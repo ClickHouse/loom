@@ -579,6 +579,35 @@ _NOT_FOR_END_USERS = (
 )
 
 
+async def authenticate_token(
+    token: str, *, secret: str | None = None, fallback_org: str | None = None
+) -> AuthInfo:
+    """Verify the credential, then admit its complete person and ancestry graph.
+
+    Caller routes supply their configured fallback for an org-less or wildcard bearer;
+    the returned token identity remains unchanged.
+    """
+    from server.auth import login, scim
+
+    auth = verify_token(token, secret=secret)
+    org = fallback_org if auth.org in ("", "*") else None
+    try:
+        refused = (
+            await scim.refuses_auth(auth, org=org)
+            if org is not None
+            else await scim.refuses_auth(auth)
+        )
+    except login.SignInUnavailable as e:
+        raise AuthUnavailable(
+            "SCIM provisioning cannot be checked yet; retry shortly", reason="provisioning"
+        ) from e
+    if refused:
+        raise TokenError(
+            "the person is not actively provisioned in this cell", reason="provisioning"
+        )
+    return auth
+
+
 def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: Any) -> AuthInfo:
     """A short-lived token an end-user issuer signed for one of its users: one
     org, `sub: user:<id>`, and the agent the request runs inside when there is

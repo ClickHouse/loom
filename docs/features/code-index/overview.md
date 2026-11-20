@@ -140,6 +140,8 @@ still gets file-level impact.
 | Go templates and Helm charts (`.tpl`, `.tmpl`, `.gotmpl`, templated manifests)         | yes                   | template calls                                                                | —                 |
 | Terraform / HCL (`.tf`, `.tfvars`, `.hcl`), Kubernetes manifests                       | yes                   | references (`reads`)                                                          | —                 |
 | Jsonnet (`.jsonnet`, `.libsonnet`)                                                     | yes                   | calls, imports                                                                | —                 |
+| Lua (`.lua`)                                                                           | yes                   | calls, `require` includes                                                     | —                 |
+| GraphQL schemas (`.graphql`, `.gql`)                                                   | yes                   | type uses, inherits (`implements`)                                            | —                 |
 | TLA+ (`.tla`, TLC configs), CMake (`CMakeLists.txt`, `.cmake`)                         | yes                   | includes; TLA+ operators; the CMake link graph                                | —                 |
 | Markdown and docs (`.md`, `.mdc`, `.mdx`, `.rst`, `.html`, `.htm`)                     | sections (`.md` only) | relative links, backticked names as `reads` to the code                       | —                 |
 | SQL (`.sql`)                                                                           | with a switch         | table references, with statement records on                                   | —                 |
@@ -326,6 +328,7 @@ Operator signals (tier lag, stale files, failed passes) are in
 
 ## Related
 
+- [repository questions](../../guides/repository-questions.md): calibration, documentation retrieval and answer completeness
 - [operations.md](operations.md): every `code.*` op by task
 - [freshness.md](freshness.md): `as_of`, commit coverage, CI refresh
 - [repositories.md](repositories.md): adding a repository, branches, who can read

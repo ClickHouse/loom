@@ -31,6 +31,8 @@ from server.identity.app import namespace_snapshot
 from server.identity.app.directory import IdentityDirectory
 from server.operations.base import Role
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 ORG, NS = "clickhouse", "ops-deleted"
 BORN = datetime(2025, 1, 2, 3, 4, 5)
 

@@ -701,8 +701,14 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.sso_links": (
         "auth plane: verified account links and signed issuer/domain evidence; no memory content."
     ),
-    "loom.oauth_signin_state": "auth plane: sign-in state in Keeper (codes, sessions); no memory.",
-    "loom.oauth_state": "auth plane: OAuth client registrations and codes; no memory rows.",
+    "loom.oauth_signin_state": (
+        "auth plane: Keeper sign-in state (codes, devices, sessions), including optional "
+        "verified sign-in email metadata; no memory content."
+    ),
+    "loom.oauth_state": (
+        "auth plane: OAuth client registrations, refresh grants with optional verified "
+        "sign-in email metadata, and owed revocations; no memory content."
+    ),
     "loom.oauth_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.grant_claims": "auth plane: no code path writes it; never holds memory content.",
     "loom.service_accounts": "auth plane: service-account definitions.",

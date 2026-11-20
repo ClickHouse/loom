@@ -14,6 +14,8 @@ from server.memory.store import MemoryRow
 from tests.unit.claims_fake import fake_key_locks
 from tests.unit.memory_store import stub_status_before
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 @pytest.fixture(autouse=True)
 def _key_locks(monkeypatch: pytest.MonkeyPatch) -> None:

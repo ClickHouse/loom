@@ -619,7 +619,7 @@ Register a document source on a namespace: a kind, what it reads (items and link
 | `org` | `str` | required | The org. |
 | `namespace` | `str` | required | The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. |
 | `name` | `str` | required | Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. |
-| `kind` | `str` | required | The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a meeting store's transcripts). |
+| `kind` | `str` | required | The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (Zoom recording transcripts). |
 | `items` | `list[dict[str, Any]] \| None` | `None` | The things the source reads, each an object with a `type`: 1-300 for gdrive, 1-20 for linear and 1-20 for notion; gdrive: {type: folder, id, recursive (default false; subfolders to a depth of 8, at most 500 subfolders per source)}, {type… |
 | `links` | `list[str] \| None` | `None` | Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (BAD_LINK). |
 | `config` | `dict[str, Any] \| None` | `None` | What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids… |

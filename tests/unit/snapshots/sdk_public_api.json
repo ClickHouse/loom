@@ -83,7 +83,8 @@
       "session_id",
       "run_id",
       "only",
-      "max_result_chars"
+      "max_result_chars",
+      "code_namespace"
     ]
   },
   "Datapack.__init__": [
@@ -3086,6 +3087,7 @@
           "memory_type",
           "tags",
           "entities",
+          "files",
           "user_id",
           "session_id",
           "run_id",

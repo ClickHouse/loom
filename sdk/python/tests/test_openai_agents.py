@@ -78,14 +78,23 @@ def test_recall_runs_memory_search_in_the_bound_scope() -> None:
 
 
 def test_remember_runs_memory_set() -> None:
-    agent = _FakeAgent({"version": 2})
+    receipt = {
+        "version": 2,
+        "memory_id": "5ec521fa-3762-4e56-aa7a-5f4c691bb572",
+        "memory_key": "seat",
+        "content_sha256": "a" * 64,
+        "status": "active",
+        "conflict_verdict": "clear",
+        "noop": False,
+    }
+    agent = _FakeAgent(receipt)
     (remember,) = loom_tools(agent, only=["loom_remember"])  # type: ignore[arg-type]
     out = _invoke(remember, {"memory_key": "seat", "value": "Alice prefers aisle seats"})
     assert agent.calls[0][:2] == (
         "memory.set",
         {"memory_key": "seat", "value": "Alice prefers aisle seats"},
     )
-    assert json.loads(out)["stored"] is True
+    assert json.loads(out) == {**receipt, "stored": True, "verdict": "clear"}
 
 
 def test_without_openai_agents_the_import_names_the_extra(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -140,8 +149,8 @@ def test_max_result_chars_caps_what_the_model_reads() -> None:
     )
     (recall,) = loom_tools(agent, only=["loom_recall"], max_result_chars=100)  # type: ignore[arg-type]
     out = _invoke(recall, {"query": "seat"})
-    assert out.endswith("…[truncated]")
-    assert len(out) == 100 + len("…[truncated]")
+    assert json.loads(out) == {"memories": [], "omitted": 1}
+    assert len(out) <= 100
 
 
 # ---- LoomSession -------------------------------------------------------------

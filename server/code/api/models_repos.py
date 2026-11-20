@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field, field_validator
 from server.code.api.models_common import _CodeIdentity
 from server.code.api.models_status import CodeTierHealth
 from server.operations.read_projection import ProjectedRow
+from server.settings.catalog import GIT_PROXY_IDENTITY
+
+# An empty `git_proxy_identity` (the deployment's default) or one identity.
+_GIT_PROXY_IDENTITY_OR_EMPTY = f"^(?:{GIT_PROXY_IDENTITY.pattern})?$"
 
 # ============================================================
 # code.repos — every configured repo the caller may read
@@ -158,6 +162,14 @@ class CodeRepoAddInput(BaseModel):
     access_token: str = Field(
         "", description="Token for a private HTTPS remote; stored encrypted, never returned."
     )
+    git_proxy_identity: str = Field(
+        "",
+        pattern=_GIT_PROXY_IDENTITY_OR_EMPTY,
+        description=(
+            "The user name this repository's git presents to the deployment's git proxy; "
+            "only a platform admin may set it. Default '': the deployment's default identity."
+        ),
+    )
     # Path prefixes to index (`src/`, `lib/`); blank entries are dropped, [] indexes the
     # whole tree.
     path_prefixes: list[str] = Field(default_factory=list)
@@ -173,8 +185,8 @@ class CodeRepoAddInput(BaseModel):
     # python)
     scip_producer: Literal["", "go", "typescript", "clang", "python"] = ""
     # More branches chosen at add time, each its own index sharing the mirror and
-    # inheriting rule, token and paths; per-branch refusals come back in `skipped`,
-    # never undoing the ones registered.
+    # inheriting rule, token, git proxy identity and paths; per-branch refusals come
+    # back in `skipped`, never undoing the ones registered.
     branches: list[str] = Field(default_factory=list, max_length=12)
 
 
@@ -187,6 +199,14 @@ class CodeRepoRemoteBranchesInput(BaseModel):
     org: str = Field(..., description="The org adding the repository.")
     repo: str = Field(..., description="GitHub owner/name or an HTTPS/SSH Git URL.")
     access_token: str = Field("", description="Token for a private HTTPS remote; used once.")
+    git_proxy_identity: str = Field(
+        "",
+        pattern=_GIT_PROXY_IDENTITY_OR_EMPTY,
+        description=(
+            "The user name this read presents to the deployment's git proxy; only a "
+            "platform admin may set it. Default '': the deployment's default identity."
+        ),
+    )
     # a repository can have thousands of heads (ClickHouse has ~16,000)
     query: str = Field(
         "", max_length=200, description="Case-insensitive substring of the branch name to match."
@@ -229,7 +249,8 @@ class CodeRepoAddBranchInput(BaseModel):
     """Index another branch of a repository the caller maintains. `namespace` is any
     existing index of that repository (the transport's ADMIN gate on it is who may
     call); the new index inherits the remote, token, prefixes, classification and join
-    rule."""
+    rule. It inherits the index's git proxy identity too, and where there is one only
+    a platform admin may add the branch."""
 
     org: str
     namespace: str

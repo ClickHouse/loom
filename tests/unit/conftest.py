@@ -61,6 +61,22 @@ from server.settings import settings  # noqa: E402
 _REPO = Path(__file__).resolve().parents[2]
 
 
+@pytest.fixture
+def no_blacklisted_values(monkeypatch):
+    """Lifecycle field/ordering cases have no refusal policy. The guard's real cache,
+    encoded values and commit generations are covered in test_blacklist_restore_paths."""
+    from server.memory.app import blacklist_guard
+
+    async def allow(rows, *, policy=None):
+        return {}
+
+    async def capture(org):
+        return {}
+
+    monkeypatch.setattr(blacklist_guard, "capture_policy", capture)
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", allow)
+
+
 @pytest.fixture(autouse=True)
 def auth_account_lifecycle(monkeypatch):
     """Direct auth unit calls receive the same mandatory implementation as HTTP/CLI."""
@@ -104,6 +120,7 @@ def stub_model_command(monkeypatch):
         return None
 
     monkeypatch.setattr(provider_command, "model_command", command)
+    monkeypatch.setattr(provider_command, "participant_command", command)
     monkeypatch.setattr(pg_profile, "check_configured", checked)
 
 
@@ -1176,3 +1193,28 @@ def no_mirrors(monkeypatch: pytest.MonkeyPatch) -> None:
         return {}
 
     monkeypatch.setattr("server.knowledge.app.mirrors.mirrors_of", _none)
+
+
+@pytest.fixture(autouse=True)
+def isolated_retirement_gate(monkeypatch):
+    """Each test models a fresh process; permanent shutdown cannot leak between them."""
+    from server.core import retirement
+
+    monkeypatch.setattr(retirement, "_gate", retirement.RetirementGate())
+
+
+@pytest.fixture(autouse=True)
+def memory_insert_keeper(monkeypatch):
+    """Memory inserts use real lease logic against a private control-plane fake.
+
+    Business-domain ClickHouse fakes need no Keeper SQL implementation. Tests of
+    contention and failure can change this store or replace the fence explicitly.
+    """
+    from server.memory.store import write_fence
+    from tests.unit.claims_fake import FakeLockTable
+
+    keeper = FakeLockTable()
+    monkeypatch.setattr(write_fence, "_lease_client", lambda ch: keeper)
+    # Domain tests fail fast on deliberate contention; waiting has explicit coverage.
+    monkeypatch.setattr(write_fence, "_admission_wait_s", lambda: 0.0)
+    return keeper

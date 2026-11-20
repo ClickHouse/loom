@@ -17,9 +17,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.parametrize("header", [None, "", "   "])
-def test_a_blank_header_is_no_credential(header: str | None) -> None:
+async def test_a_blank_header_is_no_credential(header: str | None) -> None:
     assert bearer_token(header) is None
-    assert verify_bearer_header(header) is None
+    assert (await verify_bearer_header(header)) is None
 
 
 @pytest.mark.parametrize("header", ["Bearer abc", "bearer abc", "BEARER  abc ", "  Bearer abc"])
@@ -30,11 +30,11 @@ def test_the_scheme_is_case_insensitive_and_the_token_trimmed(header: str) -> No
 @pytest.mark.parametrize(
     "header", ["Basic dXNlcjpwYXNz", "Bearer", "Bearer   ", "Token abc", "abc"]
 )
-def test_anything_else_is_a_credential_loom_cannot_read(header: str) -> None:
+async def test_anything_else_is_a_credential_loom_cannot_read(header: str) -> None:
     with pytest.raises(TokenError):
         bearer_token(header)
     with pytest.raises(HTTPException) as e:
-        verify_bearer_header(header)
+        (await verify_bearer_header(header))
     assert e.value.status_code == 401 and e.value.detail["code"] == "AUTH_INVALID"
 
 

@@ -262,6 +262,7 @@ async def link_account(
     SSO sign-in makes a second account for it meanwhile. Returns the address it
     had, the namespaces carried, and whether that address is another account's
     verified email, as read under the account and email claims."""
+    from server.auth.authz import identity_write
     from server.auth.self_signup import CLAIM_TTL_S, email_claim
     from server.core import leases
     from server.core.ch import get_client
@@ -283,10 +284,11 @@ async def link_account(
         if was:  # first, so a link stopped part way leaves no link a re-run can't redo
             await sso_links.unlink(was, [(org, namespace)], by)
         # Insert-as-replace carrying every other column forward.
-        await get_client().insert(
-            "loom.namespaces",
-            [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
-        )
+        with identity_write():
+            await get_client().insert(
+                "loom.namespaces",
+                [{**row, "contact_email": email, "updated_at": max(now, row["updated_at"])}],
+            )
         await sso_links.link(email, [(org, namespace)], by)
     await audit.emit(
         "auth.sso_linked",

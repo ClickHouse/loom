@@ -50,10 +50,8 @@ MAX_PROJECTS = 20  # not a setting: the add op's wire contract (1 to 20 projects
 # A page store's page and database ids, together, at most.
 MAX_PAGE_STORE_IDS = 20  # not a setting: the add op's wire contract, few enough to probe each
 
-# A meeting store's recordings, by `provider`: a meeting space's id (it goes into a
-# request path and a listing filter) or a numeric meeting id.
+# Zoom recording registrations use numeric meeting ids.
 RECORDING_ID_RE = {
-    "meet": re.compile(r"[A-Za-z0-9_-]{1,128}"),
     "zoom": re.compile(r"[0-9]{9,12}"),
 }
 MAX_RECORDING_IDS = 20  # not a setting: the add op's wire contract (1 to 20 ids)
@@ -350,11 +348,8 @@ def _recording_config(config: dict[str, Any]) -> dict[str, Any]:
     for raw in raw_ids:
         # A meeting id may come as a JSON number; a bool is no id.
         value = str(raw) if isinstance(raw, int) and not isinstance(raw, bool) else raw
-        if isinstance(value, str) and provider == "meet":
-            value = value.removeprefix("spaces/")
         if not isinstance(value, str) or not id_re.fullmatch(value):
-            what = "a space id" if provider == "meet" else "a meeting id (digits)"
-            raise BadConfigError(f"config.ids: {shown(raw)} is not {what}")
+            raise BadConfigError(f"config.ids: {shown(raw)} is not a meeting id (digits)")
         if value not in ids:
             ids.append(value)
     if len(ids) > MAX_RECORDING_IDS:

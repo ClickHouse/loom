@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schemas.langflow.org/extension/v1.json",
+  "id": "lfx-loom",
+  "version": "0.1.0",
+  "name": "Loom",
+  "description": "Save and search Loom memory and search knowledge documents.",
+  "lfx": {
+    "compat": ["1"]
+  },
+  "bundles": [
+    {
+      "name": "loom",
+      "path": "components/loom"
+    }
+  ],
+  "capabilities": {
+    "requiresCredentials": true
+  }
+}

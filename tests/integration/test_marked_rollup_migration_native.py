@@ -210,6 +210,9 @@ async def test_same_key_old_and_marked_parts_merge_without_fake_samples(world: R
     await world.insert()
     await world.refresh()
     await world.cutover()
+    # Seed the equal-timestamp cohort before a refresh can advance its high-water mark.
+    await world.execute("SYSTEM PAUSE VIEW loom.agent_cost_rollup_refresh")
+    await world.execute("SYSTEM WAIT VIEW loom.agent_cost_rollup_refresh")
     await world.insert(offset=1, marked=True, cost=2)
     await world.insert(offset=1, marked=True, agent="marked-only", cost=3)
     await world.insert(offset=1, agent="zero-spend", cost=0)

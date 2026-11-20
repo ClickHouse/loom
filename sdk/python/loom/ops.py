@@ -5614,6 +5614,10 @@ class CodeAskBody(TypedDict, total=False):
 
 class CodeAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    partial: NotRequired[bool]
+    partial_reason: NotRequired[str]
+    note: NotRequired[str]
+    coverage: NotRequired[Literal["", "full", "partial", "none"]]
     citations: NotRequired[list[dict[str, Any]]]
     source: Required[Literal["cached", "synthesized", "abstained"]]
     cache_similarity: NotRequired[float]
@@ -7149,6 +7153,7 @@ class CodeRepoAddInput(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7165,6 +7170,7 @@ class CodeRepoAddBody(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7210,6 +7216,7 @@ class CodeRepoRemoteBranchesInput(TypedDict, total=False):
     org: Required[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -7220,6 +7227,7 @@ class CodeRepoRemoteBranchesBody(TypedDict, total=False):
     org: NotRequired[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -14657,7 +14665,7 @@ class MemoryListEntry(TypedDict, total=False):
 
 
 class MemoryLockInput(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: Required[str]
     namespace: Required[str]
@@ -14674,7 +14682,7 @@ class MemoryLockInput(TypedDict, total=False):
 
 
 class MemoryLockBody(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -16392,6 +16400,8 @@ class MemoryTouchResult(TypedDict, total=False):
 
 
 class MemoryUnlockInput(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -16403,6 +16413,8 @@ class MemoryUnlockInput(TypedDict, total=False):
 
 
 class MemoryUnlockBody(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -16551,7 +16563,7 @@ class MemoryUpdateByIdOutput(TypedDict, total=False):
 
 
 class MemoryVerifyInput(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: Required[str]
     memory_id: NotRequired[str]
@@ -16565,7 +16577,7 @@ class MemoryVerifyInput(TypedDict, total=False):
 
 
 class MemoryVerifyBody(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     memory_id: NotRequired[str]
@@ -19209,6 +19221,7 @@ class SearchQueryInput(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -19227,6 +19240,7 @@ class SearchQueryBody(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -19234,12 +19248,31 @@ class SearchQueryOutput(TypedDict, total=False):
     'The sections, each `{"results": [...], ...}` as its plane\'s search'
 
     tracker: NotRequired[Optional[dict[str, Any]]]
+    live: NotRequired[Optional["LiveSearchResults"]]
     memory: NotRequired[dict[str, Any]]
     knowledge: NotRequired[dict[str, Any]]
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
     namespaces_skipped: NotRequired[list[str]]
+
+
+class LiveSearchResults(TypedDict, total=False):
+    "Connected-source results returned only in this response."
+
+    live: NotRequired[Literal[True]]
+    results: NotRequired[list["LiveSearchHit"]]
+
+
+class LiveSearchHit(TypedDict, total=False):
+    "One ephemeral result from the asker's connected source."
+
+    id: Required[str]
+    title: Required[str]
+    url: Required[str]
+    provider: Required[Literal["gdrive", "notion", "linear"]]
+    content: NotRequired[str]
+    live: NotRequired[Literal[True]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):

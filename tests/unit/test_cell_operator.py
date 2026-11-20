@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import json
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
@@ -21,6 +22,29 @@ from tests.unit.clock_fake import ManualClock
 
 OPERATOR = "lco_" + "7" * 128
 SHA = "a" * 64
+
+
+OBSERVED = {
+    "cell": "eu-1",
+    "is_first": False,
+    "host": "eu-1.example",
+    "deployment_id": "dep-eu-1",
+    "bucket": "",
+    "bucket_prefix": "",
+    "probe_url": "",
+    "upstream_url": "",
+    "current_fp": None,
+    "next_fp": None,
+    "mutation_generation": str(UUID(int=1)),
+}
+
+
+@pytest.fixture(autouse=True)
+def control_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    def read(url: str, **_kw: Any) -> httpx.Response:
+        return httpx.Response(200, json=OBSERVED, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx, "get", read)
 
 
 def test_a_new_credential_is_lcr_and_128_hex_with_its_sha256(capsys) -> None:
@@ -110,7 +134,9 @@ def test_a_rotation_step_calls_the_operator_api(operator, kw, body) -> None:
     assert cell_cli._cmd_credential(_args(cell="eu-1", **kw)) == 0
     (call,) = operator.calls
     assert call["url"] == "https://router.test/cells/v1/operator/cells/eu-1/credential"
-    assert call["json"] == body and call["headers"] == {"Authorization": f"Bearer {OPERATOR}"}
+    assert call["json"] == {**body, "expected": OBSERVED} and call["headers"] == {
+        "Authorization": f"Bearer {OPERATOR}"
+    }
 
 
 @pytest.mark.parametrize(
@@ -124,7 +150,7 @@ def test_a_rotation_step_calls_the_operator_api(operator, kw, body) -> None:
 )
 def test_a_limit_calls_the_operator_api(operator, kw, body) -> None:
     assert cell_cli._cmd_limit(_args(cell="eu-1", **kw)) == 0
-    assert operator.calls[0]["json"] == body
+    assert operator.calls[0]["json"] == {**body, "expected": OBSERVED}
     assert operator.calls[0]["url"].endswith("/cells/v1/operator/cells/eu-1/limit")
 
 
@@ -331,8 +357,7 @@ def test_a_cell_name_no_cell_can_have_is_refused_before_the_credential_is_sent(
 
 @pytest.mark.parametrize("command", ["which", "limit"])
 def test_a_page_that_is_not_the_routers_answer_fails(monkeypatch, capsys, command) -> None:
-    """A URL that serves something else (an HTML page, with 200) is not read as the
-    router's answer; for a change, it may have been made."""
+    """A malformed initial router answer refuses before sending a mutation."""
     page = httpx.Response(
         200, text="<html>not the router</html>", request=httpx.Request("GET", "https://x/")
     )
@@ -345,7 +370,7 @@ def test_a_page_that_is_not_the_routers_answer_fails(monkeypatch, capsys, comman
         assert cell_cli._cmd_limit(_args(cell="eu-1", closed=True)) == 1
     err = capsys.readouterr().err
     assert "did not answer as the router does" in err
-    assert ("the change may have been made" in err) is (command == "limit")
+    assert "the change may have been made" not in err  # failed precondition read sent no mutation
 
 
 def _parse(*argv: str) -> argparse.Namespace:
@@ -388,6 +413,7 @@ def _row(**over: Any) -> directory.Cell:
         "placed": 3,
         "credential_sha256": "b" * 64,
         "credential_next_sha256": None,
+        "mutation_generation": UUID(int=1),
         "deployment_id": "dep-eu-1",
         "current_fp": None,
         "next_fp": None,
@@ -403,12 +429,18 @@ def api(monkeypatch) -> tuple[TestClient, list[Any]]:
     calls: list[Any] = []
 
     async def _limit(cell: str, **kw: Any) -> directory.Cell:
+        expected = kw.pop("expected")
+        assert expected.generation == UUID(int=1)
+        assert expected.values == {k: OBSERVED[k] for k in directory.CONTROL_FIELDS}
         calls.append(("limit", cell, kw))
         if cell == "nope":
             raise directory.NoSuchCell("cell 'nope' is not in the directory")
         return _row(closed=kw.get("closed") is True)
 
-    async def _rotate(cell: str, step: str, sha: str = "") -> directory.Cell:
+    async def _rotate(
+        cell: str, step: str, sha: str = "", *, expected: directory.Control
+    ) -> directory.Cell:
+        assert expected.generation == UUID(int=1)
         calls.append(("credential", cell, step, sha))
         if sha == "c" * 64:
             raise directory.OperatorRefused("cell 'eu-2' records that credential hash already")
@@ -420,6 +452,8 @@ def api(monkeypatch) -> tuple[TestClient, list[Any]]:
 
 
 def _post(client: TestClient, path: str, body: Any, token: str = OPERATOR) -> Any:
+    if isinstance(body, dict):
+        body = {**body, "expected": OBSERVED}
     return client.post(
         f"/cells/v1/operator/cells/{path}", json=body, headers={"Authorization": f"Bearer {token}"}
     )
@@ -536,7 +570,7 @@ def test_a_rotation_is_seen_by_this_replica_on_its_next_call(monkeypatch) -> Non
         reads.append(1)
         return dict(hashes)
 
-    async def _rotate(cell: str, step: str, sha: str = "") -> directory.Cell:
+    async def _rotate(cell: str, step: str, sha: str = "", **_kw: Any) -> directory.Cell:
         hashes["eu-1"] = ("b" * 64, sha)
         return _row(credential_next_sha256=sha)
 

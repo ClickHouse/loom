@@ -441,16 +441,50 @@ async def test_usage_labels_drain_with_a_waited_insert(monkeypatch) -> None:
     usage._reset_for_tests()
 
 
-def test_shutdown_drains_share_a_budget_before_retirement() -> None:
+@pytest.mark.asyncio
+async def test_shutdown_drains_share_a_budget_before_retirement(monkeypatch) -> None:
     import inspect
+    from types import SimpleNamespace
 
     from server import main
+    from server.core import instances
+    from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S
 
-    src = inspect.getsource(main._shut_down)
-    budget = src.index("_shutdown_drains(lease, supervisor, emitter), timeout=left")
-    assert (
-        src.index("await _instances.stop(ch)") < budget < src.index("await boot.leave_deployment(")
-    )
+    clock = [100.0]
+    calls = []
+    wait_timeouts = []
+    ch, lease, supervisor, emitter = object(), object(), object(), object()
+
+    async def stop(client):
+        assert client is ch
+        calls.append("stop")
+        clock[0] += 3.0
+
+    async def drains(actual_lease, actual_supervisor, actual_emitter):
+        assert (actual_lease, actual_supervisor, actual_emitter) == (lease, supervisor, emitter)
+        calls.append("drains")
+        clock[0] += 2.0
+
+    async def wait(tasks, **kwargs):
+        wait_timeouts.append(kwargs["timeout"])
+        return await asyncio.wait(tasks, **kwargs)
+
+    async def leave(client, *, budget_s):
+        assert client is ch
+        calls.append("retire")
+        assert budget_s == SHUTDOWN_RETIRE_S + 5.0
+
+    monkeypatch.setattr(main, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(main, "asyncio", SimpleNamespace(wait=wait))
+    monkeypatch.setattr(instances, "stop", stop)
+    monkeypatch.setattr(main, "_shutdown_drains", drains)
+    monkeypatch.setattr(boot, "leave_deployment", leave)
+    monkeypatch.setattr(boot, "SHUTDOWN_DRAIN_BUDGET_S", 10.0)
+
+    await main._shut_down(ch, lease, supervisor, emitter)
+
+    assert calls == ["stop", "drains", "retire"]
+    assert wait_timeouts == [7.0]
     life = inspect.getsource(main.lifespan)
     assert "await _shut_down(" in life and "ch.disconnect()" not in life
 

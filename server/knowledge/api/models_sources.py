@@ -230,7 +230,7 @@ class KnowledgeSourceAddInput(BaseModel):
         ...,
         description="The source kind: `gdrive` (a shared-folder store), `linear` (a project "
         "tracker's project documents), `notion` (a page store's pages and databases) or "
-        "`recording` (a meeting store's transcripts).",
+        "`recording` (Zoom recording transcripts). Meet transcripts and notes use `gdrive`.",
     )
     items: list[dict[str, Any]] | None = Field(
         None, max_length=MAX_ITEMS, description=_ITEMS_DESCRIPTION
@@ -242,8 +242,7 @@ class KnowledgeSourceAddInput(BaseModel):
         "items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, "
         "pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids, "
         "UUIDs]}; notion: {page_ids: [...], database_ids: [...]} (1-20 ids in all); "
-        "recording (config only): {provider: meet | zoom, ids: [1-20 space ids (meet) or "
-        "meeting ids (zoom)]}.",
+        "recording (config only): {provider: zoom, ids: [1-20 meeting ids]}.",
     )
     include: list[str] | None = Field(
         None,
@@ -265,9 +264,8 @@ class KnowledgeSourceAddInput(BaseModel):
         description="The source's read-only credential (gdrive: a service account's JSON key, "
         "with the folders shared to the account read-only; linear: a read-only API key of an "
         "account that sees the projects; notion: an integration token with read content "
-        "access, the pages and databases shared to it; recording: for meet, an "
-        "authorized_user JSON file with the meetings.space.readonly scope only; for zoom, a "
-        "server-to-server app's {account_id, client_id, client_secret} with read-only "
+        "access, the pages and databases shared to it; recording: a server-to-server app's "
+        "{account_id, client_id, client_secret} with read-only "
         "scopes); stored encrypted, never returned.",
     )
     dry_run: bool = Field(False, description="Probe and write nothing.")

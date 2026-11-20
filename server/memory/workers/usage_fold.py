@@ -55,17 +55,20 @@ Two shapes matter for correctness and cost:
     statements instead of 2,000; on ClickHouse Cloud each lightweight UPDATE
     is a patch part and the cost is per statement, not per row.
 
-The watermark is process-local. On a cold start it is derived from the
-destination tables (the earliest `bumped_at` whose totals exceed what
-`loom.memory` already carries) instead of the epoch, so a redeploy does
-not re-walk the whole history at the batch cap before reaching live
-rows, and a pass keeps taking batches until it is caught up or its time
-budget is spent.
+The watermark is process-local and retains the boundary second. Every pass
+compares totals with the destination counters: a concurrent full-version
+insert can carry counts read before a fold and must be repaired even when
+no usage timestamp changes. This is eventual reconciliation, not an atomic
+update of future versions. A cold start begins at the earliest discrepancy
+instead of the epoch. A cursor on bumped_at, fixed-width identity digests,
+and memory_id pages through ties and is saved in worker_status when the time
+budget is spent. Digests keep supported identity sizes within its cursor limit.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -93,6 +96,10 @@ UPDATE_CHUNK_ROWS = 500
 _LIGHTWEIGHT_UNSUPPORTED_CODES = (48, 62, 344)
 
 _UINT32_MAX = 2**32 - 1
+
+_Cursor = tuple[datetime, str, str, str]
+# Empty cursors preserve the supervisor's last value; an epoch cursor resets it.
+_RESET_CURSOR = json.dumps((UNIX_EPOCH.isoformat(), "", "", ""))
 
 _watermark: datetime = UNIX_EPOCH
 _watermark_derived: bool = False
@@ -284,6 +291,16 @@ def _fold_key(org: Any, namespace: Any, memory_id: Any) -> tuple[str, str, str]:
     return str(org), str(namespace), str(memory_id)
 
 
+def _cursor_identity(org: Any, namespace: Any, memory_id: Any) -> tuple[str, str, str]:
+    """Fixed-width sort components fit the supervisor's bounded cursor."""
+    org, namespace, memory_id = _fold_key(org, namespace, memory_id)
+    return (
+        hashlib.sha256(org.encode()).hexdigest().upper(),
+        hashlib.sha256(namespace.encode()).hexdigest().upper(),
+        memory_id,
+    )
+
+
 def _scope_params(keys: list[tuple[str, str, str]]) -> dict[str, Any]:
     """`_FOLD_SCOPE`'s parameters. `keys` stays in the caller's order: the UPDATE's
     transform() pairs it with the targets by position."""
@@ -454,36 +471,37 @@ async def _fold_reinforcement_rows(ch: _CHClient, targets: list[_Target], chunk:
     return statements
 
 
-async def _derive_cold_start_watermark(ch: _CHClient, hwm: datetime) -> datetime:
-    """Where to start after a restart: just before the earliest totals row
-    whose recall/evidence exceed what `loom.memory` already carries. Targets
+async def _derive_watermark(ch: _CHClient, hwm: datetime) -> datetime:
+    """Reconcile from the earliest totals row ahead of a live memory. Targets
     are absolute, so the join is exact for the two counters that live on
     `loom.memory`; `used`-only activity has no destination counter there
-    and re-folds when its row is next bumped. No unfolded rows → the high
-    water mark (nothing to do)."""
+    and re-folds when its row is next bumped. With no discrepancy, retain the
+    high water mark's second for usage that becomes visible after this read."""
     row = await ch.query_one(
-        """
+        f"""
         SELECT min(t.bumped) AS first_unfolded
         FROM (
             SELECT org, namespace, memory_id,
                    sum(recall_count)   AS recall_total,
                    sum(evidence_count) AS evidence_total,
+                   max(last_recalled_at) AS last_recalled,
                    max(bumped_at)      AS bumped
             FROM loom.memory_usage_totals
             GROUP BY org, namespace, memory_id
         ) AS t
         INNER JOIN (
-            SELECT org, namespace, memory_id, recall_count, evidence_count
+            SELECT org, namespace, memory_id, recall_count, evidence_count, last_recalled_at
             FROM loom.memory FINAL
             WHERE tombstoned_at IS NULL
         ) AS m ON m.org = t.org AND m.namespace = t.namespace AND m.memory_id = t.memory_id
-        WHERE t.recall_total > m.recall_count
-           OR (1 + t.evidence_total) > m.evidence_count
+        WHERE least(t.recall_total, {_UINT32_MAX}) > m.recall_count
+           OR (1 + least(t.evidence_total, {_UINT32_MAX - 1})) > m.evidence_count
+           OR t.last_recalled > coalesce(m.last_recalled_at, toDateTime(0))
         """
     )
     first = _utc((row or {}).get("first_unfolded"))
     if first <= UNIX_EPOCH:
-        return hwm
+        return max(UNIX_EPOCH, hwm - timedelta(seconds=1))
     return first - timedelta(seconds=1)
 
 
@@ -509,9 +527,13 @@ IDENTITY_STATEMENT = f"""
 """
 
 
-async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResult) -> bool:
-    """One batch past the watermark. Returns True when a full batch was
-    taken (there may be more), False when the backlog is drained."""
+async def _fold_batch(
+    ch: _CHClient,
+    cfg: UsageFoldConfig,
+    result: UsageFoldResult,
+    after: _Cursor,
+) -> _Cursor | None:
+    """Fold one batch; return its tie-break cursor if more rows may remain."""
     global _watermark
     # Backpressure: while the destination already carries a
     # queue of unfinished mutations, folding more only lengthens it. Skip the
@@ -526,7 +548,7 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
             settings.memory_usage_fold_max_pending_mutations,
             _watermark.isoformat(),
         )
-        return False
+        return None
     # Absolute totals per memory. The HAVING filter must come AFTER
     # the GROUP BY (a row-level bumped_at predicate would drop the
     # older unmerged SummingMergeTree part-rows of a freshly-bumped
@@ -543,14 +565,16 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
         FROM loom.memory_usage_totals
         GROUP BY org, namespace, memory_id
         HAVING bumped > {wm:DateTime}
-        ORDER BY bumped ASC
+           AND (bumped, hex(SHA256(org)), hex(SHA256(namespace)), memory_id)
+               > {after:Tuple(DateTime, String, String, String)}
+        ORDER BY bumped ASC, hex(SHA256(org)) ASC, hex(SHA256(namespace)) ASC, memory_id ASC
         LIMIT {lim:UInt32}
         """,
-        params={"wm": _watermark, "lim": int(cfg.max_memories_per_pass)},
+        params={"wm": _watermark, "after": after, "lim": int(cfg.max_memories_per_pass)},
     )
     result.candidates += len(rows)
     if not rows:
-        return False
+        return None
     result.batches += 1
 
     # Resolve each (org, namespace, memory_id) to the keys holding it, with their
@@ -574,17 +598,28 @@ async def _fold_batch(ch: _CHClient, cfg: UsageFoldConfig, result: UsageFoldResu
     # Advance the watermark only after every fold in the batch landed — a
     # partial batch re-folds from the old watermark, which is safe because
     # targets are absolute.
-    max_bumped = max(_utc(r["bumped"]) for r in rows)
-    full = len(rows) >= int(cfg.max_memories_per_pass)
-    if full:
-        # Full batch: bumped_at is second-resolution, so boundary ties may
-        # exist past the LIMIT. Step back one second to re-fold the boundary
-        # next batch (idempotent) — unless that would stall the watermark.
-        new_wm = max_bumped - timedelta(seconds=1)
-        _watermark = new_wm if new_wm > _watermark else max_bumped
-    else:
-        _watermark = max_bumped
-    return full
+    cursor = max(
+        (_utc(r["bumped"]), *_cursor_identity(r["org"], r["namespace"], r["memory_id"]))
+        for r in rows
+    )
+    # Every batch retains the boundary second for the next pass. The cursor
+    # makes progress within this pass without dropping ties past the LIMIT.
+    _watermark = max(UNIX_EPOCH, cursor[0] - timedelta(seconds=1))
+    return cursor if len(rows) >= int(cfg.max_memories_per_pass) else None
+
+
+def _resume_after(watermark: datetime) -> _Cursor:
+    """Resume a partial scan unless reconciliation found an earlier second."""
+    try:
+        saved = json.loads(pass_context.resume_cursor() or "[]")
+        if isinstance(saved, list) and len(saved) == 4 and all(isinstance(v, str) for v in saved):
+            at, org_hash, namespace_hash, mid = saved
+            bumped = _utc(datetime.fromisoformat(at))
+            if bumped > UNIX_EPOCH and bumped - timedelta(seconds=1) <= watermark:
+                return bumped, org_hash, namespace_hash, mid
+    except ValueError:
+        pass  # A truncated cursor restarts from destination reconciliation.
+    return UNIX_EPOCH, "", "", ""
 
 
 # ---------------------------------------------------------------- acted
@@ -824,8 +859,7 @@ async def run_pass(
     cfg: UsageFoldConfig | None = None,
     ch: _CHClient | None = None,
 ) -> UsageFoldResult:
-    """One fold pass: probe for new usage, derive the watermark on a cold
-    start, then fold batches until caught up or the time budget is spent."""
+    """Reconcile destination counters, then fold batches within the time budget."""
     global _watermark, _watermark_derived
     cfg = cfg or UsageFoldConfig()
     result = UsageFoldResult(watermark=_watermark)
@@ -857,25 +891,31 @@ async def run_pass(
             log.warning("usage fold: acted pass failed (non-fatal): %s", e)
             pass_context.note_failure(e, "acted")
 
-        # Cheap no-op probe: skip the GROUP BY entirely when nothing new
-        # has landed since the last pass.
+        # Only an empty totals table can skip destination reconciliation: a
+        # stale version may have replaced folded counts without another event.
         probe = await ch.query_one("SELECT max(bumped_at) AS hwm FROM loom.memory_usage_totals")
         hwm = _utc((probe or {}).get("hwm"))
         if hwm <= UNIX_EPOCH:
+            pass_context.set_cursor(_RESET_CURSOR)
             return _done({"candidates": 0, "folded": 0, "skipped_no_memory": 0})
 
-        if not _watermark_derived and _watermark <= UNIX_EPOCH:
-            _watermark = await _derive_cold_start_watermark(ch, hwm)
-            _watermark_derived = True
-            log.info("usage fold: cold-start watermark derived as %s", _watermark.isoformat())
+        resume = await _derive_watermark(ch, hwm)
+        _watermark = min(_watermark, resume) if _watermark_derived else resume
+        _watermark_derived = True
 
-        if hwm <= _watermark:
-            return _done({"candidates": 0, "folded": 0, "skipped_no_memory": 0})
-
+        after = _resume_after(_watermark)
+        if after[0] > UNIX_EPOCH:
+            _watermark = min(_watermark, after[0] - timedelta(seconds=1))
+        pass_context.set_cursor(json.dumps((after[0].isoformat(), *after[1:])))
         while True:
-            more = await _fold_batch(ch, cfg, result)
-            if not more:
+            pass_context.check_stop()
+            cursor = await _fold_batch(ch, cfg, result, after)
+            if cursor is None:
+                if not result.skipped_pending_mutations:
+                    pass_context.set_cursor(_RESET_CURSOR)
                 break
+            after = cursor
+            pass_context.set_cursor(json.dumps((after[0].isoformat(), *after[1:])))
             if time.monotonic() - started >= float(cfg.pass_time_budget_seconds):
                 log.info("usage fold: time budget spent, resuming next pass")
                 break

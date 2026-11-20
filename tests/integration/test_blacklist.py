@@ -124,3 +124,55 @@ async def test_remove_unblocks_matching_writes(
         # Same value now writes
         ok = await a.memory.set("s2", "this is a secret token", memory_type="semantic")
         assert ok["content_sha256"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "memory_type,sensitivity", [("semantic", "low"), ("episodic", "low"), ("semantic", "high")]
+)
+async def test_restore_cannot_revive_a_value_blacklisted_after_delete(
+    control_plane_url, mint_test_token, memory_type, sensitivity
+) -> None:
+    from loom import Agent
+    from loom.errors import LoomError
+
+    from server.core.ch import get_client
+
+    ns = f"bl-restore-{uuid.uuid4().hex[:10]}"
+    token = mint_test_token(org=ORG, namespaces=[ns], roles=["admin"])
+    pattern = f"refused-{uuid.uuid4().hex}"
+    ch = get_client()
+
+    async def persisted(table):
+        return await ch.query_all(
+            f"SELECT * FROM loom.{table} FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String} "
+            "AND memory_key = 'blocked' ORDER BY version",
+            {"org": ORG, "ns": ns},
+        )
+
+    async with Agent(
+        org=ORG, namespace=ns, agent="t", base_url=control_plane_url, api_key=token
+    ) as agent:
+        await agent.call(
+            "memory.set",
+            memory_key="blocked",
+            value=pattern,
+            memory_type=memory_type,
+            sensitivity=sensitivity,
+        )
+        await agent.memory.delete("blocked")
+        before = [await persisted(table) for table in ("memory", "memory_embeddings")]
+        assert before[0] and before[0][0]["tombstoned_at"] is not None
+        assert before[0][0]["sensitivity"] == sensitivity
+        await agent.blacklist.add(pattern, scope="namespace", reason="refuse future copies")
+
+        with pytest.raises(LoomError, match="BLACKLISTED"):
+            await agent.memory.restore("blocked")
+
+        after = [await persisted(table) for table in ("memory", "memory_embeddings")]
+        assert after == before, "a refusal changes no persisted memory or search field"
+        await agent.memory.set("allowed", "unrelated value", memory_type="semantic")
+        await agent.memory.delete("allowed")
+        restored = await agent.memory.restore("allowed")
+        assert restored["restored"] is True

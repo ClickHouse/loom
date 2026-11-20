@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from time import monotonic
 from typing import Any
 
 from server.core.ch import CHClient, get_client, query_tag
@@ -47,14 +48,49 @@ class LatchUnavailable(RuntimeError):
         super().__init__("Session protection state could not be confirmed")
 
 
-def _log_unavailable(proof_stage: str, error: Exception) -> None:
+class _ProofProgress:
+    def __init__(self, stage: str) -> None:
+        self.stage = stage
+        self.started: float | None = None
+        self.changed: float | None = None
+        self.completed: dict[str, int] = {}
+        self.enter(stage)
+
+    def enter(self, stage: str) -> None:
+        try:
+            now = monotonic()
+            if self.started is None:
+                self.started = now
+            else:
+                self.completed[self.stage] = max(0, round((now - self.started) * 1000))
+            self.changed = now
+        except Exception:  # noqa: BLE001 — timing must not change the privacy decision
+            pass
+        self.stage = stage
+
+
+def _log_unavailable(
+    progress: _ProofProgress, error: Exception, deadline: asyncio.Timeout | None
+) -> None:
     # Exception bodies can contain session content or credentials.
     try:
+        now = monotonic()
+        elapsed = (
+            max(0, round((now - progress.started) * 1000)) if progress.started is not None else 0
+        )
+        current = (
+            max(0, round((now - progress.changed) * 1000)) if progress.changed is not None else 0
+        )
         log.warning(
-            "Session protection proof refused: stage=%s exception=%s code=%s",
-            proof_stage,
+            "Session protection proof refused: stage=%s exception=%s code=%s "
+            "elapsed_ms=%s stage_elapsed_ms=%s expired=%s completed_ms=%s",
+            progress.stage,
             type(error).__name__,
             error_code(error),
+            elapsed,
+            current,
+            deadline is not None and deadline.expired(),
+            dict(progress.completed),
         )
     except Exception:  # noqa: BLE001 — logging must not replace the privacy refusal
         pass
@@ -112,13 +148,6 @@ async def _confirm(ch: CHClient, backend: uuid.UUID, params: dict[str, Any]) -> 
         raise LatchUnavailable()
 
 
-async def _clear(ch: CHClient, backend: uuid.UUID, params: dict[str, Any]) -> None:
-    await ch.execute(LOCK_RELEASE, params)
-    _, row = await _one(ch, _NONCE, params, backend=backend)
-    if row["holders"]:
-        raise LatchUnavailable()
-
-
 async def enabled(*, ch: CHClient | None = None) -> bool:
     """Never cache an absence; only a confirmed synchronous write orders that read."""
     ch = ch or get_client()
@@ -128,38 +157,45 @@ async def enabled(*, ch: CHClient | None = None) -> bool:
         "ttl": 30,
     }
     sent = False
-    proof_stage = "enabled.coordination"
+    progress = _ProofProgress("enabled.coordination")
+    deadline: asyncio.Timeout | None = None
     with query_tag("knowledge.mirror.latch"):
         try:
             # not a setting: the privacy proof must end within its fixed security deadline.
-            async with asyncio.timeout(5), ch.coordination_session():
-                proof_stage = "enabled.engines"
+            async with asyncio.timeout(5) as deadline, ch.coordination_session():
+                progress.enter("enabled.engines")
                 backend = await _engines(ch)
-                proof_stage = "enabled.latch"
+                progress.enter("enabled.latch")
                 if await _latched(ch, backend):
+                    progress.enter("enabled.close")
                     return True
-                proof_stage = "enabled.keeper_before"
+                progress.enter("enabled.keeper_before")
                 before = await _keeper(ch, backend)
                 # The writer attests itself; a replayed bootstrap may exist on two backends.
                 sent = True
-                proof_stage = "enabled.barrier"
+                progress.enter("enabled.barrier")
                 await ch.execute(_BARRIER, params)
-                proof_stage = "enabled.ordered_latch"
+                progress.enter("enabled.ordered_latch")
                 latched = await _latched(ch, backend)
-                proof_stage = "enabled.keeper_after_barrier"
+                progress.enter("enabled.keeper_after_barrier")
                 if await _keeper(ch, backend) != before:
                     raise LatchUnavailable()
-                proof_stage = "enabled.nonce_confirm"
+                progress.enter("enabled.nonce_confirm")
                 await _confirm(ch, backend, params)
-                proof_stage = "enabled.nonce_clear"
-                await _clear(ch, backend, params)
-                proof_stage = "enabled.keeper_after_clear"
+                progress.enter("enabled.nonce_release")
+                await ch.execute(LOCK_RELEASE, params)
+                progress.enter("enabled.nonce_verify")
+                _, row = await _one(ch, _NONCE, params, backend=backend)
+                if row["holders"]:
+                    raise LatchUnavailable()
+                progress.enter("enabled.keeper_after_clear")
                 if await _keeper(ch, backend) != before:
                     raise LatchUnavailable()
                 sent = False
+                progress.enter("enabled.close")
                 return latched
         except Exception as error:  # noqa: BLE001 — uncertain privacy state refuses without public backend diagnostics
-            _log_unavailable(proof_stage, error)
+            _log_unavailable(progress, error, deadline)
             raise LatchUnavailable() from None
         finally:
             if sent:
@@ -175,27 +211,30 @@ async def enabled(*, ch: CHClient | None = None) -> bool:
 async def ensure(*, ch: CHClient | None = None) -> None:
     """Set the real positive state; a racing identical insert is confirmed afresh."""
     ch = ch or get_client()
-    proof_stage = "ensure.coordination_before"
+    progress = _ProofProgress("ensure.coordination_before")
+    deadline: asyncio.Timeout | None = None
     with query_tag("knowledge.mirror.latch_set"):
         try:
             # not a setting: positive confirmation shares the fixed privacy-proof deadline.
-            async with asyncio.timeout(5):
+            async with asyncio.timeout(5) as deadline:
                 async with ch.coordination_session():
-                    proof_stage = "ensure.engines_before"
+                    progress.enter("ensure.engines_before")
                     backend = await _engines(ch)
-                proof_stage = "ensure.set"
+                    progress.enter("ensure.close_before")
+                progress.enter("ensure.set")
                 try:
                     await ch.execute(_SET, {"backend": str(backend)})
                 except Exception as error:
                     if not key_exists(error):
                         raise
-                proof_stage = "ensure.coordination_after"
+                progress.enter("ensure.coordination_after")
                 async with ch.coordination_session():
-                    proof_stage = "ensure.engines_after"
+                    progress.enter("ensure.engines_after")
                     backend = await _engines(ch)
-                    proof_stage = "ensure.latch_after"
+                    progress.enter("ensure.latch_after")
                     if not await _latched(ch, backend):
                         raise LatchUnavailable()
+                    progress.enter("ensure.close_after")
         except Exception as error:  # noqa: BLE001 — uncertain privacy state refuses without public backend diagnostics
-            _log_unavailable(proof_stage, error)
+            _log_unavailable(progress, error, deadline)
             raise LatchUnavailable() from None

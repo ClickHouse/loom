@@ -18,7 +18,7 @@ import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -53,7 +53,7 @@ def _auth(subject: str = "sa:gateway"):
     )
 
 
-def test_extract_auth_honors_obo_header_for_trusted_caller() -> None:
+async def test_extract_auth_honors_obo_header_for_trusted_caller() -> None:
     """sa:gateway is on LOOM_TRUSTED_CALLERS → header replaces subject."""
     from server.transport import http as http_mod
 
@@ -65,17 +65,17 @@ def test_extract_auth_honors_obo_header_for_trusted_caller() -> None:
     )
 
     with (
-        patch.object(bearer_mod, "verify_token", return_value=_auth("sa:gateway")),
+        patch.object(bearer_mod, "authenticate_token", return_value=_auth("sa:gateway")),
         patch.object(http_mod.settings, "trusted_callers", "sa:gateway,sa:other"),
     ):
-        out = http_mod._extract_auth(req)  # type: ignore[arg-type]
+        out = await http_mod._extract_auth(req)  # type: ignore[arg-type]
 
     assert out is not None
     assert out.subject == "bob@example.com"
     assert out.impersonated_by == "sa:gateway"
 
 
-def test_extract_auth_ignores_obo_when_caller_not_trusted() -> None:
+async def test_extract_auth_ignores_obo_when_caller_not_trusted() -> None:
     """sa:imposter not in LOOM_TRUSTED_CALLERS → header is ignored."""
     from server.transport import http as http_mod
 
@@ -87,17 +87,17 @@ def test_extract_auth_ignores_obo_when_caller_not_trusted() -> None:
     )
 
     with (
-        patch.object(bearer_mod, "verify_token", return_value=_auth("sa:imposter")),
+        patch.object(bearer_mod, "authenticate_token", return_value=_auth("sa:imposter")),
         patch.object(http_mod.settings, "trusted_callers", "sa:gateway"),
     ):
-        out = http_mod._extract_auth(req)  # type: ignore[arg-type]
+        out = await http_mod._extract_auth(req)  # type: ignore[arg-type]
 
     assert out is not None
     assert out.subject == "sa:imposter"  # unchanged
     assert out.impersonated_by == ""
 
 
-def test_extract_auth_ignores_obo_when_no_trusted_callers_configured() -> None:
+async def test_extract_auth_ignores_obo_when_no_trusted_callers_configured() -> None:
     """Empty LOOM_TRUSTED_CALLERS → impersonation feature is off entirely."""
     from server.transport import http as http_mod
 
@@ -109,17 +109,17 @@ def test_extract_auth_ignores_obo_when_no_trusted_callers_configured() -> None:
     )
 
     with (
-        patch.object(bearer_mod, "verify_token", return_value=_auth("sa:gateway")),
+        patch.object(bearer_mod, "authenticate_token", return_value=_auth("sa:gateway")),
         patch.object(http_mod.settings, "trusted_callers", ""),
     ):
-        out = http_mod._extract_auth(req)  # type: ignore[arg-type]
+        out = await http_mod._extract_auth(req)  # type: ignore[arg-type]
 
     assert out is not None
     assert out.subject == "sa:gateway"
     assert out.impersonated_by == ""
 
 
-def test_extract_auth_trusted_caller_without_obo_header_is_noop() -> None:
+async def test_extract_auth_trusted_caller_without_obo_header_is_noop() -> None:
     """Trusted caller making a normal request (no impersonation) — works as
     today; subject stays the JWT's actual sub."""
     from server.transport import http as http_mod
@@ -127,10 +127,10 @@ def test_extract_auth_trusted_caller_without_obo_header_is_noop() -> None:
     req = _FakeRequest({"Authorization": "Bearer fake-token"})
 
     with (
-        patch.object(bearer_mod, "verify_token", return_value=_auth("sa:gateway")),
+        patch.object(bearer_mod, "authenticate_token", return_value=_auth("sa:gateway")),
         patch.object(http_mod.settings, "trusted_callers", "sa:gateway"),
     ):
-        out = http_mod._extract_auth(req)  # type: ignore[arg-type]
+        out = await http_mod._extract_auth(req)  # type: ignore[arg-type]
 
     assert out is not None
     assert out.subject == "sa:gateway"
@@ -164,7 +164,7 @@ def test_agent_event_carries_impersonated_by() -> None:
 # ── the subject a trusted caller acts for ─────────────────────────────────
 
 
-def _acting(subject: str, org: str = "clickhouse") -> AuthInfo:
+def _acting(subject: str, org: str = "acme") -> AuthInfo:
     from server.auth.jwt import AuthInfo, Role
 
     return AuthInfo(
@@ -203,7 +203,7 @@ def test_a_revoked_subject_is_not_acted_for(
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({revoked.lower()}))
     with pytest.raises(PermissionError, match="acts for is revoked"):
-        asyncio.run(authz.check_acted_for(_acting(header, org), "acme"))
+        asyncio.run(authz.check_acted_for(_acting(header, org), "acme" if org == "*" else org))
 
 
 def test_an_unreadable_grant_map_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -298,8 +298,11 @@ def test_a_cutoff_revocation_does_not_refuse_acting_for_the_subject(
 def test_the_tokens_own_org_is_checked_too(monkeypatch: pytest.MonkeyPatch) -> None:
     """A personal namespace is provisioned in the token's org: a spelling tied to a
     revoked subject there refuses, though the target org ties nothing."""
+    from dataclasses import replace
+
     from server.auth import authz, revocation
     from server.core import grant_cache
+    from server.operations.base import Role
 
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         tied = {"bob@corp.com", "bob"} if org == "clickhouse" else {subject}
@@ -309,7 +312,12 @@ def test_the_tokens_own_org_is_checked_too(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(revocation, "_revoked_folded", frozenset({"bob"}))
     # its own refusal, so the HTTP 403 adds no code-index reason to it
     with pytest.raises(authz.ActedForRefused, match="acts for is revoked"):
-        asyncio.run(authz.check_acted_for(_acting("bob@corp.com", "clickhouse"), "acme"))
+        asyncio.run(
+            authz.check_acted_for(
+                replace(_acting("bob@corp.com", "clickhouse"), roles=(Role.PLATFORM_ADMIN,)),
+                "acme",
+            )
+        )
 
 
 def test_an_end_user_token_is_not_checked_as_acted_for(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -452,7 +460,9 @@ def _trusted(monkeypatch: pytest.MonkeyPatch) -> object:
     async def grant_map(org: str, subject: str) -> grant_cache.GrantMap:
         return grant_cache.GrantMap(ranks={}, held=(subject.lower(),))
 
-    monkeypatch.setattr(bearer_mod, "verify_token", lambda *a, **k: _auth("sa:gateway"))
+    monkeypatch.setattr(
+        bearer_mod, "authenticate_token", AsyncMock(side_effect=lambda *a, **k: _auth("sa:gateway"))
+    )
     monkeypatch.setattr(http_mod.settings, "trusted_callers", "sa:gateway")
     monkeypatch.setattr(grant_cache, "grant_map", grant_map)
     return TestClient(app)

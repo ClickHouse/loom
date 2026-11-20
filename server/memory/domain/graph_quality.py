@@ -17,6 +17,7 @@ from datetime import date, datetime, timedelta
 _SPACE_RE = re.compile(r"\s+")
 _VOWELS = frozenset("aeiouy")
 _PUNCT_RE = re.compile(r"[^\w\s:/.-]+")
+_PLAIN_ASCII_ENTITY_RE = re.compile(r"[a-z0-9_:/.-]+(?: [a-z0-9_:/.-]+)*")
 _NOT_WORD_RE = re.compile(r"\W+")
 _VERB_GAP_RE = re.compile(r"[\s_]+")
 _ARTICLE_RE = re.compile(r"(?:the|a|an)\s+")
@@ -435,10 +436,14 @@ def fold_case(text: str) -> str:
 def _normalise(lowered: str) -> str:
     # The possessive goes after lower() ("'S" is "'s" only then) and before the
     # fold's NFC: a mark after it ("x's" + "¨") then joins the letter before it.
-    text = unicodedata.normalize("NFKC", lowered).lower()
-    text = fold_case(text.replace("'s", "").replace("’s", ""))
-    text = _PUNCT_RE.sub(_marks_kept, text)
-    text = _lead(_SPACE_RE.sub(" ", text))
+    if _PLAIN_ASCII_ENTITY_RE.fullmatch(lowered):
+        # These characters and single spaces survive Unicode and punctuation folding.
+        text = lowered
+    else:
+        text = unicodedata.normalize("NFKC", lowered).lower()
+        text = fold_case(text.replace("'s", "").replace("’s", ""))
+        text = _SPACE_RE.sub(" ", _PUNCT_RE.sub(_marks_kept, text))
+    text = _lead(text)
     text = text.rstrip(" .") if _CODE_FACET_NAME.match(text) else _settle(text)
     return SELF_SUBJECT if text in _FIRST_PERSON_FORMS else text
 
@@ -478,7 +483,7 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text; a name that starts with
     "commit:" or "error:" and a non-blank is never singularised. Idempotent."""
-    return canonical_entity(raw).text
+    return _capped_normal(str(raw or "").strip()) or ""
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:

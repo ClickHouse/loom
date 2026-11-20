@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from server.auth.bearer import auth_unavailable, bearer_token
-from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+from server.auth.jwt import AuthUnavailable, TokenError, authenticate_token
 from server.observability.metrics import record_auth_refusal
 from server.settings import settings
 
@@ -105,7 +105,7 @@ async def whoami(request: Request) -> dict[str, object]:
     if token is None:
         return {"authenticated": False}
     try:
-        info = verify_token(token)
+        info = await authenticate_token(token)
     except TokenError as e:
         record_auth_refusal(e, transport="http")
         if not isinstance(e, AuthUnavailable):
@@ -121,7 +121,7 @@ async def whoami(request: Request) -> dict[str, object]:
     except pyjwt.PyJWTError:
         header = {}
 
-    # exp/iat surfaced without re-verifying (verify_token already passed)
+    # exp/iat surfaced without re-verifying (authenticate_token already passed)
     try:
         unverified_claims = pyjwt.decode(
             token,

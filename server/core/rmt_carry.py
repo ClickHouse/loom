@@ -380,8 +380,8 @@ def under_lease(ends_at: float) -> Iterator[None]:
     """Every insert in this block starts by `ends_at` (monotonic: the publisher's
     deadline, at or before its lease's end) plus the transit allowance, however long it
     waits to be sent; one not carried is sent guarded all the same."""
-    outer = _lease_end.get()
-    token = _lease_end.set(ends_at if outer is None else min(outer, ends_at))
+    previous = _lease_end.get()
+    token = _lease_end.set(ends_at if previous is None else min(previous, ends_at))
     try:
         yield
     finally:

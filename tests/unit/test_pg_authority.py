@@ -11,7 +11,6 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +31,7 @@ from server.memory.domain.redaction_lineage import REDACTED_VALUE
 from server.memory.store import pg_memory
 from server.memory.store.pg_publish import ClaimExpired
 from server.memory.store.rows import MemoryRow, _hydrate, identity_key
+from tests.unit.test_memory_verify import _row as _memory_head
 
 
 @pytest.mark.parametrize(
@@ -683,9 +683,11 @@ async def test_a_cli_connection_to_another_deployments_postgres_is_refused(
     class _Pool:
         terminated = False
 
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
         def terminate(self) -> None:
             _Pool.terminated = True
@@ -1226,23 +1228,24 @@ def test_a_nul_character_is_refused_before_the_commit() -> None:
 async def test_a_write_that_starts_over_embeds_each_text_once() -> None:
     from server.memory.app.reused_vectors import ReusedVectors
 
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
     class _Counting:
         model_name, dim = "m", 1
 
         async def embed(self, text: str) -> list[float]:
-            calls.append(text)
-            return [float(len(text))]
+            calls.append(("query", text))
+            return [float(len(text) + 10)]
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            return [await self.embed(t) for t in texts]
+            calls.extend(("document", text) for text in texts)
+            return [[float(len(text))] for text in texts]
 
     vectors = ReusedVectors(_Counting())
     assert await vectors.embed_many(["a", "bb", "a"]) == [[1.0], [2.0], [1.0]]
-    assert await vectors.embed("bb") == [2.0]
+    assert await vectors.embed("bb") == [12.0]
     assert await vectors.embed_many(["ccc", "a"]) == [[3.0], [1.0]]
-    assert calls == ["a", "bb", "ccc"]
+    assert calls == [("document", "a"), ("document", "bb"), ("query", "bb"), ("document", "ccc")]
 
 
 class _Unavailable(Exception):
@@ -2588,10 +2591,13 @@ def test_a_write_that_read_a_version_before_its_redaction_starts_over() -> None:
     """A redaction since the read is a head that moved: the write reads again and
     rebuilds from the scrubbed head, never from the text the redaction removed."""
 
-    read = {"pinned": 0, "lock_mode": "", "status": "active", "redacted_at": None}
-    redacted = {**read, "version": 7, "redacted_at": "2026-01-01 00:00:00"}
+    from server.memory.store.rows import build_memory_version_row
+    from tests.unit.test_memory_verify import _row
+
+    read = build_memory_version_row(_row(version=7))
+    redacted = {**read, "redacted_at": datetime(2026, 1, 1)}
     for exact in (False, True):  # compare-and-set too: a redaction keeps the version
-        then = SimpleNamespace(**read, version=7, tombstoned_at=None, lock_until=None)
+        then = _hydrate(read)
         recheck = pg_memory.heads_unchanged({("k",): then}, exact=exact)
         recheck(("k",), {**read, "version": 7})
         with pytest.raises(pg_memory.HeadMoved):
@@ -3332,7 +3338,9 @@ async def test_a_copy_writer_commits_only_over_the_version_it_read(
     monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
     monkeypatch.setattr(pg_publish, "commit", _commit)
     monkeypatch.setattr(pg_publish, "publish", _publish)
-    base = {"pinned": False, "status": "active", "lock_mode": "", "tombstoned_at": None}
+    from server.memory.store.rows import build_memory_version_row
+
+    base = build_memory_version_row(read)
     heads.append({**base, "version": 1})  # the version read
     assert (
         await lifecycle.write_versions_by_ids(
@@ -3440,25 +3448,14 @@ async def test_a_lock_over_a_head_redacted_since_its_read_answers_contended(
         raise AssertionError("committed over a changed head")
 
     monkeypatch.setattr(pg_publish, "commit", _commit)
-    monkeypatch.setattr("server.memory.store.lifecycle.check_memory_rows", lambda rows: None)
-    read.update(
-        {
-            "org": "o",
-            "namespace": "n",
-            "agent": "a",
-            "user_id": "-",
-            "session_id": "-",
-            "memory_key": "k",
-            "version": 1,
-            "pinned": False,
-            "status": "active",
-        }
-    )
+    from server.memory.store.rows import build_memory_version_row
+
+    read.update(build_memory_version_row(_memory_head(version=1)))
     row = {**read, "version": 2, "lock_mode": "read_only"}
     with pytest.raises(pg_memory.AdmissionContendedError):
         await lifecycle.insert_versions_over_heads(
             [row],
-            [SimpleNamespace(**read)],
+            [_hydrate(read)],
             ch=object(),
         )
 
@@ -3523,6 +3520,7 @@ async def test_a_no_migration_boot_only_checks_the_record(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_refused_by_an_erasure_answers_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3575,6 +3573,7 @@ async def test_a_restore_refused_by_an_erasure_answers_not_found(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     monkeypatch: pytest.MonkeyPatch, error: Exception, checked: bool
 ) -> None:
@@ -3620,6 +3619,7 @@ async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     ("memory_type", "sensitivity", "owed"),
     [("semantic", "", True), ("episodic", "", False), ("semantic", "high", False)],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_committed_restore_whose_document_failed_owes_it_only_when_embedded(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3755,6 +3755,7 @@ async def test_on_clickhouse_the_status_before_a_retirement_is_read_by_the_rows_
     assert (params["id"], params["version"]) == ("mid", 9)
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_logged(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3767,6 +3768,8 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
 
     async def _insert(rows: Any, **_: Any) -> None:
         ran.append("insert")
+        if on_inserted := _.get("on_inserted"):
+            on_inserted()
 
     async def _mirror() -> None:
         raise RuntimeError("clickhouse refused the document")
@@ -3794,6 +3797,7 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
     assert "search document failed for k" in caplog.text
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mirrors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3835,6 +3839,7 @@ async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mir
         (False, None, [False]),  # unknown: fenced on the context's own settled read
     ],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_postgres_restore_of_a_high_key_is_fenced_once_its_commit_may_have_landed(
     monkeypatch: pytest.MonkeyPatch, committed: bool, reread: bool | None, fenced: list[bool]
 ) -> None:
@@ -4137,6 +4142,7 @@ async def test_a_gap_is_measured_by_the_embedders_own_model(
     assert asked == ["model-now"]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_leaves_out_the_memories_whose_erasure_evidence_is_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4176,18 +4182,26 @@ def test_a_non_finite_or_out_of_range_float32_is_refused(confidence: float) -> N
         pg_memory.encode_row({"confidence": confidence})
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A large restore commits batch by batch, each within a commit's lease. Once one's
     publication is pending, the rest are only committed, without waiting on ClickHouse
     again, and the restore completes: the delivery worker publishes them."""
-    from server.memory.app import snapshot_rows
+    from server.memory.app import blacklist_guard, snapshot_rows
     from server.settings import settings
 
     calls: list[tuple[int, bool]] = []
+    checked_policy = {("", "*"): 1, ("o", "*"): 4}
 
-    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True) -> int:
+    async def checked(rows: Any) -> dict[tuple[str, str], int]:
+        return checked_policy
+
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", checked)
+
+    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True, policy: Any) -> int:
+        assert policy == checked_policy, "every batch keeps the policy checked for the payload"
         calls.append((len(rows), publish_now))
         if len(calls) == 2:
             raise pg_lease.PublicationPending()
@@ -4200,6 +4214,7 @@ async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_wor
     assert calls == [(2, True), (2, True), (2, False), (1, False)]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_an_erasure_between_batches_refuses_the_batch_it_meets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4782,6 +4797,46 @@ async def test_a_recovery_listing_lists_what_the_authority_holds(
     assert await lifecycle.recovered_rows(gone, as_of=now) == []
 
 
+@pytest.mark.parametrize("widen", [False, True])
+@pytest.mark.parametrize("status", ["active", "rejected"])
+async def test_recovery_listing_never_swaps_in_a_rejected_authority_head(
+    monkeypatch: pytest.MonkeyPatch, widen: bool, status: str
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _served_by_authority
+    from server.memory.app.served_superseded import served_flags
+
+    now = naive_utc_now()
+    projected = _hydrate(
+        _row("k", created_at=now, value='"preview"', confidence=1.0, content_sha256="sha")
+    )
+    head = projected.model_copy(
+        update={"version": 3, "status": status, "tombstoned_at": now, "value": "whole text"}
+    )
+
+    async def heads(keys: Any, *, include_tombstoned: bool) -> dict[Any, Any]:
+        return {identity_key(projected): head.model_dump()}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    request = MemoryListInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        include_tombstoned=True,
+        include_duplicates=widen,
+        include_superseded=widen,
+        include_proposed=widen,
+    )
+    rows = await _served_by_authority(request, [projected], served_flags(request))
+    assert [(row.memory_key, row.status, row.version, row.value) for row in rows] == (
+        [("k", "active", 3, projected.value)] if status == "active" else []
+    )
+
+
 async def test_a_send_deadline_measures_the_server_clock_it_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4826,6 +4881,8 @@ async def test_an_update_whose_retirement_fails(
         raise RuntimeError("retire refused")
 
     async def _ok(*a: object, **kw: object) -> None:
+        if on_inserted := kw.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _commit(rows: Any, *, targets: int, **kw: object) -> Any:
@@ -4902,23 +4959,30 @@ async def test_an_expiry_pass_leaves_a_moved_head_for_the_next_one(
     """One head that moved since the pass read it refuses the batch: the heads are read
     again and the batch goes once more without it, which the next pass sees."""
     from server.memory.app import expiry
+    from server.settings import settings
 
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
     batches: list[list[str]] = []
 
-    async def _over_heads(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    async def _over_heads(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         batches.append([r["memory_key"] for r in rows])
         if any(r["memory_key"] == "moved" for r in rows):
             raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     async def _heads(rows: list[Any]) -> list[Any]:
-        return [SimpleNamespace(version=r.version + (r.memory_key == "moved")) for r in rows]
+        return [
+            r.model_copy(update={"version": r.version + (r.memory_key == "moved")}) for r in rows
+        ]
 
     monkeypatch.setattr("server.memory.store.insert_versions_over_heads", _over_heads)
     monkeypatch.setattr("server.memory.store.authority_heads", _heads)
     res = expiry.ExpiryResult(tombstoned=2, demoted=1)
     rows = [{"memory_key": k} for k in ("a", "moved", "b")]
     reads = [
-        MemoryRow.model_construct(
+        _memory_head(
             version=1, org="o", namespace="n", agent="a", user_id="-", session_id="-", memory_key=k
         )
         for k in ("a", "moved", "b")
@@ -4938,12 +5002,18 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
     left out; a batch refused once more (a head moved after the re-read) is left whole,
     counted for the next pass and not as a failure."""
     from server.memory.app import expiry
+    from server.settings import settings
 
-    async def _always_moved(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+
+    async def _always_moved(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     def _row(key: str, *, redacted: bool = False) -> Any:
-        return MemoryRow.model_construct(
+        return _memory_head(
             org="o",
             namespace="n",
             agent="a",
@@ -4956,7 +5026,7 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
             lock_mode="",
             lock_until=None,
             status="active",
-            redacted_at="now" if redacted else None,
+            redacted_at=datetime(2026, 1, 1) if redacted else None,
         )
 
     async def _heads(rows: list[Any]) -> list[Any]:
@@ -5966,9 +6036,11 @@ async def test_verify_deployment_checks_a_pool_already_open(
             return {"epoch": 1, "deployment_id": "other"}
 
     class _Pool:
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
     async def _open() -> _Pool:
         return _Pool()
@@ -6385,6 +6457,10 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     fenced: list[Any] = []
 
     async def _nothing(*_a: Any, **_k: Any) -> Any:
+        if on_send := _k.get("on_send"):
+            on_send()
+        if on_inserted := _k.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> int:
@@ -6628,6 +6704,7 @@ async def test_a_clickhouse_restore_never_settles_that_it_did_not_land(
     assert await restore._restore_landed(None, _row("k", version=7)) is landed
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6658,6 +6735,7 @@ async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     assert raised.value.extra["outcome_unknown"] is True
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_cancelled_while_it_reads_a_lost_commit_back_is_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6837,7 +6915,9 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     fenced: list[Any] = []
 
-    async def _inserted(*_a: Any) -> None:
+    async def _inserted(*_a: Any, on_send: Any, on_inserted: Any) -> None:
+        on_send()
+        on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> dict[Any, int]:

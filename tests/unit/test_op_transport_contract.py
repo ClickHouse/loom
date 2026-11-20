@@ -37,6 +37,7 @@ import types
 import typing
 from collections.abc import Iterator
 from typing import Any
+from unittest.mock import AsyncMock
 
 import annotated_types
 import pytest
@@ -49,9 +50,9 @@ import server.transport.mcp_outcome as mcp_outcome
 from server.auth.jwt import AuthInfo, TokenError
 from server.operations.base import Operation, Role
 from server.operations.registry import ALL_OPERATIONS
+from server.operations.toolsets import _MCP_HIDDEN_OPS
 from server.settings import settings
 from server.transport.mcp_config import _LOOM_ACTIVATE_TOOL_NAME, _LOOM_SEARCH_TOOL_NAME
-from server.transport.mcp_op import _MCP_HIDDEN_OPS
 
 ORG = "acme"
 NAMESPACE = "team"
@@ -155,8 +156,12 @@ _TOKENS = {f"tok-{r.name.lower()}": _principal(r) for r in Role} | {"tok-rival":
 # holds it there.
 _ORG_CHECKED_IN_HANDLER = {
     "erasure.status": "test_transport_security::test_erasure_status_foreign_org_token_is_not_found",
-    "memory.cross_promote": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_cross_promote",
-    "memory.copy_to": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_copy_into_or_out_of_an_org",
+    "memory.cross_promote": (
+        "test_cross_promote_source_scope::test_another_orgs_admin_cannot_cross_promote"
+    ),
+    "memory.copy_to": (
+        "test_cross_promote_source_scope::test_another_orgs_admin_cannot_copy_into_or_out_of_an_org"
+    ),
 }
 
 
@@ -220,7 +225,7 @@ def _patched_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
     monkeypatch.setattr(settings, "tracker_org", ORG)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     for op in ops:
         monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
@@ -326,6 +331,20 @@ def test_every_op_refuses_a_wrong_typed_field_by_name_on_both_transports(env: _E
     assert env.ran == []
 
 
+@pytest.mark.parametrize("name", ["ops.projection_failures.list", "ops.projection_failures.retry"])
+@pytest.mark.parametrize("limit", [-1, 0, 1001, 50_000_000, 4_294_967_295])
+def test_projection_failure_limits_refuse_before_handler(env: _Env, name: str, limit: int) -> None:
+    op = next(op for op in ALL_OPERATIONS if op.name == name)
+    body = {**_body(op), "limit": limit}
+    r = _post(env, op, body, f"Bearer {_token(Role.ORG_ADMIN)}")
+    assert (r.status_code, _code(r)) == (422, "VALIDATION_FAILED"), r.text
+    assert ["limit"] in [error["loc"] for error in r.json()["detail"]["errors"]]
+    out = _mcp(op, body, Role.ORG_ADMIN)["result"]
+    assert out["isError"]
+    assert ["limit"] in [error["loc"] for error in out["structuredContent"]["errors"]]
+    assert env.ran == []
+
+
 _GATED = [op for op in ALL_OPERATIONS if op.required_role > Role.VIEWER]
 # An op whose MCP tool name is a hand-written tool (`search` is `loom_search`)
 # is answered on MCP by that tool's own path, which its own tests cover.
@@ -376,6 +395,22 @@ def test_an_op_kept_off_mcp_is_refused_there_for_every_role(env: _Env) -> None:
                 failures.append(f"{op.name} as {role.name}: isError={out.get('isError')} {code}")
     _report(failures)
     assert env.ran == []
+
+
+def test_the_upload_ops_keep_their_role_floor_where_mcp_serves_them(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`mcp_code_upload_tools` takes the two upload ops off the hidden roster; the gates
+    then hold them as they hold every op on MCP."""
+    monkeypatch.setattr(settings, "mcp_code_upload_tools", True)
+    by_name = {op.name: op for op in ALL_OPERATIONS}
+    ingest, status = by_name["code.scip_ingest"], by_name["code.scip_status"]
+    refused = _mcp(ingest, _body(ingest), Role.VIEWER)["result"]
+    assert refused["isError"] and refused["structuredContent"]["code"] == "AUTH_INSUFFICIENT"
+    assert env.ran == []
+    assert not _mcp(ingest, _body(ingest), Role.WRITER)["result"]["isError"]
+    assert not _mcp(status, _body(status), Role.VIEWER)["result"]["isError"]
+    assert env.ran == ["code.scip_ingest", "code.scip_status"]
 
 
 def test_another_orgs_admin_reaches_no_handler_the_transport_can_check(env: _Env) -> None:

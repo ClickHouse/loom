@@ -26,11 +26,13 @@ Search every plane of the caller's Loom content in one call.
 | `recipe` | `Literal['', 'fast', 'balanced', 'quality', 'verbatim', 'code', 'temporal', 'graph']` | `''` | Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...); empty = the server's defaults. |
 | `bodies` | `Literal['full', 'excerpt', 'none', 'unit']` | `'excerpt'` | What each memory hit carries: `excerpt` (the first 200 characters; a decision or a constraint as stored), `full` (the stored clip), `none` (keys and scores only) or `unit` (whole values within a budget). |
 | `explain` | `bool` | `False` | Every section unwithheld, and the ranking terms of each memory hit. |
+| `live` | `bool` | `False` | Search the asker's connected sources without storing their results; off by default. |
 | `page` | `str` | `''` | A `memory.next_page` handle from an earlier answer, to read the memory leg's next page; empty = the first page. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `tracker` | `dict[str, Any] \| None` | Cited issue/PR matches, or a duplicate-check verdict for a scoped defect report even with no matches; absent for empty general search or an unavailable, failed or timed-out tracker leg. |
+| `live` | `LiveSearchResults \| None` | Ephemeral connected-source hits; absent unless the optional live leg answered. |
 | `memory` | `dict[str, Any]` | The `memory.search` result plus the scoped repository's decisions, rendered as a reader block, without the hits the calibration flagged below its threshold (unless every hit is flagged). |
 | `knowledge` | `dict[str, Any]` | The `knowledge.search` result plus the scoped repository's documents, hits below the knowledge similarity floor dropped. |
 | `profile` | `dict[str, Any]` | Profile sections whose label or text matches the query words, then by meaning. |

@@ -210,7 +210,16 @@ class _StarTokenCH(_CH):
         self.sql.append(sql)
         params = params or {}
         if "service_accounts" in sql:
-            return {"created_by": self.row_creator}
+            return {
+                "bounded_creator": self.row_creator,
+                "bounded_lineage": [],
+                "lineage_count": 0,
+                "subject_bytes": len(self.row_creator.encode()),
+                "revoked_at": None,
+                "expires_at": None,
+                "inherit_creator_grants": False,
+                "kind": "",
+            }
         if "user_state" in sql:
             mine = self.saved and params["sub"] == self.owner
             return {"namespace": self.saved} if mine else None

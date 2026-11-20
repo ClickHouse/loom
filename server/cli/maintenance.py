@@ -207,8 +207,9 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
     the stored transcripts, the source untouched."""
     import asyncio
 
-    from server.cli._ch import connect_declared, disconnect
+    from server.cli._ch import check_acceptance, connect_verified, disconnect
     from server.core.ch import get_client
+    from server.insights.app.provider_command import participant_command
     from server.memory.app.reextract import load_sessions, render_report, replay
 
     if args.into == args.namespace:
@@ -225,33 +226,42 @@ def _cmd_reextract(args: argparse.Namespace) -> int:
 
     async def _go() -> int:
         ch = get_client()
-        await connect_declared(
-            ch, org_free=reads("reads; the replay writes through the server at --base-url")
-        )
+        await connect_verified(ch)
         try:
-            sessions = await load_sessions(ch, org=args.org, namespace=args.namespace)
+            async with participant_command():
+                await check_acceptance(
+                    org_free=reads("reads; replay writes through the HTTP server")
+                )
+                sessions = await load_sessions(ch, org=args.org, namespace=args.namespace)
+                if args.limit_sessions:
+                    sessions = sessions[: args.limit_sessions]
+                if not sessions:
+                    print(
+                        f"  no set_from_messages evidence in {args.org}/{args.namespace}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                rep = await replay(
+                    sessions,
+                    base_url=args.base_url,
+                    token=token,
+                    org=args.org,
+                    into=args.into,
+                    dates=args.dates,
+                    concurrency=args.concurrency,
+                    dry_run=args.dry_run,
+                )
+                print(
+                    render_report(rep, source=args.namespace, into=args.into, dry_run=args.dry_run)
+                )
+                return 1 if rep.failed and rep.failed == rep.sessions else 0
         finally:
-            await disconnect(ch)
-        if args.limit_sessions:
-            sessions = sessions[: args.limit_sessions]
-        if not sessions:
-            print(
-                f"  no set_from_messages evidence in {args.org}/{args.namespace}",
-                file=sys.stderr,
-            )
-            return 1
-        rep = await replay(
-            sessions,
-            base_url=args.base_url,
-            token=token,
-            org=args.org,
-            into=args.into,
-            dates=args.dates,
-            concurrency=args.concurrency,
-            dry_run=args.dry_run,
-        )
-        print(render_report(rep, source=args.namespace, into=args.into, dry_run=args.dry_run))
-        return 1 if rep.failed and rep.failed == rep.sessions else 0
+            first = sys.exception()
+            try:
+                await disconnect(ch)
+            except BaseException:  # a disconnect failure must not replace the command failure
+                if first is None:
+                    raise
 
     return asyncio.run(_go())
 

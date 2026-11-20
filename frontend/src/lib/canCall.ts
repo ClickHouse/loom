@@ -219,6 +219,19 @@ export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI 
 // The flat claims, lowercased: org and platform admin reach no more than admin here.
 const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, platform_admin: RANK.admin };
 
+/** Own-only connection ops use the signed-in person's org, independent of namespace grants.
+ *  The server checks canonical ownership and standing, and consent requires a primary session. */
+export function canCallOwnConnections(whoami: WhoAmI | null): boolean {
+  return !!(
+    whoami?.authenticated &&
+    whoami.subject &&
+    whoami.org &&
+    whoami.org !== "*" &&
+    !whoami.is_service_account &&
+    whoami.roles?.some((r) => CLAIM_RANK[r.toLowerCase()] >= RANK.viewer)
+  );
+}
+
 /** The ops `canCallOn` answers: namespace-gated at writer or above, the card's verbs. */
 export type RowOp = Extract<
   GatedOp,

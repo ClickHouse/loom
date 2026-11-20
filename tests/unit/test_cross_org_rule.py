@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -53,7 +54,7 @@ class _Out(BaseModel):
     ok: bool = True
 
 
-def _verify(token: str) -> AuthInfo:
+def _verify(token: str, *, secret: str | None = None) -> AuthInfo:
     if token not in TOKENS:
         raise TokenError("bad token")
     return TOKENS[token]
@@ -94,7 +95,7 @@ def clients(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     monkeypatch.setattr(settings, "mcp_auth_mode", "required")
     monkeypatch.setattr(settings, "oauth_enabled", False)
     monkeypatch.setattr(settings, "identity_provider", "", raising=False)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr("server.auth.jwt.verify_token", _verify)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 10_000)  # a probe op's budget

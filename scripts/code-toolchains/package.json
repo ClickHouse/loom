@@ -1,0 +1,18 @@
+{
+  "name": "loom-scripts-code-toolchains",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@sourcegraph/scip-typescript": "0.4.0",
+    "@sourcegraph/scip-python": "0.6.6",
+    "pnpm": "12.15.0",
+    "yarn": "1.22.22",
+    "bun": "1.4.2"
+  },
+  "optionalDependencies": {
+    "@oven/bun-darwin-x64-baseline": "1.4.2",
+    "@oven/bun-linux-x64-baseline": "1.4.2",
+    "@oven/bun-linux-x64-musl-baseline": "1.4.2",
+    "@oven/bun-windows-x64-baseline": "1.4.2"
+  }
+}

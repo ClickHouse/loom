@@ -165,12 +165,22 @@ async def test_third_set_inside_the_window_starts_a_bulk(
     assert by_key["e"]["conflict_verdict"] == "conflict"
 
 
-async def test_a_coalesced_set_keeps_the_rows_own_verdict(agent: Agent) -> None:
+async def test_a_coalesced_set_keeps_the_rows_own_verdict(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     # `refines` rides only the per-row verdict; no aggregate list carries it.
     t: Any = agent.transport
     t.row_verdicts = {"c": "refines", "d": "conflict"}
     t.bulk_extra = {"conflicted": ["d", "e"]}
-    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     by_key = {r["memory_key"]: r["conflict_verdict"] for r in results if r.get("coalesced")}
     # c and d carry their own verdict; e has none, so it is clear whatever the lists say.
     assert by_key == {"c": "refines", "d": "conflict", "e": "clear"}
@@ -402,12 +412,22 @@ async def test_a_restatement_does_not_take_a_rejected_siblings_verdict(agent: Ag
     assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
 
 
-async def test_a_missing_result_row_shifts_no_other_sets_result(agent: Agent) -> None:
+async def test_a_missing_result_row_shifts_no_other_sets_result(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     # An N-1 server leaves a blacklisted entry out of `written`: the sets after it still
     # get their own rows, and the one left out gets the version-0 placeholder.
     t: Any = agent.transport
     t.dropped_values = {"D"}
-    results = await asyncio.gather(*[agent.memory.set(k, k.upper()) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, k.upper()) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     by_key = {r["memory_key"]: r for r in results if r.get("coalesced")}
     assert by_key["c"]["version"] == 100
     assert by_key["d"]["version"] == 0 and by_key["d"]["noop"] is True
@@ -720,8 +740,13 @@ async def test_close_waits_for_a_first_set_queued_behind_a_flush(agent: Agent) -
 
 
 async def test_a_first_set_its_caller_cancels_still_lands_before_the_windows_flush(
-    agent: Agent,
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     t: Any = agent.transport
     t.set_gates = {"v1": asyncio.Event()}
     x = asyncio.create_task(agent.memory.set("x", "x"))
@@ -812,11 +837,12 @@ async def test_close_returns_while_a_writer_keeps_setting(agent: Agent) -> None:
 async def test_a_set_made_after_a_cancelled_close_began_is_written(agent: Agent) -> None:
     t: Any = agent.transport
     t.bulk_gate = asyncio.Event()
+    t.set_gates["a"] = t.bulk_gate
     earlier = [asyncio.create_task(agent.memory.set(k, k)) for k in "abcde"]
     await _settle()
     closing = asyncio.create_task(agent.close())
     await _settle()
-    closing.cancel()
+    assert closing.cancel()
     await _settle()
     late = [asyncio.create_task(agent.memory.set(k, k)) for k in "fghi"]
     await _settle()

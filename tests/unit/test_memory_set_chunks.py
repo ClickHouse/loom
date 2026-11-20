@@ -116,9 +116,11 @@ class _SerialEmbedder:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def embed(self, text: str) -> list[float]:
-        self.calls.append(text)
-        return [0.5, 0.5, float(len(self.calls))]
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        if len(texts) > 1:
+            raise ConnectionError("batch unavailable")
+        self.calls.extend(texts)
+        return [[0.5, 0.5, float(len(self.calls))]]
 
 
 def _input(value: Any, **kw: Any) -> MemorySetInput:
@@ -401,7 +403,7 @@ async def test_the_cap_truncates_and_records_a_drop(monkeypatch: pytest.MonkeyPa
 
 
 @pytest.mark.asyncio
-async def test_an_embedder_without_embed_many_falls_back_serial() -> None:
+async def test_a_failed_document_batch_recovers_with_single_document_requests() -> None:
     ch, emb = _CH(), _SerialEmbedder()
     n = await sc.write_set_chunks(
         _input(_NOTE_5KB), memory_type="semantic", limit=_LIMIT, ch=ch, embedder=emb
@@ -814,6 +816,7 @@ async def test_chunks_that_land_after_the_key_turned_high_are_tombstoned(
 
     class _Embedder:
         model_name = "fake"
+        dim = 2
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
             return [[0.1, 0.2] for _ in texts]
@@ -849,6 +852,7 @@ async def test_a_failed_head_read_retires_the_chunks_it_just_wrote(
 
     class _Embedder:
         model_name = "fake"
+        dim = 2
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
             return [[0.1, 0.2] for _ in texts]

@@ -36,7 +36,16 @@ class _FakeCH:
         if "service_accounts" in sql:
             if not self._creator:
                 return None
-            return {"created_by": self._creator, "inherit_creator_grants": self._inherits}
+            return {
+                "bounded_creator": self._creator,
+                "bounded_lineage": [],
+                "lineage_count": 0,
+                "subject_bytes": len(self._creator.encode()),
+                "revoked_at": None,
+                "expires_at": None,
+                "inherit_creator_grants": self._inherits,
+                "kind": "",
+            }
         if "namespace_grants" in sql:
             return (
                 {"role": self._role}
