@@ -1,9 +1,14 @@
+---
+title: PR history and regression candidates in ClickHouse Loom
+description: Inspect merged PRs, review comments and regression candidates in ClickHouse Loom. History collection is opt-in, and candidate rankings do not prove causation.
+---
+
 # History, PRs and releases
 
-These ops need merged-PR history; the `code_pr_history` worker is off by default
-(`LOOM_CODE_PR_HISTORY_ENABLED`).
+ClickHouse Loom's PR-history operations need merged-PR history. The `code_pr_history`
+worker is off by default (`LOOM_CODE_PR_HISTORY_ENABLED`).
 
-The PR plane answers "how did the code get here". It lives in the same code namespace
+Loom's PR plane answers "how did the code get here". It lives in the same code namespace
 as the index, so a history answer joins a merged PR's files against today's symbols,
 callers and tests in one read, with no GitHub call at question time. A team's issue and
 incident records join in through a linked [tracker](../tracker/overview.md).
