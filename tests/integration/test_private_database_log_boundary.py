@@ -3,12 +3,38 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from uuid import uuid4
 
 import httpx
 import pytest
 
 from tests.integration._resources import ch_client_from_env, unique_org
+
+
+@contextmanager
+def _observe_request_capture(patch, capture):
+    from server.core import ch
+    from server.settings import settings
+
+    # Child work belongs to this request; tasks already running do not.
+    request = ContextVar("private_log_test_capture", default=False)
+    original_path = settings.ch_capture_statements
+    original_capture = ch.capture_statement
+
+    def capture_request(sql, _path):
+        path = str(capture) if request.get() else original_path
+        if path:
+            original_capture(sql, path)
+
+    patch.setattr(ch, "capture_statement", capture_request)
+    patch.setattr(settings, "ch_capture_statements", str(capture))
+    token = request.set(True)
+    try:
+        yield
+    finally:
+        request.reset(token)
 
 
 async def test_native_private_query_log_is_inaccessible_to_sql_and_analyst(
@@ -20,7 +46,6 @@ async def test_native_private_query_log_is_inaccessible_to_sql_and_analyst(
     from server.core.diagnostics import private_work
     from server.insights.app import sql_access
     from server.insights.domain.sql_surface import Scope
-    from server.settings import settings
 
     org, namespace = unique_org("private-log"), "docs"
     token = mint_test_token(org=org, namespaces=[namespace], roles=["writer"])
@@ -32,8 +57,7 @@ async def test_native_private_query_log_is_inaccessible_to_sql_and_analyst(
     try:
         await ch.connect()
         capture = tmp_path / "statements.jsonl"
-        with monkeypatch.context() as patch:
-            patch.setattr(settings, "ch_capture_statements", str(capture))
+        with monkeypatch.context() as patch, _observe_request_capture(patch, capture):
             query_id = "docsrc-private-log-" + uuid4().hex
             with private_work():
                 value = await ch.raw_bytes(
