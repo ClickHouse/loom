@@ -13,9 +13,9 @@ from typing import Any, cast
 from uuid import UUID
 
 from server.cli import cell_attach_pg as apg
-from server.cli.cell_ch import Refusal
-from server.cli.cell_ch import Refused as Refused
 from server.core import pg, retirement
+from server.core.cell_ch import Refusal
+from server.core.cell_ch import Refused as Refused
 from server.router.directory import CONTROL_FIELDS, CONTROL_MAX_S
 from server.settings import settings
 

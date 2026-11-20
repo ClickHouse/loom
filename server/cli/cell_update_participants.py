@@ -9,9 +9,9 @@ import time
 from typing import Any, cast
 from uuid import UUID
 
-from server.cli import cell_control, cell_scan, cell_writers
-from server.cli.cell_ch import WHOLE_SQL, Refused, per_host, quote, read_topology
-from server.core import cell, ch_names, instances
+from server.cli import cell_control
+from server.core import cell, cell_sync, ch_names, instances
+from server.core.cell_ch import WHOLE_SQL, Refused, per_host, quote, read_topology
 from server.core.ch import query_tag
 from server.core.provider_process import (
     certified,
@@ -19,6 +19,7 @@ from server.core.provider_process import (
     participant_tag,
     proves_stopped,
 )
+from server.insights.store import cell_catalog
 from server.insights.store import provider_participants as participants
 
 
@@ -88,8 +89,8 @@ async def census(ch: Any) -> dict[str, dict[str, Any]]:
         raise cell_control._refused("participant census cannot resolve the configured cluster")
     if problems := topology.refusals():
         raise Refused(problems)
-    names = await cell_writers.host_names(ch, topology) if topology.multi else {}
-    if problems := (await cell_writers.own_refusals(ch, topology, names))[0]:
+    names = await cell_catalog.host_names(ch, topology) if topology.multi else {}
+    if problems := (await cell_catalog.own_refusals(ch, topology, names))[0]:
         raise Refused(problems)
     database = ch_names.database()
     tables = await per_host(
@@ -122,14 +123,14 @@ async def census(ch: Any) -> dict[str, dict[str, Any]]:
             ),
             {"db": database},
         )
-        if any(len(value) != 1 for value in rows.values()) or cell_writers.extra_replicas(
+        if any(len(value) != 1 for value in rows.values()) or cell_catalog.extra_replicas(
             row for value in rows.values() for row in value
         ):
             raise cell_control._refused("participant replica set includes an unverified replica")
-        budget = cell_scan.Budget(cell_control.TRANSACTION_S)
-        await cell_scan._system(
+        budget = cell_sync.Budget(cell_control.TRANSACTION_S)
+        await cell_sync._system(
             ch,
-            f"SYSTEM SYNC REPLICA{cell_scan._on_cluster(topology)} "
+            f"SYSTEM SYNC REPLICA{cell_sync._on_cluster(topology)} "
             f"{quote(database)}.`_provider_participants` LIGHTWEIGHT",
             topology,
             budget,

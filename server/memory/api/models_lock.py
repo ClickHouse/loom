@@ -15,7 +15,9 @@ from server.memory.api.models_common import _Identity
 
 
 class MemoryLockInput(_Identity):
-    """Lock one row against a class of writes.
+    """Lock one row, refusing a changed source with retryable 503
+    `ADMISSION_CONTENDED` without writing a memory version; read the current row
+    before retrying.
 
     `read_only` refuses a changed value, a changed expiry and deletion;
     `no_delete` lets the value change but refuses tombstone, redact, clear,
@@ -24,6 +26,7 @@ class MemoryLockInput(_Identity):
     `memory.unlock` (ADMIN). `until` / `ttl_seconds` bound the lock (omit
     both for an open-ended lock). Under auth `locked_by` is the caller's
     token subject; the body value is read only when no auth context exists.
+
     """
 
     # The key to lock, under this exact identity (a miss answers `locked: false`).
@@ -63,6 +66,11 @@ class MemoryLockOutput(BaseModel):
 
 
 class MemoryUnlockInput(_Identity):
+    """Unlock one row, refusing a changed source with retryable 503
+    `ADMISSION_CONTENDED` without writing a memory version; read the current row
+    before retrying.
+    """
+
     # The key to unlock, under this exact identity.
     memory_key: str
     # Actor reported when the server runs without auth; under auth the token

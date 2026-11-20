@@ -1243,7 +1243,7 @@ List memory keys under this identity, optionally filtered.
 
 ## `memory.lock`
 
-Lock one row against a class of writes.
+Lock one row, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; read the current row before retrying.
 
 `POST /v1/memory.lock` · MCP `loom_memory_lock` · role `writer` · write · audited
 
@@ -2271,7 +2271,7 @@ Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker
 | `demoted` | `int` | Rows demoted: expiry cleared, confidence scaled down (or would be, under `dry_run`). |
 | `anonymized` | `int` | Rows anonymized: value replaced by a marker, embeddings tombstoned, the shell row kept (or would be, under `dry_run`). |
 | `locked_skipped` | `int` | Rows left as they are because a lock refuses their post-action; reads still hide them. |
-| `moved_skipped` | `int` | Rows left for the next pass because their head moved on since the read (renewed, rewritten or deleted); 0 under the ClickHouse authority. |
+| `moved_skipped` | `int` | Rows deferred because their source changed or a second batch admission refused them, including unchanged peers in that batch; 0 under the ClickHouse authority. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `sample` | `list[dict[str, Any]]` | Up to 20 handled rows: memory_key, namespace, agent, action, expired_at. |
 | `failures` | `list[str]` | Errors of the pass (`scan:`, `insert:`, `mirror:`); empty on a clean run. |
@@ -2334,7 +2334,7 @@ Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear
 
 ## `memory.unlock`
 
-Lift a lock set by memory.lock (admin).
+Unlock one row, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; read the current row before retrying.
 
 `POST /v1/memory.unlock` · MCP `loom_memory_unlock` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
@@ -2448,7 +2448,7 @@ Update a memory by UUID with an optimistic concurrency check.
 
 ## `memory.verify`
 
-Attest to (or revoke the attestation on) one memory.
+Attest or revoke, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; review the current row before retrying.
 
 `POST /v1/memory.verify` · MCP `loom_memory_verify` · role `writer` · idempotent · audited
 

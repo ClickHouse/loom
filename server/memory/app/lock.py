@@ -103,7 +103,7 @@ async def handle_memory_lock(input: MemoryLockInput) -> MemoryLockOutput:
         locked_by=_actor(input.locked_by),
         locked_at=now,
     )
-    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client())
+    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client(), exact=True)
     return MemoryLockOutput(
         locked=True,
         memory_id=str(existing.memory_id),
@@ -141,7 +141,7 @@ async def handle_memory_unlock(input: MemoryUnlockInput) -> MemoryUnlockOutput:
         locked_by="",
         locked_at=None,
     )
-    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client())
+    await memory_repo.insert_versions_over_heads([row], [existing], ch=get_client(), exact=True)
     return MemoryUnlockOutput(
         unlocked=True,
         memory_id=str(existing.memory_id),

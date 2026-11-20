@@ -278,8 +278,10 @@ async def test_on_clickhouse_a_failed_vector_copy_still_counts_the_row_inserted(
     async def _by_keys(keys, **_):
         return {identity_key(summary): summary}
 
-    async def _insert_rows(rows, *, ch=None):
+    async def _insert_rows(rows, *, ch=None, **callbacks):
         inserted.extend(rows)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def _refused(items, *, ch, of_content=None):
         raise RuntimeError("ClickHouse refused the copy")

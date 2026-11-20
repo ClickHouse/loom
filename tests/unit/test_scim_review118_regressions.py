@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from server.auth import aliases, jit, login, oauth
-from server.cli.cell_ch import Refused
+from server.core.cell_ch import Refused
 from server.settings import settings
 from tests.unit.test_cell_scim_precondition import provisioned_run as provisioned_run
 from tests.unit.test_scim_people import people as people
