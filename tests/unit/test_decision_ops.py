@@ -804,8 +804,10 @@ def test_a_pinned_decision_peer_is_marked_conflicted_and_stays_pinned(monkeypatc
     async def get_by_id(memory_id, **kw):
         return rows.get(memory_id)
 
-    async def insert(versions, ch=None):
+    async def insert(versions, ch=None, **callbacks):
         written.extend(versions)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def mirror(versions, ch=None, **_):
         return None

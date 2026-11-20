@@ -71,8 +71,8 @@ def test_stamping_keeps_every_row_on_one_key_set() -> None:
     got = stamp_intra_batch_supersessions(rows, embs, [(0, 2)], datetime(2026, 1, 1))
     assert got == [("a", "c")]
     assert rows[0]["status"] == "superseded" and rows[0]["superseded_by"] == "c"
-    assert rows[0]["invalid_at"] == datetime(2024, 1, 2)
-    assert embs[0]["status"] == "superseded" and embs[0]["invalid_at"] == datetime(2024, 1, 2)
+    assert rows[0]["invalid_at"] == datetime(2026, 1, 1)
+    assert embs[0]["status"] == "superseded" and embs[0]["invalid_at"] == datetime(2026, 1, 1)
     assert len({tuple(sorted(r.keys())) for r in rows}) == 1  # one key set for the insert
     assert rows[1]["status"] == "active" and rows[1]["superseded_by"] == ""
 

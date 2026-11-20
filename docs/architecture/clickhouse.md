@@ -668,7 +668,23 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   (`server/memory/workers/usage_fold.py`). On ClickHouse Cloud each statement is a patch part and
   a Keeper entry, so cost is per statement. A pass is skipped while the table has too many
   unfinished mutations. Only "lightweight update unsupported" errors fall back to
-  `ALTER TABLE … UPDATE`; a transient error is retried next pass.
+  `ALTER TABLE … UPDATE`; a transient error is retried next pass. Every batch retains
+  its boundary second because `bumped_at` has second resolution. A cursor ordered by
+  `bumped_at`, SHA-256 digests of `org` and `namespace`, and `memory_id` pages through
+  ties. Fixed-width digests fit supported identity sizes within the cursor limit.
+  `worker_status` stores the cursor when a pass stops at its time budget. A completed scan stores an epoch cursor to
+  reset the scan: an empty cursor tells the supervisor to keep its previous value.
+
+  A full-version insert can carry counters read before a fold and replace its result.
+  Every pass therefore compares the absolute totals and last-recall time with the live
+  rows, even when the usage high-water mark is unchanged, and rewinds to the earliest
+  discrepancy. Comparisons use the same UInt32 saturation as the counter writes, so
+  an unattainable total cannot keep rewinding the scan. This adds an aggregate join
+  per nonempty pass. Repair is eventual once
+  the competing writes are visible; a read followed by an insert is not atomic. Absolute
+  targets and `greatest` make counter repair idempotent across replicas. The usage events
+  remain authoritative; the counters on `memory` are a derived projection.
+
 - **Erasure purges** remove rows. On `erasure/store/mutations.py::LIGHTWEIGHT_PURGE_TABLES` (vector,
   chunk, summary and evidence tables) a purge uses lightweight `DELETE FROM`, which writes
   only the row mask: rows vanish from every read at once and bytes leave at the next merge.

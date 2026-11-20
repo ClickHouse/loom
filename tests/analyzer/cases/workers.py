@@ -149,6 +149,8 @@ async def _worker_passes(ch: RecordingCH, c: dict[str, Any]) -> None:
         last_activity=now,
     )
     await uf._fold_memory_rows(ch, [target], 10)
+    await uf._derive_watermark(ch, now)
+    await uf._fold_batch(ch, uf.UsageFoldConfig(), uf.UsageFoldResult(), (now, ORG, NS, "m1"))
 
 
 async def _admin_readers(ch: RecordingCH, c: dict[str, Any]) -> None:

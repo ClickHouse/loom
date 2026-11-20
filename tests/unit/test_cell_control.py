@@ -15,10 +15,18 @@ from tests.unit.test_cell_attach import FakeConn
 
 @pytest.mark.asyncio
 async def test_uncertain_commit_closes_before_cancelling_work(monkeypatch):
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", clock)
+    monkeypatch.setattr(pg, "time", clock)
+
     class Stalled(FakeConn):
         async def execute(self, sql: str, *args: Any) -> str:
             answer = await super().execute(sql, *args)
             if sql == "COMMIT":
+                clock.advance(0.03)
                 try:
                     await asyncio.Future()
                 finally:
@@ -224,10 +232,18 @@ async def test_terminal_mode_failure_never_resets_unknown_or_retries(failed):
 async def test_expired_phase_does_not_receive_another_exit_allowance(monkeypatch):
     import time
 
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", clock)
+    monkeypatch.setattr(pg, "time", clock)
+
     class StalledClose(FakeConn):
         async def close(self, **kwargs):
             self.timeouts = [kwargs["timeout"]]
             self.executed.append("CLOSE START")
+            clock.advance(kwargs["timeout"])
             await asyncio.Future()
 
     conn = StalledClose()
@@ -238,8 +254,12 @@ async def test_expired_phase_does_not_receive_another_exit_allowance(monkeypatch
     monkeypatch.setattr(cell_control.Owner, "_open", opening)
     monkeypatch.setattr(cell_control, "TRANSACTION_S", 0.04)
 
+    async def stalled():
+        clock.advance(0.03)
+        await asyncio.Future()
+
     async def body(owned):
-        return await owned.transaction(lambda: asyncio.Future())
+        return await owned.transaction(stalled)
 
     started = time.monotonic()
     with pytest.raises(TimeoutError):

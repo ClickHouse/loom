@@ -165,12 +165,22 @@ async def test_third_set_inside_the_window_starts_a_bulk(
     assert by_key["e"]["conflict_verdict"] == "conflict"
 
 
-async def test_a_coalesced_set_keeps_the_rows_own_verdict(agent: Agent) -> None:
+async def test_a_coalesced_set_keeps_the_rows_own_verdict(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     # `refines` rides only the per-row verdict; no aggregate list carries it.
     t: Any = agent.transport
     t.row_verdicts = {"c": "refines", "d": "conflict"}
     t.bulk_extra = {"conflicted": ["d", "e"]}
-    results = await asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, {"v": k}) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     by_key = {r["memory_key"]: r["conflict_verdict"] for r in results if r.get("coalesced")}
     # c and d carry their own verdict; e has none, so it is clear whatever the lists say.
     assert by_key == {"c": "refines", "d": "conflict", "e": "clear"}

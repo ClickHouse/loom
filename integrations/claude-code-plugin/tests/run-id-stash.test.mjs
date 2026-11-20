@@ -8,10 +8,10 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { completeBody, readRunState, sessionRunId, writeRunBegun } from "../lib/run-hook.mjs";
-import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles } from "../lib/tmp-state.mjs";
+import { STALE_STATE_MS, sessionStatePath, sweepStaleStateFiles, writeJsonFile } from "../lib/tmp-state.mjs";
 import { recallBody } from "../lib/prompt-recall.mjs";
 import { sessionMemoryBody } from "../lib/session-memory.mjs";
 import { hostEnv, withTmpdir } from "./host-env.mjs";
@@ -216,6 +216,84 @@ test("a re-sent begin and the close fit Codex's one-second SessionEnd budget", a
     const spent = close.closedAt - begin.at;
     assert.ok(spent < 1000, `begin and close took ${spent} ms`);
   });
+});
+
+test("close admission deducts preparation from the shared deadline", async (t) => {
+  for (const preparationMs of [0, 650, 750]) {
+    await t.test(`preparation ${preparationMs} ms`, async () => {
+      const tmp = freshTmp();
+      withTmpdir(tmp, () =>
+        writeJsonFile(sessionStatePath("run", "budget"), {
+          attempted: true,
+          body: { run_id: "cc-budget", goal: "test", user_request: "test" },
+        }),
+      );
+      const script = `
+        import fs from "node:fs";
+        let now = 0;
+        let bound;
+        let prepared = false;
+        const requests = [];
+        const write = fs.writeSync;
+        fs.writeSync = (file, value, ...options) => {
+          if (value === '{"run_id":"r-budget"}') {
+            now += ${preparationMs};
+            prepared = true;
+          }
+          return write(file, value, ...options);
+        };
+        Date.now = () => now;
+        AbortSignal.timeout = (ms) => {
+          bound = ms;
+          return new AbortController().signal;
+        };
+        globalThis.fetch = async (url) => {
+          const op = url.split("/").at(-1);
+          requests.push({ op, bound, at: now });
+          if (op === "run.begin") now += 200;
+          return { status: 200, json: async () => ({ run_id: "r-budget" }) };
+        };
+        process.on("exit", () => fs.writeSync(1, JSON.stringify({ requests, now, prepared })));
+        process.argv = [process.execPath, ${JSON.stringify(HOOK)}, "SessionEnd"];
+        await import(${JSON.stringify(pathToFileURL(HOOK).href)});
+      `;
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+          env: hostEnv({
+            PATH: process.env.PATH,
+            HOME: tmp,
+            TMPDIR: tmp,
+            LOOM_BASE_URL: "http://127.0.0.1:1",
+            LOOM_API_KEY: "t",
+          }),
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        let out = "";
+        let err = "";
+        child.stdout.on("data", (part) => {
+          out += part;
+        });
+        child.stderr.on("data", (part) => {
+          err += part;
+        });
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ code, out, err }));
+        child.stdin.end(JSON.stringify({ session_id: "budget", cwd: tmp, reason: "exit" }));
+      });
+      assert.equal(result.code, 0, result.err);
+      const observed = JSON.parse(result.out);
+      assert.equal(observed.prepared, true, "the clock advances at close preparation");
+      assert.deepEqual(observed.requests[0], { op: "run.begin", bound: 400, at: 0 });
+      const closes = observed.requests.filter((request) => request.op === "run.complete");
+      if (preparationMs >= 700) {
+        assert.deepEqual(closes, [], "an expired budget admits no close request");
+      } else {
+        assert.equal(closes.length, 1, "the admitted close is sent");
+        assert.ok(closes[0].bound > 0);
+        assert.ok(closes[0].at + closes[0].bound <= 900, "preparation cannot extend the shared deadline");
+      }
+    });
+  }
 });
 
 test("a 429 is a busy moment: the next prompt asks again", async () => {

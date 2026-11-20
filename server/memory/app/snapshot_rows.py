@@ -185,12 +185,15 @@ async def insert_version_rows(
 ) -> bool:
     """Commit restored version rows; whether some are not yet published. Under Postgres
     they commit in batches of LOOM_PG_RESTORE_BATCH_ROWS; once one's publication is
-    pending, the rest are only committed, and the delivery worker publishes them."""
+    pending, the rest are only committed, and the delivery worker publishes them.
+    ClickHouse batches keep Keeper admission within a holder's work budget."""
     from server.memory.app import blacklist_guard
 
     policy = await blacklist_guard.enforce_rows(rows)
     if not pg.enabled():
-        await store.insert_memory_versions(rows, ch=ch)
+        step = settings.ch_restore_batch_rows
+        for start in range(0, len(rows), step):
+            await store.insert_memory_versions(rows[start : start + step], ch=ch)
         return False
     publish_now = True
     step = settings.pg_restore_batch_rows
