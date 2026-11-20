@@ -4,6 +4,45 @@ Use `code.search` to retrieve source and documentation, and `code.ask` to produc
 cited answer from that evidence. Both can serve a reader who has no local checkout.
 The repository must be indexed in the code namespace passed to the request.
 
+## Serve triage agents, design assistants and team chatbots
+
+Run the assistant against the indexed repository, with a Loom token that can read its
+code namespace. The application supplies the repository scope; the user supplies the
+question. Git fetch credentials used to build the index do not grant a chatbot's users
+access to it. Follow the [repository access rules](../features/code-index/repositories.md#who-can-read)
+and preserve each caller's authorized scope.
+
+| Assistant        | Evidence to request                                                                                           | Result to check                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Triage agent     | `code.search` for the symptom, then `code.symbol` and `code.callers` for the relevant definition              | Cited implementation and callers that explain the reported path            |
+| Design assistant | `code.impact` for a proposed symbol change and [linked team decisions](../use-cases/memory-linked-to-code.md) | Affected definitions, test mappings and lessons with their freshness state |
+| Team chatbot     | `code.ask` for a cited answer, or `code.search` for the application's own reader                              | Source ranges supporting each claim, or an explicit abstention             |
+
+For example, replace the organization, namespace and question with those of your indexed
+repository. Server-side synthesis needs a configured real LLM:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.ask" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"code-example","question":"Where are incoming requests authorized?","synthesize":true}'
+```
+
+A grounded answer returns `answer` and `citations`; an unanswerable question can return
+`abstain` and `abstain_reason`. Inspect the completeness signals below before displaying
+an answer. To retrieve evidence without server-side synthesis, pass `synthesize: false`;
+`answer` is empty and `citations` holds the retrieved units. This does not disable any
+embedding or reranking provider used by retrieval. The
+[code operation reference](../reference/operations/code.md#codeask) gives the full contract.
+
+The answer concerns the indexed branch, not an uncommitted local checkout. Check
+[freshness](../features/code-index/freshness.md), [language and compiler-tier support](../features/code-index/overview.md#language-support),
+and returned truncation or lower-bound metadata. An empty caller list does not prove
+there are no runtime callers, and an impact test mapping does not mean a test ran.
+Use the [SDK intent table](code-tools.md#choose-evidence-by-intent) to expose bounded
+lookups to a model, and [evaluate on your own repository](../getting-started/evaluate.md#code-intelligence)
+before relying on its answers.
+
 ## Calibrate the embedding model
 
 After indexing, run `code.calibrate` as an administrator for the indexed namespace.
@@ -84,6 +123,12 @@ Finding the expected file is a retrieval result. Producing a complete, correct a
 is a separate result. Keep both measures when evaluating a repository assistant.
 
 ## Using retrieval inside a coding agent
+
+An existing checkout already provides local files and tools. Loom can add remote
+cross-file relationships, cited retrieval and shared lessons that are not present in
+that checkout. Whether these reduce work or improve answers depends on the task and
+index coverage. Use local tools for uncommitted files and insufficient or unsupported
+indexed results; check the indexed commit before treating evidence as current.
 
 For a coding agent, also inspect whether the model requested tools and received useful
 results. A connected MCP server does not establish tool adoption. Hook-supplied

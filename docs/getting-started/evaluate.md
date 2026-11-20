@@ -155,6 +155,34 @@ agent tasks with ordinary repository tools only. Report task success first, then
 tokens, cost and wall time. Tool-schema overhead depends on the client, so record whether
 it defers MCP tool definitions.
 
+#### Label your own repository before querying
+
+The built-in acceptance report is not a repository-neutral answer-quality test. Make a
+task sheet for your own repository with these columns before collecting results:
+
+| Column                 | What to record                                                                                 |
+| ---------------------- | ---------------------------------------------------------------------------------------------- |
+| Task and frozen source | Question, repository commit, branch and task category                                          |
+| Expected evidence      | Definition path and qualified symbol, accepted source ranges, or a reviewed caller/test set    |
+| Expected answer        | Claims the answer must support and claims it must not make                                     |
+| Expected refusal       | Unanswerable, wrong-repository and denied-access cases                                         |
+| Retrieval outcome      | Returned identifiers, ranks, citations, freshness and completeness limits                      |
+| Agent outcome          | Actual calls and evidence used, answer or patch, objective test result, latency and total cost |
+
+This is a proposed evaluation record, not an input schema accepted by the supplied
+harness. Call `code.symbol`, `code.callers`, `code.impact`, `code.search` or `code.ask`
+for the corresponding labelled cases using the
+[operation reference](../reference/operations/code.md). Read each result's uncertainty:
+an incomplete graph should not be graded as an exhaustive caller set, and changed or
+missing watermarks leave a freshness comparison unverified. Keep stale, failed and
+permission-denied requests visible alongside successful retrieval.
+
+For task-level comparisons and a CTO decision scorecard, use the
+[paired agent-platform evaluation](../guides/agent-platforms.md#give-a-cto-an-evaluation-they-can-check).
+It includes application, hook and model-selected calls, zero-use tasks, citation checks,
+objective tests, construction cost and uncertainty. That procedure supplies no measured
+result until you run and report it on the chosen workload.
+
 ### Keep the comparison fair
 
 - Use the same model, prompt, data snapshot and question order in paired arms.

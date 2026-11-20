@@ -1,7 +1,8 @@
 # Memory linked to code for coding agents
 
 Loom links coding agents' memories to the functions, classes and files they name, follows
-them through refactors, and flags a memory when its code changes. By default, search leaves
+them through refactors, and flags a memory when its code changes. Team decisions and notes
+saved as memories use the same links. By default, search leaves
 out a memory whose code is all gone unless a person pinned, locked or verified it, and every
 read that serves a lesson says when its code changed or is gone. It runs over MCP, HTTP and
 the SDKs on the repositories a self-hosted Loom indexes (the
@@ -82,6 +83,37 @@ writes at least 60 seconds old and passes run every 60 seconds, so once trunk is
 `code.symbol` on that definition returns the lesson under `lessons` within about two
 minutes.
 
+### Save and retrieve a linked team decision
+
+Replace the repository tag, symbol and claim with a real, verified lesson from your
+indexed repository. The token needs write access to `team-context` and read access to
+`code-example`. This example saves a memory outside the code namespace, so the symbol
+read explicitly names its memory namespace:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/memory.set" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"team-context","agent":"design-assistant","memory_key":"design/retry-tests","value":"Changes to `pkg.Reader.fetch_page` require retry tests.","tags":["repo:<repository-id>"]}'
+```
+
+Check the write receipt before claiming it was saved
+([write outcomes](../guides/agent-integration.md#4-read-the-writes-answer)). After the
+link worker has processed it, request the actual indexed definition:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.symbol" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"code-example","name":"pkg.Reader.fetch_page","include_lessons":true,"lesson_namespaces":["team-context"]}'
+```
+
+Look for the saved memory under `lessons` and inspect `code_state`. A saved memory is
+not proof that a link resolved. An ambiguous name, pending indexing or link work,
+permissions and response caps can prevent it appearing; use `memory.get` to inspect
+the memory's own `code` links. A tag associates content with a repository; it grants
+no read access.
+
 ## Check a lesson after a code edit
 
 On the repository's indexed trunk, save a lesson such as `` `fetch_page()` retries on code 115 ``
@@ -117,5 +149,20 @@ tool selection are not tested.
 
 For removal, held-memory exceptions and model-backed revision, see the
 [link policies](../concepts/memory.md#memories-linked-to-code).
+
+To list review work for the example memory, call the read-only integrity report:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/namespace.validate" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"team-context","keys":["design/retry-tests"]}'
+```
+
+Inspect `code_links_stale` findings and any skipped checks. A report with unavailable
+evidence is not a freshness proof. Review the current source and revise the same memory
+key when the decision changes;
+[history and provenance](../features/memory/history-and-provenance.md) retain the prior
+versions. A code change alone does not authorize rewriting the decision.
 
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

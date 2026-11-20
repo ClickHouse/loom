@@ -88,6 +88,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Guides
 
 - [Integrate Loom into an agent](docs/guides/agent-integration.md): This guide covers what an agent sends to Loom and how it reads the answers: the client surface, the identity, what to write, and how to read.
+- [Offer Loom in an agent platform or factory](docs/guides/agent-platforms.md): An agent platform or factory can offer Loom as an optional shared memory and code retrieval service through MCP, HTTP, or the Python and TypeScript SDKs.
 - [Code tools for model integrations](docs/guides/code-tools.md): An indexed code namespace and a token with read access let an SDK tool loop investigate definitions, behavior and relationships with `loom_code_lookup`.
 - [Debug a request](docs/guides/debugging.md): Loom tags everything one request does with the same id, so tracing a request is a join.
 - [Customize the extraction pipeline](docs/guides/extraction-pipeline.md): `memory.set_from_messages` runs its transcript through an ordered list of steps that share one state.

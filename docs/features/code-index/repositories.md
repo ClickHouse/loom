@@ -217,6 +217,65 @@ that:
 A `code.repo.set_access` row wins over the configured classification and join policy
 and survives restarts. `code.refresh` (writer) and the admin ops always need a grant.
 
+### Separate repositories for two teams
+
+Keep repositories with different readers in different code namespaces. For example,
+index a billing repository as `code-billing` and an operations repository as
+`code-operations`, both `classification: "restricted"` with `join_policy: "approval"`.
+Use the [operator-configured entry format](../../operations/code-index-operations.md)
+or the [self-service access controls](#self-service-repositories) for your deployment.
+Bootstrap maintainer grants before restricting an existing namespace, following the
+[restricted-namespace procedure](../../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
+
+Give a billing service a live viewer grant and a token explicitly naming only
+`code-billing`. Its expected read behavior is:
+
+| Request                            | Expected scope outcome                                                         |
+| ---------------------------------- | ------------------------------------------------------------------------------ |
+| `code.search` in `code-billing`    | Authorized; useful hits still depend on the index and query                    |
+| `code.search` in `code-operations` | Denied; the billing grant and token do not cover it                            |
+| `code.repos`                       | Can include request-only metadata for the other repository; inspect `readable` |
+
+Check the allowed request with a symbol you know is indexed, then repeat an equivalent
+request against the other namespace. Over HTTP, a denied scoped code read returns
+`AUTH_INSUFFICIENT`; a known object ID can instead read as missing to avoid revealing its
+existence ([authorization diagnostics](../../operations/troubleshooting.md#an-id-you-know-exists-reads-as-missing)).
+Test revocation separately from an empty search result. Repeat for each indexed branch:
+namespace naming and maintainer inheritance do not give every reader access to every
+branch.
+
+A same-organization repository with approval-based joining can appear in `code.repos`
+as `readable: false`. That row exposes metadata for requesting access, with empty index
+counts and watermarks. It does not authorize reading code. Do not treat a listing entry
+as a successful access check.
+
+For example, with the billing service's token, replace the query with a known billing
+symbol. Repeat with `namespace` set to `code-operations` and expect an authorization
+failure, not an empty successful result:
+
+```sh
+curl --fail-with-body -X POST "$LOOM_BASE_URL/v1/code.search" \
+  -H "Authorization: Bearer $LOOM_API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data '{"org":"example","namespace":"code-billing","query":"invoice authorization","top_k":3}'
+```
+
+The Git token or SSH identity that fetches source is separate from the Loom token and
+grants used by readers. A chat or document connector login does not grant a native Loom
+service repository access. Agent names and repository tags record attribution or
+association; they are not access boundaries.
+
+### Check indexing isolation separately from read access
+
+Repository read grants do not sandbox indexing jobs. Self-service indexing requires
+the sandbox unless an operator explicitly enables its restricted unsandboxed mode;
+operator-configured repositories can run without it. To require isolation for every
+repository job, set `LOOM_CODE_SANDBOX_REQUIRED=true` and satisfy the host requirements.
+When the sandbox is unavailable, jobs are refused or skipped rather than silently run
+outside it. The [sandbox runbook](../../operations/code-index-operations.md#repository-job-sandbox)
+describes namespaces, mounts, egress, process limits, supported stacks and remaining
+container/host responsibilities; Loom's per-process limits do not impose a job cgroup.
+
 ## Failure modes
 
 | Symptom                                           | Cause and fix                                                                                                                                                                                                                                                          |
@@ -226,7 +285,7 @@ and survives restarts. `code.refresh` (writer) and the admin ops always need a g
 | Adding a repository answers `AUTH_INSUFFICIENT`   | the message names `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY`: only platform admins add repositories and branches on this deployment, with a token of their own that is not scoped to namespaces                                                                      |
 | A self-service card stays at `error`              | read `stage_detail` in `code.repos`; a failed clone retries next pass (timeout `LOOM_CODE_BOOTSTRAP_CLONE_TIMEOUT_S`)                                                                                                                                                  |
 | A private self-service repository stops fetching  | `LOOM_JWT_SECRET` was rotated; re-enter the token                                                                                                                                                                                                                      |
-| An entry is missing from `code.repos`             | check `loom.code.repos_config_errors`; `code.repos` also lists only what the caller may read                                                                                                                                                                           |
+| An entry is missing from `code.repos`             | check `loom.code.repos_config_errors` and the caller's listing eligibility; request-only entries have `readable: false` and do not grant code access                                                                                                                   |
 | Revoking or lowering an admin answers busy        | a revoke on a code namespace first re-reads `loom.code_repos`, so it sees the branches added here from another process, and answers busy while that read fails; retry once the read succeeds                                                                           |
 | A restricted branch added here has no admin       | its admins were all copies from branches added here, which the sync revokes; grant admin on one of the repository's operator entries (with none, the operator lists a branch of it in `LOOM_CODE_REPOS_JSON` first)                                                    |
 | A new maintainer lacks the other branches         | the admin grant was made before this process read `loom.code_repos` (that process logs `not synced` the first time); the next admin grant or approval on a branch of the repository, or a branch added, copies it; or grant it again                                   |
