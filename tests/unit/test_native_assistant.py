@@ -191,7 +191,7 @@ def test_cancellation_closes_the_model_and_accounts_once(
             await anext(stream)
             assert (await anext(stream))["choices"][0]["delta"]["content"] == "provisional"
         assert acc.llm_calls == 1 and acc.cost_usd > 0 and acc.cost_estimated
-        assert state.estimated and closed == [True]
+        assert state.spent == acc.cost_usd and closed == [True]
 
     asyncio.run(scenario())
 
@@ -207,7 +207,7 @@ def test_deadline_joins_blocked_tool(offline: list, monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(tools.Tools, "_request", blocked)
     monkeypatch.setattr(settings, "assistant_answer_ttl_s", 0.02)
-    ticket = runtime.Ticket("org", "ns", "t", 1, "alice", "viewer")
+    ticket = runtime.Ticket("org", "ns", "t", 1, "viewer")
 
     async def scenario() -> None:
         with pytest.raises(AssistantUpstreamError, match="deadline"):
@@ -568,7 +568,7 @@ def test_mirror_marker_precedes_native_producer_work(monkeypatch):
 
     async def scenario():
         stream = runtime.stream(
-            runtime.Ticket("org", "ns", "t", 1, "alice", "viewer", True),
+            runtime.Ticket("org", "ns", "t", 1, "viewer", True),
             [{"role": "user", "content": "policy"}],
             runtime.Answer(),
         )
@@ -593,7 +593,7 @@ def test_unverified_citation_withholds_terminal_done(offline, monkeypatch):
         received = []
         with pytest.raises(AssistantUpstreamError, match="unverified"):
             async for frame in runtime.stream(
-                runtime.Ticket("org", "ns", "t", 1, "alice", "viewer"),
+                runtime.Ticket("org", "ns", "t", 1, "viewer"),
                 [{"role": "user", "content": "policy"}],
                 runtime.Answer(),
             ):
@@ -667,7 +667,7 @@ def test_provisional_text_above_the_character_cap_withholds_done(offline, monkey
     monkeypatch.setattr(model, "model_for", lambda *_: Oversized())
 
     async def scenario():
-        ticket = runtime.Ticket("org", "ns", "t", 1, "alice", "viewer")
+        ticket = runtime.Ticket("org", "ns", "t", 1, "viewer")
         seen = []
         with pytest.raises(AssistantUpstreamError, match="output bound"):
             async for chunk in runtime.stream(

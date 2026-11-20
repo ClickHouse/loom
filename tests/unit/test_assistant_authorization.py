@@ -155,18 +155,6 @@ def _org_slot(org: str) -> Any:
     return slots
 
 
-async def _no_wait(_seconds: float) -> None:
-    return None
-
-
-async def _yield(_seconds: float) -> None:
-    await asyncio.sleep(0)
-
-
-async def _found_nothing(*_: Any, **__: Any) -> Any:
-    return []
-
-
 def test_the_answer_token_is_viewer_on_the_namespace_for_one_answer(world: _World) -> None:
     _answer(_caller(), QUESTION)
     assert world.delegated == {

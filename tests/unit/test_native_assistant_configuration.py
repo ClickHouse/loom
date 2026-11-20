@@ -133,6 +133,6 @@ def test_routed_alias_reserves_and_accounts_at_its_explicit_price(configured, mo
         assert frames[0]["model"] == "routed-model-alias"
         assert state.turns == 1 and state.spent == pytest.approx(expected)
         assert acc.llm_calls == 1 and acc.cost_usd == pytest.approx(expected)
-        assert not state.estimated and not acc.cost_estimated
+        assert not acc.cost_estimated
 
     asyncio.run(scenario())

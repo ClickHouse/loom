@@ -82,8 +82,6 @@ class Ticket:
     # The delegated token stays out of logs and assertion representations.
     token: str = field(repr=False)
     slot: int
-    # The caller's subject: its answer's tool calls are ledgered under it.
-    subject: str
     # Loom's line about the caller's credential (`asker_line`), the last line of the
     # question the native runtime is sent.
     asker: str
@@ -319,7 +317,7 @@ async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
         except BaseException:
             _give_back(org, namespace, slot)
             raise
-    return Ticket(org, namespace, token, slot, auth.subject, asker, mirrored)
+    return Ticket(org, namespace, token, slot, asker, mirrored)
 
 
 async def _mirror_admission(org: str, namespace: str) -> bool:

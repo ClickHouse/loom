@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -36,7 +37,8 @@ def main() -> None:
         owner_bindings=_read(args.owner_bindings),
     )
     # Never overwrite a source export or an existing archive.
-    with args.output.open("x") as output:
+    descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
         json.dump(archive, output, ensure_ascii=False, indent=2)
         output.write("\n")
 

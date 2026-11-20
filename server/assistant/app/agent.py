@@ -28,7 +28,6 @@ class State:
     output_tokens: int = 0
     spent: float = 0.0
     turns: int = 0
-    estimated: bool = False
 
 
 def _event(obj: str, state: State, **fields: Any) -> dict[str, Any]:
@@ -72,7 +71,6 @@ def _account(
     if usage is None or not turn.usage_complete:
         # A failed in-flight request has unknown spend. Its failed answer row holds
         # the reservation estimate, never invented token counts or a free call.
-        state.estimated = True
         state.spent += reserve
         cost_accumulator.report_charge(model, reserve, estimated=True)
         generation.record_accounting(
