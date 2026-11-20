@@ -477,7 +477,10 @@ refusal is the generic "cannot access" message, so it does not reveal whether th
 exists. If the classification cannot be read, access is denied.
 
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
-  caller cannot read, and `code.repos` hides them.
+  caller cannot read. `code.repos` can return permitted join, access-request or adoption
+  metadata with `readable: false`; those rows omit populated index counts and watermarks
+  and do not authorize code reads. Other inaccessible entries are omitted. See
+  [repository listing and access](../features/code-index/repositories.md#who-can-read).
 - Each request admitted to the restricted namespace it names writes a
   `namespace.restricted_access` audit row before the answer
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,

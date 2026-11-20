@@ -136,8 +136,8 @@ class CodeRepoSummary(ProjectedRow):
 
 
 class CodeReposOutput(BaseModel):
-    # One row per entry the caller reads (plus unreadable rows an org admin may adopt),
-    # narrowed to the `repo` / `repos` match when either was given; [] when none.
+    # Readable entries and permitted request-only or adoption metadata, narrowed to
+    # the `repo` / `repos` match when either was given; [] when none.
     repos: list[CodeRepoSummary]
 
 

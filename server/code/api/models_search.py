@@ -321,7 +321,7 @@ class CodeAskInput(_CodeIdentity):
 
 
 class CodeAskOutput(BaseModel):
-    # The grounded answer text; "" on an abstain or when synthesize=false.
+    # The grounded answer text; empty on abstention or an uncached retrieval-only call.
     answer: str = ""
     # True when retrieval or provider limits prevent a complete response.
     partial: bool = False
@@ -332,7 +332,7 @@ class CodeAskOutput(BaseModel):
     # Synthesis self-assessment, not verified correctness; empty on cached answers.
     coverage: Literal["", "full", "partial", "none"] = ""
     # The units the answer used (or was shown when none is cited): {path, start_line,
-    # end_line, symbol, unit_id} each; the retrieved units when synthesize=false.
+    # end_line, symbol, unit_id} each; retrieved units on an uncached retrieval-only call.
     citations: list[dict[str, Any]] = Field(default_factory=list)
     # cached = served from the answer cache | synthesized = answered now (or retrieval-only
     # when synthesize=false) | abstained = no grounded answer (`abstain_reason` says why).
