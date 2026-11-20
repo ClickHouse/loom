@@ -14,6 +14,7 @@ from server.cli import cell_attach, cell_control, cell_prepare
 from server.core import leases, object_store, pg
 from server.settings import settings
 from tests.unit import test_cell_native_http_first_error as native_http
+from tests.unit.clock_fake import ManualClock
 from tests.unit.test_cell_attach import FakeConn
 from tests.unit.test_cell_control import snapshot
 
@@ -79,6 +80,10 @@ def nonce_edges(monkeypatch, exchange):
 
 @pytest.fixture
 def native_call(monkeypatch, nonce_edges, exchange):
+    # Scheduling cannot consume the fake session's close budget.
+    phase_clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", phase_clock)
+    monkeypatch.setattr(pg, "time", phase_clock)
     state = nonce_edges
     row = {**snapshot(), "is_first": False, "state": "attaching", "mode": "enforced"}
     exchange.answer = row.copy()

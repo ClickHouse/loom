@@ -88,7 +88,7 @@ class Drill:
                 await asyncio.sleep(0.02)
 
     async def seed(self, dsn: str, sql: str, *, marked: bool = False) -> None:
-        """Cancel COMMIT only after it is primary-visible and waiting for standby flush."""
+        """Cancel a standby-blocked COMMIT and drain its acknowledgement before returning."""
         application = f"placement-seed-{len(self.tasks)}"
         conn = await asyncpg.connect(
             dsn,
@@ -108,6 +108,9 @@ class Drill:
             commit.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(commit, 5)
+            # Client cancellation precedes the server releasing the transaction.
+            # Drain it before termination can cancel the driver's CancelRequest.
+            await conn.close(timeout=5)
         finally:
             conn.terminate()
 

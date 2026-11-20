@@ -1714,6 +1714,9 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # Chunk-kind ranking prior when the request names none: structural boosts the
+    # kind named by the question; flat/default apply fixed tables; off disables it.
+    code_search_kind_prior: Literal["off", "default", "flat", "structural"] = "flat"
     # The question kinds `code_search_catalogue_penalty` applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:

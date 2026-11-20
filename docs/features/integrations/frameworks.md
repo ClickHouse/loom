@@ -583,7 +583,7 @@ across conversations, and the application runs its commands. `AsyncLoomMemoryToo
 memory tool bases and run those commands against Loom: each file is a Loom document, so
 every agent of the namespace reads the same files, `knowledge.search` finds what they say,
 and the files stay in the Loom deployment. Install with
-`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.8.x).
+`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.11.x).
 
 ```python
 import anthropic

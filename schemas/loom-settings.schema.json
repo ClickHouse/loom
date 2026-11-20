@@ -2019,6 +2019,17 @@
           "type": "string",
           "description": "code.search HyDE: writes a hypothetical indexed passage whose embedding runs a second vector list (see code_search_hyde_*). \"\" = off."
         },
+        "code_search_kind_prior": {
+          "default": "flat",
+          "enum": [
+            "off",
+            "default",
+            "flat",
+            "structural"
+          ],
+          "type": "string",
+          "description": "Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it."
+        },
         "code_search_llm_leg_grace_ms": {
           "default": 0,
           "type": "integer",

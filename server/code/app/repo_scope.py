@@ -69,6 +69,33 @@ def repo_trunk(org: str, repo: str) -> tuple[str, str]:
     return trunk_namespace_of(org, entries[0].namespace), tag
 
 
+def namespace_repo_tag(org: str, namespace: str) -> str:
+    """`repo:<id>` of the repository configured for code namespace `namespace` in
+    `org`, whichever of its branches that is; "" when none is, or the registry is
+    unread (closed). The namespace's name is never read as a repository id."""
+    from server.code.domain.index.remote import repo_tag
+
+    try:
+        cfg = repo_for_namespace(org, namespace)
+    except RegistryUnread:
+        return ""
+    return repo_tag(cfg.git_remote or cfg.repo) if cfg is not None else ""
+
+
+async def session_repo_tag(org: str, write_namespace: str) -> str:
+    """The `repo:<id>` tag a `memory.set` into `write_namespace` of `org` takes from
+    the request's code scope; "" adds none. The scope's org must be the write's. The
+    scope must name a configured repository the caller may read, else nothing is added.
+    Then a write into a configured code namespace takes that repository's tag, whatever
+    repository the scope names; any other namespace takes the scope's repository's."""
+    scope = current_code_scope()
+    if not scope or scope[0] != org:
+        return ""
+    if not await readable_repo_namespace(org, scope[1]):
+        return ""
+    return namespace_repo_tag(org, write_namespace) or namespace_repo_tag(org, scope[1])
+
+
 def repo_names(org: str) -> dict[str, tuple[str, str]]:
     """`repo:<id>` tag -> (owner/name, trunk code namespace) of each repository
     configured in `org`."""

@@ -132,7 +132,12 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   that namespace as if it had been named. `loom_search` under the header also reads
   the repository's documents and `decision` memories from its trunk code namespace,
   when the caller may read it, and runs the tracker duplicate check for a
-  defect-shaped query.
+  defect-shaped query. A `memory.set` with no `repo:` tag takes the `repo:<id>` of the
+  repository configured for the scope's namespace, when the scope's org is the write's
+  org and the caller may read that repository; with such a scope, a write into another
+  configured code namespace takes that namespace's repository tag instead. A scope that
+  names no configured, readable repository adds no tag, and an explicit `repo:` tag
+  always stays.
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which

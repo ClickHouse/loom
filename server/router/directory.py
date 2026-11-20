@@ -175,11 +175,20 @@ async def _init(conn: Any) -> None:
                 typ, encoder=json.dumps, decoder=json.loads, schema="pg_catalog"
             )
     except BaseException as original:
-        # Only builtin codecs run here: this raw session has never been borrowed or
-        # held command locks. Quarantine before the driver can lose its ownership.
+        # Failed initialization cannot admit this raw session. A local abort alone
+        # does not acknowledge backend exit, so finish public close while still owned.
+        task = asyncio.current_task()
+        unknown = task is None or bool(task.cancelling())
+        if not unknown:
+            try:
+                await conn.close(timeout=STATEMENT_TIMEOUT_S)
+            except BaseException:  # noqa: BLE001 — close must preserve the first init failure.
+                unknown = True
         try:
             conn.terminate()
-        except BaseException:  # noqa: BLE001 — disposal must preserve the first init failure.
+        except BaseException:  # noqa: BLE001 — abort cannot replace the first init failure.
+            unknown = True
+        if unknown:
             try:
                 original.add_note("directory initialization session closure is unknown")
             except BaseException:  # noqa: BLE001 — diagnostics must preserve the first failure.
@@ -1250,8 +1259,8 @@ async def update_configuration(
         current, pending = fingerprints.configuration_pair(
             expected.values.get("current_fp"), expected.values.get("next_fp"), target, action
         )
-    except ValueError as error:
-        raise OperatorRefused(str(error)) from None
+    except fingerprints.ConfigurationRefused as error:
+        raise OperatorRefused(error.reason) from None
     accepted = [value for value in (current, pending) if value is not None]
     desired_orgs = {org for value in accepted for org in value["fields"].get("configured_orgs", [])}
     prior_orgs = {

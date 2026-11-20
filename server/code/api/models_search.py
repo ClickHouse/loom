@@ -90,7 +90,7 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # a body via code.symbol when one card wins.
     # None = the deployment default (settings.code_search_bodies_default).
     bodies: Literal["auto", "none"] | None = None
-    # Chunk-kind prior override for A/B: None = the served "flat" table; "default" /
+    # Chunk-kind prior override: None = code_search_kind_prior; "default" /
     # "flat" pick a table, "structural" applies only the phrasing rule, "off" disables.
     kind_prior: Literal["off", "default", "flat", "structural"] | None = Field(
         default=None, json_schema_extra=MCP_HIDDEN
@@ -327,6 +327,14 @@ class CodeAskInput(_CodeIdentity):
 class CodeAskOutput(BaseModel):
     # The grounded answer text; "" on an abstain or when synthesize=false.
     answer: str = ""
+    # True when retrieval or provider limits prevent a complete response.
+    partial: bool = False
+    # Sanitized reason for an incomplete response; empty when complete.
+    partial_reason: str = ""
+    # Caller-facing warning about missing retrieval or synthesis.
+    note: str = ""
+    # Synthesis self-assessment, not verified correctness; empty on cached answers.
+    coverage: Literal["", "full", "partial", "none"] = ""
     # The units the answer used (or was shown when none is cited): {path, start_line,
     # end_line, symbol, unit_id} each; the retrieved units when synthesize=false.
     citations: list[dict[str, Any]] = Field(default_factory=list)
