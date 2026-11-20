@@ -295,7 +295,12 @@ each field means is in [monitoring](./monitoring.md#health-checks).
   - **The deployment is not meant to be a cell** (no directory row, or no router), or
     **an unattached later cell** (its row reads `is_first = false`,
     `state = 'attaching'` and `placed = 0`) that you are turning back into a single
-    deployment: clear the state in one transaction, in a psql session on `LOOM_PG_DSN`
+    deployment: for a registered cell, use the
+    [fenced state cleanup](cell-control.md#clear-a-registered-unattached-cells-state).
+    Do not run the SQL below for a registered cell. For a deployment whose directory
+    has no row, first positively stop/fence every control client and outstanding router
+    control request and prevent restarts; with no online acceptance controller, clear
+    the state in one transaction, in a psql session on `LOOM_PG_DSN`
     (`\connect` back to it after the check) as the role that owns schema `loom`'s tables
     (the role that migrates; altering a trigger needs the table's owner). The
     deployment is then `open`. An unattached later cell's directory row stays live until
@@ -353,8 +358,9 @@ each field means is in [monitoring](./monitoring.md#health-checks).
     `state = 'attaching'` and `placed = 0`, whatever its `mode`, since an attach refused at
     its step-3 lock leaves it `enforced`; and `SELECT mode FROM loom.tenancy_mode` on its
     Postgres reads `recording`): back it out in this order. Unset `LOOM_CELL` on every
-    process, each of which then serves as in `recording`; run the state transaction and the
-    drop step above; then run `loom cell remove --cell <cell>` with the router's operator
+    process, each of which then serves as in `recording`; run the
+    [fenced state cleanup](cell-control.md#clear-a-registered-unattached-cells-state),
+    with `LOOM_CELL` still set on that control client; then run `loom cell remove --cell <cell>` with the router's operator
     credential and the cell's `LOOM_PG_DSN`, which refuses until that Postgres reads `open`
     and records the row's deployment id. Removing the row first would answer every new org
     503, and clearing the state first would gate every process with `LOOM_CELL` set. The

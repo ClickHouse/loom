@@ -132,7 +132,7 @@ def build_router(components: dict[str, Any] | None = None) -> APIRouter:
     return router
 
 
-def _extract_auth(request: Request) -> AuthInfo | None:
+async def _extract_auth(request: Request) -> AuthInfo | None:
     """Pull a bearer token from the Authorization header and verify it.
 
     Returns None if no token is present (allowed only when auth_required=False).
@@ -140,7 +140,7 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     tokens when auth_required=True.
     """
     # Counts its own refusals; an end-user token is served here.
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if settings.auth_actually_required():
             raise missing_bearer()
@@ -765,7 +765,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # code-trace row (the body and validation refusals write both),
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
-        call.auth = auth = _extract_auth(request)
+        call.auth = auth = await _extract_auth(request)
         # Bound before the body is read, as MCP binds it before validation:
         # a refusal's ledger row reads the token's org and pins from it.
         from server.auth.context import set_current_auth

@@ -53,6 +53,9 @@ The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assis
 
 Framework adapters live under `loom.integrations`: LangChain retrievers (`pip install 'clickhouse-loom[langchain]'`), a LlamaIndex retriever and memory block (`[llamaindex]`), a Haystack document store and retriever (`[haystack]`), OpenAI Agents SDK tools and sessions (`[openai-agents]`), CrewAI crew memory (`[crewai]`), an AutoGen memory (`[autogen]`), an AG2 recall policy and tools (`[ag2]`), a Microsoft Agent Framework context provider (`[agent-framework]`), a Claude API memory tool backend (`[claude-memory]`), a Google ADK memory service (`[google-adk]`), an Agno user-memory database (`[agno]`), a Pydantic AI toolset (`[pydantic-ai]`), a Pipecat memory service (`[pipecat]`), a LangGraph store and a Strands Agents memory store ([frameworks](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)).
 
+For Pipecat installation, pipeline placement, the single-file text example and its
+checked scope, see the [Pipecat integration README](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/pipecat/README.md).
+
 Full guide: [docs/reference/python-sdk.md](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md). Deployment paths (how an operator stands up the server): [docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 
 ## Every op by name, any op by call, a probe before you rely

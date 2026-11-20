@@ -32,6 +32,7 @@ Skips without LOOM_BASE_URL (tests/integration/conftest.py).
 
 from __future__ import annotations
 
+import json
 import time
 import typing
 import uuid
@@ -1060,14 +1061,36 @@ async def _drain_queue(org: str, ns: str) -> None:
         await ch.disconnect()
 
 
+@pytest.fixture
+def badge_extractor_key(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Fix only the fake provider's extraction answer, not the replay or write path."""
+    from server.llm import fake
+
+    def badge_facts(user: str, *, agent_rules: bool = False) -> dict[str, Any]:
+        # Existing-memory context contains earlier badges; extract only the new turn.
+        _, separator, current = user.partition("current_messages (extract from these):")
+        assert separator, user
+        messages = [
+            f"Quux keeps the badge number {badge}." for badge in ("1111", "2222", "3333", "4444")
+        ]
+        (message,) = [message for message in messages if message in current]
+        return {"facts": [{"key": "quux_badge", "value": message, "source_message_indices": [0]}]}
+
+    monkeypatch.setattr(fake, "_extract_facts_from_user_prompt", badge_facts)
+    return "quux_badge"
+
+
 @pytest.mark.asyncio
 async def test_a_deferred_extraction_replays_inside_the_writers_scope(
-    control_plane_url: str, seed: _Seed, ch_client: Any
+    control_plane_url: str, seed: _Seed, ch_client: Any, badge_extractor_key: str
 ) -> None:
-    """Under `newest_wins` a same-key write supersedes the older row. W's pinned
-    token defers a set_from_messages whose fact lands on the key V holds: the replay
-    runs under W's scope, so V's row stays active. A namespace-wide writer's deferred
-    write of the same key does supersede it (the control)."""
+    """Deferred same-key writes only supersede rows owned by the write's user.
+
+    W's pinned token and a namespace-wide token writing as user-x both replay
+    inside their respective writers' scopes, leaving V's row active. A later
+    write for the same user from another session still supersedes that user's
+    earlier row.
+    """
     ns = f"rs-defer-{uuid.uuid4().hex[:8]}"
     ns_tok = _mint(seed.org, ns)
     w_tok = _mint(seed.org, ns, read_scope="own_user", read_user_id=W)
@@ -1080,17 +1103,29 @@ async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     )
 
     def say(badge: str) -> list[dict[str, str]]:
-        # The fake extractor gives each of these the same key.
-        return [{"role": "user", "content": f"Quux keeps the badge number {badge} today."}]
+        return [{"role": "user", "content": f"Quux keeps the badge number {badge}."}]
 
     v_out = _write(
         control_plane_url,
         ns_tok,
         "memory.set_from_messages",
-        {**base, "user_id": V, "session_id": "sess-1", "messages": say("1111")},
+        {**base, "user_id": V, "session_id": "sess-1", "messages": say("1111"), "defer": True},
     )
-    assert v_out["written"], v_out
-    v_key = v_out["written"][0]["memory_key"]
+    assert v_out["deferred"] is True, v_out
+    await _drain_queue(seed.org, ns)
+    v_key = badge_extractor_key
+    assert _rows_by_user(ch_client, seed.org, ns)[V] == [(v_key, "active", "")]
+
+    def x_versions() -> list[tuple[Any, ...]]:
+        return ch_client.query(
+            """
+            SELECT toString(memory_id), value, session_id, toString(status), superseded_by
+            FROM loom.memory FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND user_id = 'user-x' AND memory_key = {key:String} AND tombstoned_at IS NULL
+            """,
+            parameters={"org": seed.org, "ns": ns, "key": v_key},
+        ).result_rows
 
     deferred = _write(
         control_plane_url,
@@ -1112,7 +1147,40 @@ async def test_a_deferred_extraction_replays_inside_the_writers_scope(
     )
     await _drain_queue(seed.org, ns)
     rows = _rows_by_user(ch_client, seed.org, ns)
-    assert rows[V][0][1] == "superseded", f"the control superseded nothing: {rows}"
+    assert any(r[0] == v_key and r[1] == "active" for r in rows.get("user-x", [])), (
+        f"user-x's replay wrote nothing: {rows}"
+    )
+    assert rows[V] == [(v_key, "active", "")], f"user-x's deferred write changed V's row: {rows}"
+
+    (x_old,) = x_versions()
+    assert json.loads(x_old[1]) == say("3333")[0]["content"]
+    assert x_old[2:] == ("-", "active", "")
+    w_rows = rows[W]
+
+    # Same-user supersession remains permitted across sessions.
+    _write(
+        control_plane_url,
+        ns_tok,
+        "memory.set_from_messages",
+        {
+            **base,
+            "user_id": "user-x",
+            "session_id": "sess-2",
+            "messages": say("4444"),
+            "defer": True,
+        },
+    )
+    await _drain_queue(seed.org, ns)
+    rows = _rows_by_user(ch_client, seed.org, ns)
+    versions = x_versions()
+    assert len(versions) == 2, versions
+    (x_new,) = [row for row in versions if row[3] == "active"]
+    assert x_new[0] != x_old[0], versions
+    assert json.loads(x_new[1]) == say("4444")[0]["content"]
+    assert x_new[2:] == ("sess-2", "active", "")
+    assert (x_old[0], x_old[1], x_old[2], "superseded", x_new[0]) in versions, versions
+    assert rows[W] == w_rows, f"user-x's same-user write changed W's row: {rows}"
+    assert rows[V] == [(v_key, "active", "")], f"user-x's same-user write changed V's row: {rows}"
 
 
 def test_a_pinned_token_reads_only_its_users_deferred_batches(

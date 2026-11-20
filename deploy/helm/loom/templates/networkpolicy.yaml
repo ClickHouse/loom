@@ -87,10 +87,6 @@ spec:
         {{- include "loom.anywhereBut" . | nindent 8 }}
       ports:
         - port: 443
-        {{- if .Values.retireLostPods }}
-        # The Kubernetes API (443 on EKS; 6443 on most other clusters).
-        - port: 6443
-        {{- end }}
         {{- if and (not .Values.devClickhouse.enabled) (ne (int .Values.clickhouse.port) 443) }}
         - port: {{ .Values.clickhouse.port }}
         {{- end }}

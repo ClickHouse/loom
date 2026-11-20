@@ -230,6 +230,10 @@ export interface CodeAskInput {
 
 export interface CodeAskOutput {
   answer?: string;
+  partial?: boolean;
+  partial_reason?: string;
+  note?: string;
+  coverage?: "" | "full" | "partial" | "none";
   citations?: Array<Record<string, unknown>>;
   source: "cached" | "synthesized" | "abstained";
   cache_similarity?: number;

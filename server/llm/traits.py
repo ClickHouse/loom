@@ -1,8 +1,7 @@
-"""What Loom has learned about each model from its provider's own answers.
+"""Known request restrictions and what provider responses teach Loom.
 
-Nothing here is keyed on model names, so a model released tomorrow needs no code
-change. A client builds the request it would like to send; the provider's
-answers then teach this process, once per model:
+Known sampling restrictions apply before the first request. Other traits
+are learned from provider responses, once per model:
 
 * **Refused fields.** A 400 that names a field the request carried (OpenAI's
   `error.param`, or the field's name in the error message) means the model does
@@ -25,7 +24,7 @@ answers then teach this process, once per model:
 * **Output limit.** A 400 that says the cap is over the model's maximum names
   the maximum; caps are clamped to it from then on.
 
-Learned traits live for the process; a restart relearns them in a call or two.
+Learned traits live for the process; known restrictions survive a restart.
 """
 
 from __future__ import annotations
@@ -39,6 +38,20 @@ from typing import Any
 EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh")
 # Re-sends one call may spend learning what its model takes.
 MAX_NEGOTIATION = 4
+
+_PARTIAL_STOPS = frozenset(
+    {
+        "content_filter",
+        "refusal",
+        "length",
+        "max_tokens",
+        "content_filtered",
+        "guardrail_intervened",
+        "model_context_window_exceeded",
+        "malformed_model_output",
+        "malformed_tool_use",
+    }
+)
 # The least reasoning a starved reply is taken to have spent: a tiny cap
 # (a 3-token judge) would otherwise grow by a few tokens per try.
 STARVED_FLOOR = 1024
@@ -49,6 +62,15 @@ _SUPPORTED_RE = re.compile(r"Supported values are:([^.]*)")
 # "... supports at most 16384 completion tokens" (OpenAI).
 _OUTPUT_LIMIT_RE = re.compile(
     r"(?:>\s*(\d+),\s*which is the maximum|supports at most (\d+) (?:completion|output) tokens)"
+)
+# These model revisions reject sampling parameters even on the first request.
+# https://platform.claude.com/docs/en/about-claude/model-deprecations
+# Leave sampling at the provider default for the default extraction model.
+_DEFAULT_SAMPLING_MODELS = frozenset({"gpt-6-luna"})
+_DEFAULT_SAMPLING_RE = re.compile(
+    r"(?:(?:us|eu|apac|global|au|jp)\.)?(?:anthropic\.)?"
+    r"claude-(?:opus-(?:4-[78]|5(?:-5)?)|sonnet-5(?:-5)?|haiku-5-5)"
+    r"(?:-\d{8}|-v\d+)?(?::\d+)?"
 )
 
 
@@ -64,8 +86,20 @@ class Traits:
 _TRAITS: dict[str, Traits] = {}
 
 
+def is_complete_stop(stop_reason: str) -> bool:
+    """False when the provider reports a cut or refused reply; empty is unreported."""
+    return stop_reason not in _PARTIAL_STOPS
+
+
 def traits(model: str) -> Traits:
-    return _TRAITS.setdefault(model, Traits())
+    if model not in _TRAITS:
+        t = Traits()
+        # Bedrock accepts regional IDs and profile ARNs as well as model IDs.
+        name = model.rsplit("/", 1)[-1].removeprefix("bedrock:")
+        if name in _DEFAULT_SAMPLING_MODELS or _DEFAULT_SAMPLING_RE.fullmatch(name):
+            t.refused.add("temperature")
+        _TRAITS[model] = t
+    return _TRAITS[model]
 
 
 def reset_for_tests() -> None:

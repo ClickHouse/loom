@@ -208,7 +208,7 @@ async def _plane_namespace(
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
 
 
-def _verify_bearer(request: Request) -> AuthInfo | None:
+async def _verify_bearer(request: Request) -> AuthInfo | None:
     """Verify the JWT on an MCP request.
 
     The bearer comes from the ``Authorization: Bearer <jwt>`` header only. A
@@ -226,12 +226,12 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
     set_code_scope(request.headers.get("x-loom-code-scope"))
     from server.auth.bearer import bearer_token
     from server.auth.gateway import is_end_user
-    from server.auth.jwt import verify_token
+    from server.auth.jwt import authenticate_token
 
     token = bearer_token(request.headers.get("authorization"))
     if token is None:
         return None
-    auth = verify_token(token)
+    auth = await authenticate_token(token)
     if is_end_user(auth):
         # An end user's service calls the HTTP API, which maps `@me` and its downloads.
         raise PermissionError("an end-user token calls the HTTP API (/v1/<op>), not MCP")

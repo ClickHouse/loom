@@ -166,7 +166,7 @@ async def test_the_postgres_scan_skips_through_the_org_index(own_pg: Any) -> Non
         ("Index Only Scan", "tenancy_pkey"),
         ("Index Only Scan", "tenancy_pkey"),
     ], scans
-    assert len(await cell_scan._pg_orgs("loom.tenancy", Budget(60))) == 20000
+    assert len(await cell_scan.pg_orgs("loom.tenancy", Budget(60))) == 20000
     # Every org-keyed table of the schema has the index the scan needs.
     names, refusals = await cell_scan.list_postgres(own_pg)
     assert refusals == []

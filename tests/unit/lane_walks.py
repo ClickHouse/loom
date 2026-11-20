@@ -544,6 +544,7 @@ SAMPLES: dict[str, tuple[str, str, str]] = {
     "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n", "k8s"),
     "jsonnet": ("a.jsonnet", "", "jsonnet"),
     "lua": ("a.lua", "", "lua"),
+    "graphql": ("a.graphql", "", "graphql"),
     "tla": ("a.tla", "---- MODULE a ----\n", "tla"),
     "tla_config": ("a.cfg", "INIT Init\n", "tla_config"),
     "flatbuffers": ("a.fbs", "", "flatbuffers"),

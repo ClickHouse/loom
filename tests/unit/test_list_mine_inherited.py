@@ -46,7 +46,18 @@ class _FakeCH:
 
     async def query_one(self, sql: str, params: Any = None) -> dict[str, Any] | None:
         assert "service_accounts" in sql
-        return self.sa
+        if self.sa is None:
+            return None
+        return {
+            "bounded_creator": self.sa["created_by"],
+            "bounded_lineage": [],
+            "lineage_count": 0,
+            "subject_bytes": len(self.sa["created_by"].encode()),
+            "revoked_at": None,
+            "expires_at": None,
+            "inherit_creator_grants": self.sa["inherit_creator_grants"],
+            "kind": "",
+        }
 
 
 @pytest.fixture

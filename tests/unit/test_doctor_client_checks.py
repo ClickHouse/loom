@@ -572,7 +572,7 @@ def test_doctor_client_flag_appends_the_lines_and_json_carries_them(
 ) -> None:
     from server.cli import doctor
 
-    monkeypatch.setattr(doctor, "_run_doctor_checks", lambda: [("python", "PASS", "3.12")])
+    monkeypatch.setattr(doctor, "_run_doctor_checks", lambda *_: [("python", "PASS", "3.12")])
     monkeypatch.setattr(doctor, "_doctor_problems", lambda: [])
     monkeypatch.setattr(
         doctor,

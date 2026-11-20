@@ -142,10 +142,10 @@ def test_cli_release_without_a_terminal_aborts_and_writes_nothing(
     fake = _FakeCH()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
 
-    def _eof(prompt: str = "") -> str:
+    async def _eof() -> str:
         raise EOFError
 
-    monkeypatch.setattr("builtins.input", _eof)
+    monkeypatch.setattr("server.cli.access._claim_release_answer", _eof)
     args = argparse.Namespace(org="acme", namespace="vault", yes=False)
     assert _cmd_claim_release(args) == 1
     assert fake.inserts == [] and fake.executed == []
@@ -158,7 +158,11 @@ def test_cli_confirmation_names_the_owner_from_the_registry_row(
     writes nothing."""
     fake = _FakeCH()
     monkeypatch.setattr(server.core.ch, "get_client", lambda: fake)
-    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+
+    async def _decline() -> str:
+        return "n"
+
+    monkeypatch.setattr("server.cli.access._claim_release_answer", _decline)
 
     args = _args()
     args.yes = False

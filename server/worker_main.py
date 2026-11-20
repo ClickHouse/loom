@@ -20,6 +20,7 @@ import threading
 from typing import Any
 
 from server import boot
+from server.core import retirement
 from server.settings import settings
 from server.workers import child, leader
 from server.workers.supervisor import get_supervisor
@@ -27,12 +28,20 @@ from server.workers.supervisor import get_supervisor
 log = logging.getLogger("loom.workers.child")
 
 
+async def _enroll() -> None:
+    from server.core.ch import query_tag
+    from server.insights.app.provider_barrier import register_process
+
+    with query_tag("boot.workers_child"):
+        retirement.get_gate().install("worker")
+        await register_process()
+
+
 async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
     from server.code.app.index import repo_registry
     from server.core.background import register_buffer_drainer
     from server.core.ch import query_tag, set_query_tag
     from server.core.model_work_gate import get_model_work_gate
-    from server.insights.app.provider_barrier import register_process
     from server.insights.app.provider_runtime import load_active_configuration, refresh_loop
     from server.observability import get_emitter
     from server.tracker.app import registry_sources
@@ -46,18 +55,18 @@ async def _start_services(ch: Any) -> list[asyncio.Task[None]]:
     # `with`, not set_query_tag: the supervisor and the shutdown run in this context after.
     with query_tag("boot.workers_child"):
         register_buffer_drainer("boot-writes", boot.drain_writes)
-        await register_process()
         await load_active_configuration()
         await get_emitter().start()
         await registry_sources.refresh_db_sources(force=True, ch=ch)
         if not get_model_work_gate().closed:
             await boot.calibrate_similarity_gates()
+        track = retirement.get_gate().track
         tasks = [
-            asyncio.create_task(refresh_loop(), name="provider-configuration-refresh"),
-            asyncio.create_task(_trackers(), name="loom-tracker-sources-refresh"),
-            await repo_registry.start_refresher(ch),
+            track(asyncio.create_task(refresh_loop(), name="provider-configuration-refresh")),
+            track(asyncio.create_task(_trackers(), name="loom-tracker-sources-refresh")),
+            track(await repo_registry.start_refresher(ch)),
             # The workers read LIVE settings too: their passes see the deployment's overrides.
-            boot.start_runtime_overrides(),
+            track(boot.start_runtime_overrides()),
         ]
         await boot.await_warm_up(settings.boot_warmup_timeout_s, ("runtime_overrides",))
     return tasks
@@ -103,23 +112,33 @@ async def _serve(fd: int, alive_fd: int) -> None:
     ch = get_client()
     await ch.connect()
     await boot.open_storage_authority()
+    services = []
     try:
-        services = await _start_services(ch)
+        await _enroll()
         if settings.cell:
             # The passes verify tokens and judge the gate as the parent does: the child
             # reads the cell's rows itself.
             services += await boot.start_cell_state()
+        services += await _start_services(ch)
         supervisor = get_supervisor()
         supervisor.start_all()
         await stop.wait()
         log.info("workers child %s stopping", os.getpid())
+        retirement.get_gate().close()
         embedder_calibration.stop_refresh_loop()
         for task in services:
             task.cancel()
         await asyncio.gather(*services, return_exceptions=True)
         await supervisor.stop_all(drain_timeout_s=leader.drain_timeout_s())
         await _drain()
+        retirement.get_gate().stopped()
     finally:
+        retirement.get_gate().close()
+        for producer in tuple(retirement.get_gate().producers):
+            producer.cancel()
+        for task in services:
+            task.cancel()
+        await asyncio.gather(*services, return_exceptions=True)
         beat.cancel()
         await boot.leave_deployment(ch, budget_s=SHUTDOWN_RETIRE_S)
         await boot.close_storage_authority()

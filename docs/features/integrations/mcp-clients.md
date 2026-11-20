@@ -89,11 +89,9 @@ or `enabled`. When the file cannot be merged, the command leaves it unchanged an
 entry to add by hand.
 
 Cursor's CLI (`agent`) reads the same `mcp.json` as the editor, so the `cursor` entry
-serves both.
-
-Cursor CLI 2026.11.13-eacade1 discovered distinct disabled entries in both the user
-and project files while signed out. This checks configuration discovery only: no
-connection, token/header behavior or editor plugin was tested.
+serves both. To bind code tools to one repository, use the
+[checkout configuration](cursor.md#connect-an-indexed-checkout), including its code-scope
+header and the CLI approval step.
 
 The two entry shapes, the first as the Cursor command above writes it:
 
@@ -303,11 +301,12 @@ Gemini CLI also installs Loom as an extension, which asks for the MCP URL and, f
 server, a token (leave it empty for a single-user server):
 
 ```bash
-gemini extensions install https://github.com/ClickHouse/loom
+gemini extensions install https://github.com/ClickHouse/loom --ref v1.3.0-rc.1
 ```
 
-Gemini installs an extension from the repository's latest release; `--ref <branch>`
-installs another ref. The extension also installs Loom's two agent skills, `loom` and
+The command pins a release candidate that contains the extension manifest. An unpinned
+install follows the repository's latest release; `--ref <tag-or-branch>` selects a
+different revision. The extension also installs Loom's two agent skills, `loom` and
 `loom-code`. `gemini extensions config clickhouse-loom` changes the two values later; a
 scripted install passes `--skip-settings` and writes `LOOM_MCP_URL` and `LOOM_API_KEY` to
 the extension's `.env` file (`~/.gemini/extensions/clickhouse-loom/.env`).

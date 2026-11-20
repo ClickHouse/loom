@@ -186,17 +186,16 @@ node. Nothing else counts: an unreachable process is not a stopped one.
   TTL is 60 s, renewed every 20 s; a contender takes it over once it expired and the
   holder's participant counts as stopped. `loom provider-lock clear --holder <holder>`
   frees one whose holder has no participant row, which never counts as stopped.
-- **Killed mid-reconfiguration.** The transition waits on a participant whose heartbeat
-  expired, since a paused process may resume with admitted work, until a process on
-  its host proves it gone (its container restarted, or its pid exited) and retires it.
-  The workers leader
-  deletes the rows of participants retired a day ago and lists, once a minute, those a
-  transition would wait on as `provider_participants_stale` in its `/v1/health`. Retire
-  one by hand with `loom participant retire --participant <id> --yes` once its process
-  is confirmed gone; the command refuses a participant whose heartbeat is fresh or whose
-  queries still run.
-- **A boot that fails after enrolling** retires its row; a crash-looping container leaves
-  none behind.
+- **Killed mid-reconfiguration.** An expired heartbeat remains a blocker until the
+  exact process dies or completes guarded shutdown. A trusted local process can
+  verify its PID, namespace, boot and start identity, then retire it after all
+  cross-replica queries settle. Use `loom participant retire --participant <id>` on
+  that trusted host. Pod deletion or replacement and namespace changes alone do
+  not prove death. The workers leader prunes only certified permanent retirements
+  older than a day; unknown legacy rows remain visible.
+- **A boot that fails after enrolling** remains nonretired unless all its actual
+  producers and writes stop. A shutdown deadline does not turn cancellation into
+  a retirement certificate.
 
 A process frozen past its heartbeat (a stopped container, a VM pause) holds the
 transition until it resumes and drains, or an operator retires it.

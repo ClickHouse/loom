@@ -15,7 +15,6 @@ at the next poll.
 
 from __future__ import annotations
 
-import hmac
 import re
 import time
 import uuid
@@ -30,7 +29,7 @@ from server.auth import scim
 from server.auth.bearer import bearer_token
 from server.auth.gateway import is_end_user
 from server.auth.grant_claims import group_change
-from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
+from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, authenticate_token
 from server.auth.scim_routes import (
     LAST_INDEX,
     LIST_SCHEMA,
@@ -49,7 +48,6 @@ from server.core.principals import USER, is_principal_id
 from server.observability import audit
 from server.observability.metrics import record_auth_refusal
 from server.operations.base import Role
-from server.settings import settings
 
 GROUP_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:Group"
 # The path Entra and Okta send to remove one member: members[value eq "<id>"].
@@ -89,11 +87,16 @@ async def _caller(request: Request) -> _Caller:
     if token is None:
         record_auth_refusal(None, transport="scim")
         raise ScimError(401, message)
-    presented = token.encode()
-    if any([hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]):
-        return _Caller(org="", actor="scim")
     try:
-        auth: AuthInfo = verify_token(token)
+        if scim.authorized(token):
+            return _Caller(org="", actor="scim")
+    except AuthUnavailable as e:
+        raise ScimError(503, "SCIM tokens cannot be checked yet; retry") from e
+    except TokenError as e:
+        record_auth_refusal(e, transport="scim")
+        raise ScimError(401, message) from None
+    try:
+        auth: AuthInfo = await authenticate_token(token)
     except AuthUnavailable as e:  # the revocation list or keyring is not loaded yet
         raise ScimError(503, "tokens cannot be checked yet; retry") from e
     except TokenError as e:

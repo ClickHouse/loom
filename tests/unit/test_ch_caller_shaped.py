@@ -153,7 +153,7 @@ def test_a_route_outside_the_registry_carries_the_quota_key_once_the_bearer_veri
 
     @app.get("/probe")
     async def probe(request: Request) -> dict[str, Any]:
-        verify_bearer_header(request.headers.get("Authorization"))
+        (await verify_bearer_header(request.headers.get("Authorization")))
         return {"key": ch.statement_settings(_SELECT).get("quota_key")}
 
     tok = mint_token(subject="alice", org="acme", namespaces=["n"], roles=["viewer"])

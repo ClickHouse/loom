@@ -173,15 +173,14 @@ async def forget_account(org: str, namespace: str, by: str, *, ch: Any = None) -
 
 
 async def reaching(email: str) -> list[tuple[str, str]]:
-    """The linked accounts an SSO sign-in with `email` would reach: active, and
-    still naming the email (a deactivated or released one reaches nothing)."""
+    """The active accounts SSO reaches: passwordless or linked, still naming the email."""
     rows = await get_client().query_all(
         f"""
         SELECT org, namespace FROM loom.namespaces FINAL
         WHERE contact_email = {{email:String}} AND active = 1
-          AND (org, namespace) IN (
+          AND (password_hash = '' OR (org, namespace) IN (
               SELECT org, namespace FROM {TABLE} FINAL WHERE email = {{email:String}} AND linked = 1
-          )
+          ))
         """,
         params={"email": email.strip().lower()},
     )
@@ -206,6 +205,8 @@ async def _write(
 ) -> None:
     """Write the link rows through `ch`; the grant watermark goes through the
     default client (`grant_cache.changed`), as every grant write's does."""
+    from server.auth.authz import identity_write
+
     if not accounts:
         return
     ch = ch or get_client()
@@ -221,23 +222,24 @@ async def _write(
         for org in orgs:
             await announced.enter_async_context(grant_cache.announced(org))
         try:
-            await ch.insert(
-                TABLE,
-                [
-                    {
-                        "email": email.strip().lower(),
-                        "org": org,
-                        "namespace": namespace,
-                        "linked": linked,
-                        "hosted_domain": hosted_domain,
-                        "issuer": issuer,
-                        "linked_by": by,
-                        "linked_at": now,
-                        "version": version,
-                    }
-                    for org, namespace in accounts
-                ],
-            )
+            with identity_write():
+                await ch.insert(
+                    TABLE,
+                    [
+                        {
+                            "email": email.strip().lower(),
+                            "org": org,
+                            "namespace": namespace,
+                            "linked": linked,
+                            "hosted_domain": hosted_domain,
+                            "issuer": issuer,
+                            "linked_by": by,
+                            "linked_at": now,
+                            "version": version,
+                        }
+                        for org, namespace in accounts
+                    ],
+                )
         finally:
             for org in orgs:
                 aliases.invalidate_org(org)
