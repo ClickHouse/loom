@@ -193,7 +193,7 @@ jobs:
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
-          pytest tests/unit -vv -n auto -p randomly --randomly-seed="$SEED" --durations=15 \
+          pytest tests/unit -vv -n auto -p randomly -p tests._worker_status --randomly-seed="$SEED" --durations=15 \
             -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
@@ -206,6 +206,7 @@ jobs:
           path: |
             .coverage.unit-${{ matrix.part }}
             junit-unit-${{ matrix.part }}.xml
+            .pytest_cache/worker-status/
           include-hidden-files: true
           if-no-files-found: warn
           # A re-run of one failed part replaces the data its first attempt uploaded.
