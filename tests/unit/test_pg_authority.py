@@ -31,6 +31,7 @@ from server.memory.domain.redaction_lineage import REDACTED_VALUE
 from server.memory.store import pg_memory
 from server.memory.store.pg_publish import ClaimExpired
 from server.memory.store.rows import MemoryRow, _hydrate, identity_key
+from tests.unit.test_memory_verify import _row as _memory_head
 
 
 @pytest.mark.parametrize(
@@ -2590,10 +2591,13 @@ def test_a_write_that_read_a_version_before_its_redaction_starts_over() -> None:
     """A redaction since the read is a head that moved: the write reads again and
     rebuilds from the scrubbed head, never from the text the redaction removed."""
 
-    read = {"pinned": 0, "lock_mode": "", "status": "active", "redacted_at": None}
-    redacted = {**read, "version": 7, "redacted_at": "2026-01-01 00:00:00"}
+    from server.memory.store.rows import build_memory_version_row
+    from tests.unit.test_memory_verify import _row
+
+    read = build_memory_version_row(_row(version=7))
+    redacted = {**read, "redacted_at": datetime(2026, 1, 1)}
     for exact in (False, True):  # compare-and-set too: a redaction keeps the version
-        then = SimpleNamespace(**read, version=7, tombstoned_at=None, lock_until=None)
+        then = _hydrate(read)
         recheck = pg_memory.heads_unchanged({("k",): then}, exact=exact)
         recheck(("k",), {**read, "version": 7})
         with pytest.raises(pg_memory.HeadMoved):
@@ -3334,7 +3338,9 @@ async def test_a_copy_writer_commits_only_over_the_version_it_read(
     monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
     monkeypatch.setattr(pg_publish, "commit", _commit)
     monkeypatch.setattr(pg_publish, "publish", _publish)
-    base = {"pinned": False, "status": "active", "lock_mode": "", "tombstoned_at": None}
+    from server.memory.store.rows import build_memory_version_row
+
+    base = build_memory_version_row(read)
     heads.append({**base, "version": 1})  # the version read
     assert (
         await lifecycle.write_versions_by_ids(
@@ -3442,25 +3448,14 @@ async def test_a_lock_over_a_head_redacted_since_its_read_answers_contended(
         raise AssertionError("committed over a changed head")
 
     monkeypatch.setattr(pg_publish, "commit", _commit)
-    monkeypatch.setattr("server.memory.store.lifecycle.check_memory_rows", lambda rows: None)
-    read.update(
-        {
-            "org": "o",
-            "namespace": "n",
-            "agent": "a",
-            "user_id": "-",
-            "session_id": "-",
-            "memory_key": "k",
-            "version": 1,
-            "pinned": False,
-            "status": "active",
-        }
-    )
+    from server.memory.store.rows import build_memory_version_row
+
+    read.update(build_memory_version_row(_memory_head(version=1)))
     row = {**read, "version": 2, "lock_mode": "read_only"}
     with pytest.raises(pg_memory.AdmissionContendedError):
         await lifecycle.insert_versions_over_heads(
             [row],
-            [SimpleNamespace(**read)],
+            [_hydrate(read)],
             ch=object(),
         )
 
@@ -3773,6 +3768,8 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
 
     async def _insert(rows: Any, **_: Any) -> None:
         ran.append("insert")
+        if on_inserted := _.get("on_inserted"):
+            on_inserted()
 
     async def _mirror() -> None:
         raise RuntimeError("clickhouse refused the document")
@@ -4800,6 +4797,46 @@ async def test_a_recovery_listing_lists_what_the_authority_holds(
     assert await lifecycle.recovered_rows(gone, as_of=now) == []
 
 
+@pytest.mark.parametrize("widen", [False, True])
+@pytest.mark.parametrize("status", ["active", "rejected"])
+async def test_recovery_listing_never_swaps_in_a_rejected_authority_head(
+    monkeypatch: pytest.MonkeyPatch, widen: bool, status: str
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _served_by_authority
+    from server.memory.app.served_superseded import served_flags
+
+    now = naive_utc_now()
+    projected = _hydrate(
+        _row("k", created_at=now, value='"preview"', confidence=1.0, content_sha256="sha")
+    )
+    head = projected.model_copy(
+        update={"version": 3, "status": status, "tombstoned_at": now, "value": "whole text"}
+    )
+
+    async def heads(keys: Any, *, include_tombstoned: bool) -> dict[Any, Any]:
+        return {identity_key(projected): head.model_dump()}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    request = MemoryListInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        include_tombstoned=True,
+        include_duplicates=widen,
+        include_superseded=widen,
+        include_proposed=widen,
+    )
+    rows = await _served_by_authority(request, [projected], served_flags(request))
+    assert [(row.memory_key, row.status, row.version, row.value) for row in rows] == (
+        [("k", "active", 3, projected.value)] if status == "active" else []
+    )
+
+
 async def test_a_send_deadline_measures_the_server_clock_it_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4844,6 +4881,8 @@ async def test_an_update_whose_retirement_fails(
         raise RuntimeError("retire refused")
 
     async def _ok(*a: object, **kw: object) -> None:
+        if on_inserted := kw.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _commit(rows: Any, *, targets: int, **kw: object) -> Any:
@@ -4929,14 +4968,16 @@ async def test_an_expiry_pass_leaves_a_moved_head_for_the_next_one(
             raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     async def _heads(rows: list[Any]) -> list[Any]:
-        return [SimpleNamespace(version=r.version + (r.memory_key == "moved")) for r in rows]
+        return [
+            r.model_copy(update={"version": r.version + (r.memory_key == "moved")}) for r in rows
+        ]
 
     monkeypatch.setattr("server.memory.store.insert_versions_over_heads", _over_heads)
     monkeypatch.setattr("server.memory.store.authority_heads", _heads)
     res = expiry.ExpiryResult(tombstoned=2, demoted=1)
     rows = [{"memory_key": k} for k in ("a", "moved", "b")]
     reads = [
-        MemoryRow.model_construct(
+        _memory_head(
             version=1, org="o", namespace="n", agent="a", user_id="-", session_id="-", memory_key=k
         )
         for k in ("a", "moved", "b")
@@ -4961,7 +5002,7 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
         raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     def _row(key: str, *, redacted: bool = False) -> Any:
-        return MemoryRow.model_construct(
+        return _memory_head(
             org="o",
             namespace="n",
             agent="a",
@@ -4974,7 +5015,7 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
             lock_mode="",
             lock_until=None,
             status="active",
-            redacted_at="now" if redacted else None,
+            redacted_at=datetime(2026, 1, 1) if redacted else None,
         )
 
     async def _heads(rows: list[Any]) -> list[Any]:
@@ -6405,6 +6446,10 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     fenced: list[Any] = []
 
     async def _nothing(*_a: Any, **_k: Any) -> Any:
+        if on_send := _k.get("on_send"):
+            on_send()
+        if on_inserted := _k.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> int:
@@ -6859,7 +6904,9 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     fenced: list[Any] = []
 
-    async def _inserted(*_a: Any) -> None:
+    async def _inserted(*_a: Any, on_send: Any, on_inserted: Any) -> None:
+        on_send()
+        on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> dict[Any, int]:

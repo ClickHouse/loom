@@ -460,6 +460,7 @@ async def test_update_fences_a_high_key_when_cancelled_during_the_write(
     fenced: list[Any] = []
 
     async def _insert(*_: Any, **__: Any) -> None:
+        __["on_send"]()
         inserting.set()
         await asyncio.Event().wait()
 

@@ -360,11 +360,18 @@ async def test_clear_and_a_conflict_resolve_announce_what_they_tombstone(
     await ops("namespace.register", owner_email="itest@loom", conflict_threshold=0.60, **a)
     await ops.register(receiver.url, events=["memory.tombstoned"])
 
-    # memory.clear: every live row of the user, at the version it held.
+    # memory.clear: every live row of the user gets a tombstone version.
     await ops("memory.set", memory_key="k/kept", value="another user's value", **a)
     cleared = await ops("memory.set", memory_key="k/cleared", user_id="u-42", value="v", **a)
     out = await ops("memory.clear", user_id="u-42", confirm_subject="u-42")
     assert out["rows_affected"]["loom.memory"] == 1
+    [(clear_version, tombstoned)] = ch_client.query(
+        "SELECT version, tombstoned_at IS NOT NULL FROM loom.memory FINAL "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND memory_id = {id:UUID}",
+        parameters={"org": ORG, "ns": ops.ns, "id": cleared["memory_id"]},
+        settings={"select_sequential_consistency": 1},
+    ).result_rows
+    assert tombstoned and clear_version > cleared["version"]
 
     # conflicts.resolve(revise): the peer it tombstones.
     first = "Always use 2-space indentation"
@@ -391,7 +398,7 @@ async def test_clear_and_a_conflict_resolve_announce_what_they_tombstone(
             break
         await asyncio.sleep(0.25)
     (clear_event, resolve_event) = sorted(_outbox(ch_client, ops.ns), key=lambda e: e[1])
-    assert clear_event == ("memory.tombstoned", "k/cleared", cleared["version"])
+    assert clear_event == ("memory.tombstoned", "k/cleared", clear_version)
     assert resolve_event[:2] == ("memory.tombstoned", "style")
     assert resolve_event[2] > loser["version"]
 

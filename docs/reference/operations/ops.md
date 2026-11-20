@@ -55,7 +55,7 @@ List recorded projection failures: derived rows (embeddings, graph edges, summar
 | `namespace` | `str \| None` | `None` | The namespace the op reads or writes. |
 | `projection` | `str` | `''` | Only failures of this projection (the derived table, such as `memory_chunks` or `entity_edges`); empty lists every projection. |
 | `status` | `Literal['active', 'resolved', 'abandoned', '']` | `'active'` | `active` lists open failures, `resolved` repaired ones, `abandoned` those the repair gave up on (the reason is in `error_message`), empty all of them. |
-| `limit` | `int` | `100` | At most this many failures, newest first. |
+| `limit` | `int` | `100` | At most this many failures, newest first; 1 to 1000. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Retry open projection failures for a namespace, optionally one projection kind.
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str \| None` | `None` | The namespace the op reads or writes. |
 | `projection` | `str` | `''` | Only retry failures of this projection; empty retries every projection. |
-| `limit` | `int` | `50` | At most this many active failures are retried, newest first. |
+| `limit` | `int` | `50` | At most this many active failures are retried, newest first; 1 to 1000. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

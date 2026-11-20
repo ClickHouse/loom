@@ -116,7 +116,8 @@ class KeptCH:
     each statement sees what the earlier ones wrote. An insert into one of the `_UNREAD`
     side tables is dropped unless the fixture created it; any other statement on a table
     the fixture did not create raises. Statement `settings` are ignored, and a row is
-    inlined between `$$` quotes, so a value holding `$$` cannot be inserted."""
+    inlined between `$$` quotes, so a value holding `$$` cannot be inserted.
+    Explicit asynchronous mutations finish before their local process closes."""
 
     def __init__(self, path: Path, *setup: str) -> None:
         self.path = path
@@ -131,6 +132,13 @@ class KeptCH:
     async def execute(
         self, sql: str, params: dict[str, Any] | None = None, *, settings: Any = None
     ) -> None:
+        # A local process cannot keep mutating after it exits. Await the mutation here;
+        # the store's next poll still reads its real system.mutations receipt.
+        sql = re.sub(
+            r"\b((?:lightweight_deletes_sync|mutations_sync)\s*=\s*)0\s*$",
+            r"\g<1>2",
+            sql,
+        )
         run([sql], "SELECT 1", params, path=self.path)
 
     async def insert(self, table: str, rows: list[dict[str, Any]], settings: Any = None) -> None:
