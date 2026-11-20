@@ -8,6 +8,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -62,6 +63,8 @@ async def stores(monkeypatch):
 
 @pytest.fixture
 async def ch(stores, monkeypatch):
+    # Dedicated and pooled work must both adopt this fixture's private database.
+    await pg.close_pool()
     real = ch_module.get_client()
     await real.connect()
     tag = uuid.uuid4().hex
@@ -91,6 +94,10 @@ async def ch(stores, monkeypatch):
         monkeypatch.setattr(settings, "pg_dsn", stores["first"])
         monkeypatch.setattr(settings, "document_s3_bucket", "")
         stack.push_async_callback(pg.close_pool)
+        async with pg.dedicated() as conn:
+            expected = unquote(urlsplit(stores["first"]).path.removeprefix("/"))
+            assert await pg.fetchval("SELECT current_database()") == expected
+            assert await conn.fetchval("SELECT current_database()") == expected
         yield paired
     except BaseException:  # Cleanup must preserve the erasure or repair failure.
         with contextlib.suppress(BaseException):
