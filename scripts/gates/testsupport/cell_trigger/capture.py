@@ -255,8 +255,10 @@ class Codec:
             "workload semantic/active",
         )
         need(row["confidence"] == 1.0, "workload confidence")
-        for field, default in self.p["sparse_defaults"].items():
-            equal(row[field], default)
+        equal(
+            {field: row[field] for field in self.p["sparse_defaults"]},
+            self.p["sparse_defaults"],
+        )
         need(
             row["value"] == json.dumps(payload(key)) and row["content_sha256"] == content_hash(key),
             "exact stored payload/hash",
