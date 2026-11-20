@@ -47,6 +47,12 @@ def main() -> int:
     )
     report.add_argument("results", nargs="+", type=Path)
     report.add_argument("--output", type=Path, required=True)
+    paired = commands.add_parser(
+        "paired", help="Analyze the persisted pilot order without inference"
+    )
+    paired.add_argument("--schedule", type=Path, required=True)
+    paired.add_argument("--attempts", type=Path, required=True)
+    paired.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if args.command == "run":
         result = run_task(args.task, args.output, args.mode)
@@ -56,6 +62,14 @@ def main() -> int:
         result = compare([json.loads(p.read_text()) for p in args.results])
         args.output.write_text(json.dumps(result, indent=2) + "\n")
         return 0
+    if args.command == "paired":
+        from .paired import analyze
+
+        result = analyze(
+            json.loads(args.schedule.read_text()), json.loads(args.attempts.read_text())
+        )
+        args.output.write_text(json.dumps(result, indent=2) + "\n")
+        return 0 if result["complete"] else 1
     args.output.mkdir(parents=True, exist_ok=False)
     results = [
         run_task(task, args.output / f"{task}-{mode}", mode)

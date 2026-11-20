@@ -1,0 +1,186 @@
+"""Authored analysis inputs exercise pairing; they are not benchmark results."""
+
+from __future__ import annotations
+
+import copy
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from examples.software_factory.__main__ import main
+from examples.software_factory.live_support import schedule
+from examples.software_factory.model import digest
+from examples.software_factory.paired import analyze
+
+
+def inputs():
+    rows = schedule(["a", "b", "c"], seed=741)
+    order = {"attempts": rows, "schedule_sha256": digest(rows)}
+    entries = []
+    for row in rows:
+        host = 3 if row["mode"] == "orchestrated" else 0
+        entries.append(
+            {
+                "order": row["order"],
+                "result": {
+                    "task_id": row["task_id"],
+                    "mode": row["mode"],
+                    "provider": "authored-fixture",
+                    "kind": "authored-analysis-contract",
+                    "resolved": True,
+                    "status": "completed",
+                    "duration_s": 5,
+                    "total_cost_usd": 2,
+                    "cost_status": "priced",
+                    "tool_total_requests": 4,
+                    "host_loom_requests": host,
+                    "model_selected_loom_requests": 0,
+                    "loom_logical_requests": host,
+                    "loom_physical_requests": host * 3,
+                    "provider_logical_requests": 1,
+                    "provider_physical_requests": 1,
+                    "provider_failed_requests": 0,
+                    "provider_usage": [{"inputTokens": 10, "outputTokens": 2}],
+                },
+            }
+        )
+    return order, entries
+
+
+class PairedAnalysisContracts(unittest.TestCase):
+    def test_failed_attempt_costs_stay_in_arm_and_whole_cohort(self):
+        order, entries = inputs()
+        failed = next(e for e in entries if order["attempts"][e["order"]]["arm"] == "orchestrated")
+        failed["result"].update(resolved=False, status="objective_failure", total_cost_usd=10)
+        report = analyze(order, entries, resamples=100)
+        arm = report["arms"]["orchestrated"]
+        self.assertEqual(arm["resolved"], 8)
+        self.assertEqual(arm["total_cost_usd"], 26)
+        self.assertEqual(arm["cost_per_success_usd"], 26 / 8)
+        self.assertEqual(report["cohort_total_cost_usd"], 74)
+        self.assertEqual(arm["statuses"]["objective_failure"], 1)
+
+    def test_unknowns_are_not_zero_or_removed_from_pairs(self):
+        order, entries = inputs()
+        next(e for e in entries if e["result"]["mode"] == "natural")["result"].update(
+            total_cost_usd=5, cost_status="unknown"
+        )
+        report = analyze(order, entries, resamples=100)
+        self.assertIsNone(report["cohort_total_cost_usd"])
+        contrast = report["paired_deltas"]["natural-minus-baseline"]
+        self.assertIsNone(contrast["total_cost_usd"]["estimate"])
+        self.assertIsNone(contrast["end_to_end_s"]["estimate"])
+        self.assertIsNone(contrast["provider_cacheReadInputTokens"]["estimate"])
+        self.assertEqual(contrast["provider_inputTokens"]["estimate"], 0)
+        self.assertEqual(contrast["quality"]["estimate"], 0)
+
+    def test_missing_attempt_suppresses_partial_cohort_inference(self):
+        order, entries = inputs()
+        missing = entries.pop()["order"]
+        report = analyze(order, entries, resamples=100)
+        self.assertFalse(report["complete"])
+        self.assertEqual(report["missing_orders"], [missing])
+        self.assertEqual(report["paired_deltas"], {})
+        self.assertEqual(sum(a["observed"] for a in report["arms"].values()), 32)
+
+    def test_duplicates_scope_changes_and_baseline_exposure_refuse(self):
+        order, entries = inputs()
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            analyze(order, entries + [copy.deepcopy(entries[0])], resamples=100)
+        bad = copy.deepcopy(entries)
+        bad[0]["result"]["task_id"] = "other"
+        with self.assertRaisesRegex(ValueError, "identity"):
+            analyze(order, bad, resamples=100)
+        bad = copy.deepcopy(entries)
+        base = next(e for e in bad if e["result"]["mode"] == "baseline")
+        base["result"]["loom_logical_requests"] = 1
+        with self.assertRaisesRegex(ValueError, "Baseline"):
+            analyze(order, bad, resamples=100)
+
+    def test_task_cluster_intervals_and_aa_stay_separate(self):
+        order, entries = inputs()
+        for entry in entries:
+            row, result = order["attempts"][entry["order"]], entry["result"]
+            if row["arm"] == "baseline":
+                result["resolved"] = False
+            if row["arm"] == "orchestrated":
+                result["resolved"] = row["task_id"] == "a"
+            if row["arm"] == "baseline-b":
+                result["duration_s"] = 9
+        report = analyze(order, entries)
+        quality = report["paired_deltas"]["orchestrated-minus-baseline"]["quality"]
+        self.assertEqual(quality["task_deltas"], {"a": 1, "b": 0, "c": 0})
+        self.assertEqual(quality["estimate"], 1 / 3)
+        self.assertEqual(quality["ci95"], [0, 1])
+        self.assertEqual(
+            report["aa_reference"]["baseline-b-minus-baseline-a"]["attempt_duration_s"]["estimate"],
+            4,
+        )
+        self.assertEqual(
+            report["paired_deltas"]["orchestrated-minus-baseline"]["attempt_duration_s"][
+                "estimate"
+            ],
+            0,
+        )
+        self.assertFalse(report["benchmark_claims"])
+        self.assertTrue(report["exploratory_only"])
+
+    def test_failed_provider_usage_is_unknown_and_tool_calls_avoid_double_count(self):
+        order, entries = inputs()
+        target = next(e for e in entries if e["result"]["mode"] == "natural")["result"]
+        target.update(
+            provider_failed_requests=1,
+            model_selected_loom_requests=1,
+            host_loom_requests=0,
+            loom_logical_requests=1,
+            loom_physical_requests=3,
+        )
+        report = analyze(order, entries, resamples=100)
+        contrast = report["paired_deltas"]["natural-minus-baseline"]
+        self.assertIsNone(contrast["provider_inputTokens"]["estimate"])
+        target_metrics = report["arms"]["natural"]["attempts"][0]
+        self.assertEqual(target_metrics["total_tool_requests"], 4)
+
+    def test_seed_reproduces_analysis_and_schedule_tampering_refuses(self):
+        order, entries = inputs()
+        self.assertEqual(
+            analyze(order, entries, resamples=100), analyze(order, entries, resamples=100)
+        )
+        self.assertEqual(
+            analyze(order, entries, resamples=100)["paired_deltas"],
+            analyze(order, list(reversed(entries)), resamples=100)["paired_deltas"],
+        )
+        order["attempts"][0]["task_id"] = "changed"
+        with self.assertRaisesRegex(ValueError, "hash"):
+            analyze(order, entries, resamples=100)
+
+    def test_cli_reads_explicit_controller_exports_without_clients(self):
+        order, entries = inputs()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "schedule.json").write_text(json.dumps(order))
+            (root / "attempts.json").write_text(json.dumps(entries))
+            with patch(
+                "sys.argv",
+                [
+                    "factory",
+                    "paired",
+                    "--schedule",
+                    str(root / "schedule.json"),
+                    "--attempts",
+                    str(root / "attempts.json"),
+                    "--output",
+                    str(root / "report.json"),
+                ],
+            ):
+                self.assertEqual(main(), 0)
+            report = json.loads((root / "report.json").read_text())
+            self.assertTrue(report["complete"])
+            self.assertFalse(report["provenance_verified"])
+            self.assertEqual(report["declared_input"]["task_kind"], "authored-analysis-contract")
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -253,3 +253,35 @@ responses to usage receipts. HTTP records use only `x-request-id`; Bedrock
 records use only parsed `ResponseMetadata.RequestId`. Other headers and response
 content are excluded. Missing or malformed IDs remain unknown; correlation
 alone does not establish complete billing or a zero cost.
+
+## Analyze the proposed pilot
+
+```bash
+python -m examples.software_factory paired \
+  --schedule /private/proposed-schedule.json \
+  --attempts /private/controller-attempts.json \
+  --output /private/paired-report.json
+```
+
+The schedule contains `attempts` and their `schedule_sha256` from the proposal.
+The controller export is a JSON list of `{"order": 0, "result": {}}` entries,
+where each result is the complete evaluator-owned attempt manifest. The command
+constructs no clients. Duplicate slots, changed task/provider labels and baseline
+Loom exposure refuse analysis. Missing attempts remain visible and suppress
+partial-cohort intervals. Natural nonuse and objective failures remain included.
+
+The report pairs the three repeated arms by task and repeat and separates A/A
+reference pairs. It averages within each task before using the repository's
+`bench.bootstrap.paired_bootstrap` helper to resample tasks. Its intervals are
+exploratory: three task clusters cannot establish significance, savings or
+adoption. The report never certifies input provenance or grants benchmark claims.
+An analysis seed reproduces the report, not the model's trajectory.
+
+Arm costs include failed attempts; unknown prices and partial usage stay unknown.
+Whole-cohort cost includes the A/A attempts. Tool totals combine agent requests
+and logical host lookups, without counting model-selected Loom twice; physical
+provider/Loom requests remain separate. Raw provider token fields retain their
+names and missing cache counts stay unknown. `attempt_duration_s` comes from the
+factory manifest; complete elapsed time requires a separate controller-supplied
+`end_to_end_s` including setup, hidden grading and cleanup. It is unknown when
+absent. Authored contract inputs exercise the analysis but measure no live effect.
