@@ -73,7 +73,13 @@ async def ch(stores, monkeypatch):
     stack.push_async_callback(real.disconnect)
     try:
         for source, target in aliases.items():
-            await real.execute(f"CREATE TABLE {target} AS {source}")
+            if source == "loom.instances":
+                # A KeeperMap clone would share the running server's heartbeat keys.
+                await real.execute(
+                    f"CREATE TABLE {target} ENGINE = Memory AS SELECT * FROM {source} LIMIT 0"
+                )
+            else:
+                await real.execute(f"CREATE TABLE {target} AS {source}")
             stack.push_async_callback(real.execute, f"DROP TABLE IF EXISTS {target}")
         await real.insert(
             aliases["loom.storage_authority"],
