@@ -322,8 +322,7 @@ items to compensate. These append guarantees do not make concurrent history pagi
 `pop_item` or `clear_session` atomic.
 
 An `episodic` memory is not embedded, so an item is never merged with or judged against
-another row. Repeated values remain separate items in the Python batch. TypeScript uses
-separate point writes and can leave earlier items stored when a later write fails.
+another row. Repeated values remain separate occurrences in both SDKs' batches.
 A read fails if an item
 disappears before its full value can be fetched. Items are stored under a Loom session derived from
 the user and the session id (`oai-py-` and a digest of the pair in Python, `oai-ts-`

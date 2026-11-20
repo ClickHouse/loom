@@ -345,6 +345,10 @@
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
+    "sdk/typescript/src/integrations/openai-agents.ts:ops.capabilities:d29e857647f728e2169d:1": {
+      "category": "scope",
+      "reason": "Sends only identity scope and an empty operation catalogue request; retained SessionCapture contributors still guard discovery and append."
+    },
     "sdk/typescript/src/session.ts:<dynamic>:f81d27efc95e87cdbb46:1": {
       "category": "delivery",
       "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
@@ -409,7 +413,7 @@
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
     "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
-    "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
+    "sdk/typescript/src/integrations/openai-agents.ts": "f185d90da6512833c590c4729aaf2bfb140ff469e4864fad6d761e29a66c1b0a",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }
 }
