@@ -82,7 +82,7 @@ class ExpiryResult:
     demoted: int = 0
     anonymized: int = 0
     locked_skipped: int = 0
-    moved_skipped: int = 0  # candidates no longer eligible or changed after planning
+    moved_skipped: int = 0  # candidates omitted by head selection or changed after planning
     dry_run: bool = False
     # Up to 20 handled rows: (identity key, the entry as_dict reports).
     sampled: list[tuple[IdentityKey, dict[str, Any]]] = field(default_factory=list)
@@ -205,7 +205,7 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
         )
-        # Postgres can replace a lagging candidate with its still-expired head before
+        # Postgres keeps equal-version heads or substitutes a still-expired head before
         # planning. Admission checks changes after that selection.
         now = naive_utc_now()
         current = await memory_repo.current_heads(rows, lambda _, h: _still_expired(h, now))

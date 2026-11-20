@@ -69,7 +69,8 @@ two writers choose the same version. Derived usage fields (`recall_count`,
 `evidence_count`, `last_recalled_at`) and JSON projection formatting are excluded
 because they can differ without a version insert.
 Expiry post-actions compare the source rows selected for planning inside those fences.
-Before that selection, Postgres can refresh a candidate to a newer still-expired head.
+Before planning, Postgres keeps an equal-version authoritative head or refreshes a
+candidate to a different-version head that is still expired.
 A head changed after selection refuses the batch; the sweep re-reads it, removes moved candidates and retries once
 with the same admission check. A second refusal leaves the remaining batch for the
 next pass. Only accepted rows produce search mirrors and webhook events. Other copy
