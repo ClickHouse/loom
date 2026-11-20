@@ -345,9 +345,9 @@ async def test_failed_codec_raw_session_is_disposed_without_touching_other_loans
         raise original
 
     async def close(self, **kwargs):
-        if self is failed.get("raw"):
-            # This is the failed, never-borrowed raw codec session, not an active
-            # command session: synchronous quarantine must precede driver cleanup.
+        if self is failed.get("raw") and self.is_closed():
+            # The initializer's first public close runs normally. Driver cleanup
+            # reaches this branch only after that session has been closed.
             assert self.is_closed()
             failed["driver close"] = True
             if driver_close == "exit":
@@ -427,8 +427,8 @@ async def test_codec_quarantine_failure_keeps_native_original_and_unknown_diagno
         result = await directory._control_result(acquire)
         assert isinstance(result, directory._ControlFatal) and result.error is original
         assert original.__notes__ == ["directory initialization session closure is unknown"]
-        # Termination's request is not the proof; here the driver's subsequent
-        # ordinary-error public close really completes and the observer proves it.
+        # The initializer's public close completes before termination fails;
+        # the observer still proves backend and lock absence.
         await released(directory_database, failed["pid"])
     finally:
         monkeypatch.setattr(asyncpg.Connection, "set_type_codec", real_codec)

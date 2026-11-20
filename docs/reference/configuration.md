@@ -667,6 +667,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
 | `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'flat'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |

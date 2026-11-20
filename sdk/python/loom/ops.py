@@ -5614,6 +5614,10 @@ class CodeAskBody(TypedDict, total=False):
 
 class CodeAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    partial: NotRequired[bool]
+    partial_reason: NotRequired[str]
+    note: NotRequired[str]
+    coverage: NotRequired[Literal["", "full", "partial", "none"]]
     citations: NotRequired[list[dict[str, Any]]]
     source: Required[Literal["cached", "synthesized", "abstained"]]
     cache_similarity: NotRequired[float]

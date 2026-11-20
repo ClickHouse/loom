@@ -864,7 +864,11 @@ provisioned. The personal-namespace auto-claim passes over a name in use to its 
 name, a workload trust's exchange refuses an agent name in use, and a first write's
 auto-registration names no owner on a name in use (rows a read or a run leaves aside,
 `namespace_autoregister.READ_TRACES`, which a fresh `namespace.register` still counts), so
-only an admin of the name completes the registration, a writer that is one included. Every
+only an admin of the name completes the registration, a writer that is one included. The
+exchange sets aside the rows a request writes about itself under the name it names
+(`namespace_census.REQUEST_TRACES`: a latency reading, an exposure, a search trace), so a
+lookup of an agent's name before its first exchange does not take the name from the
+agent; a run's ledger row counts there. Every
 other path that registers a name as new and makes its caller admin (`namespace.register`,
 `namespace.restore` into a fresh target, `collection.create`, a self-service code
 repository or tracker source, which checks again under the account's claim after its

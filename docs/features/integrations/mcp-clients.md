@@ -293,11 +293,12 @@ Gemini CLI also installs Loom as an extension, which asks for the MCP URL and, f
 server, a token (leave it empty for a single-user server):
 
 ```bash
-gemini extensions install https://github.com/ClickHouse/loom
+gemini extensions install https://github.com/ClickHouse/loom --ref v1.3.0-rc.1
 ```
 
-Gemini installs an extension from the repository's latest release; `--ref <branch>`
-installs another ref. The extension also installs Loom's two agent skills, `loom` and
+The command pins a release candidate that contains the extension manifest. An unpinned
+install follows the repository's latest release; `--ref <tag-or-branch>` selects a
+different revision. The extension also installs Loom's two agent skills, `loom` and
 `loom-code`. `gemini extensions config clickhouse-loom` changes the two values later; a
 scripted install passes `--skip-settings` and writes `LOOM_MCP_URL` and `LOOM_API_KEY` to
 the extension's `.env` file (`~/.gemini/extensions/clickhouse-loom/.env`).

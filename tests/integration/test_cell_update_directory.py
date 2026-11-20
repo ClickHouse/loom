@@ -342,7 +342,7 @@ async def test_configuration_http_requires_store_proof_before_any_change(
     nonces = {"postgres": "pg-nonce", "clickhouse": "ch-nonce", "bucket": None}
     before = await stored(configured)
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app.build_app()), base_url="http://router"
+        transport=httpx.ASGITransport(app=app.build_app()), base_url="http://test"
     ) as client:
         response = await client.post(
             "/cells/v1/operator/cells/first/configuration",
@@ -387,7 +387,7 @@ async def test_configuration_accepts_the_actual_instance_key_fingerprint(configu
     monkeypatch.setattr(app.Router, "_stores_check", stores_check)
     compare = await observed("first")
     async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app.build_app()), base_url="http://router"
+        transport=httpx.ASGITransport(app=app.build_app()), base_url="http://test"
     ) as client:
         response = await client.post(
             "/cells/v1/operator/cells/first/configuration",

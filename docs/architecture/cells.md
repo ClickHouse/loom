@@ -1508,10 +1508,12 @@ operation or cleanup failure.
 The shared directory pool opens physical sessions only for foreground acquisitions;
 pool object creation does not establish connectivity. Healthy released sessions are
 cached under the existing size cap, recycling and idle expiry. A later cold acquisition
-opens a new session. Fixed JSON codec initialization quarantines its never-borrowed raw
-session on failure; native interruptions return to that foreground consumer after driver
-cleanup, with no autonomous opening or replenishment task. If quarantine fails, the
-original failure records that session closure is unknown.
+opens a new session. On fixed JSON codec initialization failure, an uncancelled
+acquisition awaits the driver's disconnect acknowledgment before locally aborting the
+never-borrowed raw session and running driver cleanup. An interrupted acquisition starts
+no new close allowance; an unacknowledged close records that closure is unknown. Native
+interruptions return to the foreground consumer after driver cleanup, with no autonomous
+opening or replenishment task.
 
 The source census for acceptance and operator directory writes is checked by
 `tests/unit/test_cell_control_census.py`, including dynamic cleanup tables, guarded
