@@ -105,6 +105,11 @@ and its path and line span match the task checkout. `code.index_status` must
 identify the expected repository and full commit. Check the compiler-tier fields
 as well; disabling a worker does not erase an existing compiler index.
 
+Separate read-time cache updates from source or watermark drift.
+`code.index_status` can refresh the shared `status_snapshot` row in
+`code_index_state`. Record that cache activity separately when comparing index
+contents before and after an attempt.
+
 An elided body is a context-budget outcome. An absent definition is an abstention.
 Neither proves that the index is stale. Record these separately from bodies that
 differ from the local source, and retain the affected task in the comparison.
