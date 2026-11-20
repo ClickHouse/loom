@@ -46,6 +46,9 @@ def _patch_append(monkeypatch, *, append, embed):
         async def embed(self, text):
             return await embed(text)
 
+        async def embed_many(self, texts):
+            return [await embed(text) for text in texts]
+
     monkeypatch.setattr(conversation_repo, "namespace_logging_enabled", enabled)
     monkeypatch.setattr(conversation_repo, "message_exists", exists)
     monkeypatch.setattr(conversation_repo, "append", record)

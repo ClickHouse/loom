@@ -20,6 +20,7 @@ from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector, document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -611,25 +612,10 @@ async def _set_embed(w: _SetWrite, embedder: Any = None) -> None:
     )
     with traced("embed.compute", model=embedder.model_name, excerpt_len=len(excerpt)):
         if not key_text:
-            embedding = await embedder.embed(embed_text)
+            embedding = await document_vector(embedder, embed_text)
             key_embedding = [0.0] * embedder.dim
         else:
-            # One request for both axes when the embedder can batch. The two
-            # `embed()` calls already ran concurrently, so this is not a latency
-            # win — it halves outbound embedding requests per write, which is
-            # rate-limit headroom rather than speed. `embed_many` is not on the
-            # Embedder protocol (the local embedder lacks it), hence the probe.
-            embed_many = getattr(embedder, "embed_many", None)
-            if embed_many is not None:
-                pair = await embed_many([embed_text, key_text])
-                if len(pair) != 2:
-                    raise RuntimeError(f"embed_many returned {len(pair)} vectors for 2 inputs")
-                embedding, key_embedding = pair[0], pair[1]
-            else:
-                embedding, key_embedding = await asyncio.gather(
-                    embedder.embed(embed_text),
-                    embedder.embed(key_text),
-                )
+            embedding, key_embedding = await document_vectors(embedder, [embed_text, key_text])
     w.embedder = embedder
     w.excerpt = excerpt
     w.embedding = embedding
@@ -1139,9 +1125,16 @@ async def _set_after_write(
 
 def _same_key_batch(input: MemorySetInput, memory_id: str) -> list[dict[str, Any]]:
     """The one-row batch same-key supersession takes, with the serialized value (the form
-    the row stores)."""
+    the row stores) and the write's user, so the peer read stays in that user's scope."""
     stored = json.dumps(input.value, default=str) if input.value is not None else ""
-    return [{"memory_id": memory_id, "memory_key": input.memory_key, "value": stored}]
+    return [
+        {
+            "memory_id": memory_id,
+            "memory_key": input.memory_key,
+            "value": stored,
+            "user_id": input.user_id,
+        }
+    ]
 
 
 async def _set_post_insert(

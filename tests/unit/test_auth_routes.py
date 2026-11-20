@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -102,7 +103,7 @@ def test_whoami_while_revocation_is_unloaded_is_a_retryable_503(
     def _unavailable(_token: str) -> None:
         raise RevocationUnavailable("revocation list not loaded")
 
-    monkeypatch.setattr(routes, "verify_token", _unavailable)
+    monkeypatch.setattr(routes, "authenticate_token", AsyncMock(side_effect=_unavailable))
     r = _client().get("/v1/whoami", headers={"Authorization": "Bearer t"})
     assert r.status_code == 503
     assert r.headers["Retry-After"] == "5"

@@ -1,0 +1,134 @@
+name: Optional Pipecat text memory video
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact merged workflow commit to record
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pipecat-text-video
+  cancel-in-progress: false
+
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: fixture
+    env:
+      LOOM_ENV_FILE: ""
+      LOOM_CH_CONTAINER: loom-pipecat-video-${{ github.run_id }}-${{ github.run_attempt }}
+      LOOM_CH_HOST: localhost
+      LOOM_CH_PORT: "8123"
+      LOOM_CH_USER: loom
+      LOOM_CH_READER_USER: loom_reader
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_CH_SECURE: "false"
+      LOOM_AUTH_REQUIRED: "true"
+      LOOM_BASE_URL: http://localhost:7778
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_LLM_PROVIDER: fake
+      LOOM_BACKGROUND_WORKERS: "off"
+      LOOM_INSTANCE_LABEL: ci:pipecat-video
+      LOOM_LATENCY_BUDGET_MULTIPLIER: "10"
+      LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS: "1"
+      LOOM_MODEL_CALLS_POLICY_REFRESH_SECONDS: "2"
+      LOOM_CODE_ORG: ci
+      LOOM_CODE_NAMESPACE: code-ci
+      LOOM_CODE_REPO: example/ci
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Admit the exact merged workflow
+        working-directory: .
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          command -v google-chrome chromedriver mediainfo
+          test "$(id -u)" != 0
+          echo "This optional job exports PUBLIC artifacts containing synthetic text only."
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 3c9ae8e1dde82685ee0e27bfe29b1c8d66cb956f
+          path: fixture
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - name: Prepare the pinned source fixture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 3c9ae8e1dde82685ee0e27bfe29b1c8d66cb956f
+          uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          cp "$GITHUB_WORKSPACE/dev/pipecat_demo/_pipecat_video_ci.py" tests/integration/_pipecat_video_ci.py
+          image=$(bash dev/clickhouse_release.sh)
+          echo "LOOM_CLICKHOUSE_IMAGE=$image" >> "$GITHUB_ENV"
+          secret=$(openssl rand -hex 32)
+          echo "::add-mask::$secret"
+          echo "LOOM_JWT_SECRET=$secret" >> "$GITHUB_ENV"
+      - name: Start the owned ClickHouse fixture
+        env:
+          GITHUB_WORKSPACE: ${{ github.workspace }}/fixture
+        run: bash dev/ci_start_clickhouse.sh
+      - name: Migrate and prepare the test issuer
+        run: |
+          set -euo pipefail
+          python -m server.core.schema.migrate
+          python -m tests.end_user_issuer "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install the pinned native client
+        run: >-
+          uv pip install --python "$PWD/.venv/bin/python"
+          --target "$RUNNER_TEMP/loom-pipecat-filming" './sdk/python[pipecat]' 'pipecat-ai==1.16.0'
+      - name: Record one real text turn
+        timeout-minutes: 6
+        env:
+          PYTHONPATH: ${{ runner.temp }}/loom-pipecat-filming
+          LOOM_PIPECAT_EVIDENCE: ${{ runner.temp }}/pipecat-filming-receipt.json
+        run: |
+          set -euo pipefail
+          python "$GITHUB_WORKSPACE/dev/pipecat_demo/record_pipecat_video.py" --with-server
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          output = Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public"
+          status = json.loads((output / "recording-status.json").read_text())
+          assert status["native_code"] == 0
+          assert status["reason"] == "recorded_requires_media_review"
+          assert status["video"] and (output / status["video"]["file"]).is_file()
+          print("Encoded video requires visual review before use as a demonstration.")
+          PY
+      - name: Upload public synthetic-content recording
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pipecat-text-video-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/pipecat-video-public/pipecat-ordinary-text.webm
+            ${{ runner.temp }}/pipecat-video-public/recording-status.json
+            ${{ runner.temp }}/pipecat-filming-receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Remove the owned ClickHouse fixture
+        if: always()
+        run: docker rm -f "$LOOM_CH_CONTAINER"

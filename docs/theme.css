@@ -1,0 +1,32 @@
+/* Keep the current-page state as quiet as ClickHouse Docs' navigation hover. */
+:root {
+  --loom-nav-surface: rgb(0 0 0 / 0.05);
+}
+
+:root[data-theme="dark"] {
+  --loom-nav-surface: rgb(255 255 255 / 0.05);
+}
+
+:root[data-theme="dark"] .loom-logo-background {
+  fill: #1d1d1d;
+}
+
+:root[data-theme="dark"] .loom-logo-mark {
+  fill: #faff69;
+  stroke: #faff69;
+}
+
+:root[data-theme="dark"] .loom-logo-cutout {
+  fill: #1d1d1d;
+}
+
+.blume-nav-link:hover,
+.blume-nav-link[aria-current="page"],
+.blume-nav-drill:hover,
+.blume-nav-drill[aria-current],
+.blume-nav-drill-link:hover,
+.blume-nav-drill-link[aria-current],
+.blume-nav-heading-link:hover,
+.blume-nav-heading-link[aria-current="page"] {
+  background-color: var(--loom-nav-surface);
+}

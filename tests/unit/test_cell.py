@@ -7,13 +7,14 @@ import asyncio
 import json
 import time
 from unittest.mock import AsyncMock, call
+from uuid import UUID
 
 import pytest
 from pydantic import ValidationError
 
 from server import boot, worker_main
 from server.auth import jwt
-from server.core import cell, cell_probe, instances, pg, pg_profile
+from server.core import cell, cell_probe, instances, pg, pg_profile, provider_process
 from server.core import ch as ch_mod
 from server.settings import Settings, settings
 from server.transport.model_maintenance import ModelMaintenanceMiddleware
@@ -329,6 +330,8 @@ def test_an_on_process_outside_a_cell_holds_from_its_first_step(
 def test_the_heartbeat_reports_the_cell_and_a_gated_process_is_not_serving(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    participant = UUID(int=7)
+    monkeypatch.setattr(provider_process, "process_identity", lambda: participant)
     monkeypatch.setattr(instances.readiness, "draining", lambda: False)
     monkeypatch.setattr(instances.deployment_config, "drift", lambda: [])
     monkeypatch.setattr(settings, "serves_traffic", True)
@@ -346,6 +349,7 @@ def test_the_heartbeat_reports_the_cell_and_a_gated_process_is_not_serving(
         **cell.as_value(cell.mine()),
         "serves": True,
         "marked": None,
+        "participant_id": str(participant),
     }
 
 
@@ -571,6 +575,7 @@ def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
     monkeypatch.setattr(worker_main.child, "beat", _beat)
     monkeypatch.setattr(worker_main, "get_supervisor", lambda: _Supervisor())
     monkeypatch.setattr(worker_main, "_start_services", _services)
+    monkeypatch.setattr(worker_main, "_enroll", AsyncMock())
     monkeypatch.setattr(boot, "start_cell_state", _cell_state)
     monkeypatch.setattr(boot, "open_storage_authority", _nothing)
     monkeypatch.setattr(boot, "close_storage_authority", _nothing)
@@ -579,7 +584,7 @@ def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Client())
     with pytest.raises(_Done):
         asyncio.run(worker_main._serve(0, 0))
-    assert order == (["services", "cell", "start_all"] if in_a_cell else ["services", "start_all"])
+    assert order == (["cell", "services", "start_all"] if in_a_cell else ["services", "start_all"])
 
 
 def test_the_stale_bound_leaves_room_for_three_cell_reads() -> None:

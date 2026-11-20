@@ -45,7 +45,7 @@ class SetupModel(BaseModel):
 
 
 class LLMSetup(SetupModel):
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "bedrock"]
     model: ModelName
     # Omitted jobs inherit the main model or retain their disabled state.
     overrides: dict[ModelJob, ModelName] = Field(default_factory=dict)
@@ -53,7 +53,7 @@ class LLMSetup(SetupModel):
 
 
 class EmbeddingSetup(SetupModel):
-    provider: Literal["openai", "gemini", "compatible"]
+    provider: Literal["openai", "gemini", "compatible", "bedrock"]
     model: ModelName
     dimensions: int = Field(default=3072, ge=1, le=65535, strict=True)
     base_url: str = Field(default="", max_length=2048)
@@ -63,6 +63,10 @@ class EmbeddingSetup(SetupModel):
     def validate_endpoint(self) -> "EmbeddingSetup":
         self.base_url = self.base_url.strip().rstrip("/")
         if self.provider != "compatible":
+            if self.provider == "bedrock" and "dimensions" not in self.model_fields_set:
+                self.dimensions = 1536
+            if self.provider == "bedrock" and self.dimensions not in {256, 512, 1024, 1536}:
+                raise ValueError("Cohere Embed v4 dimensions must be 256, 512, 1024 or 1536")
             if self.dimensions > 3072:
                 raise ValueError("Built-in embedding providers support at most 3072 dimensions")
             if self.base_url or self.send_dimensions:

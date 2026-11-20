@@ -44,7 +44,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import urlsplit
 
-from server.core import pg, readiness
+from server.core import pg, readiness, scim_tokens
 from server.core.errors import caller_text
 from server.settings import settings
 from server.settings.catalog import is_http_url
@@ -62,9 +62,9 @@ PLACEMENTS_MAX = 2**63 - 1  # not a setting: the bigint column bounds it
 # Postgres's btree entry limit (about 2.7 KB), so every org a cell records has a
 # placement the directory can index.
 ORG_MAX_BYTES = 2048  # not a setting: cells and the router judge one limit
-# The advisory lock on a cell's Postgres that attach will hold, and prepare and update once
-# they take it, and that the troubleshooting page's full-state cleanup takes before the
-# migration lock. Positive: the page's holder query splits it into two `oid` halves.
+# The advisory lock on a cell's Postgres that attach and prepare hold for their run, and that
+# the troubleshooting page's full-state cleanup takes before the migration lock. Positive:
+# the page's holder query splits it into two `oid` halves.
 ATTACH_LOCK_KEY = 0x6C6F6F6D_61746368  # "loomatch"
 
 
@@ -272,6 +272,12 @@ _deployment_id = ""
 _awaiting_first_read = False
 
 
+def discard_inherited_view() -> None:
+    """A child enrolls and reads primary state before using acceptance state."""
+    global _view, _memo, _awaiting_first_read
+    _view, _memo, _awaiting_first_read = _View(), None, True
+
+
 def expect_first_read() -> None:
     global _awaiting_first_read
     _awaiting_first_read = True
@@ -296,6 +302,11 @@ def is_first() -> bool | None:
     """Whether this cell is the deployment's first, as its `first` row last read says;
     None before a read lands or while the row is absent."""
     return None if _view.first is None else _view.first[0]
+
+
+def first_identity() -> tuple[bool, str] | None:
+    """The immutable first tuple in the existing state view, None before it is known."""
+    return _view.first
 
 
 def rows_read() -> bool:
@@ -350,6 +361,8 @@ def gate_reason() -> str:
         # and a gated one stays gated (docs/architecture/cells.md, "Invariants").
         return _unset_reason(_view)
     view, memo = _view, _memo
+    if problem := scim_tokens.cell_policy_problem(settings.scim_token, settings.cell, view.first):
+        return problem
     # Checked on every call, before the verdict kept for this read: time moves on. A
     # failed read trusts the last rows as long as a revocation snapshot is trusted.
     max_age = float(settings.jwt_revocation_max_stale_seconds)
@@ -496,11 +509,11 @@ _STATE = (
 
 async def read_state(conn: Any) -> str:
     """The cell state on `conn` (`state`); raises when it cannot read."""
-    return (await _read_named_state(conn))[0]
+    return (await read_state_and_first(conn))[0]
 
 
-async def _read_named_state(conn: Any) -> tuple[str, str]:
-    """The cell state on `conn` and the cell its first row names ('' without one)."""
+async def read_state_and_first(conn: Any) -> tuple[str, tuple[bool, str] | None]:
+    """The state and full immutable first identity from the same statement."""
     row = await conn.fetchrow(_STATE)
     first = None if row["is_first"] is None else (bool(row["is_first"]), str(row["cell"]))
     found = state(
@@ -509,14 +522,14 @@ async def _read_named_state(conn: Any) -> tuple[str, str]:
         has_own=bool(row["has_own"]),
         has_tenancy=bool(row["has_tenancy"]),
     )
-    return found, first[1] if first else ""
+    return found, first
 
 
 _STATE_TABLES = ("loom.cell_first", "loom.tenancy_mode", "loom.cell_self", "loom.tenancy")
 
 
 async def read_state_if_present(conn: Any) -> tuple[str, str]:
-    """`_read_named_state`, with every state table absent read as `open`: a schema that
+    """The state and first name, with every state table absent read as `open`: a schema that
     predates them cannot be a cell. Judged by `to_regclass`, never by matching a
     privilege error, so a role missing a grant still raises; some tables absent is
     `partial`."""
@@ -527,7 +540,8 @@ async def read_state_if_present(conn: Any) -> tuple[str, str]:
         return "open", ""
     if present < len(_STATE_TABLES):
         return "partial", ""
-    return await _read_named_state(conn)
+    found, first = await read_state_and_first(conn)
+    return found, first[1] if first else ""
 
 
 async def refresh() -> bool:

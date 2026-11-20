@@ -74,6 +74,7 @@ _LANG_WORKFLOWS: tuple[str, ...] = (
     "cmake",
     "fbs",
     "go",
+    "graphql",
     "helm",
     "hosts",
     "java",

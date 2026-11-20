@@ -58,10 +58,12 @@ class IdentityDirectory:
         *,
         ch: _CHClient | None = None,
         skip: frozenset[str] = frozenset(),
+        skip_request_traces: bool = False,
     ) -> bool:
         """A configured code-plane entry or tracker namespace is in use before its
         registry row or first row lands; any other name when Postgres holds a memory of it
-        or `namespace_census.in_use` finds a row (in the census tables not in `skip`), read
+        or `namespace_census.in_use` finds a row (in the census tables not in `skip` nor,
+        with `skip_request_traces`, in `namespace_census.REQUEST_TRACES`), read
         sequentially: one another replica wrote a moment ago counts."""
         if self.code_entry(org, namespace) is not None:
             return True
@@ -69,6 +71,8 @@ class IdentityDirectory:
             return True
         if await ledger_reads.pg_holds_namespace(org, namespace):
             return True
+        if skip_request_traces:
+            skip = skip | namespace_census.REQUEST_TRACES
         tables = [t for t in ledger_reads.namespace_tables() if t not in skip]
         with sequential_reads():
             return await namespace_census.in_use(org, namespace, tables, ch=ch)

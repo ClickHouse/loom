@@ -13,26 +13,43 @@ responses. Calls are async and use the application's Tokio runtime.
 
 ## Install
 
-From your Rust application's directory, add the SDK from a local Loom checkout:
+From your Rust application's directory, add the SDK from
+[crates.io](https://crates.io/crates/clickhouse-loom):
 
 ```bash
-cargo add clickhouse-loom --path /path/to/loom/sdk/rust
+cargo add clickhouse-loom
 ```
 
-Replace `/path/to/loom` with the checkout's location. The equivalent `Cargo.toml`
-configuration, including the runtime used by the example, is:
+The equivalent `Cargo.toml` dependency is:
 
 ```toml
 [dependencies]
-clickhouse-loom = { path = "/path/to/loom/sdk/rust" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+clickhouse-loom = "0.1"
 ```
 
-Rust 1.84+. Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand, uuid,
-httpdate, log and derive_more. The crate name is `clickhouse-loom`; Rust imports it as
-`clickhouse_loom`.
+Cargo resolves the SDK's dependencies automatically.
+
+Use the current stable Rust and Cargo toolchain for installation from crates.io.
+The SDK source supports Rust 1.84+, but resolved dependencies may require a newer
+toolchain.
+
+`cargo install` installs executables. This SDK is a library added to your
+application's dependencies. The crate name is `clickhouse-loom`; Rust imports it
+as `clickhouse_loom`.
+
+Runtime deps: reqwest with Rustls, serde, serde_json, Tokio, rand, uuid, httpdate,
+log and derive_more.
 
 ## Use
+
+The example uses `#[tokio::main]`. If your application does not already enable
+Tokio's `macros` and `rt-multi-thread` features, add this dependency to its
+`Cargo.toml`:
+
+```toml
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
 
 For a local [single-user installation](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md),
 connect to `http://localhost:7777` with org `dev`, namespace `local` and no token:

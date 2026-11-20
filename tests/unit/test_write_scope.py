@@ -350,6 +350,149 @@ def test_the_per_fact_value_update_read_stays_in_the_writers_scope() -> None:
     assert _scoped_to_u(ch)
 
 
+def _namespace_wide() -> AuthInfo:
+    """A service token that reads the whole namespace and writes for many users."""
+    return AuthInfo(
+        subject="sa:bot", org="o", namespaces=("n",), roles=("writer",), is_service_account=True
+    )
+
+
+def _scoped_to(ch: _SqlCH, user: str) -> bool:
+    return any(
+        "user_id = {scope_uid:String}" in s and p.get("scope_uid") == user for s, p in ch.sql
+    )
+
+
+def test_same_key_supersession_under_a_namespace_wide_token_reads_only_the_named_users_rows() -> (
+    None
+):
+    """A namespace-wide token writing Bob's `seat` must not see Alice's live row of that key."""
+    from server.memory.app.key_supersession import supersede_same_key_rows
+
+    ch = _SqlCH()
+    rows = [{"memory_key": "seat", "memory_id": "m-bob", "user_id": "bob"}]
+    _run_as(
+        _namespace_wide(),
+        lambda: supersede_same_key_rows(
+            follows=[], org="o", namespace="n", new_rows=rows, ch=ch, policy="newest_wins"
+        ),
+    )
+    assert _scoped_to(ch, "bob")
+
+
+def test_same_key_supersession_under_a_namespace_wide_token_without_a_user_stays_wide() -> None:
+    """A write that names no user keeps today's namespace-wide same-key read."""
+    from server.memory.app.key_supersession import supersede_same_key_rows
+
+    ch = _SqlCH()
+    rows = [{"memory_key": "seat", "memory_id": "m"}]
+    _run_as(
+        _namespace_wide(),
+        lambda: supersede_same_key_rows(
+            follows=[], org="o", namespace="n", new_rows=rows, ch=ch, policy="newest_wins"
+        ),
+    )
+    assert ch.sql and all("scope_uid" not in s for s, _ in ch.sql)
+
+
+def test_point_write_same_key_batch_under_a_namespace_wide_token_reads_the_named_users_rows() -> (
+    None
+):
+    """memory.set's production batch carries input.user_id, so Bob's write does not see Alice's row."""
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app.key_supersession import supersede_same_key_rows
+    from server.memory.app.set_commit import _same_key_batch
+
+    batch = _same_key_batch(
+        MemorySetInput(
+            org="o", namespace="n", agent="a", user_id="bob", memory_key="seat", value="window"
+        ),
+        "m-bob",
+    )
+    ch = _SqlCH()
+    _run_as(
+        _namespace_wide(),
+        lambda: supersede_same_key_rows(
+            follows=[], org="o", namespace="n", new_rows=batch, ch=ch, policy="newest_wins"
+        ),
+    )
+    assert _scoped_to(ch, "bob")
+
+
+def test_update_by_id_supersession_under_a_namespace_wide_token_reads_the_existing_rows_user() -> (
+    None
+):
+    """memory.update_by_id must retire peers of the existing row's user, not the whole namespace."""
+    from server.memory.app.update import _revision_supersession
+
+    existing = SimpleNamespace(
+        memory_id="m-bob", memory_key="seat", namespace="n", agent="a", user_id="bob"
+    )
+    ch = _SqlCH()
+    _run_as(
+        _namespace_wide(),
+        lambda: _revision_supersession("o", existing, "aisle", ch, "newest_wins", []),
+    )
+    assert _scoped_to(ch, "bob")
+
+
+def test_value_update_peers_under_a_namespace_wide_token_are_the_named_users_rows() -> None:
+    """Bob's value-update pass must not mark Alice's dated fact superseded."""
+    from server.memory.app.value_updates import _peers_codes_first, _peers_joined, _peers_many
+
+    ch = _SqlCH()
+    kw = dict(org="o", namespace="n", min_cosine=0.5, user_id="bob")
+    _run_as(
+        _namespace_wide(),
+        lambda: _peers_many(ch, items=[("semantic", "k", [0.1])], **kw),
+    )
+    _run_as(
+        _namespace_wide(),
+        lambda: _peers_joined(ch, memory_type="semantic", memory_key="k", embedding=[0.1], **kw),
+    )
+    _run_as(
+        _namespace_wide(),
+        lambda: _peers_codes_first(
+            ch, memory_type="semantic", memory_key="k", embedding=[0.1], **kw
+        ),
+    )
+    assert len(ch.sql) == 3
+    assert all(
+        "user_id = {scope_uid:String}" in s and p.get("scope_uid") == "bob" for s, p in ch.sql
+    )
+
+
+def test_link_value_updates_under_a_namespace_wide_token_reads_the_named_users_peers() -> None:
+    """The production path takes the write's user from the new rows, not the token."""
+    from server.memory.app.value_updates import link_value_updates
+
+    ch = _SqlCH()
+    rows = [
+        {
+            "memory_id": "m-bob",
+            "memory_key": "k",
+            "memory_type": "semantic",
+            "value": "Prefers window seats",
+            "user_id": "bob",
+            "status": "active",
+        }
+    ]
+    _run_as(
+        _namespace_wide(),
+        lambda: link_value_updates(
+            org="o",
+            namespace="n",
+            rows=rows,
+            embeddings_by_key={"k": [0.1]},
+            agent="a",
+            ch=ch,
+        ),
+    )
+    assert any(
+        "user_id = {scope_uid:String}" in s and p.get("scope_uid") == "bob" for s, p in ch.sql
+    )
+
+
 def test_recall_echo_keys_are_the_callers_keys(monkeypatch) -> None:
     import server.core.ch as ch_mod
     from server.memory.app.pipeline import _existing_keys_named

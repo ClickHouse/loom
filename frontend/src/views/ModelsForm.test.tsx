@@ -107,6 +107,7 @@ describe("Models & keys", () => {
       "openai",
       "gemini",
       "compatible",
+      "bedrock",
     ]);
   });
 
@@ -122,6 +123,37 @@ describe("Models & keys", () => {
     expect(config.llm.model).toBe("claude-custom");
     expect(config.embedding).toEqual({ provider: "gemini", model: "gemini-custom", dimensions: 768 });
     expect(config.expected_version).toBe(status.version);
+  });
+
+  it("preserves native Bedrock models without asking for AWS access keys", async () => {
+    const native: ModelStatus = {
+      ...status,
+      llm_provider: "bedrock",
+      llm_model: "bedrock:profile",
+      embedding_provider: "bedrock",
+      embedding_model: "cohere.embed-v4:0",
+      embedding_dimensions: 1536,
+      requires_setup: false,
+    };
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ModelsForm
+        status={native}
+        onValidate={vi.fn().mockResolvedValue({ ready: true, checks: [] })}
+        onSave={onSave}
+      />,
+    );
+    expect((screen.getByLabelText("LLM model") as HTMLInputElement).value).toBe("bedrock:profile");
+    expect((screen.getByLabelText("Embedding model") as HTMLInputElement).value).toBe("cohere.embed-v4:0");
+    expect(screen.queryByLabelText(/Bedrock API key/)).toBeNull();
+    expect(screen.getByText(/no AWS access keys are saved here/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Test & apply" }));
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      llm: { provider: "bedrock", model: "bedrock:profile" },
+      embedding: { provider: "bedrock", model: "cohere.embed-v4:0", dimensions: 1536 },
+      keys: {},
+    });
   });
 
   it("does not save failed validation and rechecks changed inputs", async () => {

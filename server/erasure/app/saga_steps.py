@@ -183,8 +183,11 @@ async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:
 
 async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> int:
     """Under its directory row's claim, which `namespace.delete` holds too."""
+    from server.auth.authz import identity_write
+
     async with account_change(org, personal_name(org, "user:" + user_id)):
-        return await principal_steps.retire_personal_collection_by_user(org, user_id)
+        with identity_write():
+            return await principal_steps.retire_personal_collection_by_user(org, user_id)
 
 
 async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
@@ -231,12 +234,15 @@ async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
     """Under each directory row's claim, then the tree's, so neither a
     `namespace.delete` nor a move that lands meanwhile writes back what it read."""
+    from server.auth.authz import identity_write
+
     async with AsyncExitStack() as held:
         for namespace in await principal_steps.collections_created_by(org, user_id):
             await held.enter_async_context(account_change(org, namespace))
         await held.enter_async_context(collections_change(org))
-        # No watermark: the cached tree holds parents, not owners.
-        return await principal_steps.forget_collection_owner_by_user(org, user_id)
+        # The tree cache holds parents; the person memo also reads these owners.
+        with identity_write():
+            return await principal_steps.forget_collection_owner_by_user(org, user_id)
 
 
 async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:

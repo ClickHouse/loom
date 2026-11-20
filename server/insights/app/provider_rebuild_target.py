@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from server.core.provider_keys import environment_provider_key
+from server.embedding.bedrock import BedrockEmbedder
 from server.embedding.compatible import CompatibleEmbedder
 from server.embedding.fake import FakeNGramEmbedder
 from server.embedding.gemini import GeminiEmbedder
@@ -61,7 +62,9 @@ def rebuild_target(
         if setup is not None and provider in setup.keys
         else environment_provider_key(provider)
     )
-    if provider == "openai":
+    if provider == "bedrock":
+        fetch = BedrockEmbedder(model=model, dim=dim)._embed_document_raw
+    elif provider == "openai":
         fetch = OpenAIEmbedder(model=model, dim=dim, api_key=key)._embed_one_raw
     elif provider == "gemini":
         fetch = GeminiEmbedder(model=model, dim=dim, api_key=key)._embed_one_raw

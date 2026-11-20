@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator
+from contextlib import contextmanager
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -83,6 +84,25 @@ class ActedForRefused(PermissionError):
     access to an index, so a transport adds no index reason to it."""
 
 
+async def _check_provisioning(auth: AuthInfo | None, org: str | None) -> None:
+    from server.auth import login, scim
+    from server.core.errors import BackendUnavailableError, LoomServerError
+
+    if auth is None:
+        return
+    scope_org = auth.org if org is None else org
+    if not may_act_in_org(auth, scope_org):
+        raise PermissionError("token is for another org")
+    try:
+        refused = await scim.refuses_auth(auth, org=scope_org)
+    except login.SignInUnavailable as e:
+        if isinstance(e.__cause__, LoomServerError):
+            raise e.__cause__ from None
+        raise BackendUnavailableError("SCIM provisioning cannot be checked yet") from e
+    if refused:
+        raise ActedForRefused(_ACTED_FOR_REVOKED)
+
+
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
     """Refuse a trusted caller acting for a revoked or SCIM-deactivated subject under any
     spelling it holds, or for an `sa:` subject that is not an active bot or one of its
@@ -93,6 +113,7 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
     from server.auth.gateway import is_end_user
     from server.core import grant_cache
 
+    await _check_provisioning(auth, org)
     # An end user's token names the user, whose revocation verify checked.
     if auth is None or not auth.impersonated_by or is_end_user(auth):
         return
@@ -119,7 +140,7 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
 # (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation, or
 # a bot created or disabled, by another process reaches this one within that, and one
 # written here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
-_ENDED: dict[tuple[str, str], tuple[float, bool]] = {}
+_ENDED: dict[tuple[Hashable, ...], tuple[float, bool]] = {}
 _forgets = 0  # forgets so far: a read that one overtook is not kept
 _ENDED_MAX = 10_000  # not a setting: a memory bound on a memo the TTL already ages
 
@@ -129,10 +150,23 @@ def forget_ended(kind: str, key: str) -> None:
     just wrote, so its own write takes effect here at once."""
     global _forgets
     _ENDED.pop((kind, key.lower()), None)
+    for decision in tuple(_ENDED):
+        if decision[0] == "scim_people":
+            _ENDED.pop(decision, None)
     _forgets += 1
 
 
-async def _remembered(key: tuple[str, str], read: Callable[[str], Awaitable[bool]]) -> bool:
+@contextmanager
+def identity_write() -> Iterator[None]:
+    """Do not memoize person checks started before or during an identity write."""
+    forget_ended("identity", "")
+    try:
+        yield
+    finally:
+        forget_ended("identity", "")
+
+
+async def _remembered(key: tuple[Hashable, ...], read: Callable[[str], Awaitable[bool]]) -> bool:
     from server.settings import settings
 
     now = time.monotonic()
@@ -140,7 +174,7 @@ async def _remembered(key: tuple[str, str], read: Callable[[str], Awaitable[bool
     if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return hit[1]
     forgets = _forgets
-    ended = await read(key[1])
+    ended = await read(str(key[-1]))
     if _forgets != forgets:
         return ended  # a write here overtook the read: the next check reads afresh
     if len(_ENDED) >= _ENDED_MAX:
@@ -212,6 +246,7 @@ async def check_authorized(
     # authorize here (the op gate checked before it got this far).
     from server.auth import tenancy
 
+    await check_acted_for(auth, org)
     await tenancy.ensure_held(org, auth)
 
     if auth.creator:
@@ -401,6 +436,7 @@ async def _check_creator(
         raise PermissionError(
             f"principal {auth.subject!r} (org {auth.org!r}) cannot act in org {account_org!r}"
         )
+    await _check_provisioning(auth, account_org)
     if not await creator_account_active(account_org, auth.creator):
         raise PermissionError(f"the account that created this token is not active in {account_org}")
     if namespace is None and required_role.value >= Role.WRITER.value:

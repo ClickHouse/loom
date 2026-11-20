@@ -1,7 +1,8 @@
 """`loom cell credential | limit | which | remove`: the operator's commands that touch the
-router's directory (docs/architecture/cells.md, "Operations"). Only `remove` reads a cell's
-stores, a first cell's Postgres; the others run while a cell is down. `loom cell prepare` is
-`server/cli/cell_prepare.py`.
+router's directory (docs/architecture/cells.md, "Operations"). Removal holds the cell's
+Postgres lock and claims its directory generation; limits and credentials need only the
+directory. `loom cell prepare` is
+`server/cli/cell_prepare.py`, `loom cell attach` `server/cli/cell_attach.py`.
 
 - `credential new` makes a router credential offline and prints it with its SHA-256;
   `credential --cell <cell> --next <sha256> | --finish | --revert` rotates a cell's.
@@ -10,7 +11,8 @@ stores, a first cell's Postgres; the others run while a cell is down. `loom cell
 - `which --org <org>` prints the cell and host the router's lookup answers for an org (the
   first cell's for an org with no placement, which it cannot tell apart).
 - `remove --cell <cell>` removes the directory row of a cell that is `attaching` with no
-  placement; for the first cell, only once its Postgres reads `open` and records the row's
+  placement, holding its configured Postgres lock; for the first cell, only once it reads
+  `open` and records the row's
   deployment id (the troubleshooting page's back-out runs first).
 
 `credential` (except `new`), `limit` and `remove` call the router's operator API with
@@ -33,6 +35,7 @@ import httpx
 from server.auth.public_url import is_loopback_host
 from server.core.cell import NAME, PLACEMENTS_MAX, SHA256, TROUBLESHOOTING
 from server.router.directory import (
+    CONTROL_MAX_S,
     OPERATOR_CHANGE_MAX_S,
     OPERATOR_READ_MAX_S,
     REMOVE_MAX_S,
@@ -45,7 +48,7 @@ from server.settings import settings
 # A lookup makes up to two directory reads (the org, then the first cell), each a
 # slot-and-connection wait and a statement. A connect fails fast.
 _OPERATOR_TIMEOUT = httpx.Timeout(  # not a setting: derived
-    max(OPERATOR_CHANGE_MAX_S, OPERATOR_READ_MAX_S, REMOVE_MAX_S) + 10.0, connect=5.0
+    max(CONTROL_MAX_S, OPERATOR_CHANGE_MAX_S, OPERATOR_READ_MAX_S, REMOVE_MAX_S) + 10.0, connect=5.0
 )
 _LOOKUP_TIMEOUT = httpx.Timeout(  # not a setting: derived
     2 * (2 * STATEMENT_TIMEOUT_S + 1) + 10.0, connect=5.0
@@ -60,6 +63,14 @@ def new_credential(prefix: str = "lcr_") -> tuple[str, str]:
     operator credential, then 128 lowercase hex: 512 bits) and its SHA-256."""
     credential = prefix + secrets.token_hex(64)
     return credential, hashlib.sha256(credential.encode()).hexdigest()
+
+
+def _cmd_scim_token(args: argparse.Namespace) -> int:
+    if not NAME.fullmatch(args.cell):
+        print("loom cell scim-token: cell must match [a-z0-9-]{1,32}", file=sys.stderr)
+        return 2
+    print(f"lsc_{args.cell}_{secrets.token_hex(32)}")
+    return 0
 
 
 def parse_router(args: argparse.Namespace) -> httpx.URL | str:
@@ -155,6 +166,18 @@ def _operator_call(
         if isinstance(found, int):
             return found
         router = found
+    if path in ("limit", "credential"):
+        from server.cli import cell_control
+
+        row = _read_row(router, args.cell)
+        if isinstance(row, str):
+            print(f"loom cell: {row}", file=sys.stderr)
+            return 1
+        try:
+            body = {**(body or {}), **cell_control.preconditions(row)}
+        except cell_control.Refused as e:
+            print(str(e), file=sys.stderr)
+            return 1
     try:
         r = _send(router, method, args.cell, path, body)
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError) as e:
@@ -306,43 +329,6 @@ def _read_row(router: httpx.URL, cell: str) -> dict[str, Any] | str:
     return answer
 
 
-# The first cell's check: one Postgres session, its statements and the whole read bounded.
-_CHECK_STATEMENT_MS = 5000  # not a setting: a bound on one CLI read, not on serving
-_CHECK_S = 10.0  # not a setting: a bound on one CLI read, not on serving
-
-
-async def _read_first_cell() -> tuple[str, str]:
-    """The cell state and the deployment id the cell's Postgres records ('' when none), on
-    one session of its own: no ClickHouse and no pool."""
-    from server.core import cell, pg
-
-    async with pg.dedicated(statement_timeout_ms=_CHECK_STATEMENT_MS) as conn:
-        state, _first = await cell.read_state_if_present(conn)
-        recorded = await conn.fetchval("SELECT deployment_id FROM loom.authority")
-    return state, str(recorded or "")
-
-
-async def _first_cell_refusal(deployment_id: str) -> str:
-    """Why the first cell's row may not be removed yet ('' when it may): its Postgres still
-    holds a cell state, or is another deployment's. It reads `LOOM_PG_DSN` alone."""
-    if not settings.pg_dsn:
-        return "the first cell keeps its state in Postgres: set LOOM_PG_DSN to the cell's"
-    state, recorded = await asyncio.wait_for(_read_first_cell(), timeout=_CHECK_S)
-    if state != "open":
-        return (
-            f"the first cell's Postgres reads `{state}`: unset LOOM_CELL on every process, run "
-            f"the full-state cleanup ({TROUBLESHOOTING}), then remove the row"
-        )
-    if not recorded:
-        return "this Postgres records no deployment id: point LOOM_PG_DSN at the cell's own"
-    if recorded != deployment_id:
-        return (
-            f"this Postgres records deployment id {recorded!r}, and the directory's row "
-            f"{deployment_id!r}: point LOOM_PG_DSN at the cell's own Postgres"
-        )
-    return ""
-
-
 def _cmd_remove(args: argparse.Namespace) -> int:
     router = _cell_router(args)
     if isinstance(router, int):
@@ -370,24 +356,48 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     if reason := remove_refusal(args.cell, state, placed):
         print(f"loom cell remove: refusing: {reason}", file=sys.stderr)
         return 1
-    if row["is_first"]:
-        try:
-            refusal = asyncio.run(_first_cell_refusal(row["deployment_id"]))
-        except Exception as e:  # noqa: BLE001 — an unread state refuses the removal
-            reason = f"no answer within {_CHECK_S:g} s" if isinstance(e, TimeoutError) else str(e)
-            refusal = f"the first cell's Postgres could not be read ({type(e).__name__}: {reason})"
-        if refusal:
-            print(f"loom cell remove: refusing: {refusal}", file=sys.stderr)
-            return 1
-    return _operator_call(
-        args,
-        "",
-        None,
-        "a retry refused as not in the directory (NO_SUCH_CELL) means the row was removed",
-        method="DELETE",
-        router=router,
-        coded_404=True,
-    )
+    try:
+        answer = asyncio.run(_remove_locked(args, router))
+    except Exception as e:  # noqa: BLE001 — an unknown control outcome stops the run
+        print(f"loom cell remove: {type(e).__name__}: {e}; stop and rerun", file=sys.stderr)
+        return 1
+    print(json.dumps(answer, indent=2, sort_keys=True))
+    return 0
+
+
+async def _remove_locked(
+    args: argparse.Namespace,
+    router: httpx.URL,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    from server.cli import cell_control
+    from server.core import cell
+
+    async def remove(owner: cell_control.Owner) -> dict[str, Any]:
+        conn = owner.conn
+
+        async def call(path: str, body: dict[str, Any]) -> dict[str, Any]:
+            return await cell_control.request(router, args.cell, transport, path, body)
+
+        # Re-read under the local lock; the earlier read only checked eligibility.
+        row = await cell_control.request(router, args.cell, transport, "", method="GET")
+        if reason := remove_refusal(args.cell, row["state"], row["placed_orgs"]):
+            raise cell_control._refused(reason)
+        await cell_control.paired(conn, row)
+        if row["is_first"]:
+            state, _ = await owner.transaction(lambda: cell.read_state_if_present(conn))
+            if state != "open":
+                raise cell_control._refused(
+                    f"the first cell's Postgres reads {state}: run the full-state cleanup "
+                    f"({TROUBLESHOOTING}) before removing its directory row"
+                )
+        row = await cell_control.claim(conn, call, row)
+        await cell_control.check_lock(conn)
+        return await cell_control.request(
+            router, args.cell, transport, "", cell_control.preconditions(row), method="DELETE"
+        )
+
+    return await cell_control.run("remove", remove)
 
 
 def _cmd_which(args: argparse.Namespace) -> int:
@@ -422,6 +432,12 @@ def _add_cell_parser(sub: Any) -> None:
     p = sub.add_parser("cell", help="Operate a deployment's cells through the router's directory.")
     csub = p.add_subparsers(dest="cell_cmd", required=True)
 
+    scim = csub.add_parser("scim-token", help="Generate a cell's SCIM token offline.")
+    scim_sub = scim.add_subparsers(dest="action", required=True)
+    scim_new = scim_sub.add_parser("new", help="Print a random token for the named cell.")
+    scim_new.add_argument("--cell", required=True, help="The cell's exact LOOM_CELL name")
+    scim_new.set_defaults(func=_cmd_scim_token)
+
     cred = csub.add_parser("credential", help="Make a router credential, or rotate a cell's.")
     cred.add_argument("action", nargs="?", choices=["new"], help="new: make one offline")
     cred.add_argument("--cell", help="The cell whose credential to rotate")
@@ -438,7 +454,7 @@ def _add_cell_parser(sub: Any) -> None:
     limit.add_argument("--cell", required=True, help="The cell to limit")
     state = limit.add_mutually_exclusive_group()
     state.add_argument("--closed", action="store_true", help="Refuse its new orgs")
-    state.add_argument("--open", action="store_true", help="Take new orgs again")
+    state.add_argument("--open", action="store_true", help="Take new orgs again once serving")
     limit.add_argument(
         "--placements-max", metavar="N|none", help="Its quota of orgs (none: no quota)"
     )
@@ -459,6 +475,8 @@ def _add_cell_parser(sub: Any) -> None:
     remove.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     remove.set_defaults(func=_cmd_remove)
 
+    from server.cli.cell_attach import add_attach_parser
     from server.cli.cell_prepare import add_prepare_parser
 
     add_prepare_parser(csub)
+    add_attach_parser(csub)

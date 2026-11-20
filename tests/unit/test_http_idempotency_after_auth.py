@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -71,7 +72,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, dict[str, Any],
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
 
     async def _admit(*_a: Any, **_k: Any) -> gates.Target:
         return gates.Target(org="o", namespace="n", named_namespace="n", register_namespace="n")

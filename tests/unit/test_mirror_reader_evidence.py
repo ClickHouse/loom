@@ -219,7 +219,7 @@ async def test_callback_evidence_failure_revokes_and_never_starts_session(
     )
     monkeypatch.setattr(
         oauth,
-        "_refused_if_deactivated",
+        "_refused_sign_in",
         AsyncMock(return_value=Response(status_code=403) if deactivated else None),
     )
     monkeypatch.setattr(oauth, "_dashboard_signed_in", session)
@@ -243,7 +243,7 @@ async def test_cancelled_attestation_does_not_become_restart_response(monkeypatc
 
     from server.auth import oauth, oidc
 
-    monkeypatch.setattr(oauth, "_refused_if_deactivated", AsyncMock(return_value=None))
+    monkeypatch.setattr(oauth, "_refused_sign_in", AsyncMock(return_value=None))
     monkeypatch.setattr(sso_links, "attest_domain", AsyncMock(side_effect=asyncio.CancelledError))
     revoke = AsyncMock()
     monkeypatch.setattr(oidc, "revoke", revoke)

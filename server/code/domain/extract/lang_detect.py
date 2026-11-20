@@ -274,6 +274,8 @@ LANG_BY_EXTENSION: dict[str, str] = {
     ".mdc": "doc",
     ".proto": "proto",
     ".thrift": "thrift",
+    ".graphql": "graphql",
+    ".gql": "graphql",
     ".tpl": "gotemplate",
     ".tmpl": "gotemplate",
     ".gotmpl": "gotemplate",

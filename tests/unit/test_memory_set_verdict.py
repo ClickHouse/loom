@@ -57,6 +57,9 @@ class _Embedder:
     async def embed(self, _text: str) -> list[float]:
         return [0.1, 0.2, 0.3, 0.4]
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 class _Calls:
     def __init__(self) -> None:

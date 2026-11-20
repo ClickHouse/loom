@@ -6,6 +6,14 @@ a time. For the length of a rollout, and again during a rollback, the previous b
 schema. These rules keep that safe. The operator procedure is in
 [upgrades](../operations/upgrades.md).
 
+Retirement of an N-1 participant also requires its authority-store work to settle.
+Under Postgres, a client without participant session tags is recertified only
+after all generic `loom` authority backends are absent, including idle pools.
+Stop and drain those legacy clients before the final retirement census; tagged
+participants can remain live. ClickHouse-authority recovery uses the verified
+deployment's ClickHouse checks. Neither path treats an unknown authority as empty.
+See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline).
+
 ## The rules
 
 1. **Migrations are additive** and run at boot under the migration lock. N-1 keeps

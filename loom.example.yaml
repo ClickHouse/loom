@@ -97,7 +97,9 @@ settings:
   # ch_read_your_writes_window_s: 20.0
 
   # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
-  # client-side bound that frees the pool slot. 0 = no bound for reads. [restart]
+  # client-side bound that frees the pool slot. 0 = no general read bound. Enforced-cell
+  # SCIM decisions still have a complete 30-second ceiling, reduced by a smaller
+  # positive value. [restart]
   # ch_timeout_read_s: 30.0
 
   # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. [restart]
@@ -376,8 +378,8 @@ settings:
 
   # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai,
   # gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini",
-  # "local", "fake". Switching providers changes the embedding space: a full re-embed is
-  # required. [restart]
+  # "bedrock" (Cohere Embed v4), "local", "fake". Switching providers changes the
+  # embedding space: a full re-embed is required. [restart]
   # embedding_provider: ""
 
   # API root for an explicitly selected OpenAI-compatible embedding service, e.g.
@@ -402,6 +404,10 @@ settings:
   # in front of Anthropic. Off the default, the key also goes as a bearer, the scheme
   # gateways take. [restart]
   # anthropic_base_url: "https://api.anthropic.com"
+
+  # Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS
+  # credentials use the SDK's role, profile or environment credential chain. [restart]
+  # bedrock_region: ""
 
   # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
   # <host>:11434/v1, llama.cpp's server <host>:8080/v1). [restart]
@@ -548,11 +554,12 @@ settings:
   # (loom.embedder_calibration), so every replica serves the same gates. [restart]
   # calibration_refresh_seconds: 60.0
 
-  # "openai" | "anthropic" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
-  # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
-  # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
+  # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) |
+  # "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai,
+  # claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
   # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
-  # overridden. Run `make bench-quick` before making anthropic a default. [restart]
+  # overridden. Bedrock requires llm_model and the SDK credential chain. Run `make
+  # bench-quick` before making anthropic a default. [restart]
   # llm_provider: ""
 
   # A fake or key-less provider is a `warn` in /v1/health `problems`; true (production)
@@ -802,10 +809,11 @@ settings:
   # Seconds a subject's grant rows are cached for the namespace gate, which caps a
   # token's claim at the grant it holds there. The backstop: a grant change reaches
   # other processes through the per-org grant watermark (acl_watermark_poll_seconds),
-  # and this bounds one whose watermark row was never written. It also bounds how long a
-  # SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller
-  # acting for it on another process, and how long a bot created there takes to be acted
-  # for. [restart]
+  # and this bounds one whose watermark row was never written. SCIM and bot final
+  # decisions use this TTL from read start. A complete enforced-cell SCIM check has a
+  # separate 30-second ceiling, so its cross-process observation bound is the larger of
+  # this TTL and that check's budget; a smaller positive read timeout reduces the
+  # latter. [restart]
   # grant_cache_ttl_seconds: 10.0
 
   # Seconds between each process's reads of the per-org grant watermark
@@ -1237,6 +1245,13 @@ settings:
   # proxy that terminates TLS under its own authority). Needs code_git_proxy_url.
   # [restart]
   # code_git_proxy_ca_file: ""
+
+  # PEM bundle git verifies the proxy's own certificate with, in place of its default
+  # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+  # is for the remote, behind a proxy that terminates TLS under its own authority; this
+  # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+  # [restart]
+  # code_git_proxy_tls_ca_file: ""
 
   # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
   # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
@@ -5099,10 +5114,18 @@ settings:
   # serves requests; inline = in the serving process. [restart]
   # workers_process: "child"
 
+  # At most this many seconds to certify a reaped worker child; also bounded by the
+  # remaining stop or restart delay. Expiry leaves its participant unretired. [restart]
+  # workers_child_retirement_timeout_s: 1.0
+
   # Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so
   # the load balancer stops routing to it before its port closes. Size it to the LB's
   # probe interval × failure threshold. 0 = stop at once. [restart]
   # shutdown_ready_delay_s: 15.0
+
+  # Seconds a native CLI command allows its producers, deferred writes and participant
+  # retirement to finish. Expiry leaves the participant unretired. [restart]
+  # native_command_drain_timeout_s: 15.0
 
   # Seconds boot waits for the first load of the tracker registry and the runtime
   # overrides, and the first publish of the dashboard bundle, before it serves;

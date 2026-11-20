@@ -51,6 +51,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple, Protocol
 from urllib.parse import parse_qs
+from uuid import UUID
 
 import httpx
 from starlette.applications import Starlette
@@ -542,7 +543,12 @@ class Router:
             return refusal
         if refusal := _malformed_cell_refusal(request):
             return refusal
-        body = await _body(request)
+        body = _parsed(await _bounded(request, ATTACH_BEGIN_MAX_BYTES))
+        if not isinstance(body, dict):
+            return _refused(400, "this call's body is a JSON object")
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
         known = {"closed", "placements_max"}
         if not isinstance(body, dict) or not body or set(body) - known:
             return _refused(400, "a limit is a JSON object of closed and/or placements_max")
@@ -556,7 +562,7 @@ class Router:
             return _refused(400, "placements_max is a whole number, 0 or more, or null")
         return await _operator_answer(
             lambda: directory.set_limit(
-                request.path_params["cell"], closed=closed, placements_max=quota
+                request.path_params["cell"], closed=closed, placements_max=quota, expected=expected
             )
         )
 
@@ -567,7 +573,12 @@ class Router:
             return refusal
         if refusal := _malformed_cell_refusal(request):
             return refusal
-        body = await _body(request)
+        body = _parsed(await _bounded(request, ATTACH_BEGIN_MAX_BYTES))
+        if not isinstance(body, dict):
+            return _refused(400, "this call's body is a JSON object")
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
         if not isinstance(body, dict) or set(body) - {"step", "sha256"}:
             return _refused(400, "a rotation is a JSON object of step and sha256")
         step, sha = body.get("step"), body.get("sha256", "")
@@ -578,7 +589,9 @@ class Router:
         if step == "next" and _is_operator_hash(sha):
             return _refused(400, _OPERATOR_HASH_REFUSAL)
         response = await _operator_answer(
-            lambda: directory.rotate_credential(request.path_params["cell"], step, sha)
+            lambda: directory.rotate_credential(
+                request.path_params["cell"], step, sha, expected=expected
+            )
         )
         # This replica reads the hashes again on its next call. A 503 is included: its
         # change may have committed (BACKEND_UNAVAILABLE).
@@ -632,7 +645,7 @@ class Router:
         )
 
     async def _operator_body(
-        self, request: Request, limit: int = MAX_BODY_BYTES
+        self, request: Request, limit: int = ATTACH_BEGIN_MAX_BYTES
     ) -> dict[str, Any] | JSONResponse:
         """The operator call's JSON object, or its refusal: the credential, then the cell's
         name, then the body (413 past `limit`, 400 when it is no JSON object)."""
@@ -660,6 +673,19 @@ class Router:
             lambda found: {**_attach_answer(found), "other": found.other},
         )
 
+    async def claim(self, request: Request) -> JSONResponse:
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        expected = _control(body, claim=True)
+        if isinstance(expected, JSONResponse):
+            return expected
+        if body:
+            return _refused(400, "a control claim contains only expected")
+        return await _answered(
+            lambda: directory.claim(request.path_params["cell"], expected), _attach_answer
+        )
+
     async def attach_begin(self, request: Request) -> JSONResponse:
         """`attach/begin`: once the probe listener echoes attach's nonces from the stores
         the row names and the upstream reports the row's deployment id, write when attach
@@ -668,6 +694,9 @@ class Router:
         body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
         if isinstance(body, JSONResponse):
             return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
         name = request.path_params["cell"]
         parsed = _begin(body)
         if isinstance(parsed, JSONResponse):
@@ -676,17 +705,32 @@ class Router:
         found = await _read_attaching(name)
         if isinstance(found, JSONResponse):
             return found
-        if reason := directory.begin_refusal(found, begin):
+        if reason := directory.control_refusal(found, expected) or directory.begin_refusal(
+            found, begin
+        ):
             return _refused(409, reason)
         if refusal := await self._stores_check(found, nonces):
             return refusal
-        return await _answered(lambda: directory.attach_begin(name, begin), _attach_answer)
+        return await _answered(
+            lambda: directory.attach_begin(name, begin, expected=expected), _attach_answer
+        )
 
     async def attach_place(self, request: Request) -> JSONResponse:
         """`attach/place {deployment_id, orgs}`: a batch of at most ATTACH_BATCH orgs."""
         body = await self._operator_body(request)
         if isinstance(body, JSONResponse):
             return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
+        if (
+            len(json.dumps(body, ensure_ascii=True, separators=(",", ":")).encode())
+            > MAX_BODY_BYTES
+        ):
+            return _refused(
+                413,
+                f"a placement batch without its control envelope is at most {MAX_BODY_BYTES} bytes",
+            )
         orgs = body.get("orgs")
         deployment_id = _text(body, "deployment_id", needed=True)
         if (
@@ -704,7 +748,7 @@ class Router:
         name = request.path_params["cell"]
         batch = [o for o in named if o is not None]
         return await _answered(
-            lambda: directory.attach_place(name, deployment_id, batch),
+            lambda: directory.attach_place(name, deployment_id, batch, expected=expected),
             lambda counts: {"cell": name, "placed": counts[0], "placed_orgs": counts[1]},
         )
 
@@ -713,12 +757,16 @@ class Router:
         body = await self._operator_body(request)
         if isinstance(body, JSONResponse):
             return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
         deployment_id = _text(body, "deployment_id", needed=True)
         if set(body) != {"deployment_id"} or deployment_id is None:
             return _refused(400, "attach/enforced is a JSON object of deployment_id")
         name = request.path_params["cell"]
         return await _answered(
-            lambda: directory.attach_enforced(name, deployment_id), _attach_answer
+            lambda: directory.attach_enforced(name, deployment_id, expected=expected),
+            _attach_answer,
         )
 
     async def attach_serving(self, request: Request) -> JSONResponse:
@@ -728,6 +776,9 @@ class Router:
         body = await self._operator_body(request)
         if isinstance(body, JSONResponse):
             return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
         deployment_id = _text(body, "deployment_id", needed=True)
         nonces: Any = body.get("nonces")
         if set(body) != {"deployment_id", "nonces"} or deployment_id is None:
@@ -738,13 +789,15 @@ class Router:
         found = await _read_attaching(name)
         if isinstance(found, JSONResponse):
             return found
+        if reason := directory.control_refusal(found, expected):
+            return _refused(409, reason)
         if not found.served(deployment_id):
             if reason := directory.attach_refusal(found, deployment_id, enforced=True):
                 return _refused(409, reason)
             if refusal := await self._stores_check(found, nonces):
                 return refusal
         response = await _answered(
-            lambda: directory.attach_serving(name, deployment_id), _attach_answer
+            lambda: directory.attach_serving(name, deployment_id, expected=expected), _attach_answer
         )
         # A 503's change may have committed: this replica reads the cell's issuers and state
         # on its next request either way.
@@ -760,13 +813,18 @@ class Router:
         a cell `attaching` with no placement (`directory.remove`). The router cannot read
         the cell's Postgres: `loom cell remove` checks that a first cell's reads `open`, and
         a direct call skips that check."""
-        if refusal := self._operator(request):
-            return refusal
-        if refusal := _malformed_cell_refusal(request):
-            return refusal
+        body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        expected = _control(body)
+        if isinstance(expected, JSONResponse):
+            return expected
+        if body:
+            return _refused(400, "a removal contains only expected")
         name = request.path_params["cell"]
         response = await _answered(
-            lambda: directory.remove(name), lambda row: {"cell": row.cell, "removed": True}
+            lambda: directory.remove(name, expected=expected),
+            lambda row: {"cell": row.cell, "removed": True},
         )
         # A 503 is included: the removal may have committed (BACKEND_UNAVAILABLE).
         if response.status_code in (200, 503):
@@ -1315,6 +1373,41 @@ async def _answered[T](
     return JSONResponse(render(result))
 
 
+def _control(body: dict[str, Any], *, claim: bool = False) -> directory.Control | JSONResponse:
+    """Remove and validate the exact observed row; no caller may select a new token."""
+    value = body.pop("expected", None)
+    if not isinstance(value, dict):
+        return _refused(
+            409,
+            "cell control fencing requires upgraded control clients and every router replica",
+            code="CONTROL_UPGRADE_REQUIRED",
+        )
+    keys = set(directory.CONTROL_FIELDS) | (set() if claim else {"mutation_generation"})
+    if set(value) != keys:
+        return _refused(
+            400,
+            "expected contains the complete registration, fingerprint pair and claimed generation",
+        )
+    if type(value["is_first"]) is not bool or any(
+        not isinstance(value[name], str) or "\x00" in value[name]
+        for name in directory.CONTROL_IDENTITY
+        if name != "is_first"
+    ):
+        return _refused(400, "expected registration has invalid field types")
+    if any(
+        value[name] is not None and not isinstance(value[name], dict)
+        for name in ("current_fp", "next_fp")
+    ) or _holds_nul(value):
+        return _refused(400, "expected fingerprint pair contains JSON objects or null")
+    generation = None
+    if not claim:
+        try:
+            generation = UUID(value["mutation_generation"])
+        except (TypeError, ValueError, AttributeError):
+            return _refused(400, "expected mutation_generation is a UUID")
+    return directory.Control({name: value[name] for name in directory.CONTROL_FIELDS}, generation)
+
+
 def _limits(row: directory.Cell) -> dict[str, Any]:
     return {
         "cell": row.cell,
@@ -1344,6 +1437,8 @@ def _attach_answer(found: directory.Attaching) -> dict[str, Any]:
         "attach_started_at": started.isoformat() if started else None,
         "current_fp": row.current_fp,
         "next_fp": row.next_fp,
+        "mutation_generation": str(row.mutation_generation),
+        **{name: getattr(found, name) for name in directory._REGISTERED},
     }
 
 
@@ -1374,6 +1469,7 @@ def build_app(router: Router | None = None) -> Starlette:
                 methods=["POST"],
             ),
             Route("/cells/v1/operator/cells/{cell}", router.operator_cell, methods=["GET"]),
+            Route("/cells/v1/operator/cells/{cell}/claim", router.claim, methods=["POST"]),
             Route("/cells/v1/operator/cells/{cell}", router.remove, methods=["DELETE"]),
             Route(
                 "/cells/v1/operator/cells/{cell}/attach/begin",

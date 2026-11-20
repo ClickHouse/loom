@@ -148,9 +148,8 @@ async def _standing(org: str, subject: str, since: int, keys: tuple[str, ...] = 
     spellings = await aliases.verified_spellings(org, subject)
     if not await store.account_active(org, spellings):
         raise OwnerUnavailable()
-    for email in identity.emails:
-        if await scim.deactivated(email):
-            raise OwnerUnavailable()
+    if await scim.refuses_subject(subject, org=org, also=tuple(sorted(identity.emails))):
+        raise OwnerUnavailable()
     for at in (await revocation.cutoffs([*spellings, *keys])).values():
         if revocation.kills(at, since):
             raise OwnerUnavailable()
