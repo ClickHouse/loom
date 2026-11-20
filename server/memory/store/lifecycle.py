@@ -973,10 +973,7 @@ async def _tombstone_ch_heads(
         rows = [
             build_memory_version_row(
                 _hydrate(head),
-                status="tombstoned",
                 tombstoned_at=params["at"],
-                expires_at=None,
-                updated_at=params["at"],
                 version=version_over(int(head["version"]), int(params["clear_version"])),
             )
             for head in page

@@ -148,7 +148,16 @@ async def test_clear_keeps_a_complete_tombstone_in_version_history(
 ) -> None:
     me = minted_identity(mint_test_token, "clear-history")
     me["token"] = mint_test_token(org=me["org"], namespaces=["*"], roles=["admin"])
-    _memory(ch_client, me, "clear-me", version=100, tags=["retained"], actor="human:writer")
+    _memory(
+        ch_client,
+        me,
+        "clear-me",
+        version=100,
+        tags=["retained"],
+        actor="human:writer",
+        expires_at=naive_utc_now() + timedelta(days=1),
+        updated_at=naive_utc_now() - timedelta(hours=1),
+    )
     _memory(ch_client, me, "locked", version=100, lock_mode="read_only", locked_by="owner")
     _memory(ch_client, me, "outside", version=100, user_id="other")
     query = (
@@ -178,7 +187,7 @@ async def test_clear_keeps_a_complete_tombstone_in_version_history(
         assert original == before[0]
         assert tombstone["version"] > original["version"]
         assert tombstone["tombstoned_at"] is not None
-        changed = {"version", "tombstoned_at", "status", "updated_at", "expires_at"}
+        changed = {"version", "tombstoned_at"}
         assert {k: v for k, v in tombstone.items() if k not in changed} == {
             k: v for k, v in original.items() if k not in changed
         }
