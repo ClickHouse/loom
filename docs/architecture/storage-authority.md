@@ -65,8 +65,9 @@ authority every memory insert takes per-key Keeper fences. `memory.lock`,
 answer 503 `ADMISSION_CONTENDED` without inserting when a head has moved. Value writers
 take the same fences, so another replica cannot insert between that check and the copy.
 The comparison includes the served value and persisted metadata: clock skew can make
-two writers choose the same version. Usage totals and JSON projection formatting are
-excluded because they can differ without a version insert.
+two writers choose the same version. Derived usage fields (`recall_count`,
+`evidence_count`, `last_recalled_at`) and JSON projection formatting are excluded
+because they can differ without a version insert.
 Other copy writers fence only their insert: a write with a lower version whose row lands
 between their source read and the fence is still overtaken, and nothing reports it.
 Under Postgres the copy commits only
