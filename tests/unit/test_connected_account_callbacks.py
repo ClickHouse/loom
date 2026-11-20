@@ -21,7 +21,7 @@ from starlette.requests import Request
 from server.auth.jwt import AuthInfo, mint_token
 from server.auth.oauth_store import ClickHouseStore, token_id
 from server.clients import connected_oauth as provider_wire
-from server.core import ch
+from server.core import cell, ch
 from server.core.errors import AuthInsufficientError, ValidationError
 from server.core.secrets_at_rest import unseal
 from server.erasure.store import census
@@ -34,6 +34,7 @@ _ACCESS = "callback-private-access"
 _REFRESH = "callback-private-refresh"
 _EMAIL = "https://www.googleapis.com/auth/userinfo.email"
 _DRIVE = "https://www.googleapis.com/auth/drive.readonly"
+_SCIM_DEACTIVATED = accounts.scim.deactivated
 
 
 class _UnreadErrorBody(httpx.AsyncByteStream):
@@ -319,6 +320,139 @@ async def world(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_World]:
         external = _World(monkeypatch, http)
         yield external
         assert external.exchange_active == 0
+
+
+class _SCIMWorld(_World):
+    """Directory and SCIM rows behind the real connected-account standing check."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, http: httpx.AsyncClient) -> None:
+        super().__init__(monkeypatch, http)
+        self.contacts = ["person@example.com"]
+        self.people: dict[str, dict[str, Any]] = {}
+
+    def provision(self, email: str, *, active: bool = True, deleted: bool = False) -> None:
+        self.people[accounts.scim.user_id(email)] = {
+            "id": accounts.scim.user_id(email),
+            "email": email,
+            "active": active,
+            "deleted": deleted,
+            "work_addresses": set(),
+        }
+
+    async def query_all(self, query: str, params: Any = None, **kw: Any):
+        if "FROM loom.scim_users" in query:
+            return [self.people[uid] for uid in params["ids"] if uid in self.people]
+        if "SELECT DISTINCT" in query and "AS owner" in query:
+            assert params["org"] == "team"
+            return (
+                [{"owner": "person", "oversized": False}]
+                if params["sub"] in {"person", *self.contacts}
+                else []
+            )
+        rows = await super().query_all(query, params, **kw)
+        return [
+            dict(rows[0], namespace=f"personal-person-{index}", contact_email=email)
+            for index, email in enumerate(self.contacts)
+        ]
+
+    async def query_one(self, query: str, params: dict[str, Any]):
+        if "FROM loom.namespaces" in query and "account_count" in query:
+            assert params["org"] == "team" and params["owner"] == "person"
+            return {
+                "account_count": len(self.contacts),
+                "account_bytes": sum(len(email.encode()) for email in self.contacts),
+                "accounts": [(email, True) for email in self.contacts],
+            }
+        if "FROM loom.scim_users" in query:
+            if "missing" in params:
+                qualified: set[str] = set()
+                for uid in params["ids"]:
+                    row = self.people.get(uid)
+                    if row and row["active"] and not row["deleted"]:
+                        if row["email"] in params["witnesses"]:
+                            qualified.update(row["work_addresses"] & set(params["missing"]))
+                return {"qualified": sorted(qualified)}
+            row = self.people.get(params["id"])
+            return {"x": 1} if row is not None and not row["active"] else None
+        return await super().query_one(query, params)
+
+
+@pytest.fixture
+async def scim_world(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[_SCIMWorld]:
+    async def provider(request: httpx.Request) -> httpx.Response:
+        return await external.provider(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as http:
+        external = _SCIMWorld(monkeypatch, http)
+        monkeypatch.setattr(accounts.settings, "cell", "first")
+        monkeypatch.setattr(accounts.settings, "scim_token", "lsc_first_" + "a" * 64)
+        monkeypatch.setattr(cell, "mode", lambda: "enforced")
+        monkeypatch.setattr(cell, "deployment_id", lambda: "connected-account-standing-test")
+        monkeypatch.setattr(accounts.scim, "get_client", lambda: external)
+        monkeypatch.setattr(accounts.scim, "deactivated", _SCIM_DEACTIVATED)
+        yield external
+        assert external.exchange_active == 0
+
+
+@pytest.mark.parametrize(
+    "scenario,allowed",
+    [
+        ("missing", False),
+        ("active", True),
+        ("inactive", False),
+        ("deleted", False),
+        ("scim_off", True),
+        ("standalone", True),
+        ("pre_enforcement", True),
+        ("missing_alias", False),
+        ("inactive_alias", False),
+        ("revoked_session", False),
+        ("inactive_scim_off", False),
+        ("inactive_account", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_connected_consent_requires_the_complete_live_scim_person(
+    scim_world: _SCIMWorld, monkeypatch: pytest.MonkeyPatch, scenario: str, allowed: bool
+):
+    if scenario in {
+        "active",
+        "missing_alias",
+        "inactive_alias",
+        "revoked_session",
+        "inactive_account",
+    }:
+        scim_world.provision("person@example.com")
+    elif scenario in {"inactive", "inactive_scim_off"}:
+        scim_world.provision("person@example.com", active=False)
+    elif scenario == "deleted":
+        scim_world.provision("person@example.com", deleted=True)
+    if scenario in {"scim_off", "inactive_scim_off"}:
+        monkeypatch.setattr(accounts.settings, "scim_token", "")
+    elif scenario == "standalone":
+        monkeypatch.setattr(accounts.settings, "cell", "")
+    elif scenario == "pre_enforcement":
+        monkeypatch.setattr(cell, "mode", lambda: "recording")
+    if scenario in {"missing_alias", "inactive_alias"}:
+        scim_world.contacts.append("alias@example.com")
+        if scenario == "inactive_alias":
+            scim_world.provision("alias@example.com", active=False)
+    if scenario == "inactive_account":
+        scim_world.active = False
+    if scenario == "revoked_session":
+        scim_world.revocations["primary-session"] = None
+
+    if allowed:
+        _url, state, _binding = await accounts.start(_auth(), "gdrive")
+        pending = await accounts.pending_store.pending("connect:" + token_id(state))
+        assert pending is not None and pending["subject"] == "person"
+        assert not scim_world.account().active
+    else:
+        with pytest.raises(accounts.OwnerUnavailable):
+            await accounts.start(_auth(), "gdrive")
+        assert scim_world.rows == scim_world.keeper == {}
+    assert scim_world.directory_reads > 0
+    assert scim_world.requests == []
 
 
 @pytest.mark.asyncio

@@ -575,6 +575,7 @@ def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
     monkeypatch.setattr(worker_main.child, "beat", _beat)
     monkeypatch.setattr(worker_main, "get_supervisor", lambda: _Supervisor())
     monkeypatch.setattr(worker_main, "_start_services", _services)
+    monkeypatch.setattr(worker_main, "_enroll", AsyncMock())
     monkeypatch.setattr(boot, "start_cell_state", _cell_state)
     monkeypatch.setattr(boot, "open_storage_authority", _nothing)
     monkeypatch.setattr(boot, "close_storage_authority", _nothing)
@@ -583,7 +584,7 @@ def test_the_workers_child_reads_its_cell_rows_only_in_a_cell(
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Client())
     with pytest.raises(_Done):
         asyncio.run(worker_main._serve(0, 0))
-    assert order == (["services", "cell", "start_all"] if in_a_cell else ["services", "start_all"])
+    assert order == (["cell", "services", "start_all"] if in_a_cell else ["services", "start_all"])
 
 
 def test_the_stale_bound_leaves_room_for_three_cell_reads() -> None:

@@ -12375,6 +12375,137 @@
        "help": null,
        "metavar": null,
        "subcommands": {
+        "scim-token": {
+         "prog": "loom cell scim-token",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "action"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "action",
+           "action": "_SubParsersAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "A...",
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null,
+           "subcommands": {
+            "new": {
+             "prog": "loom cell scim-token new",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.cell:_cmd_scim_token"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "cell"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--cell"
+               ],
+               "dest": "cell",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The cell's exact LOOM_CELL name",
+               "metavar": null
+              }
+             ]
+            }
+           },
+           "aliases_of": {
+            "new": "loom cell scim-token new"
+           },
+           "choices_help": [
+            {
+             "dest": "new",
+             "help": "Print a random token for the named cell.",
+             "metavar": "new"
+            }
+           ]
+          }
+         ]
+        },
         "each": {
          "prog": "loom cell each",
          "usage": null,
@@ -13313,6 +13444,7 @@
             "ch_allow_object",
             "ch_allow_replica",
             "pg_allow_role",
+            "revoke_unprovisioned",
             "router"
            ]
           }
@@ -13472,6 +13604,21 @@
           },
           {
            "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
+           "metavar": null
+          },
+          {
+           "option_strings": [
             "--router"
            ],
            "dest": "router",
@@ -13489,6 +13636,7 @@
         }
        },
        "aliases_of": {
+        "scim-token": "loom cell scim-token",
         "each": "loom cell each",
         "automation": "loom cell automation",
         "credential": "loom cell credential",
@@ -13499,6 +13647,11 @@
         "attach": "loom cell attach"
        },
        "choices_help": [
+        {
+         "dest": "scim-token",
+         "help": "Generate a cell's SCIM token offline.",
+         "metavar": "scim-token"
+        },
         {
          "dest": "each",
          "help": "Run a supported admin command in every cell",

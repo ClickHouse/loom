@@ -77,24 +77,24 @@ async def require_admin(request: Request) -> AuthInfo | None:
     identity provider over a prod-derived `LOOM_AUTH_REQUIRED=true` does not
     lock the admin surface while every other route is open.
     """
-    return _verified_admin(request, Role.PLATFORM_ADMIN)
+    return await _verified_admin(request, Role.PLATFORM_ADMIN)
 
 
 async def require_org_admin(request: Request) -> AuthInfo | None:
     """Bearer + ORG_ADMIN gate for the endpoints that act inside the one org
     their body names; each handler pins that org to the caller's own (a
     platform admin passes for any org)."""
-    return _verified_admin(request, Role.ORG_ADMIN)
+    return await _verified_admin(request, Role.ORG_ADMIN)
 
 
-def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
+async def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
     """A per-namespace admin (a flat `admin` role, or a scoped token's
     `ns_roles`) is not deployment or org authority and never passes."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
+    info = await verify_bearer_header(request.headers.get("Authorization"))
     if not settings.auth_actually_required():
         return None
-    info = verify_bearer_header(request.headers.get("Authorization"))
     if info is None:
         raise missing_bearer()
     if info.has_ns_roles() or not info.has_role(needed):
@@ -817,7 +817,7 @@ async def admin_token_mint(
         creator = info.subject
     else:
         # Auth off: a valid bearer names the owner, in its own org; else the single user.
-        bearer = tokens.dev_bearer(request)
+        bearer = await tokens.dev_bearer(request)
         await admit_org(bearer, input.org, "mint a token for")
         creator = bearer.subject if bearer is not None else auth_off_subject()
     if input.name is None and "subject" in body:

@@ -97,7 +97,9 @@ settings:
   # ch_read_your_writes_window_s: 20.0
 
   # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
-  # client-side bound that frees the pool slot. 0 = no bound for reads. [restart]
+  # client-side bound that frees the pool slot. 0 = no general read bound. Enforced-cell
+  # SCIM decisions still have a complete 30-second ceiling, reduced by a smaller
+  # positive value. [restart]
   # ch_timeout_read_s: 30.0
 
   # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. [restart]
@@ -807,10 +809,11 @@ settings:
   # Seconds a subject's grant rows are cached for the namespace gate, which caps a
   # token's claim at the grant it holds there. The backstop: a grant change reaches
   # other processes through the per-org grant watermark (acl_watermark_poll_seconds),
-  # and this bounds one whose watermark row was never written. It also bounds how long a
-  # SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller
-  # acting for it on another process, and how long a bot created there takes to be acted
-  # for. [restart]
+  # and this bounds one whose watermark row was never written. SCIM and bot final
+  # decisions use this TTL from read start. A complete enforced-cell SCIM check has a
+  # separate 30-second ceiling, so its cross-process observation bound is the larger of
+  # this TTL and that check's budget; a smaller positive read timeout reduces the
+  # latter. [restart]
   # grant_cache_ttl_seconds: 10.0
 
   # Seconds between each process's reads of the per-org grant watermark

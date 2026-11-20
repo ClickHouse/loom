@@ -1,0 +1,74 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Loom Pipecat text memory demonstration</title>
+<canvas id="terminal" width="1280" height="720"></canvas>
+<script>
+  "use strict";
+  const canvas = document.getElementById("terminal");
+  const drawing = canvas.getContext("2d");
+  const lines = [];
+  let recorder;
+  let started;
+  let ticker;
+  let deadline;
+  let stopped = false;
+  window.captureReady = false;
+  window.captureError = false;
+  window.captureBase64 = null;
+  function paint() {
+    drawing.fillStyle = "#101820";
+    drawing.fillRect(0, 0, 1280, 720);
+    drawing.font = "24px monospace";
+    drawing.fillStyle = "#75e3c0";
+    drawing.fillText("Loom + Pipecat | actual hosted ordinary text execution", 32, 48);
+    drawing.font = "19px monospace";
+    drawing.fillStyle = "#c9d5df";
+    drawing.fillText("Live process status; synthetic memory observations appear after assertions", 32, 82);
+    drawing.fillText("Real Agent + Pipecat 1.16.0 | fake LLM/embeddings | text only, no audio", 32, 112);
+    drawing.fillText("Elapsed wall time: " + ((performance.now() - started) / 1000).toFixed(1) + " s", 32, 145);
+    drawing.fillStyle = "#ffffff";
+    lines.slice(-13).forEach((line, index) => drawing.fillText(line, 32, 195 + index * 35));
+  }
+  window.appendActualEvent = (line) => {
+    if (!stopped && typeof line === "string" && line.length <= 150) {
+      lines.push(line);
+      paint();
+    }
+  };
+  window.finishCapture = () => {
+    if (stopped) return;
+    stopped = true;
+    clearInterval(ticker);
+    clearTimeout(deadline);
+    recorder.stop();
+  };
+  window.beginCapture = () => {
+    const mimeType = "video/webm;codecs=vp8";
+    if (!canvas.captureStream || !window.MediaRecorder || !MediaRecorder.isTypeSupported(mimeType)) {
+      return "encoder-unavailable";
+    }
+    started = performance.now();
+    lines.push("TEST RUNNING: no recall or storage outcome claimed yet.");
+    paint();
+    const stream = canvas.captureStream(5);
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 300000 });
+    const chunks = [];
+    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+    recorder.onerror = () => { window.captureError = true; window.captureReady = false; };
+    recorder.onstop = async () => {
+      if (window.captureError) return;
+      stream.getTracks().forEach((track) => track.stop());
+      const data = new Uint8Array(await new Blob(chunks, { type: mimeType }).arrayBuffer());
+      let binary = "";
+      for (let offset = 0; offset < data.length; offset += 8192) {
+        binary += String.fromCharCode(...data.subarray(offset, offset + 8192));
+      }
+      window.captureBase64 = btoa(binary);
+      window.captureReady = true;
+    };
+    recorder.start(1000);
+    ticker = setInterval(paint, 100);
+    deadline = setTimeout(window.finishCapture, 60000);
+    return "recording";
+  };
+</script>

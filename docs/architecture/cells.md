@@ -355,42 +355,68 @@ require assignment and to deactivate on unassignment. Each cell keeps its SCIM u
 deactivations and tombstones exactly as a single deployment does ([SSO and
 SCIM](../operations/sso.md)); the router holds no identity.
 
-A cell in `enforced` with SCIM on requires SCIM: a person acts in the cell only while
-its SCIM holds an active row for them. The check is on the person's account, not on how
-a subject is spelled: `scim.refuses_subject(subject)` takes the subject's own email
-spellings and the contact and verified emails of the active accounts it owns, password
-accounts included, and refuses if any of them has no active row (the row whose id is
-`scim.user_id(email)`; an inactive or deleted row with that id always refuses, and an
-email with no row of its own passes only as a work address of an active row whose
-primary email is one of the subject's own spellings). A principal outside SCIM is one of
-a closed list: a bot (a subject whose `sa:<name>` before any further `:` names a
-`loom.machine_identities` row: the bot and its agents, as `check_acted_for` parses it),
-a machine or workload subject, an end user (`user:`). Any other `sa:` subject, a
-personal service account, is checked through its creator (`service_accounts.sa_creator`)
-and every subject its row's `lineage` lists, so acting for it is acting for the person
-who made it; every other subject on these paths is a person, and is refused unless it
-has an email spelling or owns an account with one. A SCIM read that fails raises
-`SignInUnavailable`, as `scim.deactivated` does, never an `OAuthError`, so a refresh
-puts its token back and no session ends on an outage. Every path that admits a person
-uses it:
+A cell in `enforced` with SCIM on admits a person only while its SCIM data
+qualifies that person's complete identity graph. `scim.refuses_subject` checks the
+primary subject, token creator, every parent and any acted-for subject together, in
+the concrete target org before grants or placement. A wildcard token supplies no
+guessed org; the concrete operation checks the complete graph again.
 
-- an SSO sign-in, before the account is found or made (JIT), with the email the identity
-  provider verified;
-- every refresh of a session (`_refresh_session`), with the verified email the grant
-  stores, or, for a grant without one, the subject's accounts;
-- an act on a person's behalf (`authz.check_acted_for`), whatever the subject's
-  spelling;
-- a gateway token's subject, checked when verified and remembered as verification's
-  other answers are;
-- the creator of a delegated token or personal service account (`authz._check_creator`),
-  cached as the acted-for check is, so a token made by a person never provisioned is
-  refused once the cell is `enforced`.
+A person's signed email and the verified email from their OIDC sign-in are positive
+ownership witnesses. In the target org, the check resolves one normalized owner from
+an active account's owner or its verified contact pair (`VERIFIED_EMAIL_SQL`). Two
+different owners refuse. An email-shaped canonical owner is both mandatory and a
+positive witness. Every contact on every active account of that owner is mandatory,
+including an unlinked password contact; that unverified contact cannot supply a
+positive witness or resolve another owner. At least one positive witness is required.
+Every mandatory address needs its own active, undeleted `scim.user_id(email)` row.
+Only a missing own row may pass as a work address of an active primary row belonging
+to this person's positive witnesses. An inactive or deleted own row always refuses.
+One person's verified email never qualifies a different root or service-account
+ancestor.
 
-SCIM on already closes password sign-in and self-signup (`oauth_login_provider=oidc`),
-and the device flow signs in through SSO, so through the same check. Principals without
-an email are outside SCIM and deprovisioned by whoever made them: bots and minted tokens
-by an operator, end-user issuers' users by the service that signs for them, workload
-trust by its rule.
+Exemptions are closed: an active registered bot and its agents, including machine or
+workload exchanges backed by that registration, and a signed end user whose issuer
+and end-user metadata were verified. A prefix, an admin role or the absence of email
+creates no exemption. An actual bearer naming another `sa:` subject uses the current
+personal service-account row: it must exist, remain unrevoked and unexpired, and have a creator. Its creator
+and every persisted lineage subject must qualify, even when grant inheritance is
+disabled. This security read bypasses the grant-inheritance metadata cache. Cycles
+refuse; a shared ancestor completed on another path is checked once. A trusted caller
+acts for an `sa:` subject only when it names an active registered bot or its agent;
+a personal row cannot prove the token's, session's or parent credentials' liveness.
+
+One decision allows at most 1,024 supplied roots, distinct subjects, examined lineage
+edges, account rows and distinct emails in each dimension. Repeated root entries
+count before deduplication, and repeated lineage edges count as examined work. Input
+and serialized query parameters each fit 65,536 bytes; account and ancestry bytes
+transferred across the decision share that bound. SQL returns overflow counts and
+bounded projections rather than accepting a truncated prefix. Unsupported sizes
+refuse before admission. The traversal costs O(S + E) for S subjects and E examined
+edges, plus the bounded account data; resolving an owner still scans that org's
+account rows.
+
+A complete cold decision has one finite 30-second deadline, reduced by a smaller
+positive `LOOM_CH_TIMEOUT_READ_S`. Setting that field to zero leaves general reads
+unbounded but does not remove the SCIM deadline. Queries use the remaining decision
+budget through the normal ClickHouse statement limits; a tighter scoped or query-class
+limit still applies. A read failure or deadline raises `SignInUnavailable`, which
+becomes retryable 503 rather than deactivation. The refresh path checks this policy
+before rotating the provider's credential and puts the same token and family back
+on an outage. Positive refusal and an unavailable read are different outcomes.
+
+Only a completed whole-graph result is memoized, in authorization's existing final
+memo. Its key includes deployment and cell identity, concrete org, exact primary
+subject, normalized verified email and canonical additional roots. No inner subject
+or ancestry cache supplies a security answer. `LOOM_GRANT_CACHE_TTL_SECONDS` is counted
+from the complete read's start, not its finish or a cache hit. Identity, account,
+link, machine and lineage writes invalidate through the existing forget hook before
+the attempt and in `finally`, so an overtaken read cannot install its stale result.
+Across processes, an already-running decision can observe a change within at most
+`max(grant_cache_ttl_seconds, decision_s)`, where `decision_s` is the finite complete
+decision budget. This is not a globally atomic identity snapshot; ordinary revocation
+checks retain their separate rules. Standalone deployments and cells without the
+required policy retain deactivation checking without installing a positive-provisioning
+permit. The global cell gate still refuses unknown or unread identity.
 
 **Break-glass.** Every cell holds a key-proof platform-admin bot
 (`loom bot create --platform-admin`), which has no email and which SCIM never revokes,
@@ -408,10 +434,14 @@ unique in the directory). A token that starts with `lsc_` names a cell and must 
 without that prefix names no cell. With `LOOM_CELL` set, a SCIM token has the form
 `lsc_<cell>_<secret>`, as `loom cell scim-token new --cell <name>` makes it (it runs
 offline): exactly three fields split on `_`, the middle one equal to `LOOM_CELL`, and a
-secret of at least 32 lowercase hex characters (128 bits).
+secret of at least 32 lowercase hex characters. The offline command draws 32 random
+bytes and prints 64 lowercase hex characters; a configured token's length alone does
+not establish its randomness.
 
-One parser beside `scim.tokens()` returns a token's cell name or nothing, and its
-callers compare that with `LOOM_CELL` and the cell's `first` row (below).
+The pure parser and configuration policy in `server.core.scim_tokens` share the token
+splitter exposed as `scim.tokens()`. Core admission and authentication use the same
+policy without a second identity query or cache. Callers compare the token's name
+with `LOOM_CELL` and the full immutable `first` tuple (below).
 `scim_settings_problem` takes both, so boot and `loom doctor` refuse through one
 function, and with `LOOM_CELL` set they refuse a third configured token (two allow a
 rotation). One function, `scim.authorized(presented)`, holds the constant-time
@@ -420,6 +450,19 @@ unset it compares against the configured tokens as a single deployment does and 
 nothing. With it set it compares against the tokens the parser admits for `LOOM_CELL`
 and the `first` row; while that row is unread it raises as `AuthUnavailable` does, so
 the routes answer 503 with `Retry-After` and the identity provider retries.
+
+The cell admission gate derives token policy before returning a cached readiness
+verdict. A late first successful identity read cannot admit an invalid configuration.
+Server and worker startup check known identity before starting writers; unknown
+identity keeps the process unready while its deployment probe remains available for
+prepare. Doctor grades policy from its own bounded state query, including both fields
+of the first tuple. Unread identity fails the configured SCIM check.
+
+Store generated tokens in the operator's secret store and configure the identity
+provider for that cell's host. To rotate, configure current and replacement tokens,
+switch the identity provider to the replacement, verify requests, then remove the old
+entry. Two configured entries are allowed per cell, including duplicate entries in
+that count. Standalone deployments retain their existing configured-token behavior.
 
 - A process refuses to boot with a SCIM token that names another cell, and `/scim/v2`
   answers 401 to one.
@@ -1117,10 +1160,28 @@ refuses on any failure, naming it:
   revocation prefix, so a person the identity provider provisions later is admitted,
   since it will never deprovision a person it does not count as assigned.
 
+The provisioning census reads active accounts, current unexpired refresh families and
+unrevoked, unexpired personal service accounts in bounded pages of 128 rows and 65,536
+bytes of projected string metadata. It uses each table's actual row key to continue, refuses an oversized
+page, and shares one finite scan budget. The same bounded person and ancestry reader
+checks every root freshly, including while the cell is recording; an authentication
+memo or a deactivation-only check cannot establish this precondition. A current refresh
+family supplies only its own stored verified email. Registered machine identities keep
+their existing closed exemption; a subject prefix or an absent creator grants nothing.
+
+With `--revoke-unprovisioned`, each accepted cutoff uses SCIM's own subject lease and
+revocation prefix. An outright revocation or a newer cutoff is retained. The command
+never creates a provisioned user, changes the operator's revocation row, or revokes a
+registered machine identity. An accepted cutoff is reported before confirmation and
+audit; a later failure leaves it in force and the census incomplete. Rerun with the same
+flag to finish. A dry run and a serving rerun never revoke.
+
 The first attach (`loom cell attach`, its procedure on
 [attaching the first cell](../operations/cell-attach.md)) turns the existing deployment
 into the first cell. It aliases nothing (an `oauth_issuer_host` on another host refuses at
-`attach/begin`), and refuses with SCIM on until per-cell SCIM ships. A run holds an
+`attach/begin`). With SCIM on, it freshly checks the complete provisioning precondition
+while still recording, before each mode-commit try, after enforcement and before serving.
+A serving rerun repeats that check without changing revocations. A run holds an
 advisory lock, `cell.ATTACH_LOCK_KEY`, on a session of its own for its life (prepare
 takes the same lock), after checking that the session is one direct
 backend that keeps the tenancy marker: a lock left on a pooler's server connection would

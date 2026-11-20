@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -103,7 +104,7 @@ def serve_probe(
     # Every served op has a latency budget; these two are not in the registry.
     monkeypatch.setitem(OP_BUDGETS_P99_MS, op.name, 10_000)
     monkeypatch.setitem(OP_BUDGETS_P99_MS, flat.name, 10_000)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     monkeypatch.setattr(http_mod, "_record_failure", lambda *a, **k: None)
     app = FastAPI()

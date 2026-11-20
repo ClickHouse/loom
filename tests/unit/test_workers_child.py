@@ -375,6 +375,7 @@ async def test_the_child_stops_its_loops_before_its_writes_drain(monkeypatch) ->
 
     monkeypatch.setattr(ch_mod, "get_client", lambda: _Ch())
     monkeypatch.setattr(worker_main, "_start_services", _start_services)
+    monkeypatch.setattr(provider_barrier, "register_process", AsyncMock())
     monkeypatch.setattr(worker_main, "get_supervisor", lambda: _Sup())
     monkeypatch.setattr(worker_main, "_drain", _drain)
     monkeypatch.setattr(provider_barrier, "retire_process", _retire)

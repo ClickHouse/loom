@@ -34,7 +34,11 @@ Every item below is a precondition attach checks, or one it cannot check and rel
 7. `LOOM_PG_DSN` points straight at Postgres, with no pooler of any mode, for the servers
    and for attach: attach refuses a session that moves between backends or loses the
    tenancy marker, and refuses a server whose heartbeat reports `marked` false.
-8. SCIM is off: attach refuses with it on.
+8. With SCIM on, its tokens belong to this cell and every active account, current
+   refresh session and personal service-account creator graph satisfies the
+   [provisioning precondition](../architecture/cells.md#scim-and-sign-in-across-cells).
+   Provision missing identities, or explicitly cut off their existing tokens with
+   `--revoke-unprovisioned`.
 9. On a ClickHouse cluster of several hosts, attach's user exists on every host, and the
    cluster has an interserver `<secret>` or a `remote_servers` user equal to attach's.
    One replica that cannot sync blocks attach (`SYSTEM SYNC REPLICA … ON CLUSTER`): an
@@ -94,6 +98,16 @@ plus the router timeout, with one extension for a process first seen booting; th
 is not charged to `--wait`. `--scan-budget` (default 7200 s) bounds each full scan, and
 step 2 must take at most half of it, since step 4 reads the same tables again.
 Each Postgres mode or trigger try reserves cleanup time inside its client deadline.
+
+With SCIM on, `--scan-budget` also bounds each complete provisioning census. It checks
+active accounts and their contacts, current refresh families with their stored verified
+email, and live personal service accounts with every creator and ancestor. It names an
+unprovisioned subject and refuses before serving. `--revoke-unprovisioned` cuts off that
+subject's existing tokens under SCIM's revocation prefix; it does not provision a user.
+Already accepted cutoffs remain if a later read, audit or subject fails. Rerun the same
+command and flag to finish. An outright revocation or a newer cutoff is never narrowed.
+`--dry-run --revoke-unprovisioned` never revokes; command participation is still recorded.
+A serving rerun only verifies.
 On interruption its owner closes the session before cancelling transaction work.
 A close that cannot complete uses transport abort and reports failure; that abort
 does not establish that server locks or an unacknowledged commit have disappeared.

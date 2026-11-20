@@ -44,7 +44,7 @@ import httpx
 from server.cli import cell as cell_cli
 from server.cli import cell_attach_beats as beats
 from server.cli import cell_attach_pg as apg
-from server.cli import cell_control, cell_scan
+from server.cli import cell_control, cell_scan, cell_scim
 from server.cli._ch import writes
 from server.cli.cell_ch import Refusal, Refused, read_topology
 from server.core import cell, cell_triggers
@@ -209,7 +209,25 @@ class Run:
             lambda: beats.read_beats(self.ch), self.judge_beats(stopped_unset), self.wait
         )
         (self.keys_fp,) = verdict.keys_fps
+        await self.scim_precondition()
         return verdict
+
+    async def scim_precondition(self) -> None:
+        if not cell_scim.required(*self.own_fp):
+            return
+        report: dict[str, Any] = {}
+        self.report["scim"] = report
+        await cell_scim.check(
+            self.ch,
+            self.lock_conn,
+            self.row,
+            self.own_fp,
+            seconds=self.args.scan_budget,
+            revoke=getattr(self.args, "revoke_unprovisioned", False),
+            dry_run=self.args.dry_run,
+            report=report,
+            log=self.log,
+        )
 
     async def stores_refusals(self) -> list[Refusal]:
         from server.core import pg_profile
@@ -414,6 +432,8 @@ class Run:
         verdict = self.judge_beats("refuse")(await beats.read_beats(self.ch))
         if verdict.refusals:
             raise Refused(verdict.refusals)
+        if not verdict.booting:
+            await self.scim_precondition()
         return verdict.booting
 
     async def commit_mode(self) -> None:
@@ -493,6 +513,7 @@ class Run:
         verdict = await beats.settle(
             _read, self.judge_beats("refuse"), floor, extend_s=instances.boot_allowance_s()
         )
+        await self.scim_precondition()
         if verdict.keys_fps != {self.begun_keys_fp}:
             raise _refused(
                 "processes",
@@ -568,6 +589,29 @@ class Run:
         async with pg.dedicated(statement_timeout_ms=_LOCK_STATEMENT_MS) as conn:
             await cell_control.paired(conn, self.row)
             state, _ = await apg.read_mode(conn)
+            own = await conn.fetchrow("SELECT current_fp, next_fp FROM loom.cell_self")
+            if own is None:
+                raise _refused("SCIM provisioning", "the accepted local pair is absent")
+            local_pair = (cell.json_object(own["current_fp"]), cell.json_object(own["next_fp"]))
+            if not cell.matches({}, local_pair[0]) or (
+                own["next_fp"] is not None and not cell.matches({}, local_pair[1])
+            ):
+                raise _refused("SCIM provisioning", "the accepted local pair is unreadable")
+            if cell_scim.required(*local_pair, self.row.get("current_fp"), self.row.get("next_fp")):
+                if not cell.matches({}, self.row.get("current_fp")):
+                    raise _refused("SCIM provisioning", "the serving directory pair is unreadable")
+                report: dict[str, Any] = {}
+                self.report["scim"] = report
+                await cell_scim.check(
+                    self.ch,
+                    conn,
+                    self.row,
+                    local_pair,
+                    seconds=self.args.scan_budget,
+                    dry_run=True,
+                    report=report,
+                    log=self.log,
+                )
         if state != "enforced":
             raise _refused(
                 "postgres cell state",
@@ -743,5 +787,10 @@ def add_attach_parser(csub: Any) -> None:
         ("--pg-allow-role", "A Postgres role that may make an org held (the servers' role)"),
     ):
         p.add_argument(flag, action="append", default=[], help=what)
+    p.add_argument(
+        "--revoke-unprovisioned",
+        action="store_true",
+        help="Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
+    )
     p.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     p.set_defaults(func=cmd_attach)

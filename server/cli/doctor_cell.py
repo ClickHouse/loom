@@ -9,8 +9,8 @@ tenancy row (`stray_org_checks`).
 
 A refusal (ClickHouse access denied, no LOOM_PG_DSN, another recorded authority or a
 Postgres of another deployment) fails the doctor's exit and reads no cell state;
-any other error is one "not read" line. None of the rest fails a doctor run used as a
-deployment gate: a defect is named, graded WARN."""
+any other error is one "not read" line. Configured SCIM policy needs a readable first
+identity and fails the run when invalid or unread. Marker and trigger defects are WARN."""
 
 from __future__ import annotations
 
@@ -66,17 +66,17 @@ async def _bounded(read: Any) -> Any:
         raise _Refused(str(e)) from None
 
 
-async def _marked_session() -> tuple[str, bool, list[Any]]:
-    """The state, whether this process's sessions keep the marker after RESET ALL, and
+async def _marked_session() -> tuple[str, tuple[bool, str] | None, bool, list[Any]]:
+    """The state and first tuple, whether sessions keep the marker after RESET ALL, and
     the triggers' defects, on one session opened as the pool's are."""
     from server.core import cell, cell_triggers, pg
 
     async with pg.dedicated(statement_timeout_ms=_STATEMENT_MS) as conn:
-        state = await cell.read_state(conn)
+        state, first = await cell.read_state_and_first(conn)
         await conn.execute("RESET ALL")  # a startup value survives it, a SET does not
         marked = await conn.fetchval("SELECT current_setting($1, true)", pg.TENANCY_MARKER)
         defects = await cell_triggers.missing(conn)
-    return state, marked == "on", defects
+    return state, first, marked == "on", defects
 
 
 async def _unmarked_session() -> bool:
@@ -175,15 +175,18 @@ def _grades(
 
 
 async def _checks(ch: Any, allowed_roles: tuple[str, ...] = ()) -> list[tuple[str, str, str]]:
+    from server.cli.doctor import _doctor_scim_token_check
+    from server.settings import settings
+
     try:
         if before := await asyncio.wait_for(_deployment_check(ch), timeout=_SESSION_S):
-            return [("cell_state", PASS, f"cell checks not run: {before}")]
-        state, marked, defects = await _bounded(_marked_session())
+            return [("cell_state", PASS, f"cell checks not run: {before}")] + _unread_scim()
+        state, first, marked, defects = await _bounded(_marked_session())
         marks_all = await _bounded(_unmarked_session())
     except _Refused as e:
-        return [("cell_deployment", FAIL, f"deployment check refused: {e}")]
+        return [("cell_deployment", FAIL, f"deployment check refused: {e}")] + _unread_scim()
     except Exception as e:  # noqa: BLE001 — an unreadable cell is named, not a failed run
-        return [("cell_state", WARN, f"not read: {_reason(e)}")]
+        return [("cell_state", WARN, f"not read: {_reason(e)}")] + _unread_scim()
     try:
         reads: list[tuple[str, str, str]] = await _bounded(_writer_reads(allowed_roles))
     except Exception as e:  # noqa: BLE001 — an unread catalog is named, not a failed run
@@ -191,7 +194,23 @@ async def _checks(ch: Any, allowed_roles: tuple[str, ...] = ()) -> list[tuple[st
             (name, WARN, f"not read: {_reason(e)}")
             for name in ("cell_tenancy_privilege", "cell_unchecked_writers")
         ]
-    return _grades(state, marked, marks_all, defects) + reads
+    return (
+        _grades(state, marked, marks_all, defects)
+        + reads
+        + [_doctor_scim_token_check(settings, first)]
+    )
+
+
+def _unread_scim() -> list[tuple[str, str, str]]:
+    from server.cli.doctor import _doctor_scim_token_check
+    from server.core.scim_tokens import tokens
+    from server.settings import settings
+
+    return (
+        [_doctor_scim_token_check(settings)]
+        if settings.cell and tokens(settings.scim_token)
+        else []
+    )
 
 
 def _reason(e: BaseException) -> str:
@@ -215,7 +234,7 @@ def cell_checks(allowed_roles: tuple[str, ...] = ()) -> list[tuple[str, str, str
             )
             return await _checks(ch, allowed_roles)
         except Exception as e:  # noqa: BLE001 — a ClickHouse that does not answer is named
-            return [("cell_state", WARN, f"not read: {_reason(e)}")]
+            return [("cell_state", WARN, f"not read: {_reason(e)}")] + _unread_scim()
         finally:
             first = sys.exception()
             try:

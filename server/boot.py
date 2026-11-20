@@ -645,6 +645,7 @@ async def start_cell_state() -> list[asyncio.Task[None]]:
     if not cell.deployment_id():
         cell.set_deployment_id(await pg_profile.deployment_id())
     await cell.refresh()
+    _require_cell_scim_settings()
     return [cell.start_refresh_loop()]
 
 
@@ -667,6 +668,7 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
         )
     # With Postgres migrations pending (LOOM_BOOT_MIGRATE off) the state tables may not
     # exist yet: the process boots, gated and unready until a read lands.
+    _require_cell_scim_settings()
     loops = [cell.start_refresh_loop()]
     if settings.cell:
         from server.core import cell_router
@@ -674,6 +676,19 @@ async def start_cell_gate() -> list[asyncio.Task[None]]:
         # What the heartbeat's `router` key reports, and what a new org's recording reads.
         loops.append(cell_router.start_reader())
     return loops
+
+
+def _require_cell_scim_settings() -> None:
+    from server.auth.scim_routes import require_scim_settings
+    from server.core import cell
+
+    require_scim_settings(
+        settings.scim_token,
+        settings.oauth_login_provider,
+        settings.auth_actually_required(),
+        cell_name=settings.cell,
+        first=cell.first_identity(),
+    )
 
 
 async def ensure_default_namespace() -> None:

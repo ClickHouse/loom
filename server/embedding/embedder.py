@@ -115,11 +115,24 @@ def get_embedder() -> Embedder:
     return _cached
 
 
-def _served(name: str) -> Embedder:
+def served_model_label(name: str) -> str:
+    """The configured stored label, without constructing a provider or key fallback."""
     provider = provider_for(name)
     if provider in ("prefix", "alias"):
         # Labels over the served model, never the served model itself.
         raise ValueError(f"unknown embedding model: {name!r}")
+    if provider == "fake":
+        from server.embedding.fake import fake_model_name
+
+        return fake_model_name(settings.embedding_dim)
+    if provider == "local" and not (name == "local" or name.startswith("local:")):
+        return "local"
+    return name
+
+
+def _served(name: str) -> Embedder:
+    name = served_model_label(name)
+    provider = provider_for(name)
     if _key_missing(provider):
         logging.getLogger(__name__).error(
             "No real embedder configured. LOOM_EMBEDDING_MODEL=%s but %s is not set — "
@@ -140,9 +153,6 @@ def _served(name: str) -> Embedder:
         from server.embedding.fake import FakeNGramEmbedder
 
         return FakeNGramEmbedder(dim=settings.embedding_dim)
-    if provider == "local" and not (name == "local" or name.startswith("local:")):
-        # LOOM_EMBEDDING_PROVIDER=local over a non-local model name.
-        name = "local"
     return _build(name, provider)
 
 

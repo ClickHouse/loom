@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -119,7 +120,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             raise TokenError("bad token")
         return _principal()
 
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     app = FastAPI()
     app.include_router(http_mod.build_router())
     client = TestClient(app)

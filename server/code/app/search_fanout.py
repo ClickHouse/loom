@@ -260,6 +260,24 @@ def _disclosure(
     }
 
 
+def _partial_disclosure(
+    answered: Answered, namespaces: list[str], dropped: list[str]
+) -> dict[str, Any]:
+    incomplete = [
+        (ns, answered[ns][0])
+        for ns in namespaces
+        if ns in answered and (answered[ns][0].partial or answered[ns][0].epistemic)
+    ]
+    reasons = [f"{ns}: {out.partial_reason or 'retrieval incomplete'}" for ns, out in incomplete]
+    if dropped:
+        reasons.append("fan-out deadline: " + ", ".join(dropped))
+    return {
+        "partial": bool(incomplete or dropped),
+        "partial_reason": "; ".join(reasons),
+        "epistemic": "partial" if incomplete or dropped else "",
+    }
+
+
 def assemble(
     inp: CodeSearchInput,
     namespaces: list[str],
@@ -322,6 +340,7 @@ def assemble(
         constrained=lead.constrained if lead is not None else False,
         matched_files=lead.matched_files if lead is not None else 0,
         fanout=_disclosure(answered, namespaces, dropped, timeout_ms=timeout_ms),
+        **_partial_disclosure(answered, namespaces, dropped),
         # A namespace still embedding says so, by name
         note="; ".join(
             f"{ns}: {answered[ns][0].note}"

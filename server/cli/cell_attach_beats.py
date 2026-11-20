@@ -192,10 +192,6 @@ def final_refusals(verdict: Verdict) -> list[Refusal]:
                 "finish the root-secret rollout first",
             )
         )
-    if verdict.scim:
-        out.append(
-            Refusal("processes", "SCIM is on: attach with SCIM on needs the per-cell SCIM release")
-        )
     return out
 
 

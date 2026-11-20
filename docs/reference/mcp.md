@@ -55,11 +55,11 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
-| `open`               | nothing; an invalid bearer is ignored (trusted networks only) |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
+| `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
 `LOOM_ALLOW_INSECURE=1`. A deployment with auth off (`LOOM_AUTH_REQUIRED=false`)
@@ -75,6 +75,10 @@ is an ordinary Loom JWT; see [Tokens and grants](../guides/tokens-and-grants.md)
 The bearer is read from the `Authorization` header only. A token passed as `?token=` on
 the `/mcp` URL is ignored and the request is unauthenticated: request lines land in proxy
 and access logs, where a URL token would be written in the clear.
+
+A bearer that verifies but fails required cell provisioning is refused in every mode;
+an unavailable provisioning read answers retryable 503. Neither becomes an anonymous
+caller. See [cell provisioning](../architecture/cells.md#scim-and-sign-in-across-cells).
 
 ### OAuth
 

@@ -65,6 +65,14 @@ def new_credential(prefix: str = "lcr_") -> tuple[str, str]:
     return credential, hashlib.sha256(credential.encode()).hexdigest()
 
 
+def _cmd_scim_token(args: argparse.Namespace) -> int:
+    if not NAME.fullmatch(args.cell):
+        print("loom cell scim-token: cell must match [a-z0-9-]{1,32}", file=sys.stderr)
+        return 2
+    print(f"lsc_{args.cell}_{secrets.token_hex(32)}")
+    return 0
+
+
 def parse_router(args: argparse.Namespace) -> httpx.URL | str:
     """The router's URL, or why it is not one."""
     url = args.router or settings.cell_router_url
@@ -423,6 +431,12 @@ def _cmd_which(args: argparse.Namespace) -> int:
 def _add_cell_parser(sub: Any) -> None:
     p = sub.add_parser("cell", help="Operate a deployment's cells through the router's directory.")
     csub = p.add_subparsers(dest="cell_cmd", required=True)
+
+    scim = csub.add_parser("scim-token", help="Generate a cell's SCIM token offline.")
+    scim_sub = scim.add_subparsers(dest="action", required=True)
+    scim_new = scim_sub.add_parser("new", help="Print a random token for the named cell.")
+    scim_new.add_argument("--cell", required=True, help="The cell's exact LOOM_CELL name")
+    scim_new.set_defaults(func=_cmd_scim_token)
 
     from server.cli.cell_automation import add_automation_parser
     from server.cli.cell_each_run import add_each_parser

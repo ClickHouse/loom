@@ -434,9 +434,18 @@
   "options: -h, --help show this help message and exit"
  ],
  "loom cell": [
-  "usage: loom cell [-h] {each,automation,credential,limit,which,remove,prepare,attach} ...",
-  "positional arguments: {each,automation,credential,limit,which,remove,prepare,attach} each Run a supported admin command in every cell automation Prove and register distinct automation and recovery bot keys. credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed). remove Remove the directory row of a cell attaching with no placement. prepare Register this cell in the router's directory and write its rows. attach Attach the prepared first cell: place its orgs, serve.",
+  "usage: loom cell [-h] {scim-token,each,automation,credential,limit,which,remove,prepare,attach} ...",
+  "positional arguments: {scim-token,each,automation,credential,limit,which,remove,prepare,attach} scim-token Generate a cell's SCIM token offline. each Run a supported admin command in every cell automation Prove and register distinct automation and recovery bot keys. credential Make a router credential, or rotate a cell's. limit Close, reopen or bound a cell to new orgs. which Print the lookup's cell and host for an org (the first cell if not placed). remove Remove the directory row of a cell attaching with no placement. prepare Register this cell in the router's directory and write its rows. attach Attach the prepared first cell: place its orgs, serve.",
   "options: -h, --help show this help message and exit"
+ ],
+ "loom cell scim-token": [
+  "usage: loom cell scim-token [-h] {new} ...",
+  "positional arguments: {new} new Print a random token for the named cell.",
+  "options: -h, --help show this help message and exit"
+ ],
+ "loom cell scim-token new": [
+  "usage: loom cell scim-token new [-h] --cell CELL",
+  "options: -h, --help show this help message and exit --cell CELL The cell's exact LOOM_CELL name"
  ],
  "loom cell each": [
   "usage: loom cell each [-h] --router ROUTER --credentials CREDENTIALS (--state STATE | --resume RESUME) ...",
@@ -469,8 +478,8 @@
   "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --host HOST The host the cell serves its orgs at --credential-sha256 SHA256 The sha256 of the cell's router credential (`loom cell credential new`) --probe-url PROBE_URL A later cell's probe listener address (not the first's) --wait WAIT Seconds to retry a busy or unreachable probe listener --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom cell attach": [
-  "usage: loom cell attach [-h] --cell CELL [--wait WAIT] [--scan-budget SCAN_BUDGET] [--dry-run] [--ch-allow-user CH_ALLOW_USER] [--ch-allow-user-directory CH_ALLOW_USER_DIRECTORY] [--ch-allow-object CH_ALLOW_OBJECT] [--ch-allow-replica CH_ALLOW_REPLICA] [--pg-allow-role PG_ALLOW_ROLE] [--router ROUTER]",
-  "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --wait WAIT Seconds of wall time the waits share; 0 runs one try of each, with no retry --scan-budget SCAN_BUDGET Seconds one full org scan may take --dry-run Run the refusals and the scan and print what would be placed; keep cell state, tenancy triggers and placements unchanged. Command participation is still recorded (the router's own begin refusals do not run) --ch-allow-user CH_ALLOW_USER A ClickHouse user that may write the configured databases --ch-allow-user-directory CH_ALLOW_USER_DIRECTORY A ClickHouse user directory the check cannot read --ch-allow-object CH_ALLOW_OBJECT A ClickHouse object (db.name) that writes the databases --ch-allow-replica CH_ALLOW_REPLICA A replica outside the cluster (db.table:replica) --pg-allow-role PG_ALLOW_ROLE A Postgres role that may make an org held (the servers' role) --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
+  "usage: loom cell attach [-h] --cell CELL [--wait WAIT] [--scan-budget SCAN_BUDGET] [--dry-run] [--ch-allow-user CH_ALLOW_USER] [--ch-allow-user-directory CH_ALLOW_USER_DIRECTORY] [--ch-allow-object CH_ALLOW_OBJECT] [--ch-allow-replica CH_ALLOW_REPLICA] [--pg-allow-role PG_ALLOW_ROLE] [--revoke-unprovisioned] [--router ROUTER]",
+  "options: -h, --help show this help message and exit --cell CELL This cell's name (LOOM_CELL) --wait WAIT Seconds of wall time the waits share; 0 runs one try of each, with no retry --scan-budget SCAN_BUDGET Seconds one full org scan may take --dry-run Run the refusals and the scan and print what would be placed; keep cell state, tenancy triggers and placements unchanged. Command participation is still recorded (the router's own begin refusals do not run) --ch-allow-user CH_ALLOW_USER A ClickHouse user that may write the configured databases --ch-allow-user-directory CH_ALLOW_USER_DIRECTORY A ClickHouse user directory the check cannot read --ch-allow-object CH_ALLOW_OBJECT A ClickHouse object (db.name) that writes the databases --ch-allow-replica CH_ALLOW_REPLICA A replica outside the cluster (db.table:replica) --pg-allow-role PG_ALLOW_ROLE A Postgres role that may make an org held (the servers' role) --revoke-unprovisioned Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes --router ROUTER The router's URL (default: LOOM_CELL_ROUTER_URL)"
  ],
  "loom tracker-probe": [
   "usage: loom tracker-probe [-h]",

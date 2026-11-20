@@ -254,7 +254,7 @@ HTTP 403, raised as `server.core.errors.AuthInsufficientError`. A public 403 tha
 
 #### `AUTH_INVALID`
 
-Raised in `server/auth/bearer.py`, `server/auth/delegation.py`, `server/auth/login.py`. Category `auth`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+Raised in `server/auth/bearer.py`, `server/auth/delegation.py`, `server/auth/login.py`, `server/transport/tenancy_gate.py`. Category `auth`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `AUTH_UNAVAILABLE`
 

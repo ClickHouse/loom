@@ -275,6 +275,9 @@ class AuthSettings(BaseModel):
     identity_provider_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
     # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
+    # With LOOM_CELL set, at most two entries, named for that cell; only the observed first
+    # cell also accepts unnamed tokens. Generate one with `loom cell scim-token new --cell NAME`.
+    # Enforced cells also require active provisioning for every nonexempt person.
     scim_token: str = ""
 
     @property
@@ -424,9 +427,10 @@ class AuthSettings(BaseModel):
     # caps a token's claim at the grant it holds there. The backstop: a grant
     # change reaches other processes through the per-org grant watermark
     # (acl_watermark_poll_seconds), and this bounds one whose watermark row was
-    # never written. It also bounds how long a SCIM deactivation of an email, or a
-    # bot disable, takes to stop a trusted caller acting for it on another process,
-    # and how long a bot created there takes to be acted for.
+    # never written. SCIM and bot final decisions use this TTL from read start.
+    # A complete enforced-cell SCIM check has a separate 30-second ceiling, so
+    # its cross-process observation bound is the larger of this TTL and that
+    # check's budget; a smaller positive read timeout reduces the latter.
     grant_cache_ttl_seconds: float = 10.0
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other
@@ -707,7 +711,9 @@ class ClickHouseSettings(BaseModel):
     # empty-pool retry remains the backstop).
     ch_read_your_writes_window_s: float = 20.0
     # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
-    # client-side bound that frees the pool slot. 0 = no bound for reads.
+    # client-side bound that frees the pool slot. 0 = no general read bound.
+    # Enforced-cell SCIM decisions still have a complete 30-second ceiling,
+    # reduced by a smaller positive value.
     ch_timeout_read_s: float = 30.0
     # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
     ch_timeout_write_s: float = 60.0
