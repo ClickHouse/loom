@@ -157,6 +157,52 @@ def capture_failure(state: dict, error: Exception) -> dict:
     }
 
 
+def driver_log_diagnostic(state: dict) -> dict:
+    # Only fixed markers escape the private log; no match does not mean healthy.
+    unavailable = {"state": "unavailable", "prefix_omitted": False, "markers": []}
+    log = state.get("driver_log")
+    if log is None:
+        return unavailable
+    try:
+        fd = log.fileno()
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+        ):
+            return unavailable
+        raw = os.pread(fd, 16384, max(0, info.st_size - 16384))
+        if os.fstat(fd).st_size != info.st_size or len(raw) != min(info.st_size, 16384):
+            return unavailable
+    except (OSError, ValueError):
+        return unavailable
+    markers = {
+        "crashpad_database_required": (b"crashpad_handler: --database is required",),
+        "sandbox_refusal": (b"No usable sandbox!",),
+        "devtools_port_missing": (
+            b"DevToolsActivePort file doesn't exist",
+            b"Could not read in devtools port number",
+        ),
+        "profile_write_failure": (
+            b"cannot create default profile directory",
+            b"failed to write prefs file",
+            b"failed to write first run file",
+        ),
+        "chrome_launch_failure": (b"Failed to create Chrome process.",),
+        "chrome_startup_wait": (b"Timed out while waiting for Chrome process.",),
+    }
+    seen = [
+        name for name, messages in markers.items() if any(message in raw for message in messages)
+    ]
+    return {
+        "state": "observed" if seen else "no_known_marker",
+        "prefix_omitted": info.st_size > 16384,
+        "markers": seen,
+    }
+
+
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -553,14 +599,14 @@ def start_capture(state: dict, private: Path) -> None:
         name: os.environ[name] for name in ("PATH", "LANG", "LC_ALL") if name in os.environ
     }
     log = os.fdopen(
-        os.open(private / "driver.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
+        os.open(private / "driver.log", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600), "w+b"
     )
     state["driver_log"] = log
     state["capture_stage"] = 3  # driver launch
     start_owned(
         state,
         "driver",
-        [driver_binary, "--port=" + str(port)],
+        [driver_binary, "--port=" + str(port), "--enable-chrome-logs"],
         env=browser_env,
         stdout=log,
         stderr=subprocess.STDOUT,
@@ -891,6 +937,7 @@ def main() -> int:
             if not cleanup_failed
             else "unavailable"
         )
+        state["driver_log_observation"] = driver_log_diagnostic(state)
         try:
             if state.get("probe"):
                 state["probe"].stdout.close()
@@ -923,6 +970,7 @@ def main() -> int:
                     "video",
                     "capture_failure",
                     "post_cleanup_children",
+                    "driver_log_observation",
                 )
             }
             summary["intended_public_artifact_synthetic_content_only"] = True

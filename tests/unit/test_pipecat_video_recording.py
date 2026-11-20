@@ -17,6 +17,134 @@ import pytest
 RECORDER = Path(__file__).resolve().parents[2] / "dev/pipecat_demo/record_pipecat_video.py"
 
 
+def test_driver_log_exports_only_fixed_markers(recorder, tmp_path):
+    module, _ = recorder
+    with (tmp_path / "private-driver.log").open("w+b") as log:
+        log.write(
+            b"private-token private-host /private/path\n"
+            b"chrome_crashpad_handler: --database is required\n"
+            b"DevToolsActivePort file doesn't exist\n"
+        )
+        log.flush()
+        before = log.tell()
+        result = module.driver_log_diagnostic({"driver_log": log})
+        assert result == {
+            "state": "observed",
+            "prefix_omitted": False,
+            "markers": ["crashpad_database_required", "devtools_port_missing"],
+        }
+        assert log.tell() == before
+    assert "private" not in json.dumps(result)
+
+
+def test_driver_log_observes_only_bounded_tail(recorder, tmp_path):
+    module, _ = recorder
+    with (tmp_path / "private-driver.log").open("w+b") as log:
+        log.write(b"No usable sandbox!\n" + b"x" * 16384)
+        log.flush()
+        with mock.patch.object(module.os, "pread", wraps=os.pread) as read:
+            result = module.driver_log_diagnostic({"driver_log": log})
+        assert result == {"state": "no_known_marker", "prefix_omitted": True, "markers": []}
+        read.assert_called_once_with(log.fileno(), 16384, 19)
+
+
+@pytest.mark.parametrize("failure", ["missing", "closed", "read", "mode", "uid"])
+def test_driver_log_unverifiable_handle_is_unavailable(recorder, tmp_path, failure):
+    module, _ = recorder
+    with (tmp_path / "private-driver.log").open("w+b") as log:
+        state = {} if failure == "missing" else {"driver_log": log}
+        if failure == "closed":
+            log.close()
+        info = mock.Mock(st_mode=0o100600, st_uid=os.getuid(), st_size=0, st_nlink=1)
+        if failure == "mode":
+            info.st_mode = 0o040600
+        if failure == "uid":
+            info.st_uid += 1
+        with (
+            mock.patch.object(module.os, "fstat", return_value=info),
+            mock.patch.object(module.os, "pread", side_effect=OSError("private details")),
+        ):
+            assert module.driver_log_diagnostic(state) == {
+                "state": "unavailable",
+                "prefix_omitted": False,
+                "markers": [],
+            }
+
+
+@pytest.mark.parametrize(
+    ("message", "marker"),
+    [
+        (b"No usable sandbox!", "sandbox_refusal"),
+        (b"cannot create default profile directory", "profile_write_failure"),
+        (b"failed to write prefs file", "profile_write_failure"),
+        (b"failed to write first run file", "profile_write_failure"),
+        (b"Failed to create Chrome process.", "chrome_launch_failure"),
+        (b"Timed out while waiting for Chrome process.", "chrome_startup_wait"),
+        (b"Could not read in devtools port number", "devtools_port_missing"),
+    ],
+)
+def test_driver_log_recognizes_fixed_primary_source_markers(recorder, tmp_path, message, marker):
+    module, _ = recorder
+    with (tmp_path / "private-driver.log").open("w+b") as log:
+        log.write(message + b" private-token arbitrary-path")
+        log.flush()
+        assert module.driver_log_diagnostic({"driver_log": log}) == {
+            "state": "observed",
+            "prefix_omitted": False,
+            "markers": [marker],
+        }
+
+
+def test_driver_log_changing_size_refuses_observation(recorder, tmp_path):
+    module, _ = recorder
+    with (tmp_path / "private-driver.log").open("w+b") as log:
+        initial = os.fstat(log.fileno())
+        changed = mock.Mock(st_size=initial.st_size + 1)
+        with mock.patch.object(module.os, "fstat", side_effect=[initial, changed]):
+            assert module.driver_log_diagnostic({"driver_log": log}) == {
+                "state": "unavailable",
+                "prefix_omitted": False,
+                "markers": [],
+            }
+
+
+def test_driver_log_observation_follows_cleanup_and_preserves_failure(recorder):
+    module, _ = recorder
+    events = []
+    log = mock.Mock()
+    log.close.side_effect = lambda: events.append("close")
+
+    def capture(state, _private):
+        state["driver_log"] = log
+        raise TimeoutError("private setup details")
+
+    def native(_state):
+        events.append("native")
+        return 0
+
+    def observe(state):
+        assert events == ["native", "stop", "stop", "stop", "stop"]
+        assert state["capture_failure"]["io"]["kind"] == "timeout"
+        events.append("observe")
+        return {"state": "no_known_marker", "prefix_omitted": False, "markers": []}
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=capture),
+        mock.patch.object(module, "run_native", side_effect=native),
+        mock.patch.object(module, "stop_owned", side_effect=lambda _: events.append("stop")),
+        mock.patch.object(module, "post_cleanup_children", return_value="empty"),
+        mock.patch.object(module, "driver_log_diagnostic", side_effect=observe),
+    ):
+        assert module.main() == 0
+    assert events[-2:] == ["observe", "close"]
+    summary = json.loads(
+        (Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json").read_text()
+    )
+    assert summary["reason"] == "capture_setup_unqualified"
+    assert summary["capture_failure"]["io"]["kind"] == "timeout"
+    assert summary["driver_log_observation"]["state"] == "no_known_marker"
+
+
 @pytest.fixture
 def recorder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     spec = importlib.util.spec_from_file_location("pipecat_video_recorder", RECORDER)
