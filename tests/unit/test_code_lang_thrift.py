@@ -111,14 +111,10 @@ def _uses_type(path: str, src: bytes) -> set[tuple[str, str]]:
 
 def test_fields_without_a_numeric_id_record_their_types() -> None:
     # the IDL grammar makes `FieldID ':'` optional
-    src = b"struct User { 1: string id }
-struct Envelope { optional User user }
-"
-    assert (2, "User", "field_type") in th.parse_thrift("idl/e.thrift", src).sites
+    src = b"struct User { 1: string id }\nstruct Envelope { optional User user }\n"
+    assert (2, "User", "field_type") in th.thrift_units("idl/e.thrift", src.decode()).sites
     assert ("Envelope", "User") in _uses_type("idl/e.thrift", src)
-    with_id = b"struct User { 1: string id }
-struct Envelope { 1: optional User user }
-"
+    with_id = b"struct User { 1: string id }\nstruct Envelope { 1: optional User user }\n"
     assert ("Envelope", "User") in _uses_type("idl/e.thrift", with_id)
 
 
@@ -136,7 +132,7 @@ service Lookup {
   Mixed find(Id id, 2: Tag tag) throws (Missing missing)
 }
 """
-    sites = th.parse_thrift("idl/l.thrift", src).sites
+    sites = th.thrift_units("idl/l.thrift", src.decode()).sites
     assert {
         (5, "Id", "field_type"),
         (6, "Tag", "field_type"),
