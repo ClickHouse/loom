@@ -6420,6 +6420,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # One JSONExtract query over loom.memory FINAL; budget covers large group-by
     # cardinality.
     "memory.aggregate": 250,
+    # Fresh episodic rows: one Postgres commit, publication and the hash-only audit.
+    "memory.append_batch": 300,
     "memory.apply": 3000,
     # Retrieval (memory.search's own budget) plus at most one LLM synthesis
     # call; a retrieval_only / abstained call pays no LLM latency.
@@ -6740,6 +6742,7 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     # "rewrite": deduplication dropped the saved turn, + the rewritten row's wait.
     "conversation.save_message": {"rewrite": 350},
     "memory.bulk_get": {"audited": 130},
+    "memory.append_batch": {"webhook": 350},
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
     "memory.delete_version": {"webhook": 130},

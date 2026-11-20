@@ -119,6 +119,10 @@ class LoomSession:
     TypeScript sessions have a separate history because their item formats differ. The mapping is in
     ``docs/features/integrations/frameworks.md`` (OpenAI Agents SDK).
 
+    Additions require a server serving ``memory.append_batch`` on the Postgres
+    memory authority. Each nonempty addition is one batch of at most 1,000 items;
+    an unsupported server refuses instead of writing part of the history.
+
     Bind the application's existing protection family before construction. The
     session retains constructor and callback contributors across client rebinding;
     native user/session ids only route history. Native reads and additions are
@@ -205,20 +209,26 @@ class LoomSession:
     async def add_items(self, items: list[TResponseInputItem]) -> None:
         global _last_stamp
         with self._protection.automatic(self._agent.transport.session_protection):
-            for item in items:
+            if not items:
+                return
+            if len(items) > 1000:
+                raise ValueError("A session addition takes at most 1,000 items")
+            # Encode the entire batch before dispatch: a malformed later item writes nothing.
+            values = [json.dumps(item) for item in items]
+            if not (await self._agent.capabilities()).has("memory.append_batch"):
+                raise LoomError("Session additions require memory.append_batch on the server")
+            entries = []
+            for value in values:
                 # The clock or one past this process's last stamp, never less: keys keep order.
                 _last_stamp = max(time.time_ns(), _last_stamp + 1)
-                # One memory.set per item: a batch folds a value identical to a live row.
-                await self._agent.call(
-                    "memory.set",
+                entries.append(
                     {
                         "memory_key": f"{self._prefix}{_last_stamp:020d}-{secrets.token_hex(4)}",
-                        "value": json.dumps(item),
-                        "memory_type": "episodic",
-                    },
-                    **self._scope(),
+                        "value": value,
+                    }
                 )
-                require_automatic_allowed(self._agent.transport.session_protection)
+            await self._agent.call("memory.append_batch", {"entries": entries}, **self._scope())
+            require_automatic_allowed(self._agent.transport.session_protection)
 
     async def pop_item(self) -> TResponseInputItem | None:
         with self._protection.observing(self._agent.transport.session_protection):

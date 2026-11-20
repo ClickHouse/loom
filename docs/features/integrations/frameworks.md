@@ -301,13 +301,30 @@ result = await Runner.run(assistant, "Book my usual seat to Lisbon", session=ses
 | `Session`       | Loom                                                                                                                                                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `get_items`     | `memory.list` of the session's items, sorted by writer-generated key; `limit` (or `session_settings.limit`) keeps the latest after scanning the history; an item the list cuts at 2,048 characters, or sends without a value, is read whole with `memory.get` |
-| `add_items`     | one `memory.set` per item, an `episodic` memory under `<key_prefix>/<nanoseconds>-<random>`, the item's JSON its value                                                                                                                                        |
+| `add_items`     | Python: one `memory.append_batch` per call, each item an `episodic` row under `<key_prefix>/<nanoseconds>-<random>` with the item's JSON as its value; TypeScript: one `memory.set` per item                                                                                                                                        |
 | `pop_item`      | the latest item, read as `get_items(limit=1)` reads it, deleted with `memory.delete` and returned                                                                                                                                                             |
 | `clear_session` | `memory.delete` of every item of the session                                                                                                                                                                                                                  |
 
+Python additions require a server advertising
+[`memory.append_batch`](../../reference/operations.md#memoryappend_batch) and using the
+Postgres memory authority. A nonempty call encodes every item before sending one request
+of at most 1,000 items. Equal values remain distinct occurrences. A refused entry or an
+existing key refuses the whole batch before any history is appended. An empty call sends
+nothing. Discovery failures, an older replica's missing operation and storage refusals
+propagate without a point-write or bulk-write fallback. Existing history remains readable
+on older servers. This changes the server requirement for Python additions; the supported
+OpenAI Agents SDK dependency range is unchanged.
+
+A committed batch whose publication is pending reports `PUBLICATION_PENDING` with
+`committed=true`; it is not a rollback. Preserve the original request's idempotency key
+when resolving an uncertain outcome. Do not retry as a fresh addition or delete earlier
+items to compensate. These append guarantees do not make concurrent history paging,
+`pop_item` or `clear_session` atomic.
+
 An `episodic` memory is not embedded, so an item is never merged with or judged against
-another row, and a repeated item stays two items (one `memory.set` per item, bypassing SDK
-coalescing: a batch would fold a value identical to a live row). A read fails if an item
+another row. Repeated values remain separate items in the Python batch. TypeScript uses
+separate point writes and can leave earlier items stored when a later write fails.
+A read fails if an item
 disappears before its full value can be fetched. Items are stored under a Loom session derived from
 the user and the session id (`oai-py-` and a digest of the pair in Python, `oai-ts-`
 in TypeScript). Keys follow writer clocks; independent writers do not share a server

@@ -253,6 +253,7 @@ def catalog(
 # "no op reachable" plus look-alikes and guess: a help call, a grep of the
 # source, a wrong argument name.
 _INSTEAD: dict[str, str] = {
+    "memory.append_batch": "a native session client appends its history; nothing to call",
     "memory.bulk_set": "call memory.set once per fact; a batch saves no round trip here",
     "memory.bulk_get": "call memory.get per key, or memory.list with a key prefix",
     "memory.keys": "call memory.list, which pages the namespace",
