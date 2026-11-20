@@ -40,7 +40,6 @@ import contextlib
 import functools
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import re
@@ -1147,24 +1146,6 @@ def _is_operator_hash(sha: str) -> bool:
     return hmac.compare_digest(sha, settings.router_operator_sha256)
 
 
-def _cell_address(value: str) -> str | None:
-    """A cell's probe or upstream address in the shape the forward's upstreams take
-    (`http(s)://host[:port]`, `routing.usable_upstream`), written one way however it is
-    spelled (host in lower case, IDNA-encoded, an IPv6 address compressed; no default
-    port and no trailing `/`; a fully qualified name keeps its final dot, as the forward
-    resolves it), so replicas that spell one address differently agree on it; the router
-    appends the path."""
-    if not routing.usable_upstream(value):
-        return None
-    u = httpx.URL(value)
-    # httpx lower-cases a name; an IPv6 address is compressed (lower-cased) below.
-    host = u.raw_host.decode("ascii")
-    if ":" in host:  # an IPv6 address, which httpx gives without its brackets
-        host = f"[{ipaddress.ip_address(host).compressed}]"
-    default = {"http": 80, "https": 443}[u.scheme]
-    return f"{u.scheme}://{host}" + ("" if u.port in (None, default) else f":{u.port}")
-
-
 def _registration(
     cell: str, body: Any
 ) -> tuple[directory.Registration, dict[str, str | None]] | JSONResponse:
@@ -1217,7 +1198,7 @@ def _registration(
         # A cell's own settings refuse these (LOOM_DOCUMENT_S3_PREFIX), so no listener
         # could echo them back.
         return _refused(400, "a bucket's prefix is named, with no leading or trailing /")
-    probe_address = _cell_address(probe) if probe else ""
+    probe_address = routing.cell_address(probe) if probe else ""
     if probe_address is None:
         return _refused(400, "probe_url, when given, is http(s)://host[:port] with a valid host")
     # What needs no configuration is judged above; what depends on the first cell, below.
@@ -1236,7 +1217,7 @@ def _registration(
                 400, "the first cell is probed at the router's own address: no probe_url"
             )
         # The router's own configuration, never prepare's: the deployment it fronts.
-        address = _cell_address(settings.router_upstream_probe_url) or ""
+        address = routing.cell_address(settings.router_upstream_probe_url) or ""
         if not address:
             return _refused(
                 409,
@@ -1245,7 +1226,7 @@ def _registration(
             )
         # The upstream may be '': only a new row copies it (the directory refuses one
         # without it), and a rerun probes and answers without it.
-        upstream = _cell_address(settings.router_upstream_url) or ""
+        upstream = routing.cell_address(settings.router_upstream_url) or ""
     else:
         if not probe_address:
             return _refused(400, "a later cell names its probe_url")

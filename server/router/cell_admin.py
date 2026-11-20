@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from server.core.cell import normalise_host
+from server.router import fingerprints, routing
 
 MAX_CELLS = 4096  # not a setting: coordinator and directory share one finite fleet protocol
 MAX_CENSUS_BYTES = 4 * 1024 * 1024  # not a setting: the client refuses larger census documents
@@ -106,10 +107,49 @@ def selected_record(raw: Any) -> dict[str, Any]:
     return row
 
 
-def target(row: Any) -> dict[str, Any]:
+def provisioning_refusal(row: Any) -> str:
+    """Permit a complete prepared later registration, without beginning attach."""
+    if row.get("mode") != "enforced":
+        return "automation provisioning requires enforced mode"
+    if row.get("state") == "serving":
+        return ""
+    if (
+        row.get("state") != "attaching"
+        or row.get("is_first") is not False
+        or "attach_started_at" not in row
+        or row["attach_started_at"] is not None
+        or type(row.get("placed_orgs")) is not int
+        or row["placed_orgs"] != 0
+    ):
+        return "automation provisioning requires a serving or prepared later cell"
+    try:
+        host = _text(row["host"], 512)
+        _text(row["cell"], 32)
+        _text(row["deployment_id"], 256)
+        for name in ("upstream_url", "probe_url"):
+            value = _text(row[name], 2048)
+            if routing.cell_address(value) != value:
+                return "prepared cell addresses are incomplete"
+        if normalise_host(host) != host or row["upstream_url"] == row["probe_url"]:
+            return "prepared cell addresses are incomplete"
+        if not fingerprints.readable(row["current_fp"]):
+            return "prepared cell fingerprint is unreadable"
+        return fingerprints.registration_pair_refusal(row, row["current_fp"], row["next_fp"])
+    except (KeyError, TypeError, InvalidAdministration):
+        return "prepared cell registration is incomplete"
+
+
+def target(row: Any, *, prepared: bool = False) -> dict[str, Any]:
     public = identity(row)
     host = _text(row["host"], 512)
-    if normalise_host(host) != host or row["state"] != "serving" or row["mode"] != "enforced":
+    if prepared:
+        if reason := provisioning_refusal(row):
+            raise InvalidAdministration(reason)
+    if (
+        normalise_host(host) != host
+        or (row["state"] != "serving" and not prepared)
+        or row["mode"] != "enforced"
+    ):
         raise InvalidAdministration("Cell is not ready for administration")
     generation = str(row["mutation_generation"])
     try:
@@ -127,7 +167,7 @@ def target(row: Any) -> dict[str, Any]:
     answer = {key: value for key, value in public.items() if key != "version"}
     answer.update(
         origin="https://" + host,
-        state="serving",
+        state=row["state"],
         mode="enforced",
         mutation_generation=generation,
         configuration_digests=sorted(set(digests)),

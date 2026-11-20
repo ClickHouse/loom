@@ -141,6 +141,24 @@ def usable_upstream(url: str) -> bool:
     )
 
 
+def cell_address(value: str) -> str | None:
+    """A cell's probe or upstream address in the shape the forward's upstreams take
+    (`http(s)://host[:port]`, `routing.usable_upstream`), written one way however it is
+    spelled (host in lower case, IDNA-encoded, an IPv6 address compressed; no default
+    port and no trailing `/`; a fully qualified name keeps its final dot, as the forward
+    resolves it), so replicas that spell one address differently agree on it; the router
+    appends the path."""
+    if not usable_upstream(value):
+        return None
+    u = httpx.URL(value)
+    # httpx lower-cases a name; an IPv6 address is compressed (lower-cased) below.
+    host = u.raw_host.decode("ascii")
+    if ":" in host:  # an IPv6 address, which httpx gives without its brackets
+        host = f"[{ipaddress.ip_address(host).compressed}]"
+    default = {"http": 80, "https": 443}[u.scheme]
+    return f"{u.scheme}://{host}" + ("" if u.port in (None, default) else f":{u.port}")
+
+
 def usable_host(host: str) -> bool:
     """Whether `host`, as `normalise_host` writes it, may be a cell's or the shared host:
     the address rule, label by label, and an IPv6 address only in its compressed spelling

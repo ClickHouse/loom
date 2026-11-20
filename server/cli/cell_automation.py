@@ -24,8 +24,21 @@ async def provision(
         return await cell_control.request(router, args.cell, transport, path, body)
 
     row = await cell_control.request(router, args.cell, transport, "", method="GET")
-    if row.get("state") != "serving" or row.get("mode") != "enforced":
-        raise cell_control._refused("automation provisioning requires a serving, enforced cell")
+    if reason := cell_admin.provisioning_refusal(row):
+        raise cell_control._refused(reason)
+    if row["state"] == "attaching":
+        await cell_control.check_lock(owner.conn)
+        await cell_control.paired(owner.conn, row)
+        local = await owner.call(
+            lambda: cell_control._acceptance(owner.conn), total_s=cell_control.TRANSACTION_S
+        )
+        expected_local = {
+            "first": {"is_first": False, "cell": row["cell"]},
+            "mode": "enforced",
+            "own": {"current_fp": row["current_fp"], "next_fp": row["next_fp"]},
+        }
+        if json.dumps(local, sort_keys=True) != json.dumps(expected_local, sort_keys=True):
+            raise cell_control._refused("local prepared state differs from the directory")
     row = await cell_control.claim(owner.conn, call, row)
     automation = cell_bot_proof.BotKey(
         args.automation_bot, args.automation_thumbprint, args.automation_key
@@ -78,7 +91,9 @@ def add_automation_parser(sub: Any) -> None:
     parser = sub.add_parser(
         "automation", help="Prove and register distinct automation and recovery bot keys."
     )
-    parser.add_argument("--cell", required=True, help="The serving cell to provision")
+    parser.add_argument(
+        "--cell", required=True, help="The serving or prepared later cell to provision"
+    )
     parser.add_argument("--router", help="The router's URL (default: LOOM_CELL_ROUTER_URL)")
     for purpose in ("automation", "recovery"):
         parser.add_argument(

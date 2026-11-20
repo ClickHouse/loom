@@ -234,7 +234,7 @@ def test_an_address_is_written_one_way_however_it_is_spelled(router) -> None:
         ("http://[FD00:0:0:0:0:0:0:7]:7790", "http://[fd00::7]:7790"),
         ("https://eu-2.internal:443/", "https://eu-2.internal"),
     ):
-        assert router_app._cell_address(spelled) == written
+        assert router_app.routing.cell_address(spelled) == written
 
 
 def test_a_rerun_the_directory_refuses_is_refused_before_the_probe(router) -> None:

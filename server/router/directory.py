@@ -377,8 +377,19 @@ async def set_administration(
     public = cell_admin.public_pair(encoded)
 
     async def change_locked(conn: Any, found: Attaching) -> dict[str, Any]:
-        if found.row.state != "serving" or found.row.mode != "enforced":
-            raise OperatorRefused("automation provisioning requires a serving, enforced cell")
+        context = {
+            **vars(found.row),
+            **{name: getattr(found, name) for name in _ATTACH_EXTRA},
+            "placed_orgs": found.row.placed,
+        }
+        if reason := cell_admin.provisioning_refusal(context):
+            raise OperatorRefused(reason)
+        if found.row.state == "attaching":
+            first = await conn.fetchrow(
+                "SELECT cell, state, mode FROM loom_router.cells WHERE is_first LIMIT 1"
+            )
+            if first is None or first["state"] != "serving" or first["mode"] != "enforced":
+                raise OperatorRefused("the first cell must be serving and enforced")
         await conn.execute(
             "UPDATE loom_router.cells SET break_glass = $2, updated_at = now() WHERE cell = $1",
             cell_name,

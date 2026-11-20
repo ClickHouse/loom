@@ -25,6 +25,11 @@ grant. On the configured cell operator profile, run `loom cell automation --cell
 The command holds the cell's control lock, claims its current directory registration,
 and proves both keys through the cell's public authentication and bot-registration
 endpoints before writing the public pair. Neither private key is sent to the router.
+A later cell can provision while prepared only before attach begins and before it holds
+placements. Its enforced local first/own rows and both accepted fingerprints must match
+the registration, with distinct published main and probe origins and a serving first
+cell. Incomplete preparation refuses; provisioning does not attach or repair the cell.
+The fleet administration command still requires every cell serving and enforced.
 
 Create a private credential manifest with these fields:
 
