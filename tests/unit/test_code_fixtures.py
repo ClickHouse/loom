@@ -100,7 +100,10 @@ def test_context_is_collected_after_the_original_failed_judge(
     assert len(notes) == 1
     assert notes[0].startswith("linear_cost_context=")
     assert "private-small" not in notes[0] and "private-big" not in notes[0]
-    assert json.loads(notes[0].removeprefix("linear_cost_context=")) == context
+    received = json.loads(notes[0].removeprefix("linear_cost_context="))
+    samples = received.pop("samples")
+    assert [sample["cost_s"] for sample in samples] == values
+    assert received == context
 
 
 @pytest.mark.parametrize("failure", [AssertionError("cost failed"), RuntimeError("cost failed")])
@@ -167,6 +170,118 @@ def test_real_failure_context_contains_numeric_state_without_input_text() -> Non
             return all(numeric(item) for item in value.values())
         if isinstance(value, list):
             return all(numeric(item) for item in value)
-        return type(value) in (int, bool)
+        return type(value) in (int, float, bool)
 
     assert numeric(context)
+
+
+@pytest.mark.parametrize("values", [[1.0, 8.0], [1.0, 16.0, 2.0, 3.0, 17.0, 18.0]])
+def test_failed_cost_samples_keep_values_and_boundary_context(values: list[float]) -> None:
+    calls: list[str] = []
+    measurements = iter(values)
+
+    def cost(size: str) -> float:
+        calls.append(size)
+        return next(measurements)
+
+    with pytest.raises(AssertionError) as error:
+        code_fixtures.assert_linear(cost, "private-small", "private-big")
+    context = json.loads(error.value.__notes__[0].removeprefix("linear_cost_context="))
+    samples = context["samples"]
+    assert [sample["cost_s"] for sample in samples] == values
+    expected = ["private-small", "private-big"]
+    if len(values) == 6:
+        expected += ["private-small", "private-small", "private-big", "private-big"]
+    assert calls == expected
+    assert error.value.args == ((values[0], values[1]),)
+    assert "private-small" not in error.value.__notes__[0]
+    for sample in samples:
+        before, after = sample["before"], sample["after"]
+        for clock in ("process_cpu_ns", "monotonic_ns", "thread_cpu_ns"):
+            assert after[clock] >= before[clock] >= 0
+        assert before["trace_active"] == after["trace_active"] == (sys.gettrace() is not None)
+        assert before["profile_active"] == after["profile_active"] == (sys.getprofile() is not None)
+        assert isinstance(before["gc_enabled"], bool)
+        assert len(before["gc_count"]) == len(after["gc_count"]) == 3
+
+
+def test_registry_sample_context_surrounds_original_cost_and_excludes_warmup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.code.domain.extract import bounded_parse
+    from tests.unit import lane_walks
+
+    # The registry normally runs in a child; this check must restore its wrapper.
+    monkeypatch.setattr(bounded_parse, "parse", bounded_parse.parse)
+    clocks = iter([0.0, 1.0, 10.0, 11.0, 20.0, 24.0])
+    monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+    monkeypatch.setattr(lane_walks, "SHAPES", [("observed", lambda n: "a\\n" * n)])
+    calls: list[int] = []
+
+    def extract(path: str, source: bytes, **kwargs: object) -> tuple[object, bool]:
+        calls.append(len(source))
+        return SimpleNamespace(lang="python", tree=object()), True
+
+    monkeypatch.setattr(lane_walks, "_extract", extract)
+    diagnostics: dict[str, list[dict[str, object]]] = {}
+    got = lane_walks.registry_cost("python", diagnostics=diagnostics)
+    assert got == [("observed", "N", 1.0, 4.0, 0, 0)]
+    assert len(calls) == 3
+    samples = diagnostics["observed"]
+    assert [sample["cpu_s"] for sample in samples] == [1.0, 4.0]
+    for sample in samples:
+        assert sample["after"]["thread_cpu_ns"] >= sample["before"]["thread_cpu_ns"]
+
+
+@pytest.mark.parametrize("large", [4.0, 8.0])
+def test_sample_context_error_preserves_the_original_judge(
+    monkeypatch: pytest.MonkeyPatch, large: float
+) -> None:
+    def unavailable() -> int:
+        raise RuntimeError("private context error")
+
+    monkeypatch.setattr(code_fixtures.time, "thread_time_ns", unavailable)
+
+    def cost(n: int) -> float:
+        return 1.0 if n == 1 else large
+
+    if large == 4.0:
+        code_fixtures.assert_linear(cost, 1, 4)
+    else:
+        with pytest.raises(AssertionError) as error:
+            code_fixtures.assert_linear(cost, 1, 4)
+        assert error.value.args == ((1.0, 8.0),)
+        context = json.loads(error.value.__notes__[0].removeprefix("linear_cost_context="))
+        assert [sample["cost_s"] for sample in context["samples"]] == [1.0, 8.0]
+        for sample in context["samples"]:
+            assert sample["before"] == sample["after"] == {"context_error": "RuntimeError"}
+        assert "private context error" not in error.value.__notes__[0]
+
+
+def test_sample_context_is_collected_outside_the_cost_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    inside = False
+    snapshots = 0
+    real = code_fixtures.linear_sample_context
+
+    def snapshot() -> dict[str, object]:
+        nonlocal snapshots
+        assert not inside
+        snapshots += 1
+        return real()
+
+    monkeypatch.setattr(code_fixtures, "linear_sample_context", snapshot)
+
+    def cost(n: int) -> float:
+        nonlocal inside
+        inside = True
+        try:
+            return float(n)
+        finally:
+            inside = False
+
+    code_fixtures.assert_linear(cost, 1, 4)
+    assert snapshots == 4

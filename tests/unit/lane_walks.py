@@ -10,7 +10,7 @@ import functools
 import time
 from collections.abc import Callable
 
-from tests.unit.code_fixtures import untraced
+from tests.unit.code_fixtures import linear_sample_context, untraced
 
 
 def _markdown(text: str) -> object:
@@ -779,6 +779,8 @@ def registry_cost(
         source = (head + text(n)).encode()
         parse_s, parse_bytes, parse_raised = 0.0, 0, False
         errors = {}
+        # These boundaries include untraced setup and restoration, outside the timed walk.
+        before = linear_sample_context() if samples is not None else None
         with untraced():
             t0 = time.process_time()  # CPU time, as in `walk_cost`
             if samples is None:
@@ -794,6 +796,8 @@ def registry_cost(
                     "n": n,
                     "source_bytes": len(source),
                     "cpu_s": took,
+                    "before": before,
+                    "after": linear_sample_context(),
                     "parsed_bytes": parse_bytes,
                     "lane": lane,
                     "finished": finished,
