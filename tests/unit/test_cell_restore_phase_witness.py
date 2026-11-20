@@ -98,8 +98,7 @@ def test_failure_evidence_reaches_parent_before_blocked_teardown(tmp_path, modul
         assert all(r["monotonic_ns"] > 0 for r in records)
         assert [r["monotonic_ns"] for r in records] == sorted(r["monotonic_ns"] for r in records)
         assert all(
-            set(r)
-            == {"v", "seq", "node", "phase", "event", "monotonic_ns", "type", "file", "line"}
+            set(r) == {"v", "seq", "node", "phase", "event", "monotonic_ns", "type", "file", "line"}
             for r in records
         )
         assert "private failure text" not in json.dumps(records)
@@ -107,9 +106,7 @@ def test_failure_evidence_reaches_parent_before_blocked_teardown(tmp_path, modul
         tail, _ = process.communicate(timeout=10)
         assert process.returncode == 1
         completed = [
-            json.loads(line[len(PREFIX) :])
-            for line in tail.splitlines()
-            if line.startswith(PREFIX)
+            json.loads(line[len(PREFIX) :]) for line in tail.splitlines() if line.startswith(PREFIX)
         ]
         assert [(r["phase"], r["event"]) for r in completed] == [(2, 1)]
     finally:
@@ -129,9 +126,7 @@ def test_unselected_module_has_no_phase_output(tmp_path):
 
 def test_overflow_is_visible_once_without_changing_outcomes(tmp_path):
     command, env = _command(tmp_path)
-    (tmp_path / "conftest.py").write_text(
-        "import phase_witness\nphase_witness._MAX_RECORDS = 2\n"
-    )
+    (tmp_path / "conftest.py").write_text("import phase_witness\nphase_witness._MAX_RECORDS = 2\n")
     (tmp_path / "test_cell_restore.py").write_text(
         "def test_first():\n    assert True\ndef test_second():\n    assert True\n"
     )
