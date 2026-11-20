@@ -1323,8 +1323,6 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 | -------------------------- | ---------------------------------------------------------------------------------------- |
 | `./redeploy.sh`            | the sequence above; exits without a change when already at `origin/main`                 |
 | `./redeploy.sh --force`    | rebuild and swap even with no new commits                                                |
-| `./redeploy.sh --target-commit <full-sha>` | deploy exactly that clean HEAD without advancing to main |
-| `./redeploy.sh --target-commit <full-sha> --reapply-config` | apply another configuration at that same commit through the ordinary guards |
 | `./redeploy.sh --rollback` | start the stopped previous colour, health-check it, swap the proxy back (no schema step) |
 | `./redeploy.sh --status`   | which colour serves, each colour's build, container state and workers lease              |
 | `loom deploy-delta`        | after about 30 minutes: ledger and ClickHouse statement shapes on each side of the swap  |

@@ -381,7 +381,11 @@ if [[ -x dev/redeploy_preflight.sh ]]; then
   case "$preflight_rc" in
     0) ;;
     3)
-      echo "==> the running build already is $(git rev-parse --short HEAD) — nothing to deploy (use --force)"
+      rebuild_flag=--force
+      if [[ -n "$target_commit" ]]; then
+        rebuild_flag=--reapply-config
+      fi
+      echo "==> the running build already is $(git rev-parse --short HEAD) — nothing to deploy (use $rebuild_flag)"
       exit 0
       ;;
     *)
