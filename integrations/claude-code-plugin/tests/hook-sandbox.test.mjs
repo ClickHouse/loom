@@ -1,3 +1,4 @@
+import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fork, spawn } from "node:child_process";
@@ -8,6 +9,7 @@ import path from "node:path";
 import { once } from "node:events";
 import { setImmediate as immediate } from "node:timers/promises";
 import { removeSandbox } from "./hook-sandbox.mjs";
+import { hostEnv } from "./host-env.mjs";
 import { dispatchFlush } from "../lib/flush-job.mjs";
 
 function sandbox() {
@@ -36,7 +38,11 @@ process.once("message", () => {
 });
 `,
   );
-  const child = fork(script, [box.dir], { env: {}, stdio: ["ignore", "ignore", "pipe", "ipc"], detached: true });
+  const child = fork(script, [box.dir], {
+    env: hostEnv({}),
+    stdio: ["ignore", "ignore", "pipe", "ipc"],
+    detached: true,
+  });
   const closed = once(child, "close");
   let removing;
   let released = false;
@@ -130,14 +136,14 @@ test("sandbox removal waits for the real flusher's completion marker", async () 
           spawnImpl: (command, args, options) => {
             child = spawn(command, args, {
               ...options,
-              env: {
+              env: hostEnv({
                 HOME: box.dir,
                 TMPDIR: box.tmp,
                 LOOM_BASE_URL: `http://127.0.0.1:${server.address().port}`,
                 LOOM_API_KEY: token,
                 LOOM_HOOK_TIMEOUT_MS: "1000",
                 LOOM_AUTO_SIGNUP: "off",
-              },
+              }),
             });
             closed = once(child, "close");
             return child;
