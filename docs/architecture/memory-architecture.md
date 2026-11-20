@@ -1185,6 +1185,15 @@ quarantine write `status='rejected'` as a new version too (`reject_by_identity`)
 usage fold's counters on `memory` are batched lightweight updates; see
 [ClickHouse](clickhouse.md#deletes-and-mutations).
 
+Under the ClickHouse authority, every memory version insert holds a Keeper fence per
+identity key. `memory.lock`, `memory.unlock` and `memory.verify` check that the source
+version is still the head inside the fence, and answer 503 `ADMISSION_CONTENDED` with
+no version written when it moved. All value inserts take the same fences, including
+unconditional writes and batches, so the check and insert cannot interleave with another
+replica's version insert. A re-read outside the fence provides no such guarantee.
+The fence's failure and rollout limits are described in
+[storage authority](storage-authority.md#why-two-stores).
+
 A caller that must know whether its new version took effect (`write_versions_by_ids`
 with `on_written`) re-reads each key's head under FINAL after the insert. The version is
 confirmed when it is the head; a higher head (a write that raced in after the read)

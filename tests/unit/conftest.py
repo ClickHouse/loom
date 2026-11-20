@@ -1201,3 +1201,18 @@ def isolated_retirement_gate(monkeypatch):
     from server.core import retirement
 
     monkeypatch.setattr(retirement, "_gate", retirement.RetirementGate())
+
+
+@pytest.fixture(autouse=True)
+def memory_insert_keeper(monkeypatch):
+    """Memory inserts use real lease logic against a private control-plane fake.
+
+    Business-domain ClickHouse fakes need no Keeper SQL implementation. Tests of
+    contention and failure can change this store or replace the fence explicitly.
+    """
+    from server.memory.store import write_fence
+    from tests.unit.claims_fake import FakeLockTable
+
+    keeper = FakeLockTable()
+    monkeypatch.setattr(write_fence, "_lease_client", lambda ch: keeper)
+    return keeper

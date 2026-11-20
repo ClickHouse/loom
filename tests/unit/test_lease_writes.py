@@ -62,3 +62,14 @@ async def test_unavailable_fence_never_enters_writer(monkeypatch: pytest.MonkeyP
     with pytest.raises(writes.BackendUnavailableError):
         async with writes.fenced("scope"):
             pytest.fail("writer admitted without fence")
+
+
+def test_nested_fences_keep_the_earliest_send_deadline() -> None:
+    from server.core import rmt_carry
+
+    with rmt_carry.under_lease(10):
+        with rmt_carry.under_lease(20):
+            assert rmt_carry._lease_end.get() == 10
+        with rmt_carry.under_lease(5):
+            assert rmt_carry._lease_end.get() == 5
+        assert rmt_carry._lease_end.get() == 10

@@ -299,13 +299,16 @@ async def insert_versions_over_heads(
     live_sources: bool = False,
     policy: Mapping[tuple[str, str], int] | None = None,
     on_commit: Callable[[], None] | None = None,
+    exact: bool = False,
 ) -> int:
     """Write `rows`, each a copy of the authority's head beside it in `read`, drawn above
     it (`rows.version_over`) or, to yield to a write since, before the read: a copy below
     the head is overtaken by it. Under Postgres only over that very version, else 503
     (`heads_unchanged(exact=True)`): a copy never overwrites a write, a relabel or a
     redaction it did not see; a key with no head read (None) is held to having no live
-    head. On ClickHouse, the plain insert.
+    head. On ClickHouse, `exact` checks the versions under the same Keeper fences every
+    memory insert takes, refusing a moved head with 503 `ADMISSION_CONTENDED`; without
+    it, only the insert is fenced and the source may have moved before the fence.
 
     `then` runs once the rows are in and its count is returned; under Postgres within the
     commit's lease, so a redaction waits out the ClickHouse writes it makes, and a failure
@@ -321,7 +324,14 @@ async def insert_versions_over_heads(
     publication is pending is done."""
     if not pg.enabled() or not rows:
         if rows:
-            await insert_memory_versions(rows, ch=ch)
+            if exact:
+                expected = {
+                    identity_key(r): None if h is None else h.version
+                    for r, h in zip(rows, read, strict=True)
+                }
+                await insert_memory_versions(rows, ch=ch, expected_heads=expected)
+            else:
+                await insert_memory_versions(rows, ch=ch)
             if on_commit is not None:
                 on_commit()
             if landed is not None:

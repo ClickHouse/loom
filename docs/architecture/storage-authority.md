@@ -60,11 +60,23 @@ supersession draws before its read and is not lifted: any head above that versio
 the key, a write drawn later or one from a replica whose clock is ahead. A judged
 supersession goes one above the version it read; its vector rows take a version the
 status mirror draws (`mirror_status_to_embeddings(judged=True)`). Under the ClickHouse
-authority a copy is a plain insert: a write with a lower version whose row lands between
-the read and the insert (a value, a delete, a relabel to `high`) is overtaken by it, and
-nothing reports it. Under Postgres the copy commits only
+authority every memory insert takes per-key Keeper fences. `memory.lock`,
+`memory.unlock` and `memory.verify` check the source versions inside those fences and
+answer 503 `ADMISSION_CONTENDED` without inserting when a head has moved. Value writers
+take the same fences, so another replica cannot insert between that check and the copy.
+Other copy writers fence only their insert: a write with a lower version whose row lands
+between their source read and the fence is still overtaken, and nothing reports it.
+Under Postgres the copy commits only
 over the head it read (`heads_unchanged(exact=True)`), and a head written since refuses
 it.
+
+The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retain their
+Keeper holders until every admitted send has finished or expired. Batches take keys in
+sorted identity order and keep the earliest send deadline. A busy fence or an unavailable
+Keeper refuses the write with a retryable 503. The check covers version inserts, not
+in-place counter updates or redaction mutations. A serving build without these fences
+does not participate; during a rolling upgrade, the guarantee requires every writer to
+run a build that takes them. Both builds serve the same schema.
 
 ## The tables
 
