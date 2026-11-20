@@ -99,6 +99,7 @@ function nativePhaseTrail(child) {
     "witness-live",
     "witness-identity",
     "witness-announced",
+    "witness-wait-returned",
     "compiler-private",
     "compiler-identity",
     "compiler-path",
@@ -162,6 +163,7 @@ function nativePhaseTrail(child) {
           "witness-live",
           "witness-identity",
           "witness-announced",
+          "witness-wait-returned",
         ].includes(match[1]) ||
           code === 0)
       ) {

@@ -7,7 +7,7 @@ $lib = [IO.Path]::GetFullPath([IO.Path]::Combine($PSScriptRoot, '..', 'lib'))
 . ([IO.Path]::Combine($lib, 'windows-session-protection.ps1')) -DefinitionsOnly
 $native = New-LoomBootstrapApi
 function Write-LoomWitnessPhase([string]$phase) {
-    if ($phase -cnotin @('assigned', 'live', 'identity', 'announced')) { throw 'Unavailable' }
+    if ($phase -cnotin @('assigned', 'live', 'identity', 'announced', 'wait-returned')) { throw 'Unavailable' }
     try {
         [Console]::Error.WriteLine('LSP1:witness-' + $phase + ':0')
         [Console]::Error.Flush()
@@ -56,6 +56,7 @@ function Write-LoomWitnessPhase([string]$phase) {
         } finally { $compiler.Dispose() }
         # Existing native job deadlines bound this exact-process wait.
         if ($compilerNative::WaitForSingleObject($compilerHandle, [uint32]::MaxValue) -ne 0) { throw 'Unavailable' }
+        Write-LoomWitnessPhase 'wait-returned'
     }
     $compiled = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($assemblyFile))
     $fixtureType = $compiled.GetType('LoomCompilerWitness', $true, $false)
