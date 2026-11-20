@@ -166,6 +166,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
 - [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
+- [Pipecat demonstration recording](docs/architecture/pipecat-demo-recording.md): The optional `pipecat-demo.yml` workflow renders a timestamped execution visualization of an authenticated native Pipecat text-memory check.
 - [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.
