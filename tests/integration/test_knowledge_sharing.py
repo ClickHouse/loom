@@ -1161,7 +1161,8 @@ def test_only_collection_admins_change_its_spend_policy_and_keep_other_settings(
         key: value for key, value in expected.items() if key != "updated_at"
     }
     status = gw.ok("alice", "cost.budget_status", {"namespace": collection})
-    assert status["cap_source"] == "namespace" and status["cap_usd"] == 0.25
+    assert status["user_id"] == "alice"
+    assert status["cap_source"] == "namespace_user" and status["cap_usd"] == 0.125
     gw.ok("alice", "collection.budget_set", {"namespace": collection, **original})
     restored = gw.ok("alice", "namespace.get", {"namespace": collection})
     assert {key: value for key, value in restored.items() if key != "updated_at"} == {
