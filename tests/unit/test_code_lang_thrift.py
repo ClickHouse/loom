@@ -250,7 +250,9 @@ service S {
     assert _uses_type("idl/main.thrift", src) == {("S.fetch", "Audit")}
 
 
-@pytest.mark.parametrize("default", ["+1", "-1", "+1.5e+2", "-1.5e-2"])
+@pytest.mark.parametrize(
+    "default", ["+1", "-1", "+1.5e+2", "-1.5e-2", ".5", "+.5", "-.5", "+.5e-2"]
+)
 @pytest.mark.parametrize("field_id", ["", "+1: "])
 def test_signed_defaults_preserve_the_following_id_less_field(default: str, field_id: str) -> None:
     src = (
@@ -289,3 +291,80 @@ def test_nested_xsd_attrs_cost_linear_time() -> None:
         return time.perf_counter() - started
 
     assert_linear(cost, 500, 2_000)
+
+
+def test_nested_type_annotations_are_not_type_sites() -> None:
+    src = b"""struct Audit {}
+struct Item {}
+struct Box {
+  1: list<string (Audit = "metadata")> names
+  2: map<string (Audit = "metadata"), list<Item> (Audit = "metadata")> values
+}
+"""
+    assert th.thrift_units("idl/main.thrift", src.decode()).sites == [(5, "Item", "field_type")]
+    assert _uses_type("idl/main.thrift", src) == {("Box", "Item")}
+
+
+def test_an_annotated_alias_keeps_its_symbol_and_type_edge() -> None:
+    src = b"""struct Audit {}
+struct Meta {}
+typedef list<Audit> (Meta = "metadata") AuditList
+"""
+    units = th.thrift_units("idl/main.thrift", src.decode())
+    alias = next(symbol for symbol in units.symbols if symbol.name == "AuditList")
+    assert (alias.kind, alias.start_line, alias.end_line) == ("type", 3, 3)
+    assert units.sites == [(3, "Audit", "field_type")]
+    assert _uses_type("idl/main.thrift", src) == {("AuditList", "Audit")}
+
+
+def test_an_annotated_return_keeps_its_signature_span_and_source_edge() -> None:
+    src = b"""struct Audit {}
+struct Meta {}
+service S {
+  list<Audit>
+  (Meta = "metadata")
+  fetch()
+  string (Meta = "metadata") ping()
+  Audit following()
+}
+"""
+    units = th.thrift_units("idl/main.thrift", src.decode())
+    by_name = {symbol.name: symbol for symbol in units.symbols}
+    fetch = by_name["fetch"]
+    assert (fetch.start_line, fetch.end_line) == (4, 6)
+    assert fetch.signature == 'list<Audit>(Meta = "metadata") fetch()'
+    assert by_name["ping"].signature == 'string(Meta = "metadata") ping()'
+    assert units.sites == [(4, "Audit", "field_type"), (8, "Audit", "field_type")]
+    assert _uses_type("idl/main.thrift", src) == {("S.fetch", "Audit"), ("S.following", "Audit")}
+
+
+def test_native_type_hints_do_not_hide_nested_types_or_create_sites() -> None:
+    src = b"""struct Audit {}
+struct Item {}
+typedef list cpp_type "vector<Audit>" <Item> Items
+struct Box {
+  1: map cpp_type "Map" <string, list cpp_type "Vector" <Item>> entries
+}
+service S {
+  list cpp_type "vector<Audit>" <Item> fetch()
+}
+"""
+    units = th.thrift_units("idl/main.thrift", src.decode())
+    assert [symbol.name for symbol in units.symbols] == [
+        "Audit",
+        "Item",
+        "Items",
+        "Box",
+        "S",
+        "fetch",
+    ]
+    assert units.sites == [
+        (3, "Item", "field_type"),
+        (5, "Item", "field_type"),
+        (8, "Item", "field_type"),
+    ]
+    assert _uses_type("idl/main.thrift", src) == {
+        ("Items", "Item"),
+        ("Box", "Item"),
+        ("S.fetch", "Item"),
+    }

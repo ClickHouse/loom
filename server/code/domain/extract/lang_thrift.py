@@ -69,7 +69,7 @@ _PAIRS: dict[str, str] = {"(": ")", "[": "]", "{": "}", "<": ">"}
 # to the end of the file, as Thrift's lexer reads them.
 _TOKEN_RE = re.compile(
     r"//[^\n]*|#[^\n]*|/\*.*?(?:\*/|\Z)|\"(?:[^\"\\\n]|\\.)*+\"?|'(?:[^'\\\n]|\\.)*+'?"
-    r"|[A-Za-z_][A-Za-z0-9_.]*|[+-]?\d[\w.+-]*|[{}()<>,;:=\[\]]|\S",
+    r"|[A-Za-z_][A-Za-z0-9_.]*|[+-]?(?:\d|\.\d)[\w.+-]*|[{}()<>,;:=\[\]]|\S",
     re.S,
 )
 
@@ -147,10 +147,6 @@ class _Parser:
             elif t.text == "}" and opens:
                 self._closes[opens.pop()] = j
 
-    def _peek(self, k: int = 0) -> _Tok | None:
-        j = self.i + k
-        return self.toks[j] if j < len(self.toks) else None
-
     def _add(self, name: str, kind: str, sig: str, start: int, end: int, scope: str = "") -> None:
         self.units.symbols.append(
             Symbol(
@@ -169,30 +165,45 @@ class _Parser:
         if bare:
             self.units.sites.append((line, bare, kind))
 
+    def _type_metadata_end(self, j: int, stop: int) -> int:
+        if j < stop and self.toks[j].text == "(":
+            return self._group_end(j, stop)
+        if (
+            j + 1 < stop
+            and self.toks[j].text == "cpp_type"
+            and self.toks[j + 1].text.startswith(('"', "'"))
+        ):
+            return j + 2
+        return j
+
     def _type(self, j: int, stop: int) -> int:
-        """Read a type at `j` (a name, or a container with `<…>`), recording its named
-        types; returns the index after it."""
+        """Read a type and its metadata, recording only named dependencies."""
         if j >= stop:
             return j
         t = self.toks[j]
-        if t.text in _CONTAINERS and j + 1 < stop and self.toks[j + 1].text == "<":
-            depth = 0
-            k = j + 1
-            while k < stop:
-                tk = self.toks[k].text
-                if tk == "<":
-                    depth += 1
-                elif tk == ">":
-                    depth -= 1
-                    if depth == 0:
-                        return k + 1
-                elif _is_name(tk):
-                    self._site(self.toks[k].line, tk)
-                k += 1
-            return k
         if _is_name(t.text):
             self._site(t.line, t.text)
-        return j + 1
+        j += 1
+        if t.text in _CONTAINERS:
+            j = self._type_metadata_end(j, stop)
+            if j < stop and self.toks[j].text == "<":
+                depth = 1
+                j += 1
+                while j < stop and depth:
+                    after = self._type_metadata_end(j, stop)
+                    if after != j:
+                        j = after
+                        continue
+                    tk = self.toks[j].text
+                    if tk == "<":
+                        depth += 1
+                    elif tk == ">":
+                        depth -= 1
+                    elif _is_name(tk):
+                        self._site(self.toks[j].line, tk)
+                    j += 1
+            j = self._type_metadata_end(j, stop)
+        return self._type_metadata_end(j, stop)
 
     def _group_end(self, j: int, stop: int) -> int:
         """At an opening bracket, the index after its match (or `stop`); else `j + 1`."""
@@ -224,9 +235,8 @@ class _Parser:
         if j < stop and self.toks[j].text in _FIELD_REQ:
             j += 1
         j = self._type(j, stop)
-        for skip in ("(", "&"):  # type annotations, then a C++ reference marker
-            if j < stop and self.toks[j].text == skip:
-                j = self._group_end(j, stop)
+        if j < stop and self.toks[j].text == "&":
+            j += 1
         if j < stop and _is_name(self.toks[j].text):
             j += 1
         if j < stop and self.toks[j].text == "=" and j + 1 < stop:
