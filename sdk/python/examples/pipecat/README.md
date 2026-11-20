@@ -55,12 +55,8 @@ from pipecat_text_memory import CannedReply
 
 
 def memory_pipeline(agent: Agent, user_id: str, conversation_id: str) -> Pipeline:
-    memory = LoomMemoryService(
-        agent, user_id=user_id, session_id=conversation_id, defer=False
-    )
-    return Pipeline(
-        [memory.recall_processor(), CannedReply(), memory.capture_processor()]
-    )
+    memory = LoomMemoryService(agent, user_id=user_id, session_id=conversation_id, defer=False)
+    return Pipeline([memory.recall_processor(), CannedReply(), memory.capture_processor()])
 ```
 
 The complete example supplies `PipelineWorker` and `WorkerRunner`, queues a text
