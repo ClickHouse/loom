@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -248,3 +249,47 @@ async def test_native_hash_bytes_cannot_validate_changed_or_invalid_sources(
         == []
     )
     assert requested == [KEY]
+
+
+@pytest.mark.parametrize("outcome", ["normal", "helper-error", "assertion-error"])
+async def test_digest_metadata_integration_check_closes_its_pool(monkeypatch, outcome):
+    from tests.integration import test_pg_authority
+
+    stored = _source()
+    events = []
+
+    async def call(op, body):
+        assert op == "memory.set"
+        stored["namespace"] = body["namespace"]
+        stored["agent"] = body["agent"]
+        stored["user_id"] = stored["session_id"] = "-"
+        return SimpleNamespace(status_code=200, text="")
+
+    async def fetchval(sql, org, namespace):
+        assert (org, namespace) == (stored["org"], stored["namespace"])
+        return stored
+
+    async def heads(keys):
+        events.append("opened")
+        assert keys[0] == identity_key(stored)
+        if outcome == "helper-error":
+            raise RuntimeError("source metadata unavailable")
+        if outcome == "assertion-error":
+            return {}
+        return {keys[0]: {col: stored.get(col) for col in pg_memory.SUMMARY_SOURCE_STATE_COLUMNS}}
+
+    async def close_pool():
+        assert events == ["opened"]
+        events.append("closed")
+
+    monkeypatch.setattr(pg_memory, "summary_source_heads", heads)
+    monkeypatch.setattr(pg, "close_pool", close_pool)
+    check = test_pg_authority.test_digest_source_proof_reads_exact_authoritative_metadata
+    args = (call, stored["org"], SimpleNamespace(fetchval=fetchval))
+    if outcome == "normal":
+        await check(*args)
+    else:
+        error = RuntimeError if outcome == "helper-error" else AssertionError
+        with pytest.raises(error):
+            await check(*args)
+    assert events == ["opened", "closed"]
