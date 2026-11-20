@@ -432,7 +432,7 @@ async def _served_by_authority(
 
     if not input.include_tombstoned:
         return await memory_repo.served_rows(rows)
-    hidden = frozenset(status for status, flag in _STATUS_FLAGS if not served[flag])
+    hidden = frozenset(status for status, flag in _STATUS_FLAGS if not served[flag]) | {"rejected"}
     return await memory_repo.recovered_rows(
         rows, source_trace=input.source_trace or None, hidden_statuses=hidden, as_of=input.as_of
     )

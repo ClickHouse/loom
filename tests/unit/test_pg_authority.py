@@ -4800,6 +4800,46 @@ async def test_a_recovery_listing_lists_what_the_authority_holds(
     assert await lifecycle.recovered_rows(gone, as_of=now) == []
 
 
+@pytest.mark.parametrize("widen", [False, True])
+@pytest.mark.parametrize("status", ["active", "rejected"])
+async def test_recovery_listing_never_swaps_in_a_rejected_authority_head(
+    monkeypatch: pytest.MonkeyPatch, widen: bool, status: str
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _served_by_authority
+    from server.memory.app.served_superseded import served_flags
+
+    now = naive_utc_now()
+    projected = _hydrate(
+        _row("k", created_at=now, value='"preview"', confidence=1.0, content_sha256="sha")
+    )
+    head = projected.model_copy(
+        update={"version": 3, "status": status, "tombstoned_at": now, "value": "whole text"}
+    )
+
+    async def heads(keys: Any, *, include_tombstoned: bool) -> dict[Any, Any]:
+        return {identity_key(projected): head.model_dump()}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    request = MemoryListInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        include_tombstoned=True,
+        include_duplicates=widen,
+        include_superseded=widen,
+        include_proposed=widen,
+    )
+    rows = await _served_by_authority(request, [projected], served_flags(request))
+    assert [(row.memory_key, row.status, row.version, row.value) for row in rows] == (
+        [("k", "active", 3, projected.value)] if status == "active" else []
+    )
+
+
 async def test_a_send_deadline_measures_the_server_clock_it_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

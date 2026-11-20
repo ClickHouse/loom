@@ -196,9 +196,7 @@ async def fetch_session_summaries(
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
-    # A digest that reads as high is written without a vector; this holds back
-    # one an earlier build embedded. No spare row backfills it: such a digest is rare,
-    # and a spare row costs a granule of vectors on every search.
+    # A stored vector does not establish that the digest passes the sensitivity check.
     rows = without_high(rows, lambda r: str(r.get("summary_text") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
