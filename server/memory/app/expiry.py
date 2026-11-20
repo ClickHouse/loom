@@ -29,6 +29,7 @@ counted under `locked_skipped`.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -42,6 +43,7 @@ from server.core.ch import sequential_reads
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import caller_text
 from server.core.hashing import sha256_value as _sha
+from server.core.shielded import to_its_end
 from server.memory.app import webhooks
 from server.memory.domain import lock as _lock
 from server.memory.store.rows import IdentityKey, MemoryRow, identity_key
@@ -80,7 +82,7 @@ class ExpiryResult:
     demoted: int = 0
     anonymized: int = 0
     locked_skipped: int = 0
-    moved_skipped: int = 0  # candidates whose head moved on since ClickHouse's copy
+    moved_skipped: int = 0  # candidates no longer eligible or changed after planning
     dry_run: bool = False
     # Up to 20 handled rows: (identity key, the entry as_dict reports).
     sampled: list[tuple[IdentityKey, dict[str, Any]]] = field(default_factory=list)
@@ -203,8 +205,8 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             org_filter=cfg.org_filter,
             namespace_filter=cfg.namespace_filter,
         )
-        # The candidates are ClickHouse's: each is expired from the head the authority
-        # holds, never from a stale copy; a head renewed or deleted since is left alone.
+        # Postgres can replace a lagging candidate with its still-expired head before
+        # planning. Admission checks changes after that selection.
         now = naive_utc_now()
         current = await memory_repo.current_heads(rows, lambda _, h: _still_expired(h, now))
         res.moved_skipped = len(rows) - len(current)
@@ -267,11 +269,15 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             committed_rows[:] = rows
             committed_mirrors[:] = copied
 
+        cancelled = False
         try:
             version_rows, mirrors = await _over_unmoved_heads(
                 version_rows, mirrors, res, ch=ch, on_commit=committed
             )
             committed(version_rows, mirrors)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception as e:  # the pass records a failure; the rows expire next pass
             log.exception("memory_expiry_sweep: version insert failed")
             res.failures.append(f"insert: {caller_text(e)}")
@@ -285,7 +291,15 @@ async def run_pass(cfg: ExpiryConfig | None = None) -> ExpiryResult:
             # Acknowledged rows still owe their projections when holder cleanup
             # is cancelled. Refused or uncertain inserts leave these lists empty.
             if committed_rows:
-                await _after_expiry(committed_rows, committed_mirrors, res, cfg=cfg, ch=ch)
+                try:
+                    await to_its_end(
+                        _after_expiry(committed_rows, committed_mirrors, res, cfg=cfg, ch=ch),
+                        name="memory.expiry.followups",
+                    )
+                except asyncio.CancelledError:
+                    # Keep the original cancellation after all acknowledged work ends.
+                    if not cancelled:
+                        raise
     outcome = res.as_dict()
     outcome.pop("sample", None)
     get_registry().record_success(

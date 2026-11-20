@@ -1138,6 +1138,79 @@ async def test_expiry_leaves_authored_metadata_changed_at_the_same_version(
 
 
 @pytest.mark.parametrize("action", X.ACTIONS)
+@pytest.mark.parametrize("suspended", ["announcement", "mirror"])
+async def test_committed_expiry_finishes_followups_after_repeated_cancellation(
+    monkeypatch: pytest.MonkeyPatch, action: str, suspended: str
+) -> None:
+    import asyncio
+
+    from server.core import leases
+
+    source = _row(on_expire=action)
+    ch, _ = _stub(monkeypatch, [source])
+    releasing, finish_release = asyncio.Event(), asyncio.Event()
+    following, finish_followup = asyncio.Event(), asyncio.Event()
+    release, mirror = leases.release_shielded, X.apply_mirror
+    announced: list[Any] = []
+
+    async def held_release(lease: Any) -> None:
+        releasing.set()
+        await finish_release.wait()
+        await release(lease)
+
+    async def pause(stage: str) -> None:
+        if suspended == stage:
+            following.set()
+            await finish_followup.wait()
+
+    async def announce(events: list[Any]) -> None:
+        await pause("announcement")
+        announced.extend(events)
+
+    async def apply_mirror(items: Any, demoted: Any, *, ch: Any) -> None:
+        await pause("mirror")
+        await mirror(items, demoted, ch=ch)
+
+    monkeypatch.setattr(leases, "release_shielded", held_release)
+    monkeypatch.setattr(X.webhooks, "announce", announce)
+    monkeypatch.setattr(X, "apply_mirror", apply_mirror)
+    task = asyncio.create_task(X.run_pass())
+    try:
+        async with asyncio.timeout(5):
+            await releasing.wait()
+            task.cancel("original cancellation")
+            finish_release.set()
+            await following.wait()
+            task.cancel("repeated cancellation")
+            finish_followup.set()
+            with pytest.raises(asyncio.CancelledError) as error:
+                await task
+        assert len(ch.inserts) == 1
+        written = ch.inserts[0][1][0]
+        assert ch.heads[identity_key(source)] == written
+        assert announced == [
+            ("memory.tombstoned" if action == "tombstone" else "memory.revised", written)
+        ]
+        if action == "demote":
+            assert _DEMOTE_REEMITS == [
+                (
+                    source.memory_key,
+                    X._demote_overrides(source, X.ExpiryConfig()) | {"version": written["version"]},
+                )
+            ]
+        else:
+            assert retired == [(source.memory_key, written["version"])]
+            assert retired_bare[source.memory_key] == (action == "anonymize")
+        assert error.value.args == ("original cancellation",)
+    finally:
+        finish_release.set()
+        finish_followup.set()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("action", X.ACTIONS)
 async def test_cancelled_expiry_admission_leaves_no_followups(
     monkeypatch: pytest.MonkeyPatch, action: str
 ) -> None:

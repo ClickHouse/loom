@@ -68,8 +68,9 @@ The comparison includes the served value and persisted metadata: clock skew can 
 two writers choose the same version. Derived usage fields (`recall_count`,
 `evidence_count`, `last_recalled_at`) and JSON projection formatting are excluded
 because they can differ without a version insert.
-Expiry post-actions also compare their source rows inside those fences. A moved head
-refuses the batch; the sweep re-reads it, removes moved candidates and retries once
+Expiry post-actions compare the source rows selected for planning inside those fences.
+Before that selection, Postgres can refresh a candidate to a newer still-expired head.
+A head changed after selection refuses the batch; the sweep re-reads it, removes moved candidates and retries once
 with the same admission check. A second refusal leaves the remaining batch for the
 next pass. Only accepted rows produce search mirrors and webhook events. Other copy
 writers that do not request exact-head admission fence only their insert: a write with
