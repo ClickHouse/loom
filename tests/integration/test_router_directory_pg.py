@@ -132,7 +132,8 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
                 "SELECT pg_advisory_xact_lock($1, hashtext($2))", directory._PLACE_LOCK, org
             )
             racing = asyncio.gather(
-                directory.place(org, a, _never), directory.place(org, b, _never)
+                directory.place(org, a, _never, actor="operator"),
+                directory.place(org, b, _never, actor="operator"),
             )
             # Both placements wait on the org's lock before it is released.
             for _ in range(100):
@@ -156,10 +157,11 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
             "SELECT actor FROM loom_router.audit WHERE action = 'place' AND detail->>'org' = $1",
             org,
         )
-        assert [r["actor"] for r in audit] == [f"cell:{winners[0][0]}"]
+        assert [r["actor"] for r in audit] == ["operator", "operator"]
         # Ten concurrent placements in a cell with room for three: three are written.
         results = await asyncio.gather(
-            *(directory.place(f"{q}-{i}", q, _never) for i in range(10)), return_exceptions=True
+            *(directory.place(f"{q}-{i}", q, _never, actor="operator") for i in range(10)),
+            return_exceptions=True,
         )
         assert sum(isinstance(r, tuple) for r in results) == 3
         assert sum(isinstance(r, directory.PlacementRefused) for r in results) == 7
@@ -168,10 +170,13 @@ async def test_the_directory_places_once_and_holds_the_quota(dsn: str) -> None:
         assert held == 3
         # An org placed already answers its cell, whatever the quota or the cell's state.
         placed = next(f"{q}-{i}" for i, r in enumerate(results) if isinstance(r, tuple))
-        assert await directory.place(placed, q, lambda _r: "closed") == (q, f"dep-{q}")
+        assert await directory.place(placed, q, lambda _r: "closed", actor="operator") == (
+            q,
+            f"dep-{q}",
+        )
         # A refusal judged on the locked row writes nothing.
         with pytest.raises(directory.PlacementRefused, match="closed"):
-            await directory.place(f"new-{a}", a, lambda _r: "closed")
+            await directory.place(f"new-{a}", a, lambda _r: "closed", actor="operator")
         assert await directory.lookup(f"new-{a}") is None
         # Routing reads every cell with its upstream address ('' until attach writes it).
         cells, _aliases = await directory.routing()
@@ -801,7 +806,9 @@ async def test_a_batch_racing_a_live_placement_of_the_same_org_skips_it(
     conn = await asyncpg.connect(own_dsn)
     try:
         async with asyncio.timeout(30):
-            live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
+            live = asyncio.ensure_future(
+                directory.place("acme", name, lambda _row: "", actor=f"cell:{name}")
+            )
             await inserted.wait()
             batch = asyncio.ensure_future(
                 directory.attach_place(name, dep, ["acme", "beta"], expected=await _observed(name))
@@ -851,12 +858,17 @@ async def test_a_live_placement_racing_a_batch_of_the_same_org_answers_it_placed
                 directory.attach_place(name, dep, ["acme"], expected=await _observed(name))
             )
             await written.wait()
-            live = asyncio.ensure_future(directory.place("acme", name, lambda _row: ""))
+            live = asyncio.ensure_future(
+                directory.place("acme", name, lambda _row: "", actor=f"cell:{name}")
+            )
             await _waits_on_the_row_lock(conn, "FOR UPDATE")
             release.set()
             assert await batch == (1, 1)
             assert await live == (name, dep)
-        assert await _placements_of(conn, name) == (1, [("operator", "acme")])
+        assert await _placements_of(conn, name) == (
+            1,
+            [("operator", "acme"), (f"cell:{name}", "acme")],
+        )
     finally:
         release.set()
         await conn.close()

@@ -14,8 +14,8 @@ from typing import Any
 from server.auth import claims, revocation, scim, scim_people, subject_revocation
 from server.auth.scim_routes import scim_settings_problem
 from server.cli import cell_control
-from server.cli.cell_ch import WHOLE_SQL, Refusal, Refused
 from server.core import cell, ch
+from server.core.cell_ch import WHOLE_SQL, Refusal, Refused
 from server.core.datetimes import as_aware_utc
 from server.settings import settings
 
@@ -262,16 +262,21 @@ async def check(
     seconds: float,
     revoke: bool = False,
     dry_run: bool = False,
+    target: dict[str, Any] | None = None,
     report: dict[str, Any] | None = None,
     log: Callable[[str], None] = lambda _message: None,
 ) -> None:
     """Read the intended policy freshly; contract only under the native attach owner."""
-    if not required(*own):
+    if not (required(target) if target is not None else required(*own)):
         return
     if not math.isfinite(seconds) or seconds <= 0:
         raise _refuse("the provisioning census needs a finite positive scan budget")
     if client is not ch.get_client():
         raise _refuse("the census client differs from this process's configured store")
+    if target is not None and target.get("fields", {}).get("deployment_id") != row.get(
+        "deployment_id"
+    ):
+        raise _refuse("the intended configuration names another deployment")
     status = report if report is not None else {}
     status.update(checked=0, revoked=0, unprovisioned=0, complete=False)
     deadline = time.monotonic() + seconds

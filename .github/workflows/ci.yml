@@ -1014,9 +1014,16 @@ jobs:
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
           tests/integration/test_cell_attach.py
+          tests/integration/test_cell_place.py
+          tests/integration/test_cell_update_directory.py
+          tests/integration/test_cell_update_addresses.py
+          tests/integration/test_cell_update_run_pg.py
+          tests/integration/test_cell_update_participants_ch.py
+          tests/integration/test_cell_place_cleanup.py
           tests/integration/test_cell_attach_two_replicas.py
           tests/integration/test_cell_attach_cleanup.py
           tests/integration/test_cell_scim_census_live_ch.py
+          tests/integration/test_cell_update_scim_live_ch.py
           tests/integration/test_cell_control_cleanup.py
           tests/integration/test_cell_control_fence.py
           tests/integration/test_directory_control_cleanup.py
@@ -1066,6 +1073,45 @@ jobs:
           bash dev/ci_start_postgres.sh
           docker update --memory 1g --memory-swap 1g loom-scale-index-drill-pg loom-scale-index-drill-pg-standby
           pytest -q tests/integration/test_pg_online_index_durability.py
+      - name: pytest placement durability on a private physical standby
+        timeout-minutes: 8
+        env:
+          LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
+          LOOM_PG_CONTAINER: loom-scale-place-drill-pg
+          LOOM_PG_HOST_PORT: "0"
+          LOOM_CELL_PLACE_DRILL: "1"
+        run: |
+          set -euo pipefail
+          for name in loom-scale-place-drill-pg loom-scale-place-drill-pg-standby; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              echo "drill container already exists: $name" >&2
+              exit 1
+            fi
+          done
+          if docker network inspect loom-scale-place-drill-pg-net >/dev/null 2>&1; then
+            echo "drill network already exists" >&2
+            exit 1
+          fi
+          cleanup() {
+            docker rm -f -v loom-scale-place-drill-pg loom-scale-place-drill-pg-standby || true
+            docker network rm loom-scale-place-drill-pg-net || true
+          }
+          trap cleanup EXIT
+          bash dev/ci_start_postgres.sh
+          # Docker reserves the host port; use only this primary's loopback mapping.
+          mapping=$(docker port "$LOOM_PG_CONTAINER" 5432/tcp)
+          if [[ ! "$mapping" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          port=${BASH_REMATCH[1]}
+          if (( port > 65535 )); then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          export LOOM_CELL_PLACE_DRILL_DSN="postgres://loom:loomdev@127.0.0.1:$port/loom"
+          docker update --memory 1g --memory-swap 1g loom-scale-place-drill-pg loom-scale-place-drill-pg-standby
+          pytest -q tests/integration/test_cell_place_durability.py
       # The tenant-isolation gates again, against a second server that enforces auth:
       # the Postgres read paths (heads by key and by id, narrowed scopes) see real tokens.
       # They run whether or not the memory suites passed (`!cancelled()`).
@@ -1253,6 +1299,15 @@ jobs:
       - name: build + dist tests + publint + attw
         working-directory: sdk/typescript
         run: npm run check:dist
+      # Keep the locked 1.8 baseline above and qualify the other supported band
+      # against the same source, native tool runner and package exports.
+      - name: Claude memory tool with Anthropic 1.11
+        working-directory: sdk/typescript
+        run: |
+          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm run type-check
+          npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
+          npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
 
   sdk-python-adapters:
     needs: validate-ref

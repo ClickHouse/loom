@@ -84,7 +84,9 @@ class _Directory:
         row = self.cells.get(name)
         return row if row is not None and row.is_first else None
 
-    async def place(self, org: str, name: str, refusal: Any) -> tuple[str, str]:
+    async def place(
+        self, org: str, name: str, refusal: Any, *, actor: str, verify: Any = None
+    ) -> tuple[str, str]:
         self._check()
         if org not in self.placements:
             row = self.cells[name]  # the row as the placement locks it

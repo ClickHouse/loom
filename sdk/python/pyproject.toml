@@ -82,6 +82,9 @@ google-adk = ["google-adk>=2.14,<2.15"]
 # Pipecat 1.16 has LLMContextFrame, LLMContextAssistantTurnFrame and the universal
 # aggregators the adapter hooks; the package is semver past 1.0.
 pipecat = ["pipecat-ai>=1.16,<1.17"]
+# DSPy 3.5 has dspy.Tool with async functions and the dspy.retrievers callables the
+# adapter mirrors; DSPy changes its retrieval API between minor versions.
+dspy = ["dspy>=3.5,<3.6"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"

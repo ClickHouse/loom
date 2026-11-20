@@ -9,7 +9,7 @@ import pytest
 
 from server.auth import revocation
 from server.auth.revocation import scim_revoke as actual_scim_revoke
-from server.cli.cell_ch import Refused
+from server.core.cell_ch import Refused
 from tests.unit.test_cell_attach_serving_identity import serving_run as serving_run
 from tests.unit.test_cell_scim_precondition import provisioned_run as provisioned_run
 
