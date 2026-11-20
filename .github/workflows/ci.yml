@@ -1074,9 +1074,8 @@ jobs:
         env:
           LOOM_PG_IMAGE: postgres:${{ matrix.postgres }}
           LOOM_PG_CONTAINER: loom-scale-place-drill-pg
-          LOOM_PG_HOST_PORT: "55432"
+          LOOM_PG_HOST_PORT: "0"
           LOOM_CELL_PLACE_DRILL: "1"
-          LOOM_CELL_PLACE_DRILL_DSN: postgres://loom:loomdev@localhost:55432/loom
         run: |
           set -euo pipefail
           for name in loom-scale-place-drill-pg loom-scale-place-drill-pg-standby; do
@@ -1095,6 +1094,18 @@ jobs:
           }
           trap cleanup EXIT
           bash dev/ci_start_postgres.sh
+          # Docker reserves the host port; use only this primary's loopback mapping.
+          mapping=$(docker port "$LOOM_PG_CONTAINER" 5432/tcp)
+          if [[ ! "$mapping" =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          port=${BASH_REMATCH[1]}
+          if (( port > 65535 )); then
+            echo "invalid placement drill loopback mapping" >&2
+            exit 1
+          fi
+          export LOOM_CELL_PLACE_DRILL_DSN="postgres://loom:loomdev@127.0.0.1:$port/loom"
           docker update --memory 1g --memory-swap 1g loom-scale-place-drill-pg loom-scale-place-drill-pg-standby
           pytest -q tests/integration/test_cell_place_durability.py
       # The tenant-isolation gates again, against a second server that enforces auth:
