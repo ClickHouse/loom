@@ -442,3 +442,128 @@ async def test_idle_transport_reuse_never_revives_an_old_child_session(client: A
         if pending is not None:
             await asyncio.gather(pending, return_exceptions=True)
         await client.disconnect()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["bootstrap", "preflight", "unsupported", "body"])
+async def test_a_refused_reused_transport_is_not_lent_to_the_next_proof(
+    client: Any, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    async with client.coordination_session():
+        original_channel = client._statement_client()
+    original = client.proofs[0]
+    try:
+        if failure == "bootstrap":
+            original.error = ConnectionResetError("connection reset")
+            with pytest.raises(ConnectionResetError):
+                async with client.coordination_session():
+                    pytest.fail("a failed bootstrap admitted a proof")
+        elif failure == "body":
+            with pytest.raises(ValueError, match="proof refused"):
+                async with client.coordination_session():
+                    raise ValueError("proof refused")
+        else:
+            async with client.coordination_session():
+                if failure == "preflight":
+                    with monkeypatch.context() as patch:
+                        patch.setattr(
+                            ch, "guard_pending_schema", AsyncMock(side_effect=ValueError())
+                        )
+                        with pytest.raises(ValueError):
+                            await client.query_one("SELECT 2")
+                else:
+                    with pytest.raises(ch.CoordinationSessionLost):
+                        await client.insert("loom._migration_lock", [{"name": "test"}])
+        assert original.closed
+        async with client.coordination_session():
+            assert client._statement_client() is not original_channel
+            await client.query_one("SELECT 3")
+        assert len(client.proofs) == 2
+    finally:
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reuse_bootstrap_discards_the_transport_and_returns_capacity(
+    client: Any,
+) -> None:
+    async with client.coordination_session():
+        pass
+    original = client.proofs[0]
+    original.release = asyncio.Event()
+    capacity = client._stream_slots._value
+
+    async def proof() -> None:
+        async with client.coordination_session():
+            pytest.fail("a blocked bootstrap admitted a proof")
+
+    pending = asyncio.create_task(proof())
+    try:
+        await original.entered.wait()
+        pending.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert original.closed and client._stream_slots._value == capacity
+        async with client.coordination_session():
+            await client.query_one("SELECT 2")
+        assert len(client.proofs) == 2
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        await client.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cannot_receive_an_idle_channel_from_an_active_proof(
+    client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered, release = asyncio.Event(), asyncio.Event()
+    closing, closed = asyncio.Event(), asyncio.Event()
+
+    async def proof() -> None:
+        async with client.coordination_session():
+            entered.set()
+            await release.wait()
+
+    async def close_shared() -> None:
+        closing.set()
+        await closed.wait()
+
+    monkeypatch.setattr(client.client, "close", close_shared)
+    pending = asyncio.create_task(proof())
+    disconnect = None
+    try:
+        await entered.wait()
+        disconnect = asyncio.create_task(client.disconnect())
+        await closing.wait()
+        release.set()
+        await pending
+        assert client.proofs[0].closed
+        with pytest.raises(ch.CoordinationSessionLost):
+            async with client.coordination_session():
+                pytest.fail("a disconnecting client admitted a proof")
+    finally:
+        release.set()
+        closed.set()
+        await asyncio.gather(pending, *([disconnect] if disconnect is not None else []))
+    assert not client.connected and client._coordination_idle is None
+
+
+@pytest.mark.asyncio
+async def test_reused_channel_keeps_the_service_principal_for_each_fresh_session(
+    client: Any,
+) -> None:
+    try:
+        with ch.caller_shaped():
+            for _ in range(2):
+                async with client.coordination_session():
+                    await client.query_one("SELECT 2")
+            await client.query_one("SELECT 3")
+        assert len(client.proofs) == 1
+        calls = client.proofs[0].calls
+        assert all(kwargs == {} for _, _, kwargs in calls)
+        assert [settings["session_check"] for _, settings, _ in calls] == [0, 1, 0, 1]
+        assert len({settings["session_id"] for _, settings, _ in calls}) == 2
+        assert "Authorization" in client.client.calls[0][2]["transport_settings"]
+    finally:
+        await client.disconnect()
