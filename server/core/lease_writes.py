@@ -10,13 +10,17 @@ from typing import Any
 
 from server.core import leases, rmt_carry
 from server.core.errors import BackendUnavailableError
+from server.core.shielded import to_its_end
+from server.settings import settings
 
 
 class FenceUnavailableError(BackendUnavailableError):
     """The writer cannot enter because its holder is busy or its lease expired."""
 
 
-_ADMIT_AT_ONCE = 16
+def _wave_size() -> int:
+    cap = settings.ch_write_fence_concurrency
+    return min(cap, settings.ch_pool_maxsize) if settings.ch_pool_maxsize > 0 else cap
 
 
 def lease_ttl_s(send_bound_s: float) -> float:
@@ -36,13 +40,17 @@ async def fenced(name: str, *, ch: Any = None) -> AsyncIterator[Callable[[bool],
 
 
 async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]:
+    async def take(name: str) -> leases.Lease | BaseException | None:
+        try:
+            return await leases.take(name, ttl_s=ttl, ch=ch)
+        except BaseException as error:  # noqa: BLE001 — preserve the first backend refusal, including cancellation
+            return error
+
     held: list[leases.Lease] = []
     try:
-        for start in range(0, len(names), _ADMIT_AT_ONCE):
-            tasks = [
-                asyncio.create_task(leases.take(name, ttl_s=ttl, ch=ch))
-                for name in names[start : start + _ADMIT_AT_ONCE]
-            ]
+        size = _wave_size()
+        for start in range(0, len(names), size):
+            tasks = [asyncio.create_task(take(name)) for name in names[start : start + size]]
             try:
                 results = await asyncio.gather(*tasks, return_exceptions=True)
             finally:
@@ -60,8 +68,16 @@ async def _take_all(names: list[str], ttl: float, ch: Any) -> list[leases.Lease]
                     raise FenceUnavailableError("a previous leased write is still settling")
         return held
     except BaseException:
-        await asyncio.gather(*(leases.release_shielded(lease) for lease in held))
+        await to_its_end(_release_all(held), name="lease_writes.release")
         raise
+
+
+async def _release_all(held: list[leases.Lease]) -> None:
+    size = _wave_size()
+    for start in range(0, len(held), size):
+        await asyncio.gather(
+            *(leases.release_shielded(lease) for lease in held[start : start + size])
+        )
 
 
 @asynccontextmanager
@@ -86,4 +102,4 @@ async def fenced_many(names: list[str], *, ch: Any = None) -> AsyncIterator[Call
         if uncertain:
             for lease in held:
                 lease.let_expire()
-        await asyncio.gather(*(leases.release_shielded(lease) for lease in held))
+        await to_its_end(_release_all(held), name="lease_writes.release")

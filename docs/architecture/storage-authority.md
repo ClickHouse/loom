@@ -74,6 +74,13 @@ The ClickHouse fences use `server/core/lease_writes.py`: uncertain inserts retai
 Keeper holders until every admitted send has finished or expired. Batches admit keys in
 bounded waves and keep the earliest send deadline. Memory rows commit before their
 embedding rows are inserted, so a refused value write publishes no searchable text.
+A high-sensitivity update refused before admission leaves prior search data live;
+a memory send whose outcome is unknown is still fenced.
+Holder release uses bounded waves too, so a batch does not exhaust its own connection
+pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
+keep admission inside each batch's lease budget.
+`LOOM_CH_WRITE_FENCE_CONCURRENCY` bounds each wave, capped by a bounded HTTP pool;
+`LOOM_CH_RESTORE_BATCH_ROWS` bounds each restore insert.
 A busy fence or an unavailable
 Keeper refuses the write with a retryable 503. The check covers version inserts, not
 in-place counter updates or redaction mutations. A serving build without these fences

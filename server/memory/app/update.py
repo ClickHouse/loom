@@ -719,10 +719,16 @@ async def _land_inserted(
     record: Callable[[], Awaitable[None]],
 ) -> None:
     """On ClickHouse: recorded once the version row is in, the first failure raised."""
+    sent = False
+
+    def on_send() -> None:
+        nonlocal sent
+        sent = True
+
     try:
         # Every insert runs to its end, so the fence below comes after the retire.
         done = await _insert_revision(
-            existing, memory_row, emb_rows, ch, retire_vectors=retire_vectors
+            existing, memory_row, emb_rows, ch, retire_vectors=retire_vectors, on_send=on_send
         )
         if not isinstance(done[0], BaseException):
             # The row is in: audit and announce it even when the rest of the write fails;
@@ -732,7 +738,7 @@ async def _land_inserted(
             if isinstance(d, BaseException):
                 raise d
     finally:
-        if high:
+        if high and sent:
             # After the request's own retire, at the same version: the later insert wins the
             # tie. Even when an insert failed or the write was cancelled: the row may be in.
             await fence_high([(identity_key(existing), int(memory_row["version"]))], ch=ch)
@@ -774,13 +780,14 @@ async def _insert_revision(
     ch: Any,
     *,
     retire_vectors: bool,
+    on_send: Callable[[], None],
 ) -> list[Any]:
     """On ClickHouse: the version row, its search document and, for a row no longer
     searchable (`retire_vectors`), its vectors retired at its version: each one's
     outcome. A refused memory insert publishes no search document."""
     import server.memory.store as memory_repo
 
-    await insert_memory_versions([memory_row], ch=ch)
+    await insert_memory_versions([memory_row], ch=ch, on_send=on_send)
     writes: list[Awaitable[Any]] = []
     if emb_rows:
         writes.append(memory_repo.insert_embedding_rows(emb_rows, ch=ch))

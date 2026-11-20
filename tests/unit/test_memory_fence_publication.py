@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -17,7 +17,7 @@ from tests.unit.test_memory_verify import _row
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("operation", ["set", "update", "update_retire", "bulk_set"])
+@pytest.mark.parametrize("operation", ["set", "update", "update_retire", "update_high", "bulk_set"])
 async def test_contended_value_write_publishes_no_embedding(
     operation, memory_insert_keeper, monkeypatch
 ):
@@ -26,7 +26,9 @@ async def test_contended_value_write_publishes_no_embedding(
     embedding = {"memory_key": source.memory_key, "excerpt": "uncommitted value"}
     inserted: dict[str, list[dict[str, Any]]] = {}
     retire = AsyncMock()
+    high_fence = AsyncMock()
     monkeypatch.setattr(store, "tombstone_vectors_of", retire)
+    monkeypatch.setattr(update, "fence_high", high_fence)
 
     class CH:
         async def insert(self, table, rows, **kw):
@@ -39,14 +41,14 @@ async def test_contended_value_write_publishes_no_embedding(
             await set_commit._insert_row_and_vector(
                 SimpleNamespace(memory_row=memory, embedder=SimpleNamespace(dim=4)), ch, embedding
             )
-        elif operation in ("update", "update_retire"):
+        elif operation in ("update", "update_retire", "update_high"):
             await update._land_inserted(
                 source,
                 memory,
                 [] if operation == "update_retire" else [embedding],
                 ch,
                 retire_vectors=operation == "update_retire",
-                high=False,
+                high=operation == "update_high",
                 record=AsyncMock(),
             )
         else:
@@ -55,3 +57,56 @@ async def test_contended_value_write_publishes_no_embedding(
             )
     assert inserted == {}, "a refused write must never be searchable"
     retire.assert_not_awaited()
+    high_fence.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_admission_leaves_search_data_live(monkeypatch):
+    import asyncio
+
+    from server.core import leases
+
+    entered = asyncio.Event()
+    fence = AsyncMock()
+    monkeypatch.setattr(update, "fence_high", fence)
+
+    async def taking(*args, **kw):
+        entered.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(leases, "take", taking)
+    source = _row()
+    task = asyncio.create_task(
+        update._land_inserted(
+            source,
+            store.build_memory_version_row(source, sensitivity="high"),
+            [],
+            object(),
+            retire_vectors=True,
+            high=True,
+            record=AsyncMock(),
+        )
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    fence.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unanswered_high_memory_send_still_fences_search(monkeypatch):
+    fence = AsyncMock()
+    monkeypatch.setattr(update, "fence_high", fence)
+    source = _row()
+    memory = store.build_memory_version_row(source, sensitivity="high")
+
+    class LostAnswer:
+        async def insert(self, *args, **kw):
+            raise TimeoutError("the memory insert may have committed")
+
+    with pytest.raises(TimeoutError):
+        await update._land_inserted(
+            source, memory, [], LostAnswer(), retire_vectors=True, high=True, record=AsyncMock()
+        )
+    fence.assert_awaited_once_with([(identity_key(source), memory["version"])], ch=ANY)

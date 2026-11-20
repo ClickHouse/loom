@@ -3,7 +3,7 @@ and the full-row check the loom.memory one applies."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from typing import Any
 
@@ -40,6 +40,7 @@ async def insert_memory_versions(
     publish_now: bool = True,
     policy: Mapping[tuple[str, str], int] | None = None,
     expected_heads: Mapping[IdentityKey, int | None] | None = None,
+    on_send: Callable[[], None] | None = None,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
@@ -48,6 +49,7 @@ async def insert_memory_versions(
     here with `published`; with `publish_now` False they are only committed, for the
     delivery worker to publish. On ClickHouse all writers take the same per-key Keeper
     fences; `expected_heads` checks source versions inside them before inserting.
+    `on_send` marks a direct ClickHouse insert that passed admission and may land.
     Returns the row count; an empty batch writes nothing."""
     if not rows:
         return 0
@@ -75,6 +77,8 @@ async def insert_memory_versions(
         nullcontext() if pg.enabled() else checked_write(rows, expected_heads=expected_heads, ch=ch)
     )
     async with guard:
+        if on_send is not None:
+            on_send()
         await ch.insert(
             "loom.memory",
             [dict(r) for r in rows],

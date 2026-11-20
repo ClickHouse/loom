@@ -118,3 +118,33 @@ async def test_batch_checks_the_earliest_holder_before_sending(monkeypatch):
         async with writes.fenced_many(["a", "b"]):
             pytest.fail("batch admission exhausted its earliest holder")
     assert release.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pool", [0, 1, 8, 64])
+async def test_batch_release_does_not_overload_its_own_pool(monkeypatch, pool):
+    names = [f"k{i}" for i in range(1000)]
+    remaining = set(names)
+    active = 0
+
+    async def take(name, **kw):
+        return SimpleNamespace(name=name)
+
+    async def release(lease):
+        nonlocal active
+        active += 1
+        try:
+            if active > (pool or 64):
+                return  # a refused release leaves its durable holder in place
+            await asyncio.sleep(0)
+            remaining.remove(lease.name)
+        finally:
+            active -= 1
+
+    monkeypatch.setattr(writes.leases, "take", take)
+    monkeypatch.setattr(writes.settings, "ch_pool_maxsize", pool)
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 24)
+    monkeypatch.setattr(writes.leases, "release_shielded", release)
+    async with writes.fenced_many(names):
+        pass
+    assert not remaining, "cleanup cannot strand keys by exceeding the connection pool"

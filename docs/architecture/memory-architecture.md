@@ -1333,6 +1333,9 @@ target or its grants, then rechecks the values after its own grant writes. A rol
 checks all planned live reinstatements in bounded slices before its first batch, then
 reads each batch's heads afresh. Under Postgres each commit holds the
 policy generations captured before the guard; a changed policy refuses the commit.
+ClickHouse namespace restores write bounded batches so their Keeper holders remain
+live through admission and insertion. A failed later batch leaves earlier inserts in
+place; retrying the restore writes the snapshot again.
 An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head

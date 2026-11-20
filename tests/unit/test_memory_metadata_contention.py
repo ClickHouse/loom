@@ -196,8 +196,11 @@ async def test_batch_contention_releases_keys_it_already_took(memory_insert_keep
 
 
 @pytest.mark.asyncio
-async def test_supported_batch_reaches_insert_with_live_holders(monkeypatch):
-    """Two 30 ms control statements per key must fit a 1000-key write's leases."""
+@pytest.mark.parametrize("restore", [False, True])
+async def test_supported_batch_reaches_insert_with_live_holders(
+    monkeypatch, no_blacklisted_values, restore
+):
+    """A bulk write or a large restore must reach each insert with live holders."""
     import asyncio
     from types import SimpleNamespace
 
@@ -206,16 +209,17 @@ async def test_supported_batch_reaches_insert_with_live_holders(monkeypatch):
     elapsed = 0.0
     held = []
     source = _row()
-    batch = [memory_repo.build_memory_version_row(source, memory_key=f"k{i}") for i in range(1000)]
+    count, latency = (10_000, 0.06) if restore else (1000, 0.03)
+    batch = [memory_repo.build_memory_version_row(source, memory_key=f"k{i}") for i in range(count)]
 
     async def take(name, *, ttl_s, **kw):
         nonlocal elapsed
         started = elapsed
         await asyncio.sleep(0)
-        elapsed = max(elapsed, started + 0.03)
+        elapsed = max(elapsed, started + latency)
         read = elapsed
         await asyncio.sleep(0)
-        elapsed = max(elapsed, read + 0.03)
+        elapsed = max(elapsed, read + latency)
         lease = SimpleNamespace(
             name=name, acquired=started, ttl=ttl_s, released=False, let_expire=lambda: None
         )
@@ -230,7 +234,7 @@ async def test_supported_batch_reaches_insert_with_live_holders(monkeypatch):
 
     class TimedInsert(Replica):
         async def insert(self, *args, **kw):
-            assert all(work_left(lease, lease.ttl) > 0 for lease in held), (
+            assert all(work_left(lease, lease.ttl) > 0 for lease in held if not lease.released), (
                 "batch admission consumed an earlier holder before the insert"
             )
             await super().insert(*args, **kw)
@@ -239,6 +243,11 @@ async def test_supported_batch_reaches_insert_with_live_holders(monkeypatch):
     monkeypatch.setattr(lease_writes.leases, "release_shielded", release)
     monkeypatch.setattr(lease_writes.leases, "work_left", work_left)
     table = []
-    await insert_memory_versions(batch, ch=TimedInsert(table))
+    if restore:
+        from server.memory.app import snapshot_rows
+
+        assert not await snapshot_rows.insert_version_rows(batch, ch=TimedInsert(table))
+    else:
+        await insert_memory_versions(batch, ch=TimedInsert(table))
     assert table == batch
     assert all(lease.released for lease in held)
