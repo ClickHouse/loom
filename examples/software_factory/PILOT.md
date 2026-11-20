@@ -17,18 +17,21 @@ All arms share the same agent tools, provider, tests and task budgets.
 
 Candidate tasks are 4045 (name validation), 4575 (redirect customization feature),
 and 4935 (nested subdomain routing), as pinned in `historical-candidates.json`.
-The imported receipts record individually valid controls for these tasks; the
-whole prior cohort is incomplete. Case 5063 is excluded because inspected controls
-are incomplete. Do not infer qualification from an image tag or a prior summary.
+The imported receipts describe diagnostic controls; the whole prior cohort is
+incomplete. Candidate-written reports do not establish independent correctness.
+Case 5063 is excluded because inspected controls are incomplete. Do not infer
+qualification from an image tag or a prior summary.
 
 ## Qualification and freeze before approval
 
-Historical admission is blocked by candidate-controlled pytest result authority.
-`HistoricalGrader` is diagnostic; the factory and worker refuse it before client
-construction, and the qualification CLI refuses it before container execution.
-Replace it with an oracle whose assertions and result authority remain outside
-candidate control, then independently qualify that boundary. Imported controls
-and filesystem probes cannot satisfy this requirement.
+`HistoricalGrader` uses candidate-controlled pytest reports and remains diagnostic.
+The factory and worker refuse it before client construction, and its qualification
+CLI refuses it before container execution. `BehavioralGrader` supplies a separate
+host oracle with authored public-behavior probes. Its assertions and final grades
+stay outside candidate execution. A pilot must explicitly choose this narrower
+coverage and freeze its code, seeds and independent control receipts; it cannot
+claim the official pytest selectors were executed. Imported diagnostic controls
+and filesystem probes do not qualify either oracle for a live protocol.
 
 1. Freeze the implementation commit, all agent-visible inputs, tool schemas,
    prompts, output limits, exact provider model id, API version and complete
@@ -37,16 +40,18 @@ and filesystem probes cannot satisfy this requirement.
    Cohere. Do not infer capabilities from an alias. Send no temperature default.
 2. Freeze a currently available dependency image by digest for each historical
    base. Independently run visible-base pass, hidden base fail and reference
-   pass controls; require every selected test to collect and reject errors,
-   missing selectors and skips. Reference patches stay evaluator-private.
+   pass controls against the chosen oracle. Require every frozen probe to return
+   a valid observation; missing or malformed observations cannot pass. Official
+   pytest selectors remain diagnostic. Reference patches stay evaluator-private.
    Imported controls and image digests are evidence to inspect, not permission
    to reuse an invalid environment. No full local suites on the shared host.
 3. Qualify a sandbox: one source checkout, no `.git`, alternates, future objects,
    reference fixes, grader files, credential files, network or sibling mounts.
    Candidate tests run without evaluator authority. Mount only immutable runtime
    dependencies. Verify traversal, symlink, import, subprocess and egress attacks
-   fail. Use a separate independent evaluator checkout for hidden grading; apply
-   only source allowlisted changes, preserving tests and runner configuration.
+   fail. Keep assertions and final grades on the host, outside candidate mounts.
+   Apply only allowlisted source changes to each observation checkout; expose no
+   hidden expectations, grader program or reference patch.
 4. Authorize existing immutable index namespaces for each repository/base using
    reader credentials only. Verify full commit and repository identity before
    and after reads. Zero restricted counts mean unknown. Do not grant access or

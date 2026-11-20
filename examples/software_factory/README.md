@@ -186,10 +186,11 @@ container construction. Direct hidden historical grading also refuses. Imported
 base/reference controls and filesystem-isolation probes do not qualify an
 independent historical oracle.
 
-Historical live runs require a replacement oracle whose assertions and result
-authority execute outside candidate control, followed by fresh independent
-controls and an exact protocol freeze. A declaration on a trusted adapter alone
-does not prove that boundary. The authored expression grader keeps its assertions
+The [authored host oracle](#authored-historical-behavioral-checks) supplies narrower
+public-behavior coverage with assertions and final grades outside candidate
+control. Historical live runs require its fresh independent controls and an exact
+protocol that explicitly chooses that coverage. A declaration on a trusted
+adapter alone does not prove the boundary. The authored expression grader keeps its assertions
 in the host and interprets only bounded source expressions as data; it remains
 available for offline replay. It is not a general Python grading sandbox.
 
@@ -222,10 +223,9 @@ full repository, namespace, commit and server build before releasing evidence.
 Matching watermarks do not establish immutability by themselves.
 
 These pieces do not constitute an approved historical cohort command.
-`HistoricalGrader` is refused until its result-authority boundary is replaced.
-The controller also needs qualified
-provider/dependency locks, verified token bounds, integrated hard supervision,
-server billing joins and actual protocol approval.
+`HistoricalGrader` remains refused; use the separately qualified host oracle.
+The controller also needs qualified provider/dependency locks, verified token
+bounds, actual transport and billing evidence, and exact protocol approval.
 The offline CLI never constructs live clients. Provider failures and invalid
 hidden graders retain failed result manifests, counts and unknown costs.
 
@@ -272,15 +272,13 @@ cohort journal. Bind them to their clients before dispatch. Each physical reques
 consumes its persisted global ceiling before I/O, including failures; a baseline
 Loom dispatch is refused. Counts survive cold workers and controller restarts.
 
-`preparation.prepare_historical` supplies the historical task/grader pair for a
-worker. It reuses the qualifier's private-input validation, verifies the pinned
-independent control receipt, checks actual base/reference outcomes and requires
-the same grading implementation. It exports implementation files from the exact
-base, checks source/grader hashes, and keeps the hidden test patch in the host's
-test adapter. Reference candidates and future Git objects stay outside source
-tools. Preparation does not confer objective result authority; the factory
-refuses this candidate-controlled adapter. Changed grading code also invalidates
-older control hashes rather than silently reusing their qualification.
+`preparation.prepare_behavioral` supplies exact-base implementation files and the
+host grader after verifying its frozen independent control receipt. It checks
+base/reference outcomes and source/grader hashes without reading the private
+reference patch or hidden test file. Reference candidates and future Git objects
+stay outside source tools. Changed grading code invalidates old control hashes.
+`prepare_historical` prepares only the diagnostic candidate-controlled adapter,
+which the factory refuses. It cannot substitute for host-oracle qualification.
 The host must still provide a qualified namespace, intake symbol and eligibility
 check; preparing source grants no index access or inference permission.
 
