@@ -170,29 +170,49 @@ _TRANSFERS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semapho
 
 
 @functools.lru_cache(maxsize=4)
-def _client_for(endpoint: str, region: str, connect_s: float, read_s: float) -> Any:
+def _client_for(
+    endpoint: str, region: str, connect_s: float, read_s: float, *, diagnostic: bool = False
+) -> Any:
     """A client for the endpoint, region and timeouts, cached. Each build makes its own
     session; the lock serialises building the session and the client, as botocore
     loads its data files and credential chain then and is not reliably safe to do
     so in two threads at once. The cache does not hold the lock, so two first
     calls may each build a client and one is kept."""
+    if diagnostic:
+        from server.core import object_store_probe
+
+        object_store_probe.require_sdk()
     import boto3
 
-    config = _client_config(connect_s, read_s)
+    config = _client_config(connect_s, read_s, diagnostic=diagnostic)
     with _CLIENT_LOCK:
         session = boto3.session.Session()
-        return session.client(
+        client = session.client(
             "s3", endpoint_url=endpoint or None, region_name=region or None, config=config
         )
+        if diagnostic:
+            try:
+                object_store_probe.install(client)
+            except BaseException:
+                try:
+                    client.close()
+                except Exception:  # noqa: BLE001 — retain the diagnostic client refusal
+                    pass
+                raise
+        return client
 
 
-def _client_config(connect_s: float, read_s: float) -> Any:
+def _client_config(connect_s: float, read_s: float, *, diagnostic: bool = False) -> Any:
     from botocore.config import Config
 
     return Config(
         connect_timeout=connect_s,
         read_timeout=read_s,
-        retries={"max_attempts": 3, "mode": "standard"},
+        retries=(
+            {"total_max_attempts": 1, "mode": "standard"}
+            if diagnostic
+            else {"max_attempts": 3, "mode": "standard"}
+        ),
         max_pool_connections=_THREADS,  # one connection per bucket thread
         # Checksums only where a request needs one (`put` sends its SHA-256 itself):
         # boto3's default of one on every request is refused by some S3-compatible stores.
