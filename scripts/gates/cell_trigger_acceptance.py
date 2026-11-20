@@ -11,6 +11,7 @@ import re
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -751,6 +752,99 @@ def dependency_receipt(root: Path, output: Path) -> dict:
     return {"path": str(output), "sha256": sha(output)}
 
 
+def _progress_row(row, *, budget: bool) -> bool:
+    if type(row) is not list or not row or not all(type(n) is int and 0 <= n < 2**63 for n in row):
+        return False
+    if budget:
+        return (
+            len(row) == 7
+            and row[:2] == [0, 1]
+            and row[2] in (0, 1)
+            and row[4] <= 7020000
+            and row[6] in (0, 1)
+        )
+    if row[0] == 0:
+        return row == [0, 1, 100, 45500]
+    if row[0] == 1:
+        return (
+            len(row) == 6
+            and row[1] in (*range(1, 9), *range(10, 26))
+            and row[2] <= 456
+            and row[3] <= 45500
+        )
+    return len(row) == 4 and row[0] == 2 and row[1] <= 3216 and row[3] in (0, 1)
+
+
+def _read_provenance_progress(path: Path, *, budget: bool):
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        return None
+    require(
+        stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and info.st_nlink == 1,
+        "Owned regular provenance diagnostic",
+    )
+    cap, records = (512, 2) if budget else (823552, 3217)
+    require(info.st_size <= cap, "Bounded provenance diagnostic")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            actual = os.fstat(stream.fileno())
+            require(
+                (actual.st_dev, actual.st_ino, actual.st_uid, actual.st_nlink)
+                == (info.st_dev, info.st_ino, os.getuid(), 1)
+                and stat.S_ISREG(actual.st_mode),
+                "Stable provenance diagnostic",
+            )
+            data = stream.read(cap + 1)
+    finally:
+        os.close(fd)
+    require(len(data) <= cap, "Bounded provenance diagnostic read")
+    incomplete = int(bool(data) and not data.endswith(b"\n"))
+    lines = data.splitlines()
+    require(
+        len(lines) <= records and all(len(line) + 1 <= 256 for line in lines),
+        "Bounded provenance diagnostic records",
+    )
+    if incomplete:
+        lines = lines[:-1]
+    rows = [json.loads(line.decode("ascii")) for line in lines]
+    require(all(_progress_row(row, budget=budget) for row in rows), "Numeric provenance records")
+    if budget:
+        require(all(row[2] == index for index, row in enumerate(rows)), "Ordered budget snapshots")
+    elif rows:
+        require(rows[0] == [0, 1, 100, 45500], "Provenance diagnostic header")
+        require(
+            all(row[0] == 1 for row in rows[1:-1]) and (len(rows) == 1 or rows[-1][0] in (1, 2)),
+            "Ordered provenance records",
+        )
+        if rows[-1][0] == 2:
+            require(rows[-1][1] == len(rows) - 1, "Provenance record count")
+    return rows, incomplete
+
+
+def _publish_provenance_progress(fixture: Path, destination: Path) -> None:
+    diagnostic = None
+    try:
+        child = _read_provenance_progress(fixture / "provenance-progress.jsonl", budget=False)
+        budget = _read_provenance_progress(fixture / "provenance-budget.jsonl", budget=True)
+        if child is not None or budget is not None:
+            diagnostic = {
+                "schema": 1,
+                "rows": child[0] if child else [],
+                "budget": budget[0] if budget else [],
+                "incomplete_tail": int(bool((child and child[1]) or (budget and budget[1]))),
+            }
+    except (OSError, ValueError, RuntimeError):
+        diagnostic = {"schema": 1, "invalid": 1}
+    if diagnostic is not None:
+        try:
+            write(destination / "provenance-progress.json", diagnostic)
+        except OSError:
+            # Missing diagnostics cannot replace the required work or cleanup result.
+            pass
+
+
 def publish(
     folder: Path,
     destination: Path,
@@ -775,6 +869,7 @@ def publish(
     for name in ("source-before.json", "source-after.json", "startup-diagnostics.json"):
         if (folder / name).is_file():
             shutil.copyfile(folder / name, destination / name)
+    _publish_provenance_progress(fixture, destination)
     # Only the fixed numeric-only API diagnostic is public; raw API logs stay private.
     costs = fixture / "serving-cell/request-costs.jsonl"
     diagnostic = None
