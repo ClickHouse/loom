@@ -67,25 +67,17 @@ class _Object:
     members: tuple[_Member, ...]
 
 
-def upsert_object_key(
-    text: str, section: str, name: str, entry: dict[str, Any]
-) -> tuple[str, bool]:
-    """Return the text with `section.name` set to `entry`, and whether it changed.
-
-    An entry that is already equal is left byte for byte. Raises JsoncEditError
-    when the root is not an object, `section` is not one object, or `name` is
-    duplicated there.
-    """
-    return upsert_nested_key(text, (section,), name, entry)
-
-
 def upsert_nested_key(
     text: str, sections: tuple[str, ...], name: str, entry: dict[str, Any]
 ) -> tuple[str, bool]:
-    """`upsert_object_key` under a path of objects: with sections ("mcp", "servers"),
-    `mcp.servers.name` is set. The first section missing on the way down is inserted
-    with the rest of the path inside it. Raises JsoncEditError as above for any
-    section on the path."""
+    """Return the text with `entry` set at `sections` + `name`, and whether it changed.
+
+    With sections ("mcp", "servers"), `mcp.servers.name` is set. The first section
+    missing on the way down is inserted with the rest of the path inside it. An entry
+    that is already equal is left byte for byte. Raises JsoncEditError when the root
+    is not an object, a section on the path is not one object, or `name` is
+    duplicated in the last one.
+    """
     if not sections:
         raise ValueError("sections must name at least one object")
     path = (*sections, name)

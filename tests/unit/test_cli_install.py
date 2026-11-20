@@ -9,7 +9,7 @@ import sys
 import pytest
 
 import server.cli.install as cli
-from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
+from server.cli.jsonc_edit import JsoncEditError, upsert_nested_key
 from server.identity.app.token_clients import MCP_CLIENTS, client_config
 
 
@@ -1441,7 +1441,7 @@ def test_only_zed_settings_writes_skip_newline_translation(
 )
 def test_a_non_ascii_or_huge_number_is_a_jsonc_edit_error(text: str) -> None:
     with pytest.raises(JsoncEditError):
-        upsert_object_key(text, "context_servers", "loom", {"url": "http://h"})
+        upsert_nested_key(text, ("context_servers",), "loom", {"url": "http://h"})
 
 
 @pytest.mark.parametrize(
