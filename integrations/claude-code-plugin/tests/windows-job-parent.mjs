@@ -11,11 +11,11 @@ const child = spawn(
     "-File",
     fileURLToPath(new URL("./windows-job-witness.ps1", import.meta.url)),
   ],
-  { stdio: ["pipe", "pipe", "pipe"], windowsHide: true },
+  // Guardian diagnostics must survive this relay's deliberate termination.
+  { stdio: ["pipe", "pipe", "inherit"], windowsHide: true },
 );
 child.stdin.end();
 child.stdout.pipe(process.stdout);
-child.stderr.pipe(process.stderr);
 child.on("error", (error) => {
   throw error;
 });

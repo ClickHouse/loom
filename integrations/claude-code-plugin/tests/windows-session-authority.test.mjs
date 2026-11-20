@@ -613,6 +613,11 @@ if (process.platform === "win32") {
         } catch {}
       }
       if (stage === "live-identities" || stage === "deadline-absence") processObservationFailure(observation);
+      if (stage === "deadline-absence" || stage === "directory-absence") {
+        try {
+          context.diagnostic(`LWN1:parent:${stage}:${phases()}`);
+        } catch {} // Diagnostics must preserve the original failure.
+      }
       lifetimeFailure(context, "parent", stage, error);
       throw error;
     } finally {
