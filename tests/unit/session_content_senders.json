@@ -405,7 +405,7 @@
     "sdk/python/loom/integrations/haystack.py": "8ab24c9dfb4220b35c8194605a77368a9b7b8a29d27a0b6b30569668947a31e0",
     "sdk/python/loom/integrations/langgraph.py": "5d68e6ab1645d868477a13b14aa6d734c72f72057464cac9a21aa707add17e7b",
     "sdk/python/loom/integrations/llamaindex.py": "06eaa071115cad752d27bdc9bf7c4d5b6f5d7d39d9896267fcd459a4e06bf661",
-    "sdk/python/loom/integrations/openai_agents.py": "18b8e9493122bf64284ac82294cfc96d974ede556bec34f23c0eaf58e66502d6",
+    "sdk/python/loom/integrations/openai_agents.py": "143fe1df060b96550a33f77fa44416e291c2154552e433f8309275f61c8fca2a",
     "sdk/python/loom/memory.py": "e1384e84ddf58b503dc430eca1b2e734eb5e5680ac6904a64785bb50a63316d1",
     "sdk/python/loom/run.py": "1d47d5f4d197f78de347d2cf66b9f59f4292846d214f7116c444035971c6ab42",
     "sdk/python/loom/session.py": "5f0fd61fcfdbf9d60888b111887fca8f32e24eb51ca9ff04a256901657c3202b",
