@@ -1173,4 +1173,6 @@ def test_only_collection_admins_change_its_spend_policy_and_keep_other_settings(
         "namespace.register",
         {"namespace": collection, "owner_email": "user:alice", "daily_cost_cap_usd": 1},
     )
-    assert wrong_route.status_code == 422 and "collection operations only" in wrong_route.text
+    assert wrong_route.status_code == 403
+    assert "namespace.register is not open to an end user" in wrong_route.text
+    assert gw.ok("alice", "namespace.get", {"namespace": collection}) == restored
