@@ -1343,7 +1343,8 @@ jobs:
           cache-dependency-path: sdk/typescript/package-lock.json
       - name: npm ci
         working-directory: sdk/typescript
-        run: npm ci --no-audit --no-fund
+        # Host expression engines are not needed to build or test adapters.
+        run: npm ci --ignore-scripts --no-audit --no-fund
       # biome lint + format, tsc --noEmit, version consistency, the README's
       # ts examples type-checked against src, vitest.
       - name: lint + type-check + version + README examples + unit tests
@@ -1360,7 +1361,7 @@ jobs:
       - name: Claude memory tool with Anthropic 1.11
         working-directory: sdk/typescript
         run: |
-          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund @anthropic-ai/sdk@1.11.0
           npm run type-check
           npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
           npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts

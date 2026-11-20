@@ -1,12 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
-import type { Agent } from "@clickhouse/loom";
 import { BaseListChatMessageHistory } from "@langchain/core/chat_history";
 import {
   type BaseMessage,
-  type StoredMessage,
   mapChatMessagesToStoredMessages,
   mapStoredMessagesToChatMessages,
+  type StoredMessage,
 } from "@langchain/core/messages";
+import type { Agent } from "../../../../agent.js";
 
 type Row = { memory_key: string; value?: unknown; value_truncated?: boolean };
 const PREFIX = "n8n-history/";

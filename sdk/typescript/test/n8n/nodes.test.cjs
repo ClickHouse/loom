@@ -1,10 +1,12 @@
 const assert = require("node:assert/strict");
 const { afterEach, mock, test } = require("node:test");
 const { Agent } = require("@clickhouse/loom");
+const { dirname, join } = require("node:path");
+const root = dirname(require.resolve("@clickhouse/loom/package.json"));
 const { HumanMessage, AIMessage } = require("@langchain/core/messages");
-const { Loom } = require("../dist/nodes/Loom/Loom.node.js");
-const { LoomMemory } = require("../dist/nodes/LoomMemory/LoomMemory.node.js");
-const { LoomChatHistory } = require("../dist/nodes/LoomMemory/LoomChatHistory.js");
+const { Loom } = require(join(root, "dist/integrations/n8n/nodes/Loom/Loom.node.js"));
+const { LoomMemory } = require(join(root, "dist/integrations/n8n/nodes/LoomMemory/LoomMemory.node.js"));
+const { LoomChatHistory } = require(join(root, "dist/integrations/n8n/nodes/LoomMemory/LoomChatHistory.js"));
 
 afterEach(() => mock.restoreAll());
 
@@ -191,7 +193,7 @@ test("server refusals fail a node or become an error item when continue-on-fail 
 
 test("the bundled tokenizer carries its upstream license text", () => {
   const { readFileSync } = require("node:fs");
-  const licenses = readFileSync(require("node:path").join(__dirname, "../dist/THIRD_PARTY_LICENSES.txt"), "utf8");
+  const licenses = readFileSync(join(root, "dist/integrations/n8n/THIRD_PARTY_LICENSES.txt"), "utf8");
   const tokenizer = licenses.split("js-tiktoken 1.0.21\n")[1]?.split("\n\n---\n\n")[0];
   assert.match(tokenizer, /Permission is hereby granted/);
 });

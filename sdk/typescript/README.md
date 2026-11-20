@@ -512,6 +512,27 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## n8n
+
+The SDK includes the Loom action node, Loom Chat Memory node and Loom API credential
+for self-hosted n8n. Their classes are exported by `@clickhouse/loom/integrations/n8n`.
+The native CommonJS files and icons are in `dist/integrations/n8n` inside this package.
+The `n8n-workflow` package is an optional peer supplied by the n8n host; importing the
+SDK's main entry does not load the adapter.
+
+Install the SDK in the npm project running n8n and set the custom-node directory
+before starting n8n:
+
+```sh
+npm install @clickhouse/loom
+export N8N_CUSTOM_EXTENSIONS="$(node -p 'require("node:path").join(require("node:path").dirname(require.resolve("@clickhouse/loom/package.json")), "dist/integrations/n8n")')"
+npx --no-install n8n start
+```
+
+The adapter is tested with `n8n-workflow` 2.47.2. Use n8n's custom-node loader;
+its Community Nodes settings installer requires a different package naming format.
+See [configuration and memory scope](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#n8n).
+
 ## Mastra
 
 ```ts

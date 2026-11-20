@@ -1,14 +1,8 @@
 import { BufferWindowMemory } from "@langchain/classic/memory";
-import {
-  NodeConnectionTypes,
-  NodeOperationError,
-  type INodeType,
-  type INodeTypeDescription,
-  type ISupplyDataFunctions,
-  type SupplyData,
-} from "n8n-workflow";
-import { client, identityProperties } from "../client";
-import { LoomChatHistory } from "./LoomChatHistory";
+import type { INodeType, INodeTypeDescription, ISupplyDataFunctions, SupplyData } from "n8n-workflow";
+import { NodeConnectionTypes, NodeOperationError } from "../../runtime.js";
+import { client, identityProperties } from "../client.js";
+import { LoomChatHistory } from "./LoomChatHistory.js";
 
 export class LoomMemory implements INodeType {
   description: INodeTypeDescription = {

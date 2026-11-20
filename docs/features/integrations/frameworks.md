@@ -27,7 +27,7 @@ or needs another database, vector store or cache.
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                                                        |
 | Mastra                         | `loomTools`, `LoomMemoryStorage`                | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool`, `MemoryStorage` from `@mastra/core`                        |
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                                       |
-| n8n                            | Loom Chat Memory, Loom                          | `@clickhouse/n8n-nodes-loom`                              | AI Memory sub-node and action/tool node                                  |
+| n8n                            | Loom Chat Memory, Loom                          | TypeScript, `@clickhouse/loom/integrations/n8n`           | AI Memory sub-node and action/tool node                                  |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                                                              |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
@@ -1086,16 +1086,33 @@ tool-error result with Loom's message, and the run goes on.
 
 ## n8n
 
-The `@clickhouse/n8n-nodes-loom` community package gives self-hosted n8n a Loom Chat
+The `@clickhouse/loom` npm package gives self-hosted n8n a Loom Chat
 Memory sub-node for its AI Agent and a Loom action node for Remember, Recall and Search
 Knowledge. The action node can also connect as an agent tool. Both call your Loom
 server through the SDK; data stays in your Loom deployment.
 
-Install the package through n8n's Community Nodes settings after it is published, or
-build a tarball from [`integrations/n8n`](https://github.com/ClickHouse/loom/tree/main/integrations/n8n)
-and install it into the community nodes directory. Its README gives the checked build
-and installation commands. The package bundles its SDK and framework libraries and is
-not verified for n8n Cloud.
+Install the SDK in the npm project that runs n8n, where the host's `n8n-workflow`
+package is available. The adapter is tested with `n8n-workflow` 2.47.2. Point n8n's
+custom-node loader at the SDK's bundled node directory, then restart n8n:
+
+```sh
+npm install @clickhouse/loom
+export N8N_CUSTOM_EXTENSIONS="$(node -p 'require("node:path").join(require("node:path").dirname(require.resolve("@clickhouse/loom/package.json")), "dist/integrations/n8n")')"
+npx --no-install n8n start
+```
+
+Set the same environment variable on each n8n worker that loads the nodes. The
+[custom-node loader](https://docs.n8n.io/hosting/configuration/configuration-examples/custom-nodes-location/)
+supports this package directory. The Community Nodes settings installer requires
+an `n8n-nodes-` package name, so use the custom-node loader for `@clickhouse/loom`.
+The native node files bundle their framework libraries and licenses. The adapter
+targets self-hosted n8n and does not claim n8n Cloud verification.
+
+The classes are also available from `@clickhouse/loom/integrations/n8n`: `Loom`,
+`LoomMemory`, `LoomApi` and `LoomChatHistory`. The SDK's main import does not load
+these classes or their host dependency. To check a private Loom deployment, run
+`LOOM_BASE_URL=http://localhost:7790 npm --prefix sdk/typescript run test:n8n:live`
+from the repository root after building the SDK.
 
 Create a Loom API credential with the server URL and a namespace-scoped writer token.
 Set Organization, Namespace, Agent Name and User ID on each node. Connect Loom Chat
@@ -1106,7 +1123,7 @@ messages stay in Loom until cleared. Remember stores durable facts separately fr
 conversation history. Use separate namespaces and restricted tokens for mutually
 untrusted users.
 
-Without a community package, n8n's MCP Client Tool node can connect to Loom's MCP URL
+n8n's MCP Client Tool node can also connect to Loom's MCP URL
 with `?toolset=core` and a bearer token, and expose `loom_memory_set` and `loom_search`
 to its AI Agent.
 [The MCP client setup](./mcp-clients.md#other-editors-and-agents) describes that route.
