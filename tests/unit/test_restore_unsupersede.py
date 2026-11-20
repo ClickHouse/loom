@@ -248,6 +248,7 @@ async def test_an_undo_whose_record_fails_restores_nothing(monkeypatch):
 
 
 @pytest.mark.parametrize("deleted_since", [True, False])
+@pytest.mark.asyncio(loop_scope="function")
 async def test_an_undo_after_a_later_delete_leaves_the_delete(monkeypatch, deleted_since):
     # The first read still shows the retirement; the read-your-writes head shows the
     # delete that landed since, or no row at all. The delete stands, and the answer
@@ -282,6 +283,7 @@ async def test_an_undo_after_a_later_delete_leaves_the_delete(monkeypatch, delet
         assert out.memory_id is None
 
 
+@pytest.mark.asyncio(loop_scope="function")
 async def test_a_guarded_restore_never_undoes_a_delete(monkeypatch):
     # The inspector showed the row retired; another client deleted it since.
     from server.memory.api.models_crud import MemoryRestoreInput
@@ -337,6 +339,7 @@ _FUTURE = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=30)
         ({"status": "active", "valid_to": _PAST}, "active"),
     ],
 )
+@pytest.mark.asyncio(loop_scope="function")
 async def test_undoing_a_retired_duplicate_keeps_it_a_duplicate(monkeypatch, keeper, status):
     # The same-key judge can retire a duplicate row. Undone while the row it
     # duplicates is still served, it stays hidden behind that row, on both tables.
@@ -389,3 +392,20 @@ def test_a_version_becomes_its_time_to_the_microsecond() -> None:
 
     # A float of these ns rounds the microsecond up; integer arithmetic does not.
     assert version_time(1_792_383_601_496_448_999) == datetime(2026, 10, 19, 4, 20, 1, 496448)
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_restore_clock_owns_the_test_loop():
+    from server.core.errors import PreconditionFailedError
+
+    loop = asyncio.get_running_loop()
+    clock = key_write_lock.time
+    assert loop.time == clock.monotonic
+    began = clock.monotonic()
+    locks = key_write_lock.key_write_locks
+    async with locks.hold("o", "n", "a", "-", "s", "clock-control"):
+        with pytest.raises(PreconditionFailedError):
+            async with locks.hold("o", "n", "a", "-", "s", "clock-control"):
+                pytest.fail("a blocked key lock cannot outlive its idle budget")
+    assert clock.monotonic() > began
+    assert len(locks) == 0
