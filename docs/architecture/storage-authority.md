@@ -84,6 +84,8 @@ an admitted memory send is still fenced if its outcome is unknown or cancellatio
 arrives during holder release.
 Acknowledged copies record their commit before holder cleanup, and still run their
 announcements and follow-ups when that cleanup is cancelled.
+Point writes retain their hash-only receipt and announcement after an acknowledged
+insert, including cancellation during holder release.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection
 pool during cleanup. Large ClickHouse namespace restores insert bounded batches to
 keep admission inside each batch's lease budget.

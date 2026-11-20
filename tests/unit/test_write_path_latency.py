@@ -154,6 +154,8 @@ async def test_a_plain_insert_projects_its_edges_as_an_embedded_write_does(
     seen, gate = post_insert
 
     async def _nothing(*_: Any, **__: Any) -> None:
+        if on_inserted := __.get("on_inserted"):
+            on_inserted()
         return None
 
     monkeypatch.setattr(set_commit, "insert_memory_versions", _nothing)

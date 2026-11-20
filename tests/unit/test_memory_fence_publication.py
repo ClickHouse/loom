@@ -10,6 +10,7 @@ import pytest
 
 from server.core.lease_writes import FenceUnavailableError
 from server.memory import store
+from server.memory.api.models_crud import MemorySetInput
 from server.memory.app import bulk_set, set_commit, update
 from server.memory.store.rows import identity_key
 from server.memory.store.write_fence import lease_name
@@ -30,6 +31,9 @@ async def test_contended_value_write_publishes_no_embedding(
     inserted: dict[str, list[dict[str, Any]]] = {}
     retire = AsyncMock()
     high_fence = AsyncMock()
+    receipt, point_announce, revision = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(set_commit, "_audit_set_receipt", receipt)
+    monkeypatch.setattr(set_commit, "_announce_set", point_announce)
     monkeypatch.setattr(store, "tombstone_vectors_of", retire)
     monkeypatch.setattr(update, "fence_high", high_fence)
     monkeypatch.setattr(set_commit, "fence_high", high_fence)
@@ -62,7 +66,7 @@ async def test_contended_value_write_publishes_no_embedding(
                 ch,
                 retire_vectors=operation == "update_retire",
                 high=operation == "update_high",
-                record=AsyncMock(),
+                record=revision,
             )
         else:
             await bulk_set._insert_batch(
@@ -72,6 +76,9 @@ async def test_contended_value_write_publishes_no_embedding(
     retire.assert_not_awaited()
     high_fence.assert_not_awaited()
     announce.assert_not_awaited()
+    receipt.assert_not_awaited()
+    point_announce.assert_not_awaited()
+    revision.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -140,6 +147,10 @@ async def test_high_write_cancelled_during_holder_release_still_fences_search(
     fence = AsyncMock()
     monkeypatch.setattr(set_commit, "fence_high", fence)
     monkeypatch.setattr(bulk_set, "fence_high", fence)
+    monkeypatch.setattr(set_commit, "_receipt_for_set", AsyncMock())
+    monkeypatch.setattr(set_commit, "_lift_after_insert", AsyncMock(return_value=100))
+    monkeypatch.setattr(set_commit, "_announce_set", AsyncMock())
+    monkeypatch.setattr(store, "tombstone_vectors_of", AsyncMock())
     announce = AsyncMock()
     monkeypatch.setattr(bulk_set, "_bulk_announce", announce)
     source = _row()
@@ -158,7 +169,9 @@ async def test_high_write_cancelled_during_holder_release_still_fences_search(
     monkeypatch.setattr(leases, "release_shielded", held_release)
     ch = CH()
     call = (
-        set_commit._land_plain_row(SimpleNamespace(memory_row=memory), ch, high=True)
+        set_commit._land_plain_row(
+            SimpleNamespace(memory_row=memory, existing=source), ch, high=True
+        )
         if operation == "set"
         else bulk_set._land_batch(
             ch, SimpleNamespace(memory_rows=[memory], embedding_rows=[]), None, {}
@@ -248,3 +261,75 @@ async def test_copy_commit_mark_and_followups_survive_holder_release_cancellatio
     with pytest.raises(asyncio.CancelledError):
         await task
     assert calls == ["committed", "landed", "then"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["plain_set", "searchable_set", "update"])
+async def test_acknowledged_point_write_records_after_release_cancellation(monkeypatch, operation):
+    import asyncio
+
+    from server.core import leases
+    from server.memory.app import conflicts
+
+    source = _row()
+    memory = store.build_memory_version_row(source)
+    w = set_commit._SetWrite(
+        input=MemorySetInput(
+            org=source.org,
+            namespace=source.namespace,
+            agent=source.agent,
+            memory_key=source.memory_key,
+            value=source.value,
+        ),
+        version=source.version,
+        retyped_from="",
+        existing=source,
+        expires_at=None,
+        memory_row=memory,
+        memory_id=source.memory_id,
+        embedder=SimpleNamespace(model_name="m", dim=4),
+    )
+    receipt, announce, revision = AsyncMock(), AsyncMock(), AsyncMock()
+    monkeypatch.setattr(set_commit, "_audit_set_receipt", receipt)
+    monkeypatch.setattr(set_commit, "_announce_set", announce)
+    monkeypatch.setattr(set_commit, "_lift_above_deletes", AsyncMock())
+    monkeypatch.setattr(set_commit, "_lift_after_insert", AsyncMock(return_value=source.version))
+    monkeypatch.setattr(store, "tombstone_vectors_of", AsyncMock())
+    monkeypatch.setattr(store, "search_document_row", lambda *a, **k: {})
+    monkeypatch.setattr(conflicts, "same_key_mark", AsyncMock(return_value=None))
+    releasing, finish = asyncio.Event(), asyncio.Event()
+    release = leases.release_shielded
+
+    class CH:
+        async def insert(self, table, batch, **kw):
+            assert table == "loom.memory"
+
+    async def held_release(lease):
+        releasing.set()
+        await finish.wait()
+        await release(lease)
+
+    monkeypatch.setattr(leases, "release_shielded", held_release)
+    ch = CH()
+    if operation == "plain_set":
+        call = set_commit._land_plain_row(w, ch, high=False)
+    elif operation == "searchable_set":
+        call = set_commit._set_dual_write(
+            w, ch, SimpleNamespace(policy={}), SimpleNamespace(verdict="clear")
+        )
+    else:
+        call = update._land_inserted(
+            source, memory, [], ch, retire_vectors=False, high=False, record=revision
+        )
+    task = asyncio.create_task(call)
+    await releasing.wait()
+    task.cancel("release-stage")
+    finish.set()
+    with pytest.raises(asyncio.CancelledError) as cancelled:
+        await task
+    assert cancelled.value.args == ("release-stage",)
+    if operation == "update":
+        revision.assert_awaited_once()
+    else:
+        receipt.assert_awaited_once()
+        announce.assert_awaited_once_with(w)

@@ -276,6 +276,8 @@ class _SetWrite:
     # follow-ups (conflict marks, supersession, audit) ran.
     pending: pg_lease.PublicationPending | None = None
     max_distance: float = 0.0
+    # ClickHouse acknowledged the row, before cancellable holder cleanup.
+    inserted: bool = False
 
 
 async def settled[T](w: _SetWrite, step: Awaitable[T]) -> T:
@@ -469,7 +471,6 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
     """Write the plain row and announce it, and fence a 'high' one whenever it may be in:
     under Postgres committed and handed to the publication batch, on ClickHouse inserted
     and lifted above a delete that landed meanwhile. Returns the version it landed at."""
-    import server.memory.store as memory_repo
     from server.observability.otel import traced
 
     memory_row = w.memory_row
@@ -494,32 +495,56 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
             finally:
                 await _announce_set(w)  # committed, whatever failed after it
             return w.version
-    sent = False
+    return await _land_plain_clickhouse(w, ch, high=high)
+
+
+async def _receipt_for_set(w: _SetWrite, verdict: str = "") -> None:
+    await _audit_set_receipt(
+        w.input,
+        memory_id=w.memory_id,
+        content_sha256=w.new_sha,
+        source_class=w.source_class,
+        verdict=verdict,
+        actor=w.writer_actor or "-",
+    )
+
+
+async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
+    import server.memory.store as memory_repo
+    from server.observability.otel import traced
+
+    memory_row = w.memory_row
+    sent = inserted = False
+    version = int(memory_row["version"])
 
     def mark_sent() -> None:
         nonlocal sent
         sent = True
 
+    def mark_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+
     try:
-        with traced("ch.insert.memory", table="loom.memory"):
-            await insert_memory_versions([memory_row], ch=ch, on_send=mark_sent)
         try:
-            await _audit_set_receipt(
-                w.input,
-                memory_id=w.memory_id,
-                content_sha256=w.new_sha,
-                source_class=w.source_class,
-                verdict="",
-                actor=w.writer_actor or "-",
-            )
-            version = await _lift_after_insert(w, ch)
+            with traced("ch.insert.memory", table="loom.memory"):
+                await insert_memory_versions(
+                    [memory_row], ch=ch, on_send=mark_sent, on_inserted=mark_inserted
+                )
         finally:
-            await _announce_set(w)  # the row is in, whatever failed after it
-        await memory_repo.tombstone_vectors_of(w.existing, version=memory_row["version"], ch=ch)
+            if inserted:
+                try:
+                    await _receipt_for_set(w)
+                    version = await _lift_after_insert(w, ch)
+                finally:
+                    await _announce_set(w)
+                await memory_repo.tombstone_vectors_of(
+                    w.existing, version=memory_row["version"], ch=ch
+                )
         return version
-    finally:  # the row is in: a failed lift or retire must not also skip the fence
-        if sent and (fence := _fence()):
-            await fence_high(fence, ch=ch)
+    finally:
+        if high and sent:
+            await fence_high([(identity_key(memory_row), int(memory_row["version"]))], ch=ch)
 
 
 async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
@@ -936,9 +961,14 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
             await _announce_set(w)  # committed, whatever failed after it
         return
 
+    w.inserted = False
+
+    def mark_inserted() -> None:
+        w.inserted = True
+
     async def _insert_memory() -> None:
         with traced("ch.insert.memory", table="loom.memory"):
-            await insert_memory_versions([memory_row], ch=ch)
+            await insert_memory_versions([memory_row], ch=ch, on_inserted=mark_inserted)
 
     async def _insert_embedding() -> None:
         with traced(
@@ -950,12 +980,13 @@ async def _insert_row_and_vector(w: _SetWrite, ch: Any, embedding_row: dict[str,
 
             await memory_repo.insert_embedding_rows([embedding_row], ch=ch)
 
-    await _insert_memory()
     try:
+        await _insert_memory()
         await _insert_embedding()
         await _lift_after_insert(w, ch, [embedding_row])
     finally:
-        await _announce_set(w)  # the row is in, whatever failed after it
+        if w.inserted:
+            await _announce_set(w)  # the row is in, whatever failed after it
 
 
 async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any) -> Any:
@@ -1005,6 +1036,11 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
         # Committed: the write's own follow-ups still run, and the caller is told
         # afterwards (`settled`).
         w.pending = e
+    except BaseException:  # acknowledged rows still owe their receipt when publication is cancelled
+        if w.inserted:
+            verdict = "duplicate" if w.memory_row.get("duplicate_of") else conflict_result.verdict
+            await _receipt_for_set(w, verdict)
+        raise
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
 

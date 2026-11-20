@@ -4841,6 +4841,8 @@ async def test_an_update_whose_retirement_fails(
         raise RuntimeError("retire refused")
 
     async def _ok(*a: object, **kw: object) -> None:
+        if on_inserted := kw.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _commit(rows: Any, *, targets: int, **kw: object) -> Any:
@@ -6406,6 +6408,8 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     async def _nothing(*_a: Any, **_k: Any) -> Any:
         if on_send := _k.get("on_send"):
             on_send()
+        if on_inserted := _k.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> int:

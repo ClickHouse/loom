@@ -28,6 +28,8 @@ def plain(monkeypatch: pytest.MonkeyPatch) -> Any:
         if on_send := kwargs.get("on_send"):
             on_send()
         writes.extend(rows)
+        if on_inserted := kwargs.get("on_inserted"):
+            on_inserted()
 
     async def emit(**kwargs: Any) -> str:
         assert len(writes) == 1
