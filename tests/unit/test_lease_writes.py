@@ -203,6 +203,41 @@ async def test_admission_wait_stops_at_its_deadline(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("pause", [0.0, 6.0, 100.0])
+async def test_holder_deadline_does_not_move_after_process_suspension(monkeypatch, pause):
+    now = 100.0
+    deadlines = []
+
+    class Timeout:
+        async def __aenter__(self):
+            nonlocal now
+            now += pause
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def expired(self):
+            return False
+
+    @contextmanager
+    def under(deadline):
+        deadlines.append(deadline)
+        yield
+
+    monkeypatch.setattr(writes, "time", SimpleNamespace(monotonic=lambda: now))
+    monkeypatch.setattr(writes.leases, "take", AsyncMock(return_value=SimpleNamespace()))
+    monkeypatch.setattr(writes.leases, "work_left", lambda *args: 10.0)
+    monkeypatch.setattr(writes.leases, "release_shielded", AsyncMock())
+    monkeypatch.setattr(writes.asyncio, "timeout", lambda *args: Timeout())
+    monkeypatch.setattr(writes.asyncio, "timeout_at", lambda *args: Timeout())
+    monkeypatch.setattr(writes.rmt_carry, "under_lease", under)
+    async with writes.fenced_many(["key"]):
+        pass
+    assert deadlines == [110.0]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("sending", [False, True])
 async def test_fence_deadline_is_typed_and_preserves_unknown_outcome(monkeypatch, sending):
     from unittest.mock import Mock

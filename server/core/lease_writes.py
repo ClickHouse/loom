@@ -80,6 +80,16 @@ async def _release_all(held: list[leases.Lease]) -> None:
         )
 
 
+def _work_deadlines(held: list[leases.Lease], ttl: float) -> tuple[float, float]:
+    # Sample both clocks before work_left: a suspension cannot extend the holder.
+    loop_now = asyncio.get_running_loop().time()
+    send_now = time.monotonic()
+    left = min(leases.work_left(lease, ttl) for lease in held)
+    if left <= 0:
+        raise FenceUnavailableError("the write lease expired")
+    return loop_now + left, send_now + left
+
+
 @asynccontextmanager
 async def fenced_many(
     names: list[str], *, ch: Any = None, wait_s: float = 0.0
@@ -105,13 +115,11 @@ async def fenced_many(
         uncertain = value
 
     try:
-        left = min(leases.work_left(lease, ttl) for lease in held)
-        if left <= 0:
-            raise FenceUnavailableError("the write lease expired")
-        deadline = asyncio.timeout(left)
+        loop_deadline, send_deadline = _work_deadlines(held, ttl)
+        deadline = asyncio.timeout_at(loop_deadline)
         try:
             async with deadline:
-                with rmt_carry.under_lease(time.monotonic() + left):
+                with rmt_carry.under_lease(send_deadline):
                     yield mark_uncertain
         except TimeoutError:
             if not deadline.expired():
