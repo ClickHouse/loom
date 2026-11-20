@@ -125,8 +125,10 @@ benchmark intent or of a PR does not replace that approval.
    an isolated focused grader. Verify traversal, symlink, import, subprocess and
    egress isolation. Export only allowlisted implementation edits into a separate
    independent final grader; preserve evaluator tests and runner configuration.
-4. Supply authorized immutable index scopes for all three exact source bases,
-   using reader credentials. Verify repository, full commit, server build,
+4. Use a private server and database owned by this pilot; never reuse a production
+   server. Supply authorized immutable index scopes for all three exact source
+   bases using reader credentials. Use exact retrieval only, with no embeddings,
+   conceptual search or model enrichment. Verify repository, full commit, server build,
    permissions and every required index tier before and after reads. External
    immutability evidence is mandatory; matching watermarks alone are insufficient.
    Restricted zero counts mean unknown. No index creation or grants are implied.
