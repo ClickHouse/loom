@@ -215,6 +215,22 @@ describe("useReadableCollections", () => {
     return <p data-testid="probe">{c.rows === null ? "reading" : c.rows.map((r) => r.namespace).join(",")}</p>;
   }
 
+  it("starts only the latest collection read when earlier effects were replaced before running", async () => {
+    let latest: ReadableCollections | null = null;
+    function Holder() {
+      latest = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    // The deferred reads have not run yet: each reload supersedes the one before it.
+    act(() => latest?.reload());
+    act(() => latest?.reload());
+    await settle();
+    expect(api.listCollections).toHaveBeenCalledTimes(1);
+    expect(api.listCollections.mock.calls[0][1].signal.aborted).toBe(false);
+  });
+
   it("requests document counts with every collection page", async () => {
     api.listCollections
       .mockResolvedValueOnce({ collections: [entry("col-a")], next_cursor: "col-a" })

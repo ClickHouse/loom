@@ -156,6 +156,8 @@ export function useReadableCollections(org: string, showing: string | null = nul
   const hold = answered && showing !== null && answer.rows.some((c) => c.namespace === showing) ? showing : "";
   useAbortableEffect(
     (signal, live) => {
+      // A reload can replace this effect before its deferred callback runs.
+      if (!live()) return;
       setError(null);
       void (async () => {
         for (let attempt = 0; ; attempt++) {
