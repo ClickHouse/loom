@@ -375,3 +375,248 @@ def test_sql_failure_keeps_the_complete_sample_context(
         "samples": recorded,
     }
     assert len(recorded) == 2
+
+
+@pytest.mark.parametrize(
+    "values", [[3.0, 1.0, 2.0, 6.0, 4.0, 5.0], [3.0, 1.0, 2.0, 10.0, 8.0, 9.0]]
+)
+def test_walk_samples_preserve_six_costs_and_boundary_context(
+    monkeypatch: pytest.MonkeyPatch, values: list[float]
+) -> None:
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from tests.unit import lane_walks
+
+    clocks = iter(
+        value
+        for index, value in enumerate(values)
+        for value in (index * 100.0, index * 100.0 + value)
+    )
+    events: list[tuple[str, object]] = []
+    inside = False
+
+    @contextmanager
+    def region():
+        nonlocal inside
+        inside = True
+        try:
+            yield
+        finally:
+            inside = False
+
+    def source(n: int) -> str:
+        events.append(("source", n))
+        return str(n)
+
+    def walk(text: str) -> None:
+        assert inside
+        events.append(("walk", text))
+
+    def snapshot() -> dict[str, object]:
+        assert not inside
+        events.append(("snapshot", len(events)))
+        return {"boundary": len(events)}
+
+    monkeypatch.setattr(lane_walks, "WALKS", [("observed", walk, source)])
+    monkeypatch.setattr(lane_walks, "untraced", region)
+    monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+    monkeypatch.setattr(lane_walks, "linear_sample_context", snapshot)
+    samples: list[dict[str, object]] = []
+    small, big = lane_walks.walk_cost("observed", diagnostics=samples)
+    assert (small, big) == (min(values[:3]), min(values[3:]))
+    assert (big < 0.1 or big < 8.0 * small) == (values[-2] == 4.0)
+    sizes = [100_000] * 3 + [400_000] * 3
+    assert [sample["n"] for sample in samples] == sizes
+    assert [sample["cpu_s"] for sample in samples] == values
+    assert [value for event, value in events if event == "source"] == sizes
+    assert [value for event, value in events if event == "walk"] == [str(n) for n in sizes]
+    assert len([event for event, _ in events if event == "snapshot"]) == 12
+    for sample in samples:
+        assert sample["after"]["boundary"] > sample["before"]["boundary"]
+
+
+def test_walk_sample_keeps_the_original_walker_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import lane_walks
+
+    failure = RuntimeError("private walker error")
+    seen: list[str] = []
+
+    def walk(text: str) -> None:
+        seen.append(text)
+        raise failure
+
+    monkeypatch.setattr(lane_walks, "WALKS", [("observed", walk, lambda n: "private source")])
+    monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: 0.0))
+    samples: list[dict[str, object]] = []
+    with pytest.raises(RuntimeError) as error:
+        lane_walks.walk_cost("observed", diagnostics=samples)
+    assert error.value is failure
+    assert seen == ["private source"]
+    assert len(samples) == 1
+    assert samples[0]["n"] == 100_000
+    assert samples[0]["cpu_s"] is None
+    assert "private source" not in json.dumps(samples)
+    assert "private walker error" not in json.dumps(samples)
+
+
+@pytest.mark.parametrize("large", [4.0, 8.0])
+def test_walk_context_error_keeps_selected_costs(
+    monkeypatch: pytest.MonkeyPatch, large: float
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import lane_walks
+
+    def unavailable() -> int:
+        raise RuntimeError("private observer error")
+
+    clocks = iter(
+        [
+            0.0,
+            1.0,
+            10.0,
+            11.0,
+            20.0,
+            21.0,
+            30.0,
+            30.0 + large,
+            40.0,
+            40.0 + large,
+            50.0,
+            50.0 + large,
+        ]
+    )
+    monkeypatch.setattr(code_fixtures.time, "thread_time_ns", unavailable)
+    monkeypatch.setattr(lane_walks, "WALKS", [("observed", lambda text: None, lambda n: "")])
+    monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+    samples: list[dict[str, object]] = []
+    small, big = lane_walks.walk_cost("observed", diagnostics=samples)
+    assert (small, big) == (1.0, large)
+    assert (big < 0.1 or big < 8.0 * small) == (large == 4.0)
+    assert len(samples) == 6
+    for sample in samples:
+        assert sample["before"] == sample["after"] == {"context_error": "RuntimeError"}
+    assert "private observer error" not in json.dumps(samples)
+
+
+def test_walk_without_diagnostics_does_not_collect_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import lane_walks
+
+    def forbidden() -> dict[str, object]:
+        pytest.fail("A caller without diagnostics must not collect context")
+
+    monkeypatch.setattr(lane_walks, "linear_sample_context", forbidden)
+    monkeypatch.setattr(lane_walks, "WALKS", [("observed", lambda text: None, lambda n: "")])
+    clocks = iter(range(12))
+    monkeypatch.setattr(lane_walks, "time", SimpleNamespace(process_time=lambda: next(clocks)))
+    assert lane_walks.walk_cost("observed") == (1, 1)
+
+
+def test_walk_child_publishes_the_complete_sample_packet(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import faulthandler
+    from types import SimpleNamespace
+
+    from tests.unit import lane_walks
+    from tests.unit import test_code_regex_cost as costs
+
+    samples = [
+        {"n": n, "cpu_s": cpu, "before": {"clock": i}, "after": {"clock": i + 1}}
+        for i, (n, cpu) in enumerate(
+            zip([100_000] * 3 + [400_000] * 3, [3.0, 1.0, 2.0, 6.0, 4.0, 5.0], strict=True)
+        )
+    ]
+
+    def walk_cost(name: str, *, diagnostics: list[dict[str, object]]) -> tuple[float, float]:
+        assert name == "observed"
+        diagnostics.extend(samples)
+        return 1.0, 4.0
+
+    monkeypatch.setattr(lane_walks, "walk_cost", walk_cost)
+    monkeypatch.setattr(sys, "argv", ["child", "observed"])
+
+    child_faults = {name: getattr(faulthandler, name) for name in dir(faulthandler)}
+    child_faults["dump_traceback_later"] = lambda *a, **kw: None
+    monkeypatch.setitem(sys.modules, "faulthandler", SimpleNamespace(**child_faults))
+    exec(costs._WALK_CHILD, {})
+    assert json.loads(capsys.readouterr().out) == {"costs": [1.0, 4.0], "samples": samples}
+
+
+@pytest.mark.parametrize("large", [4.0, 8.0])
+def test_walk_parent_keeps_judge_and_failure_packet(
+    monkeypatch: pytest.MonkeyPatch, large: float
+) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import test_code_regex_cost as costs
+
+    samples = [
+        {"n": n, "cpu_s": cpu, "before": {"clock": i}, "after": {"clock": i + 1}}
+        for i, (n, cpu) in enumerate(
+            zip(
+                [100_000] * 3 + [400_000] * 3,
+                [3.0, 1.0, 2.0, large + 2, large, large + 1],
+                strict=True,
+            )
+        )
+    ]
+    packet = {"costs": [1.0, large], "samples": samples}
+
+    def run(argv: list[str], **kwargs: object) -> object:
+        assert argv[:2] == [sys.executable, "-c"]
+        assert argv[-1] == "observed"
+        assert kwargs["capture_output"] is True and kwargs["text"] is True
+        assert kwargs["timeout"] == 120
+        return SimpleNamespace(returncode=0, stdout=json.dumps(packet), stderr="")
+
+    monkeypatch.setattr(costs.subprocess, "run", run)
+    if large == 4.0:
+        costs.test_a_lane_walk_costs_linear_time("observed")
+    else:
+        with pytest.raises(AssertionError) as error:
+            costs.test_a_lane_walk_costs_linear_time("observed")
+        assert json.loads(str(error.value.args[0]).splitlines()[0]) == {
+            "name": "observed",
+            **packet,
+        }
+
+
+@pytest.mark.parametrize("failure", ["child", "invalid", "timeout"])
+def test_walk_child_errors_remain_failures(monkeypatch: pytest.MonkeyPatch, failure: str) -> None:
+    from types import SimpleNamespace
+
+    from tests.unit import test_code_regex_cost as costs
+
+    timeout = costs.subprocess.TimeoutExpired("walk-child", 120)
+
+    def run(*args: object, **kwargs: object) -> object:
+        if failure == "timeout":
+            raise timeout
+        return SimpleNamespace(
+            returncode=1 if failure == "child" else 0,
+            stdout="invalid packet",
+            stderr="child failed",
+        )
+
+    monkeypatch.setattr(costs.subprocess, "run", run)
+    expected = {
+        "child": AssertionError,
+        "invalid": json.JSONDecodeError,
+        "timeout": costs.subprocess.TimeoutExpired,
+    }[failure]
+    with pytest.raises(expected) as error:
+        costs.test_a_lane_walk_costs_linear_time("observed")
+    if failure == "timeout":
+        assert error.value is timeout
+    elif failure == "child":
+        assert str(error.value.args[0]).startswith("child failed")
