@@ -121,9 +121,15 @@ def _call_span(name: str, carrier: Mapping[str, Any], operation: str) -> Iterato
                 yield span
             except BaseException as error:
                 status = getattr(error, "status_code", 0)
+                detail = getattr(error, "detail", None)
+                code = (
+                    detail.get("code")
+                    if isinstance(detail, Mapping)
+                    else getattr(error, "code", None)
+                )
                 result = (
                     "timeout"
-                    if isinstance(error, TimeoutError) or status in (408, 504)
+                    if isinstance(error, TimeoutError) or _timed_out(code, status)
                     else ("refusal" if isinstance(status, int) and 400 <= status < 500 else "error")
                 )
                 _outcome(span, result)
@@ -206,6 +212,10 @@ def _outcome(span: Any, value: str) -> None:
         pass
 
 
+def _timed_out(code: Any, status: Any) -> bool:
+    return code in ("BACKEND_TIMEOUT", "EMBED_TIMEOUT", "TIMEOUT") or status in (408, 504)
+
+
 def outcome(
     span: Any, response: Mapping[str, Any], *, protocol_refusals: tuple[int, ...] = ()
 ) -> None:
@@ -230,9 +240,7 @@ def outcome(
         )
     else:
         detail, value = {}, "success"
-    if detail.get("code") in ("BACKEND_TIMEOUT", "EMBED_TIMEOUT", "TIMEOUT") or detail.get(
-        "status"
-    ) in (408, 504):
+    if _timed_out(detail.get("code"), detail.get("status")):
         value = "timeout"
     _outcome(span, value)
 

@@ -589,3 +589,44 @@ def test_review_operation_label_distinguishes_help_from_invalid_targets(
     assert len(roots) == 1
     assert roots[0].attributes["loom.operation"] == operation
     assert roots[0].attributes["loom.call.outcome"] == ("refusal" if failed else "success")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind, expected", [("embed", "timeout"), ("http", "timeout"), ("busy", "error")]
+)
+async def test_review_http_timeout_conversion_preserves_classification(
+    monkeypatch, spans, kind, expected
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from server.core.errors import EmbedTimeoutError
+    from server.transport import http
+
+    code = "UPSTREAM_UNAVAILABLE" if kind == "busy" else "EMBED_TIMEOUT"
+
+    async def handler(payload):
+        if kind == "embed":
+            raise EmbedTimeoutError("private provider failure")
+        raise HTTPException(503, detail={"code": code, "message": "private provider failure"})
+
+    monkeypatch.setattr(http.gates, "tenant_slot", lambda *args: nullcontext())
+    monkeypatch.setattr(http.llm_free, "serving", lambda *args: nullcontext())
+    monkeypatch.setattr(http, "_emit_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(http, "_record_failure", lambda *args, **kwargs: None)
+    op = SimpleNamespace(name="memory.search", handler=handler, idempotent=True)
+    call = SimpleNamespace(
+        request_id="request", raw_body={}, identity={"namespace": "ns"}, auth=None, target="ns"
+    )
+    with pytest.raises(HTTPException) as raised:
+        with prompt_context.http_call({}, op.name):
+            await http._run_handler(op, None, call)
+    assert raised.value.status_code == 503
+    assert raised.value.detail["code"] == code
+    root = spans.get_finished_spans()[0]
+    assert root.attributes["loom.call.outcome"] == expected
+    assert "private provider failure" not in str(root.attributes)
+    assert not root.events
