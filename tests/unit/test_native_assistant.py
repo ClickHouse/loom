@@ -383,7 +383,14 @@ def test_citation_evidence_is_from_results_not_untrusted_text() -> None:
         (
             "[help:features/x.md § X > Y]",
             "help.get",
-            {"found": True, "path": "features/x.md", "section": "X > Y", "anchor": "y"},
+            {
+                "found": True,
+                "path": "features/x.md",
+                "section": "X > Y",
+                "anchor": "y",
+                "text": "Returned section text.",
+                "truncated": False,
+            },
             {},
         ),
         (

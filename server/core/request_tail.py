@@ -356,6 +356,14 @@ async def settle_current() -> None:
         await settle(tail)
 
 
+async def publish_current() -> None:
+    """Settle streamed accounting and renew its retained source proofs."""
+    tail = _tail.get()
+    if tail is not None:
+        await settle(tail)
+        await _publication_barrier(tail)
+
+
 @asynccontextmanager
 async def streaming_scope() -> AsyncIterator[None]:
     """Own final streamed usage after the HTTP header tail has closed.
@@ -437,4 +445,5 @@ __all__ = [
     "fail_required",
     "settle",
     "settle_current",
+    "publish_current",
 ]

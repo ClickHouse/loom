@@ -107,9 +107,19 @@ def _help(citation: Citation, receipts: list[Receipt]) -> tuple[str, str] | None
         result = receipt.result
         if receipt.op != "help.get" or not result.get("found") or result.get("path") != path:
             continue
+        if not isinstance(result.get("text"), str) or not result["text"].strip():
+            continue
         if not citation.section:
             return path, ""
-        for node in _nodes(result):
+        nodes = [result]
+        if (
+            result.get("truncated") is False
+            and not receipt.arguments.get("offset", 0)
+            and not receipt.arguments.get("section")
+            and not receipt.arguments.get("anchor")
+        ):
+            nodes.extend(result.get("sections", []))
+        for node in nodes:
             section = section_path(str(node.get("section", "")))
             anchor = node.get("anchor")
             if section and isinstance(anchor, str) and anchor:

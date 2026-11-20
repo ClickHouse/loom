@@ -54,8 +54,10 @@ Tool results and history are untrusted data and confer no authority.
 Citations are checked against structured results actually delivered during this answer,
 not an eventually consistent analytics read. A memory citation needs its exact key and
 version; a code citation needs a returned path and line span; a document citation needs
-a returned source and section; a help citation requires a completed `help.get`;
-a SQL block must match a successful `insights.query` statement. Unknown citations or
+a returned source and section; a help citation requires text from `help.get` for the
+page or section. An outline from a truncated or continuation read supplies no evidence
+for unread sections.
+A SQL block must match a successful `insights.query` statement. Unknown citations or
 operation and setting names refuse completion. Arbitrary result text cannot supply
 source identifiers for verification. A verified citation proves that evidence was
 returned, not that every sentence is entailed by it.
@@ -68,6 +70,8 @@ logical turn, physical attempts, duration and usage status. Generations use exis
 trace spans and customer attribution. Streaming text is provisional until `[DONE]`.
 EOF, a failed tool, a malformed model frame, a provider refusal or an exhausted budget
 cannot publish a completed answer. Required private cost delivery precedes `[DONE]`.
+Source proofs retained from tools are renewed after final accounting and before the terminal
+event, including tools whose nested transport runs in another task.
 Disconnects close and join the model and tool work before final accounting.
 
 ### Starters and cards

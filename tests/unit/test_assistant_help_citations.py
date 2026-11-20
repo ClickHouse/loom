@@ -121,3 +121,55 @@ def test_a_section_is_found_without_its_page_title_or_by_a_unique_tail(shipped) 
         (False, ""),
         (True, "a"),
     ]
+
+
+@pytest.mark.parametrize("section", ["", "Sharing > Collections"])
+def test_truncated_help_outline_requires_a_read_of_the_cited_section(shipped, section):
+    (shipped / "features" / "sharing.md").write_text(
+        "# Sharing\n\n## Collections\n\n"
+        + "bounded content " * 2000
+        + "\n\n## Unread sibling\n\nThis section needs its own read.\n"
+    )
+    docs.reset()
+
+    async def check():
+        first = HelpGetInput(path="features/sharing.md", section=section)
+        result = await docs.handle_help_get(first)
+        assert result.truncated and "This section needs its own read." not in result.text
+        assert any(row.anchor == "unread-sibling" for row in result.sections)
+        receipts = [Receipt("help.get", first.model_dump(), result.model_dump(), "model_tool", 1)]
+        citation = "[help:features/sharing.md § Sharing > Unread sibling]"
+        assert not evidence.verify(citation, receipts)[0].verified
+        target = HelpGetInput(path="features/sharing.md", section="Sharing > Unread sibling")
+        read = await docs.handle_help_get(target)
+        receipts.append(
+            Receipt("help.get", target.model_dump(), read.model_dump(), "model_tool", 2)
+        )
+        verified = evidence.verify(citation, receipts)[0]
+        assert verified.verified and verified.anchor == "unread-sibling"
+
+    asyncio.run(check())
+
+
+def test_a_continuation_outline_does_not_verify_the_whole_section(shipped):
+    async def check():
+        page = await docs.handle_help_get(HelpGetInput(path="features/sharing.md"))
+        args = HelpGetInput(path="features/sharing.md", offset=len(page.text) - 5)
+        result = await docs.handle_help_get(args)
+        assert not result.truncated and len(result.text) == 5 and result.sections
+        receipt = Receipt("help.get", args.model_dump(), result.model_dump(), "model_tool", 1)
+        citation = "[help:features/sharing.md § Sharing > Collections]"
+        assert not evidence.verify(citation, [receipt])[0].verified
+
+    asyncio.run(check())
+
+
+def test_an_empty_help_read_does_not_verify_a_page(shipped):
+    async def check():
+        args = HelpGetInput(path="features/sharing.md", offset=len(_PAGE) + 10)
+        result = await docs.handle_help_get(args)
+        assert result.found and not result.text
+        receipt = Receipt("help.get", args.model_dump(), result.model_dump(), "model_tool", 1)
+        assert not evidence.verify("[help:features/sharing.md]", [receipt])[0].verified
+
+    asyncio.run(check())

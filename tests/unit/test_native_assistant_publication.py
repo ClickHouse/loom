@@ -157,10 +157,103 @@ def test_help_receipts_preserve_the_verified_section_anchor(whole_page):
     from server.assistant.app.tools import Receipt
 
     section = {"section": "Sharing > Collections", "anchor": "collections"}
-    result = {"found": True, "path": "features/sharing.md", **section}
+    result = {
+        "found": True,
+        "path": "features/sharing.md",
+        "text": "# Sharing\n\n## Collections\n\nReturned section text.",
+        "truncated": False,
+        **section,
+    }
     if whole_page:
         result.update(section="", anchor="", sections=[section])
     receipt = Receipt("help.get", {}, result, "model_tool", 1)
     (citation,) = evidence.verify("[help:features/sharing.md § Sharing > Collections]", [receipt])
     assert citation.verified and citation.ref == "features/sharing.md"
     assert citation.anchor == "collections"
+
+
+@pytest.mark.parametrize("mirrored", [False, True])
+@pytest.mark.parametrize("stage", ["", "model", "accounting"])
+def test_stream_terminal_renews_nested_proofs_after_accounting(
+    publication, monkeypatch, mirrored, stage
+):
+    state = publication
+    state.stage = stage
+    state.ticket.mirrored = mirrored
+    sent = []
+    request = tools.Tools._request
+
+    async def child_request(self, *args):
+        return await asyncio.create_task(request(self, *args))
+
+    monkeypatch.setattr(tools.Tools, "_request", child_request)
+
+    async def accounting():
+        state.events.append("accounting")
+        if stage == "accounting":
+            state.current = False
+
+    def close(error):
+        if error is None:
+            request_tail.defer_required(accounting)
+
+    held = SimpleNamespace(
+        ticket=state.ticket,
+        answer=runtime.Answer(mirrored=mirrored),
+        close=close,
+        finished=False,
+        row=SimpleNamespace(request_id="stream-publication"),
+    )
+
+    async def app(scope, receive, send):
+        chunks = runtime.stream(
+            state.ticket, [{"role": "user", "content": "our policy"}], held.answer
+        )
+        response = routes._AnswerStream(routes._streamed(chunks, held), held)
+        await response(scope, receive, send)
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    async def scenario():
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/answer",
+            "headers": [],
+            "asgi": {"spec_version": "2.4"},
+        }
+        call = request_tail.RequestTailMiddleware(app)
+        if stage:
+            with pytest.raises(request_tail.RequiredTailError):
+                await call(scope, receive, send)
+        else:
+            await call(scope, receive, send)
+
+    asyncio.run(scenario())
+    body = b"".join(message.get("body", b"") for message in sent)
+    assert (b"[DONE]" in body) is (not stage)
+    assert state.events[-1] == "proof"
+    assert state.events.index("accounting") < len(state.events) - 1
+
+
+def test_stream_can_close_from_a_different_task_after_a_provisional_frame():
+    closed = []
+
+    async def source():
+        try:
+            yield b"data: provisional\n\n"
+        finally:
+            closed.append(True)
+
+    async def scenario():
+        async with request_tail.streaming_scope():
+            stream = routes._streamed(source(), SimpleNamespace(finished=False))
+            assert await asyncio.create_task(anext(stream)) == b"data: provisional\n\n"
+            await asyncio.create_task(stream.aclose())
+
+    asyncio.run(scenario())
+    assert closed == [True]

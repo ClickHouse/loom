@@ -206,12 +206,7 @@ class _AnswerStream(StreamingResponse):
         self.held = held
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
-        lifetime = (
-            request_tail.streaming_scope()
-            if self.held.ticket.mirrored
-            else contextlib.nullcontext()
-        )
-        async with lifetime:
+        async with request_tail.streaming_scope():
             await self._serve(scope, receive, send)
 
     async def _serve(self, scope: Any, receive: Any, send: Any) -> None:
@@ -316,11 +311,19 @@ async def chat_completions(request: Request) -> Any:
 
 async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[bytes]:
     try:
-        async for chunk in chunks:
+        while True:
+            # A disconnect can close this iterator from another task. Finish the
+            # publication context before yielding control to the response sender.
+            with request_tail.publication_group() as publication:
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+                publication.commit()
             if chunk == b"data: [DONE]\n\n":
                 await chunks.aclose()  # type: ignore[attr-defined]
                 held.close(None)
-                await request_tail.settle_current()
+                await request_tail.publish_current()
             yield chunk
     except LoomServerError as e:
         # Headers are sent: the error event and the row carry the runtime failure.
