@@ -22,6 +22,8 @@ from server.settings import settings
 # The aliases the SQL is written against.
 SCHEMA = "loom"
 TELEMETRY = "loom_telemetry"
+# The read-only reader user when LOOM_CH_READER_USER names none.
+DEFAULT_READER = "loom_reader"
 
 _PLAIN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

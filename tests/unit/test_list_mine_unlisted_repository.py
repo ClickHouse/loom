@@ -175,3 +175,19 @@ async def test_a_repository_listed_only_in_the_config_is_never_where_a_token_sav
         namespace_kinds.reset_cache()
     assert not caller_home.is_memory_home(kinds, "code-acme-private")
     assert caller_home.is_memory_home(kinds, "team-private")
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
+def test_a_grant_row_carries_the_directory_title() -> None:
+    setup = [
+        ddl("namespace_grants"),
+        ddl("namespaces"),
+        ddl("namespace_visits"),
+        _grant("col-research", "viewer"),
+        _grant("team-private", "admin"),
+        "INSERT INTO loom.namespaces (org, namespace, owner_email, active, kind, title) VALUES "
+        "('acme', 'col-research', 'kim@acme.dev', true, 'collection', 'Research')",
+    ]
+    by_ns = {r["namespace"]: r for r in run(setup, membership._MEMBERSHIP_SQL, _PARAMS)}
+    assert by_ns["col-research"]["title"] == "Research"
+    assert by_ns["team-private"]["title"] == ""  # no directory row

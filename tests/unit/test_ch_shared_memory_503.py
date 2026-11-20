@@ -1,0 +1,146 @@
+"""CHClient answers ClickHouse running short of the server's or the user's memory (code
+241 with "(total)", or the user's limit as "(for user)" or "User memory limit exceeded")
+as a 503 OVERLOADED the caller retries, not a 500, and logs ClickHouse's line for it at
+most once per interval; a statement's own memory cap stays its own error."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+from clickhouse_connect.driver.exceptions import DatabaseError
+
+import server.core.ch as ch_mod
+from server.core.ch_errors import is_passing_state
+from server.core.errors import OverloadedError
+
+# captured from ClickHouse 26.10 with max_server_memory_usage at 4 GiB
+_TOTAL = (
+    "Received ClickHouse exception, code: 241, server response: Code: 241. "
+    "DB::Exception: (total) memory limit exceeded: would use 4.01 GiB (attempt to allocate "
+    "chunk of 2.00 MiB), current RSS: 4.01 GiB, maximum: 4.00 GiB. (MEMORY_LIMIT_EXCEEDED) "
+    "(version 26.10.3.7 (official build)) (for url http://localhost:18701)"
+)
+_USER = "Code: 241. DB::Exception: Memory limit (for user) exceeded: would use 12 GiB"
+# captured from ClickHouse 26.5.1.882 with max_memory_usage_for_user=5000000
+_USER_NOW = (
+    "Code: 241. DB::Exception: User memory limit exceeded: would use 6.59 MiB (attempt to "
+    "allocate chunk of 6.00 MiB), maximum: 4.77 MiB. OvercommitTracker decision: Query was "
+    "selected to stop by OvercommitTracker: While executing AggregatingTransform. "
+    "(MEMORY_LIMIT_EXCEEDED) (version 26.5.1.882 (official build))"
+)
+_QUERY = "Code: 241. DB::Exception: Memory limit (for query) exceeded: would use 2 GiB"
+
+
+def _client() -> Any:
+    c = ch_mod.CHClient.__new__(ch_mod.CHClient)
+    c._client = None
+    c.reconnects = 0
+
+    async def _reconnect(seen: int | None = None) -> None:
+        c.reconnects += 1
+
+    c._reconnect = _reconnect  # type: ignore[method-assign]
+    return c
+
+
+def _raising(message: str):
+    calls = {"n": 0}
+
+    async def fn() -> str:
+        calls["n"] += 1
+        raise DatabaseError(message)
+
+    return fn, calls
+
+
+@pytest.mark.parametrize("message", [_TOTAL, _USER, _USER_NOW])
+@pytest.mark.parametrize("op", ["query_all", "insert"])
+async def test_the_servers_or_users_memory_running_short_is_a_503(message: str, op: str) -> None:
+    fn, calls = _raising(message)
+    with pytest.raises(OverloadedError) as caught:
+        c = _client()
+        await c._with_retry(op, fn, cls="write" if op == "insert" else "read")
+    assert calls["n"] == 1 and c.reconnects == 0  # answered at once, not retried here
+    assert caught.value.status_code == 503 and caught.value.extra.get("retry_after_s") == 5
+    # the answer carries no ClickHouse text, and a rows' writer still reads it as passing
+    assert "DB::Exception" not in str(caught.value)
+    assert isinstance(caught.value.__cause__, DatabaseError)
+    assert is_passing_state(caught.value)
+
+
+async def test_a_statements_own_memory_cap_stays_its_error() -> None:
+    fn, _ = _raising(_QUERY)
+    with pytest.raises(DatabaseError):
+        await _client()._with_retry("query_all", fn)
+
+
+async def test_the_503s_cause_is_logged_once_per_interval_and_counted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(ch_mod, "_SHORT_OF_MEMORY", ch_mod._Refusals())
+    monkeypatch.setattr(ch_mod.time, "monotonic", lambda: 1000.0)
+    c = _client()
+    with caplog.at_level("WARNING", logger=ch_mod.log.name):
+        for _ in range(3):
+            fn, _calls = _raising(_TOTAL)
+            with pytest.raises(OverloadedError):
+                await c._with_retry("query_all", fn)
+    lines = [r.getMessage() for r in caplog.records if "short of memory" in r.getMessage()]
+    assert len(lines) == 1  # the next two fall inside the interval
+    assert "(total) memory limit exceeded" in lines[0] and "localhost" not in lines[0]
+    assert ch_mod._SHORT_OF_MEMORY.total == 3 and ch_mod._SHORT_OF_MEMORY.since_log == 2
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        ConnectionResetError("Connection reset by peer"),
+        DatabaseError("Code: 242. DB::Exception: Table is in readonly mode"),
+    ],
+)
+async def test_a_retried_attempt_that_finds_clickhouse_short_of_memory_is_a_503(
+    first: Exception,
+) -> None:
+    # A ClickHouse near its memory limit drops connections and loses Keeper sessions
+    # too: the retry's answer is mapped as the first attempt's would be.
+    calls = {"n": 0}
+
+    async def fn() -> str:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise first
+        raise DatabaseError(_TOTAL)
+
+    c = _client()
+    with pytest.raises(OverloadedError):
+        await c._with_retry("query_all", fn)
+    assert calls["n"] == 2 and c.reconnects == 1
+
+
+class _StreamDriver:
+    """A driver whose stream open meets ClickHouse short of the user's memory."""
+
+    def __init__(self) -> None:
+        self.opens = 0
+
+    async def raw_stream(self, *_a: Any, **_k: Any) -> Any:
+        self.opens += 1
+        raise DatabaseError(_USER_NOW)
+
+
+async def test_a_stream_open_that_finds_clickhouse_short_of_memory_is_a_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def no_pending(*_a: Any, **_k: Any) -> None:
+        return None
+
+    monkeypatch.setattr(ch_mod, "guard_pending_schema", no_pending)
+    c = _client()
+    c._client = driver = _StreamDriver()
+    c._ensure_state()
+    free = c._stream_slots._value
+    with pytest.raises(OverloadedError):
+        async with c.raw_stream("SELECT 1"):
+            pass
+    assert driver.opens == 1 and c._stream_slots._value == free  # its slot is released

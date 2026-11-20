@@ -223,15 +223,16 @@ def _version_row(
     status: str = "active",
     tombstoned: bool = False,
     memory_id: str = "",
+    memory_type: str = "semantic",
 ) -> str:
     quoted = value.replace("'", "\\'")
     tombstoned_at = "now()" if tombstoned else "NULL"
     mid = f"'{memory_id}'" if memory_id else "generateUUIDv4()"
     return (
         "INSERT INTO loom.memory (org, namespace, agent, user_id, session_id, memory_key, "
-        "memory_id, value, content_sha256, status, tombstoned_at, version) VALUES ('test', "
-        f"'personal', 'cursor', 'u', '{session}', '{key}', {mid}, '{quoted}', "
-        f"'{sha256_value(value)}', '{status}', {tombstoned_at}, {version})"
+        "memory_type, memory_id, value, content_sha256, status, tombstoned_at, version) "
+        f"VALUES ('test', 'personal', 'cursor', 'u', '{session}', '{key}', '{memory_type}', "
+        f"{mid}, '{quoted}', '{sha256_value(value)}', '{status}', {tombstoned_at}, {version})"
     )
 
 
@@ -254,6 +255,16 @@ async def test_a_superseded_version_with_the_same_bytes_is_not_a_keeper() -> Non
         _version_row("user_task_branch", "User's task branch is main.", 2),
         _version_row("user_task_note", VALUE, 1, session="s-other"),
     )
+    got = await _bulk_set_mod._bulk_identity_dupes(ch, _input())
+    assert [key for key, _ in got.values()] == ["user_task_note"]
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.asyncio
+async def test_a_definition_is_never_the_keeper() -> None:
+    """A definition's key is its identity: no other entry folds into it."""
+    definition = _version_row("definition/task-branch", VALUE, 1, memory_type="definition")
+    ch = _versions_ch(definition, _version_row("user_task_note", VALUE, 1, session="s-other"))
     got = await _bulk_set_mod._bulk_identity_dupes(ch, _input())
     assert [key for key, _ in got.values()] == ["user_task_note"]
 
@@ -323,7 +334,12 @@ async def test_under_postgres_a_keeper_is_one_the_authority_still_holds(
         held = {"kept": {"content_sha256": sha}, "rewritten": {"content_sha256": "b" * 64}}
         # the authority's id: a key re-set since keeps its bytes under a new one
         return {
-            k: {"status": "active", "memory_id": f"auth-{k[5]}", **held[k[5]]}
+            k: {
+                "status": "active",
+                "memory_type": "semantic",
+                "memory_id": f"auth-{k[5]}",
+                **held[k[5]],
+            }
             for k in keys
             if k[5] in held
         }
@@ -358,7 +374,12 @@ async def test_under_postgres_a_keeper_clickhouse_does_not_hold_yet_is_found(
     async def _heads(keys: Any) -> dict[Any, Any]:
         held = {"just_written": sha, "rewritten": "b" * 64}
         return {
-            k: {"status": "active", "memory_id": f"auth-{k[5]}", "content_sha256": held[k[5]]}
+            k: {
+                "status": "active",
+                "memory_type": "semantic",
+                "memory_id": f"auth-{k[5]}",
+                "content_sha256": held[k[5]],
+            }
             for k in keys
         }
 
@@ -373,6 +394,36 @@ async def test_under_postgres_a_keeper_clickhouse_does_not_hold_yet_is_found(
     got = await bulk_set._bulk_identity_dupes(_ClickHouseHoldsNone(), _input())
     assert got == {sha: ("just_written", "auth-just_written")}
     assert asked == [("test", "personal", "cursor", "u", [sha], scope)]
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_an_unpublished_definition_is_never_the_keeper(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The undelivered revision carries no type: the authority's head gives it."""
+    from server.memory.app import bulk_set
+    from server.memory.store import pg_memory
+
+    sha = sha256_value(VALUE)
+
+    async def _unpublished(*args: Any, scope: Any) -> list[dict[str, Any]]:
+        return [
+            {"head_sha": sha, "session_id": "s1", "memory_key": "definition/x", "memory_id": "m1"}
+        ]
+
+    async def _heads(keys: Any) -> dict[Any, Any]:
+        head = {"status": "active", "memory_id": "auth-1", "content_sha256": sha}
+        return {k: {**head, "memory_type": "definition"} for k in keys}
+
+    class _ClickHouseHoldsNone:
+        async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:
+            return []
+
+    monkeypatch.setattr("server.core.pg.enabled", lambda: True)
+    monkeypatch.setattr(bulk_set, "request_scope", lambda: None)
+    monkeypatch.setattr(pg_memory, "unpublished_keepers", _unpublished)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
+    assert await bulk_set._bulk_identity_dupes(_ClickHouseHoldsNone(), _input()) == {}
 
 
 @pytest.mark.asyncio
@@ -392,7 +443,13 @@ async def test_under_postgres_a_key_rewritten_a_moment_ago_keeps_its_new_bytes(
 
     async def _heads(keys: Any) -> dict[Any, Any]:
         return {
-            k: {"status": "active", "memory_id": "auth-k", "content_sha256": new_sha} for k in keys
+            k: {
+                "status": "active",
+                "memory_type": "semantic",
+                "memory_id": "auth-k",
+                "content_sha256": new_sha,
+            }
+            for k in keys
         }
 
     class _ClickHouseShowsTheOld:
@@ -429,7 +486,15 @@ async def test_under_postgres_a_keeper_delivered_between_the_two_reads_is_found(
         return [] if delivered else [keeper]
 
     async def _heads(keys: Any) -> dict[Any, Any]:
-        return {k: {"status": "active", "memory_id": "auth-k", "content_sha256": sha} for k in keys}
+        return {
+            k: {
+                "status": "active",
+                "memory_type": "semantic",
+                "memory_id": "auth-k",
+                "content_sha256": sha,
+            }
+            for k in keys
+        }
 
     class _ClickHouseAfterTheDelivery:
         async def query_all(self, *_a: Any, **_k: Any) -> list[dict[str, Any]]:

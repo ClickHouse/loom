@@ -251,7 +251,13 @@ def test_tool_definitions_in_three_shapes_match_the_typescript_sdk() -> None:
 async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
     a, calls = _agent(
         {
-            "memory.set": {"memory_key": "seat", "version": 3, "conflict_verdict": "new"},
+            "memory.set": {
+                "memory_key": "seat",
+                "version": 3,
+                "memory_id": "m1",
+                "content_sha256": "abc",
+                "conflict_verdict": "clear",
+            },
             "memory.search": {
                 "results": [
                     {
@@ -287,14 +293,20 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
         "stored": True,
         "memory_key": "seat",
         "version": 3,
-        "verdict": "new",
+        "memory_id": "m1",
+        "content_sha256": "abc",
+        "conflict_verdict": "clear",
+        "verdict": "clear",
     }
     assert (
         calls[0][1]["memory_type"] == "preference"
         and calls[0][1]["user_id"] == "u1"
         and calls[0][1]["session_id"] == "s1"
     )
-    assert json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}')) == {
+    recalled = json.loads(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))
+    (sent,) = [b for op, b in calls if op == "memory.search"]
+    assert (sent["bodies"], sent["explain"]) == ("full", False)  # the stored clip at any top_k
+    assert recalled == {
         "memories": [
             {"memory_key": "seat", "content": "Prefers an aisle seat", "similarity": 0.512}
         ]
@@ -316,7 +328,7 @@ async def test_tools_execute_runs_each_verb_under_the_scope() -> None:
 
 
 async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> None:
-    a, _ = _agent(
+    a, calls = _agent(
         {
             "context.fetch": lambda b: (
                 {"found": False, "blob_key": b["blob_key"]}
@@ -335,6 +347,17 @@ async def test_tools_reject_unknown_bad_json_and_missing_args_and_truncate() -> 
         await tools.execute("loom_recall", "{not json")
     with pytest.raises(LoomError, match="query is required"):
         await tools.execute("loom_recall", {"query": ""})
+    with pytest.raises(LoomError, match='top_k must be an integer, got "five"'):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": "five"})
+    with pytest.raises(LoomError, match="offset must be an integer, got 1.5"):
+        await tools.execute("loom_fetch", {"blob_key": "b", "offset": 1.5})
+    with pytest.raises(LoomError, match="top_k must be an integer, got true"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": True})
+    for top_k in (5, 5.0, "5", "5.0"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": top_k})
+    await tools.execute("loom_recall", {"query": "seat", "top_k": ""})  # unset, as in TypeScript
+    sent = [b for op, b in calls if op == "memory.search"]
+    assert [b.get("top_k") for b in sent] == [5, 5, 5, 5, None]
     assert "no parked text under blob_key=nope" in await tools.execute(
         "loom_fetch", {"blob_key": "nope"}
     )
@@ -368,3 +391,39 @@ def test_sync_session_is_a_with_block_and_task_stream_iterates() -> None:
             if len(got) == 3:
                 break
         assert got == ["t1", "t2", "t3"]
+
+
+async def test_recall_over_the_cap_drops_whole_memories_and_stays_json() -> None:
+    hits = [
+        {"memory_key": f"m{i}", "content_excerpt": "x" * 400, "similarity": 0.9 - i / 100}
+        for i in range(5)
+    ]
+    a, _ = _agent({"memory.search": {"results": hits}})
+    tools = a.tools(only=["loom_recall"], max_result_chars=1_000)
+    out = json.loads(await tools.execute("loom_recall", {"query": "seat", "top_k": 5}))
+    assert [m["memory_key"] for m in out["memories"]] == ["m0", "m1"]  # the best ranked, whole
+    assert out["omitted"] == 3
+    await a.close()
+
+
+async def test_tools_refuse_an_integer_outside_the_schema() -> None:
+    a, calls = _agent({"memory.search": {"results": []}})
+    tools = a.tools(only=["loom_recall"])
+    with pytest.raises(LoomError, match="top_k must be within 1..20, got 500"):
+        await tools.execute("loom_recall", {"query": "seat", "top_k": 500})
+    fetch = a.tools(only=["loom_fetch"])
+    with pytest.raises(LoomError, match="offset must be within 0.., got -3"):
+        await fetch.execute("loom_fetch", {"blob_key": "b", "offset": -3})
+    assert calls == []
+    await a.close()
+
+
+async def test_recall_whose_best_memory_alone_is_over_the_cap_is_omitted() -> None:
+    hits = [
+        {"memory_key": f"m{i}", "content_excerpt": "x" * 900, "similarity": 0.9} for i in range(2)
+    ]
+    a, _ = _agent({"memory.search": {"results": hits}})
+    tools = a.tools(only=["loom_recall"], max_result_chars=500)
+    out = await tools.execute("loom_recall", {"query": "seat"})
+    assert json.loads(out) == {"memories": [], "omitted": 2}
+    await a.close()

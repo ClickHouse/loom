@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 
 from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_sql_model import JINJA_PLACEHOLDER, Facet
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import Symbol, file_symbol_id
 
 PLACEHOLDER = JINJA_PLACEHOLDER
@@ -56,13 +57,14 @@ FACET_MACRO_CALL = "macro_call"
 _COMMENT_RE = re.compile(r"\{#.*?(?:#\}|\Z)", re.S)
 _STATEMENT_RE = re.compile(r"\{%-?.*?(?:-?%\}|\Z)", re.S)
 _EXPR_RE = re.compile(r"\{\{-?(?:(?!\{\{).)*?-?\}\}", re.S)  # stops at the next `{{`
+_RAW_MARK_RE = re.compile("\x00RAW[0-9]+\x00")
 _RAW_RE = re.compile(r"\{%-?\s*+raw\s*+-?%\}(.*?)(?:\{%-?\s*endraw\s*-?%\}|\Z)", re.S)
 
 _REF_RE = re.compile(r"""\bref\(\s*(?:['"]([^'"]+)['"]\s*,\s*)?['"]([^'"]+)['"]""")
 _SOURCE_RE = re.compile(r"""\bsource\(\s*['"]([^'"]+)['"]\s*,\s*['"]([^'"]+)['"]""")
 _CONFIG_RE = re.compile(r"\{\{-?\s*config\s*\(((?:(?!\{\{).)*?)\)\s*-?\}\}", re.S)
 _MATERIALIZED_RE = re.compile(r"""materialized\s*=\s*['"]([\w-]+)['"]""")
-_TAGS_RE = re.compile(r"""tags\s*=\s*(\[[^\]]*\]|['"][^'"]+['"])""")
+_TAGS_RE = re.compile(r"""tags\s*=\s*(\[[^\[\]]*\]|['"][^'"]+['"])""")  # stops at the next `[`
 _MACRO_DEF_RE = re.compile(
     r"\{%-?\s*(?P<word>macro|test|snapshot|materialization)\s+(?P<name>[A-Za-z_]\w*)"
     r"(?P<args>\s*\((?:(?!\{%)[^)])*\))?",
@@ -291,19 +293,9 @@ def neutralize(text: str) -> str:
     out = _COMMENT_RE.sub(_blank_keep_lines, out)
     out = _STATEMENT_RE.sub(_blank_keep_lines, out)
     out = _EXPR_RE.sub(_placeholder_keep_lines, out)
-    for k, body in enumerate(raws):
-        out = out.replace(f"\x00RAW{k}\x00", body)
-    return out
-
-
-def _newlines(text: str) -> list[int]:
-    return [m.start() for m in re.finditer("\n", text)]
-
-
-def _line_at(newlines: list[int], pos: int) -> int:
-    """`pos`'s line, by bisection in the text's newlines (found once per file): a count
-    from the top per tag is quadratic in a file of them."""
-    return bisect.bisect_left(newlines, pos) + 1
+    # One pass: a replace per block rescans the whole text each time.
+    marks = {f"\x00RAW{k}\x00": body for k, body in enumerate(raws)}
+    return _RAW_MARK_RE.sub(lambda m: marks.get(m.group(0), m.group(0)), out)
 
 
 def _is_dbt(path: str, text: str) -> bool:
@@ -344,7 +336,7 @@ def _macro_symbols(path: str, mod: str, text: str, nl: list[int]) -> list[Symbol
             ends[word] = [(e.start(), e.end()) for e in _MACRO_END_RE[word].finditer(text)]
         k = bisect.bisect_left(ends[word], (m.end(), 0))  # the first starting after it
         e_end = ends[word][k][1] if k < len(ends[word]) else 0
-        end_line = _line_at(nl, e_end - 1) if e_end else len(nl) + 1
+        end_line = line_at(nl, e_end - 1) if e_end else len(nl) + 1
         args = (m.group("args") or "").strip()
         out.append(
             Symbol(
@@ -353,8 +345,8 @@ def _macro_symbols(path: str, mod: str, text: str, nl: list[int]) -> list[Symbol
                 kind=KIND_MACRO,
                 signature=f"{word} {name}{args}",
                 path=path,
-                start_line=_line_at(nl, m.start()),
-                end_line=max(_line_at(nl, m.start()), end_line),
+                start_line=line_at(nl, m.start()),
+                end_line=max(line_at(nl, m.start()), end_line),
             )
         )
     return out
@@ -374,7 +366,7 @@ def _calls(text: str, own: set[str], nl: list[int]) -> dict[str, int]:
                 continue
             if m.group("pkg") in ("adapter", "modules", "exceptions", "loop", "this", "target"):
                 continue
-            out[name] = _line_at(nl, tag.start() + m.start())
+            out[name] = line_at(nl, tag.start() + m.start())
     return out
 
 
@@ -389,14 +381,14 @@ def jinja_units(path: str, mod: str, text: str) -> JinjaUnits:
     if not units.dbt:
         return units
     total_lines = text.count("\n") + 1
-    nl = _newlines(text)
+    nl = newline_offsets(text)
     units.symbols = _macro_symbols(path, mod, text, nl)
     own = {s.name for s in units.symbols}
     model = _model_name(path)
     if model and not units.symbols:
         units.model = model
         cfg = _CONFIG_RE.search(text)
-        cfg_line = _line_at(nl, cfg.start()) if cfg else 1
+        cfg_line = line_at(nl, cfg.start()) if cfg else 1
         mat = _MATERIALIZED_RE.search(cfg.group(1)) if cfg else None
         sig = f"model {model}" + (f" · materialized: {mat.group(1)}" if mat else "")
         units.symbols.append(
@@ -421,17 +413,17 @@ def jinja_units(path: str, mod: str, text: str) -> JinjaUnits:
         name = m.group(2)
         if name not in units.ref_lines:  # a dict: a list's `in` per ref is quadratic
             units.refs.append(name)
-            units.ref_lines[name] = _line_at(nl, m.start())
+            units.ref_lines[name] = line_at(nl, m.start())
         key = (FACET_TABLE_READ, name)
         if key not in seen:
             seen.add(key)
-            units.facets.append(Facet(FACET_TABLE_READ, name, 0, _line_at(nl, m.start()), 1.0))
+            units.facets.append(Facet(FACET_TABLE_READ, name, 0, line_at(nl, m.start()), 1.0))
     for m in _SOURCE_RE.finditer(text):
         src, tbl = m.group(1), m.group(2)
         for key in ((FACET_SOURCE, f"{src}.{tbl}"), (FACET_TABLE_READ, tbl)):
             if key not in seen:
                 seen.add(key)
-                units.facets.append(Facet(key[0], key[1], 0, _line_at(nl, m.start()), 1.0))
+                units.facets.append(Facet(key[0], key[1], 0, line_at(nl, m.start()), 1.0))
     units.call_lines = _calls(text, own, nl)
     units.macro_calls = list(units.call_lines)
     for name, line in units.call_lines.items():

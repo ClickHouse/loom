@@ -157,7 +157,9 @@ def test_mint_token_cli_exits_1_under_another_root(
         "retired": False,
     }
     monkeypatch.setattr(settings, "jwt_secret", "y" * 40)
-    monkeypatch.setattr(access, "run_connected", lambda go: asyncio.run(go(_CH([row]))))
+    monkeypatch.setattr(
+        access, "run_connected", lambda go, **_declared: asyncio.run(go(_CH([row])))
+    )
     rc = cli.main(["mint-token", "--subject", "a@x", "--org", "o", "--namespaces", "n"])
     out, err = capsys.readouterr()
     assert rc == 1 and out == "" and "not the servers' root secret" in err
@@ -270,7 +272,9 @@ def test_an_unloadable_keyring_is_a_message_not_a_traceback(
         raise BackendUnavailableError("the signing keyring is not loaded yet; retry shortly")
 
     monkeypatch.setattr(signing_keys, "_signing_key_cmd", down)
-    monkeypatch.setattr(signing_keys, "run_connected", lambda run: asyncio.run(run(object())))
+    monkeypatch.setattr(
+        signing_keys, "run_connected", lambda run, **_declared: asyncio.run(run(object()))
+    )
     assert signing_keys._cmd_signing_key(argparse.Namespace(signing_cmd="list")) == 1
     assert "not loaded yet" in capsys.readouterr().err
 

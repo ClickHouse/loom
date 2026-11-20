@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -18,16 +18,21 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
-import { fmtInt, humanizeError, parseChTime, relativeTime } from "../lib/format";
+import { fmtInt, parseChTime, relativeTime } from "../lib/format";
 import { useVisiblePoll } from "../lib/hooks";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
+import { committedAnyway } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { pluginInstallLines } from "../lib/clients";
 import { PopoverTrigger } from "../components/ui/Menu";
-import { fieldError, ListRow, LoadingSkeleton, PageHeader } from "../components/ui";
+import { fieldError, ListRow, LoadingSkeleton, PageHeader, TipTarget, Unavailable } from "../components/ui";
+import { GatedIconButton } from "../components/ui/GatedIconButton";
+import { useOpReason } from "../lib/useOpReason";
+import { callReason } from "../lib/callReason";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
@@ -83,9 +88,22 @@ export function Profile() {
   const [editing, setEditing] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  // A section is written by profile.set and deleted by memory.delete (both WRITER): below
+  // that, New section, Edit and Delete stay in view, unavailable with why, and the selection,
+  // which holds only Delete, waits for a role that can.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const whoami = useStore((s) => s.whoami);
+  const setReason = callReason("profile.set", roleRead, whoami, identity.namespace);
+  const deleteReason = callReason("memory.delete", roleRead, whoami, identity.namespace);
+  // A reason that appears while the editor is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (!setReason) return;
+    setEditing(null);
+    setNewOpen(false);
+  }, [setReason]);
 
   async function bulkDelete() {
-    if (selected.size === 0 || bulkBusy) return;
+    if (selected.size === 0 || bulkBusy || deleteReason) return;
     const ok = await confirmAction({
       title: `Delete ${selected.size} profile section${selected.size === 1 ? "" : "s"}?`,
       message: "Soft-deleted with a 14-day grace window — restorable from the Memories view.",
@@ -100,7 +118,7 @@ export function Profile() {
       selection.clear();
       refresh();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError("Couldn't delete the sections", e);
     } finally {
       setBulkBusy(false);
     }
@@ -116,10 +134,10 @@ export function Profile() {
       : entries;
   }, [entries, listQuery]);
   // Checkboxes: one row, a Shift-click range, every section shown; Escape clears them while
-  // no editor is open (it owns Escape). Arrows and j/k move over the rows, Enter opens one.
+  // no editor is open (it owns Escape). The arrows move over the rows, Enter opens one.
   const labels = useMemo(() => (filteredEntries ?? []).map((e) => e.label), [filteredEntries]);
   const editorOpen = !!editing || newOpen;
-  const selection = useRowSelection(labels, { enabled: !editorOpen });
+  const selection = useRowSelection(labels, { enabled: !editorOpen && !deleteReason });
   const { selected, toggle: toggleSelect } = selection;
   const listNav = useRowNav({ enabled: !editorOpen && labels.length > 0 });
 
@@ -148,26 +166,31 @@ export function Profile() {
   // The control that opened an editor ("Edit <label>", "New section") takes the focus back
   // when the editor closes.
   const opener = useRef<string | null>(null);
-  const editSection = useCallback((label: string) => {
-    opener.current = `edit:${label}`;
-    setEditing(label);
-  }, []);
+  const editSection = useCallback(
+    (label: string) => {
+      if (setReason) return;
+      opener.current = `edit:${label}`;
+      setEditing(label);
+    },
+    [setReason],
+  );
   useEffect(() => {
     if (editing || newOpen || !opener.current) return;
     document.querySelector<HTMLElement>(`[data-opener="${CSS.escape(opener.current)}"]`)?.focus();
     opener.current = null;
   }, [editing, newOpen]);
   // Clicking a section opens it, or toggles it while a selection is being made.
-  const selecting = selected.size > 0;
+  // A selection made before the role fell short is not acted on: the bar goes with the boxes.
+  const selecting = !deleteReason && selected.size > 0;
   const openOrSelect = useCallback(
     (label: string) => (selecting ? toggleSelect(label) : useStore.getState().inspectProfile(label)),
     [selecting, toggleSelect],
   );
   const deleteSection = useCallback(
     (label: string) => {
-      void onDelete(identity, label, () => refreshRef.current());
+      if (!deleteReason) void onDelete(identity, label, () => refreshRef.current());
     },
-    [identity],
+    [identity, deleteReason],
   );
   // Another namespace's sections, and an editor open on one of them, are not this one's.
   useEffect(() => {
@@ -180,15 +203,19 @@ export function Profile() {
 
   const pendingEdit = useStore((s) => s.pendingEditProfileLabel);
   const requestEditProfile = useStore((s) => s.requestEditProfile);
+  // A request to edit waits while the role loads; it is spent once the editor opens, or once
+  // the role is read and does not write, or could not be read.
+  const roleLoading = roleRead.role === null && (roleRead.loading || !whoami);
   useEffect(() => {
-    if (!pendingEdit || !entries) return;
-    if (entries.some((e) => e.label === pendingEdit)) {
+    if (!pendingEdit || !entries || roleLoading) return;
+    if (!setReason && entries.some((e) => e.label === pendingEdit)) {
       setEditing(pendingEdit);
     }
     requestEditProfile(null);
-  }, [pendingEdit, entries, requestEditProfile]);
+  }, [pendingEdit, entries, requestEditProfile, setReason, roleLoading]);
 
   function openNew(seed: { label: string; value: string } | null) {
+    if (setReason) return;
     opener.current = "new";
     setNewSeed(seed);
     setNewOpen(true);
@@ -208,10 +235,10 @@ export function Profile() {
 
   return (
     <PageContainer>
-      <Header onNew={() => openNew(null)} entries={entries ?? []} empty={entries?.length === 0} />
+      <Header onNew={() => openNew(null)} newReason={setReason} entries={entries ?? []} empty={entries?.length === 0} />
 
       {isEmpty ? (
-        <EmptyState onPickTemplate={(t) => openNew({ label: t.label, value: t.value })} />
+        <EmptyState unavailable={setReason} onPickTemplate={(t) => openNew({ label: t.label, value: t.value })} />
       ) : (
         <div className="mt-6">
           <ListToolbar
@@ -304,18 +331,27 @@ export function Profile() {
                   data-focus-key={`section:${b.label}`}
                   checked={selected.has(b.label)}
                   leading={
-                    <Checkbox
-                      checked={selected.has(b.label)}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleSelect(b.label, e.shiftKey);
-                      }}
-                      aria-label={`Select section ${b.label}`}
-                      className="list-row-control"
-                    />
+                    !deleteReason && (
+                      <Checkbox
+                        checked={selected.has(b.label)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleSelect(b.label, e.shiftKey);
+                        }}
+                        aria-label={`Select section ${b.label}`}
+                        className="list-row-control"
+                      />
+                    )
                   }
                 >
-                  <SectionRow section={b} onOpen={openOrSelect} onEdit={editSection} onDelete={deleteSection} />
+                  <SectionRow
+                    section={b}
+                    onOpen={openOrSelect}
+                    onEdit={editSection}
+                    onDelete={deleteSection}
+                    editReason={setReason}
+                    deleteReason={deleteReason}
+                  />
                 </ListRow>
               ),
             )}
@@ -328,7 +364,17 @@ export function Profile() {
   );
 }
 
-function Header({ onNew, entries, empty }: { onNew: () => void; entries: ProfileEntry[]; empty?: boolean }) {
+function Header({
+  onNew,
+  newReason,
+  entries,
+  empty,
+}: {
+  onNew: () => void;
+  newReason: string | null;
+  entries: ProfileEntry[];
+  empty?: boolean;
+}) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const namespace = useStore((s) => s.identity?.namespace ?? "");
 
@@ -337,9 +383,11 @@ function Header({ onNew, entries, empty }: { onNew: () => void; entries: Profile
       <PageHeader
         title="Your AI profile"
         actions={
-          <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew} data-opener="new">
-            New section
-          </Button>
+          <Unavailable reason={newReason}>
+            <Button type="primary" htmlType="button" iconLeft="plus" onClick={onNew} data-opener="new">
+              New section
+            </Button>
+          </Unavailable>
         }
       >
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
@@ -415,7 +463,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
           icon="information"
           size="xs"
           label="What counts as a read"
-          tooltip="Counts every way a client reads the profile: a plugin session start, an MCP connect, a typed “use loom”, or the SDK. Nothing in the last 7 days."
+          tooltip="Counts every way a client reads the profile: the session context a plugin loads, an MCP connect, a typed “use loom”, a chat bot's structured profile, or the SDK. Nothing in the last 7 days."
         />
       </span>
     );
@@ -447,9 +495,7 @@ function ActivityChip({ empty }: { empty?: boolean }) {
           <div key={e.agent} className="flex items-center justify-between gap-3 px-2 py-1">
             <span className="min-w-0">
               <span className="font-mono text-xs">{e.agent}</span>
-              {e.operations.length > 0 && (
-                <span className="block text-xs text-text-muted">via {e.operations.map(readPathLabel).join(", ")}</span>
-              )}
+              {e.operations.length > 0 && <ReadPaths ops={e.operations} />}
             </span>
             <span className="shrink-0 text-xs text-text-muted tabular-nums">
               {e.event_count}× · <ListTime time={e.last_activated_at} quiet={false} />
@@ -461,20 +507,45 @@ function ActivityChip({ empty }: { empty?: boolean }) {
   );
 }
 
-/** How a client read the profile, in the words the page uses for that path. An op this
- * build does not know shows under its own name. */
-export function readPathLabel(op: string): string {
+/** "via …" for a client's read paths: the known ones in the page's words, the rest as
+ *  "another call" with the operations in its tooltip. */
+function ReadPaths({ ops }: { ops: string[] }) {
+  const known: string[] = [];
+  const unknown: string[] = [];
+  for (const op of ops) {
+    const label = readPathLabel(op);
+    if (label === null) unknown.push(op);
+    else known.push(label);
+  }
+  return (
+    <span className="block text-xs text-text-muted">
+      via {known.join(", ")}
+      {unknown.length > 0 && (
+        <>
+          {known.length > 0 && ", "}
+          <TipTarget tip={unknown.join(", ")}>{unknown.length === 1 ? "another call" : "other calls"}</TipTarget>
+        </>
+      )}
+    </span>
+  );
+}
+
+/** How a client read the profile, in the words the page uses for that path; null for an op
+ *  this build does not know, which the list shows as "another call" with the op in a tooltip. */
+export function readPathLabel(op: string): string | null {
   switch (op) {
     case "context.pack":
-      return "plugin session start";
+      return "session context";
     case "mcp.initialize":
       return "MCP connect";
     case "loom_activate":
       return "“use loom”";
     case "profile.render":
       return "SDK";
+    case "profile.structured":
+      return "structured profile";
     default:
-      return op;
+      return null;
   }
 }
 
@@ -616,16 +687,36 @@ function ReachSection() {
   );
 }
 
-function EmptyState({ onPickTemplate }: { onPickTemplate: (t: (typeof TEMPLATES)[number]) => void }) {
+function EmptyState({
+  unavailable,
+  onPickTemplate,
+}: {
+  /** Why the caller cannot write a section: the personas stay in view, unavailable. */
+  unavailable: string | null;
+  onPickTemplate: (t: (typeof TEMPLATES)[number]) => void;
+}) {
+  const whyId = useId();
   return (
     <div className="mt-6 rounded-lg border border-border bg-surface p-6">
       <div className="text-center mb-5">
         <h2 className="mb-1">Start with a persona</h2>
         <p className="text-sm text-text-muted">Pick the style you want every AI conversation to default to.</p>
+        {unavailable && (
+          <p id={whyId} className="mt-1 text-xs text-text-muted">
+            {unavailable}
+          </p>
+        )}
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         {TEMPLATES.map((t) => (
-          <button key={t.title} type="button" onClick={() => onPickTemplate(t)} className="persona-card">
+          <button
+            key={t.title}
+            type="button"
+            onClick={() => onPickTemplate(t)}
+            aria-disabled={unavailable ? "true" : undefined}
+            aria-describedby={unavailable ? whyId : undefined}
+            className="persona-card"
+          >
             <div className="text-sm font-semibold mb-1">{t.title}</div>
             <div className="text-xs text-text-muted mb-2">{t.description}</div>
             <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap leading-relaxed line-clamp-3">
@@ -643,12 +734,16 @@ const SectionRow = memo(function SectionRow({
   onOpen,
   onEdit,
   onDelete,
+  editReason,
+  deleteReason,
 }: {
   section: ProfileEntry;
   /** The row's body: opens the section (or toggles it while a selection is made). */
   onOpen: (label: string) => void;
   onEdit: (label: string) => void;
   onDelete: (label: string) => void;
+  editReason: string | null;
+  deleteReason: string | null;
 }) {
   const valueLen = section.value.length;
   const cap = section.char_limit ?? DEFAULT_CHAR_LIMIT;
@@ -692,10 +787,11 @@ const SectionRow = memo(function SectionRow({
       </button>
       {/* Edit is the row's one inline action; the rest are in its More menu. */}
       <div className="list-row-control -my-1 flex shrink-0 items-center">
-        <IconButton
+        <GatedIconButton
           onClick={() => onEdit(section.label)}
           label={`Edit ${section.label}`}
           tooltip="Edit"
+          reason={editReason}
           data-opener={`edit:${section.label}`}
           icon="pencil"
           size="sm"
@@ -713,7 +809,13 @@ const SectionRow = memo(function SectionRow({
                 );
               },
             },
-            { label: "Delete", icon: "trash", danger: true, onSelect: () => onDelete(section.label) },
+            {
+              label: "Delete",
+              icon: "trash",
+              danger: true,
+              reason: deleteReason,
+              onSelect: () => onDelete(section.label),
+            },
           ]}
         />
       </div>
@@ -735,6 +837,9 @@ function SectionEditor({
   onSaved: () => void;
 }) {
   const identity = useIdentity();
+  // The page closes this editor when its reason appears; the guard in onSave covers the render
+  // before it does.
+  const saveReason = useOpReason("profile.set", identity.namespace);
   const [label, setLabel] = useState(initialLabel);
   const [value, setValue] = useState(initialValue);
   const [saving, setSaving] = useState(false);
@@ -768,6 +873,7 @@ function SectionEditor({
   }
 
   async function onSave() {
+    if (saveReason) return;
     if (!label.trim()) {
       setLabelError("Label is required");
       labelRef.current?.focus();
@@ -783,7 +889,7 @@ function SectionEditor({
       toast(isNew ? "Section created" : "Section saved", "ok");
       onSaved();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      if (committedAnyway(isNew ? "Couldn't create the section" : "Couldn't save the section", e)) onSaved();
     } finally {
       setSaving(false);
     }
@@ -858,6 +964,6 @@ async function onDelete(identity: Identity, label: string, refresh: () => void) 
     toast("Section deleted", "ok");
     refresh();
   } catch (e) {
-    toast(humanizeError(e), "error");
+    toastError("Couldn't delete the section", e);
   }
 }

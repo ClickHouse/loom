@@ -185,6 +185,27 @@ def test_network_jobs_reach_the_relay_only(monkeypatch) -> None:
     assert "connect %h %p" in env["GIT_SSH_COMMAND"]
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="the sandbox is Linux-only")
+async def test_the_relay_is_given_the_live_idle_timeout(monkeypatch, tmp_path) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(sandbox, "_available", True)
+    monkeypatch.setattr(settings, "code_egress_idle_timeout_s", 42.0)
+    seen: list[str] = []
+
+    async def capture(*argv, **_kw):
+        seen.extend(argv)
+        raise OSError("not started")
+
+    monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", capture)
+    with pytest.raises(OSError, match="not started"):
+        await sandbox.run_sandboxed(
+            ["true"], env={"PATH": "/usr/bin:/bin"}, timeout_s=5, cwd=tmp_path, network=True
+        )
+    serve = seen.index("serve")
+    assert seen[serve + 2 : serve + 5] == [f"{sandbox._EGRESS_INSIDE}/proxy.sock", "42.0", "--"]
+
+
 async def test_without_the_sandbox_a_job_runs_as_a_plain_child(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
     done = await sandbox.run_job(
@@ -332,6 +353,86 @@ def test_without_the_sandbox_the_ingest_pass_skips_self_registered_network_entri
     assert result.note == f"self-ssh: {compiler_tier.UNSANDBOXED_NETWORK_SKIP}"
     monkeypatch.setattr(sandbox, "_available", True)
     assert ingest_pass._without_unsandboxed(entries, CodeIngestResult()) == entries
+
+
+def test_the_git_waiver_lets_only_the_git_callers_reach_a_self_registered_network_entry(
+    monkeypatch,
+) -> None:
+    """LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED keeps a self-registered network entry
+    in the ingest pass and lets a history read clone and fetch it. A compiler tier
+    asks without `git_only` and keeps its skip, and LOOM_CODE_SANDBOX_REQUIRED
+    still refuses every entry."""
+    from types import SimpleNamespace
+
+    from server.code.app.index import bootstrap, compiler_tier, ingest_pass
+    from server.code.app.index.pass_budget import CodeIngestResult
+    from server.settings import settings
+
+    network, local = (
+        SimpleNamespace(org="o", namespace=ns, source="registry", git_remote=remote)
+        for ns, remote in [
+            ("self-net", "https://git.example:8443/acme/widgets.git"),
+            ("self-local", "/srv/mirrors/widgets.git"),
+        ]
+    )
+    monkeypatch.setattr(sandbox, "_available", False)
+    assert bootstrap.network_refusal(network) == compiler_tier.UNSANDBOXED_NETWORK_SKIP
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", True)
+    result = CodeIngestResult()
+    assert ingest_pass._without_unsandboxed([network, local], result) == [network, local]
+    assert result.note == ""
+    assert bootstrap.network_refusal(network) == ""
+    tier = compiler_tier.unsandboxed_skip(network, "code_scip_py_delta")
+    assert tier == compiler_tier.UNSANDBOXED_TIER_SKIP
+    build = compiler_tier.unsandboxed_skip(network, "scip-full", runs_repo_code=True)
+    assert build == compiler_tier.UNSANDBOXED_SKIP
+    # a local mirror's entry is as without the setting: static tiers, no build tier
+    assert compiler_tier.unsandboxed_skip(local, "code_scip_py_delta") == ""
+    assert compiler_tier.unsandboxed_skip(local, "code_scip_delta", runs_repo_code=True)
+    monkeypatch.setattr(settings, "code_sandbox_required", True)
+    assert ingest_pass._without_unsandboxed([network, local], CodeIngestResult()) == []
+    assert bootstrap.network_refusal(network) == compiler_tier.SANDBOX_REQUIRED_SKIP
+
+
+def test_the_git_waiver_loads_only_where_platform_admins_alone_name_a_remote() -> None:
+    """Without the sandbox nothing vets the host a git job connects to, so the waiver
+    is refused at load unless only platform admins name a remote: without the
+    platform-admin rule, and in each mode that admits a request without a principal.
+    It is refused beside LOOM_CODE_SANDBOX_REQUIRED too, which lets no job run as a
+    plain process."""
+    from server.settings import Settings
+
+    with pytest.raises(ValueError, match="needs LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY"):
+        Settings(code_self_service_git_unsandboxed=True)
+    for field, value in (
+        ("auth_required", False),
+        ("identity_provider", "single-user"),
+        ("mcp_auth_mode", "open"),
+    ):
+        with pytest.raises(ValueError, match="needs authentication on every transport"):
+            Settings(
+                code_self_service_git_unsandboxed=True,
+                code_self_service_platform_admin_only=True,
+                **{field: value},
+            )
+    # MCP discovery without a bearer is no call: `tools/call` still needs one.
+    Settings(
+        code_self_service_git_unsandboxed=True,
+        code_self_service_platform_admin_only=True,
+        mcp_auth_mode="discovery_only",
+    )
+    with pytest.raises(ValueError, match="contradicts LOOM_CODE_SANDBOX_REQUIRED"):
+        Settings(
+            code_self_service_git_unsandboxed=True,
+            code_self_service_platform_admin_only=True,
+            code_sandbox_required=True,
+        )
+    both = Settings(
+        code_self_service_git_unsandboxed=True, code_self_service_platform_admin_only=True
+    )
+    assert both.code_self_service_git_unsandboxed and both.code_self_service_platform_admin_only
+    # The platform-admin rule stands alone, with the sandbox required or not.
+    Settings(code_self_service_platform_admin_only=True, code_sandbox_required=True)
 
 
 async def test_a_required_sandbox_skips_every_entry_before_any_fetch(
@@ -607,6 +708,57 @@ def test_a_missing_sandbox_is_an_error_only_when_required(
     ]
 
 
+def test_the_missing_sandbox_warning_says_what_the_git_waiver_changes(monkeypatch) -> None:
+    """Health keeps the warning with LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED: git then
+    reaches remotes nothing vets. Its text stops saying that self-registered
+    repositories are neither added nor fetched."""
+    from server.observability.problems import HealthState, Problem, collect_problems
+    from server.settings import settings
+
+    def warning() -> Problem:
+        problems = collect_problems(settings, HealthState(repo_sandbox=False))
+        (found,) = [p for p in problems if p.code == "repo_jobs_unsandboxed"]
+        return found
+
+    monkeypatch.setattr(settings, "code_ingest_enabled", True)
+    refusing = warning()
+    assert refusing.severity == "warn"
+    assert "are not cloned or fetched" in refusing.message
+    assert "adding one from the page is refused" in refusing.message
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", True)
+    waived = warning()
+    assert (waived.severity, waived.fix) == ("warn", refusing.fix)
+    assert "LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED" in waived.message
+    assert "no compiler tier" in waived.message and "plain processes" in waived.message
+    assert "not cloned or fetched" not in waived.message and "refused" not in waived.message
+
+
+@pytest.mark.parametrize(
+    ("proxy", "sandboxed", "reported"),
+    [
+        ("http://proxy.example:3128", True, True),
+        ("http://proxy.example:3128", False, False),
+        ("http://proxy.example:3128", None, False),  # not probed yet: unknown, not a guess
+        ("", True, False),
+    ],
+)
+def test_a_git_proxy_on_a_host_that_runs_the_sandbox_is_a_health_error(
+    monkeypatch, proxy: str, sandboxed: bool | None, reported: bool
+) -> None:
+    """The sandbox's network does not go through the operator's proxy, so network git
+    is refused there (`run_sandboxed`) and health says why."""
+    from server.observability.problems import HealthState, collect_problems, derive_status
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_git_proxy_url", proxy)
+    problems = collect_problems(settings, HealthState(repo_sandbox=sandboxed))
+    found = [p for p in problems if p.code == "repo_git_proxy_sandboxed"]
+    assert [p.severity for p in found] == (["error"] if reported else [])
+    if reported:
+        assert "LOOM_CODE_GIT_PROXY_URL" in found[0].message
+        assert derive_status(True, found) == "degraded"
+
+
 @pytest.mark.parametrize(("required", "rc", "ran"), [(True, 1, False), (False, 1, True)])
 async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     tmp_path: Path, monkeypatch, required: bool, rc: int, ran: bool
@@ -691,7 +843,11 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    cfg = repo_config(github_token="ghs_test", git_remote="https://github.com/o/private")
+    cfg = repo_config(
+        github_token="ghs_test",
+        git_remote="https://github.com/o/private",
+        git_proxy_identity="acme.widgets-indexer",
+    )
     await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40, cfg)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
@@ -699,6 +855,7 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
     assert submodules[1]["token"] == "ghs_test"
     assert submodules[1]["remote"] == "https://github.com/o/private"
+    assert submodules[1]["proxy_identity"] == "acme.widgets-indexer"
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,13 @@ gate and the handlers authorize; nothing downstream reads a raw credential. To r
 vulnerability, and for the deployment hardening checklist, see
 [SECURITY.md](../../SECURITY.md).
 
+HTTP and MCP pass the authorized target to the handler. An omitted optional
+namespace takes that target; a read-only operation also takes its omitted
+optional organization, including a code read authorized by its verified token.
+Writes keep their validated organization for stable idempotency hashes across
+builds. Explicit identities and required fields remain unchanged; a code read
+never takes the caller's memory namespace.
+
 ## Threat model
 
 | Threat                                                                | Boundary                                                                                                                                                                                                                                                                                                                                                                                                 | Enforced by                                                                                                                       |
@@ -13,8 +20,8 @@ vulnerability, and for the deployment hardening checklist, see
 | An unauthenticated caller reads or writes data                        | Bearer token on every op; 401 before the body is read                                                                                                                                                                                                                                                                                                                                                    | `server/transport/http.py` (`_extract_auth`), `server/auth/jwt.py`                                                                |
 | A forged or tampered token                                            | Signature, algorithm allow-list, `kid`, issuer, audience, time claims                                                                                                                                                                                                                                                                                                                                    | `server/auth/jwt.py` (`verify_token`)                                                                                             |
 | A revoked token keeps working                                         | Per-process revocation snapshot, fail closed until loaded                                                                                                                                                                                                                                                                                                                                                | `server/auth/revocation.py`                                                                                                       |
-| Tenant A reads tenant B's rows                                        | Org + namespace check on every call; row-scoped ops check the row's namespace                                                                                                                                                                                                                                                                                                                            | `server/auth/authz.py` (`check_authorized`, `row_in_scope`)                                                                       |
-| A refusal confirms that an id or namespace exists                     | `found=False` or a generic "cannot access", never a 403 naming the target                                                                                                                                                                                                                                                                                                                                | Row-scoped handlers; the restricted gate                                                                                          |
+| Tenant A reads tenant B's rows                                        | Org + namespace check on every call; row-scoped ops check the row's scope                                                                                                                                                                                                                                                                                                                                | `server/auth/authz.py` (`check_authorized`, `row_reach`, `row_in_scope`)                                                          |
+| A refusal confirms that an id or namespace exists                     | An answer as for a missing row, or a generic "cannot access", never a 403 naming another tenant's target                                                                                                                                                                                                                                                                                                 | Row-scoped handlers; the restricted gate                                                                                          |
 | One caller exhausts shared capacity                                   | Token buckets per namespace, org and actor                                                                                                                                                                                                                                                                                                                                                               | `server/core/ratelimit.py`                                                                                                        |
 | An agent is induced to echo or enumerate memory                       | `read_scope` ceilings, exposure ledger, breadth budgets, prompt fencing                                                                                                                                                                                                                                                                                                                                  | `server/identity/domain/read_scope.py`, `server/identity/app/policy_gate.py`, `server/memory/domain/prompt_fence.py`              |
 | Stored text carries instructions into a later prompt                  | Recalled memory is fenced with a per-prompt nonce                                                                                                                                                                                                                                                                                                                                                        | `server/memory/domain/prompt_fence.py`                                                                                            |
@@ -55,6 +62,24 @@ are in [tokens and grants](../guides/tokens-and-grants.md).
 - `verify_bearer` (`server/auth/bearer.py`) parses the bearer for routes outside the
   operation transport: 401 `AUTH_INVALID` for a missing, foreign-scheme or failing token;
   503 `AUTH_UNAVAILABLE` with `Retry-After` while revocation or the keyring is not loaded.
+
+**Mirrored reader identity.** `server/auth/reader_identity.py` selects the person a
+credential may read document permission lists as. A primary sign-in token with `sid`
+and no `creator` reads as its own subject. A delegated token reads as its creator only
+with the signed Boolean `reads_as_creator` claim. Missing means false; a non-Boolean
+claim refuses the token. An on-behalf request, an end-user identity and auth-off mode
+name nobody. A subject spelling proves neither a verified email nor a hosted domain.
+
+`POST /v1/me/personal_tokens.create` sets this claim only from a person's primary
+first-party sign-in session. It rejects service accounts, delegated tokens,
+third-party sessions and on-behalf headers before saving anything. Its grant ceilings,
+restricted grants, expiry and revocation follow the service-account mint; its saved
+row has `kind=personal_agent`. Row kind grants no access. The general
+`service_accounts.create` route ignores any body-supplied reader claim. Ordinary
+delegation never copies it. The assistant sets it explicitly for one answer only when
+its caller names the same person as the delegated creator; an answer's child loses it.
+Mirrored source registration remains unavailable while the document-access and session
+protections are incomplete ([document sources](document-sources.md#who-may-read)).
 
 **Signing keys.** `LOOM_JWT_SECRET` is the root secret: it signs as kid `default` and
 seals the private half of every other key in `loom.signing_keys`, so a database reader
@@ -260,18 +285,38 @@ authenticated call, from `gates.authorize` in both transports:
 7. A flat token's roles apply to every namespace its claims cover. Otherwise a live grant
    in `loom.namespace_grants` decides: unrevoked and `active` (`grant_sql.LIVE_GRANT`); a
    `pending` join request grants nothing. A service account with no grant reads its
-   creator's. A grant raises a flat token's role, never lowers it. A failed grant read
-   counts as no grant.
+   creator's. A grant raises a flat token's role, never lowers it. A failed read of
+   the grant map serves a cached entry younger than
+   `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s, [above](#tokens)) that no grant
+   change has superseded, and otherwise answers 503; the single grant lookup
+   (`authz.grant_role_for`) counts a failed read as no grant.
 
 The `all_mine` fan-out and the org-wide rollups use the same predicate, so they never
 exceed the gate.
 
 ### Row-scoped operations
 
-Ops addressed by an org-wide id (`memory.get_by_id`, `memory.update_by_id`,
-`memory.redact`) declare `row_scoped=True`. The transport only checks that the token
-holds the role somewhere in the org. The handler fetches the row, calls
-`authz.row_in_scope(org, row.namespace, role)`, and answers `found=False` on refusal.
+An op addressed by an org-wide id alone (a `memory_id`, `erasure_id` or blacklist
+`pattern_id`), such as `memory.get_by_id`, gets no namespace check from the transport.
+It declares `row_scoped=True` on its `Operation`, and the transport admits a flat token
+on its own role and a namespace-scoped token on its best namespace role in the org.
+`memory.verify`, which can also be addressed by namespace and key, declares
+`skip_namespace_authz=True` instead, which admits only a flat token (a scoped token gets
+400 `IDENTITY_INCOMPLETE`). The handler authorizes the caller on the scope that holds
+the row, on one of two paths:
+
+- **Before the read.** `memory.get_by_id`, `memory.update_by_id` and `memory.verify`
+  (by id) resolve the id to the namespaces that hold it (`id_namespace.namespace_for_id`),
+  keep the ones the caller reaches (`authz.row_reach`), and read the row only when
+  exactly one remains.
+- **After the read.** `memory.redact`, `erasure.status` and `blacklist.remove` fetch the
+  row and then check the caller on its scope: `authz.row_in_scope` for a row held in a
+  namespace. An erasure saga of a user needs the org-wide view, and a saga over several
+  namespaces needs flat membership of the org. An org blacklist pattern of the caller's
+  own org needs `ORG_ADMIN` and a global pattern needs `PLATFORM_ADMIN`.
+
+Every refusal on these two paths answers as a missing row does, except those two
+blacklist cases, which refuse with 403 since neither pattern belongs to another tenant.
 
 **Why not 403.** A 403 confirms the id exists in another tenant. "Not found" makes a
 foreign row and a missing row look the same.
@@ -357,11 +402,26 @@ credential is shown per window. See [tokens and grants](../guides/tokens-and-gra
 
 ## Identity modes
 
-The modes (`single-user`, `trust-network`, `gateway`) are described in
-[identities and namespaces](../concepts/identities-and-namespaces.md) and their settings
-in [deployment](../operations/deployment.md). Never expose `single-user` beyond the
-local machine: auth is off. In `trust-network`, passwords are argon2id and there is no
-email verification or password reset. In `gateway`, Loom never sees a password.
+The modes (`single-user`, `trust-network`, `gateway`) are described in [identities and
+namespaces](../concepts/identities-and-namespaces.md) and their settings in
+[deployment](../operations/deployment.md). Never expose `single-user` beyond the local
+machine: auth is off. Its one caller is also why a single-user HTTP call with no token may
+leave out `org`, and on an everyday memory or search op (`SINGLE_USER_FILLED_OPS` in
+`server/transport/gates.py`) `namespace` and `agent` too: they are filled with the
+install's own before validation and authorization (`with_single_user_identity`), as MCP
+fills them (`_caller_defaults`). Every other op names its namespace and agent, since for
+many of them the namespace or agent is what they act on: an admin or namespace op that
+leaves its namespace out is refused, never run on the install's. The one listed delete,
+`memory.delete`, acts on the key it names, in the install's namespace, under any agent of
+the same user, as it does for a named agent. A call with a token is filled with nothing,
+nor is any call in another mode, so tenant isolation and failing closed are unchanged
+wherever a token decides who the caller is. Caller identity and token-management routes
+use the deliberate dev identity only when no credential is supplied. A malformed bearer
+or another authorization scheme is refused; auth off does not turn it into `you`.
+MCP's `open` mode retains its separate [authentication rules](../reference/mcp.md#authentication).
+In `trust-network`, passwords are argon2id and there is no email verification or password
+reset. In `gateway`, Loom never sees a
+password.
 
 **Agent claims.** An agent account is unclaimed while its password is its claim code
 (`UNCLAIMED_SQL` in `server/auth/claim_codes.py`): a hash under a `claim:` prefix, which agent
@@ -444,20 +504,26 @@ it. Claim it again at once after such a restore.
 
 **Impersonation.** A subject in `LOOM_TRUSTED_CALLERS` may send `X-Loom-On-Behalf-Of` over
 HTTP to act as another principal. The header's subject becomes the effective subject, and
-`impersonated_by` records the caller on its `agent_events` rows. A subject revoked
-outright or deprovisioned, in any case and under any spelling it holds in the target org
-or the caller's own org (itself, and the handle and email of each active account of it
-whose email is verified), is not acted for (403), nor is a bot that is revoked outright or
-disabled, nor any of its agents (a disable leaves their grants). A request that names no
-org, from a caller whose token is for every org, has no org to read spellings in, so only
-the subject as sent is checked. An unverified email is not held: revoking a stranger's
-account that typed someone's email does not refuse acting for that email. Sign-up refuses
-a trusted caller's own subject as a name (the sign-up rule under roles above). Sign-up
-refuses a handle the caller acts for as a new name only once a row reserves it there (the
-sign-up rule above): a service-account caller, or one acting in another org, provisions
-nothing there, so acting for `carol` alone does not stop a stranger signing up as `carol`
-and sharing that subject. With self-signup open, have a trusted caller act for email
-subjects, which a sign-up name cannot spell, or grant each handle in
+`impersonated_by` records the caller on its `agent_events` rows. A subject revoked outright
+or deprovisioned, in any case and under any spelling it holds in the target org or the
+caller's own org (itself, and the handle and email of each active account of it whose email
+is verified), is not acted for (403), nor is a bot that is revoked outright or disabled, nor
+any of its agents (a disable leaves their grants). Of the `sa:` subjects, only an active bot
+and its agents are acted for: any other is a token's own subject, whose direct grants belong
+to the token and must end with it, and a token ends in ways its directory row does not record
+(an expiry, a revoke by `jti`, a cutoff on its maker or on itself). A trusted caller acting
+for one would keep reaching what a dead token held. An actual personal bearer still needs
+its current row, creator and every lineage subject to pass the complete provisioning check
+in an enforced cell with SCIM on. A token minted under a subject without `sa:` cannot be
+told from a person's, and is acted for until its subject is revoked outright. A request that names no org, from a caller whose token is for every org, has no
+org to read spellings in, so only the subject as sent is checked. An unverified email is not
+held: revoking a stranger's account that typed someone's email does not refuse acting for
+that email. Sign-up refuses a trusted caller's own subject as a name (the sign-up rule under
+roles above). Sign-up refuses a handle the caller acts for as a new name only once a row
+reserves it there (the sign-up rule above): a service-account caller, or one acting in
+another org, provisions nothing there, so acting for `carol` alone does not stop a stranger
+signing up as `carol` and sharing that subject. With self-signup open, have a trusted caller
+act for email subjects, which a sign-up name cannot spell, or grant each handle in
 `LOOM_SELF_SIGNUP_ORG` first ([tokens and grants](../guides/tokens-and-grants.md)).
 
 **OIDC and OAuth.** OIDC login trusts only the configured issuer's discovery, verified
@@ -490,6 +556,17 @@ the account's claims and is still reached by a subject revocation
 of an account that registered someone else's address also revokes that address; release
 such an account instead.
 
+The mirrored-reader identity resolver reads verified contact rows without an alias
+cache. A canonical owner remains identifiable without a verified email; neither a raw
+email-shaped subject nor a connected-account address proves an email permission. Direct
+OIDC sign-in records the signed `iss` and valid `hd` in `sso_links`, after the SCIM check,
+under the account's ownership lock and a fresh passwordless-account check. Domain
+permissions require that same active contact and linked row, a passwordless account and
+the configured issuer. Email suffixes and the JIT domain allowlist prove no domain
+membership. A missing domain claim, link change, account release or issuer change denies
+the domain. These identity inputs do not expose mirrored documents; mirrored source
+creation remains unavailable until the read and session protections are complete.
+
 With `LOOM_SCIM_TOKEN` set, the provider deactivates people over SCIM 2.0 (`/scim/v2`,
 `server/auth/scim.py`); that bearer token, compared in constant time, is the only credential
 those routes take. Loom refuses to start with one shorter than 32 characters, and with
@@ -508,6 +585,16 @@ replace SCIM's or be replaced by it; the operator cutoffs (`CUTOFF_PREFIX`) are 
 for the same reason. A SCIM user's id is a UUIDv5 of its email, so it is a pseudonym, not a
 secret: anyone who knows an address can compute its id. Keying it with the root secret would
 change every id when that secret rotates, and the provider would find none of its users.
+
+An enforced cell with SCIM on requires active provisioning; absence refuses a person. [Cell provisioning](cells.md#scim-and-sign-in-across-cells)
+defines the closed exemptions, verified account ownership, complete ancestry and resource
+bounds. `server/auth/jwt.py` (`authenticate_token`) adds that asynchronous decision after
+synchronous cryptographic verification. Bearer authentication, `whoami`, health's admin
+details, caller identity, dev service-account routes, the SCIM Groups JWT fallback, MCP
+POST/session DELETE and tenancy middleware use that boundary, directly or through the
+common bearer helper. Health remains public but omits denied or unavailable admin details.
+`verify_token` remains synchronous; OAuth revoke uses it only to end an existing credential,
+so provisioning refusal or outage cannot prevent logout or grant read/write authority.
 
 Loom stays the authorization server for every client (the dashboard, `loom login`, MCP
 clients); the provider only authenticates the person. The OAuth server:
@@ -540,8 +627,8 @@ and lasts what they asked for (blank 90 days, 0 never). A session a third-party 
 holds is not one: what it mints ends with its access token at the latest, and at once when
 the session is revoked (the session is one of its `parents`), so disconnecting the client
 ends its reach. Any other parent bounds its children by its own expiry. Under OIDC each
-refresh first spends the provider's refresh token, so a user deactivated there loses their
-sessions within the hour. Their machine tokens are not re-checked at the provider:
+refresh checks local provisioning before spending the provider's refresh token, so a user
+deactivated there loses their sessions within the hour. Their machine tokens are not re-checked at the provider:
 offboarding, or a session found stolen, revokes them (by subject, or each from the owner's
 service-account list). A revocation of a token that never expires lasts as long as the table
 can hold a row (2105). A provider that issues no refresh token gets no Loom refresh token. A
@@ -574,6 +661,17 @@ table's key limit is the backstop: past it new sign-ins answer 503 and `/v1/heal
 `oauth_signin_state_full`. When Keeper fails mid-change, the change is undone before the
 client is told to retry, so its retry is not taken for a replay. A refresh token without a
 family is refused, so its owner signs in again.
+
+The OIDC-verified email is carried explicitly through resolved sign-in, consent, codes,
+device approval and refresh grants. `verified_email` is optional session metadata in the
+Keeper record and `loom.oauth_state` (`String DEFAULT ''`). A build without the field can
+read the record and drop it on rewrite; the receiving build treats omission as empty and
+checks the actual subject and accounts, never a guessed email or a verification exemption.
+The held compare-and-set value remains the exact raw value read. A local provisioning
+outage uses the existing refresh put-back path, preserving the same token, family and
+current sealed upstream credential. Account activity and roles are still rechecked, so
+stored email metadata cannot revive a released account. These auth rows hold no memory
+content; their expiry and erasure classification do not change.
 
 **The IdP round trip is bound to its browser.** What the callback needs (the nonce, the
 PKCE verifier, where to send the result) travels sealed in an HttpOnly cookie of the
@@ -766,7 +864,11 @@ provisioned. The personal-namespace auto-claim passes over a name in use to its 
 name, a workload trust's exchange refuses an agent name in use, and a first write's
 auto-registration names no owner on a name in use (rows a read or a run leaves aside,
 `namespace_autoregister.READ_TRACES`, which a fresh `namespace.register` still counts), so
-only an admin of the name completes the registration, a writer that is one included. Every
+only an admin of the name completes the registration, a writer that is one included. The
+exchange sets aside the rows a request writes about itself under the name it names
+(`namespace_census.REQUEST_TRACES`: a latency reading, an exposure, a search trace), so a
+lookup of an agent's name before its first exchange does not take the name from the
+agent; a run's ledger row counts there. Every
 other path that registers a name as new and makes its caller admin (`namespace.register`,
 `namespace.restore` into a fresh target, `collection.create`, a self-service code
 repository or tracker source, which checks again under the account's claim after its
@@ -795,7 +897,8 @@ request's own scheme and `Host`, validated as `http(s)://hostname[:port]`.
 
 **Exposure.** A non-loopback `LOOM_BIND_HOST` refuses to start without
 `LOOM_PUBLIC_BASE_URL`, and, unless `LOOM_ALLOW_INSECURE=1`, with auth off,
-`LOOM_MCP_AUTH_MODE=open`, the dev JWT secret, or a root, gateway
+`LOOM_MCP_AUTH_MODE=open`, `LOOM_SELF_SIGNUP=open` (unless OIDC sign-in closes it)
+without `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a root, gateway
 (`LOOM_JWT_PUBLIC_KEYS_JSON`) or inline end-user issuer key below the minimum size of
 RFC 7518 (an HMAC secret under 32 bytes, or an RSA key under 2048 bits; only the length
 is checked, not the randomness). Keys fetched from a JWKS URL arrive at runtime and are
@@ -842,8 +945,9 @@ its value.
   check refuses. The sign-in pages under `/oauth/` run no script and send the same policy:
   their URLs can carry a user code or an authorization request, so no other site receives
   them as a referrer, and their form POSTs carry the page's own `Origin`.
-- HSTS, without `includeSubDomains` or `preload`: Loom serves plain HTTP behind a TLS
-  terminator, and a browser ignores the header over plain HTTP and honours it over HTTPS.
+- HSTS, without `includeSubDomains` or `preload`: browsers reach Loom through a TLS
+  terminator, whether Loom's own port serves plain HTTP or HTTPS (`LOOM_TLS_CERT_FILE`),
+  and a browser ignores the header over plain HTTP and honours it over HTTPS.
 
 **Route policies.** The dashboard page carries a Content-Security-Policy whose
 `script-src` admits the bundle's origin and the one boot snippet by a per-response nonce,
@@ -1316,24 +1420,24 @@ A redaction (`memory.redact`) scrubs the version it names, that key's derived ro
 every version of the user's profiles whose trace names the memory: the structured profile
 and the free-text fold's `consolidated_profile` name the memories they read in their trace
 (`profile.fold:<label>:<memory ids>`), and each version whose trace names the redacted
-memory is scrubbed with its key's derived rows, the live one included. The trace names
-the memory and not its version, so a profile built from another version of it is scrubbed
-too. The named version and every profile version reached are scrubbed in one statement
-per version table, so the redaction issues two mutations however many profile versions
-name the memory. The cached
-answers and ask precedents whose window held a scrubbed profile key are deleted with those
-of the memory's own key. A window records bare keys, and every user's profile has the same
-key, so this reach is org-wide: one redaction clears every cached answer and precedent in
-the org that rendered any user's profile, in every namespace, and each profile key reached
-adds one deletion per table. A profile version whose trace names no memory ids
-(`profile.fold:<label>` alone, as a build that does not record its sources writes it,
-including an older build during a rolling upgrade) is not reached and keeps the text until
-the user is erased. A lock on a profile key reached refuses the redaction
-before anything is scrubbed, as a lock on the memory's own key does. A scrubbed live
-profile is left out of `profile.render`, `profile.structured` and profile search, and so
-of every pack and primer, until the worker rebuilds it from the user's current facts; the
-fold rebuilds `consolidated_profile` only on its own schedule, and never for a user below
-its minimum memory count or in a namespace that has turned the fold off.
+memory is scrubbed with its key's derived rows, the live one included. The trace names the
+memory and not its version, so a profile built from another version of it is scrubbed too.
+The named version and every profile version reached are scrubbed in one statement per
+version table, so the redaction issues two mutations however many profile versions name the
+memory, and a third when a shared copy promoted from the key holds the text. The cached
+answers and ask precedents whose window held a scrubbed profile key or a shared copy's key
+are deleted with those of the memory's own key. A window records bare keys, and every user's
+profile has the same key, so this reach is org-wide: one redaction clears every cached
+answer and precedent in the org that rendered any user's profile, in every namespace, and
+each profile key reached adds one deletion per table. A profile version whose trace names no
+memory ids (`profile.fold:<label>` alone, as a build that does not record its sources writes
+it, including an older build during a rolling upgrade) is not reached and keeps the text
+until the user is erased. A lock on a profile key reached refuses the redaction before
+anything is scrubbed, as a lock on the memory's own key does. A scrubbed live profile is
+left out of `profile.render`, `profile.structured` and profile search, and so of every pack
+and primer, until the worker rebuilds it from the user's current facts; the fold rebuilds
+`consolidated_profile` only on its own schedule, and never for a user below its minimum
+memory count or in a namespace that has turned the fold off.
 
 A structured profile is served only from a row written as `worker:structured-profile`, an
 actor kind no token maps to, so a caller cannot forge one
@@ -1372,7 +1476,9 @@ the audit log outlives the source, the repository and every erasure.
 The `audit_verifier` worker recomputes row hashes and seals closed windows into
 `loom.audit_checkpoints`, chained by `prev_checkpoint_hash`, so a deleted row shows as a
 short recount. The chain is over windows because per-row chains fork under concurrent
-writers. An audit insert that fails is logged and never fails the write it records.
+writers. An audit insert that fails is logged and fails only the two ops that depend on
+their record (a `memory.restore` that undoes a retirement, and `namespace.restore`;
+[audit limits](../features/observability/audit.md#limits-and-failure-modes)).
 Settings, the verifier's reports and offline verification are in
 [audit](../features/observability/audit.md).
 
@@ -1400,6 +1506,48 @@ in a Secret only the export's pod reads; ClickHouse's query and debug logs recor
 bound parameter, on Loom's server and on any warehouse server that joins with it. The
 bucket's write role is bound to the export's own Kubernetes ServiceAccount, not to the web
 pods, and the upload never replaces an object.
+
+## The SQL surface
+
+The [SQL surface](../reference/sql-surface.md) lets an org's own SQL user read a
+tenant's memories, history, conversations and request ledger through five versioned views.
+It is the one place a principal outside Loom's request path reads Loom's tables, so its
+isolation lives in ClickHouse:
+
+- The user holds `SELECT` on the views and nothing else, under a `readonly = 1` profile:
+  a statement changes no setting but four that leave a view's rows as they are, since an
+  overflow mode or a table filter could cut a view's own filter short. The profile holds
+  the deleted mask, the query and condition caches off, the `FINAL` modes, every overflow
+  mode `throw` and predicate push-down off, and the
+  `insights.query` ceilings except its result caps. Each view is `SQL SECURITY DEFINER`,
+  so the user never needs, and never has, a grant on a base table.
+- A caller's filter runs on what a view returns, never on the rows it leaves out: a
+  filter that raises an error on a value (`toUInt64(memory_key)`) would otherwise quote
+  another tenant's. ClickHouse plans a `SQL SECURITY DEFINER` view sealed, and the profile
+  holds `query_plan_filter_push_down` and `enable_optimize_predicate_expression` off.
+- Each view admits a row only when `loom.sql_access` grants its `(org, namespace)` to
+  `currentUser()`, which ClickHouse sets from the login and a statement cannot change. A
+  user without a granted row, Loom's own users included, reads nothing: the views fail
+  closed.
+- A namespace classified restricted in `loom.namespaces` or `loom.code_repos` is in no
+  view, whatever the grant: every admitted read of one writes an audit row, which a view
+  cannot. The code repo configuration is outside ClickHouse, so `loom sql-access` checks
+  it instead: it refuses a grant naming one or a wildcard reaching one, and `list` names a
+  grant that a later configuration makes reach one.
+- The views apply the listing rules of [Sensitivity](#sensitivity) in SQL: a `high`
+  row's value and hash, a redacted value and every value of a key that was ever `high` are
+  NULL, rejected and deleted rows are absent. A conversation turn has no label and is
+  served as written, as `conversation.get` serves it. The memory and conversation views
+  read the tables erasure deletes from, which the
+  [residue census](memory-architecture.md#erasure-saga) counts; the ledger views keep
+  their rows with the erased user's identity scrubbed.
+
+Why a scope table and not one row policy per user: ClickHouse ORs a table's permissive
+policies, so a policy per user on every view needs one more policy `TO ALL EXCEPT` every
+surface user, rewritten at each grant, and a missed rewrite widens a view for every
+other user. The scope table is one row per grant behind one fixed filter in each view,
+and a grant or a revocation is an insert. `insights.query` keeps its signed policies:
+there the scope comes from the caller's token on each statement, not from the login.
 
 ## Outbound webhooks
 
@@ -1459,11 +1607,11 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   (`require_real_signing_secret`). `loom doctor` and `/v1/health` flag it elsewhere
   (`dev_jwt_secret`).
 - **Stored tokens.** Private-repository tokens, tracker-source passwords, document-source
-  credentials (`loom.knowledge_sources.credential_enc`) and provider keys are encrypted
-  at rest with a key derived from `LOOM_JWT_SECRET` and a per-purpose salt (`seal` and
-  `unseal` in `server/core/secrets_at_rest.py`), as are the signing keys in
-  `loom.signing_keys`. Changing the secret makes them undecryptable; re-enter
-  the credentials and re-mint tokens.
+  credentials (`loom.knowledge_sources.credential_enc` and `secret_enc`) and provider
+  keys are encrypted at rest with a key derived from `LOOM_JWT_SECRET` and a
+  per-purpose salt (`seal` and `unseal` in `server/core/secrets_at_rest.py`), as are
+  the signing keys in `loom.signing_keys`. Changing the secret makes them
+  undecryptable; re-enter the credentials and re-mint tokens.
 - **Ledger arguments.** `loom.agent_events` stores free-text arguments as
   `sha256:<digest>/<length>`, not text (`server/observability/event_args.py`).
 - **Errors.** A 500 carries only the request id, never exception text.
@@ -1478,7 +1626,9 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 - A process refuses every token until its revocation snapshot has loaded once.
 - A spent refresh token, code or device code that comes back ends its whole session.
 - A namespace is never authorized without an org.
-- A row-scoped op answers `found=False` outside the caller's scope, never 403.
+- A row-scoped op answers as for a missing row when the caller lacks the op's role on the
+  row's namespace, never a 403 that confirms the id exists (the two blacklist 403s are in
+  [row-scoped operations](#row-scoped-operations)).
 - A restricted namespace admits only a literal, same-org, directly granted caller, and
   denies when its classification cannot be read.
 - A `high`-sensitivity value has no embedding row; a chunk, session digest or
@@ -1490,6 +1640,8 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
   it as written.
 - Every memory write leaves a hash-only audit row; no audit row carries a value.
 - An erasure saga succeeds only when its residue census finds nothing.
+- A SQL user of the SQL surface reads only the views, and only the scope rows granted to
+  its own login.
 
 ## Source entry points
 
@@ -1498,7 +1650,7 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 | Token verification and mint | `server/auth/jwt.py` (`verify_token`, `mint_token`, `require_real_signing_secret`)                                          |
 | Bearer parsing              | `server/auth/bearer.py` (`verify_bearer`)                                                                                   |
 | Revocation                  | `server/auth/revocation.py` (`load_at_boot`, `is_revoked`)                                                                  |
-| Authorization               | `server/auth/authz.py` (`check_authorized`, `row_in_scope`); `server/core/grant_sql.py` (`LIVE_GRANT`)                      |
+| Authorization               | `server/auth/authz.py` (`check_authorized`, `row_reach`, `row_in_scope`); `server/core/grant_sql.py` (`LIVE_GRANT`)         |
 | Shared gate                 | `server/transport/gates.py` (`authorize`)                                                                                   |
 | Rate limiter                | `server/core/ratelimit.py` (`Limiter.check`, `op_class_for`), `server/core/ratelimit_shared.py`                             |
 | Blacklist                   | `server/memory/app/blacklist_guard.py` (`enforce_on_insert`), `server/memory/app/blacklist_sweep.py`                        |
@@ -1508,6 +1660,7 @@ Task inbox webhooks and memory webhooks share one sender (`server/core/webhooks.
 | Audit                       | `server/observability/audit.py`, `server/insights/domain/audit_checkpoints.py`, `server/insights/workers/audit_verifier.py` |
 | Erasure                     | `server/erasure/app/saga.py`, `server/erasure/store/`, `server/erasure/workers/recovery.py`                                 |
 | Outbound webhooks           | `server/core/webhooks.py`, `server/memory/app/webhooks.py`, `server/memory/workers/webhook_deliver.py`                      |
+| SQL surface                 | `schemas/migrations/090_sql_surface.sql`, `server/insights/domain/sql_surface.py`, `server/insights/app/sql_access.py`      |
 | Leakage gate                | `tests/integration/test_cross_principal_leakage.py`                                                                         |
 
 ## Related

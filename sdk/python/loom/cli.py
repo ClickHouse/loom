@@ -1,6 +1,6 @@
-"""`loom login | logout | whoami | call | token`: everything the dashboard does,
+"""`loom login | logout | whoami | call | token | connect`: use the dashboard's API
 from a terminal or an agent's shell. `python -m loom …` runs it with only the SDK
-installed; the server's `loom` command hands these five to it.
+installed; the server's `loom` command hands these commands to it.
 
 `loom call` reaches the whole API with the stored session (or LOOM_API_KEY):
 
@@ -23,17 +23,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import sys
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 
 from loom import credentials
-from loom.errors import LoomError
+from loom.errors import BackendUnavailable, LoomError
 from loom.ops import OPS
 
-COMMANDS = ("login", "logout", "whoami", "call", "token")
+COMMANDS = ("login", "logout", "whoami", "call", "token", "connect")
+
+_CONNECT_KINDS = {"google": "gdrive", "notion": "notion", "linear": "linear"}
 
 
 def _field(pair: str) -> tuple[str, Any]:
@@ -115,11 +119,87 @@ async def _token(args: argparse.Namespace) -> Any:
             return await agent.account.tokens()
         if args.action == "revoke":
             return await agent.account.revoke_token(args.name)
+        entries, saves_to = _token_target(args.entries or ["*"], args.saves_to)
         return await agent.account.create_token(
-            args.entries or "*", name=args.name, ttl_days=args.ttl_days
+            entries, name=args.name, ttl_days=args.ttl_days, saves_to=saves_to
         )
     finally:
         await agent.close()
+
+
+async def _connect(args: argparse.Namespace) -> str:
+    """Read the server's dashboard link; consent starts in the browser so its
+    callback receives the binding cookie set by the authenticated start route."""
+    from loom.agent import Agent
+
+    agent = Agent("", "", "loom-cli", base_url=_server(args), profile=args.profile)
+    try:
+        answer = await agent.client.connection.list()
+        kind = _CONNECT_KINDS[args.provider]
+        if not isinstance(answer, dict):
+            raise BackendUnavailable("invalid connected-account response")
+        entries = answer.get("connections")
+        if not isinstance(entries, list):
+            raise BackendUnavailable("invalid connected-account response")
+        matches = [
+            entry for entry in entries if isinstance(entry, dict) and entry.get("kind") == kind
+        ]
+        if len(matches) != 1:
+            raise BackendUnavailable("invalid connected-account response")
+        return _connect_url(matches[0].get("connect_url"), kind)
+    finally:
+        await agent.close()
+
+
+def _connect_url(value: Any, kind: str) -> str:
+    """Only print a provider dashboard link, never consent or credential material."""
+    refused = BackendUnavailable("invalid connected-account dashboard link")
+    if not isinstance(value, str) or any(ord(c) <= 32 or ord(c) == 127 for c in value):
+        raise refused
+    try:
+        url = urlsplit(value)
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.fragment
+            or "\\" in value
+            or not url.path.endswith("/settings/connected-accounts")
+            or parse_qsl(url.query, keep_blank_values=True) != [("kind", kind)]
+        ):
+            raise refused
+        _ = url.port
+    except ValueError:
+        raise refused from None
+    return value
+
+
+def _connect_parser(sub: Any) -> None:
+    p = sub.add_parser(
+        "connect",
+        help="print the dashboard link to connect your own provider account",
+        description="Open the printed link, sign in to the dashboard as the intended account "
+        "owner, and choose Connect or Reconnect. Consent completes in that browser.",
+    )
+    p.add_argument("provider", choices=tuple(_CONNECT_KINDS))
+    p.add_argument("--profile", help="credentials profile (default: LOOM_PROFILE or 'default')")
+    p.add_argument("--server", help="server URL (default: the one `loom login` signed in to)")
+
+
+def _token_target(entries: list[Any], saves_to: str | None) -> tuple[Any, str | None]:
+    """The namespaces and `saves_to` a `token create` sends. A `*` token records
+    where it saves as the namespace named before `*`, so `--saves-to` moves that
+    name to the front; a list token sends it as `saves_to`."""
+    names = [e["namespace"] if isinstance(e, dict) else e for e in entries]
+    if "*" not in names:
+        return entries, saves_to
+    if saves_to:
+        # Moved, not rewritten: a role named for it stays, so the server still refuses a role
+        # beside "*" rather than mint the namespace at the caller's own role.
+        first = [e for e, n in zip(entries, names, strict=True) if n == saves_to] or [saves_to]
+        entries = [*first, *(e for e, n in zip(entries, names, strict=True) if n != saves_to)]
+    return (entries if entries != ["*"] else "*"), None
 
 
 def _role_entry(value: str) -> dict[str, str]:
@@ -139,6 +219,7 @@ namespace save (`saves_to`).
   loom token create                                  # everything you belong to
   loom token create --name ci --namespace-role support=writer --namespace docs
   loom token create --name nightly --namespace support --ttl-days 0   # never expires
+  loom token create --name notes --namespace handbook --namespace mine --saves-to mine
   loom token list
   loom token revoke --name ci
 """
@@ -183,6 +264,13 @@ def _token_parser(sub: Any) -> None:
         "everything you belong to, the default",
     )
     create.add_argument(
+        "--saves-to",
+        metavar="NS",
+        help="where calls that name no namespace save: a memory namespace it may write "
+        "(default: the parent token's when it may write there, else the first; with '*', "
+        "where you work unless named)",
+    )
+    create.add_argument(
         "--ttl-days", type=int, default=None, help="days it lives (default 90; 0: never expires)"
     )
     actions.add_parser("list", parents=[common], help="the tokens you made")
@@ -199,7 +287,13 @@ def run(args: argparse.Namespace) -> int:
     """Run one parsed command: prints the answer, returns the exit code."""
     try:
         if args.cmd == "login":
-            credentials.login(args.server, profile=args.profile, open_browser=not args.no_browser)
+            credentials.login(
+                args.server,
+                profile=args.profile,
+                open_browser=not args.no_browser,
+                org=args.org,
+                wait_s=credentials.ORG_LOOKUP_WAIT_S if args.wait is None else args.wait,
+            )
         elif args.cmd == "logout":
             confirmed = credentials.logout(args.profile)
             print("Signed out." if confirmed else "Signed out here; the server did not confirm.")
@@ -207,6 +301,10 @@ def run(args: argparse.Namespace) -> int:
             print(json.dumps(credentials.whoami(args.profile), indent=2))
         elif args.cmd == "token":
             print(json.dumps(asyncio.run(_token(args)), indent=2, default=str))
+        elif args.cmd == "connect":
+            url = asyncio.run(_connect(args))
+            print(f"To connect {args.provider}, open:\n{url}")
+            print("Sign in as the intended account owner and choose Connect or Reconnect.")
         elif args.list:
             _list_ops()
         else:
@@ -220,6 +318,13 @@ def run(args: argparse.Namespace) -> int:
             if result is not None:
                 print(json.dumps(result, indent=2, default=str))
     except (LoomError, httpx.HTTPError, ValueError, OSError) as e:
+        if args.cmd == "connect":
+            print(
+                "loom connect: could not read your provider dashboard link. "
+                "Check your server and sign-in with `loom login`.",
+                file=sys.stderr,
+            )
+            return 1
         print(f"loom {args.cmd}: {e}", file=sys.stderr)
         for err in getattr(e, "detail", {}).get("errors") or []:
             where = ".".join(str(part) for part in err.get("loc", []))
@@ -248,6 +353,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--server", help="server URL (default: LOOM_BASE_URL or localhost)")
         if name == "login":
             p.add_argument("--no-browser", action="store_true", help="only print the URL")
+            p.add_argument("--org", help="sign in at this org's cell, as the router names it")
+            p.add_argument(
+                "--wait",
+                type=float,
+                help=f"seconds to wait out the router's rate limit for --org "
+                f"(default {credentials.ORG_LOOKUP_WAIT_S:g})",
+            )
         if name == "call":
             p.add_argument("target", nargs="?", help="an op name (memory.search) or a /path")
             p.add_argument(
@@ -259,6 +371,7 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             p.add_argument("--method", choices=("GET", "POST"), help="for a /path")
             p.add_argument("--list", action="store_true", help="list every op and its role")
     _token_parser(sub)
+    _connect_parser(sub)
     # Fields may follow options (`--namespace x query=…`), which argparse
     # leaves over; anything else left over is a mistake.
     args, extra = parser.parse_known_args(argv)
@@ -269,6 +382,13 @@ def main(argv: list[str] | None = None, prog: str = "python -m loom") -> int:
             args.fields = [*args.fields, *map(_field, extra)]
         except argparse.ArgumentTypeError as e:
             parser.error(str(e))
+    if args.cmd == "login" and args.org == "":
+        parser.error("--org needs an org")
+    if args.cmd == "login" and args.wait is not None:
+        if not args.org:
+            parser.error("--wait applies only with --org")
+        if not math.isfinite(args.wait) or args.wait < 0:
+            parser.error("--wait is a number of seconds, 0 or more")
     if args.cmd == "call":
         try:
             args.body = _body(args)

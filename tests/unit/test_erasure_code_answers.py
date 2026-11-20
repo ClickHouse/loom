@@ -109,7 +109,11 @@ class _LocalCH:
 
 
 def _census(ch: _LocalCH, scope_type: str, value: Any) -> int:
-    out = asyncio.run(erasure_census.residue_census("o", scope_type, value, ch=ch))
+    out = asyncio.run(
+        erasure_census.residue_census(
+            "o", scope_type, value, ch=ch, spellings=[value] if scope_type == "user_id" else None
+        )
+    )
     return out["loom.code_answers"]
 
 

@@ -1,0 +1,114 @@
+[
+  {
+    "name": "definition",
+    "prompt": "Where is Parser.parse_record defined, and what arguments does it take?",
+    "operation": "code.symbol",
+    "target": "Parser.parse_record",
+    "context": "src/parser.py:10-14"
+  },
+  {
+    "name": "implementation",
+    "prompt": "Show the implementation of Parser.parse_record.",
+    "operation": "code.symbol",
+    "target": "Parser.parse_record",
+    "context": "src/parser.py:10-14",
+    "include_body": true
+  },
+  {
+    "name": "callers",
+    "prompt": "Which callers of Parser.parse_record can you establish? Give locations and say whether the list is complete.",
+    "operation": "code.callers",
+    "target": "Parser.parse_record",
+    "context": "Loader.load",
+    "floor": true
+  },
+  {
+    "name": "concept",
+    "prompt": "How are nested record prefixes combined before validation?",
+    "operation": "code.search",
+    "context": "src/parser.py:10-14"
+  },
+  {
+    "name": "impact",
+    "prompt": "What code could be affected if I change how Parser.parse_record validates names?",
+    "operation": "code.impact",
+    "target": "Parser.parse_record",
+    "context": "Loader.load",
+    "floor": true
+  },
+  {
+    "name": "literal",
+    "prompt": "Find the exact error text 'invalid record' in the local checkout.",
+    "operation": null
+  },
+  {
+    "name": "untracked",
+    "prompt": "I just created the untracked file local_preview.py. Explain its working-tree version without executing it.",
+    "operation": null
+  },
+  {
+    "name": "uncommitted",
+    "prompt": "Review my uncommitted changes in src/parser.py using the working-tree version.",
+    "operation": null
+  },
+  {
+    "name": "memory",
+    "prompt": "What prefix did we decide to use? Cite the saved decision.",
+    "operation": null,
+    "memory": true
+  },
+  {
+    "name": "provided",
+    "prompt": "Use only the source excerpt below. What does this return?\n\ndef answer(): return 42",
+    "operation": null
+  },
+  {
+    "name": "noncode",
+    "prompt": "Return only this text in uppercase: ready for review",
+    "operation": null
+  },
+  {
+    "name": "unknown target",
+    "prompt": "What would this change affect?",
+    "operation": null
+  },
+  {
+    "name": "saved decision request",
+    "prompt": "Recall the saved decision about record prefixes.",
+    "operation": null,
+    "memory": true
+  },
+  {
+    "name": "saved preferences request",
+    "prompt": "What are my saved preferences for code reviews?",
+    "operation": null,
+    "memory": true
+  },
+  {
+    "name": "mixed definition and saved decision",
+    "prompt": "Where is Parser.parse_record defined? Cite the saved decision about record prefixes.",
+    "operation": "code.symbol",
+    "target": "Parser.parse_record",
+    "context": "src/parser.py:10-14"
+  },
+  {
+    "name": "mixed callers and saved decision",
+    "prompt": "Which callers of Parser.parse_record can you establish? Cite the saved decision about record prefixes.",
+    "operation": "code.callers",
+    "target": "Parser.parse_record",
+    "context": "Loader.load",
+    "floor": true
+  },
+  {
+    "name": "concept mentioning a saved decision",
+    "prompt": "How does the parser attach a saved decision to a record?",
+    "operation": "code.search",
+    "context": "src/parser.py:10-14"
+  },
+  {
+    "name": "concept mentioning saved preferences",
+    "prompt": "What code applies saved preferences when a record is parsed?",
+    "operation": "code.search",
+    "context": "src/parser.py:10-14"
+  }
+]

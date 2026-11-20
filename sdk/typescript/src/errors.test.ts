@@ -15,6 +15,7 @@ import {
   RateLimited,
   TimeoutError,
   ValidationError,
+  WrongCell,
 } from "./errors.js";
 
 describe("errorFromResponse", () => {
@@ -24,6 +25,7 @@ describe("errorFromResponse", () => {
     [409, "PINNED_CONFLICT", PreconditionFailed],
     [409, "KEY_HOLDS_FACT", PreconditionFailed],
     [409, "IDEMPOTENT_CONFLICT", IdempotentConflict],
+    [409, "WRONG_CELL", WrongCell],
     [409, "OVERRIDE_NOT_STORED", LoomError],
     [503, "IDEMPOTENT_IN_PROGRESS", IdempotentInProgress],
     [422, "BAD_NAMESPACE", ValidationError],
@@ -33,6 +35,15 @@ describe("errorFromResponse", () => {
     expect(e.constructor).toBe(cls);
     expect(e.code).toBe(code);
     expect(e.status).toBe(status);
+  });
+
+  it("names the org and its cell on WRONG_CELL", () => {
+    const detail = { code: "WRONG_CELL", message: "m", org: "acme", cell: "eu-2" };
+    const e = errorFromResponse("memory.set", 409, { detail }, "rid") as WrongCell;
+    expect(e).toBeInstanceOf(PreconditionFailed);
+    expect([e.org, e.cell]).toEqual(["acme", "eu-2"]);
+    const unnamed = errorFromResponse("memory.set", 409, { detail: { code: "WRONG_CELL" } }, "rid");
+    expect((unnamed as WrongCell).cell).toBe("");
   });
 
   it("keeps an unmapped status generic", () => {

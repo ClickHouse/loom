@@ -4,11 +4,11 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { approveDataset, DATASET_TYPES, getDatasets, type Dataset, type DatasetType, type Identity } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Alert, Loading, SectionHeading } from "../components/ui";
+import { Alert, Loading, SectionHeading, Unavailable } from "../components/ui";
 
 const SCHEMA_STATE: Record<string, string> = {
   inferred: "types inferred",
@@ -19,17 +19,18 @@ const SCHEMA_STATE: Record<string, string> = {
 /**
  * The typed tables a document's file became (knowledge.dataset_get): each one's columns
  * and types, what the typing asks a person, and an Approve that may retype columns
- * (knowledge.dataset_approve). `canApprove` follows the writer role the op asks.
+ * (knowledge.dataset_approve). `approveReason` is why the caller cannot approve (the writer
+ * role the op asks), or null: Approve then stays in view, unavailable, with it.
  */
 export function DatasetsDialog({
   identity,
   sourceUri,
-  canApprove,
+  approveReason,
   onClose,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   sourceUri: string;
-  canApprove: boolean;
+  approveReason: string | null;
   onClose: () => void;
 }) {
   // null while it reads; `found: false` when the document is no longer live.
@@ -46,7 +47,7 @@ export function DatasetsDialog({
   );
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Tables" className="w-full max-w-[720px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && read === null && <Loading label="Loading the tables" />}
       {read && !read.found && <p className="text-sm text-text-muted">This document is no longer here.</p>}
       {read?.found && read.datasets.length === 0 && (
@@ -59,7 +60,7 @@ export function DatasetsDialog({
             identity={identity}
             sourceUri={sourceUri}
             dataset={d}
-            canApprove={canApprove}
+            approveReason={approveReason}
             onChanged={() => setReload((n) => n + 1)}
           />
         ))}
@@ -77,13 +78,13 @@ function DatasetCard({
   identity,
   sourceUri,
   dataset: d,
-  canApprove,
+  approveReason,
   onChanged,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   sourceUri: string;
   dataset: Dataset;
-  canApprove: boolean;
+  approveReason: string | null;
   onChanged: () => void;
 }) {
   const [types, setTypes] = useState<Record<string, DatasetType>>({});
@@ -102,7 +103,7 @@ function DatasetCard({
       if (e instanceof ApiError && e.code === "PRECONDITION_FAILED") {
         toast(`${d.name} changed meanwhile; here it is as it is now`, "info");
         onChanged();
-      } else toast(`Approve failed: ${humanizeError(e)}`, "error");
+      } else toastError("Approve failed", e);
     } finally {
       setBusy(false);
     }
@@ -136,7 +137,7 @@ function DatasetCard({
           <li key={c.name} className="flex items-center gap-3 py-1.5">
             <span className="min-w-0 flex-1 truncate font-mono text-xs">{c.name}</span>
             {c.inferred !== c.type && <span className="text-xs text-text-muted">read as {c.inferred}</span>}
-            {canApprove ? (
+            {!approveReason ? (
               <div className="w-40">
                 <Select
                   value={types[c.name] ?? c.type}
@@ -156,11 +157,13 @@ function DatasetCard({
           </li>
         ))}
       </ul>
-      {canApprove && (d.schema_state !== "approved" || Object.keys(retyped).length > 0) && (
+      {(d.schema_state !== "approved" || Object.keys(retyped).length > 0) && (
         <div className="mt-2 flex justify-end">
-          <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void approve()}>
-            {Object.keys(retyped).length ? "Retype and approve" : "Approve schema"}
-          </Button>
+          <Unavailable reason={approveReason}>
+            <Button type="secondary" htmlType="button" disabled={busy} onClick={() => void approve()}>
+              {Object.keys(retyped).length ? "Retype and approve" : "Approve schema"}
+            </Button>
+          </Unavailable>
         </div>
       )}
     </section>

@@ -421,6 +421,9 @@ async def _memory_finders(ch: RecordingCH, c: dict[str, Any]) -> None:
         ch, org=ORG, namespace=NS, agent=AGENT, user_id="-", session_id="-", memory_key="k1"
     )
     await M.live_shared_embedding_rows_for_key(ch, org=ORG, namespace=NS, memory_key="k1")
+    await M.live_shared_embedding_rows_for_key(
+        ch, org=ORG, namespace=NS, memory_key="k1", strong=True
+    )
 
 
 _STUB_KEY = {

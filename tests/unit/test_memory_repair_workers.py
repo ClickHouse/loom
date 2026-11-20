@@ -318,7 +318,7 @@ def test_the_recalibrate_command_exits_1_on_a_failed_probe(
         raise TimeoutError("vendor slow")
 
     monkeypatch.setattr("server.memory.workers.recalibration.run_pass", _fail)
-    monkeypatch.setattr(ops, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(ops, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     assert ops._cmd_recalibrate(None) == 1  # type: ignore[arg-type]
     assert "recalibration failed: probe error: vendor slow" in capsys.readouterr().err
 

@@ -18,16 +18,23 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ValidationError
 
 from server.code.app.common import schedule_code_trace_validation_failure
+from server.code.app.repo_scope import session_repo_tag
 from server.code.domain.scope import apply_code_scope, current_code_scope
 from server.core import llm_free
-from server.core.errors import LoomServerError, unverified_class
+from server.core.errors import (
+    LoomServerError,
+    SessionProtectionRequiredError,
+    WrongCellError,
+    unverified_class,
+)
+from server.core.errors import ValidationError as LoomValidationError
 from server.core.naming import named, present
 from server.identity.app.caller_home import home_namespace
 from server.observability import genai
 from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.ledger import required_call_exit, run_id_of
 from server.operations.base import Operation
 from server.operations.toolsets import (
-    _MCP_HIDDEN_OPS,
     ASSISTANT_DROPPED_ARGS,
     ASSISTANT_FORCED_ARGS,
     ASSISTANT_NAMED_AGENT_OPS,
@@ -35,7 +42,13 @@ from server.operations.toolsets import (
 )
 from server.transport import gates
 from server.transport import mcp_runs as _mcp_runs
-from server.transport._common import begin_call, bind_request, validation_note
+from server.transport._common import (
+    begin_call,
+    bind_request,
+    ledger_identity,
+    sli_columns,
+    validation_note,
+)
 from server.transport._common import validation_errors as _validation_errors
 from server.transport.arg_feedback import feedback, refused_result, tool_error
 from server.transport.assistant_call import answer_run, assistant_call, set_assistant_call
@@ -49,7 +62,7 @@ from server.transport.mcp_config import (
 from server.transport.mcp_defaults import coerce_search_arguments, mcp_default_arguments
 from server.transport.mcp_identity import _caller_defaults, note_default_namespace
 from server.transport.mcp_ledger import batch_allows_row, emit_token_refusal
-from server.transport.mcp_op import UNKNOWN_OP
+from server.transport.mcp_op import TOOLS_BY_NAME, UNKNOWN_OP, hidden_refusal, is_hidden
 from server.transport.mcp_outcome import (
     _emit_success,
     _handler_failed,
@@ -58,7 +71,12 @@ from server.transport.mcp_outcome import (
     _success_response,
 )
 from server.transport.mcp_primer import _render_primer_and_emit
-from server.transport.mcp_tools import TOOLS_BY_NAME, _emit_mcp_event, assistant_connection
+from server.transport.mcp_refusals import refusal_result
+from server.transport.mcp_tools import (
+    _emit_mcp_event,
+    assistant_connection,
+    hint_naming,
+)
 
 if TYPE_CHECKING:
     from server.core.idempotency import Scope
@@ -128,6 +146,27 @@ def _scope_arguments(
     if op_name == SEARCH_OP:
         coerce_search_arguments(arguments)
     apply_code_scope(op_name, arguments, current_code_scope())
+
+
+async def _tag_session_repository(op: Operation, arguments: dict[str, Any], auth: Any) -> None:
+    """A `memory.set` that carries no `repo:` tag takes the `repo:<id>` of the
+    connection's code scope (`session_repo_tag` says which repository), so a
+    memory the agent saves about the checkout can be linked to its code. An
+    explicit `repo:` tag, whichever repository it names, is the caller's and
+    stays; tags that are not a list of strings are left to validation."""
+    if op.name != "memory.set" or current_code_scope() is None:
+        return
+    tags = arguments.get("tags") or []
+    if not isinstance(tags, list) or not all(isinstance(t, str) for t in tags):
+        return
+    if any(t.startswith("repo:") for t in tags):
+        return
+    org = gates.resolve_org(op, arguments.get("org"), auth)
+    namespace = present(arguments.get("namespace"))
+    if not org or not namespace:
+        return
+    if tag := await session_repo_tag(org, namespace):
+        arguments["tags"] = [*tags, tag]
 
 
 # The op MCP serves as the `loom_search` tool.
@@ -206,8 +245,8 @@ async def _call_tool(
     toolset: str | None = None,
 ) -> dict[str, Any]:
     """One MCP `tools/call`, in phases (each below this function, in order):
-    resolve the tool → bind the caller's identity → stamp the session run's
-    id → argument refusal + validation → authorization → admission (traffic
+    resolve the tool → session-content admission → bind the caller's identity →
+    stamp the session run's id → argument refusal + validation → authorization → admission (traffic
     class, policy, rate limit) → the session run begins → idempotency replay
     (only for an admitted caller) → open the trace → span identity
     (inline) → the handler → success telemetry → the response. Every phase
@@ -229,6 +268,12 @@ async def _call_tool(
         return tool  # loom_activate's answer, or the not-available refusal
     op = tool
 
+    if (refused := await _session_content_refusal(req_id, op, auth)) is not None:
+        return refused
+
+    refused = await _another_cells_org(req_id, op, arguments, auth)
+    if refused is not None:
+        return refused
     request_id, defaults = await _bind_caller_identity(op, arguments, auth, client_name)
 
     run_caller, stamped_run = _stamp_session_run(op, arguments, defaults, mcp_session_id)
@@ -245,7 +290,7 @@ async def _call_tool(
     target = await _authorize_call(req_id, op, input_obj, arguments, auth, request_id)
     if isinstance(target, dict):
         return target  # AUTH_INSUFFICIENT — nothing below (limiter, handler) runs
-    input_obj = gates.with_target(input_obj, target)
+    input_obj = gates.with_target(op, input_obj, target)
 
     # The resolved tenant the telemetry and post-handler rows name, as HTTP's
     # identity does after authorization.
@@ -309,33 +354,55 @@ async def _call_tool(
         # caches and refuse.
         genai.set_identity(operation=op.name, capture_level="off")
 
-    start = time.perf_counter()
-    try:
-        with gates.tenant_slot(auth, target), llm_free.serving(op):
-            result = await op.handler(input_obj)
-    except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
-        return _handler_failed(
-            e,
-            req_id,
-            name,
-            op,
-            arguments,
-            input_obj,
-            auth,
-            request_id,
-            mcp_session_id,
-            rl_ns=rl_ns,
-            rl_org=rl_org,
-            elapsed_ms=int((time.perf_counter() - start) * 1000),
+    with required_call_exit(
+        op_name=op.name,
+        identity=ledger_identity(arguments),
+        request_id=request_id,
+        run_id=run_id_of(arguments),
+        **sli_columns(op.name, "mcp"),
+    ):
+        start = time.perf_counter()
+        try:
+            with (
+                gates.tenant_slot(auth, target),
+                llm_free.serving(op),
+                hint_naming(toolset) as namer,
+            ):
+                result = await op.handler(input_obj)
+        except Exception as e:  # noqa: BLE001 — any handler error becomes a refusal or RPC error
+            return _handler_failed(
+                e,
+                req_id,
+                name,
+                op,
+                arguments,
+                input_obj,
+                auth,
+                request_id,
+                mcp_session_id,
+                rl_ns=rl_ns,
+                rl_org=rl_org,
+                elapsed_ms=int((time.perf_counter() - start) * 1000),
+            )
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+        mentor_hint = _emit_success(
+            op, arguments, elapsed_ms, request_id, result, mcp_session_id, namer
         )
-    elapsed_ms = int((time.perf_counter() - start) * 1000)
-    mentor_hint = _emit_success(op, arguments, elapsed_ms, request_id, result, mcp_session_id)
 
-    _record_success_telemetry(call, result, elapsed_ms)
+        _record_success_telemetry(call, result, elapsed_ms)
 
-    return await _success_response(
-        call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
-    )
+        return await _success_response(
+            call, result, elapsed_ms, (idem_scope, idem_body_hash), mentor_hint
+        )
+
+
+async def _session_content_refusal(req_id: Any, op: Operation, auth: Any) -> dict[str, Any] | None:
+    """Refuse session content before identity, validation, replay or implicit writes."""
+    try:
+        await gates.session_content(op, auth)
+    except SessionProtectionRequiredError as error:
+        return _ok(req_id, refusal_result(error))
+    return None
 
 
 def _stamp_session_run(
@@ -468,7 +535,7 @@ async def _resolve_tool(
         )
 
     op = TOOLS_BY_NAME.get(name)
-    if op is None or (op.name in _MCP_HIDDEN_OPS and not allow_hidden):
+    if op is None or (is_hidden(op.name) and not allow_hidden):
         # Return a result-with-isError, not a JSON-RPC error frame: some
         # clients drop conversation state on JSON-RPC errors (surfaces as
         # "Tool result could not be submitted"). Both are spec-legal.
@@ -476,9 +543,7 @@ async def _resolve_tool(
         # The code loom_op answers for a name no op answers to.
         body: dict[str, Any] = {"error": msg, "code": UNKNOWN_OP, "tool": name}
         if op is not None:  # A hidden op says why and what instead
-            from server.transport.mcp_op import hidden_refusal
-
-            body = {**(hidden_refusal(op.name) or {}), "tool": name}
+            body = {**(hidden_refusal(op.name, toolset) or {}), "tool": name}
             emit_token_refusal(op.name, auth, error_code="OP_NOT_ON_MCP")
             msg = f"{body.get('error', msg)}; instead: {body.get('instead', '')}"
         return _ok(
@@ -490,6 +555,37 @@ async def _resolve_tool(
             },
         )
     return op
+
+
+async def _another_cells_org(
+    req_id: Any, op: Operation, arguments: dict[str, Any], auth: Any
+) -> dict[str, Any] | None:
+    """A call in the token's own org on a cell that does not hold it answers WRONG_CELL,
+    or the refusal of a new org's name past `cell.ORG_MAX_BYTES`, as a tool error before
+    the caller's defaults are read: they live in that org, so reading them would only
+    find none and refuse the call as a validation failure. A call naming another org is
+    the op gate's to check."""
+    from server.settings import settings
+
+    if auth is None or not settings.cell:
+        return None
+    from server.auth import tenancy
+
+    # The org the op gate would check (a plane's own org for code.* and tracker.*).
+    if gates.resolve_org(op, arguments.get("org"), auth) != auth.org:
+        return None
+    try:
+        await tenancy.ensure_held(auth.org, auth)
+    except (WrongCellError, LoomValidationError) as e:
+        # The caller's to fix. The identity is not bound yet: the row names the token's
+        # org, which the ledger blanks with the rest of the tuple (`events.for_this_cell`).
+        emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org)
+        return _ok(req_id, refusal_result(e))
+    except LoomServerError as e:
+        # The cell could not tell (a 503): counted against the server, then raised.
+        emit_token_refusal(op.name, auth, error_code=e.code, org=auth.org, server_fault=True)
+        raise
+    return None
 
 
 async def _bind_caller_identity(
@@ -564,6 +660,7 @@ async def _bind_caller_identity(
         filled_ns = _address_first_claim(arguments, defaults.get("readable") or [])
     note_default_namespace(filled_ns, str(arguments.get("namespace") or ""), auth)
     _scope_arguments(op.name, arguments, defaults, explicit_agent)
+    await _tag_session_repository(op, arguments, auth)
     if op.name == SEARCH_OP and filled_ns:
         await _address_home(arguments, auth)
 
@@ -712,8 +809,8 @@ async def _authorize_call(
     """Phase 5 of `_call_tool`: the shared authorization target and gate
     (server/transport/gates.py) — role / namespace check, restricted-access
     audit, first-write registration. Returns the target, or the refusal
-    response: AUTH_INSUFFICIENT (a code/tracker index says how to get in) or
-    IDENTITY_INCOMPLETE. Any other error propagates, a LoomServerError
+    response: AUTH_INSUFFICIENT (a code/tracker index says how to get in),
+    IDENTITY_INCOMPLETE or WRONG_CELL. Any other error propagates, a LoomServerError
     ledgered first."""
     from server.core.errors import IdentityIncompleteError
 
@@ -730,11 +827,11 @@ async def _authorize_call(
             op.name, arguments, error_code=gates.ROLE_REFUSAL_CODE, request_id=request_id, error=e
         )
         return _ok(req_id, _forbidden_result(op, e, auth, target.org, target.namespace))
-    except IdentityIncompleteError as e:
-        # HTTP's 400 IDENTITY_INCOMPLETE, as a tool result: escaping, it
-        # would become a bare HTTP 400 with no JSON-RPC frame and lose the batch.
+    except (IdentityIncompleteError, WrongCellError) as e:
+        # HTTP's 400 IDENTITY_INCOMPLETE or 409 WRONG_CELL, as a tool result: escaping,
+        # it would become a bare HTTP error with no JSON-RPC frame and lose the batch.
         _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
-        return _ok(req_id, _refusal_result(e))
+        return _ok(req_id, refusal_result(e))
     except LoomServerError as e:
         # A read the gate could not make past its cache (a 503): counted
         # against the server, then answered as raised.
@@ -774,18 +871,6 @@ def _emit_refused(
             error=error,
         )
     return first
-
-
-def _refusal_result(e: BaseException) -> dict[str, Any]:
-    """A 4xx LoomServerError as the `isError` result `_handler_failed` answers."""
-    from server.transport.mcp_refusals import refusal_body, refusal_text
-
-    body = refusal_body(e) or {"code": "BAD_REQUEST", "message": str(e)}
-    return {
-        "content": [{"type": "text", "text": refusal_text(body)}],
-        "isError": True,
-        "structuredContent": body,
-    }
 
 
 @dataclass(slots=True)
@@ -830,7 +915,7 @@ async def _admission_refusal(call: _AdmittedCall) -> dict[str, Any] | None:
         call.input_obj = gates.read_scope(op, auth, input_obj)
     except (AuthInsufficientError, IdentityIncompleteError) as e:
         _emit_refused(op.name, arguments, error_code=e.code, request_id=request_id)
-        return _ok(req_id, _refusal_result(e))
+        return _ok(req_id, refusal_result(e))
 
     # History policy, at parity with HTTP: after authz, before the handler.
     # Off → no-op; shadow → records; enforce → structured denial.

@@ -134,7 +134,9 @@ async def _erase(ch: Any, org: str, user_id: str) -> None:
     from server.erasure.store import steps_ledgers
 
     await steps_ledgers.delete_learnings_queue_by_user(org, user_id, ch=ch)
-    after = await erasure_census.residue_census(org, "user_id", user_id, ch=ch)
+    after = await erasure_census.residue_census(
+        org, "user_id", user_id, ch=ch, spellings=[user_id.lower()]
+    )
     assert after["loom.learnings_supporters"] == 0
     assert after["loom.learnings_queue"] == 0
 
@@ -589,7 +591,7 @@ async def test_a_session_backing_the_rule_while_its_last_supporter_is_erased_kee
     (kept,) = _listed(base_url, tok, org, ns)
     assert kept["candidate_id"] == cand["candidate_id"] and kept["status"] == "pending"
     assert kept["rationale"] == _rationale("bob")
-    after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch)
+    after = await erasure_census.residue_census(org, "user_id", "alice", ch=ch, spellings=["alice"])
     assert after["loom.learnings_supporters"] == 0 and after["loom.learnings_queue"] == 0
 
 

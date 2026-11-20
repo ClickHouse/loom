@@ -10,15 +10,17 @@ the parts.
 LibreChat is the assistant: it hosts the agent (its model, instructions and tools) and
 runs it headless beside Loom, reachable only from Loom. Loom supplies the agent's tools,
 which read under a token of the asker's own subject, and a read-only SQL op that
-ClickHouse itself holds to that token's org and namespaces. People chat on the
-dashboard's Assistant page; agents and scripts reach the same agent over HTTP, MCP and
-both SDKs, through Loom's origin and as themselves.
+ClickHouse itself holds to that token's org and namespaces. People chat in the
+dashboard's Ask AI panel, opened from the header's Ask AI button beside the search
+field, or ask in the header search, which answers a question in place and goes on in the
+panel; agents and scripts reach the same agent over HTTP, MCP and both SDKs, through
+Loom's origin and as themselves.
 
 ## Surfaces
 
 ```mermaid
 flowchart LR
-    P["person, signed in"] --> D["dashboard<br/>Assistant page chat"]
+    P["person, signed in"] --> D["dashboard<br/>assistant panel"]
     A["agent or script"] --> S["SDK / HTTP / MCP"]
     D --> B["Loom assistant bridge"]
     S --> B
@@ -30,7 +32,7 @@ flowchart LR
 
 | Surface         | What the caller calls                                                                                                   |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Dashboard       | a chat on the Assistant page, streaming from `POST /v1/assistant/chat/completions` with the signed-in session           |
+| Dashboard       | the assistant panel, streaming from `POST /v1/assistant/chat/completions` with the signed-in session                    |
 | HTTP            | `POST /v1/assistant/chat/completions`: LibreChat's agents API request and response, OpenAI-compatible, streaming or not |
 | SDKs            | a thin `assistant` client in Python and TypeScript over that route, with streaming; it holds no agent logic             |
 | MCP             | the `loom_assistant_ask` tool (op `assistant.ask`), which forwards one question and returns the whole answer            |
@@ -63,10 +65,50 @@ ledger, the analysis boundary in the database, and the citation check.
 
 **Why a native chat, not LibreChat's UI in a frame.** A frame would put a second origin,
 a second sign-in and LibreChat's look inside the dashboard, and would need LibreChat's
-cookies to work in a third-party frame. A chat panel on the Assistant page uses Loom's
-session and components, and links verified citations into the memory and document views.
+cookies to work in a third-party frame. The dashboard's assistant panel uses Loom's
+session and components, and links verified citations into the memory and document views
+([the assistant panel](../features/dashboard.md#ask-ai) has its rules).
 
 ## The bridge: each caller's own identity
+
+Before checking model spend, the bridge reads the authorized namespace's public
+mirrored-source registrations. Any active registration marks the complete answer,
+even when its tools admit no document. The chat route sends `data: {"mirrored":true}`
+as its first SSE event, or `mirrored: true` as its whole response's first field.
+`assistant.ask` carries the same first field. A marked refusal carries it too. This
+decision also routes the answer's cost row to private storage and suppresses public
+diagnostics before subsequent model, budget or tool work.
+
+Marked operation results carry the same server-owned flag after their typed output is
+serialized. HTTP success responses retain it before post-handler rows. MCP success
+responses retain it in the outer envelope, tool result, structured content and canonical
+JSON text. The search tool's prose summary follows a separate first JSON marker block,
+so consuming its text blocks in order observes protection before the summary. Ordinary
+unmarked results keep their existing shapes.
+
+The answer token keeps the caller's `session_protection` promise and a separate
+`answer_mirrors` admission bit. Only an already marked answer for a declared caller
+receives positive admission. Missing or false admission disables its mirror legs,
+including when a source becomes active during an initially ordinary answer. Ordinary
+namespace reads retain their authorization. Current ACL checks still decide each
+mirrored item; the bit grants no access by itself. Ordinary delegated children omit
+both claims and cannot regain mirror admission through a request header. An answer
+token or any descendant cannot start another assistant answer.
+
+Streaming output is provisional until `[DONE]`. The response owns its required
+accounting lifetime beyond HTTP headers: it closes and joins model and citation work,
+captures final usage once, and confirms private cost delivery before sending `[DONE]`
+or a terminal error. Disconnects join producer cleanup and required delivery before
+propagating cancellation. A failed cost write cannot publish a completed answer.
+Whole answers and checked tool responses retain their accounting-before-publication
+boundary. Incremental text precedes final usage, so its completion boundary is the
+terminal event. A streaming client must reject EOF without `[DONE]` as incomplete.
+
+Mirrored-source creation stays unavailable until every serving build and consumer
+implements the admission, first-output marker, session and accounting boundaries.
+An older verifier accepting an unknown claim does not enforce it; schema equality
+does not establish this capability. The fleet and rollback requirements in
+[rolling upgrades](rolling-upgrades.md) still apply.
 
 LibreChat's agents API authenticates a LibreChat API key and runs the agent as that
 key's LibreChat user. The agent's tools are Loom's MCP server, and what they may read is
@@ -96,24 +138,35 @@ steps:
 1. Verify the caller's Loom token or dashboard session as on any op, and its `viewer`
    role on the request's namespace. The chat route takes the same `Origin` and CSRF
    checks as `POST /v1/{op}`. Refused here, before LibreChat is called: a revoked or
-   expired caller, an org-wide (`*`) token (an answer reads one org), a token whose
-   reads are narrower than its namespace (as `insights.query` refuses it), a caller
+   expired caller, an assistant answer's own token or one delegated from it
+   (`ASSISTANT_SELF_CALL`), an org-wide (`*`) token (an answer reads one org), a token
+   whose reads are narrower than its namespace (as `insights.query` refuses it), a caller
    whose token has less life left than one answer may run (a dashboard or `loom login`
    caller is not refused for its access token, which a refresh replaces every hour: its
    answer's token ends at sign-out instead), an org whose model calls an admin
    switched off (`org.set_model_calls`), and a namespace over its assistant budget or
-   running its most concurrent answers ([Model and cost](#model-and-cost)).
+   running its most concurrent answers ([Model and cost](#model-and-cost)). A refusal a
+   client words for its reader carries `detail.reason`: `ASSISTANT_UNAVAILABLE` names
+   `not_configured` (no LibreChat), `auth_off`, `starting` (this process has not set the
+   service up yet, or is setting it up again) or `failing` (its last try failed; the setup
+   loop retries), and `AUTH_INSUFFICIENT` names `org_wide`, `narrowed` or
+   `token_expires_soon` (with `left_s`); a caller without `viewer` on the namespace
+   carries none. Where an assistant is configured, `/v1/health/ready` reports an
+   `assistant` check, never required (a deployment whose assistant is down still serves
+   the rest), whose reason is `starting`, `failing` or `auth_off`; a missing check means
+   none is configured.
 2. Delegate the answer's token from the caller's (`server/auth/delegation.py`
    `delegate`): `viewer` on the request's namespace alone, minted for the caller's own
-   subject with consumer `loom-assistant`, as a service-account token when the caller's
-   is one, and expiring when an answer may run no longer (`LOOM_ASSISTANT_ANSWER_TTL_S`,
-   default ten minutes). Delegation applies every rule a minted child follows: the
-   creator's live grant, the end user, the ancestor subjects and their issue times, the
-   chain depth limit, and the caller's token id among the child's `parents`. The bridge
-   also asks for the caller's sign-in session among the `parents` (`delegate`'s
-   `ends_with_session`), so a dashboard or `loom login` caller's answer token ends at
-   sign-out, as a third-party client's already does. The token is not listed in
-   `loom.service_accounts`: it lives for one answer.
+   subject with consumer `loom-assistant` and an id starting with `assistant-answer-`
+   (so a token delegated from it is told by its `parents`), as a service-account token
+   when the caller's is one, and expiring when an answer may run no longer
+   (`LOOM_ASSISTANT_ANSWER_TTL_S`, default ten minutes). Delegation applies every rule a
+   minted child follows: the creator's live grant, the end user, the ancestor subjects
+   and their issue times, the chain depth limit, and the caller's token id among the
+   child's `parents`. The bridge also asks for the caller's sign-in session among the
+   `parents` (`delegate`'s `ends_with_session`), so a dashboard or `loom login` caller's
+   answer token ends at sign-out, as a third-party client's already does. The token is
+   not listed in `loom.service_accounts`: it lives for one answer.
 3. Call LibreChat's agents API with Loom's service key, the seeded agent's id in place
    of any `model` the caller names, the answer token as `parent_message_id`, and the
    text of the caller's `user` and `assistant` messages (no `system` message, which
@@ -182,8 +235,8 @@ Until the row has its key and agent id, the assistant answers `ASSISTANT_UNAVAIL
 **Conversations live with the caller.** LibreChat's agents API (the OpenAI-compatible
 `/api/agents/v1/chat/completions`) saves no messages: it runs the agent over the
 messages in the request and records only token counts in its `transactions` collection.
-A multi-turn chat is the caller's message list, which the dashboard keeps in the tab and
-an SDK caller sends each time, as with any OpenAI-compatible API. The agent's MCP
+A multi-turn chat is the caller's message list, which the dashboard keeps in the browser's
+storage and an SDK caller sends each time, as with any OpenAI-compatible API. The agent's MCP
 connection carries request-time headers, so LibreChat opens it for each answer and
 closes it after; each answer pays one MCP `initialize` and `tools/list`.
 
@@ -225,55 +278,317 @@ caller's own call, so a citation it makes verified misleads only the caller. The
 are written in the background and a tool call can land on another replica, so the bridge
 waits up to five seconds for them; a citation whose row has not arrived by then, or was
 dropped, comes back unverified. A check Loom refuses (a rate limit, an outage), a ledger
-that cannot be read, memory reads that are not recorded
-(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off), an answer with no run id, a check past the
-ten seconds, or a document read whose token expired (an answer that ran to its limit
-leaves its checks a token near its end) leaves its citation unverified with the reason
-"the check could not run", and never fails the answer. Each citation comes back marked
-`verified` or not, with the reason and its `ref` (the memory key, document source or
-code path it names), in a last `loom.citations` event before the stream's `[DONE]` (and
-a `citations` field on a whole answer and on `assistant.ask`), and an answer with no
-verified citation is shown as unsupported, as an abstention is.
+that cannot be read, an answer with no run id, a check past the ten seconds, or a
+document read whose token expired (an answer that ran to its limit leaves its checks a
+token near its end) leaves its citation unverified with the reason "the check could not
+run", and never fails the answer. With memory reads not recorded
+(`LOOM_MEMORY_EXPOSURE_LEDGER_ENABLED` off) a memory citation's reason is "this
+deployment does not record memory reads". Each citation comes back marked
+`verified` or not, with the reason and its `ref` (the memory key, document source,
+documentation page or code path it names), in a last `loom.citations` event before the
+stream's `[DONE]` (and a `citations` field on a whole answer and on `assistant.ask`),
+with the answer's [support](#support). A streamed answer sends a `loom.text_done` event
+when LibreChat's stream ends, before the checks start, so a client can show the text as
+complete while they run (up to ten seconds); the answer's slot is held until
+`loom.citations`. The dashboard shows "Checking sources…" under every streamed answer in
+that time, since the checks read every streamed answer's run.
+
+A help citation, `[help:<page> § <section>]` (the section optional, its breadcrumb
+starting with the page title as `help.search` returns it), is checked against the
+replica's own index of the shipped docs: verified when the page is indexed and the
+section is one of its own (its breadcrumb, the breadcrumb without the page title, or a
+tail of it no other section of the page shares), with the section's `anchor`, which the
+dashboard's Sources link to the Help page (`/help?page=<page>#<anchor>`). A page that is
+not indexed, or a section the page does not have, fails as a document citation does. The
+docs are the same for every caller, so the check reads nothing of Loom's. During a
+rolling upgrade a bridge of the build before the kind does not parse it, and an answer
+resting only on help citations shows as `none` there.
+
+**Names.** The instructions allow an op or setting name only from a tool's result, and
+the tool results stay with the agent, so the bridge checks what it can decide: each
+backticked dotted name whose first part is an op group (`memory`, `knowledge`, ...) and
+each `LOOM_*` name in the answer is known when the build serves it as an op, reads it
+as an environment variable (a setting, `NON_SETTINGS_ENV`, a prefix family), or its
+docs write it; a name ending in `_` is a family, known when one of those starts with
+it. The rest come back in `unknown_names` beside the citations (the event's field and
+`assistant.ask`'s), and an answer that writes one is `unsupported`, whatever it cites:
+it may have invented the name. With no docs to read, none is reported. A name written
+in prose, without backticks or the `LOOM_` prefix, is not checked.
+
+### Support
+
+Each answer comes back with `support` (on the `loom.citations` event, the whole answer
+and `assistant.ask`), which says how far it rests on what Loom holds. The server decides
+it (`server/assistant/domain/support.py`), from the codes its citation checks ended with
+and, for an answer that cites nothing, from what its own tool calls found; the first
+that applies wins:
+
+| `support`     | When                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`        | The answer has no text; or it cites nothing and either says the abstention sentence the agent's instructions give ("Nothing stored in Loom answers this.", in any case or emphasis) or it made no call to an op whose rows it could cite and none of its calls found data or failed. A greeting, a capability reply and an abstention make no claim.                                                                                     |
+| `supported`   | A citation verified.                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `unsupported` | It names an op or setting the build neither serves nor documents (`unknown_names`); or a citation failed for a reason of its own (its key was not returned to this answer, its document or section is not there, its statement did not run in this answer); or it cites nothing although a call of an op whose rows it could cite found data, or ran and found nothing while no other call found data or failed (a claim nothing backs). |
+| `unchecked`   | Otherwise: its checks could not say (a read failed or ran past its bound, no run id, memory reads not recorded, code citations, past the 50 checked), or it cites nothing and what found data has no citation form (counts and findings: the ops in `ASSISTANT_UNCITABLE_OPS`, such as `namespace.summary` and `namespace.inventory`), or a call failed.                                                                                 |
+
+The ops whose rows an answer can cite, those whose output has no citation form, and
+those that return no namespace data (Loom's own guide, documentation and catalog) are
+sets in `server/operations/toolsets.py`, with the output list each op's ledger row
+counts as `out_hits` (or its `found` flag) to say whether it found anything. A test
+requires every op of the assistant toolset to be in exactly one set and to say how its
+row shows it found nothing. The answer's calls are read by its run, its caller's subject
+and the consumer `loom-assistant`, with no namespace filter (`ledger.run_rows`): a code
+call is ledgered under the code namespace and a refused call under the sentinel. The rows
+land in the background, so two patterns read them:
+
+- A whole answer (`assistant.ask`, the chat route asked without `stream`) reads its calls
+  only when it cites nothing: once, and once more after the ledger's flush interval and
+  the batched-insert wait unless the first read already found a citable op's data.
+- A streamed answer shows what it read under it ([steps](#steps)), so it reads its calls
+  on every answer, cited or not: once, after the same wait, beside its citation checks.
+  That one read gives both its support and its steps.
+
+The reads and the waits are bounded at three seconds together, past which the answer is
+`unchecked`. One read takes 200 rows; a run with more is cut, and a cut run keeps only an
+outcome its first 200 rows decide (`unsupported` when a citable op found data there),
+else it is `unchecked`. A presence answer of `code.symbol` finds only where the symbol is
+present.
+
+The rule reads no wording beyond the abstention sentence, and accepts these residuals:
+
+- A greeting, capability reply or uncited question back after a citable call is
+  `unsupported` (`unchecked` when only ops with no citation form found data). The
+  instructions keep such calls rare: a greeting calls no tool, and a question back lists
+  each match with its citation.
+- An uncited fact with no call at all (a later turn restating an earlier one, or a
+  first answer from the model's own knowledge, which the instructions forbid), or after
+  calls whose rows land past the wait or the re-read, or are dropped (the ledger keeps
+  them at most once), is `none`.
+- A run of more than 200 ledger rows is judged on its first 200, so a citable op's data
+  past them is not seen: such an answer is `unchecked`, never `none`.
+- A "not found" answer from a lookup that misses (`memory_get`, `code_symbol`) is
+  `none` when it ends with the abstention sentence, as the instructions ask for every
+  read that finds nothing; worded otherwise, it is `unsupported`.
+- An abstention that also states a fact is `none`.
+- An uncited answer from `help.search` and `help.get` is `none`, but `unsupported` when
+  a citable call of the same answer found data; the instructions ask for every docs
+  section used to be cited as `[help:...]`, which verifies.
+- A document citation verifies when the document holds the section, whether or not this
+  answer read it; the instructions ask for a document to be read again before it is
+  cited on a later turn.
 
 **Rendering.** The answer is model output that stored text can steer, so the dashboard
 renders it as text with Markdown emphasis, lists, tables and code only: no HTML, no
-images and no links in the answer's text, where each citation shows as written. The
-dashboard's `img-src 'self' data: blob:` already stops a remote image that would carry
-rows away in its URL. Under a finished answer its Sources
-(`frontend/src/views/assistant/Sources.tsx`) list each citation as the server checked
-it: a verified memory opens in the memory drawer and a verified document in the
-Library, by the citation's `ref`; an unverified one shows why; and an answer with no
-verified citation is marked unsupported.
+images and no links in the answer's text but its citations, each drawn as a number by
+where it first appears (`citationNumbers` in
+`frontend/src/views/assistant/AnswerText.tsx`), which links to the citation's Sources
+row once the check ends; the panel and the header search's card, a preview of the
+answer, number an answer alike. The dashboard's `img-src 'self' data: blob:` already
+stops a remote image that would carry rows away in its URL. Under a finished answer its
+Sources (`frontend/src/views/assistant/Sources.tsx`) list each citation as the server
+checked it, under one Sources label, each led by its number and named as the reader
+knows it (a memory by its key, its kind and version in the row's tooltip): one found in
+Loom opens, a memory in the memory drawer, a document in the Library and a help citation
+on the Help page at its section, by the citation's `ref`; any other reads "not
+confirmed" with its reason. A label above them says the answer's support in words,
+leading with how many sources were found when some were not: "Checked against what Loom
+holds", "Partly confirmed: n of m sources found in Loom", "Couldn't confirm: 0 of m
+sources found in Loom", "Couldn't confirm: it names …" (an op or setting this Loom does
+not have), "Couldn't confirm: it gives no sources", "Sources not checked" or "Not
+checked: it cites nothing Loom holds"; an answer whose `loom.citations` never came (the
+connection was lost after its text, or the page was left) reads "Check didn't finish".
+Each label's "Why this label" note says why it reads as it does; an answer whose support
+is `none` has no label. A value the dashboard does not know reads as `unchecked`.
+
+### Steps
+
+While a streamed answer runs, the bridge reads the answer's own calls from
+`loom.agent_events` as their rows land and sends them as `loom.step` events, each carrying
+the whole list so far (`steps`: `{op, text, ok}` per call, oldest first), so the dashboard
+shows the latest as its working line. The read (`server/assistant/store/ledger.py`
+`live_rows`) runs at once and then after 1 s, 2 s and every 4 s to the answer's end.
+Before the first chunk gives the answer's run id it filters the org, the namespace, the
+caller's subject, the consumer `loom-assistant` and the second before the answer started
+(a second that takes the streaming replica's, the serving replica's and ClickHouse's
+clocks to agree; under more skew a call shows only once the run id is known), so the calls
+of the caller's other answers in the namespace that land before the run id is known
+(another tab's, say) mix in, which progress text accepts. Once the run id is known it
+filters by the run with no namespace (code and refused calls included), so another run's
+calls are not read. Each step's words come from a fixed line per op of the toolset
+(`server/assistant/domain/steps.py`, "Read the audit", "Couldn't search memories" for a
+failed or refused call); a row of any other op is no step. A step shows once its call has
+finished and its row has landed, up to four seconds later. A read that fails ends the
+steps; the answer goes on. The steps are display only and never decide the label.
+
+The `loom.citations` event then carries `steps` from the one read of the run after the
+answer ends (above), which replace the live list: an empty list when the run made no call,
+and no `steps` when that read failed or ran past its bound, when the dashboard keeps what
+it showed live; and `steps_cut: true` when the run held more than 200 ledger rows. These
+events and `loom.text_done` have `choices: []`, the run id (or none yet) as `id`, and no
+model or usage, so a client that guards for no choices skips them; both SDKs skip
+`loom.step` and `loom.text_done` and expose the final list as the answer's `steps`. A
+whole answer and `assistant.ask` carry no steps and no `loom.text_done`.
+
+### Starters and cards
+
+The dashboard's panel lists starters, one per read that answers a question about the
+namespace exactly: `namespace.inventory`, `namespace.audit`, `memory.inspect`,
+`knowledge.inspect`, `mentor.brief`, `namespace.tune`, and a link to the Graph. A
+starter's card is that read, made by the dashboard with the person's own session, not by
+the answer: it is gated on the read's own role and scope, works while the assistant cannot
+answer, and costs no model call (`frontend/src/views/assistant/cards/`). The starter also
+asks the assistant its question when the person keeps "Also ask the model" on; the
+question names the arguments the card was first read with (the audit's window, the
+mentor's agent; the card's selects read it again with others, which the question then no
+longer names), and its answer gets the same [support](#support) label as any other, the
+card's own line ("Loom's own read") saying the card is exact. The cards live in the
+conversation the browser keeps, a snapshot of up to 32 KB each; a card restored from
+History is read again before any action. A draft's action is the person's own click on the
+existing op under their own role (registering a category, the guide editor on top of the
+guide read now) or a copy of the change; the answer's token stays `viewer` and the
+assistant writes nothing. Cards come only from starters: a free-form question's tool calls
+carry no arguments the dashboard could read again.
+
+### Asking again
+
+Ask again (Retry on a failed answer), an edit of the last question and "Ask again with
+sources" answer the last turn again under its own id
+(`frontend/src/views/assistant/chatStore.ts`), so another tab's
+stored copy cannot bring the old answer back. The turn keeps its old answer, on screen and
+in storage, until the new text begins: an attempt that fails, is refused, is stopped or
+ends empty first puts the turn back as it was, as does a reload before then.
+
+- **Try again** follows a refusal whose reason the panel shows, and any such ending of an
+  edit whose words changed. It answers that turn again with the words, page line and "with
+  sources" it was asked with, whatever the field holds. Another question, Cancel edit, a
+  new conversation or another one opened drops it.
+- Any other ending of an Ask again (a rate limit, the cost cap, a lost connection), or of an
+  edit that left the words as they were, offers no Try again.
+- In each case an empty field gets the question as an edit (after Stop, only an edit's
+  words), and an Ask from it goes with the chip as it shows now.
 
 ## The agent definition
 
 `integrations/librechat/agent.yaml` holds the agent's name, instructions, model and a
 version number (`server/assistant/domain/definition.py`); the tools are the assistant
-toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns
-it, so nothing is shared. It writes the definition when its version is newer than the
+toolset's, listed by Loom. Loom seeds it at boot under the service user, which owns it,
+so nothing is shared. `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace the
+file's model and provider when set; `local` is LibreChat's endpoint for a model server
+the operator runs (`deploy/librechat/assistant.librechat.yaml`). The stored row records
+the definition's model as `<provider>/<model>` when the provider is not the file's, and
+as the bare model otherwise. It writes the definition when its version is newer than the
 stored one, or the same with another model, so during a rolling upgrade a build N-1
-never overwrites N's definition and a changed `LOOM_ASSISTANT_MODEL` takes effect at the
-next boot. While N rolls out, and after a rollback, N's definition stays, and a tool
-call it names that an N-1 pod does not serve answers `UNKNOWN_OP` there until every pod
-runs N.
+never overwrites N's definition, and a changed `LOOM_ASSISTANT_MODEL` or
+`LOOM_ASSISTANT_PROVIDER` takes effect at the next boot. One exception: a build that
+predates `LOOM_ASSISTANT_PROVIDER` ignores it, so with it set that build rewrites the
+agent onto the file's provider under the local model's name; unset it and
+`LOOM_ASSISTANT_MODEL` before rolling back. Otherwise, while N rolls out and after a
+rollback, N's definition stays, and a tool call it names that an N-1 pod does not serve
+answers `UNKNOWN_OP` there until every pod runs N.
 
 The tool list is the assistant toolset's reads and `insights.query`, so the agent writes
 nothing; a change it suggests is a draft a person applies elsewhere, as the Assistant
 page's tune drafts already are. The instructions require citations, tell the agent to
-call a tool before every answer and abstain when none supports it, to read
-`insights.catalog` before running SQL, and to treat stored text as data that cannot
-grant a tool or approve a change. Asked how a namespace should write, the agent
-recommends rather than only answers: key shape, one claim per key, a memory, a
-document or a record, pins and kinds, each recommendation naming its rows and citing
-the finding it rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the
-namespace's guide (`namespace.guide_get`), or Loom's own writing guide
-(`mentor.guide`, on the toolset for that reason).
+call a tool before answering a question about the namespace (a greeting calls none) and
+abstain when none supports it, to write no text before or between its tool calls, to
+read `insights.catalog` before running SQL, to start a question about Loom itself that
+does not plainly ask how to use it with a memory, a document and a help search together
+and answer a fact the namespace holds from the namespace, to answer how Loom works from
+`help.search` and `help.get`, citing each section as `[help:...]` rather than as a
+document citation, and to treat stored text as data that cannot grant a tool or approve
+a change. The agents API streams the text of every model step as one answer's content,
+with nothing between steps
+([streaming](../features/integrations/librechat.md#tool-errors-streaming-and-cancellation)),
+so neither the bridge nor the dashboard can tell a lead-in ("Let me search the
+memories.") from the answer it runs into. While no text has arrived, the dashboard shows
+that the assistant is answering. Asked how a namespace should write, the agent
+recommends rather than only answers: key shape, one claim per key, a memory, a document
+or a record, pins and kinds, each recommendation naming its rows and citing the finding
+it rests on in `namespace.audit`, `mentor.brief` or `namespace.tune`, the namespace's
+guide (`namespace.guide_get`), or Loom's own writing guide (`mentor.guide`, on the
+toolset for that reason).
 
 The agent names no namespace on its calls: on the assistant toolset a call that names
 none reads the first namespace its token names ([the assistant
 toolset](../reference/mcp.md#the-assistant-toolset)), which for an answer's token is the
 request's. A test pins a digest of the name, provider, model parameters, instructions
 and tools to the version, so a change to any of them bumps it.
+
+## Loom's documentation
+
+The assistant answers how Loom works from Loom's own documentation, as the build that
+serves the answer ships it. The image copies `docs/` (its Markdown; the screenshots stay
+out of the build context), and two read-only ops on the assistant toolset read it:
+`help.search` (a question or a name in, the best sections out, each with its page, its
+breadcrumb, its anchor, its audience and a snippet) and `help.get` (a page with its
+outline, or one section of it, found by the anchor a hit names, since a page may repeat
+a heading). Both are `experimental`, deployment-scoped and in no curated roster: any
+token that may read the agent guide may call them by name.
+
+The docs are indexed in each process, on its first help call, in a worker thread: each
+page is split at its headings by the splitter documents use
+(`server/knowledge/domain/chunking.py` `detect_sections`), so a section's breadcrumb
+starts with the page title as a document citation's does, and the sections are scored
+with BM25 (`server/core/bm25.py`). Terms are the words, plurals and simple suffixes
+folded, plus every whole identifier (`memory.set`, `LOOM_ASSISTANT_MODEL`), so an exact
+op or setting name finds the line that names it. An operator section's score counts
+three quarters, since most askers use Loom rather than run it. The index holds about
+2,200 sections in about 14 MB and builds in about a second; a search reads only the
+postings of its terms, and concurrent first calls share one build. A page that cannot
+be read is left out with a warning, and a process with no docs answers
+`available: false` until it restarts: the docs change only with the build, so a fault
+never rebuilds the index per call. An answer that rests only on `help.search` and
+`help.get` and cites nothing carries no support label, as one resting on `mentor.guide`
+does: the docs are not the namespace's data. A read returns at most 16,000 characters,
+and a cut one names the offset its rest starts at; a page read, or a cut one, adds the
+page's outline.
+
+**The page's context.** The dashboard's panel starts a question with one line about the page
+it is asked from, `Context: <page> page`, and with the item "Ask about this" named,
+`Context: Memories page, memory "<key>" (agent "<agent>", user "<user>", session "<session>")`,
+`Context: Library page, document "<source URI>" (title "<title>")` or `Context: Recall page,
+result <rank>, memory "<key>", for the query "<query>"`: a key or source URI the agent reads
+with `memory.get` or `knowledge.get`. A memory's user and session are named when the drawer
+read the row under them (a row filed under a user or a session), since `memory.get` takes
+`user_id` and `session_id` and misses such a row without them; an answer's token reads the
+whole namespace, so naming another user's row is a filter, not a widening. The line quotes
+names that others wrote and the person's own query, each as a JSON string literal, so a quote
+or a line break in one cannot end it: a key, a source URI, a user or a session exactly as
+stored, never cut, and an agent, a title or the query on one line, cut at 200 characters. The
+person sees it as a chip and can remove it before it is sent; it grants nothing, and no
+server or wire field carries it
+([the assistant panel](../features/dashboard.md#ask-ai)).
+
+**The asker's context.** An answer's token is `viewer` on one namespace, so the agent
+cannot tell from it what the person asking may do. The bridge, which holds the caller's
+own credential, puts one line in fixed words as the last line of the question it sends
+LibreChat: `Loom, for how-to answers only: this question comes with <credential>, whose
+role in this <place> is <role>.` The credential is `a sign-in session`, `a delegated
+token` (one capped by the grant of whoever made it, a client token's included), `a
+scoped token` (its role per namespace in its claim) or `a token`. The role is the
+highest the gate admits, after the viewer check every answer passes (`admin`, `writer`
+or `viewer`), or `unknown` when a check could not read what it needed. The place is
+`personal collection`, `collection`, `restricted namespace` (the directory's cached
+classification, no read) or `namespace`. The line names no subject and no namespace, so
+nothing the caller controls is in it and no identity goes to the model provider through
+it. It never refuses an answer. The instructions read it as Loom's only in that place,
+treat it as granting nothing, and answer how a role is raised from the documentation for
+that credential and place, naming the namespace's admins from `grants.list`. A bridge of
+an earlier build sends no line, and an answer that depends on the person's role then
+says it does not know it.
+
+**Why not a knowledge source.** Knowledge rows are tenant data: an org and namespace on
+every row, erasure coverage, and a copy per org or a read path across tenants. Indexing
+them spends embedding calls, and replicas of two builds would share one copy during a
+rolling upgrade, so one build would answer from the other's docs. The docs are the
+same text for every caller, hold no tenant data and change only with the build, so
+help keeps them out of ClickHouse: nothing is written, erased or embedded.
+
+**Nothing is withheld by role.** Every page is in the public source tree, and
+`tests/unit/test_public_copy.py` keeps hosts, keys and internal names out of it, so a
+page withheld from a viewer would protect nothing. Each hit says its audience instead:
+`operator` for running or building Loom (`operations/`, `architecture/`,
+`benchmarks/`), `user` for the rest. The contributor pages (`development/`) are not
+indexed. Help reads no environment, setting value or secret.
 
 ## The analysis op
 
@@ -285,6 +600,17 @@ call it directly, on any transport, and it joins the
 [assistant toolset](../reference/mcp.md#the-assistant-toolset). A token whose
 `read_scope` is narrower than its namespaces is refused it, as every op outside
 `SCOPED_OPS` and `NARROW_SAFE_OPS` is.
+
+The event catalog relation is `loom.analysis_agent_events`. It retains authorized request
+participation and neutralizes marked model, spend, work and outcome fields before caller
+filters, joins or aggregates. It unions ordinary `loom.agent_events` with
+`loom.agent_events_private`; the analyst has no grant on the private table. The
+ordinary table retains signed, namespace-scoped access for both serving builds and
+rejects marked events and reserved mirror namespaces through its permanent CHECK.
+The view's definer query applies the same signed org/namespace predicate as
+the physical tables' row policies; it does not use SQL-account grants. The typed projection
+is passed from the maintained event reader definition into the pure access-entity builder.
+Its shape, signed predicate and security mode are part of the entity version digest.
 
 ### The boundary is the database user
 
@@ -299,7 +625,7 @@ grants, settings profile and row policies are:
 | What the statement tries                                            | What stops it                                                                                              |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | a table or column outside the allowlist (tokens, secrets, keys)     | grants: `SELECT(col, …)` on each allowlisted table, nothing else                                           |
-| another org or namespace, through a filter, `JOIN` or subquery      | a row policy on every allowlisted table, checked on each row read (below)                                  |
+| another org or namespace, through a filter, `JOIN` or subquery      | a row policy on each physical table and the same signed predicate inside the masked event view             |
 | a deleted or erased row, or a version a later one replaced          | the row policy carries the table's live predicate and applies after `FINAL` (below)                        |
 | `system.*`, `information_schema`, `SHOW`, `DESCRIBE`, `KILL QUERY`  | no grant on `system` tables, `SHOW COLUMNS` or `system.processes`                                          |
 | `EXPLAIN`, whose estimates count other orgs' rows                   | inside the subquery, `EXPLAIN` needs `CREATE TEMPORARY TABLE`, which the user lacks                        |
@@ -322,7 +648,7 @@ two requests, of one tenant or two, from sharing an id (a probe outside a reques
 a random UUID). The client's retry of a statement resends the same id with
 `replace_running_query = 1`, so it replaces its own attempt ClickHouse still runs. The
 expiry covers every attempt the client's retry ladder can make at the time cap
-(`scope_ttl_s` in `server/insights/app/analysis.py`). Each allowlisted table's policy,
+(`scope_ttl_s` in `server/insights/app/analysis.py`). Each physical allowlisted table's policy,
 `TO loom_analyst`, admits a row only when its `org` and `namespace` match the settings,
 the expiry is in the future, and the signature matches the hash ClickHouse computes with
 the key written into the policy. A statement may set custom settings itself (`readonly =
@@ -352,17 +678,18 @@ Each policy also carries its table's live predicate, the one the erasure census 
 version of a row, and the row stays in the table until a merge or a purge, so `FINAL`
 picks each key's latest version and the policy then drops it when that version is a
 tombstone: a deleted or erased key is absent, and its earlier versions do not come back.
-A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, keeps every other
-user, Loom's own included, reading the tables as before, whatever the server's
-`users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies
-on a table, so this one would widen any permissive policy someone else put on an
-allowlisted table: before every write Loom lists them in `system.row_policies` and,
-finding one, writes nothing and reports it, naming it in the server log and in
-`loom ch-setup`'s refusal, for an admin to drop or make restrictive. A restrictive
-policy is left alone, since it narrows every user it names. The analyst user, its
-profiles and its policies' names are server-wide, so analysis needs one Loom per
-ClickHouse service: a deployment that finds the analyst's scope policy in another
-database writes nothing and reports it, naming that database in the server log.
+A second policy, `AS PERMISSIVE USING 1 TO ALL EXCEPT loom_analyst`, on every table the
+analyst has a policy on (the canary and a retired table included), lets every other user,
+Loom's own included, read every row of them, whatever the server's
+`users_without_row_policies_can_read_rows` says. ClickHouse ORs the permissive policies on a
+table, so this one would widen any permissive policy someone else put on one of these
+tables: before every write Loom lists them in `system.row_policies` and, finding one, writes
+nothing and reports it, naming it in the server log and in `loom ch-setup`'s refusal, for an
+admin to drop or make restrictive. A restrictive policy is left alone, since it narrows
+every user it names. The analyst user, its profiles and its policies' names are server-wide,
+so analysis needs one Loom per ClickHouse service: a deployment that finds the analyst's
+scope policy in another database writes nothing and reports it, naming that database in the
+server log.
 
 The key and the analyst's password are random and kept together, as one sealed value, in
 one row of `loom.analysis_secrets`. The password holds a lower and an upper case letter, a
@@ -379,6 +706,10 @@ reseals them, so the policies never change key; when the key cannot be read,
 [provisioning](#provisioning) says what happens. The analyst user cannot read the key:
 it has no grant on `system.row_policies` or on `loom.analysis_secrets`, and it cannot
 run `EXPLAIN`.
+The masked view's signed predicate uses the same hidden-argument expressions. The
+analyst profile pins `format_display_secrets_in_show_and_select = 0`, and the analyst
+has no display-secrets privilege. Native isolation checks cover the view's metadata,
+result predicates and raw-table denial as well as policy and query-log secrecy.
 
 **What the query log holds.** Loom never turns query logging off: ClickHouse Cloud pins
 `log_queries` for the service's users and refuses a statement or a settings profile that
@@ -432,34 +763,23 @@ stored key. Elsewhere an admin uses one of two commands:
   only when there is none and no analyst user exists; over a lost row with the user
   still there, it refuses: until the rotation of [part 2](#build-order), the recovery is
   to drop the analyst user and run it again.
-- `loom ch-setup --print-analyst-sql` prints SQL for an admin to run by hand, and needs
-  no access management to print (where `--print-sql` prints the admin SQL
-  `loom ch-setup` would run, with the reader's password as a placeholder). It draws the
-  secrets on a first install and otherwise prints the stored key's entity set; over a
-  lost row it refuses where Loom's user can see that the analyst user exists, and where
-  it cannot it draws again, which moves the key. The SQL comes with a `REVOKE` before
-  the grants for each grant the analyst's own `SHOW GRANTS` lists, headed by the command
-  that runs it in one session and by two checks the admin runs first: the permissive
-  policies Loom did not write, and other databases carrying the analyst's scope policy.
-  With [part 2](#build-order) it proves its `LOOM_JWT_SECRET` as the rotation below
-  does, draws a fresh key and password, and prints a complete rotation, in the order of
-  a write, with the command that runs it in one session
-  (`clickhouse-client --distributed_ddl_output_mode=throw --multiquery --queries-file <file>`):
-  the delete, the new password, the `KILL QUERY`, the rest of the entity set under the
-  new key, a settle of `SELECT sleep(...)` statements, the `KILL QUERY` again, and last
-  the `INSERT` of the new sealed row at a version from ClickHouse's clock in
-  nanoseconds. Run in full, it starts analysis on a first install, recovers it after a
-  lost row and rotates a healthy key alike. It is outside the lease and the rules below,
-  so it is printed by the newest build's CLI, and it is run, not kept.
+- `loom ch-setup --apply-analyst-sql`, run with explicitly configured existing
+  access-management credentials, applies only the analyst entities under the same
+  lease and lost-key rules. It does not rebuild the reader user. Its live
+  [event cutover](rolling-upgrades.md#analyst-event-storage-cutover) proves writer,
+  CHECK and policy visibility before grants. Additional writer HTTP routes come
+  from `LOOM_CH_ANALYSIS_OBSERVER_URLS`; their credentials are the configured service
+  credentials, and unavailable or duplicate writers refuse.
 
-A printed rotation run only in part leaves analysis unavailable, by the order of a write
-below. Its statements must run in that one session, after its first statement,
-`SET log_queries_cut_to_length = 1, log_formatted_queries = 0`: ClickHouse takes no
-per-statement settings on an access statement, and a console that sends them one by one
-would log the key in `system.query_log`.
+`loom ch-setup --print-analyst-sql` refuses with a nonzero result and prints no
+statements or secrets. An unchecked SQL file cannot enforce the native access-catalog
+proof, including a catalog hidden by its own policies. General `--print-sql` still
+prints database and reader preparation with a password placeholder. Entity writes
+cut their query-log text and disable local statement capture so policy expressions
+and passwords do not enter either log.
 
 The allowlist lives in code with the column comments that become the agent's catalog, so
-the grants, the policies and the catalog come from one definition. The rules a write
+the grants, the policies, the masked event view and the catalog come from one definition. The rules a write
 keeps:
 
 - **One writer at a time.** A write holds the cluster lease `analysis.entities`
@@ -579,19 +899,22 @@ A replica probes the analyst user at boot and then every `ch_analysis_probe_inte
 (a minute by default), in the background, as the analyst itself, so the probe needs no
 access management:
 
-- a signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
-  empty org and namespace, which `insights.query` refuses as a request's scope) under a
-  policy with the same key, must return that row: the policies accept the key;
+A signed read of `loom.analysis_canary`, whose one row sits in a reserved scope (the
+empty org and namespace, which `insights.query` refuses as a request's scope) under a
+policy with the same key, must return that row: the policies accept the key.
+
+After that check, a stored entity version newer than this build's skips the remaining
+catalog and grant checks: the newer build checks its own entities. A current, older or
+absent version continues with these checks:
+
 - a signed read of each allowlisted table in that reserved scope must count no rows: no
   extra policy widens what the analyst reads (under the server default a table with no
   analyst policy counts rows too, which a write repairs; a write is never made over a
   permissive policy Loom did not write, which is named instead);
 - a `system` table, and a column outside the allowlist (`memory.value`), must be refused;
-- unless the stored version is newer than this build's: an unsigned read of each
-  allowlisted table and of the canary must fail for want of the scope settings (the
-  table has a policy that reads them), and the analyst's own `SHOW GRANTS` must name
-  nothing but the allowlist and the canary. A newer build's entities are its own to
-  check.
+- an unsigned read of each allowlisted table and of the canary must fail for want of
+  the scope settings (the table has a policy that reads them), and the analyst's own
+  `SHOW GRANTS` must name nothing but the allowlist and the canary.
 
 A failed check answers `ANALYSIS_UNAVAILABLE`, which no client resends, and is a
 `loom doctor` problem. Every ClickHouse answer that is not a clean probe is a finding, a
@@ -605,7 +928,10 @@ leaves a replica that was serving or starting answering `OVERLOADED`, which a cl
 resends after 5 s, as does a statement that finds ClickHouse short of memory. No replica
 serves on a check that has not passed; past three probe intervals with no answer,
 `/v1/health` and `loom doctor` name it while the replica keeps answering `OVERLOADED`.
-`/v1/health` answers without a token, so the problem it shows is Loom's own text; the
+`/v1/health` answers without a token, so the problem it shows is Loom's own text: a
+ClickHouse error shows as its code and error name, with what it means for a cause Loom
+knows (a password the server's rules refuse, a missing privilege); the password gets its
+own fix, every other cause the default, and an error without a code shows its kind. The
 driver's text and the names of policies and databases go to the server log, and the 503
 a caller gets names no cause. Unless the stored version is newer than its own, a replica
 that writes the entities itself writes them again under the lease after a check failed
@@ -804,8 +1130,9 @@ the MCP endpoint) show that:
   token is answered;
 - a request to LibreChat without a token reads nothing, and one with a token reads as
   it;
-- a revoked caller, an org-wide token, a narrowed `read_scope`, a caller about to expire
-  and an org with model calls switched off are refused before LibreChat is called;
+- a revoked caller, an answer token or its child, an org-wide token, a narrowed
+  `read_scope`, a caller about to expire and an org with model calls switched off are
+  refused before LibreChat is called;
 - two replicas booting at once register one service user and keep one key, a service row
   its maker left at any step is finished by the next boot, registration never runs where
   LibreChat would log the password, `loom secrets reseal` rewrites both sealed rows
@@ -841,9 +1168,11 @@ from Loom, and both run its v0.8.8 configuration,
   service and the internal `assistant-db` network with MongoDB alone, so the `loom`
   container, which builds repository code, cannot reach the database. LibreChat alone is
   also on `assistant-egress`, a network of its own with a route out, for its model
-  provider. Its secrets and model key come from `.env` beside `compose.yaml`
-  (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
-  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`, each named apart from
+  provider (with `LOOM_ASSISTANT_PROVIDER=local`, a model server on the Docker host,
+  reached as `host.docker.internal`). Its secrets and model key come from `.env` beside
+  `compose.yaml` (`LIBRECHAT_CREDS_KEY`, `LIBRECHAT_CREDS_IV`, `LIBRECHAT_JWT_SECRET`,
+  `LIBRECHAT_JWT_REFRESH_SECRET`, `LIBRECHAT_ANTHROPIC_API_KEY`,
+  `LIBRECHAT_LOCAL_LLM_BASE_URL`, each named apart from
   anything Loom reads, since the `loom` service loads the same `.env`), and its
   configuration from
   `deploy/librechat/assistant.librechat.yaml`, which the release's stack bundle ships.
@@ -857,7 +1186,10 @@ from Loom, and both run its v0.8.8 configuration,
   non-root on a read-only root filesystem; LibreChat writes its logs and uploads to
   `emptyDir` volumes (`scripts/gates/helm_assistant_isolation.py` checks the render).
 - **Settings:** `LOOM_ASSISTANT_LIBRECHAT_URL` names LibreChat's internal address; unset,
-  Loom sets up nothing. `LOOM_ASSISTANT_MODEL` replaces the definition's model.
+  Loom sets up nothing, and the dashboard, which learns it from its boot snippet
+  (`window.__LOOM_ASSISTANT`), shows the panel without its chat: the starters still read.
+  `LOOM_ASSISTANT_MODEL` and `LOOM_ASSISTANT_PROVIDER` replace the definition's model and
+  provider.
 
 Each replica sets the service up in its background at boot. Over a row that has its key
 and agent, a boot asks LibreChat, with the stored key and no sign-in, whether the agent
@@ -900,17 +1232,17 @@ token.
 
 ## Stored data and erasure
 
-| Where                                       | What the assistant leaves                                                                            | How it is deleted                                       |
-| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)   |
-| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                     |
-| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                 |
-| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                    |
-| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days     |
-| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | the logs' TTL, none by default; erasure reaches neither |
-| the dashboard                               | the current chat, in the tab's memory                                                                | gone when the tab closes                                |
+| Where                                       | What the assistant leaves                                                                            | How it is deleted                                                                                                                                                                        |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.assistant_service`                    | one row: the service user's email and agent id, its sealed password and agents API key               | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.analysis_secrets`                     | one row: the analysis key and the analyst's password, sealed                                         | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.analysis_canary`                      | one constant row in a reserved scope, which the probe reads                                          | holds no memory content (a `NO_MEMORY_CONTENT` entry)                                                                                                                                    |
+| `loom.agent_events`                         | one row per bridge request and per tool call, under the answer's token                               | as every ledger row                                                                                                                                                                      |
+| LibreChat users, API keys, agents, sessions | the service user, its key, the agent definition and the sign-in sessions of each boot that signs in  | kept; no memory content                                                                                                                                                                  |
+| LibreChat `transactions`                    | token counts per answer and its message id, no content                                               | kept, a few hundred bytes per answer                                                                                                                                                     |
+| LibreChat logs                              | the service user's id and email and request ids, no message text, token or password                  | LibreChat's default: one file per day, kept 14 days                                                                                                                                      |
+| ClickHouse's `system.query_log`, server log | each analyst statement without its text; a refused one's error, which can quote an allowlisted value | `system.query_log` and `system.text_log`: 30 days on the bundled and dev ClickHouse, no TTL in ClickHouse's default configuration; the file log rotates by size; erasure reaches neither |
+| the dashboard                               | the person's conversations, in the browser's local storage                                           | 30 days from last use; deleted at sign-out, by another person's sign-in, or by Delete                                                                                                    |
 
 An error ClickHouse raises on a statement can quote the value it failed on: a
 `toUInt64(title)` refused on a title quotes the title. That value is one of the caller's
@@ -919,9 +1251,12 @@ document text. It is kept in `system.query_log`'s `exception` column and in the 
 log (`system.text_log` included), which records every error whatever `log_queries` says,
 on every install. ClickHouse Cloud pins `log_queries_min_type`, so the error rows cannot
 be left out of `system.query_log` there, and Loom writes one profile for every install.
-Erasure does not reach either log. ClickHouse's default configuration, which the bundled
-ClickHouse uses, sets no TTL on either one, so the rows stay until an operator bounds
-them with a `<ttl>` on `query_log` and `text_log` in the server configuration. Both are
+Erasure does not reach either log. The bundled ClickHouse and the Helm chart's dev
+ClickHouse keep 30 days of `system.query_log` and `system.text_log`
+(`deploy/clickhouse-config/system_logs.xml`).
+ClickHouse's default configuration sets no TTL on either one, so on a self-managed server
+the rows stay until an operator bounds them
+([log retention](../operations/deployment.md#log-retention)). Both are
 read only by whoever administers ClickHouse and by Loom's own user.
 
 The agents API stores no questions, answers or tool outputs, so LibreChat holds nothing
@@ -934,8 +1269,9 @@ goes to its caller only and is stored nowhere, as any read in flight.
 
 The model is the agent definition's: `LOOM_ASSISTANT_MODEL` when set (Loom writes
 it into the definition when it seeds), `claude-haiku-4-5` otherwise. The model runs in
-LibreChat on its own key, so Loom's provider layer does not call it, but Loom holds its
-spend to the same budget as its own model calls:
+LibreChat, on its own Anthropic key or on the operator's model server
+(`LOOM_ASSISTANT_PROVIDER=local`), so Loom's provider layer does not call it, but Loom
+holds its spend to the same budget as its own model calls:
 
 - Before calling LibreChat, the bridge checks the namespace's daily model cost cap
   (`server/observability/budget.py`, `daily_cost_cap_usd`, default
@@ -957,7 +1293,8 @@ spend to the same budget as its own model calls:
   `agent_events` row, where every model spend is counted. An answer cut before its final
   chunk (a disconnect, the stop button, a timeout), or on a model Loom has no rate for,
   is charged a per-answer ceiling (`LOOM_ASSISTANT_ANSWER_CEILING_USD`, default $0.10)
-  instead, so no answer spends for free.
+  instead. `0` charges nothing, which is what the local-model preset sets
+  ([a model server on your machine](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)).
 
 At the default cap of $1 a day, half of it buys about 15 answers at the mean of $0.033
 per answer that the [qualification](../features/integrations/librechat.md#qualification)
@@ -975,13 +1312,33 @@ token never reads more than the caller's own.
 
 ## Rolling upgrades
 
-`insights.query`, `insights.catalog` and `assistant.ask` are ops, and
-`/v1/assistant/chat/completions` a route, that a build before them does not know: it
-answers `UNKNOWN_OP` or 404, so a client points at them once every replica serves them.
-The analyst user, its grants and policies, `loom.analysis_secrets`,
-`loom.analysis_canary` and `loom.assistant_service` live in ClickHouse and are shared by
-every replica; the agent definition is written as
+`insights.query`, `insights.catalog`, `help.search`, `help.get` and `assistant.ask` are
+ops, and `/v1/assistant/chat/completions` a route, that a build before them does not
+know: it answers `UNKNOWN_OP` or 404, so a client points at them once every replica
+serves them. The agent's tools come from the definition the newest build writes, so
+during an upgrade a help call that reaches an older replica answers `UNKNOWN_OP`, and
+that answer goes without the docs. The analyst user, its grants and policies,
+`loom.analysis_secrets`, `loom.analysis_canary` and `loom.assistant_service` live in
+ClickHouse and are shared by every replica; the agent definition is written as
 [the agent definition](#the-agent-definition) says, never by an older build.
+
+A streamed answer from an older replica sends no `loom.step` events, no `steps` and no
+`loom.text_done`, and its mentor hints no `plane`: the dashboard then shows "Answering…"
+until the text comes, no "What it read" list, keeps Stop until `loom.citations` lands, and
+shows a hint without a page link. An older dashboard or SDK skips `loom.step` and
+`loom.text_done` as events it does not know and ignores the fields. A dashboard tab of the
+older build that shares the browser's stored conversations reads a starter's card-only
+turn as a question with no answer: it shows an empty answer and sends that question as
+history, until the tab is reloaded on the new build. Such a tab also leaves out a turn
+stored while its sources were checked, as any turn still answering, and reads it as
+stopped once it is cut off; shows a turn whose check was cut off (`checkLost`) as done
+with no label; sends a question asked with sources without " Cite your sources." in its
+history and shows no "With sources" tag; and offers no Retry, ignoring a turn's
+`retryable` and a card's `again` mark, so a starter's turn asked again shows its stored
+card there.
+
+An `/assistant` entry an older dashboard pushed opens the assistant over the landing page
+on Back ([rolling upgrades](rolling-upgrades.md), rule 46).
 
 ## Build order
 
@@ -1006,9 +1363,14 @@ every replica; the agent definition is written as
    refusals, the budget share, the per-process limit, the spend on the answer's ledger
    row, the answer's id on its tool calls' rows, the citation check and the SDKs'
    streaming clients. Built.
-5. The chat on the dashboard's Assistant page, on the signed-in session and the page's
-   namespace, with a Stop button that closes the request and each answer's checked
-   citations under it. Built.
+5. The dashboard's Ask AI panel, on the signed-in session and the header's namespace,
+   with a Stop button that closes the request, Copy, Ask again and an edit of the last
+   question, each answer's checked citations under it, the reasons it cannot answer, the
+   conversations kept in the browser, the page's chip on each question and "Ask about
+   this" on a memory, a document and a Recall result
+   ([Ask AI](../features/dashboard.md#ask-ai)). Built.
+6. Loom's documentation in the image, `help.search` and `help.get` on the toolset
+   ([Loom's documentation](#looms-documentation)). Built.
 
 Each part moves its section of this page from design to the description of what is
 built.
@@ -1025,10 +1387,16 @@ built.
   caller's and inherits its revocation.
 - `server/observability/budget.py`: the namespace cost cap the assistant's spend counts
   toward.
+- `server/assistant/app/citations.py` (`verify`) and `server/assistant/app/support.py`
+  (`answer_support`, `streamed_calls`), with the rule in
+  `server/assistant/domain/support.py`: an answer's checked citations and its support.
+- `server/assistant/app/bridge.py` (`stream`) and `server/assistant/domain/steps.py`: a
+  streamed answer's steps.
 - `server/assistant/app/service.py`: the service user and agent set up at boot;
   `server/assistant/store/service.py`: `loom.assistant_service`.
 - `integrations/librechat/`: the agent definition (`agent.yaml`) and the qualification
   harness.
+- `server/help/`: `help.search` and `help.get`, and the index over the shipped docs.
 - `deploy/librechat/assistant.librechat.yaml`: the deployed LibreChat's configuration.
 
 ## Invariants
@@ -1043,6 +1411,18 @@ built.
   key reads nothing without one.
 - LibreChat stores no question, answer or tool output.
 - The assistant writes no memory, document or grant.
+- The assistant never calls itself: calls between Loom and LibreChat go one way per hop,
+  and only the assistant's two entry points (the `assistant.ask` op and
+  `POST /v1/assistant/chat/completions`) ask LibreChat for an answer; boot setup
+  (`server/assistant/app/service.py`) only registers the service user, its key and the
+  agent. Both entry points refuse an answer's own token (consumer `loom-assistant`) and
+  any token delegated from one with `ASSISTANT_SELF_CALL` (403), ledgered as a refused
+  answer, on every transport and toolset: an answer token's id starts with
+  `assistant-answer-`, so a descendant is told by its parents. No model endpoint Loom
+  serves for LibreChat's model calls may be an assistant op or call the assistant.
+- The headless LibreChat's configuration keeps LibreChat's own memory off
+  (`memory: disabled: true` in `deploy/librechat/assistant.librechat.yaml` and the Helm
+  copy), so what a person tells the assistant is not kept a second time outside Loom.
 
 ## Related
 

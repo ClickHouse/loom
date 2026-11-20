@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { installStaleChunkReload, STALE_CHUNK_RETRY_WINDOW_MS } from "./staleChunk";
+import { installStaleChunkReload, STALE_CHUNK_RETRY_WINDOW_MS, WORDING_CHUNK } from "./staleChunk";
 
 function setup(t0 = 1_000_000) {
   const target = new EventTarget();
@@ -14,8 +14,10 @@ function setup(t0 = 1_000_000) {
   };
   let t = t0;
   installStaleChunkReload(win, storage, () => t);
-  const fire = () => {
-    const e = new Event("vite:preloadError", { cancelable: true });
+  const fire = (chunk = "/assets/Code-abc123.js") => {
+    const e = Object.assign(new Event("vite:preloadError", { cancelable: true }), {
+      payload: new Error(`Failed to fetch dynamically imported module: ${chunk}`),
+    });
     win.dispatchEvent(e);
     return e;
   };
@@ -29,6 +31,24 @@ function setup(t0 = 1_000_000) {
 }
 
 describe("installStaleChunkReload", () => {
+  it("names the wording chunk after a module that exists", () => {
+    // The build names a lazy chunk after its module; a rename here must rename the file too.
+    expect(Object.keys(import.meta.glob("./*.ts"))).toContain(`./${WORDING_CHUNK}.ts`);
+  });
+
+  it("leaves the error wording's chunk to its own fallback, with no reload", () => {
+    const { reload, fire } = setup();
+    const e = fire("/assets/errorWords-BsRZ_TNd.js");
+    expect(reload).not.toHaveBeenCalled();
+    expect(e.defaultPrevented).toBe(false);
+  });
+
+  it("reloads for the wording chunk where the browser does not name the file (Safari)", () => {
+    const { reload, fire } = setup();
+    fire("Importing a module script failed.");
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
   it("reloads once and suppresses the error on a missing chunk", () => {
     const { reload, fire } = setup();
     const e = fire();

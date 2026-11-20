@@ -94,8 +94,8 @@ class RunBeginOutput(BaseModel):
 class RunReflection(BaseModel):
     """Process learning from a run — hypotheses, not facts. Stored as ONE
     memory of memory_type="reflection" (key `reflection:<run_id>`), embedded
-    so a later run can find it by similarity, but excluded from unfiltered
-    memory.search / memory.ask: a lesson must be re-validated before it is
+    so a later run can find it by similarity, but excluded from an unfiltered
+    search or memory.ask: a lesson must be re-validated before it is
     stated as a claim. Each list is capped at 20 items of
     500 characters."""
 

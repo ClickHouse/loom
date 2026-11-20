@@ -44,7 +44,7 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 import { getMemory, restoreMemory } from "../api";
-import { toast } from "./Toast";
+import { toast, toastError } from "./Toast";
 
 const person: WhoAmI = {
   authenticated: true,
@@ -207,7 +207,12 @@ describe("MemoryInspector restore of a superseded row", () => {
     seed("writer");
     const { fail } = await restoreThenMove(() => {});
     fail(new Error("network down"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Restore of user_city failed: network down", "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Restore of user_city failed",
+        expect.objectContaining({ message: "network down" }),
+      ),
+    );
     expect(screen.getByText("works at Acme")).toBeTruthy();
   });
 
@@ -252,9 +257,13 @@ describe("MemoryInspector restore of a superseded row", () => {
     vi.mocked(getMemory).mockRejectedValue(new Error("network down"));
     await userEvent.click(await screen.findByRole("button", { name: "Restore" }));
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Restored", "ok"));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith("Reload failed: network down", "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Reload failed", expect.objectContaining({ message: "network down" }), {
+        read: true,
+      }),
+    );
     expect(onChanged).toHaveBeenCalled();
-    expect(toast).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), "error");
+    expect(toastError).not.toHaveBeenCalledWith(expect.stringContaining("Restore failed"), expect.anything());
   });
 
   it("re-reads the row and the list when the restore finds nothing, so Restore is not offered again", async () => {
@@ -300,10 +309,14 @@ describe("MemoryInspector restore of a superseded row", () => {
     expect(button).toBeDisabled();
   });
 
-  it("offers no Restore to a viewer", async () => {
+  it("shows a viewer Restore unavailable, with the role it needs", async () => {
     seed("viewer");
     await open();
     expect(screen.getByText("Superseded by a newer version")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Restore" })).toBeNull();
+    const restore = screen.getByRole("button", { name: "Restore" });
+    expect(restore).toHaveAttribute("aria-disabled", "true");
+    expect(restore).toHaveAccessibleDescription("Needs writer on team. An admin of it can grant that.");
+    await userEvent.click(restore);
+    expect(restoreMemory).not.toHaveBeenCalled();
   });
 });

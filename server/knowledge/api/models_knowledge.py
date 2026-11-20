@@ -10,8 +10,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core.naming import NAMESPACE_MAX_LEN
 from server.knowledge.api.models_query import (
     MAX_DATASETS,
     KnowledgeQueryOutput,
@@ -27,6 +28,13 @@ from server.operations.read_projection import ProjectedRow
 # ============================================================
 # Models
 # ============================================================
+
+
+# The other namespaces a read names (`knowledge.search`, `knowledge.list`), each checked
+# by `readable_namespaces`.
+NamedNamespaces = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=256)]], Field(max_length=100)
+]
 
 
 class KnowledgeAddInput(BaseModel):
@@ -165,6 +173,8 @@ class _SearchHit(BaseModel):
     keys_matched: list[str] = Field(default_factory=list)
     # True when the section is unanswered questions alone, or dated notes with no decision.
     noise: bool = False
+    # The chunk's context (title, description, breadcrumb), shown to a reranker; not served.
+    _context: str = PrivateAttr(default="")
 
 
 class KnowledgeSearchInput(BaseModel):
@@ -184,9 +194,7 @@ class KnowledgeSearchInput(BaseModel):
     # Search `namespace` and exactly these (an agent's collection, `@me`)
     # instead of a fan-out; each must be one the caller may read, else the call
     # is refused (403). Empty = `namespace_scope` decides.
-    namespaces: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(
-        default_factory=list, max_length=100
-    )
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # hybrid: the vector leg, the BM25 lexical leg and the exact-key leg (the query's
     # identifiers looked up in an extracted file's chunk keys) fused by reciprocal rank;
     # semantic: vector only;
@@ -276,6 +284,10 @@ class KnowledgeSearchOutput(BaseModel):
     # Namespaces of the caller an all_mine search did not read because it stops
     # at `memory_search_fanout_max_namespaces`; address one by name to search it.
     namespaces_skipped: list[str] = Field(default_factory=list)
+    # Under the Postgres authority: the candidates left out because their document's
+    # current version does not serve them (an older version still being retired, a
+    # deleted document, a write not committed); 0 otherwise.
+    stale_dropped: int = 0
 
 
 class _KnowledgeBulkEntry(BaseModel):
@@ -290,7 +302,8 @@ class _KnowledgeBulkEntry(BaseModel):
 class KnowledgeBulkAddInput(BaseModel):
     """Batched ingestion: many documents in one CH round-trip.
 
-    Same per-doc behavior as `knowledge.add` (no upsert / supersede).
+    Same per-doc behavior as `knowledge.add`: under the ClickHouse authority no
+    supersede; under the Postgres authority a source's earlier chunk versions are retired.
     Chunking still applies per-doc per the configured policy.
     """
 
@@ -401,6 +414,8 @@ class KnowledgeSynthesizeInput(BaseModel):
 
     org: str
     namespace: str
+    # Named user whose synthesis spend is checked; a token's user pin takes precedence.
+    user_id: str = "-"
     # The documents to read in full (up to 50; this, `datasets` or both); unknown URIs
     # contribute nothing.
     source_uris: list[str] = Field(default_factory=list, max_length=50)
@@ -517,17 +532,21 @@ class KnowledgeGetOutput(BaseModel):
 
 
 class KnowledgeListInput(BaseModel):
-    """Paginated listing of documents in a namespace, for curation tools."""
+    """Paginated listing of the documents of one namespace or several, for curation tools."""
 
     org: str
     namespace: str
+    # Also list the documents of these namespaces (or `@me`), each read-checked (403 for the
+    # first refused), with a `next_cursor` that holds only for the same namespaces; empty =
+    # `namespace` alone.
+    namespaces: NamedNamespaces = Field(default_factory=list)
     # Documents carrying any one of these tags, in any case.
     tags: list[str] = Field(default_factory=list)
     # Require every one of `tags` instead of any one; default off. Not in the MCP listing:
     # the dashboard's stacked tag chips set it.
     tags_every: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Directory scope: documents whose source_uri starts
-    # with one of these prefixes; empty = whole namespace.
+    # with one of these prefixes; empty = no prefix filter.
     uri_prefix: list[str] = Field(default_factory=list, max_length=8)
     # Also list soft-deleted and superseded documents (their `superseded` is True).
     include_superseded: bool = False
@@ -536,12 +555,15 @@ class KnowledgeListInput(BaseModel):
     cursor: str | None = None  # opaque keyset cursor
     # The output fields the caller reads (a whitelist
     # resolved against the row model, as memory.list's is); unset,
-    # every field. `source_uri` always rides. The Library page names the
+    # every field. `namespace` and `source_uri` always ride. The Library page names the
     # eleven fields its rows render and drops the 24 kB of content_preview.
     fields: list[str] | None = None
 
 
 class _KnowledgeListEntry(ProjectedRow):
+    # Where the document is: `namespace`, or one of `namespaces` (`@me` as the personal
+    # namespace it names).
+    namespace: str
     source_uri: str
     title: str
     description: str = ""
@@ -574,7 +596,7 @@ class KnowledgeDeleteInput(BaseModel):
     until an erasure, or a retention TTL an operator set under the ClickHouse authority,
     removes it.
 
-    For right-to-erasure, use the erasure plane — it cascades across
+    To erase a user's data, use the erasure plane — it cascades across
     external systems too.
     """
 
@@ -594,6 +616,46 @@ class KnowledgeDeleteOutput(BaseModel):
     # orphan age; already deleted, those up to its tombstone. A write committing beside
     # the delete keeps its own chunks.
     chunks_tombstoned: int
+
+
+class KnowledgeMoveInput(BaseModel):
+    """Move documents to another namespace of the org: a collection, `@me` (an end user's
+    own collection), or a namespace.
+
+    Each keeps its chunks and their vectors, its original file, its tables, its title,
+    description and tags, its author and its date, and takes the sharing of the place it
+    goes to. Where it was, it is deleted as `knowledge.delete` leaves it, so
+    `knowledge.restore` there brings it back. Needs writer on both namespaces."""
+
+    org: str
+    # Where the documents are.
+    namespace: str
+    # Where they go: a collection, `@me` (an end user's own collection) or a namespace of
+    # the same org.
+    to_namespace: str = Field(min_length=1, max_length=NAMESPACE_MAX_LEN)
+    # The documents to move, by source, at most 50 a call; a source named twice moves once.
+    source_uris: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1, max_length=50)
+
+
+# Why a document did not move; "" once it moved.
+MoveReason = Literal["", "not_found", "exists", "synced", "busy", "erased"]
+
+
+class _KnowledgeMoveResult(BaseModel):
+    source_uri: str
+    moved: bool = False
+    # Why it did not move: not_found, exists, synced, busy (call again shortly) or erased;
+    # each is described in docs/features/knowledge.md#moving-documents.
+    reason: MoveReason = ""
+
+
+class KnowledgeMoveOutput(BaseModel):
+    # False when the caller cannot write to `to_namespace`: nothing moved.
+    found: bool
+    # Where the documents went (`@me` resolved to the end user's own collection).
+    to_namespace: str = ""
+    # One per distinct source asked for, in the order first asked.
+    results: list[_KnowledgeMoveResult] = Field(default_factory=list)
 
 
 class KnowledgeRestoreInput(BaseModel):

@@ -1,0 +1,415 @@
+{
+  "description": "Reviewed exceptions to automatic content classification. Module and body-builder hashes require a provenance review when an exemption changes. This is a conservative source-change detector, not general dataflow analysis.",
+  "sites": {
+    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs:code.repos:983653c27b6d99198a73:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-flush.mjs:<dynamic>:aa75e0797ef41c5ea9a7:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/claude-code-plugin/hooks/loom-namespace-health.mjs:namespace.audit:bdd9c90350ecf148d06d:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs:code.callers:1ceea9354e14995739e0:1": {
+      "category": "reference",
+      "reason": "Sends only a validated identifier of at most 256 characters, scoped identity and fixed call-graph bounds. Secret redaction runs before sending; an identifier changed by redaction is refused. No prompt or transcript is sent."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:<dynamic>:7cced0ded5a09a82695e:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:code.map:ce35885f6e487a53667d:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:collection.list:02cfc8eca69110cb1f33:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:namespace.get:0e97ac92076e79cfbea3:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:session.brief_list:02318c49a02b3ca6cd62:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs:task.counts:9ddffe52a0683540021b:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/lib/first-session.mjs:<dynamic>:ce3aa2a6f37ca937fc43:1": {
+      "category": "bootstrap",
+      "reason": "Registers the plugin identity through the signup endpoint; no session text is selected."
+    },
+    "integrations/claude-code-plugin/lib/flush-job.mjs:<dynamic>:eb4672c8cca64bce379b:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/claude-code-plugin/lib/loom-client.mjs:<dynamic>:1381032bcfdb58b92b4d:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/claude-code-plugin/lib/loom-client.mjs:<dynamic>:5a95c067b80fab509ab6:1": {
+      "category": "bootstrap",
+      "reason": "Reads server health without an operation payload."
+    },
+    "integrations/claude-code-plugin/lib/loom-client.mjs:<dynamic>:7fd93c2777a713c1674f:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/claude-code-plugin/lib/loom-client.mjs:<dynamic>:b5bbd1f046e85f2b3dad:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/claude-code-plugin/lib/repo-scope.mjs:code.index_status:3e5196fa9fed4c475d9f:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/lib/repo-scope.mjs:code.repos:cc53c6081a1442e170f3:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/claude-code-plugin/lib/repo-scope.mjs:code.repos:e8c8b771830adc687f13:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-code-shunt.mjs:code.repos:983653c27b6d99198a73:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-flush.mjs:<dynamic>:aa75e0797ef41c5ea9a7:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/codex-plugin/hooks/loom-namespace-health.mjs:namespace.audit:bdd9c90350ecf148d06d:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-prompt-pack.mjs:code.callers:1ceea9354e14995739e0:1": {
+      "category": "reference",
+      "reason": "Sends only a validated identifier of at most 256 characters, scoped identity and fixed call-graph bounds. Secret redaction runs before sending; an identifier changed by redaction is refused. No prompt or transcript is sent."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:<dynamic>:7cced0ded5a09a82695e:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:code.map:ce35885f6e487a53667d:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:collection.list:02cfc8eca69110cb1f33:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:namespace.get:0e97ac92076e79cfbea3:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:session.brief_list:02318c49a02b3ca6cd62:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-session-start.mjs:task.counts:9ddffe52a0683540021b:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/lib/first-session.mjs:<dynamic>:ce3aa2a6f37ca937fc43:1": {
+      "category": "bootstrap",
+      "reason": "Registers the plugin identity through the signup endpoint; no session text is selected."
+    },
+    "integrations/codex-plugin/lib/flush-job.mjs:<dynamic>:eb4672c8cca64bce379b:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "integrations/codex-plugin/lib/loom-client.mjs:<dynamic>:1381032bcfdb58b92b4d:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/codex-plugin/lib/loom-client.mjs:<dynamic>:5a95c067b80fab509ab6:1": {
+      "category": "bootstrap",
+      "reason": "Reads server health without an operation payload."
+    },
+    "integrations/codex-plugin/lib/loom-client.mjs:<dynamic>:7fd93c2777a713c1674f:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/codex-plugin/lib/loom-client.mjs:<dynamic>:b5bbd1f046e85f2b3dad:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body supplied by separately scanned hook call sites."
+    },
+    "integrations/codex-plugin/lib/repo-scope.mjs:code.index_status:3e5196fa9fed4c475d9f:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/lib/repo-scope.mjs:code.repos:cc53c6081a1442e170f3:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/lib/repo-scope.mjs:code.repos:e8c8b771830adc687f13:1": {
+      "category": "scope",
+      "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/cursor/cursor-session-hook.sh:<shell-entry>:d26a86f07b41aa77289e:0": {
+      "category": "delivery",
+      "reason": "Delegates transcript ingestion to the separately scanned CLI entry point."
+    },
+    "integrations/generic/ingest.sh:<shell-entry>:37c1b16a6ec07322c448:0": {
+      "category": "delivery",
+      "reason": "Delegates transcript ingestion to the separately scanned CLI entry point."
+    },
+    "sdk/python/loom/integrations/agno.py:<dynamic>:96110adeff83d6d26961:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "sdk/python/loom/integrations/agno.py:memory.delete:7adca727f7a57c1e77ca:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/agno.py:memory.get:10f158d7573b01b79d19:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/agno.py:memory.get:288d54ab298f5fe2f760:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/agno.py:memory.list:c7186ab0d61829bf0cf3:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/claude_memory.py:knowledge.bulk_delete:81321ef24062c42f68cb:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/python/loom/integrations/claude_memory.py:knowledge.get:9a9dd34a7a3e66014b0e:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/python/loom/integrations/claude_memory.py:knowledge.list:02c6bac5c309497f6f52:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/python/loom/integrations/claude_memory.py:knowledge.upsert:0c0edfe682fa038b5c73:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/python/loom/integrations/google_adk.py:memory.delete_version:efc537b00995de01ad26:1": {
+      "category": "reference",
+      "reason": "Deletes the caller-selected exact stored key and version, without a transcript payload."
+    },
+    "sdk/python/loom/integrations/haystack.py:<dynamic>:5f344e4cf62d86f1b582:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "sdk/python/loom/integrations/haystack.py:knowledge.bulk_delete:4b79f171f4b509462fba:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit document-store or retriever request with caller-selected documents, identifiers or query."
+    },
+    "sdk/python/loom/integrations/haystack.py:knowledge.download:403a2770d34c4943d99b:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit document-store or retriever request with caller-selected documents, identifiers or query."
+    },
+    "sdk/python/loom/integrations/haystack.py:knowledge.get:c4f93ae3d9062341e53f:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit document-store or retriever request with caller-selected documents, identifiers or query."
+    },
+    "sdk/python/loom/integrations/haystack.py:knowledge.list:d1658eb5e9e5fe7cc4cc:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit document-store or retriever request with caller-selected documents, identifiers or query."
+    },
+    "sdk/python/loom/integrations/haystack.py:knowledge.upsert:b9cdc7dcb6de95a64056:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit document-store or retriever request with caller-selected documents, identifiers or query."
+    },
+    "sdk/python/loom/integrations/langgraph.py:memory.bulk_get:81c52c6a3951e38b2e84:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/langgraph.py:memory.delete:d114ef65cdf4b61322cf:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/langgraph.py:memory.get:4bf9d8e3437682aa9ec3:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/langgraph.py:memory.list:7a27f14c52b06a0f4cf5:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/llamaindex.py:<dynamic>:2e86dd533337f2f7589d:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "sdk/python/loom/integrations/openai_agents.py:memory.delete:8dd66e02d4041c347c35:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/openai_agents.py:memory.delete:fd24062e1c0969eae46e:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/openai_agents.py:memory.get:b699b93b8aa8d43cd9aa:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/integrations/openai_agents.py:memory.list:b98fb22805514edacc52:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/python/loom/memory.py:<dynamic>:827032f3ae5b4321f9cb:1": {
+      "category": "delivery",
+      "reason": "Forwards only the separately scanned coalescer memory.set and memory.bulk_set payloads; queued value and identity builders are pinned in this module."
+    },
+    "sdk/python/loom/run.py:run.get:82577ccc639b723c872d:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit run read, list or grading request; ambient begin and complete sends are classified separately."
+    },
+    "sdk/python/loom/run.py:run.grade:abbfc2833cb1d9343ad2:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit run read, list or grading request; ambient begin and complete sends are classified separately."
+    },
+    "sdk/python/loom/run.py:run.list:2ff9c27434df2e2fadc3:1": {
+      "category": "explicit",
+      "reason": "Implements an explicit run read, list or grading request; ambient begin and complete sends are classified separately."
+    },
+    "sdk/python/loom/session.py:<dynamic>:a3d28128a7742f8176ef:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "sdk/python/loom/session.py:<dynamic>:a57c3014e84e30d6f6a7:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
+    },
+    "sdk/python/loom/session.py:context.fetch:92d5871182fbe6421b70:1": {
+      "category": "explicit",
+      "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
+    },
+    "sdk/python/loom/session.py:context.offload:901b32ef529f7fa8e402:1": {
+      "category": "explicit",
+      "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
+    },
+    "sdk/python/loom/session.py:conversation.get:21fae2d860015a7cceb4:1": {
+      "category": "reference",
+      "reason": "Reads history using the thread identity and fixed limits, without sending transcript text."
+    },
+    "sdk/typescript/src/integrations/claude-memory.ts:knowledge.bulk_delete:01ff45efaf6503464e25:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/typescript/src/integrations/claude-memory.ts:knowledge.get:97046c7e89fb7c9b632d:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/typescript/src/integrations/claude-memory.ts:knowledge.list:4a0204d7c5266f77fd95:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/typescript/src/integrations/claude-memory.ts:knowledge.upsert:1f9de6e9d64d854927aa:1": {
+      "category": "explicit",
+      "reason": "Implements the explicitly selected memory-file tool command and its caller-provided path or content."
+    },
+    "sdk/typescript/src/integrations/mastra-memory.ts:<dynamic>:e26e447e7b608a59dc2c:1": {
+      "category": "delivery",
+      "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
+    },
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.delete_version:8c2bd6e71c77b60bb568:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.get:47e2aa636d2314464a46:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/mastra-memory.ts:memory.list:c222b5596bfa1b84be91:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:2867fea41a6f183773a4:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:eb941504445424a83e8d:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.get:187e0c61ffa21a4bc206:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/openai-agents.ts:memory.list:a0b7b4d4892d4bd750af:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
+    },
+    "sdk/typescript/src/session.ts:<dynamic>:f81d27efc95e87cdbb46:1": {
+      "category": "delivery",
+      "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
+    },
+    "sdk/typescript/src/session.ts:context.fetch:ccacc88667bf0eca248c:1": {
+      "category": "explicit",
+      "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
+    },
+    "sdk/typescript/src/session.ts:context.offload:6852f9b32930b2d7354e:1": {
+      "category": "explicit",
+      "reason": "Forwards the content, blob key or pattern supplied to the explicit session offload or fetch method."
+    },
+    "sdk/typescript/src/session.ts:conversation.get:972c9a651a04c958355b:1": {
+      "category": "reference",
+      "reason": "Reads history using the thread identity and fixed limits, without sending transcript text."
+    }
+  },
+  "reviewed_source_sha256": {
+    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
+    "integrations/claude-code-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
+    "integrations/claude-code-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
+    "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
+    "integrations/claude-code-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
+    "integrations/claude-code-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
+    "integrations/claude-code-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
+    "integrations/claude-code-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
+    "integrations/claude-code-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
+    "integrations/claude-code-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
+    "integrations/claude-code-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
+    "integrations/claude-code-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",
+    "integrations/claude-code-plugin/lib/session-brief.mjs": "0db8037ad3fd15de3dd525d3763674549186495dbe0c66dc7ae7b2bef3cab898",
+    "integrations/claude-code-plugin/lib/session-start.mjs": "505cb938886796f7fb688eaef3fc99c0c4eef2042adba8e66321d6d80e7d214a",
+    "integrations/claude-code-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
+    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
+    "integrations/codex-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
+    "integrations/codex-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
+    "integrations/codex-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
+    "integrations/codex-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
+    "integrations/codex-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
+    "integrations/codex-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
+    "integrations/codex-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
+    "integrations/codex-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
+    "integrations/codex-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
+    "integrations/codex-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
+    "integrations/codex-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",
+    "integrations/codex-plugin/lib/session-brief.mjs": "0db8037ad3fd15de3dd525d3763674549186495dbe0c66dc7ae7b2bef3cab898",
+    "integrations/codex-plugin/lib/session-start.mjs": "505cb938886796f7fb688eaef3fc99c0c4eef2042adba8e66321d6d80e7d214a",
+    "integrations/codex-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
+    "integrations/cursor/cursor-session-hook.sh": "71064260b50c8aee803523c4981fed8ebc9afab69be25e2ed472a727a538db03",
+    "integrations/generic/ingest.sh": "23b2410ce557114d83598ebd603431bd387f6af0ee9f1a7f4decb347d89b3e12",
+    "sdk/python/loom/integrations/agno.py": "74aa83737e754b5fa65cbd568bb4d18abbf401aa21f56ababaa20b1f099fc4cc",
+    "sdk/python/loom/integrations/claude_memory.py": "970aff889f2aa9d948457de51d58d8d32a6c0d7f91acbf390c25ac1230419f36",
+    "sdk/python/loom/integrations/google_adk.py": "7f55974e7d6ff0990094289915e2ed7bb46e6eb66ec43e0aeb16b01d0a7f7c58",
+    "sdk/python/loom/integrations/haystack.py": "8ab24c9dfb4220b35c8194605a77368a9b7b8a29d27a0b6b30569668947a31e0",
+    "sdk/python/loom/integrations/langgraph.py": "5d68e6ab1645d868477a13b14aa6d734c72f72057464cac9a21aa707add17e7b",
+    "sdk/python/loom/integrations/llamaindex.py": "06eaa071115cad752d27bdc9bf7c4d5b6f5d7d39d9896267fcd459a4e06bf661",
+    "sdk/python/loom/integrations/openai_agents.py": "e6fe0384a361c2c5e48db26837d8c454e52b5f7fb010fd7f6541f24a22459a7a",
+    "sdk/python/loom/memory.py": "e1384e84ddf58b503dc430eca1b2e734eb5e5680ac6904a64785bb50a63316d1",
+    "sdk/python/loom/run.py": "3d408cedd849fe9c16a9cb1a57dbe88367993aa225f6a8b23bac8c644e04723b",
+    "sdk/python/loom/session.py": "5f0fd61fcfdbf9d60888b111887fca8f32e24eb51ca9ff04a256901657c3202b",
+    "sdk/typescript/src/integrations/claude-memory.ts": "c846f0011d7cf1ba4b30e99fbfd8adb6b29abff56856d0dbe14fba620007f6bc",
+    "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
+    "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
+    "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
+    "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
+    "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
+  }
+}

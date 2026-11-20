@@ -6,7 +6,7 @@ read-only root filesystem. */}}
 {{- with .Values.assistant }}
 {{- if .enabled }}
 {{- if not .existingSecret }}
-{{- fail "assistant.existingSecret is required: a Secret with CREDS_KEY, CREDS_IV, JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY" }}
+{{- fail "assistant.existingSecret is required: a Secret with CREDS_KEY, CREDS_IV, JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY (or LOCAL_LLM_BASE_URL for a local assistant)" }}
 {{- end }}
 {{- $name := include "loom.assistantName" $ }}
 {{- $mongo := include "loom.assistantMongoName" $ }}

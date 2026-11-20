@@ -19,6 +19,7 @@ class _Ch:
 
     def __init__(self, live: list[dict[str, Any]] | None = None) -> None:
         self.rows: dict[str, dict[str, Any]] = {}
+        self.cell_rows: dict[str, dict[str, Any]] = {}
         self.extra_live = live or []
         self.executed: list[str] = []
         self.config: dict[str, Any] | None = None
@@ -45,6 +46,9 @@ class _Ch:
         if table == instances.TABLE:
             for r in rows:
                 self.rows[r["instance_id"]] = r
+        elif table == instances.CELL_TABLE:
+            for r in rows:
+                self.cell_rows[r["instance_id"]] = r
         else:
             import json
 
@@ -74,6 +78,12 @@ def test_a_beat_writes_this_process_row_with_its_fingerprints() -> None:
     assert row["config_fp"] == dc.fingerprints(settings)["config_fp"]
     assert {"settings_fp", "keys_fp", "started_at", "host", "pid"} <= set(row)
     assert row["serving"] == 1 and row["schema_version"] == instances.schema_version() > 0
+    assert set(ch.cell_rows[instances.instance_id()]) == {
+        "instance_id",
+        "cell",
+        "tenancy_mode",
+        "fingerprint",
+    }
 
 
 @pytest.mark.parametrize("why", ["draining", "drifted"])
@@ -204,7 +214,9 @@ def test_a_beat_flags_drift_and_the_leader_replaces_only_a_snapshot_it_agrees_wi
     # A drifted leader keeps the deployment's snapshot: `loom deployment publish` replaces it.
     asyncio.run(instances.tick(ch, leader=True))
     assert ch.config == stored and dc.drift()
-    assert ch.executed and "DELETE" in ch.executed[0]  # the leader sweeps old keys
+    # The leader sweeps old keys of both tables.
+    assert any("loom.instances DELETE" in sql for sql in ch.executed)
+    assert any("loom.cell_heartbeats DELETE" in sql for sql in ch.executed)
     # No other live instance runs the stored one: the leader adopts its own.
     ch.config = {**dc.snapshot(settings), "note": "another build's snapshot"}
     asyncio.run(instances.tick(ch, leader=True))
@@ -246,3 +258,56 @@ def test_the_boot_beat_and_the_stop_carry_the_heartbeat_tag() -> None:
 
     assert asyncio.run(_boot_and_stop()) == ""
     assert tags and set(tags) == {instances.QUERY_TAG}
+
+
+def test_a_failing_beat_read_is_logged_once_and_the_beat_goes_on(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    checked: list[bool] = []
+
+    async def fails(_ch: Any) -> None:
+        raise TimeoutError()
+
+    async def quiet(*_: Any, **__: Any) -> Any:
+        return []
+
+    async def check(_ch: Any) -> None:
+        checked.append(True)
+
+    monkeypatch.setattr(instances, "_on_beat", fails)
+    monkeypatch.setattr(instances, "beat", quiet)
+    monkeypatch.setattr(instances, "read_live", quiet)
+    monkeypatch.setattr(dc, "check", check)
+    with caplog.at_level("WARNING"):
+        asyncio.run(instances.tick(object(), leader=False))
+    assert checked == [True]
+    (failed,) = [r.getMessage() for r in caplog.records if "beat read failed" in r.getMessage()]
+    assert "TimeoutError" in failed
+
+
+def test_a_beat_that_missed_clickhouse_runs_no_beat_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    reads: list[bool] = []
+
+    async def read(_ch: Any) -> None:
+        reads.append(True)
+
+    async def down(*_: Any, **__: Any) -> Any:
+        raise RuntimeError("Code: 210. Connection refused")
+
+    async def quiet(*_: Any, **__: Any) -> Any:
+        return None
+
+    monkeypatch.setattr(instances, "_on_beat", read)
+    monkeypatch.setattr(instances, "beat", down)
+    monkeypatch.setattr(dc, "check", quiet)
+    asyncio.run(instances.tick(object(), leader=False))
+    assert reads == []
+
+
+def test_the_lifespan_reads_the_workers_lease_on_each_beat() -> None:
+    # The other lifespan wiring tests read the source too: running the lifespan needs a server.
+    import inspect
+
+    from server import main
+
+    assert "on_beat=boot.refresh_instance_state" in inspect.getsource(main.lifespan)

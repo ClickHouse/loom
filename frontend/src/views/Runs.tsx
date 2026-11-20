@@ -31,12 +31,14 @@ import {
   TipTarget,
   useClamped,
 } from "../components/ui";
+import { CopyButton } from "../components/CopyButton";
 import { IconButton } from "../components/IconButton";
 import { MenuChoice, MenuChoiceGroup } from "../components/MenuChoice";
 import { MenuTrigger } from "../components/ui/Menu";
 import { RowSkeleton, TableSkeleton } from "../components/Skeleton";
 import { ScopeBadge } from "../components/ScopeBadge";
 import { displayAgent, listTime, parseChTime, relativeTime, truncate } from "../lib/format";
+import { errorLine } from "../lib/errorWords";
 import { useRowNav } from "../lib/useRowNav";
 import { PageContainer } from "../layout/PageContainer";
 import { Modal } from "../components/ui/Modal";
@@ -46,8 +48,9 @@ import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { RunGrade } from "../flows/RunGrade";
-import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { canWrite, useNamespaceRoleRead } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { focusViewHeading } from "../lib/place";
 
 // The ten fields a run row reads of the twenty a run carries; the replay reads the rest
 // (the request, the expected outcome, the response, the confidence) from run.get.
@@ -124,7 +127,7 @@ function StatusBadge({ status, inferred }: { status: RunStatus; inferred?: boole
   return (
     <TipBadge
       text="Idle-closed"
-      tip="Loom inferred this run from a connection; closed on idle, not by run.complete — not a reported outcome"
+      tip="Loom inferred this run from a connection and closed it when the connection went idle; the agent reported no outcome"
     />
   );
 }
@@ -181,18 +184,18 @@ export function hasNoMemoryActivity(r: RunRow): boolean {
  * person who can fix the caller, so every empty says who fills it and how, instead of a
  * dash. */
 export const EMPTY_WHY = {
-  used: "none reported — only the agent can say which memories it relied on; it names them in run.complete(memories_used)",
-  written: "none — a write counts here when memory.set, memory.update or memory.link carried this run_id",
-  recalledOff: "n/a — per-query recall telemetry (LOOM_SEARCH_TRACE_LOG_ENABLED) is off on this deployment",
+  used: "none reported — only the agent can say which memories it relied on; it lists them when it completes the run",
+  written: "none — a memory write counts here when the agent tags it with the run",
+  recalledOff: "n/a — this deployment does not record searches; an operator can turn that on",
   recalledZero:
-    "the trace log is on and no memory.search carried this run — a read labels its run with the X-Loom-Run-Id header (the SDK's run scope and the plugin do), or the caller lists what it recalled in run.complete(recalled_keys)",
-  observations: "observe.record rows tagged with this run_id (the plugin's capture hook writes them)",
+    "no search was recorded under this run: a search counts here when the agent tags it with the run, as the coding-agent plugins and the SDK's run scope do, or lists what it recalled when it completes the run",
+  observations: "observations tagged with this run (the coding-agent plugins tag what they capture)",
   noSession:
-    "run.begin carried no top-level session_id, so model turns and cost cannot be joined (a session_id inside metadata is not read)",
+    "the run was started without a session (a session given only in the run's metadata is not read), so model turns and cost cannot be matched to it",
   sessionCost:
-    "the turns the run's session made while the run was open, from the usage the Stop hook posts (cost.record_turns)",
-  budget: "set by run.begin(budget_usd, budget_seconds); a signal for the agent, never a stop",
-  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward budget_usd",
+    "the model turns the run's session made while the run was open, from the usage reported after each prompt (the Claude Code plugin reports it; an agent can post its own)",
+  budget: "the budget the agent set when it started the run; a signal for the agent, never a stop",
+  unpriced: "turns from a model the price table does not know: they cost 0, so they never count toward the budget",
 } as const;
 
 /** Dollars to the 6 places cost and budgets are kept to, so a spend just past its budget
@@ -399,7 +402,7 @@ function runRow(r: RunRow, onOpen: (r: RunRow) => void): TableRowType {
               {inferred && (
                 <TipBadge
                   text="Auto"
-                  tip="Loom inferred this run from a connection; the agent did not declare it with run.begin"
+                  tip="Loom inferred this run from a connection; the agent did not start it itself"
                 />
               )}
             </div>
@@ -532,9 +535,11 @@ interface Shown {
 
 export function Runs() {
   const identity = useIdentity();
-  const roleHere = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const roleHere = roleRead.role;
   const whoami = useStore((s) => s.whoami);
-  const canGrade = canCall("run.grade", roleHere, whoami);
+  // Grading stays in view for a role that cannot grade, with the role it needs.
+  const gradeReason = callReason("run.grade", roleRead, whoami, identity.namespace);
   // Below Tailwind's sm breakpoint the toolbar holds the search alone; below Click UI's
   // table breakpoint the runs are list rows.
   const phone = useMedia(PHONE_QUERY);
@@ -571,6 +576,7 @@ export function Runs() {
   };
   const [detail, setDetail] = useState<RunGetResponse | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
 
   // Every change of what the list holds starts again from its first page.
   const refilter =
@@ -672,13 +678,16 @@ export function Runs() {
     if (!open) return;
     let live = true;
     setDetail(null);
+    setDetailError("");
     setDetailLoading(true);
     getRun({ org: identity.org, namespace: identity.namespace }, open.run_id)
       .then((d) => {
         if (live) setDetail(d);
       })
-      .catch(() => {
-        if (live) setDetail(null);
+      .catch((e: unknown) => {
+        if (!live) return;
+        setDetail(null);
+        setDetailError(errorLine(e, { read: true }));
       })
       .finally(() => {
         if (live) setDetailLoading(false);
@@ -710,6 +719,28 @@ export function Runs() {
   // The read of what is asked now answered with no rows, on the first page shown.
   const nothingShown =
     error === null && shown !== null && !loading && rows.length === 0 && (localRows ? page : shown.page) === 0;
+  // The fold hides runs with no memory activity on the server, so an empty folded first
+  // page cannot tell an empty namespace from one whose runs are all hidden: one read of a
+  // single run, unfolded, says which. Until it answers the page says nothing more; a failed
+  // read leaves the folded state, which claims no runs either way.
+  const probeKey = nothingShown && hideConn && !searching ? (shown?.key ?? "") : "";
+  const [anyRun, setAnyRun] = useState<{ key: string; exists: boolean } | null>(null);
+  useEffect(() => {
+    if (!probeKey) return;
+    const ctl = new AbortController();
+    listRunsPage(
+      { org: identity.org, namespace: identity.namespace },
+      { limit: 1, fields: ["run_id"], memoryActivity: "", signal: ctl.signal },
+    )
+      .then((p) => setAnyRun({ key: probeKey, exists: p.runs.length > 0 }))
+      .catch(() => {
+        if (!ctl.signal.aborted) setAnyRun({ key: probeKey, exists: true });
+      });
+    return () => ctl.abort();
+  }, [probeKey, identity.org, identity.namespace]);
+  const runsExist = !probeKey ? null : anyRun?.key === probeKey ? anyRun.exists : undefined;
+  // A viewer's agent writes nothing here: no connect, and the words say who can.
+  const writes = canWrite(roleHere);
   // Rows read for another search or filter are not counted as this one's matches.
   const count =
     shown && !error && (localRows !== null || shown.filterKey === filterKey)
@@ -878,6 +909,7 @@ export function Runs() {
             </Select>
           )}
           <Checkbox
+            id={UNFOLD_ID}
             label="Show runs with no memory activity"
             checked={!hideConn}
             onCheckedChange={(c) => refilter(setHideConn)(c !== true)}
@@ -909,19 +941,34 @@ export function Runs() {
           onClear={clearFilters}
         />
       )}
-      {nothingShown && !searching && (
+      {/* Folded and not yet known whether any run exists: nothing, rather than a state the
+          next answer takes back. */}
+      {nothingShown && !searching && runsExist !== undefined && (
         <ListState
           kind="empty"
           icon="list-numbered"
-          {...(hideConn
+          {...(hideConn && runsExist !== false
             ? {
                 title: "No runs with memory activity",
-                description: `Runs that neither relied on nor wrote a memory under their run_id are folded. Use "Show runs with no memory activity"${phone ? " in the View menu" : ""} to see them. A run fills up when the caller passes run_id on memory.set and names what it relied on in run.complete(memories_used).`,
+                description:
+                  "No run with memory activity yet. Runs without any are hidden. A run has memory activity when its agent saves memories under it, or names the memories it relied on when it finishes.",
+                action: {
+                  label: "Show runs with no memory activity",
+                  // The button leaves with this state: focus goes to the toolbar's toggle, else
+                  // (a phone, where it is in the View menu) to the page's heading.
+                  onClick: () => {
+                    refilter(setHideConn)(false);
+                    focusAfterUnfold();
+                  },
+                },
+                ...(writes ? { connect: "secondary" as const } : {}),
               }
             : {
                 title: "No runs yet",
-                description:
-                  "Agents open a run with run.begin (the Claude Code plugin does it on the first prompt of a session) and close it with run.complete, naming the memories they relied on.",
+                description: writes
+                  ? "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when a connected agent starts one; the coding-agent plugins start one on a session's first prompt."
+                  : "A run is one session of an agent's work: what it read and what it wrote. Runs appear here when someone with writer access connects an agent that starts one.",
+                ...(writes ? { connect: "primary" as const } : {}),
               })}
         />
       )}
@@ -992,7 +1039,12 @@ export function Runs() {
           openerRef.current?.focus();
         }}
       >
-        <div className="text-xs text-text-muted font-mono truncate">{open?.run_id}</div>
+        {/* The ids show cut to fit; each copy button copies the whole id, the value a
+            person pastes into a run lookup or a log search. */}
+        <div className="flex items-center gap-2 min-w-0">
+          <div className="text-xs text-text-muted font-mono truncate min-w-0">{open?.run_id}</div>
+          {open?.run_id && <CopyButton text={open.run_id} label="Copy run id" className="shrink-0" />}
+        </div>
         {open && (
           <div className="text-xs text-text-muted mt-1 mb-4 flex items-center gap-2 flex-wrap">
             <StatusBadge status={open.status} inferred={metaBool(open.metadata, "implicit")} />
@@ -1001,6 +1053,7 @@ export function Runs() {
               <>
                 <span>·</span>
                 <span className="font-mono">session {truncate(open.session_id, 24)}</span>
+                <CopyButton text={open.session_id} label="Copy session id" className="shrink-0" />
               </>
             )}
             <span>·</span>
@@ -1025,7 +1078,7 @@ export function Runs() {
               state="neutral"
               size="small"
               text={
-                'This run was inferred from a connection (implicit MCP session) that did no memory work — it recalled and wrote nothing, and closed on idle rather than by run.complete. Its "completed" status is not a reported outcome.'
+                'This run was inferred from a connection that did no memory work — it recalled and wrote nothing, and closed on idle rather than being completed by the agent. Its "completed" status is not a reported outcome.'
               }
             />
           )}
@@ -1033,9 +1086,9 @@ export function Runs() {
             <Alert
               state="neutral"
               size="small"
-              text={`This run reported no memory activity: the caller opened it with run.begin and closed it with run.complete${
+              text={`This run reported no memory activity: the agent started it and completed it${
                 open.duration_ms > 0 ? ` ${fmtDuration(open.duration_ms)} later` : ""
-              }, naming nothing it relied on, and no write carried its run_id. The fields below say what each one would have needed.`}
+              }, naming nothing it relied on, and no write was tagged with this run. The fields below say what each one would have needed.`}
             />
           )}
           {replayed?.user_request && (
@@ -1135,16 +1188,20 @@ export function Runs() {
                 Recall history for this run
               </Button>
             )}
-            {!detailLoading && !detail && <div className="text-xs text-text-muted">Could not load the replay.</div>}
+            {!detailLoading && !detail && detailError && (
+              <div role="alert" className="text-xs text-text-muted">
+                Couldn't load the replay: {detailError}
+              </div>
+            )}
           </Section>
           {replayed?.final_response && (
             <Section title="Final response">
               <div className="text-sm whitespace-pre-wrap">{replayed.final_response}</div>
             </Section>
           )}
-          {fetched && fetched.status !== "active" && canGrade && (
+          {fetched && fetched.status !== "active" && (
             <Section title="Did it hold up?">
-              <RunGrade key={fetched.run_id} identity={identity} run={fetched} />
+              <RunGrade key={fetched.run_id} identity={identity} run={fetched} unavailable={gradeReason} />
             </Section>
           )}
           {open && Object.keys(open.metadata || {}).length > 0 && (
@@ -1158,4 +1215,13 @@ export function Runs() {
       </Modal>
     </PageContainer>
   );
+}
+
+const UNFOLD_ID = "runs-show-unfolded";
+
+/** After the empty state's unfold: the toolbar's toggle, else the page's heading. */
+function focusAfterUnfold(): void {
+  const toggle = document.getElementById(UNFOLD_ID);
+  if (toggle) toggle.focus();
+  else focusViewHeading();
 }

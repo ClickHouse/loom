@@ -10,10 +10,13 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.core.background import register_deferred_task
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.core.cell_probe import Listener
 
 # What a process that skipped the boot step is serving without — the pending migration files
 # named at boot, carried by /v1/health.
@@ -92,12 +95,15 @@ def require_safe_bind(
     dev_secret: bool,
     allow_insecure: bool,
     mcp_open: bool,
+    open_signup_without_trust_network: bool,
     weak_keys: list[str],
 ) -> None:
     """Refuse to start on a non-loopback LOOM_BIND_HOST without
     LOOM_PUBLIC_BASE_URL (generated URLs would otherwise echo a request's Host),
     or, unless LOOM_ALLOW_INSECURE=1, with auth off, MCP open (`mcp_open`: every
-    tool runs with no principal), the dev signing secret, or a weak key
+    tool runs with no principal), self-signup open without
+    LOOM_IDENTITY_PROVIDER=trust-network (`open_signup_without_trust_network`:
+    anyone who reaches the port gets a writer token), the dev signing secret, or a weak key
     (`weak_keys`: the root secret, gateway or end-user keys below the minimum key size
     of RFC 7518, an HMAC secret under 32 bytes or an RSA key under 2048 bits).
     A loopback bind is not checked."""
@@ -126,6 +132,13 @@ def require_safe_bind(
             "with no principal, whatever auth the HTTP API requires. Set it to required, "
             "bind 127.0.0.1, or set LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
         )
+    if open_signup_without_trust_network:
+        raise InsecureBindRefused(
+            f"refusing to start: {where} and LOOM_SELF_SIGNUP=open gives anyone who reaches "
+            "it a writer token. Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can "
+            "reach the port may have an account, turn self-signup off, bind 127.0.0.1, or set "
+            "LOOM_ALLOW_INSECURE=1 if the port is not actually reachable."
+        )
     if dev_secret:
         raise InsecureBindRefused(
             f"refusing to start: {where} and LOOM_JWT_SECRET is the checked-in dev default, "
@@ -147,8 +160,8 @@ async def warn_collection_named_namespaces() -> list[str]:
     """Log one WARNING naming the first 20 active namespaces that use a
     collection's reserved prefix (`col-`) without being one: a `col-` name not in
     the collection tree admits only a platform admin. Returns the names."""
-    from server.auth.sharing import COLLECTION_PREFIX
     from server.core.ch import get_client
+    from server.core.principals import COLLECTION_PREFIX
 
     try:
         rows = await get_client().query_all(
@@ -324,17 +337,52 @@ async def require_keeper(ch: Any) -> None:
         raise KeeperRequired("loom._migration_lock is not a KeeperMap table")
 
 
+def require_identity_settings() -> None:
+    """Refuse to start with SCIM that could not deactivate anyone, or as a cell without
+    what a cell needs. Settings only: run before anything touches a store."""
+    from server.auth.scim_routes import require_scim_settings
+    from server.core import cell
+
+    require_scim_settings(
+        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+    )
+    cell.require_settings()
+
+
+async def require_session_protection(ch: Any) -> None:
+    """Persist an on switch before startup can admit clients or start workers."""
+    from server.knowledge.app.session_admission import reassert_local_switch
+
+    await reassert_local_switch(ch)
+
+
+async def refresh_instance_state(ch: Any) -> None:
+    """Reassert privacy state on the existing beat before reading the workers lease."""
+    from server.workers import leader
+
+    await require_session_protection(ch)
+    await leader.read_holder(ch)
+
+
 async def require_storage_authority(ch: Any) -> None:
     """The memory authority this replica is configured for, checked against the
     deployment's record (`server.core.pg_profile`); the Postgres profile first opens
     Postgres, applies its migrations and checks its commit durability. Raises to
     refuse the boot."""
-    from server.core import pg, pg_profile
+    from server.code.domain.index import repos
+    from server.core import cell, pg, pg_profile
 
     global SKIPPED_PG_MIGRATIONS
+    # The heartbeat reports the fingerprint with or without LOOM_CELL, and prepare
+    # accepts it from then: it counts the code orgs in every server process.
+    cell.set_code_orgs(repos.operator_orgs)
     if pg.enabled():
         SKIPPED_PG_MIGRATIONS = tuple(f"pg:{name}" for name in await pg_profile.start())
     await pg_profile.require_authority(ch)
+    if pg.enabled():
+        # Both stores record it now: the store identity the cell's fingerprint carries,
+        # reported before LOOM_CELL is set too, since prepare reads it from then.
+        cell.set_deployment_id(await pg_profile.deployment_id())
 
 
 async def open_storage_authority() -> None:
@@ -346,9 +394,11 @@ async def open_storage_authority() -> None:
 
 
 async def close_storage_authority() -> None:
-    from server.core import pg
+    from server.core import pg, retirement
 
-    await pg.close_pool()
+    gate = retirement.get_gate()
+    if not (gate.role in ("server", "worker") and gate.closed):
+        await pg.close_pool()
 
 
 async def run_fenced_boot_migrations(
@@ -430,6 +480,9 @@ def _spawn_boot_loop(coro: Coroutine[Any, Any, Any], *, name: str) -> asyncio.Ta
     """A task that runs for the process's life: cancelled at shutdown, never
     registered as deferred, since a model transition's drain waits for those."""
     task = asyncio.get_running_loop().create_task(coro, name=name)
+    from server.core.retirement import get_gate
+
+    get_gate().track(task)
     _BOOT_TASKS.add(task)
     task.add_done_callback(_BOOT_TASKS.discard)
     return task
@@ -582,6 +635,92 @@ async def calibrate_similarity_gates() -> None:
         log.warning("calibration failed (%s); falling back to scalar settings", e)
 
 
+async def start_cell_state() -> list[asyncio.Task[None]]:
+    """The workers child of a cell's process reads its cell's rows before its workers
+    start, then on a timer; a failed read leaves it gated."""
+    from server.code.domain.index import repos
+    from server.core import cell, pg_profile
+
+    cell.set_code_orgs(repos.operator_orgs)
+    if not cell.deployment_id():
+        cell.set_deployment_id(await pg_profile.deployment_id())
+    await cell.refresh()
+    _require_cell_scim_settings()
+    return [cell.start_refresh_loop()]
+
+
+async def start_cell_gate() -> list[asyncio.Task[None]]:
+    """A server process under the Postgres authority (`cell.gated_by_state`) reads the
+    deployment's cell state right after its storage authority opened and migrated,
+    before its first heartbeat and its lease decision, then on a timer. A failed first
+    read refuses the boot, as a failed Postgres open does, unless Postgres migrations are
+    pending; later failures keep the last view. With LOOM_CELL set it also starts the
+    router reader (`cell_router.start_reader`)."""
+    from server.core import cell
+
+    if not cell.gated_by_state():
+        return []
+    cell.expect_first_read()
+    if not await cell.refresh() and not SKIPPED_PG_MIGRATIONS:
+        raise RuntimeError(
+            "refusing to start: the deployment's cell state could not be read "
+            f"({cell.read_error()})"
+        )
+    # With Postgres migrations pending (LOOM_BOOT_MIGRATE off) the state tables may not
+    # exist yet: the process boots, gated and unready until a read lands.
+    _require_cell_scim_settings()
+    loops = [cell.start_refresh_loop()]
+    if settings.cell:
+        from server.core import cell_router
+
+        # What the heartbeat's `router` key reports, and what a new org's recording reads.
+        loops.append(cell_router.start_reader())
+    return loops
+
+
+def _require_cell_scim_settings() -> None:
+    from server.auth.scim_routes import require_scim_settings
+    from server.core import cell
+
+    require_scim_settings(
+        settings.scim_token,
+        settings.oauth_login_provider,
+        settings.auth_actually_required(),
+        cell_name=settings.cell,
+        first=cell.first_identity(),
+    )
+
+
+async def ensure_default_namespace() -> None:
+    """An auth-off deployment serves a single configured namespace: give it a
+    loom.namespaces row now (and warn about data stranded in others) rather than on the
+    first dashboard load, since the warning matters most to an operator who just changed
+    LOOM_DEFAULT_NAMESPACE and is watching the boot log. Not while the cell gate keeps
+    this process from writing (the row is also created lazily).
+    `auth_actually_required`, not `auth_required`: single-user identity mode with
+    auth_required=true is still an auth-off deployment."""
+    from server.core import cell
+
+    if settings.auth_actually_required() or cell.gate_reason():
+        return
+    from server.auth.default_namespace import ensure_default_namespace_cached
+
+    await ensure_default_namespace_cached()
+
+
+def start_probe_listener() -> Listener | None:
+    """The probe listener (LOOM_CELL_PROBE_PORT), started by the web lifespan alone, after
+    `require_storage_authority` has verified the deployment id (the port needs the
+    Postgres authority). The workers child is no web process: outside a cell it holds no
+    id, and would answer its share of the probes with none. It runs with or without
+    LOOM_CELL, since prepare reads it before LOOM_CELL rolls out."""
+    from server.core import cell_probe
+
+    if not settings.cell_probe_port:
+        return None
+    return cell_probe.start_listener()
+
+
 async def start_token_state() -> list[asyncio.Task[None]]:
     """Every process that verifies tokens loads the revocation snapshot, the
     signing keyring, the end-user issuers' JWKS and the grant watermark at boot
@@ -665,15 +804,22 @@ async def _apply_retention_overrides(ch: Any) -> None:
 def start_lease_loop(lease: Any, supervisor: Any, ch: Any) -> asyncio.Task[None] | None:
     """In `auto` mode keep the supervisor lease: the workers start where it is
     acquired (another process's holder died or exited) and stop where it is
-    lost. Returns the loop task, or None outside `auto`."""
-    if lease.mode != "auto":
+    lost. An `on` process that reads the cell state runs the loop too, with no lease:
+    the cell's gate starts and stops the workers. Returns the loop task, or None
+    otherwise."""
+    from server.core import cell
+
+    if lease.mode != "auto" and not (lease.mode == "on" and cell.gated_by_state()):
         return None
     from server.workers import leader as _leader
 
     def _on_acquired() -> None:
         # The leader's boot duties follow the lease.
         supervisor.start_all()
-        _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
+        # As at boot: only the deployment's leader registers them (an `on` process
+        # outside LOOM_DEPLOYMENT is not one).
+        if _leader.leads_deployment():
+            _spawn_boot_task(register_tracker_namespaces(ch), name="loom-tracker-namespaces")
         _spawn_boot_task(_apply_retention_overrides(ch), name="loom-retention-overrides")
         publish_deployment_config(ch)
 
@@ -783,6 +929,7 @@ def register_readiness_checks(ch: Any) -> None:
     """The checks `/v1/health/ready` runs (server/core/readiness.py). Each
     module that keeps a piece of warm-up state owns its check; ClickHouse and
     the ledger are cached."""
+    from server.assistant.app import service as assistant_service
     from server.auth import keyring, revocation
     from server.code.app.index import mirrors, repo_registry, sandbox
     from server.core import deployment_config, grant_cache, model_work_gate, pg_profile, readiness
@@ -815,11 +962,20 @@ def register_readiness_checks(ch: Any) -> None:
     readiness.register("runtime_overrides", _overrides_ready)
     readiness.register("calibration", embedder_calibration.readiness_check)
     readiness.register("config_drift", deployment_config.readiness_check)
+    from server.core import cell, cell_triggers
+
+    if cell.gated_by_state():
+        readiness.register("cell", cell.readiness_check)
+        if settings.cell:
+            readiness.register("cell_marker", cell_triggers.readiness_check)
     readiness.register("sandbox", sandbox.readiness_check)
     # Reported, not required: a provider rebuild closes the gate on every
     # replica at once, and an LB with no ready backend would cut off the
     # /v1/admin/models routes that finish it (the middleware keeps them open).
     readiness.register("model_work_gate", model_work_gate.readiness_check, required=False)
+    # Only where an assistant is configured: a missing check means none is.
+    if settings.assistant_librechat_url:
+        readiness.register("assistant", assistant_service.readiness_check, required=False)
     if settings.ready_requires_mirrors:
         readiness.register("mirrors", mirrors.readiness_check, ttl_s=5.0)
 

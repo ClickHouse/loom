@@ -30,7 +30,7 @@ export function SkeletonCard() {
 
 /** A list row's placeholder: ui/ListRow's frame at the height its list's rows measure
  *  (styles.css), so the list does not move when the rows land. `row` is a two-line row (a
- *  thread, a space, a run, a repository, a profile section). */
+ *  thread, a namespace, a run, a repository, a profile section). */
 export function RowSkeleton({ kind = "row" }: { kind?: "row" | "document" | "memory" }) {
   return (
     <div className="list-row list-row-skeleton" data-kind={kind}>

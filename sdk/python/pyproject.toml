@@ -1,22 +1,38 @@
 [project]
 name = "clickhouse-loom"
-version = "1.1.0"
-description = "Python SDK for Loom — shared-production agent memory, knowledge, conflict, and observability plane on ClickHouse."
+version = "1.3.0"
+description = "Python SDK for ClickHouse Loom, a self-hosted server that gives AI agents shared long-term memory, document search and a code index."
 requires-python = ">=3.11"
 license = "Apache-2.0"
 # A copy of the repository LICENSE: hatch cannot reach files above this directory.
 license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{ name = "ClickHouse, Inc." }]
-keywords = ["loom", "clickhouse", "agent", "memory", "mcp", "llm", "ai"]
+keywords = [
+  "loom",
+  "clickhouse",
+  "mcp",
+  "agent-memory",
+  "long-term-memory",
+  "ai-agents",
+  "document-search",
+  "code-search",
+  "rag",
+  "knowledge-base",
+  "llm",
+  "sdk",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Programming Language :: Python :: 3.14",
+  "Topic :: Database",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Topic :: Software Development :: Libraries",
   "Typing :: Typed",
 ]
@@ -33,15 +49,53 @@ classifiers = [
 dependencies = ["httpx[http2]>=0.27"]
 
 [project.optional-dependencies]
+agno = ["agno>=3.2,<3.3"]
+haystack = ["haystack-ai>=3.5,<3.6"]
 # A bot that proves a key (loom.machine) signs its client assertion with these.
 machine = ["pyjwt[crypto]>=2.8"]
 # The same, with the key read from AWS Secrets Manager (LOOM_CLIENT_KEY_SECRET).
 aws = ["pyjwt[crypto]>=2.8", "boto3>=1.28"]
+# The framework an adapter in loom.integrations subclasses; the LangGraph and
+# Strands adapters need none (structural twins).
+langchain = ["langchain-core>=1.0,<2"]
+# LlamaIndex moves its memory API between minor versions.
+llamaindex = ["llama-index-core>=0.14,<0.15"]
+# The OpenAI Agents SDK is pre-1.0: each minor version may change its tool API.
+openai-agents = ["openai-agents>=0.24,<0.25"]
+# CrewAI moves its memory API between minor versions.
+crewai = ["crewai>=1.15,<1.16"]
+# AutoGen is pre-1.0: each minor version may change its memory protocol.
+autogen = ["autogen-core>=0.7,<0.8"]
+# Pydantic AI 2.68 has the ToolFailed result the adapter raises; 3.0 may change its tool API.
+pydantic-ai = ["pydantic-ai-slim>=2.68,<3"]
+# AG2 1.3 has the assembly policies and tool(schema=...) the adapter uses; AG2 changes
+# its agent and tool APIs between minor versions.
+ag2 = ["ag2>=1.3,<1.4"]
+# Agent Framework 1.26 has the ContextProvider before_run/after_run hooks the adapter
+# implements; the framework is semver past 1.0.
+agent-framework = ["agent-framework-core>=1.26,<1.27"]
+# Anthropic exposes the memory tool as a beta API that can change between SDK minors.
+claude-memory = ["anthropic>=2.11,<2.12"]
+# ADK 2.14 has get_active_events and the memory service's add_memory and delete_memory;
+# 3.0 may change the memory service.
+google-adk = ["google-adk>=2.14,<2.15"]
+# Pipecat 1.16 has LLMContextFrame, LLMContextAssistantTurnFrame and the universal
+# aggregators the adapter hooks; the package is semver past 1.0.
+pipecat = ["pipecat-ai>=1.16,<1.17"]
+# DSPy 3.5 has dspy.Tool with async functions and the dspy.retrievers callables the
+# adapter mirrors; DSPy changes its retrieval API between minor versions.
+dspy = ["dspy>=3.5,<3.6"]
 
 [project.urls]
-Homepage = "https://github.com/ClickHouse/loom"
+Homepage = "https://clickhouse.github.io/loom/"
+Documentation = "https://clickhouse.github.io/loom/reference/python-sdk/"
 Repository = "https://github.com/ClickHouse/loom"
 Issues = "https://github.com/ClickHouse/loom/issues"
+
+[tool.pytest.ini_options]
+# The framework adapters' tests: `make test-sdk-adapters` runs each in a venv with
+# the SDK and that adapter's extra, apart from the server's environment.
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling>=1.27"]

@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { ButtonGroup } from "@clickhouse/click-ui/ButtonGroup";
@@ -23,21 +23,23 @@ import {
   type PolicyDecisionKind,
 } from "../../api";
 import { useIdentity } from "../../lib/state";
-import { IconButton } from "../../components/IconButton";
+import { GatedIconButton } from "../../components/ui/GatedIconButton";
+import { useOpReason } from "../../lib/useOpReason";
 import { Modal, ModalFooter } from "../../components/ui/Modal";
 import { Panel } from "../../components/ui/Panel";
 import { Skeleton, SkeletonCard } from "../../components/Skeleton";
 import { EmptyState } from "../../components/EmptyState";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { humanizeError, sentenceCase } from "../../lib/format";
+import { sentenceCase } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { AgentBadge } from "../../components/AgentBadge";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { oneOf } from "../../lib/oneOf";
 import { isRecord } from "../../lib/guards";
-import { Alert, ListTime, LoadingSkeleton, PageHeader } from "../../components/ui";
+import { Alert, ListTime, LoadingSkeleton, PageHeader, Unavailable } from "../../components/ui";
 import { ListState } from "../../components/ui/ListState";
 
 /**
@@ -64,7 +66,8 @@ const MODE_META: Record<PolicyMode, { state: BadgeState; blurb: string }> = {
   },
   enforce: {
     state: "danger",
-    blurb: "A deny blocks the call with 403 POLICY_FORBIDDEN. Rule errors on write-shaped calls also deny.",
+    blurb:
+      "A deny blocks the call, and the caller is told a policy refused it. A rule that errors on a call that writes also denies it.",
   },
 };
 
@@ -197,7 +200,7 @@ function parseJsonObject(text: string, what: string): Record<string, unknown> {
   try {
     v = JSON.parse(text);
   } catch (e) {
-    throw new Error(`${what} is not valid JSON: ${humanizeError(e)}`);
+    throw new Error(`${what} is not valid JSON: ${humanizeError(e, { bare: true })}`);
   }
   if (!isRecord(v)) throw new Error(`${what} must be a JSON object`);
   return v;
@@ -211,6 +214,13 @@ export function Policies() {
   const [error, setError] = useState<unknown>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [decisionsVersion, setDecisionsVersion] = useState(0);
+  // Add rule and each rule's Delete stay in view below admin, unavailable with why.
+  const setReason = useOpReason("policy.set", identity.namespace);
+  const deleteReason = useOpReason("policy.delete", identity.namespace);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (setReason) setAddOpen(false);
+  }, [setReason]);
 
   // A reload after an add or a delete keeps the rules on screen, marked busy.
   const [refreshing, setRefreshing] = useState(false);
@@ -251,6 +261,7 @@ export function Policies() {
   );
 
   const remove = async (r: PolicyRule) => {
+    if (deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete rule "${r.policy_id}"?`,
@@ -266,7 +277,7 @@ export function Policies() {
       toast("Rule deleted", "ok");
       setReads((n) => n + 1);
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -280,17 +291,19 @@ export function Policies() {
       </PageHeader>
       <p className="text-sm text-text-muted mb-5 max-w-[80ch]">
         Rules over an agent's own recent history: forbid or require an action based on what the same caller did in the
-        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} The mode is the server's{" "}
-        <code className="code-inline text-xs">LOOM_POLICY_MODE</code>; it cannot be changed here.
+        last minutes or hours. {meta && <span className="text-text">{meta.blurb}</span>} An operator of this deployment
+        sets the mode; it cannot be changed here.
       </p>
 
       <div className="space-y-4">
         <Card
           title="Rules"
           action={
-            <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
-              Add rule
-            </Button>
+            <Unavailable reason={setReason}>
+              <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
+                Add rule
+              </Button>
+            </Unavailable>
           }
         >
           {/* Mounted before the read answers, so the count is announced when it lands. */}
@@ -307,7 +320,7 @@ export function Policies() {
             <EmptyState
               icon="secure"
               title="No rules"
-              description="Add a rule to forbid or require an action based on the caller's recent history. Rules only take effect once the server mode leaves off."
+              description="Add a rule to forbid or require an action based on the caller's recent history. Rules take effect once an operator sets the policy mode to shadow or enforce."
             />
           )}
           {rules !== null && !error && rules.length > 0 && (
@@ -359,11 +372,12 @@ export function Policies() {
                     },
                     {
                       label: (
-                        <IconButton
+                        <GatedIconButton
                           icon="trash"
                           type="danger"
                           size="sm"
                           label={`Delete ${r.policy_id}`}
+                          reason={deleteReason}
                           onClick={() => remove(r)}
                         />
                       ),
@@ -394,6 +408,9 @@ export function Policies() {
 
 function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
   const identity = useIdentity();
+  // The page closes this dialog when its reason appears; the guard in submit covers the render
+  // before it does.
+  const setReason = useOpReason("policy.set", identity.namespace);
   const [policyId, setPolicyId] = useState("");
   const [effect, setEffect] = useState<PolicyEffect>("forbid");
   const [actions, setActions] = useState("memory.delete");
@@ -417,6 +434,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
   };
 
   const submit = async () => {
+    if (setReason) return;
     setErr(null);
     const id = policyId.trim();
     const acts = actions
@@ -424,11 +442,11 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
       .map((a) => a.trim())
       .filter(Boolean);
     if (!id) {
-      setErr("policy_id is required");
+      setErr("Policy ID is required");
       return;
     }
     if (acts.length === 0) {
-      setErr("at least one action is required");
+      setErr("At least one action is required");
       return;
     }
     let cond: PolicyCondition;
@@ -463,7 +481,7 @@ function AddRuleDialog({ open, onClose, onSaved }: { open: boolean; onClose: () 
         if (!v) close();
       }}
       title="Add rule"
-      description="Saving under an existing policy_id replaces that rule. Rules apply to every writer in this namespace."
+      description="Saving under an existing Policy ID replaces that rule. Rules apply to every writer in this namespace."
       className="w-full max-w-[640px]"
     >
       <form
@@ -558,7 +576,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
     setErr(null);
     const op = operation.trim();
     if (!op) {
-      setErr("operation is required");
+      setErr("Operation is required");
       return;
     }
     let parsed: Record<string, unknown>;
@@ -588,7 +606,7 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
     <Card title="Dry run">
       <div className="text-xs text-text-muted mb-3">
         Evaluate the stored rules against a hypothetical call, using the same evaluator and trace the gate reads.
-        Nothing is blocked; <span className="font-mono">would_enforce</span> says what enforce mode would do.
+        Nothing is blocked; “Would block” says what enforce mode would do.
       </div>
       <div className="grid grid-cols-1 md:grid-cols-[1fr_1fr_2fr] gap-3 items-start">
         <TextField
@@ -626,13 +644,13 @@ function DryRunPanel({ onRan }: { onRan: () => void }) {
           <div className="flex items-center gap-2 flex-wrap text-xs text-text-muted">
             <DecisionChip decision={result.decision} />
             <span>
-              would_enforce <Bool v={result.would_enforce} />
+              Would block <Bool v={result.would_enforce} />
             </span>
             <span>·</span>
-            <span>mode {result.mode}</span>
+            <span>Mode {result.mode}</span>
             <span>·</span>
             <span>
-              write-shaped <Bool v={result.write_shaped} />
+              Counts as a write <Bool v={result.write_shaped} />
             </span>
             <span>·</span>
             <span className="tabular-nums">{result.latency_ms} ms</span>

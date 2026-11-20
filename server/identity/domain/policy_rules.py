@@ -33,7 +33,8 @@ its rule runs, so a witness is always an EARLIER event. Windows are closed
 intervals measured back from the decision time and capped by
 `policy_max_window_seconds`. Every leaf's value is returned with the
 decision so a denial explains itself; every leaf error is reported, never
-swallowed — the gate decides what an error means (fail-closed for writes).
+swallowed. Unreadable history refuses writes; protected history refuses every
+enforcing operation without exposing a leaf value.
 
 This module is the rule grammar, the compiler and the verdict types, pure
 with respect to storage: the compiler returns SQL + params.
@@ -51,6 +52,8 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
+
+from server.core.event_source import ALL_EVENTS
 
 log = logging.getLogger(__name__)
 
@@ -321,8 +324,8 @@ class CallContext:
     operation: str
     args: dict[str, str] = field(default_factory=dict)
     now: datetime | None = None
-    # Verified token subject ('' when auth is off). Only the exposure-ledger
-    # leaf pins on it: loom.agent_events has no actor column.
+    # Verified token subject ('' when auth is off). Breadth pins exposures by
+    # actor and their coarse event participation by subject.
     actor: str = ""
 
     def key_clause(self, key: KeyKind) -> tuple[str, dict[str, Any]]:
@@ -359,7 +362,8 @@ _NOT_WORKER = "kind != 'worker' AND NOT startsWith(operation, 'worker.')"
 class CompiledLeaf:
     sql: str
     params: dict[str, Any]
-    kind: str  # formerly | count_within | not_since
+    kind: str  # formerly | count_within | not_since | breadth_within
+    unresolved: bool = False
 
 
 class RuleCompileError(ValueError):
@@ -373,13 +377,10 @@ def _resolve_arg(template: str, ctx: CallContext) -> str | None:
     return ctx.args.get(m.group(1))
 
 
-def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> CompiledLeaf | None:
-    """One point query per leaf, bound to the caller's key. Returns None when
-    an `$args.<field>` reference has no value on this call: nothing to
-    correlate on, so the leaf cannot hold (and a `require` on it denies)."""
+def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> CompiledLeaf:
+    """Read coarse participation and ordinary predicates in one pinned statement."""
     key_clause, params = ctx.key_clause(leaf.key)
-    secs = window_seconds(leaf.within)
-    params["p_secs"] = secs
+    params["p_secs"] = window_seconds(leaf.within)
     now = ctx.now_clause(params)
     where = [
         key_clause,
@@ -387,17 +388,21 @@ def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> C
         f"ts <= {now}",
         f"ts >= {now} - INTERVAL {{p_secs:UInt32}} SECOND",
     ]
+    predicates = ["mirror_marked = 0"]
+    unresolved = False
     if leaf.success is not None:
-        where.append("success = {p_success:Bool}")
+        predicates.append("success = {p_success:Bool}")
         params["p_success"] = bool(leaf.success)
-    for i, (k, template) in enumerate(sorted(leaf.args_equal.items())):
+    for i, (key, template) in enumerate(sorted(leaf.args_equal.items())):
         value = _resolve_arg(template, ctx)
         if value is None:
-            return None
-        where.append(f"args[{{p_ak{i}:String}}] = {{p_av{i}:String}}")
-        params[f"p_ak{i}"] = k
+            unresolved = True
+            predicates.append("0")
+            continue
+        predicates.append(f"args[{{p_ak{i}:String}}] = {{p_av{i}:String}}")
+        params[f"p_ak{i}"] = key
         params[f"p_av{i}"] = value
-
+    ordinary = " AND ".join(predicates)
     if isinstance(leaf, NotSince):
         params["p_left"] = list(leaf.operation)
         params["p_anchor"] = list(leaf.anchor)
@@ -405,35 +410,34 @@ def compile_leaf(leaf: Formerly | CountWithin | NotSince, ctx: CallContext) -> C
             "(operation IN {p_left:Array(String)} OR operation IN {p_anchor:Array(String)})"
         )
         sql = (
-            "SELECT maxOrNullIf(ts, operation IN {p_anchor:Array(String)}) AS anchor_ts, "
-            "maxOrNullIf(ts, operation IN {p_left:Array(String)}) AS left_ts "
-            "FROM loom.agent_events WHERE " + " AND ".join(where)
+            "SELECT max(mirror_marked) AS protected_history, "
+            f"maxOrNullIf(ts, ({ordinary}) AND operation IN {{p_anchor:Array(String)}})"
+            " AS anchor_ts, "
+            f"maxOrNullIf(ts, ({ordinary}) AND operation IN {{p_left:Array(String)}}) AS left_ts "
+            f"FROM {ALL_EVENTS} WHERE " + " AND ".join(where)
         )
-        return CompiledLeaf(sql=sql, params=params, kind="not_since")
-
+        return CompiledLeaf(sql=sql, params=params, kind="not_since", unresolved=unresolved)
     params["p_ops"] = list(leaf.operation)
     where.append("operation IN {p_ops:Array(String)}")
-    sql = "SELECT count() AS n FROM loom.agent_events WHERE " + " AND ".join(where)
-    return CompiledLeaf(sql=sql, params=params, kind=leaf.op)
+    sql = (
+        f"SELECT max(mirror_marked) AS protected_history, countIf({ordinary}) AS n "
+        f"FROM {ALL_EVENTS} WHERE " + " AND ".join(where)
+    )
+    return CompiledLeaf(sql=sql, params=params, kind=leaf.op, unresolved=unresolved)
 
 
 EXPOSURES_TABLE = "loom.memory_exposures"
 
 
 def compile_breadth(leaf: BreadthWithin, ctx: CallContext) -> CompiledLeaf | None:
-    """uniqExact over the returned keys the pinned principal was shown in the
-    window, plus the namespace's live row count for the fraction form. One
-    range read on (org, namespace, actor, ts) when the pin is the actor.
-    Returns None when the pin is the actor and the call carries none (auth
-    off): nothing to bound, so the leaf cannot hold."""
-    secs = window_seconds(leaf.within)
+    """Read ordinary exposures and coarse marked participation under the same pin."""
     params: dict[str, Any] = {
         "p_org": ctx.org,
         "p_ns": ctx.namespace,
-        "p_secs": secs,
+        "p_secs": window_seconds(leaf.within),
     }
     now = ctx.now_clause(params)
-    where = [
+    common = [
         "org = {p_org:String}",
         "namespace = {p_ns:String}",
         f"ts <= {now}",
@@ -442,25 +446,30 @@ def compile_breadth(leaf: BreadthWithin, ctx: CallContext) -> CompiledLeaf | Non
     if leaf.key == "actor":
         if not ctx.actor:
             return None
-        where.append("actor = {p_actor:String}")
+        pin = "actor = {p_actor:String}"
+        history_pin = "subject = {p_actor:String}"
         params["p_actor"] = ctx.actor
     elif leaf.key == "agent":
-        where.append("agent = {p_agent:String}")
+        pin = history_pin = "agent = {p_agent:String}"
         params["p_agent"] = ctx.agent
     elif leaf.key == "session":
-        where.append("session_id = {p_session:String}")
+        pin = history_pin = "session_id = {p_session:String}"
         params["p_session"] = ctx.session_id
     else:
-        where.append("user_id = {p_user:String}")
+        pin = history_pin = "user_id = {p_user:String}"
         params["p_user"] = ctx.user_id
     if leaf.operation:
-        where.append("operation IN {p_ops:Array(String)}")
+        common.append("operation IN {p_ops:Array(String)}")
         params["p_ops"] = list(leaf.operation)
+    history = " AND ".join([*common, history_pin, _NOT_WORKER])
+    where = " AND ".join([*common, pin])
     sql = (
         "SELECT uniqExact(k) AS n, "
         "(SELECT count() FROM loom.memory FINAL WHERE org = {p_org:String} "
-        "AND namespace = {p_ns:String} AND tombstoned_at IS NULL) AS total "
-        f"FROM {EXPOSURES_TABLE} ARRAY JOIN returned_keys AS k WHERE " + " AND ".join(where)
+        "AND namespace = {p_ns:String} AND tombstoned_at IS NULL) AS total, "
+        f"(SELECT max(mirror_marked) FROM {ALL_EVENTS} WHERE "
+        f"{history}) AS protected_history "
+        f"FROM {EXPOSURES_TABLE} ARRAY JOIN returned_keys AS k WHERE {where}"
     )
     return CompiledLeaf(sql=sql, params=params, kind="breadth_within")
 
@@ -489,6 +498,7 @@ class RuleVerdict:
     mode: str = "inherit"  # effective mode this verdict was evaluated under
     leaves: list[LeafResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    protected_history: bool = False
 
 
 @dataclass
@@ -502,6 +512,10 @@ class PolicyDecision:
     enforcing_rules: list[str] = field(default_factory=list)
     # Errors raised by rules whose effective mode is `enforce`.
     enforcing_errors: list[str] = field(default_factory=list)
+
+    @property
+    def enforcing_protected_history(self) -> bool:
+        return any(v.protected_history and v.mode == "enforce" for v in self.verdicts)
 
     @property
     def applied(self) -> bool:

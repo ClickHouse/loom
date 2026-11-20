@@ -18,7 +18,7 @@ and `.assistant` asks the Loom assistant (`stream` / `ask`).
 
 from loom._version import __version__
 from loom.agent import Agent
-from loom.assistant import AssistantAnswer, AssistantCitation, AssistantText
+from loom.assistant import AssistantAnswer, AssistantCitation, AssistantStep, AssistantText
 from loom.capabilities import Capabilities
 from loom.client import OpsClient
 from loom.credentials import login, logout, whoami
@@ -36,6 +36,7 @@ from loom.errors import (
     PreconditionFailed,
     RateLimited,
     ValidationError,
+    WrongCell,
 )
 from loom.retry import DEFAULT_RETRY_POLICY, RetryPolicy
 from loom.session import Resumed, Session
@@ -53,6 +54,7 @@ __all__ = [
     "AgentTools",
     "AssistantAnswer",
     "AssistantCitation",
+    "AssistantStep",
     "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",
@@ -75,6 +77,7 @@ __all__ = [
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "WrongCell",
     "__version__",
     "decode_token_claims",
     "login",

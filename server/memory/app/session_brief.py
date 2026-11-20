@@ -262,9 +262,10 @@ def _conflict(stored: int, wanted: int) -> HTTPException:
     )
 
 
-# Saves the client makes on its own. They follow the namespace owner's Recording switch: a
-# brief is condensed from the transcript, so with recording off an automatic save stores
-# nothing. A save the person asked for ("save this session") is their own act, like memory.set.
+# Saves the client makes on its own. They follow the namespace owner's Record
+# conversations switch: a brief is condensed from the transcript, so with recording off an
+# automatic save stores nothing. A save the person asked for ("save this session") is
+# their own act, like memory.set.
 _AUTOMATIC_TRIGGERS = frozenset({"precompact", "session_end", "stop"})
 
 

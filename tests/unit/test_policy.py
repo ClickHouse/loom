@@ -182,7 +182,8 @@ def test_formerly_compiles_to_one_pinned_point_query():
     assert "args[{p_ak0:String}] = {p_av0:String}" in sql
     assert c.params["p_ak0"] == "memory_key" and c.params["p_av0"] == "prefs"
     assert c.params["p_ops"] == ["memory.get"]
-    assert "session_id" not in sql and "user_id" not in sql
+    assert "session_id =" not in sql and "user_id =" not in sql
+    assert not any(k.startswith(("p_session", "p_user")) for k in c.params)
     # no literal from the call is ever spliced into the SQL text
     assert "acme" not in sql and "prefs" not in sql
 
@@ -197,11 +198,15 @@ def test_session_and_user_keys_narrow_the_pin():
     assert c2 is not None and "user_id = {p_user:String}" in c2.sql and c2.params["p_user"] == "u1"
 
 
-def test_unresolved_args_reference_skips_the_leaf():
+def test_unresolved_args_reference_keeps_the_coarse_participation_query():
     leaf = R.Formerly(
         op="formerly", within="1h", operation="x", args_equal={"memory_key": "$args.memory_id"}
     )
-    assert R.compile_leaf(leaf, ctx()) is None
+    unresolved = R.compile_leaf(leaf, ctx())
+    assert unresolved is not None and unresolved.unresolved
+    assert "max(mirror_marked) AS protected_history" in unresolved.sql
+    assert "countIf(mirror_marked = 0 AND 0) AS n" in unresolved.sql
+    assert "p_av0" not in unresolved.params
     # a literal template is not a reference and always compiles
     leaf2 = R.Formerly(
         op="formerly", within="1h", operation="x", args_equal={"memory_type": "fact"}
@@ -216,8 +221,15 @@ def test_not_since_compiles_to_two_maxima():
     )
     c = R.compile_leaf(leaf, ctx())
     assert c is not None and c.kind == "not_since"
-    assert "maxOrNullIf(ts, operation IN {p_anchor:Array(String)}) AS anchor_ts" in c.sql
-    assert "maxOrNullIf(ts, operation IN {p_left:Array(String)}) AS left_ts" in c.sql
+    assert "max(mirror_marked) AS protected_history" in c.sql
+    assert (
+        "maxOrNullIf(ts, (mirror_marked = 0) AND operation IN {p_anchor:Array(String)}) AS anchor_ts"
+        in c.sql
+    )
+    assert (
+        "maxOrNullIf(ts, (mirror_marked = 0) AND operation IN {p_left:Array(String)}) AS left_ts"
+        in c.sql
+    )
     assert c.params["p_anchor"] == ["memory.set"] and c.params["p_left"] == ["memory.delete"]
 
 
@@ -235,10 +247,10 @@ def _rule(
 @pytest.mark.asyncio
 async def test_require_formerly_denies_without_witness_and_allows_with_one():
     rule = _rule("require", {"op": "formerly", "within": "1h", "operation": "memory.get"})
-    d = await P.evaluate([rule], ctx(), FakeCH([[{"n": 0}]]))
+    d = await P.evaluate([rule], ctx(), FakeCH([[{"protected_history": 0, "n": 0}]]))
     assert d.decision == "deny" and d.determining_rules == ["r1"] and d.errors == []
     assert d.verdicts[0].leaves[0].value == 0 and d.verdicts[0].holds is False
-    d2 = await P.evaluate([rule], ctx(), FakeCH([[{"n": 3}]]))
+    d2 = await P.evaluate([rule], ctx(), FakeCH([[{"protected_history": 0, "n": 3}]]))
     assert d2.decision == "allow" and d2.determining_rules == []
     assert d2.verdicts[0].leaves[0].value == 3
 
@@ -255,8 +267,12 @@ async def test_forbid_count_within_is_a_durable_rate_limit():
             "value": 200,
         },
     )
-    assert (await P.evaluate([rule], ctx(), FakeCH([[{"n": 199}]]))).decision == "allow"
-    assert (await P.evaluate([rule], ctx(), FakeCH([[{"n": 200}]]))).decision == "deny"
+    assert (
+        await P.evaluate([rule], ctx(), FakeCH([[{"protected_history": 0, "n": 199}]]))
+    ).decision == "allow"
+    assert (
+        await P.evaluate([rule], ctx(), FakeCH([[{"protected_history": 0, "n": 200}]]))
+    ).decision == "deny"
 
 
 @pytest.mark.asyncio
@@ -267,15 +283,21 @@ async def test_not_since_open_session_idiom():
     )
     t0 = NOW - timedelta(hours=2)
     # anchor present, nothing forbidden since → holds
-    d = await P.evaluate([rule], ctx(), FakeCH([[{"anchor_ts": t0, "left_ts": None}]]))
+    d = await P.evaluate(
+        [rule], ctx(), FakeCH([[{"protected_history": 0, "anchor_ts": t0, "left_ts": None}]])
+    )
     assert d.decision == "allow"
     # forbidden event after the anchor → does not hold
     d = await P.evaluate(
-        [rule], ctx(), FakeCH([[{"anchor_ts": t0, "left_ts": t0 + timedelta(minutes=5)}]])
+        [rule],
+        ctx(),
+        FakeCH([[{"protected_history": 0, "anchor_ts": t0, "left_ts": t0 + timedelta(minutes=5)}]]),
     )
     assert d.decision == "deny"
     # no anchor in the window → since has nothing to anchor on → does not hold
-    d = await P.evaluate([rule], ctx(), FakeCH([[{"anchor_ts": None, "left_ts": None}]]))
+    d = await P.evaluate(
+        [rule], ctx(), FakeCH([[{"protected_history": 0, "anchor_ts": None, "left_ts": None}]])
+    )
     assert d.decision == "deny"
 
 
@@ -283,13 +305,17 @@ async def test_not_since_open_session_idiom():
 async def test_all_any_not_combine_and_short_circuit():
     f = {"op": "formerly", "within": "1h", "operation": "a"}
     g = {"op": "formerly", "within": "1h", "operation": "b"}
-    ch = FakeCH([[{"n": 0}]])  # `all` stops after the first false leaf
+    ch = FakeCH([[{"protected_history": 0, "n": 0}]])  # `all` stops after the first false leaf
     d = await P.evaluate([_rule("require", {"op": "all", "of": [f, g]})], ctx(), ch)
     assert d.decision == "deny" and len(ch.calls) == 1
-    ch = FakeCH([[{"n": 1}]])  # `any` stops after the first true leaf
+    ch = FakeCH([[{"protected_history": 0, "n": 1}]])  # `any` stops after the first true leaf
     d = await P.evaluate([_rule("require", {"op": "any", "of": [f, g]})], ctx(), ch)
     assert d.decision == "allow" and len(ch.calls) == 1
-    d = await P.evaluate([_rule("forbid", {"op": "not", "of": f})], ctx(), FakeCH([[{"n": 0}]]))
+    d = await P.evaluate(
+        [_rule("forbid", {"op": "not", "of": f})],
+        ctx(),
+        FakeCH([[{"protected_history": 0, "n": 0}]]),
+    )
     assert d.decision == "deny"  # forbid(not formerly) denies when nothing happened
 
 
@@ -323,7 +349,11 @@ async def test_deny_overrides_across_rules_and_detail_explains():
         {"op": "count_within", "within": "1h", "operation": "b", "cmp": "gt", "value": 0},
         pid="rate",
     )
-    d = await P.evaluate([allow_rule, deny_rule], ctx(), FakeCH([[{"n": 1}], [{"n": 5}]]))
+    d = await P.evaluate(
+        [allow_rule, deny_rule],
+        ctx(),
+        FakeCH([[{"protected_history": 0, "n": 1}], [{"protected_history": 0, "n": 5}]]),
+    )
     assert d.decision == "deny" and d.determining_rules == ["rate"]
     detail = d.to_detail()
     assert [r["policy_id"] for r in detail["rules"]] == ["ok", "rate"]

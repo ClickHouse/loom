@@ -23,7 +23,7 @@ from typing import Any
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
-from server.knowledge.store.ingestions import CANCELS, INGESTIONS
+from server.knowledge.store.ingestions import CANCELS, INGESTIONS, UNEXPIRED
 
 # The most format and scheme pairs the grouping returns.
 MAX_GROUPS = 1000  # not a setting: a bound on one report's rows, flagged when reached
@@ -46,11 +46,18 @@ _EXT = f"lower(extract({_PATH}, '[.]([A-Za-z0-9]{{1,10}})$'))"
 # markdown, slides, or the extractor's pdf, pptx or docx), else the stored content
 # type, else ".<extension>", else '(none)'.
 _SYNCED = "JSONExtractString(metadata, 'ingested_format')"
-FORMAT_SQL = (
-    f"if(format != '', toString(format), if({_SYNCED} != '', {_SYNCED}, "
-    f"if(blob_content_type != '', toString(blob_content_type), "
-    f"if({_EXT} != '', concat('.', {_EXT}), {_NONE}))))"
-)
+
+
+def format_sql(synced_sql: str) -> str:
+    """Document format precedence with a SQL expression for the sync format."""
+    return (
+        f"if(format != '', toString(format), if({synced_sql} != '', {synced_sql}, "
+        f"if(blob_content_type != '', toString(blob_content_type), "
+        f"if({_EXT} != '', concat('.', {_EXT}), {_NONE}))))"
+    )
+
+
+FORMAT_SQL = format_sql(_SYNCED)
 
 _DOCS = "FROM loom.documents FINAL WHERE org = {org:String} AND namespace = {ns:String}"
 _LIVE_CHUNKS = (
@@ -120,8 +127,9 @@ async def chunk_health(
     """Over the live documents: how many there are, and how many (with up to MAX_SAMPLES
     URIs each) have no live chunk, a live chunk with no vector, live chunks none of which
     is under `model`, or live chunks of more than one version under `model`. The
-    documents are filtered in a derived table before the join (the knowledge.list read
-    does the same), and a missing chunk side reads as 0 under either `join_use_nulls`."""
+    documents are filtered in a derived table before the join (CH 26.5's analyzer fails a
+    WHERE on a FINAL join side, NOT_FOUND_COLUMN_IN_BLOCK), and a missing chunk side
+    reads as 0 under either `join_use_nulls`."""
     n = MAX_SAMPLES
     checks = {
         "without_chunks": "ifNull(c.live, 0) = 0",
@@ -288,7 +296,7 @@ async def longer_document_uris(
 
 _OPEN = "job_state IN {open:Array(String)}"
 # A job's order among its source's: by when it was queued, then by id.
-_JOB_KEY = "(created_at, ingestion_id)"
+_JOB_KEY = "(created_at, toString(ingestion_id))"  # the queue's order (`ingestions.due`)
 # An outage a job is waiting to retry (pending, error_code `retrying`), or one that used up
 # knowledge_ingest_max_attempts (failed, `retries_exhausted`): its message tells its class.
 # A retried job a worker took again is processing and still carries `retrying` and its
@@ -349,7 +357,8 @@ def _jobs(where: str) -> str:
     job with a cancel requested (a loom.knowledge_ingest_cancels row, which no worker has
     acted on yet) is cancelled; its other fields are its row's. The columns the report
     derives are renamed (`job_state`, `job_code`, `job_updated_at`), so none shadows a
-    stored one."""
+    stored one. A row past the table's TTL, which a merge drops only later, is left out,
+    as the queue leaves it out (`ingestions.UNEXPIRED`)."""
     return f"""
         SELECT source_uri, ingestion_id, created_at, next_attempt_at, attempts,
                toString(stage) AS stage, error_message, filename, content_type, options,
@@ -361,7 +370,7 @@ def _jobs(where: str) -> str:
                if(cancel_pending, 'cancelled', toString(error_code)) AS job_code,
                updated_at AS job_updated_at
         FROM {INGESTIONS} FINAL
-        WHERE org = {{org:String}} AND namespace = {{ns:String}}{where}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND {UNEXPIRED}{where}
     """
 
 

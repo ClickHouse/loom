@@ -118,6 +118,31 @@ async def narrow_to(org: str, namespaces: list[str]) -> None:
     genai.narrow_capture_level(level)
 
 
+async def level_uncached(org: str, namespace: str) -> str:
+    """`resolve`'s level read past the cache, raising when the consent cannot be read, so
+    a caller that deletes on `off` can tell an unreadable consent from a refusal."""
+    return _level_for(await _read(org, namespace))
+
+
+async def _read(org: str, namespace: str) -> bool | None:
+    from server.core.ch import get_client
+
+    row = await get_client().query_one(
+        """
+        SELECT capture_generation_io
+        FROM loom.namespaces FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+        LIMIT 1
+        """,
+        params={"org": org, "ns": namespace},
+    )
+    if not row:
+        # An unregistered namespace has expressed no preference; inherit.
+        return None
+    value = row.get("capture_generation_io")
+    return None if value is None else bool(value)
+
+
 async def _load(org: str, namespace: str) -> bool | None:
     """The namespace's stored override, or None to inherit.
 
@@ -128,17 +153,7 @@ async def _load(org: str, namespace: str) -> bool | None:
     debugging detail, failing open publishes text a user may have declined.
     """
     try:
-        from server.core.ch import get_client
-
-        row = await get_client().query_one(
-            """
-            SELECT capture_generation_io
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-            LIMIT 1
-            """,
-            params={"org": org, "ns": namespace},
-        )
+        return await _read(org, namespace)
     except Exception as e:  # noqa: BLE001 — fail CLOSED: an unreadable consent reads as off
         log.warning(
             "capture-consent lookup failed for %s/%s (%s); NOT capturing",
@@ -149,11 +164,6 @@ async def _load(org: str, namespace: str) -> bool | None:
         # False, not None: an unreachable ClickHouse must resolve to "off", never
         # fall back to the operator's (possibly permissive) level.
         return False
-    if not row:
-        # An unregistered namespace has expressed no preference; inherit.
-        return None
-    value = row.get("capture_generation_io")
-    return None if value is None else bool(value)
 
 
 def invalidate(org: str = "", namespace: str = "") -> None:

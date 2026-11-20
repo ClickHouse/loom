@@ -1,0 +1,8 @@
+[project]
+name = "loom-dify-plugin"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["dify-plugin>=0.11.1,<0.12.0", "clickhouse-loom>=1.2.0,<2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

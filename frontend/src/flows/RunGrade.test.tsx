@@ -37,6 +37,20 @@ describe("RunGrade", () => {
     expect(await screen.findByText("Graded as held up by dashboard: CI went green")).toBeInTheDocument();
   });
 
+  it("shows a role that cannot grade the verdict, and both grades unavailable with the reason", async () => {
+    const reason = "Needs writer on team. An admin of it can grant that.";
+    render(<RunGrade identity={identity} run={run({ grade: "fail", grade_source: "ci" })} unavailable={reason} />);
+    expect(screen.getByText("Graded as did not hold by ci")).toBeInTheDocument();
+    for (const name of ["Regrade: held up", "Regrade: did not hold"]) {
+      const b = screen.getByRole("button", { name });
+      expect(b).toHaveAttribute("aria-disabled", "true");
+      expect(b).toHaveAccessibleDescription(reason);
+      await userEvent.click(b);
+    }
+    expect(api.gradeRun).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Why (optional)")).toBeDisabled();
+  });
+
   it("names the person who graded, and says how many proposals the grade decided", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice", org: "acme" } });
     vi.mocked(api.gradeRun).mockResolvedValueOnce({

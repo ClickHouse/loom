@@ -10,13 +10,17 @@ name and a typed shape.
 
 ## Install
 
-Python 3.11 or later. The only runtime dependency is `httpx[http2]`. The package is not
-published to a package index; install it from a clone or from git:
+Python 3.11 or later. The only runtime dependency is `httpx[http2]`.
 
 ```bash
-pip install ./sdk/python                    # from a clone of the repository
-pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"
+pip install clickhouse-loom
 ```
+
+The SDK's version is the server release's
+([supported versions](../operations/supported-versions.md)). A release not yet on PyPI
+installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, `pip install ./sdk/python`.
 
 The package ships `py.typed` and passes `mypy --strict`.
 
@@ -30,7 +34,10 @@ hour, or the bot's shorter maximum, that it renews itself), then the session
 `loom.login()` / `loom login` stored in `~/.loom/credentials` for that server
 (profile `LOOM_PROFILE`, default `default`; it refreshes itself), and finally
 the first line of `~/.loom/token`, the file `loom mint-token --save` writes. A
-stored session is used only for the server it signed in to.
+stored session is used only for the server it signed in to. `loom.login(org=…)`
+signs in at that org's [cell](../architecture/cells.md), as the router's lookup names
+it, waiting out its 429s for at most `wait_s` seconds; the session is then the cell
+host's, so point `base_url` (or `LOOM_BASE_URL`) at the host it prints.
 Routes outside the operation registry are on `agent.account` (service
 accounts, MCP client setup, the default namespace, the sharing summary) and
 `agent.deployment` (health, workers, model settings, claim release); see
@@ -69,14 +76,14 @@ only with a real LLM provider configured.
 ## Construction
 
 ```python
-Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
+Agent(org="", namespace="", agent=None, *, base_url=None, api_key=None, timeout_s=60.0,
       pacing=True, coalesce_sets=True, ratelimit_max_wait_s=None, auto_run=None,
-      retry=None, consumer="", mentor_brief=None, profile=None)
+      retry=None, consumer="", mentor_brief=None, profile=None, session_protection=None)
 ```
 
 | Argument                    | Meaning                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `org`, `namespace`, `agent` | The identity stamped on every call. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                                                                                                    |
+| `org`, `namespace`, `agent` | The identity stamped on every call; see [Identity defaults](#identity-defaults) for what may be left empty. `user_id`, `session_id` and `run_id` are per call (the wire's `"-"` when omitted).                                                                                                                                            |
 | `timeout_s`                 | Per-request timeout.                                                                                                                                                                                                                                                                                                                      |
 | `profile`                   | The `loom login` session to use, on the server it signed in to; not combined with `api_key` or another `base_url` ([Credentials](#credentials)).                                                                                                                                                                                          |
 | `consumer`                  | The product this process speaks for; stamped on every body that does not name its own and stored on the ledgers. `""` stamps nothing.                                                                                                                                                                                                     |
@@ -85,6 +92,61 @@ Agent(org, namespace, agent, *, base_url=None, api_key=None, timeout_s=60.0,
 | `coalesce_sets`             | From the third `memory.set` inside one 200 ms window, gather sets with the same identity into one `memory.bulk_set`. A coalesced result carries `coalesced: true` and no `memory_id` / `content_sha256`; a set with `if_match_sha256` or an expiry policy is never coalesced. `memory.flush_sets()` sends a batch now; `close()` flushes. |
 | `auto_run`                  | Bind an ambient run to the Agent's lifetime (or `LOOM_AUTO_RUN=1`): writes carry its `run_id`, reads are labelled with `X-Loom-Run-Id`. Off by default, because a write under a run is scoped to it: a restatement of another scope's row is stored as a duplicate, not merged.                                                           |
 | `mentor_brief`              | Fetch `mentor.brief` in the background on the first call (or `LOOM_MENTOR_BRIEF=on`); `await bot.mentor()` does it explicitly.                                                                                                                                                                                                            |
+
+### Session protection
+
+`session_protection` accepts an application-owned `SessionProtection` from
+`loom.session_protection`. Share the same capsule across clients, servers and tokens
+that serve one logical conversation. Create it explicitly for an independent family
+before receiving content; reopen its saved pointer on restore. Missing, damaged or
+inaccessible state suppresses automatic capture. The capsule stores control state,
+not conversation text, and requires private POSIX files. Native Windows refuses until
+a durable ACL-backed adapter is available.
+
+JSON responses are observed before typed conversion, error handling or retry. Bound
+SSE responses retain every opening producer and observe each complete frame before
+releasing its original bytes, including through raw buffered requests. Pending frames
+are limited to 4 MiB; malformed or interrupted observations protect the family and
+withhold unconfirmed bytes. Bound assistant streams request identity encoding and
+refuse compressed responses before output. Unbound streams keep their existing
+behavior.
+
+A marked response durably protects every known family before returning. A failed durable mark
+withholds the response. `with family.automatic():` classifies an application's callback;
+the final request hook checks protection after authentication and on every replay.
+Explicit actions outside automatic callbacks remain available after protection and still
+observe responses. This option does not declare protocol capability. The serving build,
+other consumers, launchers and framework callbacks require their separate qualification
+before mirrored reads are enabled.
+
+`Session.resume()` and `history()` are automatic reads. The first marked recall can
+return after durable observation; a marked pack skips the optional history request.
+Subsequent automatic reads and writes stop. `append()` and `flush()` retain their
+producer families across buffering and carry-over, discard protected text rather than
+retrying it, and stop a multi-turn append after a response marks the family. Explicit
+`offload()`, `fetch()` and `note()` remain available and observe replies for the retained
+families. Deferred coalesced writes keep their producer's automatic status and run context,
+including when another caller flushes them.
+
+### Identity defaults
+
+`org` may be left empty: a `code.*` or `tracker.*` op then runs in its plane's org, and
+any other op in the token's org, or, on a single-user server with no token, the install's.
+The server fills an empty `namespace` in only for a single-user server and a call with no
+token, on the everyday memory and search ops ([which ops](http-api.md#request)); a
+`code.*` or `tracker.*` op whose namespace is optional takes its plane's. An empty
+`namespace` is left out of the body: any other server, or any other op, that requires one
+answers `VALIDATION_FAILED` naming it rather than reading `""` as a namespace, and an op
+where it is optional runs without it. The SDK sends any credential it finds
+([Credentials](#credentials)): `api_key=`, `LOOM_API_KEY`, a bot's `LOOM_CLIENT_ID`, a
+`loom login` session for that server, or `~/.loom/token`; a call with one gets no
+namespace filled in. An op not on [that list](http-api.md#request) that requires a
+namespace needs it named, and so does any SDK feature that calls one: `auto_run`,
+`run_scope()`, `session()` and `mentor()`, the context and working-memory tools in
+`bot.tools()`, and the LangGraph store's `search()` (its `memory.bulk_get`), among others
+(an ambient run that cannot begin is skipped). The SDK refuses `knowledge.upload` and
+`knowledge.download` without both org and namespace. An `agent` not given is
+`sdk-python:<script>`.
 
 An `agent` of `""`, `"-"` or `"*"` is replaced with `sdk-python:<script>` and a
 warning: an anonymous agent is indistinguishable from every other anonymous
@@ -145,18 +207,25 @@ print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 
 ### The assistant
 
-`agent.assistant.stream(question, history=..., namespace=...)` asks the Loom
-assistant through `POST /v1/assistant/chat/completions` as the Agent's token, about
-the Agent's namespace unless `namespace` names another. It yields an
-`AssistantText` for each piece of the answer, then one `AssistantAnswer` (`text`,
-`run_id`, `model`, token usage, and the `citations` the server checked, each an
-`AssistantCitation` with `verified`, `reason` and `ref`; `.verified` holds the verified
-ones). `ask` returns the `AssistantAnswer` whole. A refusal raises its typed error
-before any text, and an `error` event after the answer began raises the same way.
-An answer that began is never resent, nor one refused with a 429; a stored login's
-401, which comes before the answer starts, is sent once more with a fresh token.
-`read_timeout_s` (300 s) bounds each read, as an answer is silent while a tool call
-runs. `SyncAgent` iterates `stream` blocking.
+`agent.assistant.stream(question, history=..., namespace=...)` asks the Loom assistant
+through `POST /v1/assistant/chat/completions` as the Agent's token, about the Agent's
+namespace unless `namespace` names another. It yields an `AssistantText` for each piece of
+the answer, then one `AssistantAnswer` (`text`, `run_id`, `model`, token usage, and the
+`citations` the server checked, each an `AssistantCitation` with `verified`, `reason` and
+`ref`; `.verified` holds the verified ones), and its `support`
+([support](../architecture/assistant.md#support): `supported`, `unsupported`, `unchecked`
+or `none`; a value the SDK does not know, or none from an older server, reads as
+`unchecked`), and `steps`: what it read, one `AssistantStep` (`op`, `text`, `ok`) per tool
+call ([steps](../architecture/assistant.md#steps); empty from an older server, and when
+the server could not read the run (a run that made no call has none either)), with
+`steps_cut` when the run held more than 200 ledger rows, so `steps` lists its first ones.
+The live `loom.step` events and `loom.text_done` are skipped. `ask` returns the
+`AssistantAnswer` whole. The generated `client.assistant_ask` op method returns the
+server's output as it is. A refusal raises its typed error before any text, and an `error`
+event after the answer began raises the same way. An answer that began is never resent,
+nor one refused with a 429; a stored login's 401, which comes before the answer starts, is
+sent once more with a fresh token. `read_timeout_s` (300 s) bounds each read, as an answer
+is silent while a tool call runs. `SyncAgent` iterates `stream` blocking.
 
 ## Sessions and tools
 
@@ -174,6 +243,20 @@ What an agent framework holds between turns:
   `await execute(name, arguments)` that returns the string the model reads:
   `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`,
   `loom_note`. The schemas match the TypeScript SDK's.
+  An explicit `code_namespace` offers `loom_code_lookup` first; `only=["loom_code_lookup"]`
+  selects just that read-only tool. The application fixes the code scope separately
+  from memory. See [code tools](../guides/code-tools.md) for arguments, evidence limits
+  and valid JSON result budgeting.
+  `loom_remember` also accepts `files`, `tags` and `source_resource_id`. These
+  preserve a finding's supporting references; inspect the server receipt before
+  claiming a code link was resolved. `only=["loom_recall", "loom_update"]`
+  opts into correction of an existing key. This optional tool requires an explicit
+  named `user_id`; `None`, an empty name and `"-"` refuse before a request because
+  they mean all users to the key-update operation. Names with surrounding whitespace
+  also refuse rather than resolve under a different identity. A correction keeps
+  the configured namespace and user scope, resolves the key across writing agents
+  and sessions, and preserves ambiguity and hash-precondition refusals. The default six tools
+  do not include `loom_update`.
 - `bot.run_scope(goal=...)` is an `async with` block that begins a run, stamps
   its `run_id` on the writes inside and labels the reads with it (the
   `X-Loom-Run-Id` header, not a filter), and on exit credits the keys a
@@ -196,6 +279,63 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
 
 ## Framework adapters
 
+- `loom.integrations.langchain.LoomKnowledgeRetriever(agent=...)` and
+  `LoomMemoryRetriever(agent=...)` are LangChain `BaseRetriever`s over
+  `knowledge.search` and `memory.search`; install the `[langchain]` extra.
+  `invoke` needs a `SyncAgent`, `ainvoke` takes either agent.
+- `loom.integrations.llamaindex.LoomRetriever(agent)` is a LlamaIndex
+  `BaseRetriever` over `knowledge.search`, and `LoomMemoryBlock(agent=...)` a
+  `Memory` block that extracts flushed messages with
+  `memory.set_from_messages` and reads them back with `memory.search`; install
+  the `[llamaindex]` extra. `retrieve` needs a `SyncAgent`, and so does the
+  block when `Memory` is used through `get` / `put` or with `flush`;
+  `aflush(memory)` hands what is left in the window to the `Memory`'s blocks
+  and archives it.
+- `loom.integrations.haystack.LoomDocumentStore(org, namespace, ...)` stores native
+  Haystack documents in Loom knowledge; `LoomRetriever(store)` is a retrieval
+  component. Install the `[haystack]` extra.
+- `loom.integrations.dspy.LoomKnowledgeRetriever(agent)` and
+  `LoomMemoryRetriever(agent, user_id=...)` are DSPy retrievers over
+  `knowledge.search` and `memory.search`: calling one returns a `dspy.Prediction`
+  with `passages`, `sources`, `scores` and `metadata`, and `as_tool()` hands the
+  search to `dspy.ReAct`; install the `[dspy]` extra. A call needs a `SyncAgent`,
+  `acall` takes either agent.
+- `loom.integrations.openai_agents.loom_tools(agent, user_id=...)` returns
+  `AgentTools` as OpenAI Agents SDK `FunctionTool`s, and
+  `LoomSession(agent, session_id, user_id=...)` is its `Session`, the history kept as
+  episodic memories; install the `[openai-agents]` extra.
+- `loom.integrations.crewai.LoomCrewMemory(agent=...)` is a CrewAI `Memory`
+  over a `SyncAgent`: `recall` is `memory.search`, a task's output goes to
+  `memory.set_from_messages`; install the `[crewai]` extra.
+- `loom.integrations.autogen.LoomMemory(agent, user_id=...)` implements
+  AutoGen's `Memory` protocol over `memory.set` and `memory.search`; install
+  the `[autogen]` extra.
+- `loom.integrations.ag2.LoomRecallPolicy(agent, user_id=...)` is an AG2
+  assembly policy that adds the memories `memory.search` finds for the latest
+  user message to the prompt, and `loom_tools(agent, user_id=...)` returns
+  `AgentTools` as AG2 tools; install the `[ag2]` extra.
+- `loom.integrations.agent_framework.LoomContextProvider(agent, user_id=...)` is a
+  Microsoft Agent Framework `ContextProvider`: before each run it adds the
+  `memory.search` matches of the user's input to the instructions, and after the run
+  it sends the turn to `memory.set_from_messages`; install the `[agent-framework]`
+  extra.
+- `loom.integrations.claude_memory.AsyncLoomMemoryTool(agent, store=...)` and
+  `LoomMemoryTool(sync_agent, store=...)` run the Claude API memory tool's commands
+  against Loom documents (`knowledge.get`, `knowledge.upsert`, `knowledge.list`,
+  `knowledge.bulk_delete`); install the `[claude-memory]` extra.
+- `loom.integrations.google_adk.LoomMemoryService(agent, app_name=...)` is a
+  Google ADK `BaseMemoryService` for one ADK app: a saved session or turn goes
+  to `memory.set_from_messages`, `add_memory` is `memory.set`, `search_memory`
+  uses `memory.search` scoped to the ADK user, then fills remaining slots with
+  up to 100 shared namespace documents from `knowledge.search`; `delete_memory`
+  calls `memory.delete_version` for the exact writer and version carried in the
+  search entry id. Install the
+  `[google-adk]` extra.
+- `loom.integrations.agno.LoomMemoryDb(sync_agent, user_id=...)` implements Agno
+  `BaseDb` user-memory methods over episodic Loom rows; install the `[agno]` extra.
+- `loom.integrations.pydantic_ai.loom_toolset(agent, user_id=...)` returns
+  `AgentTools` as a Pydantic AI `FunctionToolset`; install the `[pydantic-ai]`
+  extra.
 - `loom.integrations.langgraph.LoomStore(agent, tags=...)` is a LangGraph
   `BaseStore`: `put` is `memory.set`, `search(query=...)` ranks with
   `memory.search` and reads values with `memory.bulk_get`, and namespace tuples
@@ -204,9 +344,15 @@ system prompt of an agent with no plugin; `part="reference"` lists every plane.
   shuts down with the agent.
 - `loom.integrations.strands.LoomMemoryStore(agent, tags=...)` implements the
   Strands Agents memory-store protocol (`add` / `search`); `search` returns
-  nothing when Loom abstains unless `honour_abstain=False`.
+  nothing when Loom abstains, and leaves out memories below the floor, unless
+  `honour_abstain=False`.
+- `loom.integrations.pipecat.LoomMemoryService(agent, user_id=...)` is a Pipecat
+  memory service: its recall processor adds the `memory.search` matches of the
+  turn's user text to the shared `LLMContext`, and its capture processor sends
+  the completed turn to `memory.set_from_messages`; install the `[pipecat]`
+  extra.
 
-Both import their framework lazily. See
+The LangGraph and Strands adapters import without their framework installed. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors
@@ -233,8 +379,8 @@ whose body has neither, or one the SDK raised itself:
 - an error raised before sending is `dependency` and retryable when a service the SDK
   needed first was down (an identity provider, a secret store; a sign-in answered 429 is
   `capacity`), `auth` when the caller is not signed in, else `input`;
-- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
-  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+- a code the SDK never retries is `configuration` (a 503 an operator must fix, as the
+  [errors reference](./errors.md) classes it), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
   `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
   retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,
@@ -256,6 +402,7 @@ whose body has neither, or one the SDK raised itself:
 | `NotFound`             | `RESOURCE_NOT_FOUND`; status 404                                                |                                                                                                                                              |
 | `PreconditionFailed`   | `PRECONDITION_FAILED`; status 409, 412 without a known code                     | `.current_sha256`: retry without re-reading                                                                                                  |
 | `IdempotentConflict`   | `IDEMPOTENT_CONFLICT`                                                           |                                                                                                                                              |
+| `WrongCell`            | `WRONG_CELL`                                                                    | subclass of `PreconditionFailed`; `.org` and `.cell` (the org's cell, or ''): look its host up with the router's `GET /cells/lookup`         |
 | `BackendUnavailable`   | `BACKEND_UNAVAILABLE`, any 5xx, and `NETWORK` (no response)                     | `cannot reach <base_url>: …`, `no response from <base_url>: …` (a write that broke off, a timeout), or `response from <base_url> cut off: …` |
 | `RateLimited`          | `RATE_LIMITED`; status 429                                                      | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
 | `Overloaded`           | `OVERLOADED`                                                                    | subclass of `BackendUnavailable`; `.retry_after_s`                                                                                           |
@@ -276,7 +423,7 @@ Only `PRECONDITION_FAILED` carries `.current_sha256`. The other 409s that land i
 are not fixed by resending; match on `.code`.
 
 `loom` re-exports `LoomError`, `ValidationError`, `AuthInvalid`,
-`AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`,
+`AuthInsufficient`, `NotFound`, `PreconditionFailed`, `IdempotentConflict`, `WrongCell`,
 `BackendUnavailable` and `RateLimited`, with the two codes
 `NETWORK_ERROR_CODE` and `INVALID_RESPONSE_CODE`; `Overloaded`,
 `BackendTimeout`, `SchemaPending` and `IdempotentInProgress` import from `loom.errors`. What each server
@@ -350,6 +497,10 @@ its [GitHub Release](https://github.com/ClickHouse/loom/releases) notes.
 
 - [`sdk/python/examples/agent_memory.py`](../../sdk/python/examples/agent_memory.py):
   probe → remember → recall → ask with citations → outcome → typed errors.
+- [`sdk/python/examples/document_search.py`](../../sdk/python/examples/document_search.py):
+  add two documents → search with citations → abstain on an off-topic question → delete.
+- [`sdk/python/examples/support_agent_memory.py`](../../sdk/python/examples/support_agent_memory.py):
+  two customers kept apart → revise a fact → erase one customer and check it is gone.
 - [`examples/`](../../examples/): `claude_agent_loop.py` (needs an Anthropic
   key), `ledger_run.py`, `log_conversation.py`, `onboarding_walkthrough.py`.
 

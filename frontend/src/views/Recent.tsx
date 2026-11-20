@@ -1,4 +1,14 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { SearchField } from "@clickhouse/click-ui/SearchField";
@@ -13,6 +23,8 @@ import {
   type MemoryListEntry,
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
+import { loadDockRuntime, useDock } from "../lib/assistantDock";
+import { STARTERS_WAIT } from "./assistant/startersWait";
 import { MemoryCard } from "../components/MemoryCard";
 import { SearchScores, SearchWhy } from "../components/SearchWhy";
 import { IconButton } from "../components/IconButton";
@@ -22,26 +34,30 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { RowSkeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
+import { toastCommitted } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
-import { dayLabel, restoreText, displayAgent, SENTINEL_AGENTS } from "../lib/format";
+import { dayLabel, restoreText, displayAgent, DASHBOARD_AGENT, SENTINEL_AGENTS } from "../lib/format";
 import { AddMemoryDialog } from "../flows/AddMemoryDialog";
+import { GettingStarted, useOnboarding } from "../components/GettingStarted";
+import { shouldShowGettingStarted } from "../lib/onboarding";
 import { PageContainer } from "../layout/PageContainer";
-import { MemoryTabs, useMemoriesSection } from "../components/MemoryTabs";
+import { MemoryTabs } from "../components/MemoryTabs";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { NamespaceAuditPanel } from "../components/NamespaceAuditPanel";
 import { NamespaceGuideButton } from "../components/NamespaceGuideButton";
-import { MentorPanel } from "../components/MentorPanel";
 import { Unavailable } from "../components/ui";
-import { READ_ONLY_TIP, canWrite, useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { type GatedNamespaceOp, callReason, codeMember, needsLine } from "../lib/callReason";
 import { canCall } from "../lib/canCall";
-import { parseSearchQuery, type SearchQuery, toggleQueryToken } from "../lib/memoriesSearch";
+import { parseSearchQuery, type SearchQuery, takePendingSearch, toggleQueryToken } from "../lib/memoriesSearch";
 import { oneOf } from "../lib/oneOf";
-import { shortcutOff } from "../lib/shortcuts";
+import { isPublicationPending } from "../lib/errors";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { useRowNav } from "../lib/useRowNav";
 import { useRowSelection } from "../lib/useRowSelection";
 import { sameFilter, useMemoryListRead, useMemorySearch, useSameFilter, type TagAgentFilter } from "./memoryListReads";
+
+const MembersDialog = lazy(() => import("../flows/MembersDialog").then((m) => ({ default: m.MembersDialog })));
 
 // The cards the first screen shows. A page of a hundred mounts them all in one task
 // (395–681 ms of long tasks at 4x CPU, LCP 0.9–1.4 s); the first screen is about two
@@ -66,41 +82,54 @@ function filterOf({ tags, agent }: SearchQuery): TagAgentFilter {
   return { tags, agent: agent ?? "" };
 }
 
-/** Memories: the list, or the Insights tab (the usage audit and the mentor). */
+/** Memories: the list. What the namespace's usage says, read as a whole (the audit, the
+ *  mentor, the inventory), is the assistant's starters: the page's Insights button. */
 export function Recent() {
-  return useMemoriesSection() === "insights" ? <MemoryInsights /> : <MemoryList />;
+  return <MemoryList />;
 }
 
-/** The Insights tab: what the namespace's usage says, read as a whole. Each panel runs on a
- *  click, never on mount. */
-function MemoryInsights() {
-  const identity = useIdentity();
+/** Opens the assistant on its starters, nothing asked; while an answer streams the panel
+ *  opens on it, and the button says when the starters show. */
+function InsightsButton() {
+  const working = useDock((s) => s.working);
   return (
-    <PageContainer>
-      <PageHeader title="Memories" tab="Insights">
-        {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
-        <span className="hidden sm:contents">
-          <ScopeBadge kind="namespace" value={identity.namespace} />
+    <>
+      <Button
+        type="secondary"
+        htmlType="button"
+        iconLeft="light-bulb"
+        aria-describedby={working ? "memories-insights-wait" : undefined}
+        onClick={() => void loadDockRuntime().then((m) => m.openStarters(false))}
+      >
+        Insights
+      </Button>
+      {working && (
+        <span id="memories-insights-wait" className="sr-only">
+          {STARTERS_WAIT}
         </span>
-      </PageHeader>
-      <MemoryTabs active="insights" />
-      <div className="space-y-4">
-        {/* How the namespace is being used. A click, never on mount — the op is ~14 reads. */}
-        <NamespaceAuditPanel identity={identity} />
-        {/* What the store would tell an agent working here — the planes it never touched
-            and whether past hints were followed. */}
-        <MentorPanel identity={identity} />
-      </div>
-    </PageContainer>
+      )}
+    </>
   );
 }
 
 function MemoryList() {
   const identity = useIdentity();
-  // Viewers see the page read-only — the write CTAs are disabled with the reason, not
-  // offered and then refused by the server.
-  const role = useNamespaceRole(identity.namespace);
-  const readOnly = !canWrite(role);
+  // Add memory stays in view for a role that cannot write, unavailable with why. A role known
+  // to fall short (`needsLine`) reads the viewer's empty state. The checklist, which adds a
+  // memory itself, shows only where Add memory is available, so it never shows and then goes.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const role = roleRead.role;
+  const whoami = useStore((s) => s.whoami);
+  const why = (op: GatedNamespaceOp) => callReason(op, roleRead, whoami, identity.namespace);
+  // A repository's member may add there whatever its role (`codeMember`): the server decides.
+  const addReason = codeMember(roleRead, identity.namespace) ? null : why("memory.set");
+  const readOnly = addReason !== null && needsLine("memory.set", roleRead, whoami, identity.namespace) !== null;
+  // Restore stays in view for a role that cannot call it, unavailable with why; Pin and Delete
+  // live in the selection, which waits for a role that can.
+  const pinReason = why("memory.pin");
+  const deleteReason = why("memory.delete");
+  const restoreReason = why("memory.restore");
+  const selectable = !pinReason && !deleteReason;
   const inspectedKey = useStore((s) => s.inspectedMemoryKey);
   const inspect = useStore((s) => s.inspect);
   // Bumped on memory writes from any surface so we re-fetch immediately
@@ -133,6 +162,11 @@ function MemoryList() {
   const [pageSize, setPageSize] = usePageSize("memories");
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(new Set());
   const [addOpen, setAddOpen] = useState(false);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (addReason) setAddOpen(false);
+  }, [addReason]);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [query, setQuery] = useState("");
   // Another namespace's conflict keys and agents are not this one's: they go during render,
   // before the new namespace's first read or paint can use them (useMemorySearch drops its
@@ -146,21 +180,6 @@ function MemoryList() {
     setSeenAgents([]);
   }
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-
-  // `/` focuses the inline search anywhere on Memories.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "/" || shortcutOff(e)) return;
-      const t = e.target;
-      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
-        return;
-      e.preventDefault();
-      searchInputRef.current?.focus();
-      searchInputRef.current?.select();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
 
   // Inline search: debounced semantic match on the server; the result
   // becomes a key-set filter on the already-loaded entries, so day
@@ -205,6 +224,12 @@ function MemoryList() {
     if (typedNow.tags.some((t) => t.toLowerCase() === memoryTagFilter.toLowerCase())) return;
     applyQuery(`${query} tag:${memoryTagFilter}`.trim());
   }, [memoryTagFilter, setMemoryTagFilter, query, typedNow, applyQuery]);
+  // A search another surface opened the page with (an assistant card's agent).
+  const navSeq = useStore((s) => s.navSeq);
+  useEffect(() => {
+    const pending = takePendingSearch();
+    if (pending !== null) applyQuery(pending);
+  }, [navSeq, applyQuery]);
   // Typing waits for a pause.
   useEffect(() => {
     const t = setTimeout(() => setTyped((prev) => (sameFilter(prev, typedNow) ? prev : typedNow)), 250);
@@ -255,6 +280,7 @@ function MemoryList() {
     entriesAt,
     browsedTotal,
     filterRead,
+    listedIn,
     retry,
   } = useMemoryListRead({
     identity,
@@ -266,6 +292,44 @@ function MemoryList() {
     memoriesVersion,
   });
   const browsedCurrent = entriesAt.size === pageSize;
+
+  // The first-run checklist (components/GettingStarted). Every signal it takes comes from
+  // this list's one read: the unfiltered, live first page, read in this namespace for the
+  // filter in force. Right after a namespace switch or a filter change the rows on screen
+  // are still the last read's, and count for nothing.
+  const mine = useStore((s) => s.myNamespaces);
+  const authOff = isAuthDisabled();
+  const onboarding = useOnboarding(whoami?.subject ?? (authOff ? "local" : ""), namespaceKey);
+  const plainRead =
+    entries !== null &&
+    listedIn === namespaceKey &&
+    filterRead &&
+    !filterPending &&
+    !loadError &&
+    page === 0 &&
+    !listFiltered &&
+    !showDeleted;
+  const memoryTotal = plainRead ? (browsedTotal ?? entries.length) : null;
+  const readEmpty = memoryTotal === 0;
+  const agentSeen =
+    plainRead && entries.some((e) => !!e.agent && e.agent !== DASHBOARD_AGENT && !SENTINEL_AGENTS.has(e.agent));
+  const isNew = shouldShowGettingStarted({ mine, memoryTotal, authOff });
+  const { start } = onboarding;
+  useEffect(() => {
+    if (isNew) start();
+  }, [isNew, start]);
+  const checklist =
+    !addReason &&
+    entries !== null &&
+    listedIn === namespaceKey &&
+    !onboarding.state.dismissed &&
+    !onboarding.state.finished &&
+    (isNew || onboarding.state.started);
+  // Open in full while the namespace is empty, and kept open once it was, so the first
+  // memory's arrival ticks the step in place; otherwise one line under the toolbar. Kept
+  // per namespace: another one's checklist starts as its own.
+  const [checklistOpenFor, setChecklistOpenFor] = useState<string | null>(null);
+  const checklistOpen = checklistOpenFor === namespaceKey;
   useEffect(() => {
     if (!firstScreenOnly || entries === null) return;
     let raf = 0;
@@ -308,7 +372,6 @@ function MemoryList() {
   // Only when the role here is known to allow it: an unknown role sends nothing and the
   // cards simply carry no conflict chip, instead of a token-only viewer drawing an
   // AUTH_INSUFFICIENT per Memories load from this read.
-  const whoami = useStore((s) => s.whoami);
   const conflictsReadable = canCall("conflicts.list", role, whoami);
   useEffect(() => {
     // A role here that cannot read conflicts, or a failed read, shows no chip (never
@@ -395,11 +458,15 @@ function MemoryList() {
     rowAgent && !SENTINEL_AGENTS.has(rowAgent) ? { ...identity, agent: rowAgent } : identity;
 
   const bulkPin = async () => {
-    if (selected.size === 0 || busy) return;
+    if (selected.size === 0 || busy || pinReason) return;
     setBusy(true);
     const keys = Array.from(selected);
     let ok = 0,
       fail = 0;
+    // The last pin that committed with lists behind, and the last call that failed, for
+    // their request ids.
+    let lagging: unknown = null;
+    let failure: unknown = null;
     for (const k of keys) {
       const entry = flatList.find((e) => e.memory_key === k);
       if (!entry) {
@@ -418,18 +485,29 @@ function MemoryList() {
         } else {
           fail++;
         }
-      } catch {
-        fail++;
+      } catch (e) {
+        // Pinned, with only lists and search behind: counted as pinned, and said once below.
+        if (isPublicationPending(e)) {
+          ok++;
+          lagging = e;
+        } else {
+          fail++;
+          failure = e;
+        }
       }
     }
     setBusy(false);
     selection.clear();
-    toast(`Pinned ${ok}${fail ? ` · ${fail} failed` : ""}`, fail ? "error" : "ok");
+    const behind = lagging ? " · lists may show the old state for a moment" : "";
+    const line = `Pinned ${ok}${fail ? ` · ${fail} failed` : ""}${behind}`;
+    if (fail) toastErrorLine(line, failure);
+    else if (lagging) toastCommitted(lagging, line);
+    else toast(line, "ok");
     bumpMemoriesVersion();
   };
 
   const bulkDelete = async () => {
-    if (selected.size === 0 || busy) return;
+    if (selected.size === 0 || busy || deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete ${selected.size} ${selected.size === 1 ? "memory" : "memories"}?`,
@@ -476,17 +554,18 @@ function MemoryList() {
   const pageKeys = useMemo(() => pageList.map((e) => e.memory_key), [pageList]);
   // Checkboxes: one row, a Shift-click range, every row on the page; Escape clears them
   // while the drawer is closed (it owns Escape while open).
-  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey });
+  const selection = useRowSelection(pageKeys, { enabled: !inspectedKey && selectable });
   const { selected, toggle: toggleSelect } = selection;
   // One callback for every card, so the memoised cards skip a render when it is not theirs.
-  const selecting = selected.size > 0;
+  // A selection made before the role fell short is not acted on: the bar goes with the boxes.
+  const selecting = selectable && selected.size > 0;
   const openCard = useCallback(
     (e: MemoryListEntry) => (selecting ? toggleSelect(e.memory_key) : inspect(e.memory_key, { agent: e.agent })),
     [selecting, toggleSelect, inspect],
   );
 
   // Keyboard nav, active when no inspector is open and not typing: the list is one tab
-  // stop, j / k and the arrows move the focus from card to card, Enter opens the focused
+  // stop, the arrows move the focus from card to card, Enter opens the focused
   // card (its button), Space selects it, and the inspector returns focus to it on close.
   const listNav = useRowNav({ enabled: !inspectedKey && flatList.length > 0 });
 
@@ -495,6 +574,9 @@ function MemoryList() {
   const failed = entries !== null && entries.length === 0 && !!loadError;
   const emptyNamespace =
     entries !== null && entries.length === 0 && !loadError && !listFiltered && !filterPending && !showDeleted;
+  useEffect(() => {
+    if (readEmpty && checklist) setChecklistOpenFor(namespaceKey);
+  }, [readEmpty, checklist, namespaceKey]);
 
   // Group entries by day label, but not while searching — day buckets would hide the
   // relevance ranking.
@@ -602,16 +684,30 @@ function MemoryList() {
       </Select>
     );
 
+  // The empty page's Add memory, one element for a viewer, a writer and a role still loading,
+  // so it keeps its focus as the role resolves while the empty state stays (a writer's
+  // Getting started checklist takes the empty state's place).
+  const emptyAdd = (
+    <Unavailable reason={addReason}>
+      <Button type="primary" htmlType="button" onClick={() => setAddOpen(true)}>
+        Add memory
+      </Button>
+    </Unavailable>
+  );
   return (
     <PageContainer className="pb-24">
       <PageHeader
         title="Memories"
         actions={
           <>
+            {/* Not on a phone, where the title row keeps the first memory inside the first
+                screen: there the top bar's Ask AI opens the panel, which shows the starters
+                on an empty conversation (New chat starts one). */}
+            {!phone && <InsightsButton />}
             <NamespaceGuideButton identity={identity} compact={phone} />
             {/* The empty state's own Add is the one primary while it shows. */}
             {!emptyNamespace && (
-              <Unavailable reason={readOnly ? READ_ONLY_TIP : null}>
+              <Unavailable reason={addReason}>
                 <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setAddOpen(true)}>
                   Add memory
                 </Button>
@@ -631,6 +727,7 @@ function MemoryList() {
         open={addOpen}
         onOpenChange={setAddOpen}
         identity={identity}
+        reason={addReason}
         onAdded={() => bumpMemoriesVersion()}
       />
 
@@ -721,6 +818,23 @@ function MemoryList() {
         />
       )}
 
+      {checklist && (
+        <GettingStarted
+          // A token form opened, or a token followed, in one namespace is not another's.
+          key={namespaceKey}
+          onboarding={onboarding}
+          identity={identity}
+          agentSeen={agentSeen}
+          // The live, unfiltered count: a deleted memory is not a first memory.
+          hasMemory={(memoryTotal ?? 0) > 0}
+          authOff={authOff}
+          collapsed={!readEmpty && !checklistOpen}
+          onExpand={() => setChecklistOpenFor(namespaceKey)}
+          onMemoryAdded={() => bumpMemoriesVersion()}
+          onHidden={() => searchInputRef.current?.focus()}
+        />
+      )}
+
       {entries === null && (
         <LoadingSkeleton label="Loading memories">
           <div className="space-y-2">
@@ -741,24 +855,41 @@ function MemoryList() {
         />
       )}
 
-      {emptyNamespace && (
+      {emptyNamespace && !checklist && (
         <ListState
           kind="empty"
           icon="clock"
           title="No memories yet"
-          description={
-            // Keyed on auth-off, not on the name "local": the namespace an
-            // auth-disabled deployment serves is configurable
-            // (LOOM_DEFAULT_NAMESPACE), and this onboarding copy is about the
-            // mode, not the name.
-            isAuthDisabled()
-              ? "This is your private single-user namespace. Anything you or your agent writes here stays — across browser sessions, container restarts, and Loom upgrades. Add a memory below, or wire up an MCP client (Settings) so your agent writes here automatically."
-              : readOnly
-                ? `Memories accumulate when an agent with writer access writes via MCP. ${READ_ONLY_TIP}.`
-                : "Memories accumulate when your agent writes via MCP — or add one yourself to seed."
-          }
-          action={readOnly ? undefined : { label: "Add memory", onClick: () => setAddOpen(true) }}
+          // Auth off reads as a writer's: the connect dialog itself shows that server's setup.
+          {...(readOnly
+            ? {
+                description: "Memories appear here when someone with writer access saves one.",
+                actions: (
+                  <>
+                    {emptyAdd}
+                    <Button type="secondary" htmlType="button" onClick={() => setMembersOpen(true)}>
+                      See who the admins are
+                    </Button>
+                  </>
+                ),
+                children: (
+                  <p className="mt-2 max-w-md text-sm text-text-muted">
+                    You're a viewer in {identity.namespace}. Ask an admin for writer to add memories.
+                  </p>
+                ),
+              }
+            : {
+                description: "Memories appear here when your agent saves one. Connect an agent, or add one yourself.",
+                actions: <>{emptyAdd}</>,
+                connect: "secondary" as const,
+              })}
         />
+      )}
+      {/* A viewer reads the members list to find an admin; its chunk loads on the first open. */}
+      {membersOpen && (
+        <Suspense fallback={null}>
+          <MembersDialog open onOpenChange={setMembersOpen} org={identity.org} namespace={identity.namespace} />
+        </Suspense>
       )}
 
       {/* Rows exist, or a filter was asked of the server, and none pass: one line and a way
@@ -824,15 +955,17 @@ function MemoryList() {
                     deleted={isTombstoned}
                     className={isNew ? "animate-fade-in" : ""}
                     leading={
-                      <Checkbox
-                        checked={isSelected}
-                        onClick={(ev) => {
-                          ev.stopPropagation();
-                          toggleSelect(e.memory_key, ev.shiftKey);
-                        }}
-                        aria-label={`Select ${e.memory_key}`}
-                        className="list-row-control"
-                      />
+                      selectable && (
+                        <Checkbox
+                          checked={isSelected}
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            toggleSelect(e.memory_key, ev.shiftKey);
+                          }}
+                          aria-label={`Select ${e.memory_key}`}
+                          className="list-row-control"
+                        />
+                      )
                     }
                   >
                     <MemoryCard
@@ -853,30 +986,32 @@ function MemoryList() {
                         <span>
                           Deleted <ListTime time={e.tombstoned_at} quiet /> · {restoreText(e.tombstoned_at)}
                         </span>
-                        <Button
-                          type="empty"
-                          htmlType="button"
-                          className="list-row-control"
-                          onClick={async (ev) => {
-                            ev.stopPropagation();
-                            // Identity carries only (org, namespace, agent);
-                            // pass user_id/session_id alongside the key.
-                            const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
-                              user_id: e.user_id || "-",
-                              session_id: e.session_id || "-",
-                            });
-                            if (r.restored) {
-                              toast(`Restored ${e.memory_key}`, "ok");
-                              bumpMemoriesVersion();
-                            } else if (r.expired) {
-                              toast("Outside the 14-day grace window — can't restore", "error");
-                            } else {
-                              toast("Nothing to restore", "info");
-                            }
-                          }}
-                        >
-                          Restore
-                        </Button>
+                        <Unavailable reason={restoreReason}>
+                          <Button
+                            type="empty"
+                            htmlType="button"
+                            className="list-row-control"
+                            onClick={async (ev) => {
+                              ev.stopPropagation();
+                              // Identity carries only (org, namespace, agent);
+                              // pass user_id/session_id alongside the key.
+                              const r = await restoreMemory({ ...identity, agent: e.agent || "-" }, e.memory_key, {
+                                user_id: e.user_id || "-",
+                                session_id: e.session_id || "-",
+                              });
+                              if (r.restored) {
+                                toast(`Restored ${e.memory_key}`, "ok");
+                                bumpMemoriesVersion();
+                              } else if (r.expired) {
+                                toast("Outside the 14-day grace window — can't restore", "error");
+                              } else {
+                                toast("Nothing to restore", "info");
+                              }
+                            }}
+                          >
+                            Restore
+                          </Button>
+                        </Unavailable>
                       </div>
                     )}
                   </ListRow>

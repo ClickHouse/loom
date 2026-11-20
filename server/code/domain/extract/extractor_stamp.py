@@ -67,7 +67,13 @@ STAGES: tuple[str, ...] = ("chunk", "symbol", "edge", "guard")
 # with the reason, or that test fails.
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "chunk": ("chunker.py", "context_text.py", "tokenize.py", "callee_outline.py"),
-    "symbol": ("treesitter.py", "lang_python.py", "py_members.py", "lang_bash.py"),
+    "symbol": (
+        "treesitter.py",
+        "lang_python.py",
+        "py_members.py",
+        "lang_bash.py",
+        "spans.py",
+    ),
     "edge": (
         "edges_treesitter.py",
         "crossref.py",

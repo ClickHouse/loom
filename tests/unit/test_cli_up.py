@@ -284,6 +284,7 @@ def test_up_single_user_boots_and_prints_connect_snippets(root: Path, stack, cap
     assert "http://localhost:7777/" in out
     assert "/mcp?toolset=coding" in out
     assert "single-user mode" in out
+    assert "pip install clickhouse-loom" in out
     assert '"namespace": "local"' in out and 'namespace="local"' in out
     assert "Authorization" not in out  # tokenless snippets
     assert "build abc1234" in out

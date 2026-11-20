@@ -143,7 +143,8 @@ async def decisions_for_paths(
     namespace `trunk_ns` whose `files[]` or code links touch `paths`, at most `limit`
     served and the rest left out. The rows `first` admits rank ahead, then constraints,
     then pinned rows, then by confidence. Each is a `memory.for_file` hit with its
-    `memory_id`, `code_state` the worst over its links on every path, `line` (the
+    `memory_id`, `code_state` the worst over its links on every path and
+    `code_changed_since` the commit of that state, `line` (the
     pre-edit block's line, the value cut) and `text` (the value as that read holds it:
     cut at its ceiling when `value_truncated`). Each path's read keeps its top
     PER_PATH_ROWS rows. `refused`, and nothing read, when the caller may not read
@@ -177,7 +178,9 @@ async def decisions_for_paths(
     for hits, _skipped in per_path:
         for hit in hits:
             row = rows.setdefault(hit["memory_id"], hit)
-            row["code_state"] = worst([row["code_state"], hit["code_state"]])
+            if worst([row["code_state"], hit["code_state"]]) != row["code_state"]:
+                row["code_state"] = hit["code_state"]
+                row["code_changed_since"] = hit.get("code_changed_since", "")
     found = [r | {"line": listing_line(r), "text": value_text(r)} for r in rows.values()]
     found.sort(
         key=lambda r: (

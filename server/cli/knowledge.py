@@ -2,7 +2,8 @@
 sources and the decisions mined from them, in-process with no token (operator only), the pass the
 knowledge_source_sync worker runs (server/knowledge/app/source_sync.py). `loom knowledge
 migrate-originals`: the originals held in ClickHouse moved to the document bucket
-(server/knowledge/app/originals.py)."""
+(server/knowledge/app/originals.py). `loom knowledge source`: the sources over a running
+server (server/cli/knowledge_source.py)."""
 
 from __future__ import annotations
 
@@ -11,7 +12,8 @@ import sys
 import time
 from typing import TYPE_CHECKING, Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import dry_run_orgs, run_connected
+from server.cli.knowledge_source import register_knowledge_source_cli
 
 if TYPE_CHECKING:
     from server.knowledge.app.originals import Migrated
@@ -32,7 +34,7 @@ def register_knowledge_cli(sub: Any) -> None:
         "source's turn or a document's extraction failed.",
     )
     p_sync.add_argument("--org", required=True)
-    p_sync.add_argument("--namespace", required=True, help="The repository's trunk code namespace")
+    p_sync.add_argument("--namespace", required=True, help="The namespace the sources live in")
     p_sync.add_argument("--source", default="", help="Only the source of this name")
     p_sync.add_argument(
         "--full",
@@ -42,6 +44,7 @@ def register_knowledge_cli(sub: Any) -> None:
         "while that request is unfinished goes on with it",
     )
     p_sync.set_defaults(func=_cmd_sync)
+    register_knowledge_source_cli(ksub)
     p_move = ksub.add_parser(
         "migrate-originals",
         help="Move the document originals still held in ClickHouse, that a document, upload "
@@ -85,9 +88,9 @@ def _cmd_sync(args: argparse.Namespace) -> int:
         for line in result.errors:
             print(f"error: {line}", file=sys.stderr)
         await _record(args.namespace, started, result)
-        return 1 if result.failed else 0
+        return 1 if result.failed or result.errors else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))
 
 
 def _cmd_migrate_originals(args: argparse.Namespace) -> int:
@@ -128,7 +131,7 @@ def _cmd_migrate_originals(args: argparse.Namespace) -> int:
             _report_migrated(result)
         return 1 if result.errors or result.refused or result.unconfirmed else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 def _report_migrated(result: Migrated) -> None:
@@ -160,6 +163,18 @@ async def _record(namespace: str, started: float, result: Any) -> None:
     try:
         counts = outcome(result)
         pass_started, pass_finished = status_store.wall_from_monotonic(started)
+        if getattr(result, "private_work", False):
+            failed = bool(result.failed or result.errors)
+            await status_store.record_manual_pass(
+                "knowledge_source_sync",
+                namespace=namespace,
+                status="failed" if failed else "ok",
+                started=pass_started,
+                finished=pass_started,
+                error_class="SYNC_FAILED" if failed else "",
+                error="SYNC_FAILED" if failed else "",
+            )
+            return
         await status_store.record_manual_pass(
             "knowledge_source_sync",
             namespace=namespace,
@@ -173,4 +188,5 @@ async def _record(namespace: str, started: float, result: Any) -> None:
             detail=status_store.detail_text(counts, {"command": "loom knowledge sync"}),
         )
     except Exception as e:  # noqa: BLE001 — health reporting never fails the command
-        print(f"note: worker_status row not written: {e}", file=sys.stderr)
+        message = "SYNC_FAILED" if getattr(result, "private_work", False) else str(e)
+        print(f"note: worker_status row not written: {message}", file=sys.stderr)

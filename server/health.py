@@ -11,10 +11,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Awaitable
 from typing import Any, cast
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
 from server import __version__, boot
@@ -47,8 +48,30 @@ async def _otel_unindexed_for_health(ch_ok: bool) -> tuple[str, ...] | None:
         return None
 
 
+async def _is_platform_admin(request: Request) -> bool:
+    """Whether the caller's bearer token verifies as a platform admin's, who reads
+    each code-index entry that is not restricted. No token, or one that does not
+    verify, is an anonymous caller: `/v1/health` refuses no one."""
+    from server.auth.bearer import bearer_token
+    from server.auth.jwt import TokenError, authenticate_token
+    from server.operations.base import Role
+
+    try:
+        token = bearer_token(request.headers.get("Authorization"))
+        if token is None:
+            return False
+        info = await authenticate_token(token)
+    except TokenError:
+        return False
+    # the admin routes' rule: a scoped token's `ns_roles` is no deployment authority
+    return not info.has_ns_roles() and info.has_role(Role.PLATFORM_ADMIN)
+
+
 def _health_provider_fields(
-    ch_ok: bool, otel_metrics_unindexed: tuple[str, ...] | None = None
+    ch_ok: bool,
+    otel_metrics_unindexed: tuple[str, ...] | None = None,
+    *,
+    platform_admin: bool = False,
 ) -> dict[str, object]:
     """The provider block of `/v1/health` plus the shared problem list and the
     `status` derived from it.
@@ -84,7 +107,7 @@ def _health_provider_fields(
     probed_dim = effective_embedding_dim()
     width_mismatches = codes_state.width_mismatches(probed_dim)
     lease = _leader.current()
-    analysis_ok, analysis_error = analysis_state()
+    analysis_ok, analysis_error, analysis_fix = analysis_state()
     assistant_ok, assistant_error = assistant_state()
     from server.core import deployment_config, rmt_carry
     from server.insights.app import provider_barrier
@@ -99,6 +122,7 @@ def _health_provider_fields(
             worker_lease_held=bool(lease.held) if lease else None,
             worker_lease_error=lease.error if lease else "",
             worker_lease_given_up=lease.given_up if lease else "",
+            worker_lease_holder_live=_leader.holder_live(),
             instance_label=_instance.instance_label(),
             otel_metrics_unindexed=otel_metrics_unindexed,
             revocation_age_s=revocation.snapshot_age_seconds(),
@@ -112,6 +136,7 @@ def _health_provider_fields(
             ch_reader_error=reader_user_error(),
             analysis_ok=analysis_ok,
             analysis_error=analysis_error,
+            analysis_fix=analysis_fix,
             assistant_ok=assistant_ok,
             assistant_error=assistant_error,
             oauth_signin_state_full=signin_claims.keeper_full(),
@@ -119,6 +144,7 @@ def _health_provider_fields(
             carry_pinned=tuple(rmt_carry.pinned_overdue()),
             refused_configuration=provider_runtime.refused_configuration(),
             code_tier_failures=tier_health.problem_rows(),
+            code_tier_names="unrestricted" if platform_admin else "none",
         ),
     )
     return {
@@ -322,6 +348,17 @@ async def health_live() -> dict[str, object]:
     return {"status": "ok"}
 
 
+@health_router.get("/v1/health/deployment")
+async def health_deployment(response: Response) -> dict[str, object]:
+    """The deployment id this process verified at boot ('' before), from memory: no
+    store is read and no credential asked, so `loom cell prepare` and attach can check
+    which deployment a host or probe address reaches (`server.core.cell_probe`)."""
+    from server.core import cell_probe
+
+    response.headers["Cache-Control"] = "no-store"
+    return cell_probe.answer()
+
+
 @health_router.get("/v1/health/ready")
 async def health_ready(response: Response) -> dict[str, object]:
     """Readiness: 200 only when every required check passes (ClickHouse,
@@ -338,7 +375,7 @@ async def health_ready(response: Response) -> dict[str, object]:
 
 
 @health_router.get("/v1/health")
-async def health(response: Response, include: str = "") -> dict[str, object]:
+async def health(request: Request, response: Response, include: str = "") -> dict[str, object]:
     """Multi-tier health.
 
     Default response (lightweight; safe for high-frequency liveness
@@ -357,12 +394,18 @@ async def health(response: Response, include: str = "") -> dict[str, object]:
 
     requested = {s.strip() for s in include.split(",") if s.strip()}
     ch_ok, ch_error = await _ping_clickhouse()
-    prov = _health_provider_fields(ch_ok, await _otel_unindexed_for_health(ch_ok))
+    platform_admin = await _is_platform_admin(request)
+    prov = _health_provider_fields(
+        ch_ok, await _otel_unindexed_for_health(ch_ok), platform_admin=platform_admin
+    )
+    if platform_admin:
+        # the answer names entries a caller without the token may not read
+        response.headers["Cache-Control"] = "no-store"
     if not ch_ok:
         response.status_code = 503
     out: dict[str, object] = {
-        # The server's release, which a coding-agent plugin compares with the
-        # minimum its manifest declares.
+        # The server's release, which a coding-agent plugin compares with its
+        # MIN_SERVER_VERSION (lib/server-version.mjs).
         "version": __version__,
         "schema_version": SCHEMA_VERSION,
         "build_commit": settings.build_commit or "unknown",
@@ -416,24 +459,61 @@ async def _pg_ok() -> bool:
 
 
 async def _postgres_block() -> dict[str, object]:
-    """How commits are acknowledged (`pg_profile.standby_now`), and the deliveries, audit
+    """How commits are acknowledged (`pg_profile.standby_now`); the deliveries, audit
     rows and knowledge document deliveries ClickHouse kept refusing past the attempt cap;
-    each None when unread."""
+    and each source's backlog (`_backlog`); each None when unread."""
     from server.core import pg_profile
     from server.knowledge.store import pg_documents
     from server.memory.store import pg_memory
 
-    standby, deliveries, audits, documents = await asyncio.gather(
+    standby, deliveries, audits, documents, backlog = await asyncio.gather(
         _bounded(pg_profile.standby_now(), None),
         _bounded(pg_memory.parked_count(), None),
         _bounded(pg_memory.parked_audits_count(), None),
         _bounded(pg_documents.parked_count(), None),
+        _bounded(_backlog(), None),
     )
     return {
         "standby": standby,
         "parked_deliveries": deliveries,
         "parked_audits": audits,
         "parked_knowledge_deliveries": documents,
+        "backlog": backlog,
+    }
+
+
+_backlog_cache: dict[str, Any] = {"at": None, "value": None}
+
+
+async def _backlog() -> dict[str, dict[str, Any]]:
+    """Each source's delivery backlog (`pg_pipeline`) with the reading's age: this
+    process's own reading, kept LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS (the delivery
+    workers' readings live in the process that runs them, by default not this one).
+    Its counts stop at LOOM_PG_BACKLOG_COUNT_CAP (`capped`); the block's `parked_*`
+    fields count in full."""
+    from server.knowledge.store import pg_documents
+    from server.memory.store import pg_memory
+
+    now = time.monotonic()
+    at = _backlog_cache["at"]
+    if at is None or now - at >= settings.pg_backlog_health_cache_seconds:
+        cap = settings.pg_backlog_count_cap
+        _backlog_cache["value"] = {
+            "memory": await pg_memory.backlog(cap),
+            "audit_outbox": await pg_memory.outbox_backlog(cap),
+            "knowledge": await pg_documents.backlog(cap),
+        }
+        _backlog_cache["at"] = now
+    age = round(now - _backlog_cache["at"], 1)
+    return {
+        source: {
+            "pending": r.pending,
+            "parked": r.parked,
+            "oldest_age_s": r.oldest_age_s,
+            "capped": r.capped,
+            "reading_age_s": age,
+        }
+        for source, r in _backlog_cache["value"].items()
     }
 
 

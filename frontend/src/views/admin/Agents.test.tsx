@@ -129,6 +129,9 @@ describe("Agents: late answers", () => {
     listConnectedAgents.mockResolvedValueOnce({ rows: [] });
     render(<Agents />);
     expect(await screen.findByText("No client has written in this window")).toBeInTheDocument();
+    // The empty window offers the connect in place, not a trip to Settings.
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+    expect(screen.queryByText(/Settings generates/)).toBeNull();
     listConnectedAgents.mockReturnValueOnce(new Promise(() => {}));
     fireEvent.click(screen.getByRole("button", { name: /Refresh/ }));
     await waitFor(() => expect(listConnectedAgents).toHaveBeenCalledTimes(2));

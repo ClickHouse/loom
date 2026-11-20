@@ -230,6 +230,7 @@ def _note(op_name: str, keys: list[str]) -> None:
 def response_body(op: Any, args: Any, result: Any) -> Any:
     """The dumped result a transport returns, with `ignored_args` /
     `did_you_mean` when the call carried keys the op does not read."""
+    from server.core.request_work import flag_response
     from server.transport.epoch_nulls import scrub
 
     body = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
@@ -237,7 +238,8 @@ def response_body(op: Any, args: Any, result: Any) -> Any:
     block = ignored_block(op, args)
     if block:
         _note(op.name, block["ignored_args"])
-    return attach(body, block)
+    body = attach(body, block)
+    return flag_response(body) if isinstance(body, dict) else body
 
 
 def header_value(op: Any, args: Any, result: Any) -> str:

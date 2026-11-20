@@ -18,7 +18,6 @@ from typing import Any
 import server.memory.store as memory_repo
 from server.core import pg
 from server.core.naming import is_anonymous_user, session_spellings
-from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app import conflicts
 from server.memory.app.auto_resolution import (
@@ -29,6 +28,7 @@ from server.memory.app.auto_resolution import (
     settle_retirements,
 )
 from server.memory.domain import lock
+from server.memory.domain.memory_types import is_namespace_definition
 from server.memory.store import pg_memory
 
 log = logging.getLogger(__name__)
@@ -88,8 +88,9 @@ def same_key_victims(
     the newest when a caller sent a key twice); `live_rows` are the
     namespace's live rows for those keys with their embedding identity
     (`namespace`, `agent`, `user_id`, `session_id`) and `pinned`. A live row
-    retires when it shares a key with a new row, is not one of the new rows
-    and is not pinned; `superseded_by` is the new row's id."""
+    retires when it shares a key with a new row, is not one of the new rows,
+    is not pinned and is not a definition's namespace-wide row (`live_rows` carry
+    `memory_type`); `superseded_by` is the new row's id."""
     newest_by_key: dict[str, str] = {}
     new_ids: set[str] = set()
     for r in new_rows:
@@ -105,6 +106,8 @@ def same_key_victims(
         mid = str(m.get("memory_id") or "")
         if key not in newest_by_key or not mid or mid in new_ids or bool(m.get("pinned")):
             continue
+        if is_namespace_definition(m):
+            continue  # only a write of the namespace-wide row itself revises it
         out.append(_victim(m, newest_by_key[key]))
     return out
 
@@ -147,13 +150,14 @@ async def keys_held_elsewhere(
         "own_user": user,
         "own_sessions": session_spellings(str(writer["session_id"])),
     }
+    scope = conflicts._writer_scope(user)
+    if scope is None:
+        return set()
     if pg.enabled():
         # The authority's heads: a first write of the key elsewhere answers at its
         # commit, before ClickHouse holds it.
         own = set(params["own_sessions"])
-        heads = await pg_memory.live_key_heads(
-            org, namespace, params["keys"], scope=request_scope()
-        )
+        heads = await pg_memory.live_key_heads(org, namespace, params["keys"], scope=scope)
         return {
             str(h["memory_key"])
             for h in heads
@@ -162,7 +166,7 @@ async def keys_held_elsewhere(
             and h.get("sensitivity") != "high"
             and h.get("status") in ("active", "conflicted")
         }
-    in_scope = scope_and(request_scope(), params)
+    in_scope = scope_and(scope, params)
     rows = await ch.query_all(
         f"""
         SELECT DISTINCT memory_key
@@ -183,19 +187,24 @@ _SUPERSEDABLE = ("active", "duplicate", "conflicted")
 
 
 async def _live_same_key_rows(
-    org: str, namespace: str, keys: list[str], *, ch: Any
+    org: str, namespace: str, keys: list[str], *, ch: Any, user_id: str = ""
 ) -> list[dict[str, Any]]:
-    """The live rows of `keys` in the writer's read scope that a same-key write may retire,
-    each with its identity, value and `pinned`. Under Postgres the authority's heads: a
+    """The live rows of `keys` in the write's scope that a same-key write may retire,
+    each with its identity, type, value and `pinned`. Under Postgres the authority's heads: a
     first write of the key in another session answers at its commit, before ClickHouse
-    holds it."""
+    holds it. A write that names its user, under a namespace-wide token, reads that
+    user's rows only; a write that names no user keeps the request's scope."""
+    scope = conflicts._writer_scope(user_id)
+    if scope is None:
+        return []
     if pg.enabled():
-        heads = await pg_memory.live_key_heads(org, namespace, keys, scope=request_scope())
+        heads = await pg_memory.live_key_heads(org, namespace, keys, scope=scope)
         return [
             {
                 "memory_id": str(h["memory_id"]),
                 **{c: h[c] for c in ("namespace", "agent", "user_id", "session_id")},
                 "memory_key": h["memory_key"],
+                "memory_type": h["memory_type"],
                 "value": h.get("value"),
                 "pinned": h.get("pinned"),
             }
@@ -206,12 +215,11 @@ async def _live_same_key_rows(
     # the new rows and not retired themselves (CH Cloud replicas; no-op on plain
     # MergeTree).
     params: dict[str, Any] = {"org": org, "ns": namespace, "keys": keys}
-    # A write retires only rows inside the writer's read scope.
-    in_scope = scope_and(request_scope(), params)
+    in_scope = scope_and(scope, params)
     rows: list[dict[str, Any]] = await ch.query_all(
         f"""
         SELECT toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, value, pinned
+               memory_key, memory_type, value, pinned
         FROM loom.memory FINAL
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND memory_key IN {{keys:Array(String)}} AND tombstoned_at IS NULL
@@ -249,7 +257,18 @@ async def supersede_same_key_rows(
         keys = sorted({str(r.get("memory_key") or "") for r in new_rows} - {""})
         if not keys:
             return 0
-        live = await _live_same_key_rows(org, namespace, keys, ch=ch)
+        live: list[dict[str, Any]] = []
+        by_user: dict[str, list[str]] = {}
+        for r in new_rows:
+            key = str(r.get("memory_key") or "")
+            if key:
+                by_user.setdefault(str(r.get("user_id") or ""), []).append(key)
+        for user_id, user_keys in by_user.items():
+            live.extend(
+                await _live_same_key_rows(
+                    org, namespace, sorted(set(user_keys)), ch=ch, user_id=user_id
+                )
+            )
         victims = same_key_victims(new_rows, live)
         if not victims:
             return 0

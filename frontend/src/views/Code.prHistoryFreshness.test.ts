@@ -21,19 +21,19 @@ const worker = (over: Partial<CodeWorkerStatus>): CodeWorkerStatus =>
 
 describe("passFreshness", () => {
   it("is current while a pass ran within two intervals", () => {
-    expect(passFreshness(worker({}), NOW)).toEqual({ text: "current", tone: "ok" });
+    expect(passFreshness(worker({}), NOW)).toEqual({ text: "Current", tone: "ok" });
   });
   it("is stale once passes stop", () => {
     expect(passFreshness(worker({ last_run_at: "2030-01-01T10:00:00Z" }), NOW)).toEqual({
-      text: "stale",
+      text: "Stale",
       tone: "warn",
     });
   });
   it("names failing, disabled, pending and absent workers", () => {
-    expect(passFreshness(worker({ consecutive_failures: 2 }), NOW).text).toBe("failing");
-    expect(passFreshness(worker({ enabled: false }), NOW).text).toBe("disabled");
-    expect(passFreshness(worker({ last_run_at: "" }), NOW).text).toBe("pending");
-    expect(passFreshness(undefined, NOW).text).toBe("not on this replica");
+    expect(passFreshness(worker({ consecutive_failures: 2 }), NOW).text).toBe("Failing");
+    expect(passFreshness(worker({ enabled: false }), NOW).text).toBe("Disabled");
+    expect(passFreshness(worker({ last_run_at: "" }), NOW).text).toBe("Pending");
+    expect(passFreshness(undefined, NOW).text).toBe("Not on this replica");
   });
 });
 

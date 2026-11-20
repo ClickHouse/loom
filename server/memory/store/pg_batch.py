@@ -34,10 +34,14 @@ from server.core.ch_errors import is_connection_failure, is_passing_state
 from server.core.ch_writes import partition_blocks
 from server.core.error_summary import error_summary
 from server.core.repo_base import _CHClient, _default_client
-from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import inserts, pg_memory, pg_publish
 from server.memory.store.pg_memory import AUDIT_ROW, MEMORY_ROW, SEARCH_DOC, Committed
-from server.memory.store.rows import created_month, identity_key, search_document_row
+from server.memory.store.rows import (
+    IdentityKey,
+    created_month,
+    identity_key,
+    search_document_row,
+)
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -328,7 +332,9 @@ async def _served_documents(
     """By entry, the documents still to send, each by the revision it was built from:
     its own while that is the key's head, else rebuilt onto a newer copy of it (a pin, a
     touch, a conflict mark) that owes no document of its own, as `pg_delivery._still_heads`
-    serves one, so the writer's vector is not embedded again. One whose head was deleted,
+    serves one, so the writer's vector is not embedded again: when the first read shows
+    such a copy, the heads are read again durably and every document decided from that
+    read, since the copy may be on the primary alone. One whose head was deleted,
     rewritten or redacted since is not sent: it would land live above that head's own
     retirement. Its delivery goes to the entry's `stale`, for the delivery worker to
     build from the head or settle (`_hand_over`)."""
@@ -336,25 +342,14 @@ async def _served_documents(
     keys = [identity_key(d) for e in waiting for d in e.documents]
     heads = await pg_memory.heads_owing(keys) if keys else {}
 
-    def served(doc: dict[str, Any]) -> dict[str, Any] | None:
-        head, owed = heads.get(identity_key(doc), (None, 0))
-        if head is None or head.get("redacted_at") is not None:
-            return None
-        if int(head["version"]) == int(doc["version"]):
-            return doc
-        copy = (
-            int(head["version"]) > int(doc["version"])
-            and not owed & SEARCH_DOC
-            and head.get("tombstoned_at") is None
-            and pg_memory.embedded(head)
-            and is_content_hash(str(head.get("content_sha256") or ""))
-            and head.get("content_sha256") == doc.get("content_sha256")
-        )
-        return _onto(doc, head) if copy else None
+    if any(_newer_copy(d, heads) is not None for e in waiting for d in e.documents):
+        heads = await pg_memory.heads_owing(keys, durable=True)
 
     sent: dict[int, dict[tuple[Any, ...], dict[str, Any]]] = {}
     for e in waiting:
-        sent[id(e)] = {_doc_key(d): out for d in e.documents if (out := served(d)) is not None}
+        sent[id(e)] = {
+            _doc_key(d): out for d in e.documents if (out := _served(d, heads)) is not None
+        }
         moved = {_doc_key(d) for d in e.documents} - sent[id(e)].keys()
         e.stale = [
             seq
@@ -362,6 +357,31 @@ async def _served_documents(
             if _doc_key(row) in moved
         ]
     return sent
+
+
+_Heads = dict[IdentityKey, tuple[dict[str, Any], int]]
+
+
+def _newer_copy(doc: Mapping[str, Any], heads: _Heads) -> dict[str, Any] | None:
+    """The key's head when it is a newer copy of the document's row
+    (`pg_memory.newer_copy`) that owes no document of its own, else None."""
+    head, owed = heads.get(identity_key(doc), (None, 0))
+    if head is None or owed & SEARCH_DOC or not pg_memory.newer_copy(head, doc):
+        return None
+    return head
+
+
+def _served(doc: dict[str, Any], heads: _Heads) -> dict[str, Any] | None:
+    """The document to send for `doc` (`_served_documents`), None for none."""
+    head, _ = heads.get(identity_key(doc), (None, 0))
+    if (
+        head is not None
+        and head.get("redacted_at") is None
+        and int(head["version"]) == int(doc["version"])
+    ):
+        return doc
+    copy = _newer_copy(doc, heads)
+    return None if copy is None else _onto(doc, copy)
 
 
 def _onto(doc: Mapping[str, Any], head: Mapping[str, Any]) -> dict[str, Any]:

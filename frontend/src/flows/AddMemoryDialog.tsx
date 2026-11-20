@@ -5,7 +5,9 @@ import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { setMemory, type Identity } from "../api";
 import { sharedTagVocabulary } from "../lib/sharedReads";
-import { humanizeError } from "../lib/format";
+import { DASHBOARD_AGENT } from "../lib/format";
+import { humanizeError, toastCommitted } from "../lib/errorWords";
+import { isPublicationPending } from "../lib/errors";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
@@ -15,6 +17,9 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   identity: Identity;
   onAdded: () => void;
+  /** Why the caller cannot add, when known: the page closes the dialog when it appears, and
+   *  submit guards the render before it does. */
+  reason?: string | null;
 }
 
 // "Never" leaves ttl_seconds unset → no `expires_at`; lives until deleted.
@@ -28,7 +33,7 @@ const EXPIRY_OPTIONS: Array<{ label: string; ttlSeconds: number | null }> = [
   { label: "1 year", ttlSeconds: 365 * 24 * 60 * 60 },
 ];
 
-export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props) {
+export function AddMemoryDialog({ open, onOpenChange, identity, onAdded, reason = null }: Props) {
   const [memoryKey, setMemoryKey] = useState("");
   const [value, setValue] = useState("");
   const [tagsInput, setTagsInput] = useState("");
@@ -68,7 +73,7 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
   const canSubmit = memoryKey.trim() !== "" && value.trim() !== "" && !keyError && !busy;
 
   const onSubmit = async () => {
-    if (!canSubmit) return;
+    if (!canSubmit || reason) return;
     setBusy(true);
     setError(null);
     const tags = tagsInput
@@ -78,19 +83,25 @@ export function AddMemoryDialog({ open, onOpenChange, identity, onAdded }: Props
     try {
       // Attribute to `loom-ui`, not the picker (which is "view as", not the
       // writer) — Conflicts/Audit/Spending key off `agent`.
-      await setMemory({ ...identity, agent: "loom-ui" }, memoryKey.trim(), value.trim(), {
+      await setMemory({ ...identity, agent: DASHBOARD_AGENT }, memoryKey.trim(), value.trim(), {
         memoryType: "semantic",
         tags,
         ttlSeconds: EXPIRY_OPTIONS[expiryIdx].ttlSeconds,
       });
       toast("Memory added", "ok");
-      onAdded();
-      reset();
-      onOpenChange(false);
     } catch (e) {
-      setError(humanizeError(e));
-      setBusy(false);
+      // Added, with only lists and search behind: the dialog closes as after a success, so
+      // it is not sent again.
+      if (!isPublicationPending(e)) {
+        setError(humanizeError(e));
+        setBusy(false);
+        return;
+      }
+      toastCommitted(e);
     }
+    onAdded();
+    reset();
+    onOpenChange(false);
   };
 
   return (

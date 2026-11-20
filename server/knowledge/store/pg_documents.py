@@ -13,14 +13,16 @@ from __future__ import annotations
 
 import base64
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Set
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc_second
 from server.core.errors import NotFoundError, PreconditionFailedError, ValidationError
-from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
+from server.knowledge.domain.serving import Serving
+from server.observability import pg_pipeline
 from server.settings import settings
 
 # Delivery targets (bits of `targets`).
@@ -90,32 +92,36 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
     for col, val in row.items():
         # Whole seconds, as ClickHouse's DateTime keeps them: the head serves what a read
         # of the published row would.
-        out[col] = to_naive_utc_second(val).isoformat() if isinstance(val, datetime) else _keep(val)
+        out[col] = (
+            to_naive_utc_second(val).isoformat() if isinstance(val, datetime) else keep_text(val)
+        )
     return out
 
 
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     """The insertable loom.documents row back from its JSON."""
-    out = {col: _restore(val) for col, val in stored.items()}
+    out = {col: restore_text(val) for col, val in stored.items()}
     for col in _DATETIME_COLS:
         if isinstance(out.get(col), str):
             out[col] = datetime.fromisoformat(out[col])
     return out
 
 
-def _keep(val: Any) -> Any:
+def keep_text(val: Any) -> Any:
+    """`val` as JSON Postgres can store: text it cannot goes in base64 (`_ENCODED`)."""
     if isinstance(val, str) and pg.unstorable(val):
         return {_ENCODED: base64.b64encode(val.encode("utf-8", "surrogatepass")).decode()}
     if isinstance(val, list):
-        return [_keep(v) for v in val]
+        return [keep_text(v) for v in val]
     return val
 
 
-def _restore(val: Any) -> Any:
+def restore_text(val: Any) -> Any:
+    """`keep_text`'s value back."""
     if isinstance(val, dict) and set(val) == {_ENCODED}:
         return base64.b64decode(val[_ENCODED]).decode("utf-8", "surrogatepass")
     if isinstance(val, list):
-        return [_restore(v) for v in val]
+        return [restore_text(v) for v in val]
     return val
 
 
@@ -127,7 +133,7 @@ _LOCK_HEADS = (
 # A row keeps the `doc_id` of the document its writer read (`build_document_row`), and a
 # write carrying columns of a live one names it (`built_from`): one an erasure removed
 # since, at any version, is refused. Evidence expires by age; the sweep only reclaims it.
-_ERASED = (
+ERASED = (
     "SELECT EXISTS (SELECT 1 FROM loom.erased_documents WHERE org = $1 AND namespace = $2 "
     "AND doc_id = ANY($3::text[]) AND erased_at > now() - make_interval(hours => $4))"
 )
@@ -135,13 +141,17 @@ _ERASED = (
 # lock taken on a row that does not exist yet holds nothing.
 _INSERT_HEAD = (
     "INSERT INTO loom.knowledge_heads "
-    "(org, namespace, source_uri, version, revision, deleted, user_id, row) "
-    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) "
+    "(org, namespace, source_uri, version, revision, deleted, user_id, row, "
+    "chunks_revision, chunks_version) "
+    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10) "
     "ON CONFLICT (org, namespace, source_uri) DO NOTHING RETURNING 1"
 )
+# A commit that inserted no chunks ($9 and $10 NULL) keeps the ones the head serves.
 _UPDATE_HEAD = (
     "UPDATE loom.knowledge_heads SET version = $4, revision = $5, deleted = $6, "
-    "user_id = $7, row = $8::jsonb, committed_at = now() "
+    "user_id = $7, row = $8::jsonb, committed_at = now(), "
+    "chunks_revision = COALESCE($9::integer, chunks_revision), "
+    "chunks_version = COALESCE($10::bigint, chunks_version) "
     "WHERE org = $1 AND namespace = $2 AND source_uri = $3"
 )
 _INSERT_DELIVERY = (
@@ -157,11 +167,14 @@ async def commit(
     over: Mapping[str, int],
     targets: Mapping[str, int],
     built_from: Sequence[str] = (),
+    chunked: Set[str] = frozenset(),
 ) -> float:
     """Commit `rows` (loom.documents rows of one namespace) as their sources' heads, each
     only over the version `over[source_uri]` its writer read (0: none), and record what
     each owes ClickHouse (`targets[source_uri]`, bits of DOCUMENT_ROW and RETIRE_OLDER) under
-    COMMIT_TOKEN for LOOM_PG_REQUEST_LEASE_SECONDS. HeadMoved when a head moved.
+    COMMIT_TOKEN for LOOM_PG_REQUEST_LEASE_SECONDS. HeadMoved when a head moved. For the
+    sources in `chunked`, whose write inserted chunks at the row's version, the head
+    serves those chunks from now on (`serves`); another commit keeps the ones it serves.
 
     A source with no head yet (a document written before its namespace had heads, or by
     a build that writes none) takes its first head from this commit, whatever its writer
@@ -193,7 +206,7 @@ async def commit(
         }
         # Read after the heads' locks, which an erasure holds until it commits.
         if await conn.fetchval(
-            _ERASED,
+            ERASED,
             org,
             namespace,
             [*(str(r["doc_id"]) for r, _ in encoded), *built_from],
@@ -212,15 +225,17 @@ async def commit(
                 raise HeadMoved(uri)
         for row, stored in encoded:
             uri = str(row["source_uri"])
+            revision, version = int(row.get("revision") or 0), int(row["version"])
             head = (
                 org,
                 namespace,
                 uri,
-                int(row["version"]),
-                int(row.get("revision") or 0),
+                version,
+                revision,
                 row.get("superseded_at") is not None,
                 str(row.get("user_id") or "-"),
                 stored,
+                *((revision, version) if uri in chunked else (None, None)),
             )
             if uri in held:
                 await conn.execute(_UPDATE_HEAD, *head)
@@ -299,6 +314,49 @@ async def heads(org: str, namespace: str, uris: Sequence[str]) -> dict[str, Head
         sorted(set(uris)),
     )
     return {str(r["source_uri"]): Head(decode_row(r["row"]), bool(r["owed"])) for r in got}
+
+
+async def head_lists(org: str, namespace: str, uris: Sequence[str]) -> dict[str, str]:
+    """The permission list (`access_json`) of each live head among these sources, read
+    without the rest of the row."""
+    uris = [u for u in uris if not pg.unstorable(u)]
+    if not uris or pg.unstorable([org, namespace]):
+        return {}
+    got = await pg.fetch(
+        "SELECT source_uri, row->'access_json' AS access_json "
+        "FROM loom.knowledge_heads "
+        "WHERE org = $1 AND namespace = $2 AND source_uri = ANY($3::text[]) AND NOT deleted",
+        org,
+        namespace,
+        sorted(set(uris)),
+    )
+    return {str(r["source_uri"]): str(restore_text(r["access_json"]) or "") for r in got}
+
+
+async def serving(org: str, sources: Sequence[tuple[str, str]]) -> dict[tuple[str, str], Serving]:
+    """What the heads of these (namespace, source_uri) pairs serve, in one read; a pair
+    with no head (or a key Postgres cannot store, which holds none) is absent."""
+    pairs = sorted({s for s in sources if not pg.unstorable(s)})
+    if not pairs or pg.unstorable(org):
+        return {}
+    got = await pg.fetch(
+        "SELECT h.namespace, h.source_uri, h.deleted, h.revision, h.chunks_revision, "
+        "h.chunks_version FROM loom.knowledge_heads h "
+        "JOIN unnest($2::text[], $3::text[]) AS s(namespace, source_uri) "
+        "ON (h.namespace, h.source_uri) = (s.namespace, s.source_uri) WHERE h.org = $1",
+        org,
+        [ns for ns, _ in pairs],
+        [uri for _, uri in pairs],
+    )
+    return {
+        (str(r["namespace"]), str(r["source_uri"])): Serving(
+            bool(r["deleted"]),
+            int(r["revision"]),
+            None if r["chunks_revision"] is None else int(r["chunks_revision"]),
+            None if r["chunks_version"] is None else int(r["chunks_version"]),
+        )
+        for r in got
+    }
 
 
 async def drop_unbacked(org: str, namespace: str, source_uri: str, version: int) -> None:
@@ -419,13 +477,16 @@ async def release(deliveries: Sequence[Delivery]) -> None:
 async def owed_originals(org: str, namespace: str) -> set[str]:
     """The originals and extraction artifacts the live documents of the namespace's
     unpublished commits name (owed or parked deliveries; a tombstone or an erased
-    original needs none): their loom.documents rows have not landed, so the originals
-    sweep, which reads ClickHouse, does not see them named."""
+    original needs none), and the originals its open ingestion jobs read: their
+    ClickHouse rows may not have landed, so the originals sweep, which reads ClickHouse,
+    may not see them named."""
     if pg.unstorable([org, namespace]):
-        return set()  # no delivery holds what Postgres cannot store
+        return set()  # no delivery or job holds what Postgres cannot store
     rows = await pg.fetch(
-        f"SELECT DISTINCT sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
-        f"WHERE org = $1 AND namespace = $2 AND {NEEDS_ORIGINAL}",
+        f"SELECT sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
+        f"WHERE org = $1 AND namespace = $2 AND {NEEDS_ORIGINAL} "
+        "UNION SELECT row->>'sha256' FROM loom.knowledge_jobs "
+        f"WHERE org = $1 AND namespace = $2 AND {OPEN_JOB}",
         org,
         namespace,
     )
@@ -447,6 +508,39 @@ async def unpublished(org: str, namespace: str) -> tuple[int, int]:
         namespace,
     )
     return int(row["owed"]), int(row["parked"])
+
+
+async def owed_ending(org: str, namespace: str, suffix: str) -> Literal["parked", "owed", ""]:
+    """`parked` when a delivery of a source whose address ends in `suffix` is parked
+    past LOOM_PG_DELIVERY_MAX_ATTEMPTS, else `owed` when one is still owed, else ""."""
+    if pg.unstorable([org, namespace, suffix]):
+        return ""  # no delivery holds what Postgres cannot store
+    row = await pg.fetchrow(
+        "SELECT bool_or(lease_until = 'infinity') AS parked, count(*) > 0 AS owed "
+        "FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2 "
+        "AND NOT settled AND right(source_uri, length($3)) = $3",
+        org,
+        namespace,
+        suffix,
+    )
+    return "parked" if row["parked"] else "owed" if row["owed"] else ""
+
+
+async def backlog(cap: int) -> pg_pipeline.Backlog:
+    """The knowledge deliveries owed, for the pipeline gauges: not parked (up to `cap`),
+    parked, and the age of the oldest owed one by its head's commit."""
+    row = await pg.fetchrow(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.knowledge_deliveries "
+        "  WHERE NOT settled AND lease_until < 'infinity' LIMIT $1) p) AS pending, "
+        "(SELECT count(*) FROM (SELECT 1 FROM loom.knowledge_deliveries "
+        "  WHERE lease_until = 'infinity' AND NOT settled LIMIT $1) k) AS parked, "
+        "(SELECT extract(epoch FROM clock_timestamp() - min(h.committed_at)) "
+        "  FROM (SELECT org, namespace, source_uri FROM loom.knowledge_deliveries "
+        "    WHERE NOT settled AND lease_until < 'infinity' ORDER BY lease_until LIMIT $1) d "
+        "  JOIN loom.knowledge_heads h USING (org, namespace, source_uri)) AS oldest",
+        cap + 1,  # one past the cap says the count stopped
+    )
+    return pg_pipeline.backlog_from(row, cap)
 
 
 async def parked_count() -> int:
@@ -529,3 +623,85 @@ async def publication_may_land(org: str, namespace: str, source_uri: str) -> boo
             pg.insert_bound_s(),
         )
     )
+
+
+async def hold_for_republish(after: datetime) -> int:
+    """Owe again every head committed after `after` (its row, and the retirement of the
+    older versions a restored ClickHouse may serve), as deliveries held parked and marked
+    `pg_lease.HELD_BY_RECONCILE`, merged into one the head still owes. Returns how many."""
+    done = await pg.execute(
+        "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
+        "user_id, row, targets, lease_until, fenced_until, last_error) "
+        f"SELECT org, namespace, source_uri, version, user_id, row, {DOCUMENT_ROW | RETIRE_OLDER}, "
+        "'infinity', now(), $2 FROM loom.knowledge_heads WHERE committed_at > $1 "
+        "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET "
+        "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+        "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+        "settled = false, attempts = 0",
+        after,
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])
+
+
+async def head_page(after: tuple[str, str, str] | None, limit: int) -> list[dict[str, Any]]:
+    """Up to `limit` heads, deleted ones included, in key order after `after` (org,
+    namespace, source_uri): each one's key and version."""
+    args: list[Any] = [limit]
+    where = ""
+    if after is not None:
+        args += list(after)
+        where = "WHERE (org, namespace, source_uri) > ($2, $3, $4)"
+    rows = await pg.fetch(
+        f"SELECT org, namespace, source_uri, version FROM loom.knowledge_heads {where} "
+        "ORDER BY org, namespace, source_uri LIMIT $1",
+        *args,
+    )
+    return [dict(r) for r in rows]
+
+
+async def hold_heads(keys: Sequence[tuple[str, str, str]]) -> int:
+    """Owe these heads again, as `hold_for_republish` does for a window."""
+    if not keys:
+        return 0
+    done = await pg.execute(
+        "INSERT INTO loom.knowledge_deliveries AS d (org, namespace, source_uri, version, "
+        "user_id, row, targets, lease_until, fenced_until, last_error) "
+        f"SELECT h.org, h.namespace, h.source_uri, h.version, h.user_id, h.row, "
+        f"{DOCUMENT_ROW | RETIRE_OLDER}, 'infinity', now(), $4 FROM loom.knowledge_heads h "
+        "JOIN unnest($1::text[], $2::text[], $3::text[]) AS k(org, namespace, source_uri) "
+        "USING (org, namespace, source_uri) "
+        "ON CONFLICT (org, namespace, source_uri, version) DO UPDATE SET "
+        "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+        "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+        "settled = false, attempts = 0",
+        [k[0] for k in keys],
+        [k[1] for k in keys],
+        [k[2] for k in keys],
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])
+
+
+async def held_sources() -> list[dict[str, Any]]:
+    """(org, namespace, source_uri) of each live head `hold_for_republish` and
+    `hold_heads` hold: a deleted one has no chunks to build again."""
+    rows = await pg.fetch(
+        "SELECT DISTINCT d.org, d.namespace, d.source_uri FROM loom.knowledge_deliveries d "
+        "JOIN loom.knowledge_heads h USING (org, namespace, source_uri) "
+        "WHERE d.lease_until = 'infinity' AND d.last_error = $1 AND NOT h.deleted "
+        "ORDER BY d.org, d.namespace, d.source_uri",
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return [dict(r) for r in rows]
+
+
+async def release_held() -> int:
+    """Make every delivery marked `HELD_BY_RECONCILE` due now (`hold_for_republish`'s and
+    the heads-behind hold's); returns how many."""
+    done = await pg.execute(
+        "UPDATE loom.knowledge_deliveries SET lease_until = now(), last_error = '' "
+        "WHERE lease_until = 'infinity' AND last_error = $1",
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])

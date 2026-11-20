@@ -9,6 +9,7 @@ import sys
 from datetime import date, timedelta
 from typing import Any
 
+from server.cli._ch import check_acceptance, connect_verified, disconnect, reads
 from server.core.datetimes import utc_now as _now
 
 # The first botocore whose put_object takes IfNoneMatch (the `aws` extra's floor).
@@ -89,17 +90,27 @@ def _cmd_export(args: argparse.Namespace) -> int:
     check_credentials(role_arn=args.role_arn, region=args.region)
     put = s3_put(new_client, args.bucket, expected_owner=args.expected_bucket_owner)
 
-    # No model calls and no writes to ClickHouse: a plain connection, outside
-    # the provider barrier that `run_connected` enters. It connects inside the
-    # deadline's scope, so the driver's read timeout is the deadline too.
+    # Analytics export consumes org data even without inference; its entire native
+    # body participates in permanent retirement without taking model admission.
+    from server.insights.app.provider_command import participant_command
+
     async def _go() -> list[Exported]:
         with statement_timeout(STATEMENT_TIMEOUT_S):
             ch = get_client()
-            await ch.connect()
+            await connect_verified(ch)
             try:
-                return await export_day(day, prefix=args.prefix, put=put, name_key=name_key, ch=ch)
+                async with participant_command():
+                    await check_acceptance(org_free=reads("reads; writes only the export bucket"))
+                    return await export_day(
+                        day, prefix=args.prefix, put=put, name_key=name_key, ch=ch
+                    )
             finally:
-                await ch.disconnect()
+                first = sys.exception()
+                try:
+                    await disconnect(ch)
+                except BaseException:  # a disconnect failure must not replace the command failure
+                    if first is None:
+                        raise
 
     for e in asyncio.run(_go()):
         # A kept object's size is the earlier run's, which this run never read.

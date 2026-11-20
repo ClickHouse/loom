@@ -16,7 +16,7 @@ import { SearchField } from "@clickhouse/click-ui/SearchField";
 import { listMine, cancelNamespaceRequest, type MyNamespaceEntry } from "../api";
 import { invalidateShared, sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
-import { WILDCARD_NAMESPACE } from "../lib/namespace";
+import { WILDCARD_NAMESPACE, isCollectionName } from "../lib/namespace";
 import { nameFamilies } from "../lib/nameFamilies";
 import { isSystemKind, parseChTime } from "../lib/format";
 import { toast, toastError } from "./Toast";
@@ -28,9 +28,9 @@ import { Loading, Tip } from "./ui";
  * (`NamespacePicker` draws the trigger and loads this the first time it is needed). Sections
  * by role (you own → joined → other), sort by recency within section, badges for
  * visibility, and a hide-system-namespaces toggle so bench artefacts don't drown out a
- * user's actual namespaces. Memory namespaces whose names share a prefix (`col-`, `u-`, a
+ * user's actual namespaces. Memory namespaces whose names share a prefix (`u-`, a
  * deployment's own scheme, per owner when the names carry its uuid) fold into a group per
- * prefix, as code indexes and tracker records do. It mounts as the popover opens, so each
+ * prefix, as repositories and tracker records do. It mounts as the popover opens, so each
  * open starts folded, with the search empty.
  */
 export function NamespacePickerList({
@@ -45,7 +45,7 @@ export function NamespacePickerList({
   /** The picker's trigger, which holds the focus while this panel loads. */
   triggerRef: RefObject<HTMLButtonElement>;
   onPick: (namespace: string) => void;
-  /** Close the popover (before a jump to Spaces). */
+  /** Close the popover (before a jump to Namespaces in your org). */
   onClose: () => void;
   /** Close the popover and open the create dialog. */
   onCreate: () => void;
@@ -125,15 +125,19 @@ export function NamespacePickerList({
   };
 
   // Every row the list may show, before the search: `*` is an access wildcard, not a
-  // namespace, and system / bench rows wait behind their toggle.
+  // namespace, a collection opens in the Library (the footer links there), and system /
+  // bench rows wait behind their toggle.
   const listed = (allRows || []).filter(
-    (r) => r.namespace !== WILDCARD_NAMESPACE && (showSystem || !isSystemShaped(r) || r.namespace === current),
+    (r) =>
+      r.namespace !== WILDCARD_NAMESPACE &&
+      !isCollectionName(r.namespace) &&
+      (showSystem || !isSystemShaped(r) || r.namespace === current),
   );
   const q = query.toLowerCase();
   const matches = (r: MyNamespaceEntry) =>
     !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
 
-  // Code indexes and tracker records each fold into a group of their own, told apart by the
+  // Repositories and tracker records each fold into a group of their own, told apart by the
   // server's `kind` alone (a name is free text); memory namespaces whose names share a
   // token prefix fold into one per prefix (`nameFamilies`). The names decide the groups, so
   // a keystroke in the search reworks none of them.
@@ -163,7 +167,7 @@ export function NamespacePickerList({
   const owned = byRole(["admin"]);
   const joined = byRole(["writer", "viewer"]);
   const transient = byRole(["jwt"]);
-  // Joined anything, grouped or not: the Spaces link moves from the list to the footer.
+  // Joined anything, grouped or not: the link to public namespaces moves from the list to the footer.
   const hasJoined = listed.some((r) => !kindGroup(r) && r.role !== "admin");
 
   // Sort each group: current selection first, then most-recently-joined.
@@ -337,7 +341,7 @@ export function NamespacePickerList({
                 setView("browse");
               }}
             >
-              Find public namespaces to join in Spaces
+              Find public namespaces to join
             </Button>
           </div>
         )}
@@ -357,6 +361,7 @@ export function NamespacePickerList({
                 : setOpenGroups((o) => ({ ...o, [x.g]: !x.expanded }))
             }
           >
+            {x.g === "code" && <p className="px-2 py-1 text-xs text-text-muted">Code that Loom indexes, read-only.</p>}
             {x.shown.map((r) => (
               <NamespaceRow key={r.namespace} r={r} {...rowProps} kindRow />
             ))}
@@ -391,9 +396,9 @@ export function NamespacePickerList({
             Hide system namespaces
           </Button>
         )}
-        {/* Browsing and joining spaces is part of picking one,
-          so the Spaces page is reached from here, not from the rail. One
-          call to action: the empty list above already carries it. */}
+        {/* Finding a public namespace to join is part of picking one, so Namespaces in your
+          org is reached from here, not from the rail. One call to action: the empty list
+          above already carries it. */}
         {known != null && (hasJoined || !!query) && (
           <Button
             type="empty"
@@ -405,12 +410,27 @@ export function NamespacePickerList({
               setView("browse");
             }}
           >
-            Browse and join spaces
+            Find public namespaces to join
           </Button>
         )}
         <Button type="empty" htmlType="button" iconLeft="plus" align="left" onClick={onCreate}>
           Create namespace
         </Button>
+        <Button
+          type="empty"
+          htmlType="button"
+          iconLeft="folder-open"
+          align="left"
+          onClick={() => {
+            onClose();
+            setView("knowledge");
+          }}
+        >
+          Open collections in the Library
+        </Button>
+        {/* One line: a taller footer shrinks the list and gives it a scrollbar. The button above
+            says where collections are. */}
+        <p className="px-3 pt-1 text-xs text-text-muted">A namespace holds memories, code or tracker data.</p>
       </div>
     </>
   );
@@ -419,13 +439,14 @@ export function NamespacePickerList({
 type KindGroup = "code" | "tracker";
 const KIND_GROUPS: KindGroup[] = ["code", "tracker"];
 const GROUP_META: Record<string, { title: string; icon: IconName }> = {
-  code: { title: "Code indexes", icon: "code" },
+  code: { title: "Repositories", icon: "code" },
   tracker: { title: "Tracker records", icon: "flag" },
 };
 // An open group shows this many rows, then "Show all N".
 const GROUP_CAP = 8;
 
-/** The folded group a row belongs in, from the server's `kind` only — never its name. */
+/** The folded group a row belongs in, from the server's `kind`; a collection is set apart
+ *  before this by its reserved `col-` prefix. */
 function kindGroup(r: MyNamespaceEntry | undefined): KindGroup | null {
   if (r?.kind === "code") return "code";
   if (r?.kind === "qa" || r?.kind === "tracker") return "tracker";

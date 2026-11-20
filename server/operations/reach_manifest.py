@@ -41,6 +41,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.callers": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "code.context_pack": (
@@ -146,6 +147,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "connection.disconnect": ("dashboard",),
+    "connection.list": ("dashboard",),
     "consolidations.list": ("dashboard",),
     "context.fetch": ("sdk_method",),
     "context.offload": ("sdk_method",),
@@ -249,6 +252,11 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "help.get": (
+        "plugin_hook",
+        "dashboard",
+    ),
+    "help.search": ("plugin_hook",),
     "inbox.list": ("dashboard",),
     "inbox.policy_list": ("dashboard",),
     "inbox.policy_set": ("dashboard",),
@@ -285,6 +293,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "knowledge.formats": ("dashboard",),
+    "knowledge.gaps.draft": ("dashboard",),
+    "knowledge.gaps.list": ("dashboard",),
     "knowledge.get": (
         "sdk_method",
         "plugin_hook",
@@ -308,10 +318,14 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
+    "knowledge.move": ("dashboard",),
     "knowledge.outline": (
         "sdk_method",
         "plugin_hook",
     ),
+    "knowledge.query_history.add": ("dashboard",),
+    "knowledge.query_history.list": ("dashboard",),
+    "knowledge.query_history.remove": ("dashboard",),
     "knowledge.reads": ("dashboard",),
     "knowledge.restore": (
         "sdk_method",
@@ -327,6 +341,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.source.check": ("dashboard",),
     "knowledge.source.inspect": ("dashboard",),
     "knowledge.source.list": ("dashboard",),
+    "knowledge.source.push_configure": ("dashboard",),
+    "knowledge.source.push_confirm": ("dashboard",),
+    "knowledge.source.push_status": ("dashboard",),
     "knowledge.source.remove": ("dashboard",),
     "knowledge.source.rotate": ("dashboard",),
     "knowledge.source.sync_now": ("dashboard",),
@@ -382,6 +399,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.delete": (
         "sdk_method",
         "sdk_example",
+        "plugin_hook",
         "dashboard",
     ),
     "memory.demonstrate": ("sdk_method",),
@@ -409,6 +427,8 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.health": ("dashboard",),
     "memory.history": (
         "sdk_method",
+        "sdk_example",
+        "plugin_hook",
         "dashboard",
     ),
     "memory.import_curated": ("dashboard",),
@@ -423,6 +443,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.link": ("sdk_method",),
     "memory.list": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "memory.lock": (
@@ -566,6 +587,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "namespace.mark_seen": ("dashboard",),
     "namespace.register": (
         "sdk_method",
+        "sdk_example",
         "dashboard",
     ),
     "namespace.register_category": (

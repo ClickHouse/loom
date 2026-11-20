@@ -10,6 +10,7 @@ import {
 } from "../api/models";
 import { ModelsForm } from "./ModelsForm";
 import { Alert, Loading } from "../components/ui";
+import { errorLine } from "../lib/errorWords";
 
 const PHASES: Record<string, string> = {
   drain: "Pausing agent requests",
@@ -77,11 +78,8 @@ export function ModelsSettings() {
           setStatus(next);
           setError("");
         }
-      } catch {
-        if (!controller.signal.aborted)
-          setError(
-            "Could not load model settings. Platform administrator access is required on authenticated servers.",
-          );
+      } catch (e) {
+        if (!controller.signal.aborted) setError(`Couldn't load model settings: ${errorLine(e, { read: true })}`);
       } finally {
         loading = false;
       }
@@ -132,8 +130,8 @@ export function ModelsSettings() {
                       await resetModelConfiguration(status.version);
                       setConfirmReset(false);
                       setReload((value) => value + 1);
-                    } catch {
-                      setError("Could not reset model settings. Refresh and try again.");
+                    } catch (e) {
+                      setError(`Couldn't reset model settings: ${errorLine(e)}`);
                     } finally {
                       setResetting(false);
                     }
@@ -174,8 +172,8 @@ export function ModelsSettings() {
                     try {
                       await retryModelConfiguration(status.pending.config_id);
                       setReload((value) => value + 1);
-                    } catch {
-                      setError("Could not retry the rebuild. Refresh and try again.");
+                    } catch (e) {
+                      setError(`Couldn't retry the rebuild: ${errorLine(e)}`);
                     } finally {
                       setRetrying(false);
                     }

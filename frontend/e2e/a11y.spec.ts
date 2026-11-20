@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { installApi, ROUTES } from "./fixtures";
+import { boxOf, installApi, MIN_TARGET_PX, ROUTES } from "./fixtures";
 
 // axe-core on the rendered dashboard (e2e/axe.ts): every route at desktop and phone width,
 // and the shell's dialog and menu open. Any violation fails. Contrast is only measurable
@@ -25,13 +25,6 @@ for (const width of [1400, 375]) {
     }
   });
 }
-
-test("the Help dialog has no WCAG A/AA violations", async ({ page }) => {
-  await open(page, "/memories");
-  await page.keyboard.press("?");
-  await expect(page.getByRole("dialog")).toBeVisible();
-  expect(await violations(page)).toEqual([]);
-});
 
 test("the New menu has no WCAG A/AA violations", async ({ page }) => {
   await open(page, "/memories");
@@ -108,11 +101,13 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("j moves focus over the memory cards, one ring on the card, and the inspector returns it", async ({ page }) => {
+  test("the arrows move focus over the memory cards, one ring on the card, and the inspector returns it", async ({
+    page,
+  }) => {
     await open(page, "/memories");
     const opens = page.locator("[data-memory-open]");
-    await page.keyboard.press("j");
-    await page.keyboard.press("j");
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowDown");
     await expect(opens.nth(1)).toBeFocused();
     // The card draws the ring; its stretched button draws none of its own.
     const rings = await opens.nth(1).evaluate((el) => ({
@@ -210,15 +205,14 @@ test.describe("open overlays", () => {
   });
 
   test("a button that loads in place keeps focus through its loading state", async ({ page }) => {
-    // The usage audit is on the Memories page's Insights tab.
+    // The usage audit is the assistant's audit card (an old Insights link opens it).
     await open(page, "/memories?section=insights");
-    // Click UI disables a loading button, which drops its focus; it takes it back after.
+    const run = page.locator("[data-card='namespace.audit']").getByRole("button", { name: "Read again" });
+    await expect(page.getByTestId("audit-summary")).toBeVisible();
     await page.route("**/v1/namespace.audit", async (route) => {
       await new Promise((r) => setTimeout(r, 300));
       await route.fulfill({ status: 503, json: { detail: "audit unavailable", code: "UNAVAILABLE" } });
     });
-    await page.getByRole("button", { name: "Usage audit", exact: true }).click();
-    const run = page.getByRole("button", { name: "Run audit" });
     await run.focus();
     await page.keyboard.press("Enter");
     await expect(run).toBeEnabled();
@@ -410,15 +404,23 @@ test.describe("open overlays", () => {
     expect(await violations(page)).toEqual([]);
   });
 
-  test("the Library's collections, a collection's menu and the New collection dialog", async ({ page }) => {
+  test("the Library's collections, a collection's menu, Share and the New collection dialog", async ({ page }) => {
+    // Under 1280 px, where the select lists the places (the tree's own scan is in
+    // library-tree.spec.ts).
+    await page.setViewportSize({ width: 1100, height: 900 });
     await open(page, "/library");
     await page.getByRole("button", { name: "Show the documents of" }).click();
     await expect(page.locator("[cui-select-item]").first()).toBeVisible();
     expect(await violations(page)).toEqual([]);
     await page.getByText("col-handbook · Team handbook").last().click();
     await expect(page).toHaveURL(/collection=col-handbook/);
+    await expect(page.getByRole("group", { name: "Who can see it" })).toBeVisible();
+    await page.getByRole("main").getByRole("button", { name: "Share", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: /^Members of / })).toBeVisible();
+    expect(await violations(page)).toEqual([]);
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Actions for col-handbook" }).click();
-    await expect(page.getByRole("menuitem", { name: "Members" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Move…" })).toBeVisible();
     expect(await violations(page)).toEqual([]);
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "New collection" }).click();
@@ -561,43 +563,71 @@ test("a date field keeps its focus border on its calendar button", async ({ page
   expect(await field.evaluate((el) => getComputedStyle(el).borderColor)).toBe(active);
 });
 
-// WCAG 2.1.4: the one-key shortcuts can be turned off, and ? then types nothing.
-test("the single-key shortcuts turn off from the help dialog", async ({ page }) => {
-  await open(page, "/memories");
-  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  await help.getByRole("switch", { name: "Single-key shortcuts" }).click();
-  await page.keyboard.press("Escape");
-  await expect(help).toBeHidden();
-  await page.locator("main h1").first().click();
-  await page.keyboard.press("?");
-  await page.waitForTimeout(300);
-  await expect(help).toBeHidden();
-});
-
-// The help dialog scrolls as one: Click UI's dialog body, never a second region inside it.
-test("the help dialog has one scroll region on a short window, and is axe-clean", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 520 });
-  await open(page, "/memories");
-  await page.getByRole("button", { name: "Keyboard shortcuts" }).click();
-  const help = page.getByRole("dialog", { name: "Keyboard shortcuts" });
-  await expect(help).toBeVisible();
-  const scrollers = await help.evaluate(
-    (dialog) =>
-      [dialog, ...dialog.querySelectorAll("*")].filter((el) => {
-        const y = getComputedStyle(el).overflowY;
-        return (y === "auto" || y === "scroll") && el.scrollHeight > el.clientHeight + 1;
-      }).length,
-  );
-  expect(scrollers).toBe(1);
-  expect(await violations(page)).toEqual([]);
-});
-
 test("reduced motion stops Click UI's dialog animation", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page, "/memories");
-  await page.keyboard.press("?");
+  await page.getByRole("button", { name: "New" }).click();
+  await page.getByRole("menuitem", { name: /Memory/ }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   expect(await dialog.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 });
+
+// The token form's search order: the ticked namespaces as one ordered list, moved by drag or
+// by arrows. Axe-clean at both widths; on a touch phone each name keeps room to be read,
+// the role and arrows wrapping under it.
+for (const [width, touch] of [
+  [1400, false],
+  [375, true],
+] as const) {
+  test.describe(`the token form's search order at ${width} px`, () => {
+    test.use({ viewport: { width, height: 900 }, hasTouch: touch });
+    test("is axe-clean, keeps names readable, and moves rows by grip or, on touch, by arrows only", async ({
+      page,
+    }) => {
+      const row = (namespace: string, role: string) => ({
+        namespace,
+        role,
+        status: "active",
+        visibility: "private",
+        kind: "memory",
+        description: "",
+        joined_at: "2026-01-01T00:00:00Z",
+        is_new: false,
+      });
+      await installApi(page, {
+        mine: [row("bench", "admin"), row("team-research-notes", "writer"), row("shared-handbook", "viewer")],
+      });
+      await page.goto("/settings");
+      await page.getByRole("radio", { name: "Only what you choose" }).click();
+      await page.getByRole("checkbox", { name: "Read team-research-notes" }).click();
+      await page.getByRole("checkbox", { name: "Read shared-handbook" }).click();
+      const order = page.getByRole("list", { name: "Search order" });
+      await expect(order.getByRole("listitem")).toHaveCount(2);
+      expect(await violations(page)).toEqual([]);
+      const name = order.getByText("team-research-notes", { exact: true });
+      expect((await boxOf(name)).width).toBeGreaterThanOrEqual(140);
+      // The arrows stay inside the list, wrapped under the name where the row is narrow.
+      const list = await boxOf(order);
+      const down = await boxOf(order.getByRole("button", { name: "Move team-research-notes down" }));
+      expect(down.x + down.width).toBeLessThanOrEqual(list.x + list.width);
+      if (touch) {
+        // On a touch screen no grip shows, the hint names the arrows, and an arrow moves a row.
+        await expect(order.locator("[draggable]")).toHaveCount(0);
+        // The arrows are the way here: each enabled one is a 44 px touch target.
+        const up = await boxOf(order.getByRole("button", { name: "Move shared-handbook up" }));
+        for (const arrow of [down, up])
+          expect(Math.min(arrow.width, arrow.height)).toBeGreaterThanOrEqual(MIN_TARGET_PX);
+        await expect(page.getByText(/Use a row's arrows to change the order/)).toBeVisible();
+        await order.getByRole("button", { name: "Move team-research-notes down" }).tap();
+        await expect(order.getByRole("listitem").nth(0)).toContainText("shared-handbook");
+      } else {
+        await expect(page.getByText(/Drag a row by its grip, or use its arrows, to change the order/)).toBeVisible();
+        // A real drag by the grip: the second row takes the first place.
+        const rows = order.getByRole("listitem");
+        await rows.nth(1).locator("[draggable]").dragTo(rows.nth(0));
+        await expect(rows.nth(0)).toContainText("shared-handbook");
+      }
+    });
+  });
+}

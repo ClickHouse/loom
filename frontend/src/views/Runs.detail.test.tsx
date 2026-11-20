@@ -147,7 +147,8 @@ describe("Runs page", () => {
     render(<Runs />);
     expect(await screen.findByText("No runs with memory activity")).toBeInTheDocument();
     expect(screen.queryByText("No runs yet")).toBeNull();
-    fireEvent.click(screen.getByText("Show runs with no memory activity"));
+    // The empty state's own action unfolds them.
+    fireEvent.click(screen.getByRole("button", { name: "Show runs with no memory activity" }));
     expect(await screen.findByText("ISSUE_TRIAGE issue_114194")).toBeInTheDocument();
   });
 
@@ -199,6 +200,18 @@ describe("Runs page", () => {
     expect(within(dialog).queryByText(/inferred from a connection/)).toBeNull();
   });
 
+  it("a replay that could not load says why", async () => {
+    listRuns.mockResolvedValue([row()]);
+    getRun.mockRejectedValue(new Error("the run store did not answer"));
+    render(<Runs />);
+    fireEvent.click(await screen.findByText("Show runs with no memory activity"));
+    fireEvent.click(await screen.findByRole("button", { name: "ISSUE_TRIAGE issue_114194" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      await within(dialog).findByText("Couldn't load the replay: the run store did not answer"),
+    ).toBeInTheDocument();
+  });
+
   it("a recalled key opens the memory and the replay links to Recall history for the run", async () => {
     listRuns.mockResolvedValue([full]);
     getRun.mockResolvedValue(detail({ recalled: 2, recalled_keys: ["fact_a", "fact_c"], turns: 3, cost_usd: 0.0123 }));
@@ -212,6 +225,39 @@ describe("Runs page", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /Recall history for this run/ }));
     expect(useStore.getState().view).toBe("recall");
     expect(useStore.getState().recallRunFilter).toBe("r-full");
+  });
+
+  it("copies the whole run id and session id, though the dialog shows them cut", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+    const runId = "run-0b7e4c2a-9f1d-4d8e-a3c5-6e2f1b9d7a40-claude-code";
+    const sessionId = "session-5d1c9e7b-2a4f-4b6e-8c3d-9f0a1e2b3c4d";
+    const long = { ...full, run_id: runId, session_id: sessionId };
+    listRuns.mockResolvedValue([long]);
+    getRun.mockResolvedValue(detail({ run: long }));
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    // The session id is shown cut to fit the header.
+    expect(within(dialog).queryByText(`session ${sessionId}`)).toBeNull();
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Copy run id" }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith(runId);
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole("button", { name: "Copy session id" }));
+    });
+    expect(writeText).toHaveBeenLastCalledWith(sessionId);
+    expect(writeText).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers no session id to copy on a run without a session", async () => {
+    listRuns.mockResolvedValue([{ ...full, session_id: "-" }]);
+    render(<Runs />);
+    fireEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("button", { name: "Copy run id" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Copy session id" })).toBeNull();
   });
 
   it("shows the verdict run.get carries, which the list row does not", async () => {

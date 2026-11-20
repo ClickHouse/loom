@@ -181,6 +181,34 @@ async function openBranchMenu(user: ReturnType<typeof userEvent.setup>, branchNa
 }
 
 describe("branchHealth: one vocabulary for an index's health", () => {
+  it.each(["queued", "cloning", "indexing", "embedding"] as const)(
+    "shows a readable first index in progress before a completed head exists (%s)",
+    (stage) => {
+      const building = branch({ readable: true, git_head: "", indexed_at: "", stage });
+      expect(branchHealth(building)).toMatchObject({ text: "Indexing", state: "info" });
+    },
+  );
+
+  it.each(["not_member", "token_scope"] as const)("requires access for a redacted branch (%s)", (reason) => {
+    const redacted = branch({
+      readable: false,
+      unreadable_reason: reason,
+      classification: "restricted",
+      join_policy: "approval",
+      git_head: "",
+      clone_head: "",
+      indexed_at: "",
+      counts: {},
+    });
+    expect(branchHealth(redacted)).toMatchObject({ text: "Access required", state: "neutral" });
+    expect(branchHealth({ ...redacted, stage: "error" }).text).toBe("Access required");
+    expect(branchHealth({ ...redacted, stage: "indexing" }).text).toBe("Access required");
+    expect(branchHealth({ ...redacted, git_head: "abc123", fast_tier_lag: 42 }).text).toBe("Access required");
+    expect(worstHealth([redacted, branch()])?.text).toBe("Up to date");
+    expect(worstHealth([branch(), redacted])?.text).toBe("Up to date");
+    expect(branchHealth({ ...redacted, readable: true }).text).toBe("Not indexed");
+  });
+
   it("names every state with its badge colour", () => {
     expect(branchHealth(branch())).toMatchObject({ text: "Up to date", state: "success" });
     expect(branchHealth(branch({ fast_tier_lag: 412 }))).toMatchObject({
@@ -188,7 +216,13 @@ describe("branchHealth: one vocabulary for an index's health", () => {
       state: "warning",
     });
     expect(branchHealth(branch({ fast_tier_lag: 1 })).text).toBe("Behind 1 commit");
-    expect(branchHealth(branch({ scip_lag: 7 })).text).toBe("Behind 7 commits");
+    expect(branchHealth(branch({ fast_tier_lag: 1, scip_producer: "go" })).detail).toContain(
+      "search 1 commit behind, exact cross-file calls 0 commits behind",
+    );
+    expect(branchHealth(branch({ fast_tier_lag: -1 }))).toMatchObject({ text: "Freshness unknown", state: "neutral" });
+    expect(branchHealth(branch({ fast_tier_lag: -1, scip_lag: 7 })).text).toBe("Freshness unknown");
+    expect(branchHealth(branch({ scip_producer: "", scip_lag: -1 })).detail).not.toContain("cross-file");
+    expect(branchHealth(branch({ scip_lag: 7 })).text).toBe("Calls catching up");
     expect(branchHealth(branch({ indexed_at: hoursAgo(30), clone_head: "ffff00001111" }))).toMatchObject({
       text: "Stale",
       state: "warning",
@@ -217,13 +251,37 @@ describe("branchHealth: one vocabulary for an index's health", () => {
       "worst branch",
     );
     expect(worst.text).toBe("Behind 412 commits");
-    expect(worst.detail).toMatch(/^25\.8: 412 merged commits not yet indexed/);
+    expect(worst.detail).toMatch(/^25\.8: 412 commits merged but not yet indexed/);
     expect(worst.detail).toContain("abc123def456");
     expect(worstHealth([])).toBeNull();
   });
 });
 
 describe("RepositoryCard: the row", () => {
+  it.each([false, true])("shows access instead of indexing health for a redacted row (opened: %s)", (open) => {
+    mount(
+      [
+        branch({
+          readable: false,
+          unreadable_reason: "not_member",
+          classification: "restricted",
+          join_policy: "approval",
+          git_head: "",
+          clone_head: "",
+          indexed_at: "",
+          counts: {},
+        }),
+      ],
+      [],
+      null,
+      { open },
+    );
+    expect(screen.getAllByText("Access required").length).toBeGreaterThan(0);
+    expect(screen.getByText("Restricted")).toBeInTheDocument();
+    expect(screen.queryByText("Not indexed")).not.toBeInTheDocument();
+    expect(screen.queryByText("Up to date")).not.toBeInTheDocument();
+  });
+
   it("folded: name and health on line 1, the muted summary on line 2, the split button; the body only once opened — and passes axe", async () => {
     const user = userEvent.setup();
     const { container } = mount(
@@ -864,7 +922,8 @@ describe("RepositoryCard — sources", () => {
     cleanup();
     vi.mocked(listKnowledgeSources).mockRejectedValueOnce(new ApiError({ status: 500, message: "boom" }));
     reader();
-    expect(await within(group()).findByText(/Couldn't list the document sources/)).toHaveAttribute("role", "status");
+    expect(await within(group()).findByRole("alert")).toHaveTextContent(/Couldn't load document sources/);
+    expect(within(group()).getByRole("button", { name: "Retry" })).toBeInTheDocument();
     cleanup();
     const failed = { ...SOURCES[0], sync: { ...SOURCES[0].sync, status: "failed", error: "http_403" } };
     vi.mocked(listKnowledgeSources).mockResolvedValueOnce({ sources: [failed], enabled: true });
@@ -872,6 +931,14 @@ describe("RepositoryCard — sources", () => {
     expect(await within(group()).findByText("Sync failed")).toBeInTheDocument();
     expect(within(group()).getByText("http_403")).toBeInTheDocument();
     expect(within(group()).queryByText(/Sync is off/)).toBeNull();
+  });
+
+  it("says a closed repository namespace with no source takes none", async () => {
+    vi.mocked(listKnowledgeSources).mockResolvedValueOnce({ sources: [], enabled: true, accepts_sources: false });
+    mount([branch({ my_status: "member", my_role: "admin", docs_namespace: "code-clickhouse" })], []);
+    const group = screen.getByRole("group", { name: "Sources" });
+    expect(await within(group).findByText(/takes no new document sources\./)).toBeInTheDocument();
+    expect(within(group).queryByRole("button", { name: "Add a source" })).toBeNull();
   });
 
   it("gives the namespace's admin Add a source and each source's verbs", async () => {
@@ -885,7 +952,7 @@ describe("RepositoryCard — sources", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Check", "Sync now", "Rotate credential", "Retire"]);
+    ).toEqual(["Check", "Sync now", "Push notifications", "Rotate credential", "Retire"]);
   });
 });
 
@@ -1028,8 +1095,31 @@ describe("RepositoryCard: a failing tier", () => {
     expect(await axeViolations(container)).toEqual([]);
   });
 
+  it("requires access before interpreting a failing tier or an active index", () => {
+    const redacted = branch({ readable: false, tier_health: [failing], stage: "indexing", fast_tier_lag: 413 });
+    expect(branchHealth(redacted)).toMatchObject({ text: "Access required", state: "neutral" });
+  });
+
   it("a branch whose tiers are ok shows no failure list", () => {
     mount([branch({ tier_health: [{ ...failing, state: "ok" }] })], []);
     expect(screen.queryByTestId("repo-tier-failures")).toBeNull();
+  });
+
+  it("lists a dependency the tier cannot fetch with its fix, without making the branch failing", () => {
+    const note = {
+      ...failing,
+      tier: "go",
+      state: "unavailable" as const,
+      kind: "dependency_unavailable",
+      fix: "Go modules the error names require a module this host cannot fetch.",
+      failed_passes: 0,
+      lag_commits: -1,
+    };
+    const b = branch({ tier_health: [note] });
+    expect(branchHealth(b).state).not.toBe("warning");
+    mount([b], []);
+    const list = screen.getByTestId("repo-tier-failures");
+    expect(list).toHaveTextContent("master: dependency unavailable, since 5h ago");
+    expect(list).toHaveTextContent("Fix: Go modules the error names require a module this host cannot fetch.");
   });
 });

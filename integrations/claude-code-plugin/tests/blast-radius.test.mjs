@@ -1,7 +1,7 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { blastSignature, decideEmit, renderBlast, blastPayload } from "../lib/blast-radius.mjs";
+import { blastPayload, blastSignature, decideEmit, impactBody, renderBlast } from "../lib/blast-radius.mjs";
 
 const IMPACT = {
   touched_symbols: [
@@ -151,4 +151,11 @@ test("an empty walk stays silent, lower bound or not", () => {
   };
   assert.equal(renderBlast("a.cpp", empty), "");
   assert.equal(renderBlast("a.cpp", { ...empty, epistemic: "lower_bound", causes: ["treesitter_only_files"] }), "");
+});
+
+test("impactBody asks code.impact for the reach only, no lessons", () => {
+  const body = impactBody({ org: "o", namespace: "code-x" }, "+++ b/a.py", { depth: 1, perHop: 25 });
+  assert.equal(body.include_lessons, false);
+  assert.equal(body.per_hop_limit, 25);
+  assert.equal(body.namespace, "code-x");
 });

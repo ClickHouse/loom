@@ -10,16 +10,21 @@ from typing import Any
 
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
+from server.core.errors import VectorInputTooLargeError
+from server.core.vectors.private_first import each
 from server.memory.app.search.ann_entity_boosts import _ann_entity_boosts
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scope import _retain_task_result
 from server.memory.app.search.vector_legs import _leg_or_empty
+from server.memory.domain.search_types import SearchHit
 
 # Underscore is IN the class: a consolidated technical entity is often a
 # snake_case test/check name ("00084_external_aggregation") — splitting on `_`
 # shatters it into "00084"/"external"/"aggregation", none of which match the
 # whole-name summary entity, so the per-failure consolidation never surfaces.
 _SUMMARY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+# not a setting: the documented summary seed input contract accepts 256 distinct names.
+_MAX_ENTITY_SUMMARY_SEEDS = 256
 
 
 def _seed_entity_summary_entities(
@@ -48,13 +53,18 @@ def _seed_entity_summary_entities(
     from server.memory.domain.graph_quality import canonical_entity_text
     from server.memory.domain.retrieval_calibration import _salient_identifiers
 
-    out: list[str] = list(effective_entity_filter or [])
-    seen = {e.lower() for e in out}
+    out: list[str] = []
+    seen: set[str] = set()
 
     def _add(canon: str) -> None:
         if canon and canon.lower() not in seen:
+            if len(out) >= _MAX_ENTITY_SUMMARY_SEEDS:
+                raise VectorInputTooLargeError("entity summary seeds exceed 256 names")
             seen.add(canon.lower())
             out.append(canon)
+
+    for entity in effective_entity_filter or []:
+        _add(entity)
 
     for raw in _salient_identifiers(query or ""):
         if raw.startswith("@"):
@@ -109,28 +119,26 @@ def _launch_summary_leg(ctx: SearchContext) -> asyncio.Task[Any]:
     embedder = ctx.embedder
 
     async def _summary_legs() -> list[Any]:
-        with traced("ch.query.session_summaries", namespaces=len(ctx.namespaces)):
-            per_ns = await asyncio.gather(
-                *[
-                    fetch_session_summaries(
-                        get_client(),
-                        org=input.org,
-                        namespace=ns,
-                        agent=input.agent,
-                        user_id=input.user_id,
-                        query_vec=ctx.query_vec,
-                        embedding_model=embedder.model_name,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
-                        # The digest leg keeps to the run and the read's session bound the
-                        # way the fact and chunk legs do.
-                        run_id=input.run_id,
-                        session_id=input.session_id,
-                        session_ids=list(input.session_ids or []),
-                    )
-                    for ns in ctx.namespaces
-                ]
+        async def _summary_for_ns(ns: str) -> list[SearchHit]:
+            return await fetch_session_summaries(
+                get_client(),
+                org=input.org,
+                namespace=ns,
+                agent=input.agent,
+                user_id=input.user_id,
+                query_vec=ctx.query_vec,
+                embedding_model=embedder.model_name,
+                as_of=input.as_of,
+                as_of_basis=getattr(input, "as_of_basis", "valid_time"),
+                # The digest leg keeps to the run and the read's session bound the
+                # way the fact and chunk legs do.
+                run_id=input.run_id,
+                session_id=input.session_id,
+                session_ids=list(input.session_ids or []),
             )
+
+        with traced("ch.query.session_summaries", namespaces=len(ctx.namespaces)):
+            per_ns = await each(_summary_for_ns)(ctx.namespaces)
         out: list[Any] = []
         for ns, hits in zip(ctx.namespaces, per_ns, strict=True):
             for h in hits:
@@ -180,24 +188,22 @@ async def _launch_entity_summary_leg(ctx: SearchContext) -> asyncio.Task[Any] | 
         _entity_summary_top_n = int(_es_settings.memory_search_entity_summaries_top_n)
 
         async def _entity_summary_legs() -> list[Any]:
-            per_ns = await asyncio.gather(
-                *[
-                    fetch_entity_summaries(
-                        get_client(),
-                        org=input.org,
-                        namespace=ns,
-                        agent=input.agent,
-                        user_id=input.user_id,
-                        query_vec=ctx.query_vec,
-                        embedding_model=embedder.model_name,
-                        entity_filter=_es_entities,
-                        n=_entity_summary_top_n,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
-                    )
-                    for ns in ctx.namespaces
-                ]
-            )
+            async def _entity_summary_for_ns(ns: str) -> list[SearchHit]:
+                return await fetch_entity_summaries(
+                    get_client(),
+                    org=input.org,
+                    namespace=ns,
+                    agent=input.agent,
+                    user_id=input.user_id,
+                    query_vec=ctx.query_vec,
+                    embedding_model=embedder.model_name,
+                    entity_filter=_es_entities,
+                    n=_entity_summary_top_n,
+                    as_of=input.as_of,
+                    as_of_basis=getattr(input, "as_of_basis", "valid_time"),
+                )
+
+            per_ns = await each(_entity_summary_for_ns)(ctx.namespaces)
             out: list[Any] = []
             for ns, hits in zip(ctx.namespaces, per_ns, strict=True):
                 for h in hits:
@@ -221,23 +227,21 @@ def _launch_observation_leg(ctx: SearchContext) -> asyncio.Task[Any] | None:
     if _stated_value_update:
 
         async def _observation_legs() -> list[Any]:
-            per_ns = await asyncio.gather(
-                *[
-                    fetch_current_state_observation(
-                        get_client(),
-                        org=input.org,
-                        namespace=ns,
-                        agent=input.agent,
-                        user_id=input.user_id,
-                        query_vec=ctx.query_vec,
-                        embedding_model=embedder.model_name,
-                        entity_filter=ctx.effective_entity_filter,
-                        as_of=input.as_of,
-                        as_of_basis=getattr(input, "as_of_basis", "valid_time"),
-                    )
-                    for ns in ctx.namespaces
-                ]
-            )
+            async def _observation_for_ns(ns: str) -> list[SearchHit]:
+                return await fetch_current_state_observation(
+                    get_client(),
+                    org=input.org,
+                    namespace=ns,
+                    agent=input.agent,
+                    user_id=input.user_id,
+                    query_vec=ctx.query_vec,
+                    embedding_model=embedder.model_name,
+                    entity_filter=ctx.effective_entity_filter,
+                    as_of=input.as_of,
+                    as_of_basis=getattr(input, "as_of_basis", "valid_time"),
+                )
+
+            per_ns = await each(_observation_for_ns)(ctx.namespaces)
             out: list[Any] = []
             for ns, hits in zip(ctx.namespaces, per_ns, strict=True):
                 for h in hits:

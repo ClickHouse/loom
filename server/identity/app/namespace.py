@@ -22,7 +22,13 @@ from server.core import grant_cache
 from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import PreconditionFailedError, ValidationError
-from server.core.naming import SSO_NAMESPACE_PREFIX, reserved_for_sso
+from server.core.naming import (
+    MIRROR_REFUSED,
+    SSO_NAMESPACE_PREFIX,
+    is_mirror_name,
+    reserved_for_sso,
+)
+from server.core.principals import COLLECTION_PREFIX
 from server.identity.api.models import (
     NamespaceBrowseInput,
     NamespaceBrowseOutput,
@@ -43,6 +49,7 @@ from server.identity.domain.account_ties import owner_moved
 from server.identity.store import grants as grants_repo
 from server.identity.store import namespace_guides
 from server.identity.store import namespaces as namespaces_repo
+from server.knowledge.app.sources import deactivate_namespace_sources, sources_lease
 from server.memory.app import namespace_retrieval_defaults as _rd
 from server.memory.domain import code_change
 from server.operations.base import Role
@@ -153,6 +160,8 @@ def registry_row(
         # An agent's namespace is bound to the agent (its exchange checks it).
         "owner_email": existing["owner_email"] if existing and trust_made else input.owner_email,
         "description": _set_or_stored(input.description, existing, "description", ""),
+        # A collection's title is collection.create's to set; never from this form.
+        "title": str((existing or {}).get("title") or ""),
         # A fresh row with no explicit kind is classified by name, the same call the
         # first-write hook makes, so registering a bench-prefixed name first and writing
         # to it second lands the same row as the bare write would.
@@ -206,6 +215,12 @@ def registry_row(
         ),
         "daily_cost_cap_usd": _set_or_stored(
             input.daily_cost_cap_usd, existing, "daily_cost_cap_usd", 0.0
+        ),
+        "daily_user_cost_cap_usd": _set_or_stored(
+            input.daily_user_cost_cap_usd, existing, "daily_user_cost_cap_usd", 0.0
+        ),
+        "budget_alert_inbox": _set_or_stored(
+            input.budget_alert_inbox, existing, "budget_alert_inbox", ""
         ),
         # Same tri-state rule: an explicit null inherits LOOM_CONFLICT_THRESHOLD.
         "conflict_threshold": _sent_or_stored(input, existing, "conflict_threshold"),
@@ -342,20 +357,24 @@ def refuse_sso_name(namespace: str) -> None:
         )
 
 
-def refuse_collection_name(namespace: str) -> None:
+def refuse_unwritable_name(namespace: str) -> None:
     """A collection, an end user's personal one included, is reached only through its
     grants; no namespace operation writes its rows. `@me` names one only once the gate
-    maps it, so the literal name is refused too."""
+    maps it, so the literal name is refused too. A mirror's name is the sync's alone."""
     if is_collection(namespace) or namespace == PERSONAL_ALIAS:
         raise ValidationError("a collection is changed with the collection operations only")
+    if is_mirror_name(namespace):
+        raise ValidationError(MIRROR_REFUSED)
 
 
 async def handle_namespace_register(
     input: NamespaceRegisterInput,
 ) -> NamespaceRegisterOutput:
+    from server.auth.authz import identity_write
+
     ch = get_client()
     caller = resolve_subject()
-    refuse_collection_name(input.namespace)
+    refuse_unwritable_name(input.namespace)
 
     # Create-or-update. Fresh row ⇒ caller becomes admin; existing row ⇒
     # only an admin may update it. The whole stored row is read, so every setting the
@@ -382,9 +401,17 @@ async def handle_namespace_register(
             if await registration.refused_as_in_use(input.org, input.namespace, ch=ch):
                 raise registration.not_admin_error(input.org, input.namespace, caller)
 
+        if input.budget_alert_inbox:
+            from server.tasks.app.budget_notifications import inbox_owned_by
+
+            if not await inbox_owned_by(input.org, input.namespace, input.budget_alert_inbox):
+                raise ValidationError(
+                    "budget_alert_inbox must name an existing task inbox owned by this namespace"
+                )
         now = naive_utc_now_seconds()
         row = registry_row(input, existing, now)
-        await ch.insert("loom.namespaces", [row])
+        with identity_write():
+            await ch.insert("loom.namespaces", [row])
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(input.org)
     # The class this row implies is what the next request in this process runs as — no
@@ -474,7 +501,7 @@ async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutpu
                capture_generation_io,
                coverage_sweep,
                consolidation_enabled,
-               daily_cost_cap_usd,
+               daily_cost_cap_usd, daily_user_cost_cap_usd, budget_alert_inbox,
                conflict_threshold,
                retention_days, warm_days,
                toString(visibility) AS visibility,
@@ -497,6 +524,8 @@ async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutpu
                 active=bool(r["active"]),
                 consolidation_enabled=bool(r.get("consolidation_enabled") or False),
                 daily_cost_cap_usd=float(r.get("daily_cost_cap_usd") or 0.0),
+                daily_user_cost_cap_usd=float(r.get("daily_user_cost_cap_usd") or 0.0),
+                budget_alert_inbox=str(r.get("budget_alert_inbox") or ""),
                 conflict_threshold=(
                     float(r["conflict_threshold"]) if r["conflict_threshold"] is not None else None
                 ),
@@ -520,7 +549,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
                capture_generation_io,
                coverage_sweep,
                consolidation_enabled,
-               daily_cost_cap_usd,
+               daily_cost_cap_usd, daily_user_cost_cap_usd, budget_alert_inbox,
                conflict_threshold,
                retention_days, warm_days,
                toString(visibility) AS visibility,
@@ -570,14 +599,17 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         ),
         conversation_logging_enabled=(
             # Absent column reads as off, matching the gate in
-            # conversation_repo.namespace_logging_enabled — the settings view
-            # must not show "Recording on" for a namespace that isn't recording.
+            # conversation_repo.namespace_logging_enabled — the dashboard's
+            # Conversations page must not show the Record conversations switch
+            # on for a namespace that isn't recording.
             False
             if row.get("conversation_logging_enabled") is None
             else bool(row["conversation_logging_enabled"])
         ),
         consolidation_enabled=bool(row.get("consolidation_enabled") or False),
         daily_cost_cap_usd=float(row.get("daily_cost_cap_usd") or 0.0),
+        daily_user_cost_cap_usd=float(row.get("daily_user_cost_cap_usd") or 0.0),
+        budget_alert_inbox=str(row.get("budget_alert_inbox") or ""),
         conflict_threshold=(
             float(row["conflict_threshold"]) if row["conflict_threshold"] is not None else None
         ),
@@ -616,8 +648,10 @@ async def handle_namespace_delete(
 
     Idempotent: deleting an already-inactive namespace returns
     `deleted=False`. Deleting a namespace that was never registered
-    is a no-op (returns deleted=False). A collection is refused: it goes with
-    what it holds, through `collection.delete`.
+    writes no directory row (returns deleted=False). Registered or not, the
+    namespace's document sources are retired, their credentials cleared.
+    A collection is refused: it goes with what it holds, through
+    `collection.delete`.
     """
     if is_personal(input.namespace):
         # It goes with its user's erasure, which also takes the user's id off its row.
@@ -629,11 +663,16 @@ async def handle_namespace_delete(
 
 async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
     """`namespace.delete`'s write, and `collection.delete`'s once its purge ran."""
+    from server.auth.authz import identity_write
+
     ch = get_client()
-    # SELECT * so the soft-delete row mirrors EVERY column forward; a
-    # partial RMT insert would reset omitted columns to schema defaults.
-    async with account_change(org, namespace):  # as register holds it
+    # The sources lease first, as code.repo.remove takes it, so an add sees the delete.
+    async with sources_lease(org, namespace), account_change(org, namespace):
+        # SELECT * so the soft-delete row mirrors EVERY column forward; a
+        # partial RMT insert would reset omitted columns to schema defaults.
         existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
+        # A source never outlives its namespace with its credential.
+        retired = await deactivate_namespace_sources(org, namespace)
         now = naive_utc_now_seconds()
         if existing is None:
             # A collection whose create stopped before its directory row still
@@ -641,13 +680,17 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
             from server.identity.app.collections import retire
 
             closed = is_collection(namespace) and await retire(org, namespace)
-            return NamespaceDeleteOutput(deleted=closed, namespace=namespace, updated_at=now)
+            return NamespaceDeleteOutput(
+                deleted=closed, namespace=namespace, updated_at=now, sources_retired=retired
+            )
         active = bool(existing.get("active", False))
         if active:
             row = dict(existing)
             row["active"] = False
-            row["updated_at"] = now
-            await ch.insert("loom.namespaces", [row])
+            # Never behind the row it replaces: on a tie the row inserted last wins.
+            row["updated_at"] = max(now, existing["updated_at"])
+            with identity_write():
+                await ch.insert("loom.namespaces", [row])
         if existing.get("kind") == "collection":
             # The tree last, and on every delete: only it decides access, so a
             # delete cut short before it is retried (the gate still admits it)
@@ -656,13 +699,13 @@ async def delete_namespace(org: str, namespace: str) -> NamespaceDeleteOutput:
 
             await retire(org, namespace)
         if not active:
-            return NamespaceDeleteOutput(deleted=False, namespace=namespace, updated_at=now)
+            return NamespaceDeleteOutput(
+                deleted=False, namespace=namespace, updated_at=now, sources_retired=retired
+            )
     # The claim cap reads which accounts tie a person's spellings from this table.
     await grant_cache.changed(org)
     return NamespaceDeleteOutput(
-        deleted=True,
-        namespace=namespace,
-        updated_at=now,
+        deleted=True, namespace=namespace, updated_at=now, sources_retired=retired
     )
 
 
@@ -739,7 +782,6 @@ async def handle_namespace_browse(
         "(toString(n.classification) != 'restricted' "
         "OR (ifNull(n.kind, 'memory') = 'code' AND toString(n.join_policy) = 'approval'))",
     ]
-    from server.auth.sharing import COLLECTION_PREFIX
 
     # A collection is never joined (its grants open it), so it is not in the directory.
     where.append("NOT startsWith(n.namespace, {col_prefix:String})")

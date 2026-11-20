@@ -8,10 +8,16 @@ import pytest
 
 from server.memory.api.models_ask import MemoryAskInput, MemoryAskOutput
 from server.memory.app.ask.context_blocks import knowledge_block_text, knowledge_passages
+from tests.unit.ask_knowledge_fake import checked_reply
+from tests.unit.ask_knowledge_fake import ordinary_knowledge_scope as ordinary_knowledge_scope
+
+pytestmark = pytest.mark.usefixtures("ordinary_knowledge_scope")
 
 
 def _hit(src: str, idx: int, content: str, title: str = "") -> SimpleNamespace:
-    return SimpleNamespace(source_uri=src, chunk_idx=idx, content=content, title=title, section="")
+    return SimpleNamespace(
+        source_uri=src, chunk_idx=idx, content=content, title=title, section="", tags=[]
+    )
 
 
 def test_block_renders_labelled_bounded_passages() -> None:
@@ -40,22 +46,23 @@ def test_block_renders_labelled_bounded_passages() -> None:
 async def test_passages_follow_the_switch_and_fail_open(monkeypatch) -> None:
 
     si = SimpleNamespace(org="o", namespace="n", agent="*", query="q")
-    assert await knowledge_passages(si, "q", enabled=False) == ("", 0)
+    assert await (await knowledge_passages(si, "q", enabled=False)).current() == ("", 0)
 
-    async def boom(_inp):
+    async def boom(_request, _plan):
         raise RuntimeError("plane down")
 
     import server.knowledge.app.knowledge_search as kh
 
-    monkeypatch.setattr(kh, "handle_knowledge_search", boom)
-    assert await knowledge_passages(si, "q", enabled=True) == ("", 0)
+    monkeypatch.setattr(kh, "run_checked_search", boom)
+    assert await (await knowledge_passages(si, "q", enabled=True)).current() == ("", 0)
 
-    async def ok(inp):
+    async def ok(request, _plan):
+        inp = request.input
         assert inp.namespace == "n" and inp.query == "q" and inp.namespace_scope == "this"
-        return SimpleNamespace(results=[_hit("a.md", 1, "A passage.")])
+        return checked_reply(SimpleNamespace(results=[_hit("a.md", 1, "A passage.")]))
 
-    monkeypatch.setattr(kh, "handle_knowledge_search", ok)
-    block, n = await knowledge_passages(si, "q", enabled=True)
+    monkeypatch.setattr(kh, "run_checked_search", ok)
+    block, n = await (await knowledge_passages(si, "q", enabled=True)).current()
     assert n == 1 and "[knowledge:a.md#1] A passage." in block
 
 

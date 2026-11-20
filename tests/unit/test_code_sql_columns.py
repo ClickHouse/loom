@@ -205,7 +205,7 @@ def test_column_refs_on_a_long_run_costs_linear_time(unit: str) -> None:
         lc.column_refs(st, {"a": {"x"}})
         return time.process_time() - t0
 
-    assert_linear(cost, 2_000, 8_000, floor=0.05, bound=2.0)
+    assert_linear(cost, 2_000, 8_000, floor=0.05)
 
 
 @pytest.mark.parametrize("width", [lc.STAR_COLUMNS_MAX, lc.STAR_COLUMNS_MAX + 1])
@@ -229,7 +229,7 @@ def test_many_stars_over_a_wide_table_cost_linear_time(width: int) -> None:
         assert len(facets) <= lc.STAR_READS_MAX
         return took
 
-    assert_linear(cost, 500, 2_000, floor=0.05, bound=2.0)
+    assert_linear(cost, 500, 2_000, floor=0.05)
 
 
 def test_a_comment_opener_in_a_literal_keeps_the_columns_after_it() -> None:

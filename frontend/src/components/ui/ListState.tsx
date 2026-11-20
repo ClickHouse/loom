@@ -1,8 +1,10 @@
 import { Button } from "@clickhouse/click-ui/Button";
 import type { IconName } from "@clickhouse/click-ui/Icon";
 import { useEffect, useState, type ReactNode } from "react";
-import { errorRequestId, humanizeError } from "../../lib/format";
+import { errorRequestId } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { EmptyState } from "../EmptyState";
+import { ConnectAgentButton } from "../ConnectAgentButton";
 
 /** Nothing exists yet: the big state, with its one action. */
 export interface ListEmptyProps {
@@ -11,7 +13,15 @@ export interface ListEmptyProps {
   title: string;
   description?: string;
   action?: { label: string; onClick: () => void };
+  /** Controls that own their own state, after `action` (`EmptyState`). */
+  actions?: ReactNode;
+  /** Only an agent fills the list: "Connect an agent" after `action`, which opens the
+   *  connect dialog in place. Drawn here, in the chunk every list page loads already, so the
+   *  button costs the boot chunk no entry of its own. */
+  connect?: "primary" | "secondary";
   details?: ReactNode;
+  /** A line under the description. */
+  children?: ReactNode;
 }
 
 /** Rows exist, but none match the search or filters in force. */
@@ -56,8 +66,10 @@ export type ListStateProps = ListEmptyProps | ListFilteredProps | ListErrorProps
 export function ListState(props: ListStateProps) {
   if (props.kind === "filtered") return <FilteredState {...props} />;
   if (props.kind === "error") {
-    const message = typeof props.error === "string" ? props.error : humanizeError(props.error);
-    const rid = props.requestId ?? errorRequestId(props.error);
+    const message = typeof props.error === "string" ? props.error : humanizeError(props.error, { read: true });
+    const id = props.requestId ?? errorRequestId(props.error);
+    // An id the message already says (an internal error's) is not printed a second time.
+    const rid = id && !message.includes(id) ? id : "";
     // An alert, so a failure that replaces a skeleton or answers a Retry is announced.
     return (
       <div role="alert">
@@ -84,8 +96,26 @@ export function ListState(props: ListStateProps) {
       </div>
     );
   }
-  const { icon, title, description, action, details } = props;
-  return <EmptyState icon={icon} title={title} description={description} action={action} details={details} />;
+  const { icon, title, description, action, actions, connect, details, children } = props;
+  return (
+    <EmptyState
+      icon={icon}
+      title={title}
+      description={description}
+      action={action}
+      actions={
+        (actions || connect) && (
+          <>
+            {actions}
+            {connect && <ConnectAgentButton type={connect} />}
+          </>
+        )
+      }
+      details={details}
+    >
+      {children}
+    </EmptyState>
+  );
 }
 
 function FilteredState({ things, filter, among, onClear }: ListFilteredProps) {

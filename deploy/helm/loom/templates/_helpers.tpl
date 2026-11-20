@@ -94,10 +94,39 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
-{{- /* The settings every pod must share, as env names: the embedding space and the root
-secret. A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
+{{/* The probe is chart-owned even when disabled: an envFrom source cannot enable it. */}}
+{{- define "loom.cellProbePort" -}}
+{{- $block := dict -}}
+{{- if hasKey .Values "cellProbe" -}}
+{{- $raw := get .Values "cellProbe" -}}
+{{- if not (kindIs "invalid" $raw) -}}
+{{- if not (kindIs "map" $raw) -}}{{ fail "cellProbe must be a map" }}{{- end -}}
+{{- $block = $raw -}}
+{{- end -}}
+{{- end -}}
+{{- $port := int64 0 -}}
+{{- if hasKey $block "port" -}}
+{{- $raw := get $block "port" -}}
+{{- if not (kindIs "invalid" $raw) -}}
+{{- if not (and (has (kindOf $raw) (list "int" "int64" "float64")) (regexMatch "^(0|[1-9][0-9]*)$" (toString $raw))) -}}
+{{- fail "cellProbe.port must be a whole number from 0 to 65535, except 7777" -}}
+{{- end -}}
+{{- $port = int64 $raw -}}
+{{- if or (lt $port 0) (gt $port 65535) (eq $port 7777) -}}
+{{- fail "cellProbe.port must be a whole number from 0 to 65535, except 7777" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (ne $port 0) (hasKey .Values.podLabels "loom.clickhouse.com/cell-probe") -}}
+{{- fail "podLabels cannot set loom.clickhouse.com/cell-probe beside cellProbe.port" -}}
+{{- end -}}
+{{- printf "%d" $port -}}
+{{- end -}}
+
+{{- /* Chart-owned settings, as env names.
+A JSON array: `include "loom.guardedNames" . | fromJsonArray`. */}}
 {{- define "loom.guardedNames" -}}
-["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS"]
+["LOOM_EMBEDDING_PROVIDER", "LOOM_EMBEDDING_MODEL", "LOOM_EMBEDDING_DIM", "LOOM_EMBEDDING_BASE_URL", "LOOM_EMBEDDING_SEND_DIMENSIONS", "LOOM_JWT_SECRET", "LOOM_JWT_SECRET_PREVIOUS", "LOOM_CELL_PROBE_PORT"]
 {{- end -}}
 
 {{- /* Where a setting the chart guards is set instead: the root secret and its previous
@@ -107,7 +136,8 @@ settings-file name> "root" $). */}}
 {{- define "loom.guardedThrough" -}}
 {{- $key := upper .key | trimPrefix "LOOM_" -}}
 {{- $values := dict "JWT_SECRET" "secrets.jwtSecret" "JWT_SECRET_PREVIOUS" "secrets.jwtSecretPrevious" -}}
-{{- if not (hasKey $values $key) -}}embedding.*, which the chart guards
+{{- if eq $key "CELL_PROBE_PORT" -}}cellProbe.port
+{{- else if not (hasKey $values $key) -}}embedding.*, which the chart guards
 {{- else if .root.Values.secrets.existingSecret -}}the Secret {{ .root.Values.secrets.existingSecret }} (secrets.existingSecret)
 {{- else -}}{{ get $values $key }}, which the chart guards
 {{- end -}}
@@ -145,7 +175,37 @@ restarts mid-rollout keeps its own config instead of booting with the new one. *
 {{- fail $nameKeyRefused }}
 {{- end }}
 {{- end }}
+{{- $pg := include "loom.postgres" . | fromYaml }}
+{{- if $pg.host }}
+{{- /* The names the postgres block renders: set twice, one would silently win. */}}
+{{- $pgNames := list "LOOM_STORAGE_AUTHORITY" "LOOM_PG_DSN" "LOOM_PG_DURABILITY" "LOOM_PG_POOL_MAX_SIZE" "PGPASSWORD" }}
+{{- range $pgNames }}
+{{- if hasKey $.Values.env . }}{{ fail (printf "set %s through postgres.*, not env, beside postgres.host" .) }}{{ end }}
+{{- if hasKey $.Values.secrets.extra . }}{{ fail (printf "set %s through postgres.*, not secrets.extra, beside postgres.host" .) }}{{ end }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if has .name $pgNames }}{{ fail (printf "set %s through postgres.*, not extraEnv, beside postgres.host" .name) }}{{ end }}
+{{- end }}
+{{- range $k, $_ := .Values.settingsFile | default dict }}
+{{- if has (printf "LOOM_%s" (upper $k)) $pgNames }}{{ fail (printf "set %s through postgres.*, not settingsFile, beside postgres.host" $k) }}{{ end }}
+{{- end }}
+{{- end }}
+{{- /* The names the tls block renders (loom.tlsEnv), with the mount and the HTTPS probes
+they need: set anywhere else, the probes would still use HTTP. */}}
+{{- $_ := include "loom.tls" . }}
+{{- $tlsNames := list "LOOM_TLS_CERT_FILE" "LOOM_TLS_KEY_FILE" "LOOM_TLS_MIN_VERSION" }}
+{{- range $tlsNames }}
+{{- if hasKey $.Values.env . }}{{ fail (printf "set %s through tls.*, not env" .) }}{{ end }}
+{{- if hasKey $.Values.secrets.extra . }}{{ fail (printf "set %s through tls.*, not secrets.extra" .) }}{{ end }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if has .name $tlsNames }}{{ fail (printf "set %s through tls.*, not extraEnv" .name) }}{{ end }}
+{{- end }}
+{{- range $k, $_ := .Values.settingsFile | default dict }}
+{{- if has (printf "LOOM_%s" (upper $k)) $tlsNames }}{{ fail (printf "set %s through tls.*, not settingsFile" $k) }}{{ end }}
+{{- end }}
 LOOM_DEPLOYMENT: "1"
+LOOM_CELL_PROBE_PORT: {{ include "loom.cellProbePort" . | quote }}
 LOOM_PUBLIC_BASE_URL: {{ required "publicBaseUrl is required" .Values.publicBaseUrl | quote }}
 {{- if not (hasKey .Values.env "LOOM_OAUTH_ISSUER") }}
 LOOM_OAUTH_ISSUER: {{ .Values.publicBaseUrl | quote }}
@@ -165,6 +225,14 @@ LOOM_CH_READER_USER: {{ . | quote }}
 LOOM_SHUTDOWN_READY_DELAY_S: {{ .Values.shutdown.readyDelaySeconds | quote }}
 LOOM_GRACEFUL_SHUTDOWN_S: {{ .Values.shutdown.gracefulSeconds | quote }}
 LOOM_KEEP_ALIVE_S: {{ .Values.keepAliveSeconds | quote }}
+{{- if $pg.host }}
+# The Postgres memory authority (postgres.*). The DSN holds no password: the driver
+# reads PGPASSWORD (loom.pgEnv), and verify-full checks the server against the CA.
+LOOM_STORAGE_AUTHORITY: postgres
+LOOM_PG_DSN: {{ printf "postgres://%s@%s:%v/%s?sslmode=verify-full&sslrootcert=/etc/loom/pg-ca/%s" $pg.user $pg.host (int $pg.port) $pg.database $pg.caSecret.key | quote }}
+LOOM_PG_DURABILITY: {{ $pg.durability | quote }}
+LOOM_PG_POOL_MAX_SIZE: {{ $pg.poolMaxSize | quote }}
+{{- end }}
 {{- $ownUrl := hasKey .Values.env "LOOM_DOCUMENT_EXTRACTOR_URL" }}
 {{- range .Values.extraEnv }}{{ if eq .name "LOOM_DOCUMENT_EXTRACTOR_URL" }}{{ $ownUrl = true }}{{ end }}{{ end }}
 {{- if and .Values.extractor.enabled (not $ownUrl) }}
@@ -206,6 +274,120 @@ LOOM_LLM_MODEL: {{ . | quote }}
 {{- range $k, $v := .Values.env }}
 {{ $k }}: {{ $v | toString | quote }}
 {{- end }}
+{{- end }}
+
+{{/* The postgres block, checked: "" host for the ClickHouse authority. A release
+upgraded with --reuse-values from a chart without the block has none. */}}
+{{- define "loom.postgres" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- if $pg.host -}}
+{{- if not (dig "passwordSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.passwordSecret.name: the Secret holding the role's password" }}{{ end -}}
+{{- if not (dig "caSecret" "name" "" $pg) }}{{ fail "postgres.host needs postgres.caSecret.name: the CA bundle verify-full checks the server's certificate against" }}{{ end -}}
+{{- range $field := list "host" "database" "user" }}
+{{- if not (and (kindIs "string" (get $pg $field)) (regexMatch "^[A-Za-z0-9._-]+$" (toString (get $pg $field)))) }}{{ fail (printf "postgres.%s goes into the DSN as written: a quoted string of letters, digits, '.', '_' and '-'" $field) }}{{ end }}
+{{- end -}}
+{{- range $secret := list "passwordSecret" "caSecret" }}
+{{- $key := toString (dig $secret "key" "" $pg) }}
+{{- if not (and (regexMatch "^[A-Za-z0-9._-]+$" $key) (ne $key ".") (not (hasPrefix ".." $key))) }}{{ fail (printf "postgres.%s.key must be a Secret key: letters, digits, '.', '_' and '-', not '.' or starting '..'" $secret) }}{{ end }}
+{{- end -}}
+{{- if not (and (regexMatch "^[1-9][0-9]{0,4}$" (toString $pg.port)) (le (int $pg.port) 65535)) }}{{ fail "postgres.port must be a port number, 1 to 65535" }}{{ end -}}
+{{- end -}}
+{{- toYaml $pg -}}
+{{- end }}
+
+{{/* PGPASSWORD for a pod that connects to Postgres. */}}
+{{- define "loom.pgEnv" -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
+- name: PGPASSWORD
+  valueFrom:
+    secretKeyRef:
+      name: {{ $pg.passwordSecret.name | quote }}
+      key: {{ $pg.passwordSecret.key | quote }}
+{{- end -}}
+{{- end }}
+
+{{/* The CA bundle the DSN's sslrootcert names, as a volume and its mount. */}}
+{{- define "loom.pgVolume" -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
+- name: pg-ca
+  secret:
+    secretName: {{ $pg.caSecret.name | quote }}
+    items:
+      - key: {{ $pg.caSecret.key | quote }}
+        path: {{ $pg.caSecret.key | quote }}
+{{- end -}}
+{{- end }}
+
+{{- define "loom.pgVolumeMount" -}}
+{{- $pg := include "loom.postgres" . | fromYaml -}}
+{{- if $pg.host -}}
+- name: pg-ca
+  mountPath: /etc/loom/pg-ca
+  readOnly: true
+{{- end -}}
+{{- end }}
+
+{{/* The tls block, checked: "" secretName serves plain HTTP. A release upgraded with
+--reuse-values from a chart without the block has none, so minVersion has a default. */}}
+{{- define "loom.tls" -}}
+{{- $tls := deepCopy (.Values.tls | default dict) -}}
+{{- if kindIs "invalid" $tls.minVersion }}{{ $_ := set $tls "minVersion" "1.2" }}{{ end -}}
+{{- if $tls.secretName -}}
+{{- if not (kindIs "string" $tls.secretName) }}{{ fail "tls.secretName must be the name of a kubernetes.io/tls Secret" }}{{ end -}}
+{{- if not (has (toString $tls.minVersion) (list "1.2" "1.3")) }}{{ fail "tls.minVersion must be \"1.2\" or \"1.3\"" }}{{ end -}}
+{{- if dig "enabled" false (.Values.assistant | default dict) }}{{ fail "assistant.enabled calls Loom's port over plain HTTP, which tls.secretName turns off: turn one of them off" }}{{ end -}}
+{{- $ingress := .Values.ingress | default dict -}}
+{{- if and $ingress.enabled (eq (toString $ingress.className) "alb") -}}
+{{- /* The controller also reads these from the Service, where they win over the Ingress's. */}}
+{{- $service := dig "annotations" (dict) (.Values.service | default dict) -}}
+{{- $annotations := mergeOverwrite (deepCopy ($ingress.annotations | default dict)) (deepCopy $service) -}}
+{{- $alb := "set ingress.annotations.\"alb.ingress.kubernetes.io/%s\" to HTTPS beside tls.secretName (and not to another value in service.annotations), or the ALB sends plain HTTP to a port that answers HTTPS only" -}}
+{{- if ne (toString (get $annotations "alb.ingress.kubernetes.io/backend-protocol")) "HTTPS" }}{{ fail (printf $alb "backend-protocol") }}{{ end -}}
+{{- if and (hasKey $annotations "alb.ingress.kubernetes.io/healthcheck-protocol") (ne (toString (get $annotations "alb.ingress.kubernetes.io/healthcheck-protocol")) "HTTPS") }}{{ fail (printf $alb "healthcheck-protocol") }}{{ end -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $tls -}}
+{{- end }}
+
+{{/* The settings that serve the mounted pair (loom.tlsVolumeMount) on the web port. */}}
+{{- define "loom.tlsEnv" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: LOOM_TLS_CERT_FILE
+  value: /etc/loom/tls/tls.crt
+- name: LOOM_TLS_KEY_FILE
+  value: /etc/loom/tls/tls.key
+- name: LOOM_TLS_MIN_VERSION
+  value: {{ toString $tls.minVersion | quote }}
+{{- end -}}
+{{- end }}
+
+{{/* The certificate and key, readable by the pod's group (podSecurityContext.fsGroup)
+only. Mounted whole, not by subPath, so the kubelet swaps in a renewed pair. */}}
+{{- define "loom.tlsVolume" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: tls
+  secret:
+    secretName: {{ $tls.secretName | quote }}
+    defaultMode: 0440
+    items:
+      - key: tls.crt
+        path: tls.crt
+      - key: tls.key
+        path: tls.key
+{{- end -}}
+{{- end }}
+
+{{- define "loom.tlsVolumeMount" -}}
+{{- $tls := include "loom.tls" . | fromYaml -}}
+{{- if $tls.secretName -}}
+- name: tls
+  mountPath: /etc/loom/tls
+  readOnly: true
+{{- end -}}
 {{- end }}
 
 {{/* Hash of the embedding space, which every pod must share and cannot roll.
@@ -274,6 +456,12 @@ passes and runs an overdue worker instead of restarting its interval. */}}
 - name: settings-file
   mountPath: /app/config
   readOnly: true
+{{- with include "loom.pgVolumeMount" . }}
+{{ . }}
+{{- end }}
+{{- with include "loom.tlsVolumeMount" . }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{/* The settings file's `data`, for the release's ConfigMap and each hook Job's copy. */}}
@@ -338,6 +526,12 @@ for the workers pods. */}}
 - name: settings-file
   configMap:
     name: {{ include "loom.suffixed" (dict "root" . "suffix" "settings") }}
+{{- with include "loom.pgVolume" . }}
+{{ . }}
+{{- end }}
+{{- with include "loom.tlsVolume" . }}
+{{ . }}
+{{- end }}
 {{- with .Values.extraVolumes }}
 {{ toYaml . }}
 {{- end }}
@@ -350,18 +544,19 @@ for the workers pods. */}}
 {{- end }}
 
 {{- define "loom.probes" -}}
+{{- $scheme := ternary ", scheme: HTTPS" "" (not (empty (include "loom.tls" . | fromYaml).secretName)) -}}
 startupProbe:
-  httpGet: { path: /v1/health/ready, port: http }
+  httpGet: { path: /v1/health/ready, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.startup.periodSeconds }}
   failureThreshold: {{ .Values.probes.startup.failureThreshold }}
   timeoutSeconds: 3
 livenessProbe:
-  httpGet: { path: /v1/health/live, port: http }
+  httpGet: { path: /v1/health/live, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
   failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
   timeoutSeconds: 3
 readinessProbe:
-  httpGet: { path: /v1/health/ready, port: http }
+  httpGet: { path: /v1/health/ready, port: http{{ $scheme }} }
   periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
   failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
   timeoutSeconds: 3
@@ -401,6 +596,11 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     - name: http
       containerPort: 7777
       protocol: TCP
+    {{- if ne (include "loom.cellProbePort" $) "0" }}
+    - name: cell-probe
+      containerPort: {{ include "loom.cellProbePort" $ }}
+      protocol: TCP
+    {{- end }}
   envFrom:
     - secretRef:
         name: {{ include "loom.secretName" $ }}
@@ -415,6 +615,12 @@ the scheduler places the pod where they fit. Sizes in Gi only. */}}
     {{- end }}
     {{- end }}
     {{- include "loom.podEnv" $ | nindent 4 }}
+    {{- with include "loom.pgEnv" $ }}
+    {{- . | nindent 4 }}
+    {{- end }}
+    {{- with include "loom.tlsEnv" $ }}
+    {{- . | nindent 4 }}
+    {{- end }}
     - name: LOOM_SETTINGS_FILE
       value: /app/config/loom.yaml
     {{- if .serves }}
@@ -479,14 +685,11 @@ initContainers:
 
 {{/* Pod spec fields the Deployments, the hook Jobs and the analytics export
 share; `serviceAccount` names another account than the release's. */}}
-{{/* `leads`: the pod may hold the workers lease, which alone reads the
-Kubernetes API (retireLostPods). */}}
 {{- define "loom.podCommon" -}}
-{{- $leads := .leads -}}
 {{- $sa := .serviceAccount -}}
 {{- with .root -}}
 serviceAccountName: {{ default (include "loom.serviceAccountName" .) $sa }}
-automountServiceAccountToken: {{ or .Values.serviceAccount.automountToken (and .Values.retireLostPods $leads) }}
+automountServiceAccountToken: {{ .Values.serviceAccount.automountToken }}
 # Service links would inject LOOM_SERVICE_HOST and the like into Loom's env namespace.
 enableServiceLinks: false
 {{- if not .Values.sandbox.hostUsers }}

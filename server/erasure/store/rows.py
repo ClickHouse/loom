@@ -30,16 +30,19 @@ class RequestRow(TypedDict):
     actor: str
     urgency: str
     purge: bool
+    mirror_marked: bool
     attempts: int
     requested_at: datetime
 
 
 class VerifyColumns(TypedDict, total=False):
-    """The residue census on a terminal ledger row."""
+    """The residue census on a terminal ledger row: `residue` the non-zero counts,
+    `census` every count of a census that counted every store ('' otherwise)."""
 
     residue_count: int
     residue: str
     verified_at: datetime | None
+    census: str
 
 
 class CheckpointRow(RequestRow, VerifyColumns):
@@ -67,10 +70,12 @@ class LedgerRow(ResumeRow):
 
     residue_count: int
     verified_at: datetime | None
+    census: str
 
 
 class RequestStatusRow(TypedDict):
-    """The current state of one saga, for `erasure.status`."""
+    """The current state of one saga, for `erasure.status`; `census` is '' until a
+    census counted every store."""
 
     id: str | UUID
     org: str
@@ -85,6 +90,9 @@ class RequestStatusRow(TypedDict):
     residue_count: int
     verified_at: datetime | None
     residue: str
+    census: str
+    purge: bool
+    mirror_marked: bool
 
 
 class OrphanGraphRow(TypedDict):

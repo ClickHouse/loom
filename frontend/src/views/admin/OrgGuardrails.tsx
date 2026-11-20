@@ -17,9 +17,8 @@ import {
 import { useIdentity, useStore } from "../../lib/state";
 import { hasPlatformAdminClaim } from "../../lib/role";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { ListState } from "../../components/ui/ListState";
 import { Alert, ListTime, LoadingSkeleton, Panel, SectionHeading } from "../../components/ui";
 import { SkeletonText } from "../../components/Skeleton";
@@ -81,7 +80,7 @@ function ExtractionRules({ scope }: { scope: PolicyScope }) {
       // Name the panel's scope: a save can answer after a switch.
       toast(`Rules ${clear ? "removed" : "saved"} for ${where}`, "ok");
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setBusy(false);
     }
@@ -197,7 +196,7 @@ function ModelCallsPanel() {
       setReason("");
       toast(`Model calls ${enabled ? "on" : "off"} for ${identity.org}`, "ok");
     } catch (e) {
-      toast(`Change failed: ${humanizeError(e)}`, "error");
+      toastError("Change failed", e);
     } finally {
       setBusy(false);
     }

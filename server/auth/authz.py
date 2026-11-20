@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Awaitable, Callable, Hashable, Iterable, Iterator
+from contextlib import contextmanager
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -31,6 +32,7 @@ from server.auth.fail_closed import (
     unreadable,
 )
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
+from server.core.naming import MIRROR_REFUSED, is_mirror_name
 from server.core.principals import USER, principal_id
 
 # Re-export from operations.base so there's one canonical Role definition.
@@ -72,21 +74,46 @@ def may_act_in_org(auth: AuthInfo, org: str) -> bool:
     return auth.org in ("*", org) or auth.has_role(Role.PLATFORM_ADMIN)
 
 
-_ACTED_FOR_REVOKED = "the subject this request acts for is revoked, deprovisioned or disabled"
+_ACTED_FOR_REVOKED = "the subject this request acts for is revoked or deprovisioned"
+_ACTED_FOR_NO_BOT = "an sa: subject is acted for only while it names an active bot or its agent"
 
 
-class ActedForRevoked(PermissionError):
-    """The subject a trusted caller acts for is revoked: a refusal of the subject, not
-    of the caller's access to an index, so a transport adds no index reason to it."""
+class ActedForRefused(PermissionError):
+    """The subject a trusted caller acts for is refused (revoked, deprovisioned, or an
+    `sa:` subject naming no active bot): a refusal of the subject, not of the caller's
+    access to an index, so a transport adds no index reason to it."""
+
+
+async def _check_provisioning(auth: AuthInfo | None, org: str | None) -> None:
+    from server.auth import login, scim
+    from server.core.errors import BackendUnavailableError, LoomServerError
+
+    if auth is None:
+        return
+    scope_org = auth.org if org is None else org
+    if not may_act_in_org(auth, scope_org):
+        raise PermissionError("token is for another org")
+    try:
+        refused = await scim.refuses_auth(auth, org=scope_org)
+    except login.SignInUnavailable as e:
+        if isinstance(e.__cause__, LoomServerError):
+            raise e.__cause__ from None
+        raise BackendUnavailableError("SCIM provisioning cannot be checked yet") from e
+    if refused:
+        raise ActedForRefused(_ACTED_FOR_REVOKED)
 
 
 async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
-    """Refuse a trusted caller acting for a revoked, SCIM-deactivated or disabled-bot
-    subject under any spelling it holds; docs/architecture/security.md, Impersonation."""
+    """Refuse a trusted caller acting for a revoked or SCIM-deactivated subject under any
+    spelling it holds, or for an `sa:` subject that is not an active bot or one of its
+    agents: a token's own subject, whose grants are the token's and end with it however
+    it ends (an expiry, a revoke by jti, a cutoff on its maker), none of which its grants
+    record; docs/architecture/security.md, Impersonation."""
     from server.auth import machines, revocation
     from server.auth.gateway import is_end_user
     from server.core import grant_cache
 
+    await _check_provisioning(auth, org)
     # An end user's token names the user, whose revocation verify checked.
     if auth is None or not auth.impersonated_by or is_end_user(auth):
         return
@@ -95,22 +122,25 @@ async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
         if may_act_in_org(auth, scope_org):  # an org it cannot act in is refused after this
             spellings.update((await grant_cache.grant_map(scope_org, auth.subject)).held)
     folded = auth.subject.lower()  # bot names are lower-case; grants are read case-folded
-    bot = folded.removeprefix("sa:").partition(":")[0] if folded.startswith("sa:") else ""
+    service_account = folded.startswith("sa:")
+    bot = folded.removeprefix("sa:").partition(":")[0] if service_account else ""
+    if service_account and not bot:
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
     if bot:
         spellings.add(machines.subject(bot))  # a revoked bot refuses its agents, as their mint does
     if any(revocation.revoked_outright_any_case(s) for s in spellings):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+        raise ActedForRefused(_ACTED_FOR_REVOKED)
     for email in {s.lower() for s in spellings if "@" in s}:
         if await _remembered(("scim", email), _scim_deactivated):
-            raise ActedForRevoked(_ACTED_FOR_REVOKED)
-    if bot and await _remembered(("bot", bot), _bot_disabled):
-        raise ActedForRevoked(_ACTED_FOR_REVOKED)
+            raise ActedForRefused(_ACTED_FOR_REVOKED)
+    if bot and await _remembered(("bot", bot), _bot_ended):
+        raise ActedForRefused(_ACTED_FOR_NO_BOT)
 
 
-# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation or a
-# bot disable written by another process reaches this one within that, and one written
-# here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
-_ENDED: dict[tuple[str, str], tuple[float, bool]] = {}
+# (kind, key) -> (read at, ended), kept grant_cache_ttl_seconds: a SCIM deactivation, or
+# a bot created or disabled, by another process reaches this one within that, and one
+# written here drops its entry (`forget_ended`); emptied past _ENDED_MAX.
+_ENDED: dict[tuple[Hashable, ...], tuple[float, bool]] = {}
 _forgets = 0  # forgets so far: a read that one overtook is not kept
 _ENDED_MAX = 10_000  # not a setting: a memory bound on a memo the TTL already ages
 
@@ -120,10 +150,23 @@ def forget_ended(kind: str, key: str) -> None:
     just wrote, so its own write takes effect here at once."""
     global _forgets
     _ENDED.pop((kind, key.lower()), None)
+    for decision in tuple(_ENDED):
+        if decision[0] == "scim_people":
+            _ENDED.pop(decision, None)
     _forgets += 1
 
 
-async def _remembered(key: tuple[str, str], read: Callable[[str], Awaitable[bool]]) -> bool:
+@contextmanager
+def identity_write() -> Iterator[None]:
+    """Do not memoize person checks started before or during an identity write."""
+    forget_ended("identity", "")
+    try:
+        yield
+    finally:
+        forget_ended("identity", "")
+
+
+async def _remembered(key: tuple[Hashable, ...], read: Callable[[str], Awaitable[bool]]) -> bool:
     from server.settings import settings
 
     now = time.monotonic()
@@ -131,7 +174,7 @@ async def _remembered(key: tuple[str, str], read: Callable[[str], Awaitable[bool
     if hit is not None and now - hit[0] < settings.grant_cache_ttl_seconds:
         return hit[1]
     forgets = _forgets
-    ended = await read(key[1])
+    ended = await read(str(key[-1]))
     if _forgets != forgets:
         return ended  # a write here overtook the read: the next check reads afresh
     if len(_ENDED) >= _ENDED_MAX:
@@ -148,20 +191,21 @@ async def _scim_deactivated(email: str) -> bool:
         return await scim.deactivated(email)
     except login.SignInUnavailable as e:
         if isinstance(e.__cause__, LoomServerError):
-            raise e.__cause__ from None  # its own code and Retry-After, as _bot_disabled does
+            raise e.__cause__ from None  # its own code and Retry-After, as _bot_ended does
         raise BackendUnavailableError("cannot read whether SCIM deactivated the subject") from e
 
 
-async def _bot_disabled(name: str) -> bool:
+async def _bot_ended(name: str) -> bool:
+    """Whether no active bot holds `name`: it is disabled, or no bot ever held it."""
     from server.auth import machines
     from server.core.errors import BackendUnavailableError, LoomServerError
 
     try:
-        return await machines.disabled(name)
+        return await machines.get(name) is None
     except LoomServerError:
         raise
     except Exception as e:  # an unread bot row refuses, as the grant read does
-        raise BackendUnavailableError("cannot read whether the bot is disabled") from e
+        raise BackendUnavailableError("cannot read whether the bot is active") from e
 
 
 @marks_unverified
@@ -178,7 +222,8 @@ async def check_authorized(
 ) -> None:
     """Raise PermissionError if `auth` lacks `required_role` or access to `(org,
     namespace)`. Consults `loom.namespace_grants` as a fallback when the JWT role alone
-    is insufficient. No-op when `auth is None` (LOOM_AUTH_REQUIRED=false mode).
+    is insufficient. With `auth is None` (LOOM_AUTH_REQUIRED=false) it refuses only a
+    mirror's name.
     `deployment_scoped`: the op reads the deployment's own facts and no namespace, so a
     scoped token is gated on its best per-namespace role instead of being refused as
     IDENTITY_INCOMPLETE. `row_scoped`: the op is addressed by an id and its handler
@@ -188,11 +233,21 @@ async def check_authorized(
     the restricted check): what a caller that already read them hands in."""
     from server.auth.jwt import AuthInfo  # circular import sidestep
 
+    # A mirror opens to no token, with auth off too: only the stores' own workers reach one.
+    if namespace is not None and is_mirror_name(namespace):
+        raise PermissionError(MIRROR_REFUSED)
     if auth is None:
         return
 
     if not isinstance(auth, AuthInfo):  # defensive
         raise PermissionError("invalid auth principal")
+
+    # A cell serves only the orgs it holds: the routes outside the op registry
+    # authorize here (the op gate checked before it got this far).
+    from server.auth import tenancy
+
+    await check_acted_for(auth, org)
+    await tenancy.ensure_held(org, auth)
 
     if auth.creator:
         await _check_creator(auth, required_role, org, namespace)
@@ -381,6 +436,7 @@ async def _check_creator(
         raise PermissionError(
             f"principal {auth.subject!r} (org {auth.org!r}) cannot act in org {account_org!r}"
         )
+    await _check_provisioning(auth, account_org)
     if not await creator_account_active(account_org, auth.creator):
         raise PermissionError(f"the account that created this token is not active in {account_org}")
     if namespace is None and required_role.value >= Role.WRITER.value:
@@ -774,11 +830,12 @@ async def row_in_scope(
 ) -> bool:
     """Second gate for ops addressed by an org-wide id (memory_id, …), asked
     once the handler has the row. True when the current principal may act on
-    (org, namespace) at `required_role`, or with no auth context; False on
-    any refusal, so the caller hides the row (`found=False`): a 403 would
-    confirm the id exists. A refusal that could not be verified marks the
-    request the server's (`fail_closed`); `hides_answer=False` when this
-    refusal does not decide what the caller asked for."""
+    (org, namespace) at `required_role`, or with no auth context (but never on
+    a mirror); False on any refusal, so the caller hides the row
+    (`found=False`): a 403 would confirm the id exists. A refusal that could
+    not be verified marks the request the server's (`fail_closed`);
+    `hides_answer=False` when this refusal does not decide what the caller
+    asked for."""
     verdict = await row_reach(org, namespace, required_role)
     if verdict is None and hides_answer:  # the server's failure
         note_answered_unverified()
@@ -791,8 +848,6 @@ async def row_reach(org: str, namespace: str, required_role: Role = Role.VIEWER)
     from server.core.errors import IdentityIncompleteError
 
     auth = current_auth()
-    if auth is None:
-        return True
     try:
         await check_authorized(auth, required_role=required_role, org=org, namespace=namespace)
     except PermissionError as e:

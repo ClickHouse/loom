@@ -3,17 +3,36 @@ and the re-verify CLI read, and the checkpoint every step appends."""
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any, cast
 
 from server.core.ch import sequential_reads
+from server.core.naming import mirror_name_sql
 from server.core.repo_base import _CHClient, _default_client
-from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX
+from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX, REPLAY_PENDING_REASON
+from server.erasure.domain.receipts import receipt_version
 from server.erasure.store.rows import (
     CheckpointRow,
     LedgerRow,
     RequestStatusRow,
     ResumeRow,
+)
+
+# The ledger rows a read may act on: the table's TTL drops a saga's rows part by part 90
+# days after `requested_at`, which every checkpoint of the saga repeats, so near the end an
+# older checkpoint can outlive the terminal row and read as the saga's state. The fences
+# (`unfinished_since`, `unfinished_reaching`) do not apply it: a stale unfinished row keeps
+# fencing, which fails closed. `open_namespace_erasures` does, as the recovery worker's
+# `still_open` does: a saga that will never resume again must not refuse source adds.
+LIVE_LEDGER = "requested_at > now() - INTERVAL 89 DAY"
+
+# A saga that will still run: queued, in progress, or failed and awaiting the recovery
+# worker (not abandoned, not waiting for a replay). Takes `abandoned` and `pending`.
+WILL_RUN = (
+    "(status IN ('queued', 'in_progress') OR (status = 'failed' "
+    "AND NOT startsWith(failure_reason, {abandoned:String}) "
+    "AND failure_reason != {pending:String}))"
 )
 
 
@@ -32,12 +51,15 @@ async def list_stuck_in_progress(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason, residue
         FROM loom.erasure_requests FINAL
-        WHERE status IN ('in_progress', 'failed')
+        WHERE status IN ('in_progress', 'failed') AND """
+        + LIVE_LEDGER
+        + """
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts < {ma:UInt16}
+          AND failure_reason != {pending:String}
         ORDER BY requested_at
         LIMIT {bs:UInt32}
         """,
@@ -45,6 +67,7 @@ async def list_stuck_in_progress(
             "st": int(stale_threshold_seconds),
             "ma": int(max_attempts),
             "bs": int(batch_size),
+            "pending": REPLAY_PENDING_REASON,
         },
     )
     return cast("list[ResumeRow]", rows)
@@ -65,14 +88,17 @@ async def list_unabandoned_exhausted(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
-        WHERE status IN ('in_progress', 'failed')
+        WHERE status IN ('in_progress', 'failed') AND """
+        + LIVE_LEDGER
+        + """
           AND last_checkpoint_at < now() - INTERVAL {st:UInt32} SECOND
           AND attempts >= {ma:UInt16}
           AND NOT startsWith(failure_reason, {pfx:String})
+          AND failure_reason != {pending:String}
         ORDER BY requested_at
         LIMIT {bs:UInt32}
         """,
@@ -81,6 +107,7 @@ async def list_unabandoned_exhausted(
             "ma": int(max_attempts),
             "bs": int(batch_size),
             "pfx": ABANDONED_REASON_PREFIX,
+            "pending": REPLAY_PENDING_REASON,
         },
     )
     return cast("list[LedgerRow]", rows)
@@ -96,16 +123,16 @@ async def list_failed_requests(
     reads. The recovery worker stops at `max_attempts`; an
     operator does not."""
     ch = ch or _default_client()
-    where = "status = 'failed'"
+    where = "status = 'failed' AND " + LIVE_LEDGER
     params: dict[str, Any] = {}
     if org:
         where += " AND org = {org:String}"
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
         WHERE {where}
         ORDER BY requested_at
@@ -126,16 +153,16 @@ async def list_completed_requests(
     for the orphan row links they left: a build before N's tables completed without
     erasing them."""
     ch = ch or _default_client()
-    where = "status = 'completed' AND verified_at >= {since:DateTime}"
+    where = "status = 'completed' AND verified_at >= {since:DateTime} AND " + LIVE_LEDGER
     params: dict[str, Any] = {"since": since}
     if org:
         where += " AND org = {org:String}"
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
-               residue_count, residue, verified_at
+               residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
         WHERE {where}
         ORDER BY requested_at
@@ -158,9 +185,11 @@ async def fetch_request_status(
         """
         SELECT id, org, scope_type, scope_value, requester, status,
                current_step, failure_reason, requested_at, completed_at,
-               residue_count, verified_at, residue
+               residue_count, verified_at, residue, census, purge, mirror_marked
         FROM loom.erasure_requests FINAL
-        WHERE id = {id:UUID}
+        WHERE id = {id:UUID} AND """
+        + LIVE_LEDGER
+        + """
         LIMIT 1
         """,
         params={"id": erasure_id},
@@ -180,6 +209,19 @@ async def insert_request_checkpoint(
     await ch.insert("loom.erasure_requests", [dict(row)])
 
 
+# The ledger holds a list scope as `{"namespaces": [...], ...}`. `only_mirrors` also reads
+# the bare-array form, which the ledger never holds: `begin_erasure` stores every list as
+# an object.
+_LIST_NAMESPACES = "JSONExtract(scope_value, 'namespaces', 'Array(String)')"
+# Leaves out the sagas whose scope names mirrors only (`scopes.only_mirrors`), which only a
+# platform admin's list shows.
+NOT_ONLY_MIRRORS = (
+    f" AND NOT (scope_type = 'namespace' AND {mirror_name_sql('scope_value')})"
+    f" AND NOT (scope_type = 'namespace_list' AND notEmpty({_LIST_NAMESPACES})"
+    f" AND arrayAll(x -> {mirror_name_sql('x')}, {_LIST_NAMESPACES}))"
+)
+
+
 async def list_requests(
     org: str,
     *,
@@ -193,7 +235,12 @@ async def list_requests(
     `status` and by `scope_where` (bare-column AND fragments over
     erasure_requests, bound by `scope_params`)."""
     ch = ch or _default_client()
-    where = "org = {org:String}" + (" AND status = {st:String}" if status else "") + scope_where
+    where = (
+        "org = {org:String} AND "
+        + LIVE_LEDGER
+        + (" AND status = {st:String}" if status else "")
+        + scope_where
+    )
     params: dict[str, Any] = {**scope_params, "org": org, "lim": int(limit)}
     if status:
         params["st"] = status
@@ -216,11 +263,12 @@ async def list_requests(
                e.failure_reason AS failure_reason,
                length(e.steps_completed) AS steps_completed_count,
                coalesce(r.n, 0) AS reversals_count,
-               e.residue_count AS residue_count, e.verified_at AS verified_at
+               e.residue_count AS residue_count, e.verified_at AS verified_at,
+               e.mirror_marked AS mirror_marked
         FROM (
             SELECT id, scope_type, scope_value, requester, status,
                    requested_at, completed_at, failure_reason, steps_completed,
-                   residue_count, verified_at
+                   residue_count, verified_at, mirror_marked
             FROM loom.erasure_requests FINAL
             WHERE {where}
             ORDER BY requested_at DESC
@@ -274,12 +322,14 @@ async def unfinished_reaching(
     since_s: int,
     margin_s: int,
     *,
+    skip_abandoned: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The erasures unfinished since `since_s` that may reach a row of `namespace`: its own,
     the user scopes of `user_id` (of every user when None), and every other scope, which
-    the caller parses (namespace lists). Each row has `scope_type`, `scope_value` and
-    `purge`."""
+    the caller parses (namespace lists). `skip_abandoned` leaves out a saga the recovery
+    worker gave up on; resumed, it is `in_progress` again. Each row has `scope_type`,
+    `scope_value` and `purge`."""
     ch = ch or _default_client()
     with sequential_reads():
         return await ch.query_all(
@@ -287,6 +337,8 @@ async def unfinished_reaching(
             SELECT scope_type, scope_value, purge
             FROM loom.erasure_requests FINAL
             WHERE org = {{org:String}} AND {_UNFINISHED_SINCE}
+              AND NOT ({{skip_abandoned:Bool}} AND status = 'failed'
+                       AND startsWith(failure_reason, {{abandoned:String}}))
               AND ((scope_type = 'namespace' AND scope_value = {{ns:String}})
                    OR (scope_type = 'user_id'
                        AND ({{any_user:Bool}} OR scope_value = {{uid:String}}))
@@ -299,5 +351,149 @@ async def unfinished_reaching(
                 "any_user": user_id is None,
                 "since": int(since_s),
                 "margin": int(margin_s),
+                "skip_abandoned": skip_abandoned,
+                "abandoned": ABANDONED_REASON_PREFIX,
             },
         )
+
+
+async def open_namespace_erasures(org: str, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The org's namespace and namespace-list erasures that will still run: queued, in
+    progress, or failed and awaiting the recovery worker (not abandoned, not waiting for a
+    replay). Each row has `scope_type` and `scope_value`. Read with sequential consistency:
+    a fence on it must see an erasure another replica just registered."""
+    ch = ch or _default_client()
+    with sequential_reads():
+        return await ch.query_all(
+            "SELECT scope_type, scope_value FROM loom.erasure_requests FINAL "
+            "WHERE org = {org:String} AND " + LIVE_LEDGER + " "
+            "AND scope_type IN ('namespace', 'namespace_list') AND " + WILL_RUN,
+            params={
+                "org": org,
+                "abandoned": ABANDONED_REASON_PREFIX,
+                "pending": REPLAY_PENDING_REASON,
+            },
+        )
+
+
+_LEDGER_ROW = (
+    "SELECT id, org, scope_type, scope_value, requester, urgency, purge, mirror_marked, "
+    "requested_at, "
+    "completed_at, steps_completed, attempts FROM loom.erasure_requests FINAL "
+)
+
+
+async def mirror_mark(org: str, erasure_id: str, *, ch: _CHClient | None = None) -> bool:
+    """Privacy is independent of which checkpoint a restore trusts for deletion."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT max(mirror_marked) AS marked FROM loom.erasure_requests "
+        "WHERE org = {org:String} AND id = {id:UUID} AND " + LIVE_LEDGER,
+        params={"org": org, "id": erasure_id},
+    )
+    return bool(row and row["marked"])
+
+
+async def promote_mirror_mark(org: str, erasure_id: str, *, ch: _CHClient | None = None) -> None:
+    """Promote privacy while preserving a restore's fence and the receipt it protects."""
+    ch = ch or _default_client()
+    await ch.execute(
+        "INSERT INTO loom.erasure_requests "
+        "SELECT * REPLACE (true AS mirror_marked, {version:UInt64} AS version) FROM ("
+        "SELECT * FROM loom.erasure_requests FINAL "
+        "WHERE org = {org:String} AND id = {id:UUID} AND NOT mirror_marked AND "
+        + LIVE_LEDGER
+        + ")",
+        params={
+            "org": org,
+            "id": erasure_id,
+            "version": receipt_version(time.time_ns(), mirror_marked=True),
+        },
+    )
+
+
+async def completed_since(point: datetime, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The erasures that completed after `point`, requested within the live ledger's 89
+    days (`LIVE_LEDGER`), oldest first: those a Postgres restore to `point` undid
+    (`erasure.app.replay`). From the point's whole second, as `completed_at` keeps whole
+    seconds: running again one that completed just before the point changes nothing its
+    steps did not."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        _LEDGER_ROW
+        + "WHERE status = 'completed' AND completed_at >= {point:DateTime} AND "
+        + LIVE_LEDGER
+        + " "
+        "ORDER BY requested_at, org, id",
+        params={"point": point.replace(microsecond=0)},
+    )
+    return [dict(r) for r in rows]
+
+
+async def trusted_row(
+    org: str,
+    erasure_id: str,
+    *,
+    before: datetime,
+    actor: str,
+    ch: _CHClient | None = None,
+) -> dict[str, Any] | None:
+    """The latest row of saga `erasure_id` a restore to `before` can be trusted with: one
+    checkpointed before it, or one `actor` (the reconcile) wrote. A `BACKUP` copies its
+    tables one after another from its start, so a step checkpointed after it may be in
+    the restored ledger without its deletes in a table copied earlier. Its status
+    ("completed", "abandoned" for the recovery worker's terminal row, else the stored
+    one), `completed_at`, and `done`: the steps it names less those whose tables its
+    last census found rows in (`census.steps_to_reopen`). None for no such row, which a
+    merge that kept only a later version also leaves: every step then runs again."""
+    from server.erasure.store.census import steps_to_reopen
+
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT argMax(toString(status), version) AS status, "
+        "argMax(completed_at, version) AS completed_at, "
+        "argMax(failure_reason, version) AS failure_reason, "
+        "argMax(steps_completed, version) AS steps_completed, "
+        "argMax(residue, version) AS residue, any(scope_type) AS scope_type, "
+        "max(mirror_marked) AS mirror_marked "
+        "FROM loom.erasure_requests WHERE id = {id:UUID} AND org = {org:String} "
+        "AND (last_checkpoint_at < {before:DateTime} OR actor = {actor:String}) AND "
+        + LIVE_LEDGER
+        + " "
+        "HAVING count() > 0",
+        params={
+            "id": erasure_id,
+            "org": org,
+            "before": before.replace(microsecond=0),
+            "actor": actor,
+        },
+    )
+    if not row:
+        return None
+    status = str(row["status"])
+    if status == "failed" and str(row["failure_reason"]).startswith(ABANDONED_REASON_PREFIX):
+        status = "abandoned"
+    scope = "user_id" if row["scope_type"] == "user_id" else "namespace"
+    done = set(row["steps_completed"]) - steps_to_reopen(row["residue"], scope)
+    return {
+        "status": status,
+        "completed_at": row["completed_at"],
+        "done": done,
+        "mirror_marked": bool(row.get("mirror_marked")),
+    }
+
+
+async def still_open(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+    """The erasures not completed and not abandoned: running, or awaiting the recovery
+    worker, which resumes them."""
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        _LEDGER_ROW
+        + "WHERE "
+        + LIVE_LEDGER
+        + " AND "
+        + WILL_RUN
+        + " ORDER BY requested_at, org, id",
+        params={"abandoned": ABANDONED_REASON_PREFIX, "pending": REPLAY_PENDING_REASON},
+    )
+    return [dict(r) for r in rows]

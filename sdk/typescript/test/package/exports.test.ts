@@ -24,6 +24,7 @@ const ROOT_EXPORTS = [
   "Agent",
   "AgentTools",
   "AuthError",
+  "AutomaticCaptureSuppressed",
   "BackendUnavailable",
   "Capabilities",
   "DEFAULT_LOG_LEVEL",
@@ -54,10 +55,14 @@ const ROOT_EXPORTS = [
   "SDK_VERSION",
   "SENTINEL",
   "Session",
+  "SessionCapture",
+  "SessionProtection",
+  "SessionProtectionUnavailable",
   "StoredLogin",
   "TimeoutError",
   "Transport",
   "ValidationError",
+  "WrongCell",
   "accessToken",
   "backoffDelayMs",
   "capabilities",
@@ -126,6 +131,57 @@ describe("dist", () => {
     const cjs = require(join(dist, "integrations/strands.cjs")) as object;
     expect(names(esm)).toEqual(names(cjs));
     expect(names(esm)).toContain("LoomMemoryStore");
+  });
+
+  it("the langchain subpath loads in both formats and leaves @langchain/core to the app", async () => {
+    const esm = (await import(join(dist, "integrations/langchain.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/langchain.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["LoomKnowledgeRetriever", "LoomMemoryRetriever"]);
+    expect(readFileSync(join(dist, "integrations/langchain.mjs"), "utf8")).toMatch(
+      /from "@langchain\/core\/retrievers"/,
+    );
+  }, 30_000); // loading @langchain/core in both module formats takes seconds
+
+  it("the google-adk subpath loads in both formats without loading the framework", async () => {
+    const esm = (await import(join(dist, "integrations/google-adk.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/google-adk.cjs")) as object;
+    expect(names(esm)).toEqual(["LoomMemoryService"]);
+    expect(names(cjs)).toEqual(names(esm));
+    expect(readFileSync(join(dist, "integrations/google-adk.mjs"), "utf8")).not.toContain('from "@google/adk"');
+  });
+
+  it("the openai-agents subpath loads in both formats and leaves @openai/agents to the app", async () => {
+    const esm = (await import(join(dist, "integrations/openai-agents.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/openai-agents.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["LoomSession", "loomTools"]);
+    expect(readFileSync(join(dist, "integrations/openai-agents.mjs"), "utf8")).toMatch(/from "@openai\/agents"/);
+  }, 30_000); // loading @openai/agents in both module formats takes seconds
+
+  it("the mastra subpath loads in both formats and leaves @mastra/core to the app", async () => {
+    const esm = (await import(join(dist, "integrations/mastra.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/mastra.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["LoomMemoryStorage", "loomTools"]);
+    expect(readFileSync(join(dist, "integrations/mastra.mjs"), "utf8")).toMatch(/from "@mastra\/core\/tools"/);
+    expect(readFileSync(join(dist, "integrations/mastra.mjs"), "utf8")).toMatch(/from "@mastra\/core\/storage"/);
+  }, 30_000); // loading @mastra/core in both module formats takes seconds
+
+  it("the ai-sdk subpath loads in both formats and leaves ai to the app", async () => {
+    const esm = (await import(join(dist, "integrations/ai-sdk.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/ai-sdk.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["loomTools"]);
+    expect(readFileSync(join(dist, "integrations/ai-sdk.mjs"), "utf8")).toMatch(/from "ai"/);
+  }, 30_000); // loading ai in both module formats takes seconds
+
+  it("the claude-memory subpath loads in both formats and leaves @anthropic-ai/sdk to the app", async () => {
+    const esm = (await import(join(dist, "integrations/claude-memory.mjs"))) as object;
+    const cjs = require(join(dist, "integrations/claude-memory.cjs")) as object;
+    expect(names(esm)).toEqual(names(cjs));
+    expect(names(esm)).toEqual(["loomMemoryHandlers", "loomMemoryTool"]);
+    expect(readFileSync(join(dist, "integrations/claude-memory.mjs"), "utf8")).toMatch(/from "@anthropic-ai\/sdk/);
   });
 
   it("no bundle imports a Node built-in", () => {

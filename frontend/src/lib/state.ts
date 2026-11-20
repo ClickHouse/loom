@@ -14,11 +14,12 @@ export type View =
   | "sessions"
   | "runs"
   | "graph"
-  | "assistant"
+  | "help"
   | "browse"
   | "code"
   | "tasks"
   | "setup"
+  | "connected-accounts"
   | "admin:review_queue"
   | "admin:health"
   | "admin:guardrails"
@@ -38,11 +39,12 @@ export const ALL_VIEWS: View[] = [
   "sessions",
   "runs",
   "graph",
-  "assistant",
+  "help",
   "browse",
   "code",
   "tasks",
   "setup",
+  "connected-accounts",
   "admin:review_queue",
   "admin:health",
   "admin:guardrails",
@@ -63,6 +65,7 @@ const CANONICAL_PATH: Partial<Record<View, string>> = {
   sharing: "flow",
   browse: "spaces",
   setup: "settings",
+  "connected-accounts": "settings/connected-accounts",
 };
 
 /** View → URL path segment, e.g. "admin:health" → "admin/health". */
@@ -93,13 +96,16 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   tasks: ["inbox", "task"],
   // Settings carries its open tab (`?tab=memory|system`).
   setup: ["tab"],
+  "connected-accounts": ["kind"],
   // The object open on a page rides its URL, so a deep link, a reload and Back reopen it:
   // the memory in the drawer, the document in the preview, the thread in the replay.
-  // Memories also carries its tab: `?section=insights` is the Insights tab (MemoryTabs).
-  memories: ["memory", "section"],
-  // The Library also carries the collection it shows (`?collection=`).
-  knowledge: ["doc", "collection"],
+  memories: ["memory"],
+  // The Library also carries the place it shows (`?collection=`, or `?place=all`).
+  knowledge: ["doc", "collection", "place"],
   sessions: ["thread"],
+  // The Help view's page of the docs (`?page=features/knowledge.md`); its section is the
+  // URL's anchor.
+  help: ["page"],
 };
 
 /** The key naming the namespace a page shows. The app's own addresses carry it first (a
@@ -139,6 +145,22 @@ export function linkedNamespace(): string | null {
   return ns && NAMESPACE_NAME.test(ns) ? ns : null;
 }
 
+/** A link whose `?namespace=` is a collection opens that collection in the Library: no other
+ *  view reads one, and the header never holds one. The address is rewritten in place (a
+ *  Library link keeps its own `?collection=` and `?doc=`), and the view to boot is returned. */
+export function collectionLinkView(view: View | null): View | null {
+  const ns = linkedNamespace();
+  if (!isCollectionName(ns)) return view;
+  const kept = new URLSearchParams(view === "knowledge" ? window.location.search : "");
+  kept.delete(NAMESPACE_KEY);
+  // The root's `?view=` named the page the path now names.
+  kept.delete("view");
+  // A link naming the collection as its namespace: its `?doc=` is a document in it.
+  if (!isCollectionName(kept.get("collection"))) kept.set("collection", ns);
+  patchEntry({}, `${viewHref("knowledge")}?${kept}${window.location.hash}`);
+  return "knowledge";
+}
+
 /** How a navigation goes. `query`: the keys the destination opens on (`{ seed }` for a
  *  walk), in place of the ones the current URL carries.
  *  `back`: what the person left, when the jump offers a way back to it ("memory
@@ -150,6 +172,9 @@ export interface NavOptions {
   back?: string;
   focusKey?: string;
   note?: string;
+  /** The element the arrival focuses, by its `data-focus-key`, in place of the page's h1
+   *  (`arriveAt`); `focusKey` stays the one Back focuses. */
+  arriveFocus?: string;
 }
 
 /** The URL for `v`: the page's namespace, then with `query` exactly those keys, else only
@@ -179,17 +204,29 @@ function pushView(v: View, opts: NavOptions = {}, remember = true): void {
   // its state.
   if (!remember) return patchEntry({}, want + window.location.hash);
   const s = useStore.getState();
-  rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
+  // The phone's assistant sheet has an entry of its own over the page (its Back closes it):
+  // a navigation from it replaces that entry, so Back from the new page returns to the page
+  // under the sheet, which remembered its place when the sheet opened.
+  const replace = sheetEntry();
+  if (!replace)
+    rememberPlace({ key: s.inspectedMemoryKey, agent: s.inspectedAgent, owner: s.inspectedOwner }, opts.focusKey);
   // A navigation's entry is made in the current namespace.
   const namespace = s.identity?.namespace ?? null;
-  history.pushState(
-    { ...(opts.back ? { loomBack: opts.back } : {}), ...(namespace !== null ? { loomNamespace: namespace } : {}) },
-    "",
-    want,
-  );
+  const state = {
+    ...(opts.back ? { loomBack: opts.back } : {}),
+    ...(namespace !== null ? { loomNamespace: namespace } : {}),
+  };
+  if (replace) history.replaceState(state, "", want);
+  else history.pushState(state, "", want);
 }
 
-function urlParam(key: string): string | null {
+/** Whether the current history entry is the one the assistant's phone sheet pushed. */
+export function sheetEntry(): boolean {
+  const st: unknown = typeof history === "undefined" ? null : history.state;
+  return !!st && typeof st === "object" && (st as Record<string, unknown>).loomSheet === true;
+}
+
+export function urlParam(key: string): string | null {
   if (typeof window === "undefined") return null;
   return new URLSearchParams(window.location.search).get(key);
 }
@@ -301,6 +338,15 @@ export function pathnameView(): View | null {
  *  sign-in link brought that it refused is "refused"; a first visit carries null. */
 export type GateReason = "expired" | "ended" | "refused" | null;
 
+/** One namespace's admin badge answer: its open conflicts, whether Loom retired a memory
+ *  on its own lately, whether it is over its LLM cap, and the agents new in the last 24 h. */
+export interface AdminBadges {
+  conflicts: number | null;
+  autoResolved: boolean;
+  overCap: boolean;
+  newAgents: number;
+}
+
 interface AppState {
   authed: boolean;
   whoami: WhoAmI | null;
@@ -329,6 +375,8 @@ interface AppState {
   navSeq: number;
   /** What the latest navigation's arrival says, when not just the page's title. */
   navNote: string | null;
+  /** The element the latest navigation's arrival focuses (`NavOptions.arriveFocus`). */
+  arriveFocus: string | null;
   inspectedMemoryKey: string | null;
   // Writer-identity override for the inspected memory: when the list ran
   // with agent="*", the writer's agent may differ from identity.agent and
@@ -375,15 +423,18 @@ interface AppState {
    *  user picks one). The picker clears the flag once it has opened. */
   namespacePickerOpen: boolean;
   openNamespacePicker: (v: boolean) => void;
+  /** The sidebar's latest badge answer for the current namespace, which it writes; the
+   *  phone's More sheet reads it too. */
+  adminBadges: AdminBadges | null;
   inspect: (memoryKey: string | null, opts?: { agent?: string; userId?: string; sessionId?: string }) => void;
-  helpOpen: boolean;
-  openHelp: (v: boolean) => void;
   toggleSidebar: () => void;
   sidebarCollapsed: boolean;
   /** Navigate to Memories filtered by tag. */
   searchByTag: (tag: string) => void;
   setMemoryTagFilter: (tag: string | null) => void;
   openDocument: (sourceUri: string) => void;
+  /** Open a page of Loom's docs on the Help view, at a section's anchor when given. */
+  openDocsPage: (page: string, anchor?: string) => void;
   clearPendingDoc: () => void;
   /** The Library shows a place other than the header's namespace (a collection, or one it
    *  is confirming), or shows nothing of a namespace that holds no documents: the header's
@@ -402,7 +453,7 @@ interface AppState {
   memoriesVersion: number;
   bumpMemoriesVersion: () => void;
 
-  /** Ask the header's ⌘K palette to open with `hint` typed in (the checklist's "Find it
+  /** Ask the header's search palette to open with `hint` typed in (the checklist's "Find it
    *  again" step opens the existing palette instead of a search of its own). The palette
    *  clears the request once it has honoured it; `nonce` lets the same hint be requested
    *  twice. */
@@ -432,6 +483,7 @@ export const useStore = create<AppState>((set, get) => ({
   view: "memories",
   navSeq: 0,
   navNote: null,
+  arriveFocus: null,
   inspectedMemoryKey: null,
   inspectedAgent: "",
   inspectedOwner: null,
@@ -485,9 +537,13 @@ export const useStore = create<AppState>((set, get) => ({
     // A navigation closes the memory the drawer had open; on Memories itself the URL is the
     // same page, so its `?memory=` goes too, or a reload would reopen what was closed.
     if (!opts.query && urlParam("memory") !== null) setViewParam("memory", null, { loomInspect: null });
-    // Its tab too: a link to Memories means the list (the tabs set `section` themselves).
-    if (!opts.query && view === "memories" && urlParam("section") !== null) setViewParam("section", null);
-    set((s) => ({ view, inspectedMemoryKey: null, navSeq: s.navSeq + 1, navNote: opts.note ?? null }));
+    set((s) => ({
+      view,
+      inspectedMemoryKey: null,
+      navSeq: s.navSeq + 1,
+      navNote: opts.note ?? null,
+      arriveFocus: opts.arriveFocus ?? null,
+    }));
   },
   bootView: (view) => {
     pushView(view, {}, false);
@@ -516,6 +572,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   namespacePickerOpen: false,
   openNamespacePicker: (namespacePickerOpen) => set({ namespacePickerOpen }),
+  adminBadges: null,
   inspect: (inspectedMemoryKey, opts) => {
     const { identity, deniedNamespace } = get();
     // A memory opens in the namespace the page reads (the palette searches that one): a
@@ -533,8 +590,6 @@ export const useStore = create<AppState>((set, get) => ({
       });
     }
   },
-  helpOpen: false,
-  openHelp: (helpOpen) => set({ helpOpen }),
   searchByTag: (tag) => {
     get().navigate("memories");
     set({ memoryTagFilter: tag });
@@ -545,6 +600,17 @@ export const useStore = create<AppState>((set, get) => ({
     set({ pendingDocSourceUri: sourceUri });
   },
   clearPendingDoc: () => set({ pendingDocSourceUri: null }),
+  openDocsPage: (page, anchor = "") => {
+    const before = window.location.pathname + window.location.search;
+    get().navigate("help", { query: { page } });
+    // The section rides the URL's anchor, which the Help view scrolls to once it has read
+    // the page; navSeq moves on either way, so the view reads the address again. A move to
+    // another section of the same page gets its own entry, so Back returns to the first.
+    const here = window.location.pathname + window.location.search;
+    const hash = anchor ? `#${anchor}` : "";
+    if (here === before && hash !== window.location.hash) history.pushState(history.state, "", here + hash);
+    else history.replaceState(history.state, "", here + hash);
+  },
   openConversationThread: (threadId) => {
     get().navigate("sessions", { query: { thread: threadId } });
     set({ pendingConversationThread: { threadId } });

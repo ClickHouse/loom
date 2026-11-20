@@ -11,13 +11,22 @@ from typing import Any
 
 import httpx
 import pytest
-from loom import AssistantAnswer, AssistantCitation, AssistantText
+from loom import AssistantAnswer, AssistantCitation, AssistantStep, AssistantText
 from loom.agent import Agent
 from loom.errors import AuthInsufficient, BackendUnavailable, LoomError, RateLimited
 from loom.sync import SyncAgent
 
+HELP = "[help:guides/tokens-and-grants.md § Tokens and grants > Mint a token]"
 CITED = [
-    {"kind": "memory", "text": "[memory:a/b/c@v3]", "verified": True, "reason": "", "ref": "a/b/c"}
+    {"kind": "memory", "text": "[memory:a/b/c@v3]", "verified": True, "reason": "", "ref": "a/b/c"},
+    {
+        "kind": "help",
+        "text": HELP,
+        "verified": True,
+        "reason": "",
+        "ref": "guides/tokens-and-grants.md",
+        "anchor": "mint-a-token",
+    },
 ]
 
 
@@ -39,7 +48,13 @@ ANSWER = _sse(
     _chunk("Deploys freeze "),
     _chunk("on Fridays."),
     {"id": "chatcmpl-1", "choices": [], "usage": {"prompt_tokens": 9, "completion_tokens": 4}},
-    {"object": "loom.citations", "id": "chatcmpl-1", "citations": CITED},
+    {
+        "object": "loom.citations",
+        "id": "chatcmpl-1",
+        "citations": CITED,
+        "support": "supported",
+        "unknown_names": ["memory.frobnicate"],
+    },
 )
 
 
@@ -74,7 +89,14 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
     assert isinstance(answer, AssistantAnswer) and len(events) == 3
     assert answer.text == "Deploys freeze on Fridays." and answer.run_id == "chatcmpl-1"
     assert (answer.model, answer.prompt_tokens, answer.completion_tokens) == ("m", 9, 4)
-    assert answer.verified == (AssistantCitation("memory", "[memory:a/b/c@v3]", True, ref="a/b/c"),)
+    assert answer.verified == (
+        AssistantCitation("memory", "[memory:a/b/c@v3]", True, ref="a/b/c"),
+        AssistantCitation(
+            "help", HELP, True, ref="guides/tokens-and-grants.md", anchor="mint-a-token"
+        ),
+    )
+    assert answer.support == "supported"
+    assert answer.unknown_names == ("memory.frobnicate",)
     (r,) = sent
     assert r.url.path == "/v1/assistant/chat/completions"
     assert r.headers["X-Loom-Namespace"] == "handbook"
@@ -84,6 +106,46 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
         "stream": True,
         "messages": [*history, {"role": "user", "content": "When are deploys frozen?"}],
     }
+
+
+def test_eof_after_partial_text_does_not_yield_a_completed_answer() -> None:
+    seen: list[Any] = []
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, content=ANSWER.removesuffix(b"data: [DONE]\n\n"))
+
+    async def run() -> None:
+        async with _agent(handler) as agent:
+            async for event in agent.assistant.stream("q"):
+                seen.append(event)
+
+    with pytest.raises(LoomError, match="before completion"):
+        asyncio.run(run())
+    assert seen == [AssistantText("Deploys freeze "), AssistantText("on Fridays.")]
+    assert len(sent) == 1
+
+
+def test_text_after_done_cannot_change_the_completed_answer() -> None:
+    body = ANSWER + _sse(_chunk("discarded"))
+    events = _collect(_agent(lambda request: httpx.Response(200, content=body)))
+    assert events[:2] == [AssistantText("Deploys freeze "), AssistantText("on Fridays.")]
+    assert len(events) == 3 and events[-1].text == "Deploys freeze on Fridays."
+
+
+@pytest.mark.parametrize("support", ["a-later-state", None])
+def test_an_unknown_or_missing_support_reads_as_unchecked(support: Any) -> None:
+    event: dict[str, Any] = {"object": "loom.citations", "id": "chatcmpl-1", "citations": []}
+    if support is not None:
+        event["support"] = support
+    stream = _sse(_chunk("Seven."), event)
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream, headers={"content-type": "text/event-stream"})
+
+    answer = _collect(_agent(handler))[-1]
+    assert isinstance(answer, AssistantAnswer) and answer.support == "unchecked"
 
 
 def test_a_refusal_raises_its_typed_error_and_is_not_resent() -> None:
@@ -202,3 +264,47 @@ def test_sync_agent_iterates_the_stream() -> None:
         events = list(sa.assistant.stream("q"))
         assert isinstance(events[-1], AssistantAnswer) and len(events) == 3
         assert sa.assistant.ask("q").run_id == "chatcmpl-1"
+
+
+def test_steps_ride_the_answer_and_loom_events_yield_nothing() -> None:
+    step = {"op": "namespace.audit", "text": "Read the audit", "ok": True}
+    failed = {"op": "memory.search", "text": "Couldn't search memories", "ok": False}
+    stream = _sse(
+        {"object": "loom.step", "id": "", "choices": [], "steps": [step]},
+        _chunk("Seven."),
+        # The end of the text, before the checks: no choices, so no text.
+        {"object": "loom.text_done", "id": "chatcmpl-1", "choices": []},
+        {
+            "object": "loom.citations",
+            "id": "chatcmpl-1",
+            "citations": [],
+            "support": "unchecked",
+            "steps": [step, failed],
+            "steps_cut": True,
+        },
+    )
+
+    def handler(r: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=stream, headers={"content-type": "text/event-stream"})
+
+    events = _collect(_agent(handler))
+    assert events[0] == AssistantText("Seven.") and len(events) == 2
+    answer = events[-1]
+    assert isinstance(answer, AssistantAnswer) and answer.run_id == "chatcmpl-1"
+    assert answer.steps == (
+        AssistantStep("namespace.audit", "Read the audit", True),
+        AssistantStep("memory.search", "Couldn't search memories", False),
+    )
+    assert answer.steps_cut is True
+
+
+def test_an_answer_from_a_server_that_sends_no_steps_has_none() -> None:
+    answer = _collect(
+        _agent(
+            lambda r: httpx.Response(
+                200, content=ANSWER, headers={"content-type": "text/event-stream"}
+            )
+        )
+    )[-1]
+    assert isinstance(answer, AssistantAnswer)
+    assert (answer.steps, answer.steps_cut) == ((), False)

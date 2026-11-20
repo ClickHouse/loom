@@ -11,8 +11,8 @@ server URL and the token, and each line says what to do.
 
 Pure functions take their I/O as arguments (`get_json`, `post_json`, `home`,
 `tmp`, `now`) so the unit tests run them offline. `node_checks` is the
-exception: it runs the installed plugin's own launcher, so that one
-implementation decides which Node the hooks get.
+exception: it runs the `node` on Claude Code's PATH, and the installed Codex
+plugin's own launcher, the Node each client's hooks get.
 """
 
 from __future__ import annotations
@@ -370,10 +370,11 @@ def recording_check(
     post_json: PostJson,
     auth_ok: bool,
 ) -> Check:
-    """Whether the namespace the hooks write to keeps the
-    conversation turns they send. The owner's Recording switch in the dashboard
-    (`conversation_logging_enabled`) decides; with it off every append is
-    accepted and nothing is kept, which the hooks alone would never notice."""
+    """Whether the namespace the hooks write to keeps the conversation turns
+    they send. The owner's Record conversations switch on the dashboard's
+    Conversations page (`conversation_logging_enabled`) decides; with it off
+    the hooks soon stop sending turns, and every append is accepted and
+    dropped."""
     name = "client:recording"
     if not token or not auth_ok:
         return (name, WARN, "skipped: check auth first")
@@ -385,15 +386,15 @@ def recording_check(
         return (
             name,
             WARN,
-            f"could not read the Recording switch for {namespace!r} (HTTP {status})",
+            f"could not read the Record conversations switch for {namespace!r} (HTTP {status})",
         )
     if body.get("conversation_logging_enabled") is False:
         return (
             name,
             WARN,
-            f"conversation recording is off for {namespace!r} (the owner's Recording switch "
-            "in the dashboard): the hooks send no turns and none are kept. Turn it on there if "
-            "you want transcripts.",
+            f"conversation recording is off for {namespace!r} (the owner's Record conversations "
+            "switch on the dashboard's Conversations page): the hooks stop sending turns and none "
+            "are kept. Turn it on there if you want transcripts.",
         )
     return (name, PASS, f"conversation recording is on for {namespace!r}")
 
@@ -502,11 +503,6 @@ def claude_plugin_installed(home: Path) -> bool:
     )
 
 
-# Tools/list size per roster (tool count, chars/4 tokens), as measured against the
-# trimmed schemas. The plugin mounts `coding`.
-_ROSTER_LISTING = {"core": (41, 13265), "coding": (20, 8498), "all": (109, 31943)}
-
-
 def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
     """The plugin mounts the server AND a user-scope entry
     points at it. Every session lists both rosters; the model calls whichever
@@ -517,15 +513,13 @@ def duplicate_registration_check(name: str, entry: dict[str, Any]) -> Check:
 
     url = str(entry.get("url") or "")
     toolset = (parse_qs(urlsplit(url).query).get("toolset") or ["core"])[0]
-    tools, tokens = _ROSTER_LISTING.get(toolset, (0, 0))
-    size = f"{tools} more tools, ≈{tokens:,} tokens per turn" if tools else "a second roster"
     return (
         "client:claude-code:mcp-duplicate",
         WARN,
         f"Loom is registered twice: the plugin's own mount and the user-scope entry "
-        f"{name!r} (toolset={toolset}: {size}). The model calls either copy; the "
-        f"user-scope one carries no code scope for this checkout and its own static "
-        f"bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
+        f"{name!r} (toolset={toolset}: a second roster on every turn). The model calls "
+        f"either copy; the user-scope one carries no code scope for this checkout and its own "
+        f"static bearer. Fix: `claude mcp remove {name} -s user` (the plugin keeps the tools).",
     )
 
 
@@ -584,7 +578,8 @@ def code_access_check(
     fix = (
         "claim this machine's self-signup namespace in the dashboard (the code is in "
         "~/.loom/claim-*.txt) so its token acts as you, or save a token for your own "
-        "user (`loom mint-token --save`), or request access from the dashboard's Spaces page"
+        "user (`loom mint-token --save`), or request access from the dashboard's "
+        "Repositories page"
     )
     if readers:
         return [
@@ -881,6 +876,7 @@ def _claude_settings_env(home: Path) -> dict[str, str]:
 # profile has run. (IDEs such as VS Code load the login shell's.)
 GUI_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
 WINDOWS = sys.platform == "win32"
+DARWIN = sys.platform == "darwin"
 # Of what Codex passes its MCP header helper (codex-rs rmcp-client
 # DEFAULT_ENV_VARS), the part the launcher reads: no LOOM_NODE, no version
 # manager's variables. LOOM_NODE_SYSTEM_DIRS is kept, as ensure-node.sh keeps
@@ -891,19 +887,6 @@ CODEX_HELPER_ENV = ("HOME", "PATH", "LOOM_NODE_SYSTEM_DIRS")
 def _plugin_version(name: str) -> tuple[int, ...]:
     """A plugin cache directory's version (1.2.10) as a sortable tuple."""
     return tuple(int(n) for n in re.findall(r"\d+", name))
-
-
-def posix_sh(env: dict[str, str]) -> str | None:
-    """The sh Claude Code runs hooks with: on Windows Git Bash, found the
-    way Claude Code finds it (CLAUDE_CODE_GIT_BASH_PATH, else beside git)."""
-    if not WINDOWS:
-        return shutil.which("sh")
-    if env.get("CLAUDE_CODE_GIT_BASH_PATH"):
-        bash: Path | None = Path(env["CLAUDE_CODE_GIT_BASH_PATH"])
-    else:
-        git = shutil.which("git")
-        bash = Path(git).parents[1] / "bin" / "bash.exe" if git else None
-    return str(bash) if bash and bash.is_file() else None
 
 
 def claude_plugin_install(home: Path) -> Path | None:
@@ -936,13 +919,13 @@ def _launcher_check(sh: str, launcher: Path, env: dict[str, str]) -> tuple[int, 
 
 
 _NO_NODE = 'No hook runs, and the MCP entry gets no token ("needs authentication").'
-_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh` (Git Bash on Windows)."
+_NO_SH = "no POSIX sh: the hooks and the MCP header helper run `sh`."
 
 
 def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     """The Node each installed plugin's hooks and MCP header helper run
-    under, as that plugin's own launcher finds it in that client's
-    environment."""
+    under in that client's environment: for Claude Code the `node` on its
+    PATH, for Codex what the plugin's own launcher finds."""
     out: list[Check] = []
     install = claude_plugin_install(home)
     if install is not None:
@@ -959,18 +942,48 @@ def node_checks(home: Path, env: dict[str, str]) -> list[Check]:
     return out
 
 
-def _predates_launcher(name: str, install: Path, client: str, fix: str) -> Check:
-    return (
-        name,
-        WARN,
-        f"the installed plugin at {install} predates the Node launcher: its hooks need "
-        f"`node` on {client}'s PATH. Fix: {fix}.",
-    )
+def _path_node(env: dict[str, str]) -> tuple[int, str]:
+    """The `node` on env's PATH: (0, its ready line), (1, why it cannot run
+    the hooks), or (2, why it could not be asked)."""
+    node = shutil.which("node", path=env.get("PATH", ""))
+    if node is None:
+        return 1, "no `node` on Claude Code's PATH."
+    try:
+        r = subprocess.run(
+            [node, "--version"], env=env, capture_output=True, text=True, timeout=10, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 2, f"could not run {node}: {e}"
+    version = r.stdout.strip()
+    major = re.match(r"v(\d+)\.", version)
+    if r.returncode != 0 or major is None or int(major.group(1)) < 18:
+        return 1, f"the `node` on Claude Code's PATH, {node} ({version}), is not Node.js 18+."
+    # fnm's per-shell link goes away with the shell: name the directory it points at.
+    if "fnm_multishells" in node:
+        node = os.path.join(os.path.realpath(os.path.dirname(node)), os.path.basename(node))
+    return 0, f"Loom hook runtime ready: {node} ({version})"
+
+
+def _hooks_run_node(install: Path) -> bool:
+    """Whether the installed plugin's hooks run `node` with no shell; a
+    plugin before 1.2.21 starts them through its launcher. An unreadable
+    hooks.json reads as the current wiring."""
+    try:
+        hooks = json.loads((install / "hooks" / "hooks.json").read_text())["hooks"]
+        return any(
+            h.get("command") == "node"
+            for groups in hooks.values()
+            for g in groups
+            for h in g["hooks"]
+        )
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return True
 
 
 def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
-    """Claude Code runs hooks and the helper with its own environment plus
-    its settings `env`: this shell's, or a GUI launch's with no profile."""
+    """Claude Code runs hooks and the helper with the `node` on its own PATH,
+    its settings `env` applied: this shell's, or a GUI launch's with no
+    profile."""
     name = "client:claude-code:node"
     if not install.is_dir():
         return (
@@ -979,31 +992,32 @@ def _claude_node_check(home: Path, env: dict[str, str], install: Path) -> Check:
             f"the installed plugin at {install} is not on disk. Fix: "
             "`claude plugin uninstall loom@loom && claude plugin install loom@loom`.",
         )
-    launcher = install / "bin" / "loom-node"
-    if not launcher.is_file():
-        return _predates_launcher(name, install, "Claude Code", "`claude plugin update loom@loom`")
+    if not _hooks_run_node(install):
+        return (
+            name,
+            WARN,
+            f"the installed plugin at {install} starts its hooks through an older wiring "
+            "this check does not judge. Fix: `claude plugin update loom@loom`.",
+        )
     settings = _claude_settings_env(home)
-    client_env = {**env, **settings}
-    sh = posix_sh(client_env)
-    if sh is None:
-        return (name, FAIL, _NO_SH)
-    try:
-        code, line = _launcher_check(sh, launcher, client_env)
-        if code != 0:
-            return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
-        if WINDOWS:  # a Windows GUI app gets the user's PATH
-            return (name, PASS, line)
-        gui = {"HOME": str(home), "PATH": GUI_PATH, **settings}
-        gui_code, _ = _launcher_check(sh, launcher, gui)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return (name, WARN, f"could not run {launcher}: {e}")
+    code, line = _path_node({**env, **settings})
+    if code == 2:
+        return (name, WARN, line)
+    if code != 0:
+        return (name, FAIL, f"{line} {_NO_NODE} Fix: /loom:loom-status.")
+    # Only a macOS Dock launch has the bare system PATH: a Windows GUI app
+    # gets the user's PATH, a Linux desktop session its profile's.
+    if not DARWIN:
+        return (name, PASS, line)
+    gui_code, _ = _path_node({"HOME": str(home), "PATH": GUI_PATH, **settings})
     if gui_code != 0:
         return (
             name,
             WARN,
             f"{line}, but only with this shell's environment: Claude Code started from "
-            "the Dock or a desktop launcher finds no Node. Fix: set LOOM_NODE to that "
-            "path in the `env` block of ~/.claude/settings.json.",
+            "the Dock or a desktop launcher finds no Node.js 18+ as `node`. Fix: set PATH "
+            "in the `env` block of ~/.claude/settings.json to the whole search path with "
+            'that directory first, such as "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin".',
         )
     return (name, PASS, line)
 
@@ -1014,7 +1028,12 @@ def _codex_node_check(env: dict[str, str], install: Path) -> Check:
     name = "client:codex:node"
     launcher = install / "bin" / "loom-node"
     if not launcher.is_file():
-        return _predates_launcher(name, install, "Codex", "`codex plugin marketplace upgrade loom`")
+        return (
+            name,
+            WARN,
+            f"the installed plugin at {install} predates the Node launcher: its hooks need "
+            "`node` on Codex's PATH. Fix: `codex plugin marketplace upgrade loom`.",
+        )
     sh = shutil.which("sh")
     if sh is None:
         return (name, FAIL, _NO_SH)

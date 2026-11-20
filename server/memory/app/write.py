@@ -15,6 +15,7 @@ from server.code.app.member_writes import assert_own_row
 from server.core import pg
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.hashing import served_content_sha256
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -60,7 +61,11 @@ log = logging.getLogger(__name__)
 
 # Leaf module (no internal imports) shared with memory.app.retrieval to
 # avoid a circular import.
-from server.memory.domain.memory_types import is_embedded, is_searchable_type  # noqa: E402
+from server.memory.domain.memory_types import (  # noqa: E402
+    is_definition,
+    is_embedded,
+    is_searchable_type,
+)
 
 # Terminal failure shapes of `memory.set`, keyed by the `code` in the HTTPException detail.
 # Mapped once at the handler boundary rather than counted at each raise site, so no refusal
@@ -459,13 +464,16 @@ async def _set_prepare_value(w: _SetWrite) -> None:
 async def _set_check_if_match(w: _SetWrite) -> None:
     """Phase 5 of memory.set: the if_match_sha256 precondition (409 PRECONDITION_FAILED).
 
-    When the caller sent a hash, `w.existing` is re-read strongly and rebound.
+    A hash re-reads strongly. Absence uses the strong head already guarded under the
+    key lock, keeping an expired physical row for exact commit admission.
     """
     input, existing = w.input, w.existing
 
-    # Optimistic concurrency: verify the live row's hash matches before
-    # accepting. Mismatch → 409 so the caller can re-read and retry.
-    if input.if_match_sha256:
+    if input.if_match_sha256 == "absent":
+        expires_at = getattr(existing, "expires_at", None)
+        if existing is None or (expires_at is not None and expires_at <= naive_utc_now()):
+            return
+    elif input.if_match_sha256:
         import server.memory.store as memory_repo
 
         existing = await memory_repo.get_by_key(
@@ -484,19 +492,20 @@ async def _set_check_if_match(w: _SetWrite) -> None:
             strong=True,
             scope=request_scope(),
         )
-        current_sha = served_sha256(existing)
-        if current_sha != input.if_match_sha256:
-            raise HTTPException(
-                status_code=409,
-                detail={
-                    "code": "PRECONDITION_FAILED",
-                    "message": (
-                        "if_match_sha256 does not match current row "
-                        f"(current_sha256={current_sha!r})"
-                    ),
-                    "current_sha256": current_sha,
-                },
-            )
+    else:
+        return
+    current_sha = served_sha256(existing)
+    if current_sha != input.if_match_sha256:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PRECONDITION_FAILED",
+                "message": (
+                    f"if_match_sha256 does not match current row (current_sha256={current_sha!r})"
+                ),
+                "current_sha256": current_sha,
+            },
+        )
     w.existing = existing
 
 
@@ -622,6 +631,8 @@ async def _handle_memory_set(
 ) -> MemorySetOutput:
     """memory.set; a conditional write and a pin hold the key's write lock from their read
     to their insert, as a resolver write does, so a retirement never lands between them."""
+    if input.if_match_sha256 == "absent" and input.agent == "*":
+        raise ValidationError("if_match_sha256='absent' requires a concrete agent")
     if not (input.if_match_sha256 or input.pinned):
         return await _memory_set_phases(input)
     # A pin rewrites the row from its read: a retirement landing between the two would be
@@ -666,6 +677,16 @@ async def _memory_set_phases(input: MemorySetInput) -> MemorySetOutput:
         except HeadMoved:
             continue
     raise AdmissionContendedError(f"{input.memory_key!r} kept changing during this write")
+
+
+async def _verdict_generations(w: _SetWrite) -> dict[tuple[str, str], int]:
+    """The generations a Postgres-authority verdict is reached at: the check must see
+    every commit through them. A definition's verdict reads no peer, so it captures only
+    the policy's: no commit to the namespace in between can move it."""
+    if is_definition(w.input):
+        return dict(w.policy)
+    captured = await pg_admission.capture(w.input.org, w.input.namespace)
+    return {**captured, **w.policy}
 
 
 async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> MemorySetOutput:
@@ -728,9 +749,7 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
     deadline = time.monotonic() + settings.pg_admission_deadline_ms / 1000
     while True:
         if pg.enabled() and w.peer_rows is None:
-            # The check below must see every commit through these generations.
-            captured = await pg_admission.capture(input.org, input.namespace)
-            w.generations = {**captured, **w.policy}
+            w.generations = await _verdict_generations(w)
         _cfg, conflict_result, peers_out, _rejected_dry_run = await _set_conflict_verdict(
             w, _cfg_task
         )

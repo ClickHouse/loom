@@ -143,6 +143,7 @@ def _lease(held: bool) -> Any:
     from server.workers import leader
 
     lease = leader.SupervisorLease("on" if held else "off")
+    lease.step()  # an `on` lease is decided by its first step
     return lease
 
 

@@ -8,6 +8,8 @@ from datetime import datetime
 from typing import Any, cast
 
 from server.core import pg
+from server.core.naming import NOT_MIRROR_PG, not_mirror_sql
+from server.core.principals import COLLECTION_PREFIX
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.store.rows import (
     AgentEventExportRow,
@@ -17,6 +19,7 @@ from server.erasure.store.rows import (
     ConversationThreadExportRow,
     MemoryExportRow,
 )
+from server.observability.store.event_reads import MASKED_EVENTS
 
 # Export-side reads (data subject access request).
 
@@ -25,23 +28,21 @@ from server.erasure.store.rows import (
 class Shown:
     """The namespaces an export may show its caller, applied in each read before
     its LIMIT so hidden rows never take a visible row's place: none of
-    `hidden`, and of the collections only `collections` (None: every one)."""
+    `hidden`, never a mirror, and of the collections only `collections` (None: every
+    one)."""
 
     hidden: tuple[str, ...] = ()
     collections: tuple[str, ...] | None = None
-    # `server.auth.sharing.COLLECTION_PREFIX`, which the handler passes (a store
-    # imports no auth module).
-    collection_prefix: str = "col-"
 
     def clause(self) -> tuple[str, dict[str, Any]]:
-        sql = " AND namespace NOT IN {shown_hidden:Array(String)}"
+        sql = f" AND namespace NOT IN {{shown_hidden:Array(String)}} AND {not_mirror_sql()}"
         params: dict[str, Any] = {"shown_hidden": list(self.hidden)}
         if self.collections is not None:
             sql += (
                 " AND (NOT startsWith(namespace, {shown_prefix:String})"
                 " OR namespace IN {shown_collections:Array(String)})"
             )
-            params["shown_prefix"] = self.collection_prefix
+            params["shown_prefix"] = COLLECTION_PREFIX
             params["shown_collections"] = list(self.collections)
         return sql, params
 
@@ -113,11 +114,11 @@ async def export_memory_heads(
     column = "user_id" if scope_type == "user_id" else "namespace"
     hidden = [n for n in shown.hidden if not pg.unstorable(n)]
     args: list[Any] = [org, scope_value, int(limit), hidden]
-    where = f"org = $1 AND {column} = $2 AND NOT (namespace = ANY($4::text[]))"
+    where = f"org = $1 AND {column} = $2 AND NOT (namespace = ANY($4::text[])) AND {NOT_MIRROR_PG}"
     if not include_tombstoned:
         where += " AND row->>'tombstoned_at' IS NULL"
     if shown.collections is not None:
-        args += [shown.collection_prefix, [n for n in shown.collections if not pg.unstorable(n)]]
+        args += [COLLECTION_PREFIX, [n for n in shown.collections if not pg.unstorable(n)]]
         where += " AND (NOT starts_with(namespace, $5) OR namespace = ANY($6::text[]))"
     rows = await pg.fetch(
         "SELECT org, namespace, agent, user_id, session_id, memory_id::text AS memory_id, "
@@ -335,7 +336,7 @@ async def export_agent_events(
     shown: Shown = _EVERY,
     ch: _CHClient | None = None,
 ) -> list[AgentEventExportRow]:
-    """Read loom.agent_events rows in one scope, newest-first."""
+    """Read masked event rows in one scope, newest-first."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     scope_clause = (
@@ -347,7 +348,7 @@ async def export_agent_events(
                trace_id, latency_ms, input_tokens,
                output_tokens, embedding_tokens, upstream_cost_usd, bytes_written,
                success, error_code, kind, args
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE org = {{org:String}} AND {scope_clause}{shown_sql}
         ORDER BY ts DESC
         LIMIT {{lim:UInt64}}

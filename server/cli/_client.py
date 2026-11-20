@@ -148,18 +148,26 @@ def error_line(status: int, reason: str, raw: bytes) -> str:
     capped at 200 characters. The raw body is never printed: it can echo the
     request (a validation error quotes its input), and this line lands in
     terminals and CI logs."""
-    code, message = "", ""
     try:
         detail = json.loads(raw or b"{}").get("detail")
     except (ValueError, AttributeError):
         detail = None
+    return detail_line(status, reason, detail)
+
+
+def detail_line(status: int, reason: str, detail: Any) -> str:
+    """`error_line` from an envelope's parsed `detail`: Loom's error object, a
+    request validation list (its first field and why), or a plain message."""
+    code, message = "", ""
     if isinstance(detail, dict):
         code, message = str(detail.get("code") or ""), str(detail.get("message") or "")
     elif isinstance(detail, list) and detail and isinstance(detail[0], dict):
+        where = ".".join(str(p) for p in detail[0].get("loc") or [])
         code, message = "validation_error", str(detail[0].get("msg") or "")
+        message = f"{where}: {message}" if where else message
     elif isinstance(detail, str):
         message = detail
-    line = f"HTTP {status} {code or reason}"
+    line = f"HTTP {status} {code or reason}".rstrip()
     return f"{line}: {message[:200]}" if message else line
 
 

@@ -23,6 +23,8 @@ CONFIG_ENTRY_READERS = {
     "identity/app/token_grants.py",
     # Whether a revoke on a never-read process must read the registry and fan out.
     "code/app/index/maintainers.py",
+    # The restricted namespaces a SQL surface grant may not reach.
+    "insights/app/sql_access.py",
 }
 # The snapshot's internals and the raw configuration: only repos.py reads them.
 INTERNALS = {"_configured_from_env", "_with_registry", "_registry_repos", "_page_namespaces"}
@@ -156,7 +158,7 @@ def test_the_accessors_refuse_until_the_registry_is_read(monkeypatch) -> None:
         org_readable=True,
     )
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_configured_from_env", lambda: [entry])
+    monkeypatch.setattr(repos, "_configured_from_env", lambda _config, _errors: [entry])
     monkeypatch.setattr(repos, "registry_repos", lambda: [])
     monkeypatch.setattr(repos, "_registry_loaded", False)
     with pytest.raises(repos.RegistryUnread):
@@ -287,11 +289,11 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
     monkeypatch,
 ) -> None:
     from contextlib import asynccontextmanager
-    from types import SimpleNamespace
 
     from server.knowledge.app import source_sync
+    from server.knowledge.domain.sources import KnowledgeSource
 
-    src = SimpleNamespace(org="o", namespace="code-x", name="docs")
+    src = KnowledgeSource("o", "code-x", "docs", "gdrive", "source-id")
     retired: list[str] = []
 
     async def active() -> list[object]:
@@ -317,7 +319,7 @@ async def test_a_source_sync_retires_removed_sources_while_the_registry_is_unrea
     monkeypatch.setattr(source_sync.store, "inactive_namespaces", inactive)
     monkeypatch.setattr(source_sync, "_source_turn", turn)
     monkeypatch.setattr(source_sync, "_retire_all", retire_all)
-    # The trunk check reads the code registry and refuses, after the retirement.
+    # The pass reads the code registry for repository tags and refuses, after the retirement.
     with pytest.raises(repos.RegistryUnread):
         await source_sync.run_sync()
     assert retired == ["docs"]

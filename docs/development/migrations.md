@@ -13,11 +13,14 @@ This page holds the rules for writing a migration. How a deployment applies them
   (a CI step and the deploy preflight) fails on either. A file renamed with its text
   unchanged is not ledger-only: its SHA-256 names it, and it is recorded under the new
   name without running again.
-- Every file addresses `loom.<table>` and `loom_telemetry.<table>`. The runner maps
-  them to `LOOM_CH_DATABASE` and `LOOM_CH_TELEMETRY_DATABASE` as it sends each
-  statement (`server/core/ch_names.py`), so the checksum is over the file as written.
-  A database is compared by value as `currentDatabase()` or a bound name, never a
-  literal `'loom'` (`tests/unit/test_ch_names.py`).
+- Every file addresses `loom.<table>` and `loom_telemetry.<table>`. The runner maps them
+  to `LOOM_CH_DATABASE` and `LOOM_CH_TELEMETRY_DATABASE` as it sends each statement
+  (`server/core/ch_names.py`), so the checksum is over the file as written. A database
+  is compared by value as `currentDatabase()` or a bound name, never a literal `'loom'`
+  (`tests/unit/test_ch_names.py`). A file that changes the key or TTL of a table whose
+  name starts with `_`, or renames or exchanges one, also updates its row in [storage
+  layout](../architecture/storage-layout.md) and the reshape guard of
+  `tests/unit/test_storage_layout_rows.py`.
 
 ## Numbering
 
@@ -98,6 +101,13 @@ creates every view under the user running the migration
 (`DEFINER = CURRENT_USER`: the dump names its own user, which another server may not have), and waits for every mutation a file issues before
 recording it (`LOOM_MIGRATE_MUTATION_WAIT_S`).
 
+**Pre-checks.** A file that must not run while the data holds something the file alone
+cannot see registers a check in `server/core/schema/prechecks.py`, keyed by its name
+without the number, so a renumbered file keeps it. The runner runs the check before the
+file, a dry run included; a check that refuses stops the run with its message and runs
+nothing of the file. `097_mirror_names_reserved.sql` uses one: it refuses while a
+namespace of the reserved mirror form is registered or holds live rows.
+
 ## Changing a sort key or a partition key
 
 ClickHouse changes neither in place, so a migration declares the target and the table is
@@ -144,19 +154,59 @@ operator step ([release process](./release-process.md#release-notes)).
 ## Postgres migrations
 
 `schemas/pg_migrations/NNN_*.sql` follow the same rules: numbered, additive, never
-edited once merged. A boot applies them under a Postgres advisory lock, each file in one
-transaction with its ledger row. A migration waits at most 5 s for a table lock
-(`lock_timeout`, then retried), so an `ALTER` never queues every query of the table
-behind a long transaction. A build serves a ledger that holds a later build's files, with
-a warning naming them; a ledger file it does not carry numbered at or below its own last
-file, or one whose checksum changed, refuses the boot.
+edited once merged, and every `CREATE`, `ALTER` or `DROP` of a table names
+`loom.<table>`, except a rename's new name, where Postgres takes no schema
+(`tests/unit/test_storage_layout_rows.py`). A boot applies them under a Postgres
+advisory lock, each ordinary file in one transaction with its ledger row. A migration waits at
+most 5 s for a table lock (`lock_timeout`, then retried), so an `ALTER` never queues
+every query of the table behind a long transaction. A build serves a ledger that holds a
+later build's files, with a warning naming them; a ledger file it does not carry
+numbered at or below its own last file, or one whose checksum changed, refuses the boot.
 
-Every file runs in one transaction, so a migration builds no index on a large table: the
-build would hold off the table's writes, every commit answering 503, until it ends. Such
-an index needs `CREATE INDEX CONCURRENTLY` outside a transaction, and a boot waiting on
-the advisory lock deadlocks with it (a waiting session holds a snapshot the build waits
-out): a change that adds such a file also takes the lock by retrying
-`pg_try_advisory_lock`.
+Ordinary files run in one transaction, so they build no index on a table that
+already ships: a transactional build blocks writes until it ends. An index on a
+table introduced by the same release may be transactional because that table is
+small wherever the file runs (`010_revision_delivered_at.sql`).
+
+For an existing table, the shared Postgres runner accepts only this online file
+form, in either the cell or router journal:
+
+```sql
+-- loom:online-index loom_router.placements_by_cell_org ON loom_router.placements (cell, org)
+CREATE INDEX CONCURRENTLY placements_by_cell_org ON loom_router.placements
+USING btree (cell COLLATE "C", org COLLATE "C");
+```
+
+The declaration and statement must name the same schema, table, index and ordered
+columns. Only ordinary identifiers, a non-unique btree and C collations are
+accepted. Expressions, predicates, included columns and additional statements
+are refused before the ledger changes. This is not a general escape from
+transactional migrations.
+
+The runner takes session advisory locks by retrying `pg_try_advisory_lock`, with
+no transaction or snapshot between attempts. It releases the ordinary migration
+key before acquiring a separate schema-scoped online-index key and running
+concurrent DDL. A shipped blocking migrator can therefore finish its unchanged
+journal while the index waits for old snapshots. After the build finishes, the
+runner reacquires the ordinary key, records the file's checksum in the existing
+ledger and commits a WAL-message fence. Later files wait for this ledger entry.
+
+Catalog validation checks the table, ordered columns and collations, btree
+method, absence of constraints and expressions, and valid/ready state. A
+matching incomplete index is dropped concurrently and rebuilt; a different
+same-named object refuses without being dropped. A recorded but absent or
+invalid index refuses as corruption. Even when every file is recorded, a build
+carrying an online file validates its index and acknowledges a fresh WAL fence:
+a primary-visible ledger row after a cancelled synchronous COMMIT is insufficient.
+An interrupted build, drop or ledger write is retried from catalogs and the
+existing ledger, without a separate job table. Cancellation terminates the
+migration session before asyncpg can wait indefinitely on rollback.
+
+The router's dedicated migration connection has no statement timeout; its
+serving pool retains its statement limit. The runner preserves a borrowed
+connection's statement budget, including a stopped restore command's deadline.
+Concurrent DDL retains the five-second lock timeout and can be interrupted and
+retried without changing the file checksum.
 
 ## Schema dump and check
 

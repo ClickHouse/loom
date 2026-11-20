@@ -88,7 +88,7 @@ def _verify(text: str, run_id: str = "r1") -> list[dict[str, Any]]:
             text, org="acme", namespace="ns", token="answer-token", run_id=run_id, subject="alice"
         )
     )
-    return [c.model_dump() for c in checked]
+    return [c.citation.model_dump() for c in checked]
 
 
 def test_each_citation_is_checked_against_what_the_answer_read(
@@ -180,7 +180,10 @@ def test_with_memory_reads_not_recorded_only_memory_citations_go_unchecked(
     text = f"[memory:{MEMORY_KEY}@v12]\n```sql\n{SQL}\n```\n"
     out = {c["kind"]: (c["verified"], c["reason"]) for c in _verify(text)}
     # The statements' ledger does not depend on the exposure ledger.
-    assert out == {"memory": (False, "the check could not run"), "sql": (True, "")}
+    assert out == {
+        "memory": (False, "this deployment does not record memory reads"),
+        "sql": (True, ""),
+    }
 
 
 def test_a_document_cited_at_two_sections_is_read_once(loom: list[dict[str, Any]]) -> None:
@@ -274,6 +277,8 @@ def test_the_key_statement_finds_a_cited_key_and_its_chunks_and_nothing_else() -
 
     ch = LocalCH(
         ddl("memory_exposures"),
+        ddl("agent_events"),
+        ddl("agent_events_private"),
         # A chunk of the cited key, then keys that only look like it.
         row([chunk(key), f"{key}x", chunk(f"{key}x")]),
         # The cited key itself, but under another run, and under another caller.
@@ -284,14 +289,24 @@ def test_the_key_statement_finds_a_cited_key_and_its_chunks_and_nothing_else() -
     found = asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key, "a/b"], ch=ch))  # type: ignore[arg-type]
     assert found == {key, "a/b"}
     # A key may hold `:`: a chunk of `<key>:v2` is that key's, not the cited one's.
-    colon = LocalCH(ddl("memory_exposures"), row([chunk(f"{key}:v2")]))
+    colon = LocalCH(
+        ddl("memory_exposures"),
+        ddl("agent_events"),
+        ddl("agent_events_private"),
+        row([chunk(f"{key}:v2")]),
+    )
     assert asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key], ch=colon)) == set()  # type: ignore[arg-type]
     both = asyncio.run(
         ledger.returned_keys("acme", "ns", "r1", "alice", [key, f"{key}:v2"], ch=colon)  # type: ignore[arg-type]
     )
     assert both == {f"{key}:v2"}
     # Neither a longer key nor its chunk stands for the cited one.
-    longer = LocalCH(ddl("memory_exposures"), row([f"{key}x", chunk(f"{key}x")]))
+    longer = LocalCH(
+        ddl("memory_exposures"),
+        ddl("agent_events"),
+        ddl("agent_events_private"),
+        row([f"{key}x", chunk(f"{key}x")]),
+    )
     alone = asyncio.run(ledger.returned_keys("acme", "ns", "r1", "alice", [key], ch=longer))  # type: ignore[arg-type]
     assert alone == set()
 
@@ -337,6 +352,7 @@ def test_the_statement_read_finds_only_the_answers_own_successful_queries() -> N
 
     ch = LocalCH(
         ddl("agent_events"),
+        ddl("agent_events_private"),
         call("d-ran"),
         # Not the answer's: another run, another caller, the caller's own client, a call
         # that failed, another op.

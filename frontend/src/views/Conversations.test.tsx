@@ -7,9 +7,9 @@ import { Conversations } from "./Conversations";
 import { must } from "../test/must";
 
 // Conversations stays mounted while threads open and close and while the namespace
-// switches, so every async answer must land only on the thread or namespace it was
+// changes, so every async answer must land only on the thread or namespace it was
 // asked for: thread A's detail and memories never render under thread B, and
-// namespace A's hits and recording switch never survive into namespace B.
+// namespace A's hits and Record conversations switch never survive into namespace B.
 
 const listConversationThreads = vi.fn();
 const getConversationThread = vi.fn<typeof import("../api").getConversationThread>();
@@ -31,9 +31,12 @@ vi.mock("../api", async (importOriginal) => {
     listConversationMessages: (...args: unknown[]) => listConversationMessages(...args),
   };
 });
+const roleHere = vi.hoisted(() => ({ role: "admin" as "admin" | "writer" | "viewer", loading: false }));
 vi.mock("../lib/namespaceRole", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/namespaceRole")>()),
-  useNamespaceRole: () => "admin",
+  useNamespaceRole: () => roleHere.role,
+  useNamespaceRoleRead: () =>
+    roleHere.loading ? { role: null, loading: true, rows: null } : { role: roleHere.role, loading: false, rows: [] },
 }));
 vi.mock("../components/SessionBriefsSection", () => ({ SessionBriefsSection: () => null }));
 vi.mock("../components/SessionBriefPanel", () => ({ SessionBriefPanel: () => null }));
@@ -156,7 +159,7 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.getByText("body of thread-b")).toBeInTheDocument();
   });
 
-  it("clears namespace A's hits and recording switch on a switch to B", async () => {
+  it("clears namespace A's hits and Record conversations switch on a change to B", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     const nsB = deferred<{ conversation_logging_enabled: boolean }>();
     getNamespace.mockResolvedValueOnce({ conversation_logging_enabled: true }).mockReturnValueOnce(nsB.promise);
@@ -308,6 +311,131 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(screen.queryByText("0 messages")).toBeNull();
   });
 
+  const emptyWith = async (logging: boolean) => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockResolvedValue({ conversation_logging_enabled: logging });
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+  };
+
+  it("draws no empty state while the recording read is out", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockReturnValue(new Promise(() => {}));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    await waitFor(() => expect(listConversationThreads).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+    expect(screen.queryByRole("heading", { name: "No conversations yet in this namespace" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with the recording read failed, says what fills the page and offers no connect", async () => {
+    listConversationThreads.mockResolvedValue({ threads: [] });
+    getNamespace.mockRejectedValue(new Error("unreachable"));
+    listMemories.mockResolvedValue(noMemories);
+    render(<Conversations />);
+    expect(await screen.findByRole("heading", { name: "No conversations yet in this namespace" })).toBeInTheDocument();
+    expect(
+      screen.getByText(/saves its chat turns, one thread per chat, while Record conversations is on\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("with the recording read failed, gives a viewer the viewer's wording and no connect", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      listConversationThreads.mockResolvedValue({ threads: [] });
+      getNamespace.mockRejectedValue(new Error("unreachable"));
+      listMemories.mockResolvedValue(noMemories);
+      render(<Conversations />);
+      expect(
+        await screen.findByRole("heading", { name: "No conversations yet in this namespace" }),
+      ).toBeInTheDocument();
+      expect(screen.getByText(/when someone with writer access connects an agent/)).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
+  it("with recording on and no thread, says what fills the page and offers Connect an agent", async () => {
+    await emptyWith(true);
+    expect(
+      screen.getByText(
+        "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/conversation\.append/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Connect an agent" })).toBeInTheDocument();
+  });
+
+  it("with recording on, offers a viewer no connect and says who fills the page", async () => {
+    roleHere.role = "viewer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "v@x", org: "dev", roles: ["VIEWER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(true);
+      expect(
+        screen.getByText(/when someone with writer access connects an agent that saves its chat turns/),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
+  it("with recording off, points whoever may set it at the switch, and offers no connect", async () => {
+    await emptyWith(false);
+    expect(await screen.findByText(/It is off here: turn on Record conversations above/)).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Record conversations" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+  });
+
+  it("while the role loads, shows the Record switch locked and says the role is still loading", async () => {
+    roleHere.loading = true;
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@x", org: "dev", roles: ["WRITER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(false);
+      const sw = await screen.findByRole("switch", { name: "Record conversations" });
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAccessibleDescription("Your role on this namespace is still loading.");
+      expect(setConversationLogging).not.toHaveBeenCalled();
+    } finally {
+      roleHere.loading = false;
+    }
+  });
+
+  it("with recording off, tells whoever may not set it that an admin can, and offers no connect", async () => {
+    roleHere.role = "writer";
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@x", org: "dev", roles: ["WRITER"], namespaces: ["ns-a"] },
+    });
+    try {
+      await emptyWith(false);
+      expect(
+        await screen.findByText(/It is off here; an admin of this namespace can turn it on\./),
+      ).toBeInTheDocument();
+      // The switch stays in view, off-limits, and its info button says what setting it needs.
+      const sw = screen.getByRole("switch", { name: "Record conversations" });
+      expect(sw).toBeDisabled();
+      expect(sw).toHaveAccessibleDescription("Needs admin on ns-a. An admin of it can grant that.");
+      fireEvent.click(sw);
+      expect(setConversationLogging).not.toHaveBeenCalled();
+      expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    } finally {
+      roleHere.role = "admin";
+    }
+  });
+
   it("keeps two agents' turns that share an id apart", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-d", "Title D")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
@@ -387,21 +515,16 @@ describe("Conversations: answers follow the current thread and namespace", () =>
     expect(ringed[0]).toContain("ship the fix");
   });
 
-  it("ignores '/' pressed inside the thread dialog", async () => {
+  // The dashboard has no keyboard shortcuts: / does not focus the search.
+  it("leaves the focus where it is on '/'", async () => {
     listConversationThreads.mockResolvedValue({ threads: [summary("thread-a", "Title A")] });
     getNamespace.mockResolvedValue({ conversation_logging_enabled: true });
-    getConversationThread.mockResolvedValue(detail("thread-a", "Title A"));
     listMemories.mockResolvedValue(noMemories);
 
     render(<Conversations />);
     const box = screen.getByLabelText("Search conversation transcripts");
+    await screen.findByText("Title A");
     fireEvent.keyDown(document.body, { key: "/" });
-    expect(box).toHaveFocus();
-
-    fireEvent.click(await screen.findByText("Title A"));
-    const dialog = await screen.findByRole("dialog");
-    await screen.findByText("body of thread-a");
-    fireEvent.keyDown(dialog, { key: "/" });
     expect(box).not.toHaveFocus();
   });
 });

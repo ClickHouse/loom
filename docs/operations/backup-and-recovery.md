@@ -1,9 +1,10 @@
 # Backup and recovery
 
 A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row
-names an object in it. ClickHouse holds the originals' catalog (`loom.document_blobs`,
-and on the default store their bytes), the token signing keys (`loom.signing_keys`) and
-the admin runtime overrides (`loom.runtime_overrides`). These sit outside ClickHouse:
+names an object in it, and under the Postgres authority a backup of Postgres too.
+ClickHouse holds the originals' catalog (`loom.document_blobs`, and on the default store
+their bytes), the token signing keys (`loom.signing_keys`) and the admin runtime
+overrides (`loom.runtime_overrides`). These sit outside ClickHouse:
 
 - `LOOM_JWT_SECRET`, the root secret. It seals the stored credentials and the signing
   keys, so a backup restored without it opens neither. Keep it with the env config.
@@ -149,6 +150,32 @@ fewer rows there is a warning once a merge has run, and a failure otherwise. It 
 The dump is per table, not a snapshot across tables. Use it to move data between
 clusters, not for disaster recovery.
 
+## Connected-account authority after a restore
+
+Stop every server and worker before restoring a deployment. Under the Postgres authority,
+`loom reconcile --apply` clears restored connection authority before publishing held
+documents, for either restored store; a cleanup failure leaves publication held. Its
+live override does not skip the connected-account offline check.
+
+For a ClickHouse-only deployment, restore the configured stores and run:
+
+```bash
+python dev/restore_connected_accounts.py
+python dev/restore_connected_accounts.py --apply
+```
+
+Use the deployment's normal configuration. This maintenance entry accepts no arbitrary
+host or database remapping: a generic loader's scratch restore must not clear another
+deployment's accounts. Dry run validates the bounded history inventory without changing
+it. Apply fences historical connection keys, queues owned source ids, clears credentials
+and verifies deletion of historical account and source rows. Failure refuses completion;
+keep the deployment stopped and rerun after resolving the cause. Owners establish their
+connections again. Remote revocation is bounded and best effort after all local cleanup.
+
+This step does not certify erasure of every mirror document, chunk, head or original.
+The [mirror restore procedure](../architecture/document-sources.md#rolling-upgrades)
+remains required before serving mirrored content.
+
 ## Verifying the audit log after a restore
 
 `python dev/verify_audit_chain.py [--org X] [--ts-since YYYY-MM-DD] [--json]` recomputes
@@ -196,6 +223,163 @@ curl -s -XPOST http://localhost:7777/v1/namespace.rollback -H "Authorization: Be
   -d '{"org":"acme","namespace":"support","as_of":"'"$AS_OF"'"}' | jq '{dry_run, reinstate, remove, truncated}'
 ```
 
+## Under the Postgres authority
+
+With `LOOM_STORAGE_AUTHORITY=postgres`, live memory, its revision journal, the
+knowledge heads, the ingestion jobs and the dataset catalog are in Postgres ([storage authority](../architecture/storage-authority.md)),
+and a deployment has two stores to back up: Postgres and ClickHouse.
+
+| Store      | Holds alone                                                                                                                                                | RPO                                                                                                                                                                                                                                                                                                                                                                                                  | Backed up by                                                   |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Postgres   | every memory head and revision, knowledge heads, ingestion jobs, the dataset catalog, idempotency answers                                                  | 0 for acknowledged writes across a failover to the synchronous standby; a point-in-time restore loses what followed its point                                                                                                                                                                                                                                                                        | the HA manager's or the service's base backups and WAL archive |
+| ClickHouse | search documents and vectors, the chunks of knowledge documents and of long memory values, history past what Postgres keeps, analytics, traces, audit rows | the time since its last backup, for what only it holds; memory revisions and knowledge documents Postgres holds are published again, but not their chunks nor their datasets' rows: `loom reconcile` names each knowledge source to re-chunk, or past 20 its namespace (`loom rechunk`), and each source to ingest again, and a long memory value is searchable by its excerpt until it is set again | the methods above                                              |
+
+The recovery time of a restore is the store's own restore time plus `loom reconcile`,
+which runs again what the restored store lost of the other's record.
+
+### Restoring one store
+
+Before a ClickHouse restore with `LOOM_PG_PAYLOAD_CLEAR_ENABLED` on, stop the payload
+clearing and choose the backup as
+[the Postgres journal and a ClickHouse restore](#the-postgres-journal-and-a-clickhouse-restore)
+says. Once a clearing pass has run, run step 3's `loom reconcile` with a build that
+carries `010_revision_delivered_at.sql`, and start the deployment on that build in step 4
+(rolling-upgrade [rule 43](../architecture/rolling-upgrades.md#the-rules)); then:
+
+1. Stop every server and worker of the deployment.
+2. Restore the store from its backup, and note the backup's time from the backup's own
+   metadata (for ClickHouse, the start of `BACKUP`; for Postgres, the recovery target).
+3. Run `loom reconcile --restored clickhouse --point <time>` (or `--restored postgres`),
+   which prints what it would run again; then the same with `--apply`.
+4. Start the deployment.
+5. After a ClickHouse restore, run each `loom rechunk` the reconcile printed, and
+   upload and ingest again each source it names under "to ingest again": a knowledge
+   document's chunks and a dataset's rows live in ClickHouse alone.
+
+A [cell](../architecture/cells.md)'s Postgres carries org triggers that refuse a row for an
+org the cell holds no tenancy row for, and a `loom.tenancy` guard that refuses a tenancy
+row, from a session that does not mark itself. A logical restore into a cell is such a
+session: with every process of the cell stopped, run it as one command with the marker,
+`PGOPTIONS='-c loom.tenancy_checked=on' pg_restore ...`, then start one pod with
+`LOOM_BOOT_MIGRATE` on before the others. A data-only `pg_restore --disable-triggers` into
+an existing schema ends by enabling every trigger as an origin trigger, which leaves
+`loom.cell_first`'s two triggers off under `session_replication_role = replica`; that pod's
+boot sets them back to `ALWAYS`, and `loom doctor` names them until it does.
+
+On the Helm chart ([Kubernetes](kubernetes.md)), with release `loom`:
+
+1. Stop it: `kubectl scale deploy/loom --replicas=0`, and `deploy/loom-workers` too with
+   `workers.enabled`; suspend the analytics export, if it is on:
+   `kubectl patch cronjob loom-analytics-export -p '{"spec":{"suspend":true}}'`.
+2. A managed service restores into a new service: point the release at it with
+   `helm upgrade ... --set replicaCount=0 --set workers.replicaCount=0 --set autoscaling.enabled=false`
+   (and the new `clickhouse.host` or `postgres.host`), so no pod starts. The point is the
+   start time the service lists for the backup, or the Postgres recovery target.
+3. The Job below runs the release's image. Once a clearing pass has run and the release
+   is on a build without `010_revision_delivered_at.sql`, first
+   `helm upgrade ... --set image.tag=<a build that carries it>` (or `image.digest`, which
+   wins when set) with step 2's new host and its three `--set` overrides, so no pod
+   starts, and keep that image in step 4. Run the reconcile in a Job made from the web
+   pod's own spec, so it has the release's environment, Secret and Postgres CA, its own
+   component label (the NetworkPolicy selects it, the Service does not), and no probes:
+
+   ```bash
+   kubectl get deploy/loom -o json | jq '{apiVersion: "batch/v1", kind: "Job",
+     metadata: {name: "loom-reconcile"}, spec: {backoffLimit: 0, template: {
+     metadata: {labels: (.spec.selector.matchLabels
+       | .["app.kubernetes.io/component"] = "reconcile")},
+     spec: (.spec.template.spec | .restartPolicy = "Never" | .containers |= [.[0]
+       | del(.livenessProbe, .readinessProbe, .startupProbe)
+       | .command = ["loom", "reconcile", "--restored", "clickhouse", "--point", "<time>"]])}}}' \
+     | kubectl apply -f -
+   kubectl logs -f --pod-running-timeout=10m job/loom-reconcile
+   kubectl wait --for=condition=complete --timeout=10s job/loom-reconcile
+   ```
+
+   Use `"postgres"` after a Postgres restore. A `wait` that fails while the Job is still
+   active (`kubectl get job loom-reconcile -o jsonpath='{.status.active}'` reads `1`; a
+   dropped log stream ends `logs -f` early) means it is still running: follow its logs
+   again. A Job that failed (`.status.failed` reads `1`) exited non-zero: read its
+   output, delete the Job, and run it again. After a clean dry run, run it with
+   `"--apply"` appended.
+
+4. Start it again: `helm upgrade` with the release's values file, carrying step 2's new
+   host and step 3's `image.tag` or `image.digest` if step 3 set one, and without step
+   2's three `--set` overrides, and resume the analytics export. Run
+   each `loom rechunk` the reconcile printed with
+   `kubectl exec deploy/loom -- loom rechunk ...`, and upload and ingest again each
+   source it names under "to ingest again".
+
+`loom reconcile --apply`:
+
+- runs again every erasure the other store records as completed after the point (from
+  the point's whole second, as the ledgers keep whole seconds), with no census (the
+  other store holds what the user wrote after the erasure), and without the steps the
+  restored copy shows ran before the point: the steps of the last ClickHouse checkpoint
+  written before the point (a `BACKUP` copies its tables one after another from its
+  start, so only those deletes are in every table it copied; a row merged away leaves
+  every step to run) less those its census reopened, or the Postgres steps the ledger
+  row records in the transaction each committed in (a step a process of the previous
+  build ran is not recorded, and runs again), which run again would delete what the user
+  wrote after them. Its restored ledger row reads completed once every step ran; until
+  then, after a ClickHouse restore, it reads `failed` with "replay after a restore
+  pending", a row neither the recovery worker nor `loom erasure-re-verify --resume`
+  runs. One whose restored row read completed before the point, or that an earlier run
+  completed, is not run again. Its replay answers' step drops the org's whole replay
+  cache in both stores, as any erasure does. An erasure with no terminal state is left
+  to the recovery worker, its checkpoint written again with the steps the restore undid
+  reopened; after a ClickHouse restore, one whose restored row shows it completed or
+  abandoned has its Postgres ledger row marked so instead. The resumed saga runs as any
+  does, its census included, which counts what the user wrote in its scope since; so
+  does one that completed after the point while its Postgres ledger row missed the
+  completion, an edge the recovery pass closes at its first pass ten minutes after the
+  request, or after the completion if that is later. An abandoned one is never run
+  (`loom erasure-re-verify` owns it);
+- after a ClickHouse restore: first holds, as deliveries that are not yet due, every
+  Postgres revision and knowledge head committed after the point (less a writer's lease
+  and an insert's bound, the margin a write drawn before the point may still commit
+  after it) and every Postgres head ClickHouse holds at an older version; then runs the
+  erasures, skipping their Postgres steps (they hold, and running them again would
+  delete what the user wrote after the erasure); publishes the held deliveries; then
+  runs again every redaction Postgres records after the point, which scrubs what
+  ClickHouse restored and the cached answers and precedents quoting it;
+- after a Postgres restore: runs the erasures' Postgres steps and the replay answers'
+  on the restored copy, and every redaction ClickHouse records after the point; a
+  redacted version that is the copy's live head again (the write that replaced it was
+  lost) is scrubbed in place. What was written after the point is lost, as with any
+  point-in-time restore; ClickHouse still holds copies of it, which search does not
+  serve once Postgres has no matching head.
+
+A dataset's rows are in ClickHouse alone, and only an ingest builds them: after a
+ClickHouse restore, a dataset whose rows were written after the point (a publish, or an
+approval that retyped a column) reads with rows missing, since its catalog row, in
+Postgres, names them. `loom reconcile` names, in its dry run too, each source with a
+catalog row written after the point, to upload and ingest again; that includes a row
+an approval or a metadata edit wrote over rows that survived.
+
+Knowledge ingestion jobs need no step of their own: a job's reads take the newer of
+Postgres's row and ClickHouse's, and a job Postgres holds is projected again when a
+queue offers it. A job that ended after a ClickHouse restore point is not offered again,
+so `knowledge.inspect`, which reads ClickHouse, does not list it until its row expires.
+
+A replay that did not finish leaves its ClickHouse row `failed` with "replay after a
+restore pending"; run `loom reconcile` again until it exits 0 before starting the
+deployment, and before rolling back to a build that predates the reconcile, whose
+recovery worker would resume that row with a census.
+
+It refuses before writing anything when the point is later than now, when a worker
+reported a pass within two workers-lease terms (`LOOM_SUPERVISOR_LEASE_TTL_S`, a minute
+by default), when the point is older than `LOOM_ERASURE_LEDGER_DAYS` (ClickHouse's
+ledger reads keep 89 days), and for `--restored both`: erasures and redactions made
+after both restore points are in neither store, and must be issued again from the audit
+export. Both ledgers keep an erasure by when it was requested, so a point within the
+longest an erasure runs of that edge can miss one requested before the edge and
+completed after the point: keep backups younger than the ledger's days by that much. It
+reads the code repository registry before it writes, and refuses when that read fails.
+Every step it runs is idempotent, so a reconcile cut off, or one that exits 1, is run
+again whole before the deployment starts; deliveries it held are listed as parked by
+`GET /v1/health?include=postgres` until a run completes.
+
 ## What is and is not recoverable
 
 | Situation                                                  | Recoverable?   | How                                                                                                                                                                                      |
@@ -213,6 +397,90 @@ curl -s -XPOST http://localhost:7777/v1/namespace.rollback -H "Authorization: Be
 On a single self-managed OSS node, schedule `BACKUP DATABASE` (or `clickhouse-backup`)
 to storage off the host. ClickHouse Cloud replicates and backs up the service itself, so
 the portable dump there is for moving data, not for durability.
+
+## The Postgres journal and a ClickHouse restore
+
+Under the Postgres authority, `loom.memory_revisions` holds every revision. After a
+ClickHouse restore, the versions committed since the backup are in the journal and not
+in the restored `memory_versions`; their content survives only while their payload
+(`row`) is still in the journal. With `LOOM_PG_PAYLOAD_CLEAR_ENABLED`, the
+`pg_payload_clear` worker clears the payloads of the versions every usable backup holds
+([payload clearing](../architecture/storage-authority.md#payload-clearing)). Leave it off
+when ClickHouse is not backed up: the journal then keeps every payload.
+
+**The horizon.** Set `LOOM_CH_BACKUP_INTERVAL_MINUTES` to how often a ClickHouse
+backup starts. The pass clears a version only once it was delivered to ClickHouse more
+than the horizon ago. The horizon is `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`:
+
+- At 0 (the default), it is twice the interval plus 60. A restore can then fall back one
+  backup when the newest one failed, if the one before started on schedule.
+- It is never under the interval plus 60, nor under the insert bound plus 60. A value set
+  lower is raised to the larger of the two.
+- A value from the interval plus 60 to just under twice the interval plus 60 covers the
+  newest backup only, if it started on schedule.
+
+Both settings are LIVE. A change takes effect at the first pass after the process
+re-reads the overrides (every `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`); a pass already
+running keeps the horizon it started with.
+
+**Why the margin.** The 60 minutes cover what a backup's start time does not show:
+
+- the replica a backup reads lagging the replica that took the insert;
+- clock skew between Postgres and the backup host.
+
+Every cleared version was delivered more than the horizon before clearing stopped, so a
+backup that started less than the horizon minus 60 minutes before that moment holds
+every cleared version while lag and skew together stay under 60 minutes. A backup that
+started late shows it in its own start time, which step 4 below checks: at the smallest
+horizon the newest backup passes when it started on schedule, and a late one may not.
+`BACKUP ... ON CLUSTER` takes every shard at once. With a per-node tool, count a
+backup's start as its earliest node's start.
+
+**Before a restore, stop the clearing.** Do this before choosing the backup, while
+ClickHouse may still hold versions the backup lacks:
+
+1. Set `LOOM_PG_PAYLOAD_CLEAR_ENABLED=false` in the deployment's env. The setting is not
+   LIVE, and a restore of `loom.runtime_overrides` cannot turn it back on.
+2. Restart every Loom process with that env. Remove any stopped instance that could be
+   started again, or recreate it with the new env.
+3. Confirm from the orchestrator that every Loom process running or able to start has
+   the switch explicitly `false`. Left unset, the switch takes its value from a dotenv
+   file (`LOOM_ENV_FILE`, by default `.env` in the working directory) or a settings file
+   the environment or that dotenv names (`LOOM_SETTINGS_FILE`), either of which can turn
+   it on.
+4. Choose the backup only then, one that started less than the horizon minus 60 minutes
+   before the confirmation in step 3 above (the time the clearing stopped). If the
+   horizon was lowered, use the smallest horizon that was in force at any time in the
+   last horizon. With the default horizon that allows the newest backup or the one
+   before, if they started on schedule. An older backup may lack a version whose payload
+   is already cleared, and that version's content is then lost.
+5. Turn the switch back on when the deployment starts again at step 4 of
+   [restoring one store](#restoring-one-store), and not before: by then
+   `loom reconcile --apply` has owed a delivery again for every revision committed after
+   the point, and a revision keeps its payload while it owes a delivery. First check
+   `LOOM_CH_BACKUP_INTERVAL_MINUTES` and `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`
+   against the backup schedule: the restore brought back their overrides from the
+   backup's time, so re-apply any changed since. A version ClickHouse still lacks after
+   the restore keeps its payload, and each pass that reaches it counts it in
+   `missing_in_clickhouse`, which can stay above zero. When step 4 of
+   [restoring one store](#restoring-one-store) starts a build that carries
+   `010_revision_delivered_at.sql` on a deployment that served one without it,
+   the switch stays off until one clearing horizon after that build serves alone
+   ([rule 43](../architecture/rolling-upgrades.md#the-rules)).
+
+On the [zero-downtime pair](./deployment.md#zero-downtime-pair):
+
+1. Edit `.env`.
+2. Run `./redeploy.sh --force` from a checkout that is not behind `origin/main`.
+3. Whether the redeploy succeeded or failed, stop and `docker rm` every
+   `loom-*-workers` container, running or exited, whose
+   `docker inspect -f '{{.Config.Env}}'` does not show
+   `LOOM_PG_PAYLOAD_CLEAR_ENABLED=false`. The web containers run no workers, and with the
+   previous colour's workers container gone, `--rollback` keeps the current workers.
+4. If that leaves no workers container, fix the cause and run step 2 again.
+
+A restore that skips these steps can lose the content of the versions committed between
+the backup and the restore; their metadata stays in the journal.
 
 ## The rollback colour
 
@@ -235,11 +503,15 @@ when that colour has no workers container does the rolled-forward one keep runni
 
 ## Moving a deployment
 
-A new Loom process pointed at the same ClickHouse, or at a moved or restored one, gets
-back every feature. Carry these:
+A new Loom process pointed at the same ClickHouse (and Postgres, under
+`LOOM_STORAGE_AUTHORITY=postgres`), or at a moved or restored one, gets back every
+feature. Under the Postgres authority, stop the source before copying either store;
+restoring one store from a backup taken at another time is a
+[one-store restore](#restoring-one-store). Carry these:
 
 - ClickHouse: the same service, a copy with its Keeper state, or a `dev/backup_loom.py`
   dump restored into a ClickHouse that `loom migrate` prepared;
+- Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`: the same service, or a copy;
 - the env config (`.env` or the container environment);
 - `LOOM_JWT_SECRET`. Without it no token verifies, and the stored credentials and
   signing keys do not open;
@@ -258,11 +530,11 @@ Bounded exceptions:
 
 - The events stream (budget violations) is drained on `SIGTERM`. A `SIGKILL` or OOM loses
   at most one flush interval of that telemetry, never audit or memory rows.
-- Provider reconfiguration waits on a dead process until a process on its host proves it
-  gone, or, on Kubernetes, until the workers leader sees its pod gone. Elsewhere, one
-  whose host is gone too (a move to a new host) is retired by hand with
-  `loom participant retire --participant <id> --yes`
-  ([provider reconfiguration](../architecture/provider-reconfiguration.md)).
+- Provider reconfiguration waits on a process until guarded retirement or exact
+  physical-death proof with settled queries. On its trusted host, run
+  `loom participant retire --participant <id>`. Pod deletion and heartbeat expiry
+  are insufficient. If its identity is unknown, keep the row until the
+  [physically quiescent lifecycle recovery](../architecture/cells.md#participant-lifecycle-baseline).
 - Rate-limit bucket fill is per host. It refills in seconds, so a new host starts with
   full buckets.
 

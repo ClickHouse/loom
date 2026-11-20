@@ -8,19 +8,26 @@ registry. It behaves like the [Python SDK](./python-sdk.md): identity binding, a
 
 ## Install
 
-Node 20 or later (it uses the platform `fetch`). No runtime dependencies. The package is not
-published to a package index and `dist/` is not committed, so build it from a clone:
+Node 20 or later (it uses the platform `fetch`). No runtime dependencies.
 
 ```bash
-git clone https://github.com/ClickHouse/loom
-npm --prefix loom/sdk/typescript ci && npm --prefix loom/sdk/typescript run build
-npm install ./loom/sdk/typescript          # or: npm pack in that directory, then install the .tgz
+npm install @clickhouse/loom
 ```
+
+The SDK's version is the server release's
+([supported versions](../operations/supported-versions.md)). A release not yet on npm
+installs from its assets
+([installing from a GitHub Release](../development/release-process.md#installing-from-a-github-release)).
+For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
 
 The package ships ESM and CommonJS builds with their own declaration files and
 imports no Node built-in when it loads; signing in loads `node:fs` and the
-other built-ins it needs on first use. The Strands adapter is a second entry
-point, `@clickhouse/loom/integrations/strands`.
+other built-ins it needs on first use. The framework adapters are their own entry
+points: `@clickhouse/loom/integrations/ai-sdk`, `@clickhouse/loom/integrations/langchain`,
+`@clickhouse/loom/integrations/mastra`, `@clickhouse/loom/integrations/openai-agents` and
+`@clickhouse/loom/integrations/strands`.
 
 ## Credentials
 
@@ -162,16 +169,22 @@ const status = await loom.knowledge.ingestFile({
 
 ### The assistant
 
-`loom.assistant.stream({ namespace, question, history, signal, readTimeoutMs })` asks
-the Loom assistant through `POST /v1/assistant/chat/completions` as the client's token
-and yields `{ type: "text", text }` for each piece of the answer, then one
-`{ type: "answer", answer }` with its `runId`, usage and the citations the server
-checked (`{ kind, text, verified, reason, ref }`). A refusal throws its typed error
-before any text; an `error` event after the answer began throws the same way. An answer
-that began is never resent, nor one refused with a 429; a 401 with a token provider,
-which comes before the answer starts, is sent once more with a fresh token.
-`readTimeoutMs` (300,000) bounds the request and then each read, as an answer is silent
-while a tool call runs: past it the stream throws `TimeoutError`. An abort through
+`loom.assistant.stream({ namespace, question, history, signal, readTimeoutMs })` asks the
+Loom assistant through `POST /v1/assistant/chat/completions` as the client's token and
+yields `{ type: "text", text }` for each piece of the answer, then one `{ type: "answer",
+answer }` with its `runId`, usage and the citations the server checked (`{ kind, text,
+verified, reason, ref }`), and its `support` (`AssistantSupport`:
+[support](../architecture/assistant.md#support); a value the SDK does not know, or none
+from an older server, reads as `"unchecked"`), and its `steps`: what it read, one `{ op,
+text, ok }` per tool call ([steps](../architecture/assistant.md#steps); `[]` from an older
+server, and when the server could not read the run (a run that made no call has none
+either)), with `stepsCut` when the run held more than 200 ledger rows, so `steps` lists
+its first ones. The live `loom.step` events and `loom.text_done` are skipped. A refusal
+throws its typed error before any text; an `error` event after the answer began throws the
+same way. An answer that began is never resent, nor one refused with a 429; a 401 with a
+token provider, which comes before the answer starts, is sent once more with a fresh
+token. `readTimeoutMs` (300,000) bounds the request and then each read, as an answer is
+silent while a tool call runs: past it the stream throws `TimeoutError`. An abort through
 `signal` closes the answer on the server too. `loom.assistant.ask` is the op: one whole
 answer.
 
@@ -207,8 +220,15 @@ namespace has conversation logging off, the session warns once, sets
 `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as
 `definitions("openai" | "anthropic" | "generic")`, and
 one `execute(name, args)` dispatcher that returns the string the model reads,
-validates required arguments, and truncates past `maxResultChars`. The schemas
+validates required arguments, and truncates past `maxResultChars` (`loom_recall` leaves
+out its lowest-ranked memories whole to fit, counted in `omitted`). The schemas
 match the Python SDK's.
+
+`bot.tools(scope, { codeNamespace: "code-repo" })` offers the read-only
+`loom_code_lookup` first. `only: ["loom_code_lookup"]` selects just that tool; memory
+still uses the Agent's namespace. Code results remain valid JSON under `maxResultChars`
+with explicit omissions. See [code tools](../guides/code-tools.md) for request bounds,
+model guidance and uncertainty.
 
 ```ts
 const session = bot.session("thread-42", { userId: "u1", flushEvery: 8 });
@@ -233,13 +253,53 @@ const recentAudit = await collect(
 );
 ```
 
+## AI SDK adapter
+
+`loomTools(agent, scope)` from `@clickhouse/loom/integrations/ai-sdk` returns `AgentTools`
+as an AI SDK `ToolSet`, built with `tool()` and `jsonSchema()` from `ai`, an optional peer
+dependency (`ai` 7.x, which needs Node 22.12 or later). See
+[Frameworks](../features/integrations/frameworks.md#ai-sdk).
+
+## LangChain.js adapter
+
+`LoomKnowledgeRetriever` and `LoomMemoryRetriever` from
+`@clickhouse/loom/integrations/langchain` extend `BaseRetriever` from
+`@langchain/core`, an optional peer dependency: install it next to the SDK. They
+search `knowledge.search` and `memory.search` and return one `Document` per chunk
+or memory. See [Frameworks](../features/integrations/frameworks.md#langchain).
+
+## Mastra adapter
+
+`loomTools(agent, scope)` from `@clickhouse/loom/integrations/mastra` returns `AgentTools`
+as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer
+dependency (`@mastra/core` 1.83.x, which needs Node 22.13 or later).
+`LoomMemoryStorage(agent, { resourceId, storeId? })` from the same entry point implements
+the native `MemoryStorage` domain. Bind one canonical end-user resource to each instance;
+it becomes the actual Loom `user_id` for threads, messages and resource working memory.
+Combine it with `MastraCompositeStore({ id, domains: { memory: storage } })` and
+`@mastra/memory` with semantic recall and observational memory disabled. `storeId`
+defaults to `default` and separates applications under one Loom agent and user.
+Lists scan all matching scoped rows; partial updates use hash preconditions. First
+resource updates require server support for `memory.set.if_match_sha256="absent"`;
+older servers safely refuse creation. Deletes use exact observed versions and reject
+concurrent rewrites. The adapter provides no transaction, resource reassignment,
+cloning, run fencing or atomic working-memory merge. See
+[Frameworks](../features/integrations/frameworks.md#mastra).
+
+## OpenAI Agents SDK adapter
+
+`loomTools(agent, scope)` from `@clickhouse/loom/integrations/openai-agents` returns
+`AgentTools` as function tools built with `tool()` from `@openai/agents`, an optional peer
+dependency. See [Frameworks](../features/integrations/frameworks.md#openai-agents-sdk).
+
 ## Strands adapter
 
 `LoomMemoryStore` from `@clickhouse/loom/integrations/strands` implements the
 Strands Agents memory-store shape structurally (no dependency on the Strands
 package). A write is one `memory.set` keyed `strands/<sha256 prefix>` of the
 content, so re-adding a fact is idempotent and both SDKs write the same key; a
-search returns nothing when Loom abstains unless `honourAbstain: false`. See
+search returns nothing when Loom abstains, and leaves out memories below the
+floor, unless `honourAbstain: false`. See
 [Frameworks](../features/integrations/frameworks.md).
 
 ## Errors
@@ -276,8 +336,8 @@ the server sent):
   retryable, since the call was never sent;
 - a call the caller aborted is `input` and not retryable: the caller's choice, after which
   the call may have run;
-- a code the SDK never retries is `configuration` (`ANALYSIS_UNAVAILABLE`,
-  `CODED_WIDTH_MISMATCH`, `GATEWAY_REQUIRED`), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
+- a code the SDK never retries is `configuration` (a 503 an operator must fix, as the
+  [errors reference](./errors.md) classes it), `internal` (`MODEL_CALL_UNATTRIBUTED`) or
   `dependency` (`PUBLICATION_PENDING`: the write is committed and its rows follow), not
   retryable;
 - a 5xx on an op that is not idempotent is not retryable, since the call may have written,
@@ -290,18 +350,19 @@ the server sent):
 
 The subclass follows the HTTP status (`errorFromResponse`):
 
-| Class                  | When                                                                                                                                                                                                                 |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`      | 400, 422                                                                                                                                                                                                             |
-| `AuthError`            | 401, 403                                                                                                                                                                                                             |
-| `NotFound`             | 404                                                                                                                                                                                                                  |
-| `IdempotentConflict`   | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                                                              |
-| `PreconditionFailed`   | any other 409 (including `PINNED_CONFLICT`: check `code`) but `OVERRIDE_NOT_STORED` (a `LoomError`), 412                                                                                                             |
-| `RateLimited`          | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                       |
-| `IdempotentInProgress` | 503 with code `IDEMPOTENT_IN_PROGRESS` once the retries are spent: the first request with this `Idempotency-Key` still runs; a subclass of `BackendUnavailable` with `retryAfterS`                                   |
-| `BackendUnavailable`   | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` |
-| `TimeoutError`         | the per-call timeout elapsed                                                                                                                                                                                         |
-| `LoomError`            | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                                                                 |
+| Class                  | When                                                                                                                                                                                                                    |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`      | 400, 422                                                                                                                                                                                                                |
+| `AuthError`            | 401, 403                                                                                                                                                                                                                |
+| `NotFound`             | 404                                                                                                                                                                                                                     |
+| `IdempotentConflict`   | 409 with code `IDEMPOTENT_CONFLICT`; a subclass of `PreconditionFailed`                                                                                                                                                 |
+| `WrongCell`            | 409 with code `WRONG_CELL`: the org lives in another cell and nothing was written; `org` and `cell` (or `""`) name them, and the router's `GET /cells/lookup` gives the cell's host; a subclass of `PreconditionFailed` |
+| `PreconditionFailed`   | any other 409 (including `PINNED_CONFLICT`: check `code`) but `OVERRIDE_NOT_STORED` (a `LoomError`), 412                                                                                                                |
+| `RateLimited`          | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                          |
+| `IdempotentInProgress` | 503 with code `IDEMPOTENT_IN_PROGRESS` once the retries are spent: the first request with this `Idempotency-Key` still runs; a subclass of `BackendUnavailable` with `retryAfterS`                                      |
+| `BackendUnavailable`   | 5xx after the retries, or no complete response: the message reads `<op>: cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE`    |
+| `TimeoutError`         | the per-call timeout elapsed                                                                                                                                                                                            |
+| `LoomError`            | any other status; a 2xx body that is not JSON has code `INVALID_RESPONSE_CODE`; a call whose `signal` aborted is a plain `LoomError`                                                                                    |
 
 Because the class follows the status, match on `e.code` to tell codes that
 share one (`PRECONDITION_FAILED` from `PINNED_CONFLICT`, `OVERLOADED` from

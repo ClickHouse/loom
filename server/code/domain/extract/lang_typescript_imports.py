@@ -340,15 +340,14 @@ def exports_candidates(spec: str, pkg_dir: str, view: Manifest | None) -> list[s
 def unresolved_package_specs(from_path: str, specs: list[str], present: set[str]) -> list[str]:
     """The package-shaped specifiers (`@scope/name[/sub]`, `name/sub`) the
     probing ladder left unresolved — the `exports` table's work."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
         if spec.startswith((".", "/", *_ROOT_ALIASES)) or not package_dirs_for(spec):
             continue
         if any(c in present for c in import_candidates(from_path, spec)):
             continue
-        if spec not in out:
-            out.append(spec)
-    return out
+        out[spec] = None
+    return list(out)
 
 
 # A barrel (`index.ts` that only re-exports) is where an import lands, not where the
@@ -393,22 +392,18 @@ def resolve_imports(
     first candidate that exists). `present` is the oracle — the namespace's live paths
     or a fixture set. `extra`: per specifier, the exact candidates a tsconfig's `paths`
     / `baseUrl` gave, tried before the guessing ladder. Pure."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
         cands = [*(extra or {}).get(spec, []), *import_candidates(from_path, spec)]
         hit = next((c for c in cands if c in present), None)
-        if hit and hit != from_path and hit not in out:
-            out.append(hit)
-    return out
+        if hit and hit != from_path:
+            out[hit] = None
+    return list(out)
 
 
 def wanted_paths(from_path: str, specs: list[str]) -> list[str]:
     """Every candidate path of every specifier, for one membership read."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
-        out.extend(
-            c
-            for c in import_candidates(from_path, spec)[:_MAX_CANDIDATES_PER_IMPORT]
-            if c not in out
-        )
-    return out
+        out.update(dict.fromkeys(import_candidates(from_path, spec)[:_MAX_CANDIDATES_PER_IMPORT]))
+    return list(out)

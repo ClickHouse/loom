@@ -56,7 +56,7 @@ describe("formatMcpConfig — Claude Code", () => {
 });
 
 describe("formatMcpConfig — Cursor", () => {
-  it("carries ?toolset=coding so the listing stays under the 40-tool cap", () => {
+  it("carries ?toolset=coding for a coding client", () => {
     const cfg = formatMcpConfig({ client: "cursor", token: T, mcpUrl: URL });
     const loom = rec(rec(cfg.block.mcpServers).loom);
     expect(loom.url).toBe(`${URL}?toolset=coding`);
@@ -81,6 +81,14 @@ describe("formatMcpConfig — every other client keeps the bare URL", () => {
     const loom = rec(rec(cfg.block.mcpServers).loom);
     expect(loom.command).toBe("npx");
     expect(loom.args).toContain(URL);
+  });
+
+  it("zed writes a remote url and headers", () => {
+    const cfg = formatMcpConfig({ client: "zed", token: T, mcpUrl: URL });
+    const loom = rec(rec(cfg.block.context_servers).loom);
+    expect(loom.url).toBe(URL);
+    expect(loom.headers).toEqual({ Authorization: `Bearer ${T}` });
+    expect(loom.command).toBeUndefined();
   });
 });
 

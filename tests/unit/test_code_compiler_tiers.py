@@ -3,7 +3,7 @@
 The Health tab reads the watermark of the tier the repository runs: a
 TypeScript repository (scip-typescript advances `scip_commit_ts`) must not
 show a stale C++ (`scip_commit`) card, an unset Python (`scip_commit_py`)
-card, or a "graph catching up" pill while its own tier is at the tip."""
+card, or a "Calls catching up" badge while its own tier is at the tip."""
 
 from __future__ import annotations
 

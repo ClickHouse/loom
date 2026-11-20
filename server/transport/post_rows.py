@@ -39,6 +39,16 @@ async def gather_best_effort(
             log.warning("%s %s failed for %s (non-fatal): %s", transport, what, op_name, res)
 
 
+def _audit_namespace(op: Operation, input_obj: Any, response_body: Any, gated: str) -> str:
+    """The audit row's namespace: the op's `audit_namespace`, else the gate's."""
+    if op.audit_namespace is None:
+        return gated
+    try:
+        return op.audit_namespace(input_obj, response_body) or gated
+    except Exception:  # noqa: BLE001 — a namespace that cannot be read still gets an audit row
+        return gated
+
+
 def _audit_subject(op: Operation, input_obj: Any, response_body: Any) -> dict[str, Any]:
     """The audit row's subject: the op's `audit_subject`, else the validated
     input with its text values hashed (`audit.input_subject`); {} when either
@@ -106,7 +116,7 @@ async def post_handler_rows(
                     op_name=op.name,
                     request_id=request_id,
                     org=org,
-                    namespace=namespace,
+                    namespace=_audit_namespace(op, input_obj, response_body, namespace),
                     actor=actor,
                     subject=_audit_subject(op, input_obj, response_body),
                 ),

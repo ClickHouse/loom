@@ -566,7 +566,7 @@ def test_the_cli_refuses_an_adoption_whose_skip_matches_nothing(monkeypatch, cap
 
     monkeypatch.setattr(account_admin, "adopt_plan", plan)
     monkeypatch.setattr(account_admin, "adopt", adopt)
-    monkeypatch.setattr(sso, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(sso, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     args = argparse.Namespace(
         domain="acme.io", org="", skip=["typo@acme.io"], keep_tokens=False, dry_run=False
     )
@@ -735,7 +735,7 @@ def test_the_link_names_whose_grants_it_caps(
 
     monkeypatch.setattr(account_admin, "link_plan", plan)
     monkeypatch.setattr(account_admin, "link_account", link)
-    monkeypatch.setattr(sso, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(sso, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     args = argparse.Namespace(email="lee@corp.io", org="acme", namespace="lee", dry_run=dry_run)
     assert sso._cmd_link(args) == 0
     out = capsys.readouterr().out

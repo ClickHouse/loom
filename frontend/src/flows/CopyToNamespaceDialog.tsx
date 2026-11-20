@@ -3,7 +3,8 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { copyMemoryTo, listMine, type Identity, type MyNamespaceEntry } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
+import { isCollectionName } from "../lib/namespace";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
@@ -40,9 +41,10 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
               WRITABLE.has(r.role) &&
               r.status !== "pending" &&
               r.namespace !== source.namespace &&
-              // A code index is read-only reference data, never a copy target
-              // — even for its maintainers.
-              r.kind !== "code",
+              // A repository is read-only reference data, never a copy target
+              // — even for its maintainers; a collection is shared in the Library.
+              r.kind !== "code" &&
+              !isCollectionName(r.namespace),
           ),
         ),
       )
@@ -102,7 +104,8 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
           <p className="text-sm text-text-muted leading-relaxed">
             Copies <span className="font-mono text-text">{memoryKey}</span> from{" "}
             <span className="font-mono text-text">{source.namespace}</span> into another namespace. The original stays
-            where it is; the copy is re-embedded under the target's own embedder and keeps a link back to its source.
+            where it is; the copy becomes searchable in the target namespace once it is indexed there, and keeps a link
+            back to its source.
           </p>
           <Select
             id="copy-target-namespace"
@@ -137,7 +140,7 @@ export function CopyToNamespaceDialog({ open, onOpenChange, source, memoryKey }:
             label="Reason (optional — recorded on the audit log)"
             value={rationale}
             onChange={setRationale}
-            placeholder="promoting a validated finding to the shared space"
+            placeholder="promoting a validated finding to the shared namespace"
           />
           {error && <Alert role="alert" state="danger" text={error} />}
         </div>

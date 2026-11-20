@@ -67,6 +67,27 @@ describe("Settings → Structure", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
+  it("moves to the tab a link names while Settings already shows", async () => {
+    vi.mocked(listRecordSchemas).mockResolvedValue({ schemas: [invoice] });
+    seed("team-a");
+    render(<Setup />);
+    expect(await screen.findByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
+    // An assistant card's "Open in Settings": the same view, its tab in the address.
+    act(() => useStore.getState().navigate("setup", { query: { tab: "structure" } }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Structure" })).toHaveAttribute("aria-selected", "true"),
+    );
+  });
+
+  it("shows a role that cannot read it the tab, what it needs, and reads nothing", async () => {
+    seed("team-z");
+    useStore.setState({ myNamespaces: [row("team-a")] });
+    render(<Setup />);
+    await userEvent.click(await screen.findByRole("tab", { name: "Structure" }));
+    expect(await screen.findByText("Needs viewer on team-z. An admin of it can grant that.")).toBeVisible();
+    expect(listRecordSchemas).not.toHaveBeenCalled();
+  });
+
   it("is not offered on a code namespace", async () => {
     seed("code-x");
     render(<Setup />);

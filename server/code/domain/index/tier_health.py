@@ -16,8 +16,9 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 
 from server.code.domain.index.compiler_tiers import TIERS as COMPILER_TIER_SPECS
-from server.code.domain.index.state import IndexState
+from server.code.domain.index.state import GIT_PROXY_REFUSAL, GIT_PROXY_REFUSED, IndexState
 from server.core.datetimes import parse_iso_dt, to_naive_utc
+from server.settings import settings
 
 STATE_PREFIX = "tier_health:"
 # The compiler tiers by producer; `clang_full` is the weekly C++ full re-index, kept apart
@@ -42,10 +43,13 @@ def state_key(tier: str) -> str:
 @dataclass(frozen=True)
 class TierHealth:
     """One tier's last outcome for one entry. `failing_since` and the counters
-    describe the current run of failures; all are empty once the tier is ok."""
+    describe the current run of failures (for an `unavailable` note, `failing_since`
+    is when it was first noted); all are empty once the tier is ok."""
 
     tier: str
-    state: str = "ok"  # ok | failing
+    # ok | failing | unavailable (a dependency the tier cannot fetch on this host:
+    # noted, not failing; the next run that builds without one clears it)
+    state: str = "ok"
     kind: str = ""
     error: str = ""
     fix: str = ""
@@ -98,19 +102,64 @@ def failed(prev: TierHealth | None, tier: str, error: str, now: datetime) -> Tie
     """The record after a failed pass: the run of failures goes on from `prev`."""
     text = redact(error)
     kind = classify(text)
+    kept = text[-ERROR_CHARS:]
     at = _iso(now)
     ongoing = prev if prev is not None and prev.failing else None
     return TierHealth(
         tier=tier,
         state="failing",
         kind=kind,
-        error=text[-ERROR_CHARS:],
+        error=kept,
+        # from the whole output: the cause (an ssh refusal, a private module) and the
+        # host it names may sit before the kept tail, which the health problem reads
         fix=fix_for(kind, text),
         failing_since=(ongoing.failing_since if ongoing else "") or at,
         last_failed_at=at,
         failed_passes=(ongoing.failed_passes if ongoing else 0) + 1,
         last_ok_at=prev.last_ok_at if prev else "",
     )
+
+
+def unavailable(prev: TierHealth | None, tier: str, error: str, now: datetime) -> TierHealth:
+    """The record when the run finished but left out what it cannot fetch on this host
+    (a Go module whose dependencies are private): a note, not a failure, that keeps
+    no count of passes."""
+    text = redact(error)
+    at = _iso(now)
+    ongoing = prev if prev is not None and prev.state == "unavailable" else None
+    return TierHealth(
+        tier=tier,
+        state="unavailable",
+        kind="dependency_unavailable",
+        error=text[-ERROR_CHARS:],
+        fix=fix_for("dependency_unavailable", text),
+        failing_since=(ongoing.failing_since if ongoing else "") or at,
+        last_failed_at=at,
+        last_ok_at=prev.last_ok_at if prev else "",
+    )
+
+
+# Go's words for a module it could not fetch for want of access: a private repository
+# (or its proxy's refusal of one), not a module that is broken
+_DEPENDENCY_UNAVAILABLE = re.compile(
+    r"if this is a private repository|terminal prompts disabled|could not read username"
+    r"|: 410 gone",
+    re.IGNORECASE,
+)
+
+
+def dependency_unavailable(line: str) -> bool:
+    """Whether a module's failure line says a dependency cannot be fetched from here."""
+    return bool(_DEPENDENCY_UNAVAILABLE.search(line))
+
+
+def split_module_failures(lines: list[str]) -> tuple[list[str], list[str]]:
+    """The module failure lines that fail the tier, and those whose dependency cannot be
+    fetched from here; each sorted, so the same failures read the same every run (the
+    harness runs modules in parallel)."""
+    broken = sorted(line for line in lines if not dependency_unavailable(line))
+    unreachable = sorted(line for line in lines if dependency_unavailable(line))
+    return broken, unreachable
 
 
 def recovered(tier: str, now: datetime) -> TierHealth:
@@ -159,6 +208,23 @@ _SSH_REFUSED = re.compile(r"permission denied \([a-z-]+(?:,[a-z-]+)*\)", re.IGNO
 # The Go harness's line for a module it skipped because it would not build.
 _MODULE_FAILED = re.compile(r"go mod download failed|scip-go failed", re.IGNORECASE)
 
+# git's words for a CONNECT a proxy answered with a refusal, in either phrasing of its
+# HTTP library. The sandbox proxy refuses a host or port with 403 and a method with 405;
+# its 502 (the vetted address did not answer) and 503 (tunnel cap) are network. An
+# operator's git proxy also answers 407 to credentials it does not take.
+_CONNECT_REFUSED = re.compile(
+    r"received http code 40[357] from proxy|connect tunnel failed, response 40[357]\b",
+    re.IGNORECASE,
+)
+
+
+def refused_connect_status(text: str) -> str:
+    """The status a proxy refused git's CONNECT with, as git's output names it ('403',
+    '405' or '407'); '' when the output names no such refusal."""
+    found = _CONNECT_REFUSED.search(text or "")
+    return "".join(ch for ch in found.group(0) if ch.isdigit()) if found else ""
+
+
 # First match wins: a missing credential also makes the submodule pin look missing
 # ("did not contain <sha>"), so the credential test comes before the pin test.
 _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -167,11 +233,18 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("module", _MODULE_FAILED),
     # a relative submodule URL: the tier refuses the file transport it resolves to
     ("submodule_url", re.compile(r"transport 'file' not allowed", re.IGNORECASE)),
+    # a file the server refused to read (`untrusted_files`): over its cap, a link, not a
+    # regular file, or changed while read
+    ("file_refused", re.compile(r"^FileRefused: ", re.MULTILINE)),
     # A full disk also cuts a transfer short ("the remote end hung up"): before network.
     ("disk", re.compile(r"no space left on device|disk quota exceeded", re.IGNORECASE)),
     # the C/C++ harness's CMake configure failed: CMake's own last lines come before
     # its line, and can read as any later kind
     ("cmake", re.compile(r"^>> cmake configure failed$", re.MULTILINE)),
+    # Another git process holds a lock file in the entry's checkout (often index.lock).
+    # After cmake: a configure step's own git fetch that hits a lock is the build's,
+    # not the checkout's. No later kind's pattern matches git's lock message.
+    ("git_lock", re.compile(r"unable to create '[^'\n]*\.lock': file exists", re.IGNORECASE)),
     (
         "credential",
         re.compile(
@@ -187,9 +260,11 @@ _KINDS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
         "egress",
         re.compile(
-            # the sandbox proxy refuses a host or port with 403 and a method with 405;
-            # its 502 (the vetted address did not answer) and 503 (tunnel cap) are network
-            r"received http code 40[35] from proxy|connect tunnel failed, response 40[35]\b",
+            # a proxy's refusal in git's words, the fixed sentence a clone and the add's
+            # ls-remote show for one by the operator's git proxy, and Loom's own refusal
+            # of a job that cannot go through that proxy
+            rf"{_CONNECT_REFUSED.pattern}|{re.escape(GIT_PROXY_REFUSED)}"
+            rf"|{re.escape(GIT_PROXY_REFUSAL)}",
             re.IGNORECASE,
         ),
     ),
@@ -289,6 +364,11 @@ def _where(text: str) -> str:
     return ", ".join(parts)
 
 
+# The checkout's own files the TypeScript tier reads under a fixed cap (`untrusted_files`).
+_CHECKOUT_FILE = re.compile(r"/(?:package\.json|yarn\.lock) is \d+ bytes")
+_OVER_CAP = re.compile(r" is \d+ bytes; max \d+")
+
+
 def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
     """The one fix for a failure of `kind`, naming what the error names; with
     `name_where=False` the same fix without the host, repository or submodule."""
@@ -316,6 +396,18 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             f"A pinned commit is gone upstream{at}: the submodule's history was rewritten. "
             "Point the pin at a commit that exists, or mirror the submodule."
         )
+    if kind == "egress" and GIT_PROXY_REFUSAL in text:
+        return (
+            "Loom refused the job rather than connect without the operator's git proxy "
+            "(LOOM_CODE_GIT_PROXY_URL): the error names what the proxy setup lacks."
+        )
+    if kind == "egress" and (settings.code_git_proxy_url or GIT_PROXY_REFUSED in text):
+        return (
+            f"The operator's git proxy (LOOM_CODE_GIT_PROXY_URL) refused the connection{at}. "
+            "A 407 means it did not take the identity (the entry's git_proxy_identity, else "
+            "LOOM_CODE_GIT_PROXY_IDENTITY) or the token in LOOM_CODE_GIT_PROXY_TOKEN_FILE; "
+            "any other answer is the proxy's own rule for that identity and repository."
+        )
     if kind == "egress":
         return (
             f"The sandbox's egress proxy refused the host{at}: it connects only to public "
@@ -331,6 +423,58 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
         )
     if kind == "disk":
         return "The disk is full: free space under the code-index work directory."
+    if kind == "dependency_unavailable":
+        return (
+            "Go modules the error names require a module this host cannot fetch (a private "
+            "repository, often this repository's own through a vanity import path): they "
+            "are left out of the compiler tier and the rest is indexed. To index them, set "
+            "LOOM_CODE_SCIP_GO_PRIVATE to that module path and give the tier's user a git "
+            "credential for its host (a credential helper or ~/.netrc in its HOME). Go "
+            "says the same of a required module path or version that is wrong or gone: "
+            "check the path first if the module is not private."
+        )
+    if kind == "file_refused" and "(code_scip_delta_max_nodes)" in text:
+        return (
+            "The compiler tier's delta holds more JSON values than its cap: raise "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES with LOOM_CODE_SCIP_DELTA_FILE_MAX_MB, within "
+            "the memory the sizing in code-index-operations.md gives."
+        )
+    if kind == "file_refused" and "(code_scip_delta_round_max_nodes)" in text:
+        return (
+            "One value of the compiler tier's delta (the error names its file entry) holds "
+            "more JSON values than a round may: raise LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES, "
+            "within the memory a round costs in code-index-operations.md."
+        )
+    if kind == "file_refused" and "(a fixed cap, not a setting)" in text:
+        return (
+            "One value of the compiler tier's delta (the error names its file entry and "
+            "the cap) holds more characters than a round may, a cap no setting changes: "
+            "the file it indexes is what to split. It recurs every pass until then."
+        )
+    if kind == "file_refused" and _CHECKOUT_FILE.search(text):
+        return (
+            "A file of the checkout is larger than the tier reads (the error names it): a "
+            "package.json is read up to 1 MiB and a yarn.lock up to 64 MiB, caps no setting "
+            "changes. The tier retries when the repository's file is smaller."
+        )
+    if kind == "file_refused" and "changed while it was read" in text:
+        return (
+            "A file the tier reads changed while it was read: something was still writing "
+            "it. The tier retries next pass; nothing in the repository needs to change."
+        )
+    if kind == "file_refused" and not _OVER_CAP.search(text):
+        return (
+            "The tier refused a file it reads because it is a link or not a regular file "
+            "(the error names it and which): the repository's file, or what its job wrote, "
+            "is what to change. It recurs every pass until then."
+        )
+    if kind == "file_refused":
+        return (
+            "The compiler tier's delta is larger than its cap (the error gives both in "
+            "bytes): raise LOOM_CODE_SCIP_DELTA_FILE_MAX_MB (MiB) with "
+            "LOOM_CODE_SCIP_DELTA_MAX_NODES, within the memory the sizing in "
+            "code-index-operations.md gives."
+        )
     if kind == "module":
         return (
             "A Go module did not build: the error names it and why. The rest of the "
@@ -349,9 +493,76 @@ def fix_for(kind: str, text: str, *, name_where: bool = True) -> str:
             "created under the code repos root: share the root through "
             "LOOM_CODE_REPOS_SHARED_GID and give the group write access to what is there."
         )
+    if kind == "git_lock":
+        return (
+            "Another git process holds a lock file in the checkout or mirror the error "
+            "names (often index.lock): let it finish, or delete the lock once no git "
+            "process runs there. Start no shell or agent session inside a checkout under "
+            "the code repos root: a `git status` there takes the same lock."
+        )
     if kind == "harness":
         return "The indexer failed: the error holds the tail of its output."
-    return "See the error; the tier retries every pass."
+    return (
+        "The error matches no known cause: read it in code.index_status or on the "
+        "repository page and fix what it names. The tier retries every pass."
+    )
+
+
+# What each kind says in one phrase, where a status line names the failure.
+REASONS: dict[str, str] = {
+    "credential": "no credential",
+    "pin_missing": "pinned commit gone",
+    "submodule_url": "relative submodule URL",
+    "egress": "egress refused",
+    "network": "host unreachable",
+    "timeout": "timed out",
+    "disk": "disk full",
+    "git_lock": "git lock held",
+    "file_refused": "file refused",
+    "permission": "permission denied",
+    "cmake": "build configure failed",
+    "harness": "indexer failed",
+    "module": "module failed to build",
+    "dependency_unavailable": "dependency unavailable",
+    "unknown": "unclassified error",
+}
+# How much of an error's line a status line shows.
+ERROR_LINE_CHARS = 200
+
+
+def reason(kind: str) -> str:
+    """The phrase for a failure of `kind`; a kind a later build adds reads as itself."""
+    return REASONS.get(kind or "unknown", kind)
+
+
+def error_line(kind: str, error: str) -> str:
+    """The line of a (redacted) recorded error that says why, its last
+    `ERROR_LINE_CHARS` kept: the line the kind's pattern matched (for `cmake`, CMake's
+    own error line), else the last line, where git's `fatal:` and the exception sit (also
+    for `harness`, whose marker leads the record)."""
+    lines = [s.strip() for s in error.splitlines() if s.strip()]
+    patterns = [pattern for k, pattern in _KINDS if k == kind]
+    at = next((i for i, s in enumerate(lines) if any(p.search(s) for p in patterns)), None)
+    if at is not None and kind == "cmake":
+        # CMake's own error: `CMake Error: <what>` says it on its line; after `CMake
+        # Error at …:` the next line does, unless it is the call stack's heading; the
+        # line above the marker when CMake printed none
+        error_at = next((i for i in range(at) if lines[i].startswith("CMake Error")), None)
+        if error_at is None:
+            at = max(at - 1, 0)
+        elif (
+            lines[error_at].endswith(":")
+            and error_at + 1 < at
+            and not lines[error_at + 1].startswith("Call Stack")
+        ):
+            at = error_at + 1
+        else:
+            at = error_at
+    elif kind == "harness":
+        at = None  # its marker leads the record; the tool's own output, cause last, follows
+    line = lines[-1 if at is None else at] if lines else ""
+    # a long line keeps its end, where a tool's message puts the cause
+    return line if len(line) <= ERROR_LINE_CHARS else "…" + line[-(ERROR_LINE_CHARS - 1) :]
 
 
 def severity(

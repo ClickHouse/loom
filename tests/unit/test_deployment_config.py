@@ -238,7 +238,7 @@ def test_loom_deployment_publish_names_what_changes_and_wants_yes(
 
     theirs = dc.snapshot(_settings(embedding_model="text-embedding-3-large"))
     ch = _Ch(theirs)
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(ch)))
     assert cli._cmd_publish(argparse.Namespace(yes=False, check=False)) == 2
     assert ch.stored == theirs
     assert "LOOM_EMBEDDING_MODEL" in capsys.readouterr().out
@@ -259,11 +259,11 @@ def test_loom_deployment_publish_fails_when_the_write_fails(
         async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
             raise ConnectionError("insert refused")
 
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(_Refused())))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(_Refused())))
     assert cli._cmd_publish(argparse.Namespace(yes=True, check=False)) == 1
     assert "insert refused" in capsys.readouterr().err
     ch = _Ch(dc.snapshot(settings))
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(ch)))
     assert cli._cmd_publish(argparse.Namespace(yes=True, check=False)) == 0
     assert "already published" in capsys.readouterr().out and ch.inserted == []
 
@@ -383,10 +383,10 @@ def test_loom_deployment_publish_check_writes_nothing(
 
     theirs = dc.snapshot(_settings(embedding_model="text-embedding-3-large"))
     ch = _Ch(theirs)
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(ch)))
     assert cli._cmd_publish(argparse.Namespace(yes=True, check=True)) == 2
     assert "LOOM_EMBEDDING_MODEL" in capsys.readouterr().out and ch.inserted == []
     ch = _Ch(dc.snapshot(settings))
-    monkeypatch.setattr(cli, "run_connected", lambda run: asyncio.run(run(ch)))
+    monkeypatch.setattr(cli, "run_connected", lambda run, **_declared: asyncio.run(run(ch)))
     assert cli._cmd_publish(argparse.Namespace(yes=False, check=True)) == 0
     assert ch.inserted == []

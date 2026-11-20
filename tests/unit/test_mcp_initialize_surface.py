@@ -321,12 +321,26 @@ def test_initialize_keeps_established_session_id(_mcp_client) -> None:
 
 
 def test_loom_search_output_schema_declares_all_returned_sections() -> None:
-    descriptors = mcp_tools._synthetic_tool_descriptors()
+    from server.memory.api.models_loom_search import SearchOutput
+    from tests.unit.loom_op_marks import synthetic_descriptors
+
+    descriptors = synthetic_descriptors("core")
     loom_search = next(d for d in descriptors if d["name"] == "loom_search")
-    props = set(loom_search["outputSchema"]["properties"])
-    # structuredContent returns exactly these four sections; strict
-    # client validators reject undeclared keys.
-    assert props == {"memory", "knowledge", "profile", "conversations"}
+    schema = loom_search["outputSchema"]
+    sections = {"memory", "knowledge", "profile", "conversations"}
+    # Strict clients must also accept the optional connected-source section.
+    assert set(schema["properties"]) == sections | {"live"}
+    assert schema["properties"]["live"]["type"] == "object"
+    assert "live" not in schema.get("required", [])
+
+    payload = SearchOutput.model_validate({key: {"results": []} for key in sections}).model_dump(
+        mode="json"
+    )
+    assert "live" not in payload
+    for arguments in ({"query": "question"}, {"query": "question", "live": False}):
+        answer = mcp_tools.search_answer(payload, arguments, "scope", "")
+        assert set(answer["structuredContent"]) == set(payload)
+        assert "live" not in answer["structuredContent"]
 
 
 # ---- Description integrity: no references to nonexistent ops ----
@@ -381,7 +395,7 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
     async def _defaults(*a: Any, **k: Any) -> dict[str, str]:
         return {"org": "o", "namespace": "ns", "agent": "claude-code"}
 
-    async def _ctx(auth: Any, defaults: Any = None) -> str:
+    async def _ctx(*_args: Any) -> str:
         return ""
 
     monkeypatch.setattr(mcp_primer, "_caller_defaults", _defaults)
@@ -402,18 +416,30 @@ def test_the_initialize_primer_names_only_tools_its_listing_carries(
     assert named and named <= listed, named - listed
 
 
-def test_the_coding_primer_sends_documents_through_loom_op() -> None:
+def test_the_primer_sends_documents_through_loom_op() -> None:
     coding = mcp_primer._loom_rules("coding", None)
     core = mcp_primer._loom_rules("core", None)
-    assert "`loom_knowledge_add`" not in coding
-    assert "`loom_op` (op `knowledge.add`)" in coding
-    assert "`loom_knowledge_add`" in core and "(op `knowledge.add`)" not in core
+    everything = mcp_primer._loom_rules("all", None)
+    for listing in (coding, core):
+        assert "`loom_knowledge_add`" not in listing
+        assert "`knowledge.add` (via loom_op)" in listing
+    assert (
+        "`loom_knowledge_add`" in everything and "`knowledge.add` (via loom_op)" not in everything
+    )
     # The ops the coding listing carries keep their own tool.
     assert "`loom_memory_set`" in coding and "`loom_context_pack`" in coding
 
 
+def test_the_primer_names_the_scratchpad_route_each_listing_has() -> None:
+    for toolset in ("core", "tasks", "tracker"):
+        assert "`working_memory.set` (via loom_op)" in mcp_primer._loom_rules(toolset, None)
+    for toolset in ("coding", "atomic", "all"):
+        rules = mcp_primer._loom_rules(toolset, None)
+        assert "leases and pointers go to `loom_working_memory_set`" in rules, toolset
+
+
 def test_the_guide_is_named_at_initialize_except_on_the_compact_coding_form() -> None:
-    guide = "`loom_op` (op `mentor.guide`)"
+    guide = "`mentor.guide` (via loom_op)"
     for toolset in ("core", "readonly", None):
         assert guide in asyncio.run(mcp._initialize_instructions(None, toolset)), toolset
     # A coding agent re-reads its instructions every turn and its plugin carries the

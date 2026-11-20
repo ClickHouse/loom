@@ -17,6 +17,7 @@ the scope.
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -35,6 +36,7 @@ from server.knowledge.api.models_inspect import KnowledgeInspectInput
 from server.knowledge.app import inspect as ki
 from server.knowledge.store import inspect as store
 from server.operations.registry import OPERATIONS_BY_NAME
+from tests.unit import clickhouse_local
 from tests.unit.ch_fake import RecordingCH
 
 T0, T1 = datetime(2026, 1, 1), datetime(2026, 1, 2)
@@ -1183,14 +1185,18 @@ def test_an_exception_names_another_finding_by_its_label_on_the_page() -> None:
 
 class _Authority:
     """The Postgres authority as knowledge.inspect reads it: its unpublished document
-    commits and what `knowledge.get` serves for each listed source."""
+    commits, what `knowledge.get` serves for each listed source, and how many jobs
+    ClickHouse holds at an older version (and whether more jobs were left uncompared)."""
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         from server.core import pg
+        from server.knowledge.app import ingest_jobs
         from server.knowledge.store import documents, pg_documents
         from server.memory.app.search import pg_validation
 
         self.unpublished: Any = (0, 0)
+        self.jobs: Any = (0, False)
+        self.jobs_reads = 0
         self.served: Any = {"docs/b.md": (9, False), "docs/b.md#v2": (4, False)}
 
         async def unpublished(org: str, ns: str) -> tuple[int, int]:
@@ -1205,13 +1211,25 @@ class _Authority:
                 if u in uris and not deleted
             ]
 
+        async def unprojected(org: str, ns: str) -> tuple[int, bool]:
+            self.jobs_reads += 1
+            return Stubs._answer(self.jobs)
+
         async def nothing_behind(*_: object) -> bool:
             return False  # the memory rows are all in ClickHouse
 
         monkeypatch.setattr(pg, "enabled", lambda: True)
         monkeypatch.setattr(pg_documents, "unpublished", unpublished)
         monkeypatch.setattr(documents, "get_many_by_uris", get_many)
+        monkeypatch.setattr(ingest_jobs, "unprojected", unprojected)
         monkeypatch.setattr(pg_validation, "admit", nothing_behind)
+
+
+def _not_compared(reason: str) -> str:
+    return (
+        f"ingestions.projection: {reason}: the jobs were not compared with ClickHouse's copy; "
+        "the ingestion sections and the listed jobs may miss jobs or show an older state"
+    )
 
 
 @pytest.fixture
@@ -1274,6 +1292,10 @@ async def test_under_postgres_an_unanswering_authority_reads_on_and_says_so(
         s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")
     ]
     assert len(outages) == 1  # said once, waited out once
+    assert authority.jobs_reads == 0  # the job comparison is not tried against a dead pool
+    assert [s for s in out.skipped if s.startswith("ingestions.projection: ")] == [
+        _not_compared("POSTGRES_UNAVAILABLE")
+    ]
     assert stubs.calls["decisions"] and out.memory_findings  # the memory sections still read
     # The listing's check is not tried again against a Postgres already found down.
     assert not [s for s in out.skipped if s.startswith("listed.heads")]
@@ -1349,3 +1371,265 @@ async def test_under_postgres_a_failed_listing_check_lists_clickhouses_rows(
     )
     assert len(expected) == 1
     assert not out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_jobs_clickhouse_holds_at_an_older_version_are_counted(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """Jobs whose latest version ClickHouse does not hold are counted in `skipped`, the
+    ingestion sections still answer from ClickHouse, and the document listing is not
+    affected."""
+    _whole(stubs)
+    authority.jobs = (2, False)
+    out = await ki.handle_knowledge_inspect(_inp())
+    lines = [s for s in out.skipped if s.startswith("ingestions.projection: ")]
+    assert lines == [
+        "ingestions.projection: 2 ingestion job(s) whose latest state ClickHouse does not "
+        "hold yet; the ingestion sections and the listed jobs may miss them or show an older state"
+    ]
+    assert out.ingestions.sources is not None and stubs.calls["source_jobs"]
+    assert out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_full_job_page_says_the_comparison_was_bounded(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    from server.knowledge.app import ingest_jobs
+
+    _whole(stubs)
+    authority.jobs = (0, True)
+    out = await ki.handle_knowledge_inspect(_inp())
+    page = ingest_jobs.UNPROJECTED_PAGE
+    (line,) = [s for s in out.skipped if s.startswith("ingestions.projection: ")]
+    assert line == (
+        f"ingestions.projection: at most {page} open jobs and at most {page} of the most "
+        "recently saved non-pending ones were compared with ClickHouse"
+    )
+    # The dashboard's one exception (DocumentInspection.tsx `jobsMayBeOlder`).
+    assert line.startswith(ki.JOBS_BOUNDED)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["down", "error"])
+async def test_under_postgres_a_failed_job_comparison_reads_the_jobs_on(
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """The comparison failed: the job sections answer from ClickHouse, and the failure is
+    named once. Postgres down there is said as an outage, and nothing after it asks
+    Postgres again."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def no_wait(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
+
+    _whole(stubs)
+    if failure == "down":
+        authority.jobs = pg.PostgresUnavailableError()
+        authority.served = AssertionError("the listing's check is not tried against a dead pool")
+        monkeypatch.setattr(pg_validation, "admit", no_wait)
+    else:
+        authority.jobs = ValueError("bad row")
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert out.ingestions.sources is not None
+    if failure == "down":
+        outages = [
+            s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE: ")
+        ]
+        assert len(outages) == 1
+        assert not [s for s in out.skipped if s.startswith("listed.heads")]
+        # Said under the section's own name too: nothing was compared.
+        assert [s for s in out.skipped if s.startswith("ingestions.projection")] == [
+            _not_compared("POSTGRES_UNAVAILABLE")
+        ]
+        assert not out.listed_complete
+    else:
+        assert [s for s in out.skipped if s.startswith("ingestions.projection")] == [
+            _not_compared("ValueError")
+        ]
+        assert out.listed_complete
+
+
+@pytest.mark.asyncio
+async def test_unprojected_counts_jobs_clickhouse_holds_older_or_not_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.knowledge.app import ingest_jobs
+    from server.knowledge.store import ingestions, pg_jobs
+
+    asked: list[Any] = []
+
+    async def held(org: str, ns: str, limit: int) -> tuple[dict[str, int], bool]:
+        asked.append(limit)
+        return {"a": 3, "b": 2, "c": 1}, True
+
+    async def projected(org: str, ns: str, ids: list[str]) -> dict[str, int]:
+        asked.append(ids)
+        return {"a": 3, "b": 1}  # b behind, c not projected
+
+    monkeypatch.setattr(pg_jobs, "versions", held)
+    monkeypatch.setattr(ingestions, "versions", projected)
+    assert await ingest_jobs.unprojected("o", "n") == (2, True)
+    assert asked == [ingest_jobs.UNPROJECTED_PAGE, ["a", "b", "c"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("found", "more"), [((2, 2), False), ((3, 1), True), ((1, 3), True)])
+async def test_postgres_job_versions_read_open_and_newest_saved_jobs_on_their_indexes(
+    monkeypatch: pytest.MonkeyPatch, found: tuple[int, int], more: bool
+) -> None:
+    """Each read asks one more than the page: one that finds it says there are more,
+    and only the page of each is compared. A job both reads find counts once."""
+    from server.core import pg
+    from server.knowledge.domain.owed_originals import OPEN_JOB
+    from server.knowledge.store import pg_jobs
+
+    calls: list[tuple[str, tuple[Any, ...]]] = []
+    answers = iter(
+        [
+            [{"ingestion_id": f"open{n}", "version": n} for n in range(found[0])],
+            # open0 saved between the two statements: the later read's version is compared.
+            [{"ingestion_id": "open0", "version": 9}]
+            + [{"ingestion_id": f"saved{n}", "version": n} for n in range(found[1] - 1)],
+        ]
+    )
+
+    async def fetch(sql: str, *args: Any) -> list[dict[str, Any]]:
+        calls.append((" ".join(sql.split()), args))
+        return next(answers)
+
+    monkeypatch.setattr(pg, "fetch", fetch)
+    got, said_more = await pg_jobs.versions("o", "n", 2)
+    assert said_more is more
+    assert set(got) == {f"open{n}" for n in range(min(found[0], 2))} | {
+        f"saved{n}" for n in range(min(found[1], 2) - 1)
+    }
+    assert got["open0"] == 9
+    (open_sql, open_args), (saved_sql, saved_args) = calls
+    assert open_args == saved_args == ("o", "n", 3)
+    assert "org = $1 AND namespace = $2" in open_sql and OPEN_JOB in open_sql
+    # knowledge_jobs_open's predicate and order: its LIMIT is an index scan.
+    assert pg_jobs._LIVE in open_sql
+    assert open_sql.endswith("ORDER BY source_uri, created_at, ingestion_id LIMIT $3")
+    # knowledge_jobs_served's predicate, in its order.
+    assert "state <> 'pending'" in saved_sql and pg_jobs._LIVE in saved_sql
+    assert saved_sql.endswith("ORDER BY updated_at DESC LIMIT $3")
+
+
+@pytest.mark.asyncio
+async def test_clickhouse_job_versions_are_read_by_namespace_and_id_in_batches() -> None:
+    """In key order, in chunks that fit one form field."""
+    from clickhouse_connect.driver.binding import format_bind_value
+
+    from server.core.ch_params import FIELD_BYTES
+    from server.knowledge.store import ingestions
+
+    ids = [str(uuid.uuid4()) for _ in range(2001)]
+    ch = RecordingCH().on("knowledge_ingestions FINAL", [{"id": ids[0], "version": 4}])
+    got = await ingestions.versions("o", "n", ids, ch=ch)
+    assert got == {ids[0]: 4}
+    assert len(ch.calls) == 2  # 2,001 rendered ids are more than one field holds
+    assert "ingestion_id IN {ids:Array(UUID)}" in ch.calls[0].sql
+    sent = [i for call in ch.calls for i in call.params["ids"]]
+    assert sent == sorted(ids, key=ingestions.uuid_key_order)
+    for call in ch.calls:
+        assert (call.params["org"], call.params["ns"]) == ("o", "n")
+        assert len(format_bind_value(call.params["ids"]).encode()) <= FIELD_BYTES
+    assert await ingestions.versions("o", "n", [], ch=ch) == {}
+    assert len(ch.calls) == 2  # no ids, no read
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_an_outage_after_the_job_comparison_says_nothing_of_the_jobs(
+    stubs: Stubs, authority: _Authority, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The comparison answered (nothing behind) and the listing's check found Postgres
+    down: the outage is said, and nothing about the jobs, which were compared."""
+    from server.core import pg
+    from server.memory.app.search import pg_validation
+
+    async def no_wait(*_: object) -> bool:
+        raise AssertionError("the memory sections' wait is not tried against a dead pool")
+
+    _whole(stubs)
+    authority.served = pg.PostgresUnavailableError()
+    monkeypatch.setattr(pg_validation, "admit", no_wait)
+    out = await ki.handle_knowledge_inspect(_inp())
+    assert authority.jobs_reads == 1
+    assert [s for s in out.skipped if s.startswith("documents.projection: POSTGRES_UNAVAILABLE")]
+    assert not [s for s in out.skipped if s.startswith("ingestions.projection")]
+
+
+@pytest.mark.asyncio
+async def test_postgres_job_versions_of_an_unstorable_key_read_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A namespace Postgres cannot store holds no job there: nothing to compare."""
+    from server.core import pg
+    from server.knowledge.store import pg_jobs
+
+    async def fetch(*_: object) -> list[dict[str, Any]]:
+        raise AssertionError("no read for a key Postgres cannot store")
+
+    monkeypatch.setattr(pg, "fetch", fetch)
+    assert await pg_jobs.versions("o", "n\x00s", 5) == ({}, False)
+
+
+def test_job_ids_sort_as_clickhouse_orders_a_uuid_key() -> None:
+    """Five ids in the order `ORDER BY ingestion_id` returned them from ClickHouse 26.10:
+    a batch of neighbours reads one stretch of the namespace's granules."""
+    from server.knowledge.store import ingestions
+
+    by_clickhouse = [
+        "089cd1c7-4287-45ba-8000-0ada4721feb5",
+        "46868193-7cc9-42cb-8000-0fa1857273c4",
+        "ee81a148-3022-4561-8000-3938b0007b03",
+        "55f6022b-7a18-4eca-8000-532b2d4f8eb5",
+        "779c8795-b3af-455f-8000-6b066abed91f",
+    ]
+    assert sorted(reversed(by_clickhouse), key=ingestions.uuid_key_order) == by_clickhouse
+    # Ids sharing their last 8 bytes, in the order ClickHouse 26.10 returned them.
+    tied = [
+        "00000001-0000-4000-8000-000000000001",
+        "7fffffff-0000-4000-8000-000000000001",
+        "ffffffff-0000-4000-8000-000000000001",
+    ]
+    assert sorted(reversed(tied), key=ingestions.uuid_key_order) == tied
+
+
+def test_the_dashboard_keys_on_the_servers_job_line_names() -> None:
+    """DocumentInspection.tsx `jobsMayBeOlder` spells the prefixes it keys on."""
+    from pathlib import Path
+
+    page = Path(__file__).parents[2] / "frontend/src/views/assistant/DocumentInspection.tsx"
+    text = page.read_text(encoding="utf-8")
+    assert f'"{ki.INGESTIONS_PROJECTION}: "' in text
+    assert f'"{ki.JOBS_BOUNDED}"' in text
+
+
+@pytest.mark.skipif(clickhouse_local.CLICKHOUSE is None, reason="clickhouse binary not installed")
+def test_job_ids_sort_as_clickhouse_local_orders_uuids() -> None:
+    from server.knowledge.store import ingestions
+
+    # Ids sharing their last 8 bytes too: their first 8 then decide.
+    tied = [f"{n:08x}-0000-4000-8000-000000000001" for n in (0xFFFFFFFF, 1, 0x7FFFFFFF)]
+    ids = [str(uuid.uuid4()) for _ in range(300)] + tied
+    rows = clickhouse_local.run(
+        [],
+        "SELECT toString(u) AS id FROM (SELECT arrayJoin({ids:Array(UUID)}) AS u) ORDER BY u",
+        {"ids": ids},
+    )
+    assert [r["id"] for r in rows] == sorted(ids, key=ingestions.uuid_key_order)
+
+
+@pytest.mark.asyncio
+async def test_under_postgres_a_clickhouse_outage_at_the_job_comparison_fails_the_call(
+    stubs: Stubs, authority: _Authority
+) -> None:
+    """ClickHouse down or overloaded fails the report, as any section's read does."""
+    _whole(stubs)
+    authority.jobs = BackendUnavailableError("ClickHouse is down")
+    with pytest.raises(BackendUnavailableError):
+        await ki.handle_knowledge_inspect(_inp())

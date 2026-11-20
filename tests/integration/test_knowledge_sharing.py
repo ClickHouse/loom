@@ -16,6 +16,7 @@ import pytest
 from tests import end_user_issuer
 from tests.integration._eventually import ACL_OPS, acl_change_adopted, wait_until
 from tests.integration._resources import unique_org
+from tests.integration._sources import retirement, seed_source
 
 pytestmark = pytest.mark.slow
 
@@ -561,6 +562,32 @@ def test_a_create_cut_short_is_finished_by_its_creator_alone(gw: Gateway, ch_cli
     assert gw.ok("alice", "collection.create", {"namespace": name})["created"] is False
 
 
+def test_a_collection_made_from_its_title_is_found_again_by_it(gw: Gateway, ch_client: Any) -> None:
+    title = f"Plans {uuid.uuid4().hex[:6]}"
+    made = gw.ok("alice", "collection.create", {"title": title, "derive_name": True})
+    assert made["created"] is True and made["title"] == title
+    name = made["namespace"]
+    assert name.startswith("col-plans-")
+    row = ch_client.query(
+        "SELECT title, kind, owner_email FROM loom.namespaces FINAL"
+        " WHERE org = {org:String} AND namespace = {ns:String}",
+        parameters={"org": gw.org, "ns": name},
+    ).result_rows
+    assert row == [(title, "collection", "user:alice")]
+    listed = gw.ok("alice", "collection.list", {})["collections"]
+    assert [c["title"] for c in listed if c["namespace"] == name] == [title]
+    # The same title again (any case) is the same collection; another person's is their own.
+    again = gw.ok("alice", "collection.create", {"title": title.upper(), "derive_name": True})
+    assert (again["namespace"], again["created"]) == (name, False)
+    bobs = gw.ok("bob", "collection.create", {"title": title, "derive_name": True})
+    assert bobs["created"] is True and bobs["namespace"] != name
+    # Asked for by name, the name is taken, with a free one offered.
+    taken = gw.call("bob", "collection.create", {"namespace": name})
+    detail = taken.json()["detail"]
+    assert taken.status_code == 409 and detail["code"] == "COLLECTION_NAME_TAKEN"
+    assert detail["deleted"] is False and detail["suggestion"].startswith(f"{name}-")
+
+
 def test_a_grant_row_on_a_personal_collection_opens_nothing(gw: Gateway, ch_client: Any) -> None:
     import time
 
@@ -634,6 +661,13 @@ def test_a_deleted_collection_leaves_its_children_top_level(gw: Gateway) -> None
     listed = {c["namespace"]: c for c in gw.ok("bob", "collection.list", {})["collections"]}
     assert listed[child]["parent"] == "", "the child keeps its own grant, at the top"
     assert gw.call("bob", "collection.delete", {"namespace": child}).status_code == 403
+
+
+def test_a_deleted_collection_retires_its_document_sources(gw: Gateway, ch_client: Any) -> None:
+    col = _collection(gw, "alice", f"col-sourced-{uuid.uuid4().hex[:6]}")
+    seed_source(ch_client, gw.org, col)
+    assert gw.ok("alice", "collection.delete", {"namespace": col})["deleted"] is True
+    assert retirement(ch_client, gw.org, col) == [(False, "")]
 
 
 def test_a_grant_planted_on_a_name_keeps_it_from_becoming_a_collection(

@@ -3,11 +3,27 @@ generated from the registry; fails when the file is stale."""
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 from scripts.codegen import sdk_py_gen
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_boolean_and_null_literals_are_python_values() -> None:
+    emitter = sdk_py_gen.Emitter()
+    for schema, expected in (
+        ({"const": True}, [True]),
+        ({"const": False}, [False]),
+        ({"const": None}, [None]),
+        ({"enum": [True, False, None, "value", 7]}, [True, False, None, "value", 7]),
+    ):
+        rendered = ast.parse(emitter.render(schema), mode="eval").body
+        assert isinstance(rendered, ast.Subscript)
+        values = rendered.slice.elts if isinstance(rendered.slice, ast.Tuple) else [rendered.slice]
+        assert all(isinstance(value, ast.Constant) for value in values)
+        assert [value.value for value in values] == expected
 
 
 def test_generated_ops_py_is_current() -> None:

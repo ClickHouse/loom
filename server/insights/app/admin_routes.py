@@ -17,6 +17,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from server.core.ch import set_query_tag
+from server.core.errors import AuthInsufficientError
+from server.core.naming import MIRROR_REFUSED, is_mirror_name
 from server.core.paths import MIGRATIONS_DIR
 from server.erasure.app.backends import ErasureBackendError, LangfuseBackend
 from server.insights.app.admin_models import (
@@ -75,24 +77,24 @@ async def require_admin(request: Request) -> AuthInfo | None:
     identity provider over a prod-derived `LOOM_AUTH_REQUIRED=true` does not
     lock the admin surface while every other route is open.
     """
-    return _verified_admin(request, Role.PLATFORM_ADMIN)
+    return await _verified_admin(request, Role.PLATFORM_ADMIN)
 
 
 async def require_org_admin(request: Request) -> AuthInfo | None:
     """Bearer + ORG_ADMIN gate for the endpoints that act inside the one org
     their body names; each handler pins that org to the caller's own (a
     platform admin passes for any org)."""
-    return _verified_admin(request, Role.ORG_ADMIN)
+    return await _verified_admin(request, Role.ORG_ADMIN)
 
 
-def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
+async def _verified_admin(request: Request, needed: Role) -> AuthInfo | None:
     """A per-namespace admin (a flat `admin` role, or a scoped token's
     `ns_roles`) is not deployment or org authority and never passes."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
+    info = await verify_bearer_header(request.headers.get("Authorization"))
     if not settings.auth_actually_required():
         return None
-    info = verify_bearer_header(request.headers.get("Authorization"))
     if info is None:
         raise missing_bearer()
     if info.has_ns_roles() or not info.has_role(needed):
@@ -118,6 +120,11 @@ org_admin_router = APIRouter(dependencies=[Depends(require_org_admin)])
 # ============================================================
 
 
+def _raw_event_diagnostics(auth: AuthInfo | None) -> bool:
+    """Missing auth, including auth-off admin routes, grants no raw private evidence."""
+    return auth is not None and auth.has_role(Role.PLATFORM_ADMIN) and not auth.has_ns_roles()
+
+
 @admin_router.get("/v1/admin/schema.status")
 async def admin_schema_status() -> SchemaStatusOutput:
     """Report the gap between what migrations expect and what's in CH.
@@ -131,7 +138,9 @@ async def admin_schema_status() -> SchemaStatusOutput:
     from server.core.schema.migrate_lease import RUNNER_TABLES
 
     expected = live_objects(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.exists() else set()
-    expected |= RUNNER_TABLES
+    from server.insights.domain.analysis import EVENTS_VIEW
+
+    expected |= RUNNER_TABLES | {EVENTS_VIEW}
 
     # Skip internal MV inner_id.* tables — repo helper filters them.
     present = set(await admin_repo.list_loom_tables())
@@ -201,9 +210,17 @@ async def admin_workers_status() -> WorkersStatusOutput:
 # ============================================================
 
 
+def _refuse_mirror(namespace: str | None) -> None:
+    """These reads run outside the gate (with auth off, for anyone), so they refuse a
+    mirror's name themselves; their statements leave mirrors out besides."""
+    if namespace and is_mirror_name(namespace):
+        raise AuthInsufficientError(MIRROR_REFUSED)
+
+
 @admin_router.post("/v1/admin/audit.summary")
 async def admin_audit_summary(input: AuditSummaryInput) -> AuditSummaryOutput:
     """Aggregate audit_log by event_type in a window."""
+    _refuse_mirror(input.namespace)
     rows = await admin_repo.audit_summary(
         input.since_seconds,
         org=input.org,
@@ -228,8 +245,11 @@ async def admin_audit_summary(input: AuditSummaryInput) -> AuditSummaryOutput:
 
 
 @admin_router.post("/v1/admin/events.tail")
-async def admin_events_tail(input: EventsTailInput) -> EventsTailOutput:
+async def admin_events_tail(
+    input: EventsTailInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> EventsTailOutput:
     """Recent rows from `loom.agent_events` for live debugging."""
+    _refuse_mirror(input.namespace)
     filters: dict[str, str | bool] = {}
     for key in ("org", "namespace", "agent", "operation"):
         val = getattr(input, key)
@@ -241,6 +261,7 @@ async def admin_events_tail(input: EventsTailInput) -> EventsTailOutput:
         input.since_seconds,
         input.limit,
         filters=filters,
+        operator=_raw_event_diagnostics(auth),
     )
     return EventsTailOutput.model_validate(
         {
@@ -322,7 +343,9 @@ def _attribution_label(name: str, calls: int, claimed: int) -> str:
 
 
 @admin_router.post("/v1/admin/consumers")
-async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
+async def admin_consumers(
+    input: ConsumersInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> ConsumersOutput:
     """Per-consumer calls, error rate, p50, spend and outcome feedback over
     each requested window — read-only aggregates over
     agent_events and code_search_outcome, joined by consumer name."""
@@ -331,14 +354,18 @@ async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
     windows: list[ConsumersWindow] = []
     for since in input.windows_seconds:
         rows, outcomes = await asyncio.gather(
-            admin_repo.consumers(since, input.limit, org=input.org),
+            admin_repo.consumers(
+                since, input.limit, org=input.org, operator=_raw_event_diagnostics(auth)
+            ),
             admin_repo.consumer_outcomes(since, input.limit, org=input.org),
         )
         # Tagged / untagged per token identity; additive, so a
         # failed read leaves the window's rows intact.
         tagging_rows: list[dict[str, Any]] = []
         try:
-            tagging_rows = await admin_repo.consumer_tagging(since, input.limit, org=input.org)
+            tagging_rows = await admin_repo.consumer_tagging(
+                since, input.limit, org=input.org, operator=_raw_event_diagnostics(auth)
+            )
         except Exception as e:  # noqa: BLE001 — the split is additive
             log.warning("admin/consumers: tagging read failed (non-fatal): %s", e)
         by_name: dict[str, dict[str, Any]] = {}
@@ -525,6 +552,11 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
                 "message": "exactly one of `namespace` or `org` required",
             },
         )
+    if org:
+        # A cell sets limits only for an org it holds (a platform admin places none).
+        from server.auth import tenancy
+
+        await tenancy.ensure_held(org, None)
     limiter = get_limiter()
     if input.clear:
         if ns:
@@ -649,12 +681,16 @@ async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistory
 
 
 @admin_router.post("/v1/admin/fleet.cost")
-async def admin_fleet_cost(input: FleetCostInput) -> FleetCostOutput:
+async def admin_fleet_cost(
+    input: FleetCostInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> FleetCostOutput:
     """Top-N tenants by attributed cost over a window."""
     since_seconds = input.since_seconds
     top_n = input.top_n
     group_by = input.group_by
-    rows = await admin_repo.fleet_cost(since_seconds, top_n, group_by)
+    rows = await admin_repo.fleet_cost(
+        since_seconds, top_n, group_by, operator=_raw_event_diagnostics(auth)
+    )
     return FleetCostOutput.model_validate(
         {
             "rows": [
@@ -826,27 +862,30 @@ async def admin_token_mint(
     outranks the caller's token or live grants. It is saved to the caller's
     token list under `input.name`, with its own `sa:` subject, and revoked
     there; `loom mint-token` mints for any other subject."""
+    from server.auth.default_namespace import auth_off_subject
     from server.auth.delegation import DEFAULT_TTL_DAYS, NEVER, Delegated, delegable_role, delegate
     from server.auth.grant_claims import service_account_change
     from server.auth.jwt import new_jti
     from server.core.datetimes import naive_utc_now_seconds
     from server.identity.app import me_service_accounts as tokens
     from server.identity.app import token_grants
+    from server.identity.app.caller_home import is_memory_home, minted_home, star_home
+    from server.identity.app.namespace_kinds import kind_map
     from server.identity.app.restricted_access import note_restricted_grants
+    from server.identity.app.token_saves_to import asked_saves_to, saves_to_target
 
     # Redundant with the router-level dependency; kept so the gate holds even
     # if this handler is ever mounted on another router.
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "mint a token for")
+    await admit_org(info, input.org, "mint a token for")
     body = await request.json()
     if info is not None:
         creator = info.subject
     else:
-        # Auth off: a valid bearer names the owner, in its own org; else "dev".
-        # The token list reads the same owner, so the token is listed and revocable.
-        bearer = tokens.dev_bearer(request)
-        refuse_foreign_org(bearer, input.org, "mint a token for")
-        creator = bearer.subject if bearer is not None else "dev"
+        # Auth off: a valid bearer names the owner, in its own org; else the single user.
+        bearer = await tokens.dev_bearer(request)
+        await admit_org(bearer, input.org, "mint a token for")
+        creator = bearer.subject if bearer is not None else auth_off_subject()
     if input.name is None and "subject" in body:
         raise HTTPException(
             status_code=422,
@@ -860,6 +899,7 @@ async def admin_token_mint(
     for role in input.roles:
         delegable_role(role)
     requested: dict[str, str | None] = {ns: input.requested_role_for(ns) for ns in input.namespaces}
+    asked = asked_saves_to(input.saves_to, everything="*" in requested)
 
     jti = new_jti()
     async with service_account_change(input.org, name):
@@ -896,6 +936,9 @@ async def admin_token_mint(
             # Every namespace of the token; the grant below keeps only the restricted ones.
             flat_role = (delegated.roles or ["viewer"])[0]
             roles_on = delegated.ns_roles or dict.fromkeys(delegated.namespaces, flat_role)
+        delegated = await saves_to_target(
+            input.org, delegated, asked, before_star=star_home(input.namespaces)
+        )
         # Before the token is saved: a refusal (an unread code registry) strands nothing.
         is_code = await token_grants.code_namespace_predicate(input.org, list(roles_on))
         sa_subject = tokens.new_token_subject(input.org, name, creator)
@@ -914,6 +957,13 @@ async def admin_token_mint(
         await _audit_mint(info, input, delegated, sa_subject, jti)
     # Retired: the token's subject is its own, and it is always a service account.
     ignored = sorted({"subject", "is_service_account"} & set(body))
+    # The token's recorded target: a list token's saves_to, else its writable memory home
+    # before `*` (`caller_home.minted_home`), else "" (it only reads, or follows its
+    # owner's pick).
+    home = minted_home(delegated.as_auth(sa_subject))
+    if home and not (is_memory_home(await kind_map(input.org), home) and delegated.writes(home)):
+        home = ""
+    saves_to = delegated.saves_to or home
     return TokenMintOutput.model_validate(
         {
             "token": minted,
@@ -926,6 +976,7 @@ async def admin_token_mint(
             "ns_roles": delegated.ns_roles or None,
             "consumer": input.consumer,
             "ttl_seconds": delegated.ttl_seconds,
+            "saves_to": saves_to,
             "ignored_args": ignored,
         }
     )
@@ -948,6 +999,16 @@ def refuse_browser_reach(request: Request, what: str) -> None:
             raise HTTPException(403, f"Cross-origin {what} is not allowed")
     if request.headers.get("sec-fetch-site", "none") not in ("same-origin", "none"):
         raise HTTPException(403, f"Cross-origin {what} is not allowed")
+
+
+async def admit_org(info: AuthInfo | None, org: str, action: str) -> None:
+    """An admin acts inside its own org, a platform admin in any, and on a cell only in
+    an org the cell holds (`server.auth.tenancy`): every route whose body names the
+    org it acts in admits it here before anything else."""
+    from server.auth import tenancy
+
+    refuse_foreign_org(info, org, action)
+    await tenancy.ensure_held(org, info)
 
 
 def refuse_foreign_org(info: AuthInfo | None, org: str, action: str) -> None:
@@ -998,7 +1059,7 @@ async def admin_namespace_adopt(
     # Redundant with the router-level dependency; kept because this handler
     # also needs the verified subject as the audit actor.
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "adopt a namespace in")
+    await admit_org(info, input.org, "adopt a namespace in")
     actor = info.subject if info is not None else "dev-admin"
 
     from server.auth.sharing import is_collection

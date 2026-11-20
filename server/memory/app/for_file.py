@@ -7,7 +7,7 @@ import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.code.app.common import repo_relative
 from server.core.ch import get_client
@@ -18,7 +18,7 @@ from server.memory.api.models_for_file import (
     MemoryForFileOutput,
     _MemoryForFileHit,
 )
-from server.memory.domain.code_change import STATE_RANK, worst
+from server.memory.domain import code_change
 from server.memory.domain.decision_schema import (
     CONSTRAINT_TAG,
     DECISION_TAG,
@@ -32,6 +32,9 @@ from server.memory.domain.memory_types import KEY_IDENTIFIED_TYPES
 from server.memory.domain.trust import row_verification
 from server.settings import settings
 
+if TYPE_CHECKING:
+    from server.memory.store.code_links import LinkRow
+
 log = logging.getLogger(__name__)
 
 _VALUE_BYTES = 600
@@ -40,13 +43,8 @@ _LINE_CHARS = 220
 _ESCAPE_CHARS = 6
 # A character outside the Basic Multilingual Plane (an emoji) is two escapes.
 _PAIR_ESCAPE_CHARS = 2 * _ESCAPE_CHARS
-_CODE_NOTES = {
-    "changed": " (its code changed since it was written: check before relying on it)",
-    "unresolved": " (its code was renamed or removed and could not be followed: check it)",
-    "missing": " (the code it is about is gone: check before relying on it)",
-}
 # Rough prompt-token estimate for English prose and code paths.
-_CHARS_PER_TOKEN = 4
+CHARS_PER_TOKEN = 4
 
 # A file reference matches the requested path when either side is the bare
 # filename of the other, or both are the same string. `p` is the request,
@@ -96,7 +94,7 @@ _LINKED_SQL = f"{_SELECT}  AND memory_id IN {{linked:Array(UUID)}}{_ORDER}"
 def _whole_bytes() -> int:
     """The stored JSON a decision or constraint is read up to: the ceiling's characters,
     each as long as the longest escape of one (a surrogate pair's)."""
-    return settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
+    return settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN * _PAIR_ESCAPE_CHARS
 
 
 def value_text(hit: dict[str, Any]) -> str:
@@ -199,7 +197,8 @@ def _status_notes(hit: dict[str, Any], *, decision: bool) -> str:
         out += " (source changed)"
     if decision and FAILURE_TAG in tags:
         out += " (outcome: failed)"
-    return out + _CODE_NOTES.get(str(hit.get("code_state") or ""), "")
+    state, commit = str(hit.get("code_state") or ""), str(hit.get("code_changed_since") or "")
+    return out + code_change.note(state, commit)
 
 
 def _marker(hit: dict[str, Any], *, show_decision: bool) -> str:
@@ -332,8 +331,8 @@ def render_block(
     if not hits:
         return "", 0, False
     now = now or naive_utc_now()
-    budget_chars = token_budget * _CHARS_PER_TOKEN
-    whole_chars = settings.memory_for_file_whole_tokens * _CHARS_PER_TOKEN
+    budget_chars = token_budget * CHARS_PER_TOKEN
+    whole_chars = settings.memory_for_file_whole_tokens * CHARS_PER_TOKEN
     n = len(hits)
     lines = [f"Loom: {n} memor{'y' if n == 1 else 'ies'} anchored to {path} — read before editing:"]
     footer = _removal_footer(hits, home)
@@ -387,7 +386,7 @@ def render_block(
         lines.append(footer)
     text = "\n".join(lines)
     truncated = bool(left_out or whole_left)
-    return text, (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN, truncated
+    return text, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN, truncated
 
 
 def _stamp(r: dict[str, Any]) -> float:
@@ -407,8 +406,8 @@ def _supersede_order(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     older row's key, author and kind) and `supersedes_ids` (the memory_id of every older row
     it is linked to: another writer may hold a row under the same key). No new state: both
     stay live until the older's author or a maintainer removes it, or a verdict retires it. Two
-    typed decisions never pair: a decision's key is its identity, so one cross-linked to
-    another is a second decision, not a newer version."""
+    key-identified rows (decisions, definitions) never pair: such a row's key is its identity,
+    so one cross-linked to another is a second row, not a newer version."""
     by_id = {str(r.get("memory_id")): r for r in rows if r.get("memory_id")}
     newer_of: dict[int, list[dict[str, Any]]] = {}
     for r in rows:
@@ -459,13 +458,14 @@ async def _rows_for(
     path: str,
     base: str,
     tags: list[str],
-    linked: asyncio.Task[dict[str, list[str]] | None],
+    linked: asyncio.Task[dict[str, list[LinkRow]] | None],
     *,
     whole_only: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
-    memory_id -> the states of its links here, read alongside the files match; None when
-    that read failed), each stamped with its namespace and the worst of those states.
+    memory_id -> its links here, read alongside the files match; None when that read
+    failed), each stamped with its namespace, the worst state of those links and the
+    commit that put it there.
     `whole_only` keeps decisions and constraints only (the rows printed whole)."""
     statuses = ["active", "conflicted"] if input.include_conflicted else ["active"]
     params = {
@@ -481,28 +481,32 @@ async def _rows_for(
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
-    states_of = read or {}
-    ids = sorted(m for m, states in states_of.items() if set(states) != {"missing"})
+    links_of = read or {}
+    ids = sorted(m for m, links in links_of.items() if {a["state"] for a in links} != {"missing"})
     # a hot file's links are bound a slice at a time; the best of the files match and
     # of each slice's own top `lim` are the namespace's
     if ids:
         found = found + await query_all_sliced(ch, _LINKED_SQL, params | {"linked": ids}, "linked")
     unique = {str(r["memory_id"]): r for r in found}.values()
     rows = sorted(unique, key=_order_key)[: int(input.top_k)]
-    return [
-        {
-            **r,
-            "namespace": namespace,
-            "code_state": worst(states_of.get(str(r.get("memory_id")), [])),
-        }
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        links = links_of.get(str(r.get("memory_id")), [])
+        out.append(
+            {
+                **r,
+                "namespace": namespace,
+                "code_state": code_change.worst([a["state"] for a in links]),
+                "code_changed_since": code_change.worst_commit(links),
+            }
+        )
+    return out
 
 
 async def _linked(
     input: MemoryForFileInput, path: str, nss: list[str]
-) -> dict[str, list[str]] | None:
-    """memory_id -> the code states of the links of the `nss` memories to code in `path`,
+) -> dict[str, list[LinkRow]] | None:
+    """memory_id -> the links of the `nss` memories to code in `path`,
     read from the trunk links of the repository the call is about: the one
     `extra_namespaces` or the `repo:` tag names. None named: no links (a path alone
     is in every repository). None when the read failed."""
@@ -516,17 +520,17 @@ async def _linked(
         if not trunks:
             return {}
         links = await code_links.for_paths(
-            input.org, trunks, [path], namespaces=nss, states=list(STATE_RANK)
+            input.org, trunks, [path], namespaces=nss, states=list(code_change.STATE_RANK)
         )
         links = await current_links(input.org, links)
         seen = await readable_namespaces(input.org, {a["code_namespace"] for a in links})
     except Exception as e:  # noqa: BLE001 — the links are additive; the files match stands
         log.debug("memory.for_file: code links skipped: %s", e)
         return None
-    out: dict[str, list[str]] = defaultdict(list)
+    out: dict[str, list[LinkRow]] = defaultdict(list)
     for a in links:
         if a["code_namespace"] in seen:
-            out[a["memory_id"]].append(a["state"])
+            out[a["memory_id"]].append(a)
     return out
 
 
@@ -626,14 +630,27 @@ def _hit(r: dict[str, Any], input: MemoryForFileInput) -> _MemoryForFileHit:
 async def listing_rows(
     input: MemoryForFileInput, *, whole_only: bool = False
 ) -> tuple[list[dict[str, Any]], bool]:
-    """(rows, links skipped) for a reader that lists several files' rows itself: each
-    row the hit memory.for_file serves with its `memory_id`, and whether the code-links
-    read failed (a row reached only by a link is then missing). `whole_only` keeps the
-    decisions and constraints (typed `decision`, or tagged `decision` or `constraint`)."""
+    """(rows, links skipped) for a reader that lists several files' rows itself: each row the
+    hit memory.for_file serves with its `memory_id` and `supersedes_ids` (the older rows it
+    is placed above), and whether the code-links read failed (a row reached only by a link
+    is then missing). `whole_only` keeps the decisions and constraints (typed `decision`, or
+    tagged `decision` or `constraint`)."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
     rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
-    return [_hit(r, input).model_dump() | {"memory_id": str(r["memory_id"])} for r in rows], skipped
+    return [_with_ids(_hit(r, input), r) for r in rows], skipped
+
+
+def _with_ids(hit: _MemoryForFileHit, row: dict[str, Any]) -> dict[str, Any]:
+    """The hit with the row fields a reader needs that are not on the wire: `memory_id` and
+    `supersedes_ids` (to leave a superseded row out with its superseder) and
+    `code_changed_since` (the commit that put its worst link in a changed, unresolved or
+    missing state)."""
+    return hit.model_dump() | {
+        "memory_id": str(row.get("memory_id") or ""),
+        "supersedes_ids": row.get("supersedes_ids") or [],
+        "code_changed_since": row.get("code_changed_since", ""),
+    }
 
 
 async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutput:
@@ -642,16 +659,11 @@ async def handle_memory_for_file(input: MemoryForFileInput) -> MemoryForFileOutp
     rows, _skipped = await _merged_rows(input, path, base)
 
     hits: list[_MemoryForFileHit] = []
-    # The ids are not on the wire; render_block needs them to leave a superseded row out
-    # with its superseder.
     to_render: list[dict[str, Any]] = []
     for r in rows:
         hit = _hit(r, input)
         hits.append(hit)
-        to_render.append(
-            hit.model_dump()
-            | {"memory_id": r.get("memory_id"), "supersedes_ids": r.get("supersedes_ids") or []}
-        )
+        to_render.append(_with_ids(hit, r))
 
     shown: list[dict[str, Any]] = []
     rendered, tokens, truncated = render_block(

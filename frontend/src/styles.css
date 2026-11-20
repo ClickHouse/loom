@@ -333,6 +333,18 @@ body {
     border-color: var(--click-button-basic-color-empty-stroke-disabled);
     color: var(--click-button-basic-color-empty-text-disabled);
   }
+  [data-unavailable="danger"]:not(:disabled) {
+    background: var(--click-button-basic-color-danger-background-disabled);
+    border-color: var(--click-button-basic-color-danger-stroke-disabled);
+    color: var(--click-button-basic-color-danger-text-disabled);
+  }
+  /* An icon button (components/ui/GatedIconButton), of any variant: Click UI's icon-button
+     disabled look. */
+  .gated-icon[data-unavailable]:not(:disabled) {
+    background: var(--click-button-iconButton-color-disabled-background-default);
+    border-color: transparent;
+    color: var(--click-button-iconButton-color-disabled-text-default);
+  }
 }
 
 /* A button whose read is in flight stays focusable (components/ui/BusyButton) and shows
@@ -481,7 +493,7 @@ body {
 /* Reduced motion: the stylesheet's animations, Click UI's entrance animations and
    every transition stop for a reader who asks the OS for less motion, so a
    component needs no `motion-reduce:` variant; a spinner keeps turning, it is a
-   status. After the rules it overrides. */
+   status. After the rules it overrides, or outside the layer they sit in. */
 @media (prefers-reduced-motion: reduce) {
   .animate-network-slide,
   .animate-view-in,
@@ -550,7 +562,7 @@ textarea[aria-invalid="true"]:focus-visible {
    (options, group buttons, a group's "Show all") and the Library's text preview, which
    fills its pane. Inbox items stack flush, where an outset ring would cover the next one.
    A clipping box that holds other controls leaves them 4 px of room instead: a lane's
-   "Show all" (.tq-more), the picker's withdraw and "Find public namespaces" buttons
+   "Show all" (.tq-more), the picker's withdraw and "Find public namespaces to join" buttons
    (e2e/focus-rings.spec.ts walks every page for a clipped ring). */
 .explorer-outline [role="treeitem"]:focus-visible,
 .doc-preview-text:focus-visible,
@@ -1300,6 +1312,17 @@ textarea[aria-invalid="true"]:focus-visible {
   .list-row[data-deleted] {
     border-style: dashed;
   }
+  /* A Library row's link to where it lives, on a list of several places: a 44 px target under
+     a coarse pointer (WCAG 2.5.8), as the row's other controls are. */
+  @media (pointer: coarse) {
+    .doc-row-place {
+      display: inline-flex;
+      align-items: center;
+      min-height: var(--spacing-hit);
+      min-width: var(--spacing-hit);
+    }
+  }
+
   /* 1 px down, so the checkbox sits on the row's first line of text: a measured hand size. */
   .list-row-leading {
     display: flex;
@@ -1348,6 +1371,13 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .persona-card:hover {
     background: var(--click-card-horizontal-default-color-background-hover);
+  }
+  /* A role that cannot write a section: the card stays readable, without the hover. */
+  .persona-card[aria-disabled="true"] {
+    cursor: not-allowed;
+    border-color: var(--click-card-horizontal-default-color-stroke-disabled);
+    background: var(--click-card-horizontal-default-color-background-disabled);
+    color: var(--click-card-horizontal-default-color-title-disabled);
   }
 }
 
@@ -1536,29 +1566,6 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
-/* Kbd (ui/Kbd.tsx): a key or a short chord. It stands in for Click UI's inline code
-   (its stroke, radius and side padding) in the badge's 500 12 px Inter, muted text on the
-   muted surface. Click UI has no key component and no token for a key's 20 px square: a
-   measured hand size. In the components layer, so a utility the caller passes (`hidden`,
-   a position) still wins. */
-@layer components {
-  .kbd {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0 var(--click-codeInline-space-x);
-    border: var(--click-codeInline-stroke) solid var(--global-color-stroke-default);
-    border-radius: var(--click-codeInline-radii-all);
-    background: var(--global-color-background-muted);
-    font: var(--click-badge-typography-label-md-default);
-    line-height: 1;
-    color: var(--global-color-text-muted);
-    white-space: nowrap;
-  }
-}
-
 /* A field of chips (a tracker source's repositories): Click UI's text field frame around
    the chips and an input, since Click UI has no multi-value field. */
 @layer components {
@@ -1667,6 +1674,16 @@ textarea[aria-invalid="true"]:focus-visible {
   }
 }
 
+/* The document dialogs' drop zones: most touch screens have no file drag, so there the hint
+   goes and the picker stays. */
+@layer components {
+  @media (pointer: coarse) {
+    .drop-hint {
+      display: none;
+    }
+  }
+}
+
 /* The Library's collection tree: a child is indented in the open list; the closed select,
    which shows the picked item's own content, keeps its text in line. */
 @layer components {
@@ -1675,5 +1692,318 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   [data-testid="select-trigger"] .collection-depth {
     padding-inline-start: 0;
+  }
+  /* The Library beside its places (views/LibraryTree.tsx), where <main> has room
+     (lib/useTreeHeight.ts): 16.5rem fits "Shared with you" and three levels of a 20-char title. */
+  .library-layout {
+    display: grid;
+    grid-template-columns: 16.5rem minmax(0, 1fr);
+    align-items: start;
+  }
+  /* Click UI's sidebar navigation has no nesting: rows take its item's padding, radius and
+     text (30 px) and the Table row tints. Collections nest at most eight deep: a level indents
+     1rem for the first four steps and 0.25rem after, so every level still moves right and the
+     deepest titles keep room. */
+  .library-tree {
+    position: sticky;
+    top: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spaces-2);
+    overflow-y: auto;
+    padding: var(--spaces-5) var(--spaces-2) var(--spaces-4) var(--spaces-4);
+    border-inline-end: 1px solid var(--click-global-color-stroke-default);
+  }
+  .library-tree-label {
+    padding: var(--spaces-4) var(--spaces-2) var(--spaces-1);
+  }
+  .library-tree ul {
+    display: flex;
+    flex-direction: column;
+    gap: var(--click-sidebar-navigation-item-global-gap);
+  }
+  .library-tree-row {
+    display: flex;
+    align-items: center;
+    gap: var(--spaces-1);
+    padding-inline: calc((min(var(--depth, 0), 4) + max(var(--depth, 0) - 4, 0) * 0.25) * 1rem) var(--spaces-2);
+    border-radius: var(--click-sidebar-navigation-item-radii-all);
+  }
+  /* Show more takes a row's indent, not its hover: it is a button, not a place. */
+  .library-tree-row:not(.library-tree-more):hover {
+    background: var(--click-table-row-color-background-hover);
+  }
+  .library-tree-row[data-selected] {
+    background: var(--click-table-row-color-background-active);
+  }
+  /* While documents or a collection are dragged, the places that take them are outlined, and
+     the one under the pointer is filled too; a place that refuses them stays as it is. */
+  .library-tree-row[data-drop="ok"] {
+    outline: 1px dashed var(--color-accent);
+    outline-offset: -1px;
+  }
+  .library-tree-row[data-drop="over"] {
+    outline: 1px solid var(--color-accent);
+    outline-offset: -1px;
+    background: var(--color-surface-2);
+  }
+  /* Its words start where the titles do, past the show/hide button's box. */
+  .library-tree-top {
+    padding-inline-start: calc(1.5rem + var(--spaces-1));
+    padding-block: var(--click-sidebar-navigation-item-default-space-y);
+    font: var(--click-sidebar-navigation-item-typography-default);
+    color: var(--color-text-muted);
+  }
+  /* The place's link fills its row: the row is what a pointer aims at. */
+  .library-tree-link {
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    align-items: center;
+    gap: var(--spaces-2);
+    align-self: stretch;
+    padding-block: var(--click-sidebar-navigation-item-default-space-y);
+    font: var(--click-sidebar-navigation-item-typography-default);
+    color: var(--click-global-color-text-default);
+    text-decoration: none;
+  }
+  .library-tree-row[data-selected] .library-tree-link {
+    font: var(--click-sidebar-navigation-item-typography-active);
+  }
+  /* A sidebar row's trailing count; Click UI's navigation has no nested rows. */
+  .library-tree-count {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+  }
+  /* The show/hide button's box comes from IconButton's `minTarget` (24 px for a mouse, 44 px
+     for a thumb); a row with nothing inside holds an empty box of the same size, so the titles
+     line up. */
+  .library-tree-twist {
+    flex: 0 0 auto;
+  }
+  .library-tree-twist-space {
+    flex: 0 0 1.5rem;
+    height: 1.5rem;
+  }
+  /* New collection's form at the tree's foot: where it goes, its title, then its two
+     buttons on their own line: the column is narrow. */
+  .library-tree-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spaces-2);
+    min-width: 0;
+    padding-block: var(--spaces-1);
+  }
+  .library-tree-foot {
+    margin-top: var(--spaces-2);
+    padding-top: var(--spaces-2);
+    border-top: 1px solid var(--click-global-color-stroke-default);
+  }
+  /* Folder chips on the path's line: one sideways-scrolling row (4 px for focus rings), on
+     that line while 8rem (one chip) is left; a chip is cut at 16rem (about 25 characters). */
+  .library-chips {
+    flex: 1 1 8rem;
+    min-width: 0;
+    overflow-x: auto;
+    padding: var(--spaces-1);
+  }
+  .library-chips > ul {
+    display: flex;
+    gap: var(--spaces-2);
+    width: max-content;
+  }
+  .library-chip {
+    max-width: 16rem;
+    text-decoration: none;
+  }
+  @media (pointer: coarse) {
+    .library-tree-row {
+      min-height: var(--spacing-hit);
+    }
+    .library-tree-twist-space {
+      flex-basis: var(--spacing-hit);
+      height: var(--spacing-hit);
+    }
+  }
+}
+
+/* The assistant panel (layout/AssistantPanel.tsx). Click UI has no docked side panel; it
+   is drawn on the page's surface and stroke tokens. One element in every mode: beside
+   <main> (push), over the page at the right edge, full height (overlay), full screen on a
+   phone (sheet), the window over the page anchored at the right, 24 px of the scrim left
+   of it (expanded). Its layer sits above the page and below the inspector's overlay (z-20). */
+@layer components {
+  .assistant-panel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex-shrink: 0;
+    background: var(--color-surface);
+    border-left: 1px solid var(--color-border);
+  }
+  .assistant-panel[hidden] {
+    display: none;
+  }
+  .assistant-panel[data-mode="overlay"] {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 15;
+    box-shadow: var(--shadow-2xl);
+    border-left-color: var(--color-border-strong);
+  }
+  .assistant-panel[data-mode="sheet"] {
+    position: fixed;
+    inset: 0;
+    height: 100dvh;
+    z-index: 15;
+    border-left: 0;
+  }
+  /* The window, the overlay's surface widened to all but a 24 px strip of the scrim; its
+     rows run across it and their content keeps a reading width. */
+  .assistant-panel[data-mode="expanded"] {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 24px;
+    z-index: 15;
+    box-shadow: var(--shadow-2xl);
+    border-left-color: var(--color-border-strong);
+  }
+  .assistant-panel[data-mode="expanded"] .assistant-column {
+    max-width: 880px;
+    margin-inline: auto;
+  }
+  /* The slide-in plays only as the panel appears from closed (data-entering): Expand,
+     Collapse and a resize change the geometry with no motion. */
+  .assistant-panel[data-entering] {
+    animation: slideIn 150ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  /* Everything left of the overlay or the window is dimmed and inert. */
+  .assistant-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 14;
+    background: var(--color-overlay);
+  }
+  /* The splitter: a 6 px grab strip over the panel's left edge, its line the stroke token. */
+  .assistant-splitter {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -3px;
+    width: 6px;
+    cursor: col-resize;
+    z-index: 1;
+    touch-action: none;
+  }
+  .assistant-splitter:hover,
+  .assistant-splitter:focus-visible {
+    background: var(--color-border-strong);
+  }
+  /* Under a finger the strip is 24 px wide (8 px over <main>), transparent, its 6 px line
+     drawn on the panel's edge. */
+  @media (pointer: coarse) {
+    .assistant-splitter {
+      left: -8px;
+      width: 24px;
+    }
+    .assistant-splitter:hover,
+    .assistant-splitter:focus-visible {
+      background: none;
+    }
+    .assistant-splitter:hover::before,
+    .assistant-splitter:focus-visible::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 5px;
+      width: 6px;
+      background: var(--color-border-strong);
+    }
+  }
+  /* Under a finger a source row is a 44 px target, its text centred
+     (views/assistant/Sources.tsx): the answer's citation numbers (numberedCitations in
+     AnswerText.tsx, in the panel and the search's card) leave their touch area to these
+     rows. */
+  @media (pointer: coarse) {
+    .source-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      align-content: center;
+      column-gap: var(--spaces-1);
+      min-height: var(--spacing-hit);
+    }
+  }
+  /* The panel header's History button while History shows (aria-pressed): Click UI's ghost
+     icon button has no selected state, so it takes that button's :active tokens. */
+  .assistant-head button[aria-pressed="true"] {
+    color: var(--click-button-iconButton-color-ghost-text-active);
+    border-color: var(--click-button-iconButton-color-ghost-stroke-active);
+    background-color: var(--click-button-iconButton-color-ghost-background-active);
+  }
+  /* The search's Ask AI option's "Ask": what choosing the option does, drawn as a small
+     primary button (its tokens) inside the option, which a nested button would not be. */
+  .search-ask {
+    padding: 0 var(--spaces-2);
+    border-radius: var(--click-button-radii-all);
+    background: var(--click-button-basic-color-primary-background-default);
+    color: var(--click-button-basic-color-primary-text-default);
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+  }
+  /* The answer card's Continue in chat is a listbox option (the focus stays in the search
+     field): the option the keys moved to takes the focus ring, as the other options do. */
+  .search-continue[data-by-keys] {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  /* The Ask AI button's "answer ready" dot, on the accent token, on its corner. */
+  .assistant-launcher-dot {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--color-accent);
+    pointer-events: none;
+  }
+  /* Open, the Ask AI button keeps Click UI's pressed look (its :active tokens): the
+     secondary button's from xl, the header icon buttons' ghost one below. */
+  .assistant-launcher[aria-expanded="true"] {
+    border-color: var(--click-button-basic-color-secondary-stroke-active);
+    background-color: var(--click-button-basic-color-secondary-background-active);
+  }
+  /* Below xl the button is its icon, drawn as the header's other icon buttons (Click UI's
+     ghost icon button, whose tokens it takes: the frameless button's link colour would set
+     it apart): Click UI's padding and the gap before the word it hides go, so it is 32 px
+     (the frameless type is only as tall as its icon, hence the height; a coarse pointer's
+     44 px minimum still wins). */
+  @media (max-width: 1279.98px) {
+    .assistant-launcher {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      gap: 0;
+      justify-content: center;
+      color: var(--click-button-iconButton-color-ghost-text-default);
+    }
+    .assistant-launcher:hover {
+      color: var(--click-button-iconButton-color-ghost-text-hover);
+      background-color: var(--click-button-iconButton-color-ghost-background-hover);
+    }
+    .assistant-launcher[aria-expanded="true"] {
+      color: var(--click-button-iconButton-color-ghost-text-active);
+      border-color: var(--click-button-iconButton-color-ghost-stroke-active);
+      background-color: var(--click-button-iconButton-color-ghost-background-active);
+    }
   }
 }

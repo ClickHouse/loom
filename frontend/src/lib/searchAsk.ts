@@ -1,0 +1,25 @@
+// Whether the header search offers its Ask AI card, and the placeholder that says it does,
+// before and after the search body loads (components/HeaderSearch.tsx).
+import type { MyNamespaceEntry } from "../api";
+import { claimReason } from "./assistantClaims";
+import { chatOff } from "./assistantDock";
+import type { AssistantReason } from "./assistantLayout";
+import { isMemoryNamespace } from "./namespace";
+
+export const SEARCH_PLACEHOLDER = "Search profile, memories, library…";
+export const ASK_PLACEHOLDER = "Search or ask a question";
+
+/** Whether a known reason keeps the search from offering its answer card. The setup
+ *  starting or failing doesn't block it: the card stays and says the refusal it causes. */
+export function blocksCard(reason: AssistantReason | null): boolean {
+  return !!reason && reason.kind !== "starting" && reason.kind !== "failing";
+}
+
+/** Whether the search can offer Ask AI in this namespace: the chat on, no reason that
+ *  blocks the card, no token claim that keeps the assistant from answering, a memory
+ *  namespace. The placeholder (layout/Header.tsx) and the search's body
+ *  (components/HeaderSearch.tsx) both ask this, so the placeholder does not change when the
+ *  body loads. */
+export function offersAsk(reason: AssistantReason | null, namespace: string, mine: MyNamespaceEntry[] | null): boolean {
+  return !chatOff() && !blocksCard(reason) && !claimReason() && isMemoryNamespace(namespace, mine);
+}

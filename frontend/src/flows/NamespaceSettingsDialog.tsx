@@ -12,14 +12,19 @@ import {
   type NamespaceRegisterFields,
 } from "../api";
 import { useStore } from "../lib/state";
-import { canUpdateNamespace, isNamespaceAdmin } from "../lib/role";
-import { toast } from "../components/Toast";
+import { isNamespaceAdmin } from "../lib/role";
+import { canUpdateNamespace, restrictedMisses, restrictedReason } from "../lib/namespaceUpdate";
+import { useGrantRows } from "../lib/useGrantRows";
+import { needsRole } from "../lib/namespaceRole";
+import { holdsDirectRow, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError } from "../lib/format";
 import { useAbortableEffect } from "../lib/hooks";
 import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
-import { Loading } from "../components/ui";
+import { Loading, Unavailable } from "../components/ui";
+import { COST_CAP_EFFECT } from "../lib/costCap";
+import { NamespaceBudgetAlerts, type BudgetAlertsHandle } from "./NamespaceBudgetAlerts";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -39,6 +44,8 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   org: string;
   namespace: string;
+  /** A repository's name ("owner/name @ branch"), which its reasons name it by. */
+  label?: string;
 }
 
 /**
@@ -49,14 +56,14 @@ interface Props {
  * Members dialog = "people in this namespace + their roles"
  * Settings dialog = "what is this namespace"
  *
- * Both open from Discover's "Namespaces you manage" section.
+ * Both open from Namespaces in your org's "Namespaces you manage" section.
  */
-export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: Props) {
+export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, label }: Props) {
   const whoami = useStore((s) => s.whoami);
-  const myNamespaces = useStore((s) => s.myNamespaces);
   // A loaded row is kept with the (org, namespace) it was read for, so a row read for a
   // previous namespace is never shown under this one or used to build its save.
   const key = JSON.stringify([org, namespace]);
+  const budgetAlertsRef = useRef<BudgetAlertsHandle>(null);
   const keyRef = useRef(key);
   keyRef.current = key;
   const [loaded, setLoaded] = useState<{ key: string; info: NamespaceInfo | null } | null>(null);
@@ -84,15 +91,42 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
     [open, org, namespace],
   );
 
-  // The settings round-trip namespace.register, whose update path also admits the owner of an
-  // auto-registered row (and on a restricted row only a named, directly granted admin);
-  // namespace.delete needs ADMIN on the namespace.
-  const canManage = canUpdateNamespace(whoami, myNamespaces, namespace, ns);
-  const canDelete = isNamespaceAdmin(whoami, myNamespaces, namespace);
+  // The caller's grants: App's boot read, else this dialog's own (a restricted row's gate
+  // wants the grant even under an admin claim). Null until read, and on a failed read.
+  const grants = useGrantRows(org, open);
+  const rows = grants.rows;
+  // The restricted gate (`restrictedMisses`) decides both settings and Delete on a restricted
+  // row; elsewhere namespace.register's update path also admits the owner of an
+  // auto-registered row, and namespace.delete needs ADMIN on the namespace.
+  const restricted = ns?.classification === "restricted";
+  const misses = restricted ? restrictedMisses(whoami, rows, { org, namespace }) : [];
+  const canManage = restricted ? misses.length === 0 : canUpdateNamespace(whoami, rows, { org, namespace }, ns);
+  const canDelete = restricted ? misses.length === 0 : isNamespaceAdmin(whoami, rows, namespace);
 
   // Repository mode: a code index shows only what applies to read-only source —
   // description, the join rule, danger zone.
   const isRepo = ns?.kind === "code";
+  // A repository's admins are its maintainers, and it is named by its label.
+  const name = isRepo ? (label ?? namespace) : namespace;
+  const adminWord = isRepo ? "maintainer" : "admin";
+  // A token scoped per namespace with no direct grant here may be an admin the client cannot
+  // see; a direct grant caps it.
+  const needsAdmin = scopedUnseen(whoami, holdsDirectRow(rows, namespace))
+    ? serverDecides(name)
+    : isRepo
+      ? needsMaintainer(name)
+      : needsRole("admin", name);
+
+  // Why the fields are locked. While the grants or whoami are unread (or the read failed),
+  // say so, never a role the caller may well hold. On a restricted row, from what its gate
+  // finds missing: the token's parts, the direct grant, or both; with neither, the token is
+  // scoped per namespace and the server decides.
+  const unread = rows === null || !whoami;
+  const lockedReason = restricted
+    ? restrictedReason(grants, whoami, { org, namespace }, { name, adminWord, what: "its settings" })
+    : unread
+      ? unreadLine(grants.loading || !whoami, name)
+      : needsAdmin;
 
   const save = async (patch: Partial<NamespaceRegisterFields>) => {
     if (!ns) return;
@@ -110,7 +144,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         setDescDirty(false);
       }
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setSaving(false);
     }
@@ -132,7 +166,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
       !(await confirmAction({
         title: `Delete namespace "${namespace}"?`,
         message:
-          "The namespace is deactivated. Existing memories and grants stay queryable for forensics. To permanently erase data, run an erasure.request separately.",
+          "The namespace is deactivated. Existing memories and grants stay queryable for forensics. To erase its data, switch to it and use Erase data on Audit log → Erasures before you delete it.",
         confirmLabel: "Delete namespace",
         danger: true,
       }))
@@ -149,7 +183,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         toast(`Namespace already inactive or not found`, "info");
       }
     } catch (e) {
-      toast(`Delete failed: ${humanizeError(e)}`, "error");
+      toastError("Delete failed", e);
     } finally {
       setSaving(false);
     }
@@ -168,7 +202,8 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
       className="w-full max-w-[600px]"
       onEscapeKeyDown={(e) => {
         // Escape while editing the cap restores it; the next Escape closes the dialog.
-        if (capDraft === null) return;
+        const cancelledBudgetDraft = budgetAlertsRef.current?.cancelDrafts() ?? false;
+        if (capDraft === null && !cancelledBudgetDraft) return;
         e.preventDefault();
         setCapEdit(null);
       }}
@@ -177,6 +212,12 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
         {!ns && <Loading label="Loading namespace settings" />}
         {ns && (
           <div className="space-y-5">
+            {/* The fields stay in view, locked, and say once what changing them needs. */}
+            {!canManage && (
+              <p className="m-0 text-xs text-text-muted" data-testid="settings-locked">
+                {lockedReason}
+              </p>
+            )}
             <div className="flex items-end gap-2">
               <div className="min-w-0 flex-1">
                 <TextField
@@ -221,12 +262,13 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     {
                       value: "private",
                       label: "Private",
-                      description: "Only members you grant. Doesn't appear in Spaces.",
+                      description: "Only members you grant. Not listed for the org to join.",
                     },
                     {
                       value: "public",
                       label: "Public",
-                      description: "Anyone in the org can find + join this namespace via Spaces.",
+                      description:
+                        "Listed for anyone in the org to find; the How people join setting decides who gets in.",
                     },
                   ]}
                 />
@@ -236,7 +278,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     <div className="w-32">
                       <NumberField
                         id="ns-cost-cap"
-                        label="Daily LLM budget (USD)"
+                        label="Daily cost cap (USD)"
                         step="0.01"
                         min="0"
                         value={capDraft ?? String(ns.daily_cost_cap_usd ?? 0)}
@@ -253,12 +295,17 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                     </span>
                   </div>
                   <p className="mt-1.5 text-xs leading-relaxed text-text-muted">
-                    Once this namespace's upstream LLM spend over the last 24h reaches the cap, background entity
-                    extraction, code summaries and code-ingest descriptions skip, code.search skips query expansion, and
-                    memory.ask, code.ask and knowledge.synthesize answer without synthesis until spend drops. Writes are
-                    still accepted. 0 inherits the global default.
+                    The cap is on this namespace's upstream model and embedding spend over the last 24h.{" "}
+                    {COST_CAP_EFFECT} 0 inherits the global default.
                   </p>
                 </div>
+                <NamespaceBudgetAlerts
+                  ref={budgetAlertsRef}
+                  key={`${key}:${open}`}
+                  namespace={ns}
+                  locked={locked}
+                  save={save}
+                />
               </>
             )}
 
@@ -330,22 +377,24 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                   <p id="ns-capture-hint" className="mt-0.5 ml-6 text-xs text-text-muted">
                     Off unless you tick it, so none of your text is kept. Tick this and loom records your{" "}
                     <em>search wording</em> plus the memory text and conversation turns it sends to the model while
-                    answering &mdash; which is what makes a bad recall diagnosable afterwards. Counts, cost, latency,
-                    recall and quality scores are kept either way; those carry no text. Applies to this namespace only;
-                    takes effect within a minute.
+                    answering &mdash; which is what makes a bad recall diagnosable afterwards. When an operator of this
+                    deployment turns on unanswered questions, questions several people asked that nothing answered are
+                    listed in the Library for this namespace's admins. Counts, cost, latency, recall and quality scores
+                    are kept either way; those carry no text. Applies to this namespace only; takes effect within a
+                    minute.
                   </p>
                 </div>
               </>
             )}
 
-            {canDelete && (
-              <div className="mt-2 border-t border-border pt-4">
-                <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-xs text-text-muted">
-                    Delete deactivates the namespace. Existing data stays queryable for forensics. For full erasure run
-                    an erasure.request separately.
-                  </p>
+            <div className="mt-2 border-t border-border pt-4">
+              <div className="mb-2 text-xs font-medium text-danger">Danger zone</div>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-xs text-text-muted">
+                  Delete deactivates the namespace. Existing data stays queryable for forensics. To erase its data,
+                  switch to it and use Erase data on Audit log → Erasures before you delete it.
+                </p>
+                <Unavailable reason={canDelete ? null : lockedReason}>
                   <Button
                     type="danger"
                     htmlType="button"
@@ -356,9 +405,9 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace }: 
                   >
                     Delete namespace
                   </Button>
-                </div>
+                </Unavailable>
               </div>
-            )}
+            </div>
           </div>
         )}
       </div>

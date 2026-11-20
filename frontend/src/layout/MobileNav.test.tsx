@@ -1,10 +1,12 @@
-import { render, screen, within } from "../test/rtl";
+import { render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import { useStore, viewHref } from "../lib/state";
+import { useNewDialogs } from "../lib/newDialogs";
 import { MAIN, ADMIN_BASE, ADMIN_OPERATOR_ONLY } from "./Sidebar";
-import { MobileNav, mobileMoreItems } from "./MobileNav";
+import { MobileNav } from "./MobileNav";
+import { mobileMoreItems } from "./MobileMore";
 
 // The phone's "More" sheet is generated from the sidebar's nav arrays, so every route the
 // sidebar offers is reachable on a phone under the same label.
@@ -28,7 +30,7 @@ beforeEach(() => {
 
 describe("mobileMoreItems", () => {
   it("lists every sidebar route: MAIN, the admin drawer and Setup", () => {
-    const ids = mobileMoreItems(admin, null, NS).flatMap((g) => g.items.map((i) => i.id));
+    const ids = mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => i.id));
     const primary = ["memories", "knowledge"];
     const expected = [
       ...MAIN.map((m) => m.id),
@@ -44,7 +46,7 @@ describe("mobileMoreItems", () => {
 
   it("uses the sidebar's labels verbatim", () => {
     const labels = new Map(
-      mobileMoreItems(admin, null, NS).flatMap((g) => g.items.map((i) => [i.id, i.label] as const)),
+      mobileMoreItems(admin, null, NS, null).flatMap((g) => g.items.map((i) => [i.id, i.label] as const)),
     );
     for (const m of [...MAIN, ...ADMIN_BASE]) {
       if (["memories", "knowledge"].includes(m.id)) continue;
@@ -54,7 +56,8 @@ describe("mobileMoreItems", () => {
   });
 
   it("shows operator-only entries to platform admins only", () => {
-    const ids = (w: typeof writer) => mobileMoreItems(w, [row("admin")], NS).flatMap((g) => g.items.map((i) => i.id));
+    const ids = (w: typeof writer) =>
+      mobileMoreItems(w, [row("admin")], NS, null).flatMap((g) => g.items.map((i) => i.id));
     expect(ids(admin)).toContain("admin:users");
     expect(ids(writer)).toContain("admin:health");
     expect(ids(writer)).not.toContain("admin:users");
@@ -63,7 +66,7 @@ describe("mobileMoreItems", () => {
   it("a viewer without an admin claim sees no ADMIN group (jwt-only namespace, the audit's case)", async () => {
     const viewer = { authenticated: true, subject: "v@example.com", org: "dev", roles: ["VIEWER"] };
     const jwtOnly = [row("jwt")];
-    expect(mobileMoreItems(viewer, jwtOnly, NS).map((g) => g.group)).not.toContain("Admin");
+    expect(mobileMoreItems(viewer, jwtOnly, NS, null).map((g) => g.group)).not.toContain("Admin");
     useStore.setState({ whoami: viewer, myNamespaces: jwtOnly });
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
@@ -74,7 +77,8 @@ describe("mobileMoreItems", () => {
   });
 
   it("follows the sidebar's 8540 gate: no Admin group for a writer or viewer of the namespace", () => {
-    const groups = (role: MyNamespaceEntry["role"]) => mobileMoreItems(writer, [row(role)], NS).map((g) => g.group);
+    const groups = (role: MyNamespaceEntry["role"]) =>
+      mobileMoreItems(writer, [row(role)], NS, null).map((g) => g.group);
     // The sheet carries the rail's groups, then Settings, then Admin for an admin
     expect(groups("admin")).toEqual(["Memory", "Activity", "Sources", "Settings", "Admin"]);
     expect(groups("writer")).toEqual(["Memory", "Activity", "Sources", "Settings"]);
@@ -112,5 +116,55 @@ describe("MobileNav", () => {
     render(<MobileNav />);
     expect(screen.getByRole("link", { name: "Library" })).toHaveAttribute("aria-current", "page");
     expect(screen.getByRole("link", { name: "Memories" })).not.toHaveAttribute("aria-current");
+  });
+});
+
+describe("the tabs", () => {
+  it("are Memories, Library and More: the assistant opens from the top bar", () => {
+    render(<MobileNav />);
+    const nav = screen.getByRole("navigation", { name: "Sections" });
+    expect([...nav.children].map((e) => e.textContent?.trim())).toEqual(["Memories", "Library", "More"]);
+    expect(nav.querySelector('[data-focus-key="assistant-launcher"]')).toBeNull();
+  });
+});
+
+describe("the More sheet's New", () => {
+  const openSheet = async () => {
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    return screen.findByRole("region", { name: "New" });
+  };
+
+  it("opens the header's Add memory and Add document dialogs, closing the sheet", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("writer")] });
+    useNewDialogs.setState({ memory: false, document: false });
+    const group = await openSheet();
+    expect(within(group).getByRole("button", { name: "New document" })).not.toHaveAttribute("aria-disabled");
+    await userEvent.setup().click(within(group).getByRole("button", { name: "New memory" }));
+    expect(useNewDialogs.getState().memory).toBe(true);
+    expect(screen.queryByRole("dialog", { name: "More" })).toBeNull();
+  });
+
+  it("is unavailable with the reason for a read-only role", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("viewer")] });
+    useNewDialogs.setState({ memory: false, document: false });
+    const group = await openSheet();
+    const memory = within(group).getByRole("button", { name: "New memory" });
+    await waitFor(() => expect(memory).toHaveAttribute("aria-disabled", "true"));
+    expect(within(group).getByRole("button", { name: "New document" })).toHaveAttribute("aria-disabled", "true");
+    expect(group).toHaveTextContent(/writer/i);
+    await userEvent.setup().click(memory);
+    expect(useNewDialogs.getState().memory).toBe(false);
+  });
+
+  it("offers no Document while the Library shows a collection", async () => {
+    useStore.setState({ whoami: writer, myNamespaces: [row("writer")], libraryElsewhere: true });
+    try {
+      const group = await openSheet();
+      expect(within(group).getByRole("button", { name: "New memory" })).toBeInTheDocument();
+      expect(within(group).queryByRole("button", { name: "New document" })).toBeNull();
+    } finally {
+      useStore.setState({ libraryElsewhere: false });
+    }
   });
 });

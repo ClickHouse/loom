@@ -33,13 +33,13 @@ Every module under `server/code/domain/extract/` is either in a stage of `STAGE_
 
 ## 1. Choose the lane's shape
 
-| Shape             | Examples                                                                                                   | You provide                                                                                                                                                                 |
-| ----------------- | ---------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Grammar lane      | `lang_typescript.py`, `lang_rust.py`, `lang_go.py`, `lang_java.py`                                         | A tree-sitter grammar dependency in `pyproject.toml`; symbols and call sites from the tree; chunks and edges come from the shared chunker and edge walker.                  |
-| Tree-less lane    | `lang_proto.py`, `lang_gotemplate.py`, `lang_hcl.py`, `lang_k8s.py`, `lang_jsonnet.py` (`LANE_UNIT_LANGS`) | A hand-written scanner; `ParsedFile.tree` stays `None`; chunks from `lane_units.span_chunks`, edges from `reference_sites` + `SITE_RULES` bound by `lane_units.bind_sites`. |
-| Include-only lane | `tla`, `flatbuffers`, `cmake`, `doc` (`_LANE_INCLUDE_LANGS`)                                               | Symbols and includes resolved by the simple lane resolver.                                                                                                                  |
-| Embedded language | SQL inside Go and Java (`go_sql_units`, `java_sql_units`), shell islands in Dockerfiles and Makefiles      | Units joined into the host file's parse (`_join_island_symbols`), usually behind a kill switch setting.                                                                     |
-| Chunk-only        | `.css`, text files (`lang_text.py`)                                                                        | Nothing but detection: the file is chunked and searchable with no symbols.                                                                                                  |
+| Shape             | Examples                                                                                                                                     | You provide                                                                                                                                                                 |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Grammar lane      | `lang_typescript.py`, `lang_rust.py`, `lang_go.py`, `lang_java.py`                                                                           | A tree-sitter grammar dependency in `pyproject.toml`; symbols and call sites from the tree; chunks and edges come from the shared chunker and edge walker.                  |
+| Tree-less lane    | `lang_proto.py`, `lang_gotemplate.py`, `lang_hcl.py`, `lang_k8s.py`, `lang_jsonnet.py`, `lang_lua.py`, `lang_graphql.py` (`LANE_UNIT_LANGS`) | A hand-written scanner; `ParsedFile.tree` stays `None`; chunks from `lane_units.span_chunks`, edges from `reference_sites` + `SITE_RULES` bound by `lane_units.bind_sites`. |
+| Include-only lane | `tla`, `flatbuffers`, `cmake`, `doc` (`_LANE_INCLUDE_LANGS`)                                                                                 | Symbols and includes resolved by the simple lane resolver.                                                                                                                  |
+| Embedded language | SQL inside Go and Java (`go_sql_units`, `java_sql_units`), shell islands in Dockerfiles and Makefiles                                        | Units joined into the host file's parse (`_join_island_symbols`), usually behind a kill switch setting.                                                                     |
+| Chunk-only        | `.css`, text files (`lang_text.py`)                                                                                                          | Nothing but detection: the file is chunked and searchable with no symbols.                                                                                                  |
 
 A grammar lane's grammar is **not** in `STAMPED_GRAMMARS`, so upgrading it moves no stamp. The lane owns re-deriving its rows.
 
@@ -83,6 +83,7 @@ and add the extension to `LANG_BY_EXTENSION` (`".rs": "rust"`). The wrapper impo
 
   A number that moves there changes what every namespace holds. Review it.
 
+- **The cost guard.** A parser added to `ingest_parse._PARSERS` needs a `SAMPLES` entry in `tests/unit/lane_walks.py`; `tests/unit/test_code_regex_cost.py` then times the lane over generated shapes and fails on a walk that is over linear.
 - **The stamp test.** `tests/unit/test_code_extractor_stamp.py` with the new module in
   `NON_EXTRACTOR_MODULES`.
 - **Retrieval.** For a lane that should answer `code.search` or `code.symbol` well, run the code-intelligence gate before and after. `make bench-code-intel-dry` checks the question set offline; `make bench-code-intel` runs it against a server with a real embedder, never the fake one ([running benchmarks](../benchmarks/running.md)).

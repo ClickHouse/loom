@@ -57,6 +57,7 @@ from server.memory.domain.namespace_shapes import (
     STRUCTURED_TYPES,
 )
 from server.observability.consumer import INSPECTOR_CONSUMERS
+from server.observability.store.event_reads import MASKED_EVENTS
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -114,7 +115,7 @@ _SCOPE = "org = {org:String} AND namespace = {ns:String}"
 _LIVE = f"FROM loom.memory FINAL WHERE {_SCOPE} AND tombstoned_at IS NULL"
 _SEARCHABLE = "memory_type NOT IN {ns_types:Array(String)}"
 _LEDGER_ALL = (
-    f"FROM loom.agent_events WHERE {_SCOPE} AND ts >= now() - INTERVAL {{win:UInt32}} SECOND"
+    f"FROM {MASKED_EVENTS} WHERE {_SCOPE} AND ts >= now() - INTERVAL {{win:UInt32}} SECOND"
 )
 # The dashboard's and the assistant's calls inspect the namespace on a person's behalf;
 # counting them would grade the namespace by who looked at it.

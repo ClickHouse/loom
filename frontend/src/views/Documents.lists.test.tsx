@@ -53,12 +53,16 @@ const toolbar = () => screen.getByLabelText("Search and filters");
 describe("Library list", () => {
   beforeEach(() => {
     api.listKnowledge.mockResolvedValue({ rows: ROWS, next_cursor: null });
-    useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" }, view: "knowledge" });
+    useStore.setState({
+      identity: { org: "acme", namespace: "team", agent: "loom-ui" },
+      view: "knowledge",
+      whoami: { authenticated: false },
+    });
   });
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
-    useStore.setState({ identity: null });
+    useStore.setState({ identity: null, whoami: null });
   });
 
   it("gives every row one More menu, visible without a hover, holding its actions", async () => {
@@ -71,7 +75,16 @@ describe("Library list", () => {
       within(menu)
         .getAllByRole("menuitem")
         .map((m) => m.textContent),
-    ).toEqual(["Preview", "Download PDF, 1.8 MB", "Replace content", "Edit details", "Copy URI", "Delete"]);
+    ).toEqual([
+      "Preview",
+      "Download PDF, 1.8 MB",
+      "Replace content",
+      "Edit details",
+      "Move to…",
+      "Add to collection…",
+      "Copy URI",
+      "Delete",
+    ]);
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Download PDF, 1.8 MB" }));
     expect(api.downloadKnowledge).toHaveBeenCalledWith(
       { org: "acme", namespace: "team" },
@@ -130,6 +143,8 @@ describe("Library list", () => {
     render(<Documents />);
     expect(await screen.findByText("Your library is empty")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /Add document/ })).toHaveLength(1);
+    expect(screen.getByText(/your agents search it, and you can download the original/)).toBeInTheDocument();
+    expect(screen.queryByText(/knowledge\.search/)).toBeNull();
   });
 
   it("says a tag filter once, in the field, and a filter that matches nothing on one line", async () => {

@@ -4,8 +4,8 @@ import { describe, expect, it } from "vitest";
 import { Outline, type OutlineProps } from "./Outline";
 import type { XNode } from "./model";
 
-// The walk's outline is a tree described by both lines above it: the visible counts
-// summary and the one line naming its keys. Each row's entity name is its primary line at
+// The walk's outline is a tree described by the counts summary above it; it keeps a tree's
+// standard keys and no letter keys. Each row's entity name is its primary line at
 // 14 px; under it, muted at 12 px, "hop 1 · co-mentioned 20×". A tree of more than 20 rows
 // shows the first 20 and "Show all N".
 
@@ -58,10 +58,67 @@ function mount(order: XNode[] = [], props: Partial<OutlineProps> = {}) {
 }
 
 describe("Outline", () => {
-  it("describes the tree by its counts summary and its keys", () => {
+  it("describes the tree by its counts summary", () => {
     mount();
     const tree = screen.getByRole("tree", { name: "Walk outline" });
-    expect(tree).toHaveAccessibleDescription(/^1 node · 0 edges Arrow keys move and fold/);
+    expect(tree).toHaveAccessibleDescription("1 node · 0 edges");
+  });
+
+  // With no `r` key, the selected row's edge button is the keyboard's way to the edge: it
+  // is one of that row's tab stops, and Enter on it selects the edge. Another row's is not
+  // a tab stop, so the tree stays one.
+  it("tabs from the selected row to its edge button, whose Enter selects the edge", async () => {
+    const picked: unknown[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree"), node("parts")], {
+      selection: { kind: "node", entity: "mergetree" },
+      onSelect: (s) => picked.push(s),
+    });
+    const row = screen.getByRole("treeitem", { name: /^mergetree ·/ });
+    const edge = within(row).getByRole("button", { name: "Select the edge: co-mentioned 20× with loom" });
+    row.focus();
+    for (let i = 0; i < 6 && document.activeElement !== edge && row.contains(document.activeElement); i++)
+      await user.tab();
+    expect(edge).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(picked).toEqual([{ kind: "edge", parent: "loom", child: "mergetree" }]);
+    const other = screen.getByRole("treeitem", { name: /^parts ·/ });
+    expect(within(other).getByRole("button", { name: /^Select the edge:/ })).toHaveAttribute("tabindex", "-1");
+  });
+
+  // Enter and Space on a selected row's action button run that button, not the row's select.
+  it("runs a selected row's action button on Enter and on Space", async () => {
+    const calls: string[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree")], {
+      selection: { kind: "node", entity: "mergetree" },
+      onWalk: (entity) => calls.push(`walk ${entity}`),
+      onSelect: () => calls.push("select"),
+    });
+    const walk = within(screen.getByRole("treeitem", { name: /^mergetree ·/ })).getByRole("button", {
+      name: "Walk from here",
+    });
+    walk.focus();
+    await user.keyboard("{Enter}");
+    expect(calls).toEqual(["walk mergetree"]);
+    await user.keyboard(" ");
+    expect(calls).toEqual(["walk mergetree", "walk mergetree"]);
+  });
+
+  // The dashboard has no keyboard shortcuts: the row's actions are its buttons.
+  it("takes no w, p, e, r or x on a row", async () => {
+    const calls: string[] = [];
+    const user = userEvent.setup();
+    mount([node("mergetree")], {
+      onWalk: () => calls.push("walk"),
+      onPath: () => calls.push("path"),
+      onExpand: () => calls.push("expand"),
+      onPin: () => calls.push("pin"),
+      onSelect: () => calls.push("select"),
+    });
+    screen.getByRole("treeitem", { name: /^mergetree ·/ }).focus();
+    await user.keyboard("wperxWPERX");
+    expect(calls).toEqual([]);
   });
 
   it("a row: the entity name, then 'hop 1 · co-mentioned 20×' on a line of its own", () => {

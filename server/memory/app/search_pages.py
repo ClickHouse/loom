@@ -16,7 +16,7 @@ and hands back the handle for the slice after that. Pages are stable, cost
 one keyed read, and stay inside the read scope the first call resolved.
 
 Handle format: `page/<sha256 prefix>@<offset>`. The blob's JSON is
-`{"v": 1, "query": ..., "top_k": ..., "candidates_total": ...,
+`{"v": 2, "query": ..., "top_k": ..., "candidates_total": ...,
 "namespaces_searched": [...], "namespaces_skipped": [...], "hits": [...]}`
 where `hits` is the tail in rank order, each a `_MemorySearchHit` dump, and
 the namespace lists are the first call's, so every page says what it covers.
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from server.memory.api.models_search import _MemorySearchHit
 
 PAGE_PREFIX = "page/"
-PAGE_VERSION = 1
+PAGE_VERSION = 2
 
 
 def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
@@ -61,16 +61,16 @@ def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:
 
 
 def _parked(hit: Any) -> dict[str, Any]:
-    """A hit as a page stores it, with what a later page's check against the Postgres
-    authority reads (`row_identity`, `row_chunk`, `row_version`, `chunk_typed`, off the
-    wire)."""
+    """A hit as a page stores it, with what a later page's checks read, off the wire: the
+    row's identity, which tells a shared definition, and under the Postgres authority what
+    its check reads (`row_chunk`, `row_version`, `chunk_typed`)."""
     if not hasattr(hit, "model_dump"):
         return dict(hit)
     out: dict[str, Any] = hit.model_dump()
-    if not pg.enabled():
-        return out
     if getattr(hit, "_row_identity", None) is not None:
         out["row_identity"] = list(hit._row_identity)
+    if not pg.enabled():
+        return out
     if getattr(hit, "_row_chunk", None) is not None:
         out["row_chunk"] = list(hit._row_chunk)
     if getattr(hit, "_row_version", 0):

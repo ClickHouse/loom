@@ -26,13 +26,13 @@ Every row carries five identity columns:
 (org, namespace, agent, user_id, session_id)
 ```
 
-| Part         | Meaning                                                                                      | Default    |
-| ------------ | -------------------------------------------------------------------------------------------- | ---------- |
-| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required) |
-| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required) |
-| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required) |
-| `user_id`    | The end user the row is about.                                                               | `-`        |
-| `session_id` | One conversation or run of a conversation.                                                   | `-`        |
+| Part         | Meaning                                                                                      | Default                                                                                               |
+| ------------ | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `org`        | The tenant. Nothing crosses an org boundary except through a wildcard operator token.        | (required; single-user mode fills it, below)                                                          |
+| `namespace`  | The unit of isolation and sharing inside an org. Every read is scoped to `(org, namespace)`. | (required; single-user mode fills it, below)                                                          |
+| `agent`      | Who wrote the row (`support-bot`, `claude-code`). Authorship, not a read boundary.           | (required; single-user HTTP fills it on some ops, [HTTP reference](../reference/http-api.md#request)) |
+| `user_id`    | The end user the row is about.                                                               | `-`                                                                                                   |
+| `session_id` | One conversation or run of a conversation.                                                   | `-`                                                                                                   |
 
 Many operations also take `run_id` (default `-`) to scope a write or read to one task
 execution. The token fixes the org and the namespaces a caller may reach; the rest of the
@@ -48,10 +48,14 @@ writes, saved messages), `-` is the row written with no user, session or run.
 whoever wrote it. Passing an `agent` only narrows. `user_id` and `session_id` on a read
 filter to rows written under them.
 
-**Why the tuple leads the tables.** The identity columns are the first columns of the
-memory tables' sort keys, so scoping a read to one namespace, one user or one session is
-a primary-key range in ClickHouse rather than a scan. It also makes a user's rows findable
-for erasure without a secondary index.
+**Why the tuple leads the tables.** The sort keys of `loom.memory` and
+`loom.memory_embeddings` start with `(org, namespace, agent, user_id, session_id)`, so a
+read scoped to one namespace is a primary-key range in ClickHouse rather than a scan, and
+naming an agent narrows it. A read across agents, the default, filters `user_id` and
+`session_id` inside the namespace's range: the key skips granules on them only as far as
+the agent column allows, and no skip index covers them. Any scoped read still reads at
+least a granule of every part its range spans
+([memory at scale](../benchmarks/results.md#memory-at-scale)).
 
 ### What the server stamps
 
@@ -171,9 +175,10 @@ operation's role, or a live grant does.
 - **Service accounts inherit.** A service account with no grant of its own on a namespace
   uses its creator's grant there, so a token minted from the dashboard follows the person
   who made it, except on a restricted namespace.
-- **Operations addressed by an org-wide id** (`memory.get_by_id`, `memory.update_by_id`,
-  `memory.redact`) check the fetched row's namespace after the read and answer
-  `found=false` on refusal, so a refusal never confirms that the id exists.
+- **Operations addressed by an org-wide id**, such as `memory.get_by_id`, authorize the
+  caller on the scope that holds the row. When the caller lacks the op's role on the
+  row's namespace, they answer as for a missing row, so a refusal never confirms that
+  the id exists ([row-scoped operations](../architecture/security.md#row-scoped-operations)).
 
 Why tokens plus grants: the token is verified locally on every call without a lookup,
 which keeps the hot path cheap; grants let an admin give and take access without
@@ -193,7 +198,7 @@ The caller's own namespaces depend on the token:
 | Token                                                       | Namespaces `all_mine` adds                                                                     |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | Flat (most tokens; `loom mint-token`, self-signup)          | The namespaces the token names, plus every namespace the subject holds a grant on              |
-| Scoped (`ns_roles`; a token for _Only these namespaces_)    | Exactly the namespaces the token lists, in that order; grants added later do not join          |
+| Scoped (`ns_roles`; a token for _Only what you choose_)     | Exactly the namespaces the token lists, in that order; grants added later do not join          |
 | Delegated with `*` (a token for _Everything you belong to_) | The creator's live grants, so a namespace the person joins later is searched too               |
 | Delegated naming namespaces                                 | The ones it names where the creator still holds a grant                                        |
 | None, auth off (`single-user`)                              | The namespaces the single user holds a grant on: the default one and every one they registered |
@@ -281,6 +286,9 @@ than `namespace`:
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
+- `memory.search`'s term leg serves a governed definition under any read scope: an admin
+  published it for every reader of the namespace ([governed definitions in
+  search](#governed-definitions-in-search)).
 - A `context.pack` leg the scope cannot bound (conversations, which carry no user, and
   the runs manifest, which reads every session of a user) answers nothing.
 - `namespace.inventory` counts memories and runs, and the agents, authors and subjects on
@@ -332,6 +340,117 @@ inside the promotion's `reversible_for_days` window, default 7, up to 90). A sea
 promotion. `memory.promote` and `memory.demote` need `admin`. `memory.cross_promote`
 copies a row into another namespace, with provenance, for a caller who is admin on both.
 
+A `definition` is promoted only:
+
+- From its live namespace-wide row (agent, user and session `'-'`, `active`, not retired
+  by a supersession and not past its `expires_at` or `valid_to`) under a `definition/`
+  key, to that same key; a row of another type is never promoted under a `definition/`
+  key. Else 422 `DEFINITION_PROMOTION_REFUSED`.
+- With the hash it approves (`approved_sha256`, the row's `content_sha256`): refused
+  without it (422 `VALIDATION_FAILED`), and with 409 `PRECONDITION_FAILED` when the text
+  no longer has it.
+- With a value that is a JSON object holding a non-empty string `term` and, optionally,
+  a list of string `aliases`; else 422 `VALIDATION_FAILED`.
+- Not labelled `medium` and not reading as `medium` or `high` (422
+  `SENSITIVE_DEFINITION_REFUSED`; a `high` label answers
+  `HIGH_SENSITIVITY_PROMOTION_REFUSED` first, as for any row).
+- Within `memory_shared_definitions_max`: a new key at the ceiling, or any promotion
+  while the namespace is past it, is refused (409 `DEFINITION_CEILING`).
+- Under a name no other live shared definition holds as its term or an alias (409
+  `DEFINITION_NAME_TAKEN`, naming the keys and the names), names compared folded: format
+  characters dropped, NFKC, whitespace collapsed, case-folded, then NFKC again.
+
+One namespace's definition promotions, with their ceiling and name checks, and its
+definition demotes run one at a time, the last to run deciding whether the definition is
+shared (503 `OVERLOADED` when another holds the namespace past a 10 s wait). Demoting a
+definition gives back its name and its place. The token's actor is its `promoted_by`:
+`approver` and `promoted_from_candidate_id` are ignored and named in `ignored_args`, and
+no close shared row under another key refuses it. `learnings.review` promotes no candidate
+of type `definition` to memory.
+
+A shared definition is **governed** while it was promoted from exactly one row, the
+namespace-wide row under its key, and that row is `active`, not retired by a supersession,
+not past its `expires_at` or `valid_to`, neither labelled nor graded `medium` or `high`,
+and holds the text the shared copy holds (the served hash of both, so a store that orders
+an object's keys differently is no change). An edit, a relabel to `medium` or `high` or a
+tombstone of the source ends it; reverting the edit to the approved text makes it governed
+again with no new promotion. `memory.search` leaves out a shared definition whose
+namespace-wide source is gone (deleted, or tombstoned by the expiry sweep) or labelled
+`medium` or `high`, since the shared layer has no label of its own. When a source cannot
+be read, it leaves out every shared definition. A copy promoted from a row other than the
+namespace-wide one is judged by the namespace-wide row under its key: withheld when there
+is none, served on that row's label otherwise. The copy itself stays: a relabel back, or
+the source written again, serves it again, and `memory.demote` retires it.
+`memory.definitions.list` (admin) lists the namespace's live shared definitions, the most
+recently promoted first and at most twice `memory_shared_definitions_max`, with `count` of
+them all. Each entry carries its key and `promoted_at`; one within the ceiling also
+carries its term and aliases, its `verdict` (`governed` or `lapsed`), the `lapse_reason`
+(`not_namespace_wide`, `no_term`, `gone`, `superseded`, `conflicted`, `duplicate`,
+`not_active` for any other status, `expired`, `ended` past its `valid_to`, `changed` or
+`sensitive`) and, for a governed one, `lost`: each name it loses to another governed
+definition that holds it, as `name` and the `winner`'s key (the latest promotion wins, a
+tie settled by its promotion event). One past the ceiling is `capped`, and its source is
+not read.
+
+### Governed definitions in search
+
+`memory.search` serves a governed definition first when the query names its term or one of
+its aliases, marked `governed: true`. This term leg runs wherever `memory.search` runs:
+inside `memory.ask` and `context.pack`, and in `loom_search`'s memory section.
+
+- **What it reads.** The names of the live shared definitions of the addressed namespace
+  only, whatever `namespace_scope` fans out over, at most `memory_shared_definitions_max` of
+  them (past it, the most recently promoted, and `term_leg` is `capped`). It reads the full
+  values, and reads and grades the sources, of the definitions the query names and of those
+  that share a name with one, and no others, without sequential consistency: a promotion on
+  another replica a moment ago may miss a search. It runs beside the other legs, and once
+  they are done the search waits at most `memory_term_leg_wait_ms` more for it (a re-entrant
+  pass no longer than its time left). A fixed work budget also bounds normalization,
+  name comparisons and body decoding for validation. Excessive work withholds the
+  entire leg as `timed_out`; the stored definitions and promotion rules are unchanged.
+- **Matching.** The query and each name lose their format characters and go through NFKC
+  with whitespace collapsed; a combining mark joins the letter or number before it. A name
+  matches at whole characters with no neighbour that continues its edge: next to a Latin
+  letter, digit, `_`, `+` or `#`, another of those; next to a letter of another script
+  written with spaces (Cyrillic, Greek, Devanagari), any letter outside Latin or any digit;
+  before Hangul, a Hangul letter, and after it nothing, since particles follow; next to Han,
+  Kana, Thai, Lao, Khmer, Myanmar or punctuation, nothing. So `MRR` matches in "什么是ＭＲＲ" and
+  `ARR` in "ARR은", while `рост` does not match inside "простой". Case is decided per word of
+  a name: a word all in capitals, or with a capital after its first letter, matches only as
+  written (`IT` does not match "what is it"); any other matches case-folded.
+- **Placement.** Named definitions lead the served list in the order their names first
+  appear in the query, the longer name first where two start together, then the latest
+  promotion; a derived aggregate's computed row stays above them. Any other hit under the
+  same key in the addressed namespace is left out. They count within `top_k` and are cut
+  last; what is cut, a governed hit or one it pushed out, leads the next page. A parked
+  governed hit is checked again against the original query and current promotion and
+  source before it is served; an unread check withholds it. Whole bodies count within
+  `body_budget_tokens`; a definition that does not fit keeps an excerpt marked truncated.
+  No floor,
+  threshold or later stage drops or reorders them: not `min_similarity`, the calibration,
+  `loom_search`'s floors and answer-first rule, the tracker verdict's memory cap (within
+  which they count), `context.pack`'s packing or `memory.ask`'s check for restated values.
+- **Scores.** `similarity` and `distance` are the definition's shared embedding's (`0` and
+  `1` without one), `rank_score` is above every hit's but a computed row's and
+  `below_threshold` is never set. A response that serves one has `abstain` false;
+  `retrieval_confidence` and `retrieval_risk` describe the other hits.
+- **When it is off.** A page handle, and a field that asks for other rows: `memory_type`,
+  `tags` or `category` (not with `tags_soft` or `category_soft`), `as_of`, `min_body_chars`,
+  `recent_first` or `anchor_first` above 0, or `legs` without `memory`. An invalid Unicode
+  query turns it off when the bounded Unicode check reads it; a query beyond that check's
+  work bound reports `timed_out` before validation. A field that says whose rows to read
+  (`agent`, `user_id`, `session_id`, `session_ids`, `run_id`, `scope`) keeps it on, and
+  `exclude_keys` drops its keys.
+- **`term_leg`** on the response says what it did: `complete`, `empty` (no definitions),
+  `capped`, `timed_out`, `failed` (a read failed, so nothing was served) or `off`.
+- **Scope.** It serves governed definitions under any read scope and under `scope`
+  `private`, the default: an admin published them for every reader of the namespace.
+- **Misses.** A search that serves a governed definition, or whose leg did not report
+  `complete` or `empty` (`off` included), records no [knowledge
+  gap](../architecture/knowledge-gaps.md#recording-misses) miss.
+- **Stored answers.** A promotion and a demotion move the namespace's memory write mark, so
+  `memory.ask` reuses no answer from before them once the mark lands.
+
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an
 owner's decision and an audit trail. Promotion is that decision.
@@ -343,8 +462,11 @@ How a caller gets a token at all is the deployment's identity mode
 
 - **`single-user`**: no authentication; a call that names no namespace resolves to one
   (`LOOM_DEFAULT_NAMESPACE`, default `local`, in the org `LOOM_SELF_SIGNUP_ORG`, default
-  `dev`), and an `all_mine` search also reads the namespaces the user registered. For a
-  laptop only.
+  `dev`) on MCP for every op but `code.*`. Over HTTP, a call with no token gets the org on
+  every op but `code.*` and `tracker.*`, and the namespace on the everyday memory and
+  search ops; which ops, and the agent each gets, are in the
+  [HTTP reference](../reference/http-api.md#request). An `all_mine` search also reads the
+  namespaces the user registered. For a laptop only.
 - **`trust-network`**: self-signup with email and password; the first principal to
   claim a namespace name owns it. An agent can sign itself up (`loom init --agent`) and a
   person claims it later with the code it printed, which works once and is replaced by the
@@ -361,12 +483,23 @@ How a caller gets a token at all is the deployment's identity mode
 A collection is a namespace named `col-…` that only grants open: no token claim or org
 admin role reaches it. A collection can sit inside another and inherit its grants, and a
 grant on one can name a `user:`, `group:` or `agent:` principal, or `everyone` (every
-request acting in the org), besides a person or a service account.
-[Sharing knowledge](../architecture/sharing.md) describes the model.
+request acting in the org), besides a person or a service account. People name a
+collection by its title, and the server derives its `col-…` name from it; the name stays
+its address for good. [Sharing knowledge](../architecture/sharing.md) describes the model
+and how a name is derived. People see a collection as a collection, in the Library, by its
+title and its place there; the namespace that stores it is what grants, search scope, audit
+and erasure key on, and it never appears in the dashboard's namespace picker.
+
+A namespace named `acl-` and 24 hex digits is a mirror: it holds the documents of a
+document source that follows its store's permissions, each shown only to a reader the
+store admits ([document sources](../architecture/document-sources.md#the-mirror)). No
+token reaches one (only a platform admin's erasure names one), so `namespace.register`
+and `namespace.restore` refuse the form.
 
 When `LOOM_IDENTITY_PROVIDER` is empty the server infers the mode: auth off gives
 `single-user`, auth on with `LOOM_SELF_SIGNUP=open` gives `trust-network`, auth on
-otherwise gives `gateway`. [Deployment](../operations/deployment.md#identity-modes) lists
+otherwise gives `gateway`. A non-loopback bind with sign-up open also needs `trust-network`
+set explicitly. [Deployment](../operations/deployment.md#identity-modes) lists
 each mode's settings.
 
 ## Related

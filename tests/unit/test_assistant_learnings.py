@@ -21,6 +21,9 @@ from server.memory.domain.extraction_prompts import AGENT_LEARNINGS_ANCHOR
 from server.memory.domain.provenance import pipeline_actor
 from server.memory.store import learnings as learnings_repo
 from server.settings import settings
+from tests.unit.ask_knowledge_fake import route_scope
+from tests.unit.checked_pack_fakes import install_pack_knowledge
+from tests.unit.checked_repo_search_fakes import install_repo_search
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 from tests.unit.llm_fake import ScriptedLLM
 
@@ -1316,7 +1319,6 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
     """Three support-bot rules outrank one plain document: sales-bot's pack drops
     the rules and still packs the document."""
     from server.knowledge.api.models_knowledge import KnowledgeSearchOutput, _SearchHit
-    from server.knowledge.app import knowledge_search
     from server.memory.api.models_context import ContextPackInput
     from server.memory.app import context_pack
 
@@ -1348,7 +1350,7 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
         reranks.append(input.rerank)
         return KnowledgeSearchOutput(results=ranked[: input.top_k], embedding_model="fake")
 
-    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    install_pack_knowledge(monkeypatch, search)
     st = context_pack._PackState(
         input=ContextPackInput(
             org="o",
@@ -1360,7 +1362,10 @@ async def test_other_bots_rules_ranked_first_leave_the_knowledge_section_full(
         ),
         default_section_tokens={},
     )
-    await context_pack._pack_knowledge(st)
+    out = await context_pack.handle_context_pack(
+        st.input.model_copy(update={"only_sections": ["knowledge"]})
+    )
+    st.sections = out.sections
 
     assert "Refunds take five days." in st.sections["knowledge"]
     assert "rule 0" not in st.sections["knowledge"]
@@ -1417,7 +1422,6 @@ def _knowledge_hits(ranked: list[Any], top_k: int) -> Any:
 async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
     monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
-    from server.knowledge.app import knowledge_search
     from server.memory.api.models_context import ContextPackInput
     from server.memory.app import context_pack
 
@@ -1427,7 +1431,7 @@ async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
         asked.append(input.top_k)
         return _knowledge_hits(ranked, input.top_k)
 
-    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    install_pack_knowledge(monkeypatch, search)
     st = context_pack._PackState(
         input=ContextPackInput(
             org="o",
@@ -1439,7 +1443,10 @@ async def test_a_pinned_tokens_pack_serves_its_signed_bots_rules(
         ),
         default_section_tokens={},
     )
-    await context_pack._pack_knowledge(st)
+    out = await context_pack.handle_context_pack(
+        st.input.model_copy(update={"only_sections": ["knowledge"]})
+    )
+    st.sections = out.sections
 
     section = st.sections["knowledge"]
     assert "support rule" in section and "Refunds take five days." in section
@@ -1455,8 +1462,9 @@ async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
 ) -> None:
     from server.knowledge.app import search as knowledge_store
     from server.knowledge.app.search import ChunkHit
+    from server.knowledge.app.source_access import ReadPlan
     from server.memory.api.models_lifecycle import MemoryStackInput
-    from server.memory.app import stack
+    from server.memory.app import stack, stack_knowledge
 
     class _Embedder:
         model_name = "fake"
@@ -1478,17 +1486,22 @@ async def test_a_pinned_tokens_stack_serves_its_signed_bots_rules(
     monkeypatch.setattr("server.embedding.get_embedder", lambda: _Embedder())
     monkeypatch.setattr(knowledge_store, "hybrid_search", search)
     fill = stack._StackFill(budget=10_000)
-    await stack._stack_knowledge(
-        MemoryStackInput(
-            org="o",
-            namespace="ns",
-            agent="sales-bot",
-            include_knowledge=True,
-            knowledge_top_k=2,
-        ),
-        fill,
-        "refund",
+    knowledge_input = MemoryStackInput(
+        org="o",
+        namespace="ns",
+        agent="sales-bot",
+        include_knowledge=True,
+        knowledge_top_k=2,
     )
+    knowledge = await stack_knowledge.collect(
+        knowledge_input.org,
+        knowledge_input.namespace,
+        knowledge_input.agent,
+        "refund",
+        int(knowledge_input.knowledge_top_k),
+        ReadPlan(knowledge_input.org),
+    )
+    fill = stack._render(fill, knowledge.hits)
 
     assert [e.memory_key for e in fill.entries] == ["support-rule", "refunds.md"]
     assert asked == asked_for
@@ -1517,14 +1530,16 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
     async def namespaces(_org: str, namespace: str, _scope: Any) -> tuple[list[str], list[str]]:
         return [namespace], []
 
-    monkeypatch.setattr(fanout, "knowledge_with_repo_docs", knowledge)
+    install_repo_search(monkeypatch, knowledge)
     monkeypatch.setattr(memory_search, "handle_memory_search", leg_down)
     monkeypatch.setattr(fanout, "search_profile", leg_down)
     monkeypatch.setattr(fanout, "_conversation_leg", leg_down)
     monkeypatch.setattr(fanout, "tracker_leg", leg_down)
     monkeypatch.setattr(fanout, "request_scope", lambda: None)
     monkeypatch.setattr("server.auth.fanout.namespaces_to_search", namespaces)
-    monkeypatch.setattr(fanout, "answer_first", lambda payload, _ns, explain: payload)
+    monkeypatch.setattr(
+        fanout, "answer_first", lambda payload, _ns, explain, moved=frozenset(): payload
+    )
     payload = await fanout.search_sections(
         org="o",
         namespace="ns",
@@ -1538,6 +1553,7 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
         page="",
         explain=False,
         repo_namespace="",
+        tracker_plan=None,
     )
 
     uris = [h["source_uri"] for h in payload["knowledge"]["results"]]
@@ -1553,7 +1569,6 @@ async def test_a_pinned_tokens_loom_search_serves_its_signed_bots_rules(
 async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
     monkeypatch: pytest.MonkeyPatch, ranked: list[Any], asked_for: list[int]
 ) -> None:
-    from server.knowledge.app import knowledge_search
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.ask.context_blocks import knowledge_passages
 
@@ -1563,13 +1578,14 @@ async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
         asked.append(input.top_k)
         return _knowledge_hits(ranked, input.top_k)
 
-    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    install_pack_knowledge(monkeypatch, search)
     monkeypatch.setattr(settings, "memory_ask_knowledge_top_k", 2)
-    block, n = await knowledge_passages(
+    context = await knowledge_passages(
         MemorySearchInput(org="o", namespace="ns", agent="sales-bot", query="refund"),
         "refund",
         enabled=True,
     )
+    block, n = await context.current()
 
     assert n == 2 and "support rule" in block and "Refunds take five days." in block
     assert "sales rule" not in block
@@ -1581,7 +1597,6 @@ async def test_a_pinned_tokens_ask_passages_serve_its_signed_bots_rules(
 async def test_a_pinned_tokens_ask_synthesis_serves_its_signed_bots_rules(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from server.knowledge.app import knowledge_search
     from server.memory.api.models_ask import MemoryAskInput
     from server.memory.app.ask import handler
     from server.memory.domain import ask_routing
@@ -1595,12 +1610,12 @@ async def test_a_pinned_tokens_ask_synthesis_serves_its_signed_bots_rules(
         picked.append([h.source_uri for h in hits])
         return []
 
-    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    install_pack_knowledge(monkeypatch, search)
     monkeypatch.setattr(ask_routing, "is_corpus_task", lambda _q: True)
     monkeypatch.setattr(ask_routing, "pick_documents", pick)
     ask = MemoryAskInput(org="o", namespace="ns", agent="sales-bot", query="summarise refunds")
 
-    assert await handler._maybe_route_to_synthesize(ask) is None
+    assert await handler._maybe_route_to_synthesize(ask, await route_scope(ask)) is None
     assert picked == [["support-rule", "refunds.md"]]
 
 
@@ -1621,7 +1636,6 @@ async def test_an_unpinned_ask_under_the_default_agent_serves_every_bots_rules(
 ) -> None:
     """memory.ask defaults to agent `*`, a namespace-wide read: support-bot asking
     with its server token is served its own rule, in one knowledge search per leg."""
-    from server.knowledge.app import knowledge_search
     from server.memory.api.models_ask import MemoryAskInput
     from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.ask import handler
@@ -1640,20 +1654,21 @@ async def test_an_unpinned_ask_under_the_default_agent_serves_every_bots_rules(
         picked.append([h.source_uri for h in hits])
         return []
 
-    monkeypatch.setattr(knowledge_search, "handle_knowledge_search", search)
+    install_pack_knowledge(monkeypatch, search)
     monkeypatch.setattr(settings, "memory_ask_knowledge_top_k", 5)
     monkeypatch.setattr(ask_routing, "is_corpus_task", lambda _q: True)
     monkeypatch.setattr(ask_routing, "pick_documents", pick)
     ask = MemoryAskInput(org="o", namespace="ns", query="refund policy?")
     assert ask.agent == "*"
 
-    block, n = await knowledge_passages(
+    context = await knowledge_passages(
         MemorySearchInput(org="o", namespace="ns", agent=ask.agent, query=ask.query),
         ask.query,
         enabled=True,
     )
+    block, n = await context.current()
     assert n == 5 and "support rule" in block
-    assert await handler._maybe_route_to_synthesize(ask) is None
+    assert await handler._maybe_route_to_synthesize(ask, await route_scope(ask)) is None
     assert picked == [[uri for uri, _text, _tags in _RANKED]]
     assert asked == [5, 20]
 

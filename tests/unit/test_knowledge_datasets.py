@@ -449,7 +449,7 @@ def stores(monkeypatch: pytest.MonkeyPatch) -> Stores:
         # The ingest's own write: the uploader's identity, as the job's rows carry it.
         return SimpleNamespace(
             version=s.doc_version, revision=3, format="csv", agent="a", user_id="u",
-            session_id="-", actor="user:u", source_class="imported",
+            session_id="-", actor="user:u", source_class="imported", doc_id="doc-1",
         )  # fmt: skip
 
     async def at_version(
@@ -777,3 +777,200 @@ def test_a_samples_row_ids_reach_past_the_rows_it_rejected_below_them() -> None:
     assert repo._first_ids(catalog(25, [100 + i for i in range(20)]), 5) == 5
     # Every fourth row rejected: 16 gaps (ids 3..63) below, the last named (79) above.
     assert repo._first_ids(catalog(50_000, [4 * i for i in range(1, 21)]), 50) == 66
+
+
+# ---- under the Postgres authority (loom.knowledge_datasets) -----------------------
+
+
+def _on_pg(
+    stores: Stores,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    outcome: str = "switched",
+    projected: bool = True,
+) -> Any:
+    """The Postgres authority: `approve` answers `outcome` and records its calls; a
+    projection is recorded."""
+    from server.core import pg
+    from server.knowledge.store import pg_datasets
+
+    calls: dict[str, list[Any]] = {"approve": [], "project": []}
+
+    async def approve(new: dict[str, Any], *, read: int, doc_id: str) -> str:
+        assert doc_id == "doc-1"  # the reviewed document's, which an erasure's evidence names
+        calls["approve"].append((new["snapshot_id"], read))
+        if outcome == "switched":
+            stores.catalog.append(dict(new))
+        return outcome
+
+    async def project(rows: list[dict[str, Any]], **_: Any) -> bool:
+        calls["project"].extend(rows)
+        return projected
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_datasets, "approve", approve)
+    monkeypatch.setattr(repo, "project", project)
+    return calls
+
+
+def test_under_postgres_an_approval_commits_in_the_head_transaction(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = _on_pg(stores, monkeypatch)
+    (before,) = stores.served(100)
+    out = _run_approve(_approve_input(stores, columns={"amount": "number"}))
+    assert out.found and out.retyped
+    (after,) = stores.served(100)
+    # Committed over the version of the row read, then projected; the replaced rows go.
+    assert calls["approve"] == [(after["snapshot_id"], before["version"])]
+    assert [r["snapshot_id"] for r in calls["project"]] == [after["snapshot_id"]]
+    assert stores.forgotten == [before["snapshot_id"]]
+
+
+def test_under_postgres_an_approval_the_source_moved_under_writes_nothing(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The head moved, or another approval switched the snapshot, between the read and
+    the commit: nothing commits, nothing is projected, and the retype's rows go."""
+    calls = _on_pg(stores, monkeypatch, outcome="moved")
+    (before,) = stores.served(100)
+    with pytest.raises(PreconditionFailedError):
+        _run_approve(_approve_input(stores, columns={"amount": "number"}))
+    (served,) = stores.served(100)
+    assert served["snapshot_id"] == before["snapshot_id"] and calls["project"] == []
+    (retyped,) = calls["approve"]
+    assert stores.forgotten == [retyped[0]]  # its own rows, never the served ones
+
+
+def test_under_postgres_a_dataset_postgres_cannot_hold_is_approved_in_clickhouse(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A key or uploader Postgres cannot store (a source written before its namespace had
+    heads) keeps its catalog in ClickHouse alone, approved as without the authority."""
+    from server.knowledge.store import pg_datasets
+
+    calls = _on_pg(stores, monkeypatch)
+    monkeypatch.setattr(pg_datasets, "storable", lambda row: False)
+    out = _run_approve(_approve_input(stores))
+    assert out.found and calls["approve"] == []
+    (after,) = stores.served(100)
+    assert after["schema_state"] == "approved"  # `insert_catalog`, the fixture's store
+
+
+def test_under_postgres_an_approval_whose_commit_answer_was_lost_keeps_its_rows(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The commit may have landed: the retype's rows stay for the source's next ingest or
+    delete, rather than leave a committed catalog row naming rows that are gone."""
+    from server.core.pg import PostgresUnavailableError
+    from server.knowledge.store import pg_datasets
+
+    _on_pg(stores, monkeypatch)
+
+    async def lost(new: dict[str, Any], *, read: int, doc_id: str) -> str:
+        raise PostgresUnavailableError("connection lost", outcome_unknown=True)
+
+    monkeypatch.setattr(pg_datasets, "approve", lost)
+    with pytest.raises(PostgresUnavailableError):
+        _run_approve(_approve_input(stores, columns={"amount": "number"}))
+    assert stores.forgotten == []
+
+
+def test_under_postgres_an_approval_that_committed_nothing_drops_its_rows(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lock timeout or a refused connection: the transaction rolled back, so the
+    retype's own rows go and the served ones stay."""
+    from server.core.pg import PostgresUnavailableError
+    from server.knowledge.store import pg_datasets
+
+    _on_pg(stores, monkeypatch)
+    (before,) = stores.served(100)
+
+    async def refused(new: dict[str, Any], *, read: int, doc_id: str) -> str:
+        raise PostgresUnavailableError("lock timeout")
+
+    monkeypatch.setattr(pg_datasets, "approve", refused)
+    with pytest.raises(PostgresUnavailableError):
+        _run_approve(_approve_input(stores, columns={"amount": "number"}))
+    assert len(stores.forgotten) == 1 and stores.forgotten[0] != before["snapshot_id"]
+
+
+def test_under_postgres_an_approval_whose_projection_failed_keeps_the_replaced_rows(
+    stores: Stores, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """loom.datasets, an older build's catalog, still names the replaced snapshot: its rows
+    stay for the source's next ingest or delete."""
+    _on_pg(stores, monkeypatch, projected=False)
+    (before,) = stores.served(100)
+    out = _run_approve(_approve_input(stores, columns={"amount": "number"}))
+    assert out.found and out.retyped and stores.forgotten == []
+    assert before["snapshot_id"] in {r["snapshot_id"] for r in stores.rows}
+
+
+def test_under_postgres_a_publish_names_its_held_job_and_an_erased_one_stops_the_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The publish passes its job to the catalog write when Postgres holds it (the run
+    took a token); the write's JobErased ends the run as JobGone."""
+    from server.knowledge.app import ingest_run
+    from server.knowledge.store import pg_datasets
+
+    passed: list[Any] = []
+
+    async def publish(*a: Any, held_job: Any = None, **k: Any) -> Any:
+        passed.append(held_job)
+        if held_job is not None:  # the write's fence: Postgres no longer holds the job
+            raise pg_datasets.JobErased("j")
+        return app.Published()
+
+    monkeypatch.setattr(app, "publish", publish)
+    job = {"org": "o", "namespace": "ns", "ingestion_id": "j", "source_uri": "repo://a.csv"}
+    parsed = SimpleNamespace(artifact=ART, artifact_sha256=ART.sha256)
+
+    def run() -> None:
+        asyncio.run(ingest_run._publish_datasets(job, parsed, 100, 1, None, None))  # type: ignore[arg-type]
+
+    reset = ingest_run._RUN_TOKEN.set(7)
+    try:
+        with pytest.raises(ingest_run.JobGone):
+            run()
+    finally:
+        ingest_run._RUN_TOKEN.reset(reset)
+    run()  # no token: a job only ClickHouse holds, published with no fence
+    assert passed == [("o", "ns", "j"), None]
+
+
+def test_a_publish_passes_its_held_job_to_every_catalog_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both writes of a dataset, the empty base row and the typed one, carry the job, so
+    each commits only while Postgres holds it."""
+    jobs: list[Any] = []
+
+    async def insert_catalog(rows: list[dict[str, Any]], *, job: Any = None, **_: Any) -> None:
+        jobs.append(job)
+
+    async def insert_rows(rows: list[dict[str, Any]], **_: Any) -> None:
+        return None
+
+    monkeypatch.setattr(repo, "insert_catalog", insert_catalog)
+    monkeypatch.setattr(repo, "insert_rows", insert_rows)
+    job = {
+        "org": "o", "namespace": "ns", "source_uri": "repo://sales.csv", "agent": "a",
+        "user_id": "u", "session_id": "-", "actor": "user:u", "source_class": "imported",
+    }  # fmt: skip
+    key = ("o", "ns", "j")
+    asyncio.run(
+        app.publish(
+            job,
+            ART,
+            doc_version=100,
+            revision=3,
+            artifact_sha256=ART.sha256,
+            prior_version=0,
+            lease=None,
+            held_job=key,
+        )  # fmt: skip
+    )
+    assert jobs and set(jobs) == {key} and len(jobs) == 2 * len(ART.tables)

@@ -8,7 +8,8 @@ a function's blast radius never names the document that specifies it. Here a Mar
 file is:
 
 * a ``section`` symbol per heading, qualified name `<module>::<H1>::<H2>…`
-  from the heading text (the file's `module_scope`, headings as written),
+  from the heading text (the file's `module_scope`, headings as written; a
+  title or name over 1,000 characters is cut and ends in a hash of the whole),
   signature the `#` line, span from the heading to the next heading of the
   same or a higher level, doc the first paragraph; a file with a single H1
   is that section's parent;
@@ -36,6 +37,8 @@ extractor stamp with the other lane modules.
 
 from __future__ import annotations
 
+import bisect
+import hashlib
 import posixpath
 import re
 from dataclasses import dataclass, field
@@ -48,8 +51,10 @@ from server.code.domain.extract.treesitter import ParsedFile, Symbol
 LANG_DOC = "doc"
 KIND_SECTION = "section"
 EDGE_READS = "reads"
-_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 _FENCE_RE = re.compile(r"^(```|~~~)")
+# not a setting: renames the stored sections it cuts; a name joins at most six cut titles
+_MAX_PATH = 1000
 _LINK_RE = re.compile(r"\]\(((?:(?!\]\()[^)\s])++)(?:\s+\"[^\"]*\")?\)")
 _CODE_REF_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*)(?:\(\))?`")
 _NOISE_REFS: frozenset[str] = frozenset(
@@ -134,14 +139,19 @@ def sections_of(text: str) -> tuple[list[Section], int]:
             continue
         h = _HEADING_RE.match(raw)
         if h:
-            heads.append((i, len(h.group(1)), h.group(2).strip()))
+            # The closing `#`s off in Python: a pattern that matches them after a lazy
+            # title backtracks cubically on a run of spaces.
+            rest = h.group(2)
+            # `or`: a rest of only `#`s keeps one `#` as its title
+            title = rest.rstrip().rstrip("#").rstrip() or rest[:1]
+            heads.append((i, len(h.group(1)), _cut(title.strip())))
     out: list[Section] = []
     stack: list[str] = []
     for n, (line, level, title) in enumerate(heads):
         end = len(lines)
-        for line2, level2, _t in heads[n + 1 :]:
-            if level2 <= level:
-                end = line2 - 1
+        for k in range(n + 1, len(heads)):  # by index: a slice per heading is quadratic
+            if heads[k][1] <= level:
+                end = heads[k][0] - 1
                 break
         stack = stack[: level - 1] + [""] * max(0, level - 1 - len(stack)) + [title]
         # first paragraph: the first non-blank, non-fence run after the heading
@@ -161,7 +171,15 @@ def sections_of(text: str) -> tuple[list[Section], int]:
 
 
 def _qname(mod: str, sec: Section) -> str:
-    return "::".join([mod, *sec.path_titles])
+    return _cut("::".join([mod, *sec.path_titles]))
+
+
+def _cut(text: str) -> str:
+    """`text`, or its head and a hash of the whole past `_MAX_PATH`, so two cut texts
+    stay distinct."""
+    if len(text) <= _MAX_PATH:
+        return text
+    return text[: _MAX_PATH - 17] + "~" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def markdown_units(
@@ -185,6 +203,7 @@ def markdown_units(
         for s in secs
     ]
     includes: list[str] = []
+    seen_includes: set[str] = set()
     refs: list[tuple[str, str, int]] = []
     lines = text.splitlines()
     d = posixpath.dirname(path)
@@ -205,7 +224,8 @@ def markdown_units(
             if not target or "://" in target or target.startswith(("mailto:", "#")):
                 continue
             rel = posixpath.normpath(posixpath.join(d, target)) if d else posixpath.normpath(target)
-            if not rel.startswith("..") and rel not in includes:
+            if not rel.startswith("..") and rel not in seen_includes:
+                seen_includes.add(rel)
                 includes.append(rel)
         if current_q:
             seen: set[str] = set()
@@ -241,13 +261,11 @@ def markdown_chunks(pf: ParsedFile, max_chars: int = 6000) -> list[Chunk]:
     # leaf-level pieces: a section's own lines up to its first child heading
     for n, s in enumerate(secs):
         own_end = s.end_line
-        for s2 in secs[n + 1 :]:
-            if s2.start_line > s.start_line and s2.start_line <= s.end_line:
-                own_end = s2.start_line - 1
-                break
+        if n + 1 < len(secs) and secs[n + 1].start_line <= s.end_line:
+            own_end = secs[n + 1].start_line - 1
         body = lines[s.start_line - 1 : own_end]
         sym = by_q.get(_qname(mod, s))
-        heading_path = " › ".join(s.path_titles)
+        heading_path = " › ".join(s.path_titles)[:_MAX_PATH]
         pieces = _split_paragraphs(body, max_chars, s.start_line)
         for k, (p_start, p_end, p_text) in enumerate(pieces):
             content = p_text if k == 0 else f"<!-- {heading_path} (cont.) -->\n" + p_text
@@ -344,18 +362,28 @@ def doc_reference_edges(
     by_q = {s.qualified_name: s for s in pf.symbols}
     out: list[Edge] = []
     seen: set[tuple[str, str]] = set()
+    # per bare name, its code-kind candidates sorted by reversed qualified name: the ones a
+    # qualified mention is a suffix of are one run, found by bisection, not a scan per site
+    by_bare: dict[str, tuple[list[str], list[tuple[str, str, str]]]] = {}
     for from_q, name, line in sites:
         a = by_q.get(from_q)
         if a is None or (from_q, name) in seen:
             continue
         bare = name.rsplit("::", 1)[-1]
-        cands = [c for c in table.get(bare, ()) if c[2] in _CODE_KINDS]
+        if bare not in by_bare:
+            cands = [c for c in table.get(bare, ()) if c[2] in _CODE_KINDS]
+            cands.sort(key=lambda c: c[1][::-1])
+            by_bare[bare] = ([c[1][::-1] for c in cands], cands)
+        keys, cands = by_bare[bare]
+        i, matches = 0, len(cands)
         if "::" in name:
-            cands = [c for c in cands if c[1].endswith(name)]
-        if len(cands) != 1:
+            rev = name[::-1]
+            i = bisect.bisect_left(keys, rev)
+            matches = sum(k.startswith(rev) for k in keys[i : i + 2])
+        if matches != 1:
             continue
         seen.add((from_q, name))
-        sid, qname, _k = cands[0]
+        sid, qname, _k = cands[i]
         out.append(Edge(EDGE_READS, a.id, sid, a.qualified_name, qname, pf.path, line, 0.7))
     return out
 

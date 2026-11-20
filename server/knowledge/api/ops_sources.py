@@ -1,7 +1,8 @@
 """The `knowledge.source.*` operation declarations; their wire models are in
-`models_sources`. Each op is addressed by the repository's trunk code namespace,
-so the transport's namespace gate decides: readers list and inspect, the
-namespace's admins (the repository's maintainers) do the rest."""
+`models_sources`. Each op is addressed by the namespace the source's documents
+live in, so the transport's namespace gate decides: readers list, inspect and
+parse links; writers manage their connected sources, and shared sources require
+namespace administration inside the handler."""
 
 from __future__ import annotations
 
@@ -14,23 +15,30 @@ from server.knowledge.api.models_sources import (
     KnowledgeSourceInspectOutput,
     KnowledgeSourceListInput,
     KnowledgeSourceListOutput,
+    KnowledgeSourceParseLinksInput,
+    KnowledgeSourceParseLinksOutput,
     KnowledgeSourceRemoveInput,
     KnowledgeSourceRemoveOutput,
     KnowledgeSourceRotateInput,
     KnowledgeSourceRotateOutput,
     KnowledgeSourceSyncNowInput,
     KnowledgeSourceSyncNowOutput,
+    KnowledgeSourceUpdateInput,
+    KnowledgeSourceUpdateOutput,
 )
 from server.knowledge.app.sources import (
     handle_knowledge_source_add,
     handle_knowledge_source_check,
     handle_knowledge_source_inspect,
     handle_knowledge_source_list,
+    handle_knowledge_source_parse_links,
     handle_knowledge_source_remove,
     handle_knowledge_source_rotate,
     handle_knowledge_source_sync_now,
+    handle_knowledge_source_update,
     source_add_audit_subject,
     source_rotate_audit_subject,
+    source_update_audit_subject,
 )
 from server.operations.base import Operation, Role
 
@@ -59,12 +67,32 @@ knowledge_source_add = Operation(
     output_model=KnowledgeSourceAddOutput,
     handler=handle_knowledge_source_add,
     idempotent=False,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
     audit_subject=source_add_audit_subject,
 )
-# ADMIN although it writes nothing: the probe spends the source's rate limit
-# with the stored credential.
+knowledge_source_update = Operation(
+    name="knowledge.source.update",
+    maturity="experimental",
+    input_model=KnowledgeSourceUpdateInput,
+    output_model=KnowledgeSourceUpdateOutput,
+    handler=handle_knowledge_source_update,
+    idempotent=False,
+    required_role=Role.WRITER,
+    audit=True,
+    audit_subject=source_update_audit_subject,
+)
+# No store request and nothing written: a reader may preview what links name.
+knowledge_source_parse_links = Operation(
+    name="knowledge.source.parse_links",
+    maturity="experimental",
+    input_model=KnowledgeSourceParseLinksInput,
+    output_model=KnowledgeSourceParseLinksOutput,
+    handler=handle_knowledge_source_parse_links,
+    idempotent=True,
+    required_role=Role.VIEWER,
+)
+# The owner may probe their connection; other callers need namespace administration.
 knowledge_source_check = Operation(
     name="knowledge.source.check",
     maturity="experimental",
@@ -72,7 +100,7 @@ knowledge_source_check = Operation(
     output_model=KnowledgeSourceCheckOutput,
     handler=handle_knowledge_source_check,
     idempotent=True,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
 )
 knowledge_source_rotate = Operation(
     name="knowledge.source.rotate",
@@ -92,7 +120,7 @@ knowledge_source_remove = Operation(
     output_model=KnowledgeSourceRemoveOutput,
     handler=handle_knowledge_source_remove,
     idempotent=False,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
 )
 knowledge_source_sync_now = Operation(
@@ -102,7 +130,7 @@ knowledge_source_sync_now = Operation(
     output_model=KnowledgeSourceSyncNowOutput,
     handler=handle_knowledge_source_sync_now,
     idempotent=True,
-    required_role=Role.ADMIN,
+    required_role=Role.WRITER,
     audit=True,
 )
 
@@ -110,6 +138,8 @@ OPERATIONS: list[Operation] = [
     knowledge_source_list,
     knowledge_source_inspect,
     knowledge_source_add,
+    knowledge_source_update,
+    knowledge_source_parse_links,
     knowledge_source_check,
     knowledge_source_rotate,
     knowledge_source_remove,

@@ -156,7 +156,8 @@ def test_active_takes_booleans_and_their_strings() -> None:
 
 class _Table:
     """loom.scim_users, loom.namespaces as `_subjects` reads it, and
-    loom.revoked_tokens as the revocation module reads and writes it."""
+    loom.revoked_tokens as the revocation module reads and writes it,
+    with an empty connected-account inventory."""
 
     def __init__(
         self,
@@ -259,6 +260,27 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if sql == (
+            "SELECT org, subject, kind, connection_id, account_id, workspace_id, "
+            "account_email_enc, credential_enc, scopes, active, refresh_id, connected_at, "
+            "disconnected_at, version FROM loom.connected_accounts FINAL "
+            "WHERE subject IN {subjects:Array(String)} "
+            "ORDER BY org, subject, kind LIMIT {limit:UInt64}"
+        ):
+            assert set(params) == {"subjects", "limit"}
+            assert isinstance(params["subjects"], list) and params["subjects"]
+            assert all(isinstance(subject, str) for subject in params["subjects"])
+            assert params["limit"] == settings.knowledge_connected_registry_scan_limit + 1
+            return []
+        if sql == (
+            "SELECT DISTINCT org, subject FROM loom.connected_accounts FINAL "
+            "ORDER BY org, subject LIMIT {limit:UInt64}"
+        ):
+            assert params == {
+                "org": "",
+                "limit": settings.knowledge_connected_registry_scan_limit + 1,
+            }
+            return []
         if "loom.service_accounts" in sql:
             rows = [{**r, "live": r["revoked_at"] is None} for r in self.made_by(sql, params)]
             if self.shuffle is not None:
@@ -729,6 +751,7 @@ def _saved_token(
         "inherit_creator_grants": True,
         "ns_roles": '{"ns": "writer"}',
         "lineage": [created_by] if lineage is None else lineage,
+        "saves_to": "ns",
     }
 
 
@@ -1199,6 +1222,9 @@ async def test_deleting_an_inactive_user_is_audited_too(world) -> None:
 
 
 async def test_a_deactivated_email_is_refused_where_every_sso_sign_in_ends(monkeypatch) -> None:
+    async def no_account(email: str) -> None:
+        return None
+
     async def deactivated(email: str) -> bool:
         return email == "lee@example.com"
 
@@ -1207,12 +1233,13 @@ async def test_a_deactivated_email_is_refused_where_every_sso_sign_in_ends(monke
 
     monkeypatch.setattr(scim, "deactivated", deactivated)
     monkeypatch.setattr(audit, "emit", emit)
+    monkeypatch.setattr(login, "resolve_identity_for_email", no_account)
     # Before JIT could make an account, and again at the end of a link.
     got = await oauth._account_for("lee@example.com", {}, "")
-    assert got == oauth._Denied("this account is deactivated")
+    assert got == oauth._Denied("this account is not allowed to sign in")
     identity = ("lee", "acme", ["lee"], ["writer"])
     page = await oauth._signed_in_as({"kind": "dashboard"}, identity, "", "lee@example.com")
-    assert page.status_code == 403 and b"deactivated" in page.body
+    assert page.status_code == 403 and b"this account is not allowed to sign in" in page.body
 
 
 async def test_an_unreadable_deactivation_fails_the_sign_in_retryably(world, monkeypatch) -> None:

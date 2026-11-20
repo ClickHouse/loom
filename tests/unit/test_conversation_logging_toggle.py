@@ -90,7 +90,7 @@ async def test_logging_gate_fails_closed(monkeypatch, row) -> None:
     Both branches are "nobody has answered the question": a namespace written to
     before it was ever registered, and a row predating the column. Defaulting
     to True would record transcripts for namespaces whose owner had never
-    been shown the toggle.
+    been shown the Record conversations switch.
     """
     from server.knowledge.store import conversations as conversation_repo
 
@@ -103,7 +103,7 @@ async def test_logging_gate_fails_closed(monkeypatch, row) -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_opt_in_still_records() -> None:
-    """The off-by-default rule must not make the toggle unusable."""
+    """The off-by-default rule must not make the Record conversations switch unusable."""
     from server.knowledge.store import conversations as conversation_repo
 
     class _CH:

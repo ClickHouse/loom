@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -15,9 +15,11 @@ import { ScopeBadge } from "../components/ScopeBadge";
 import { Chip, ListTime, Loading, PageHeader, TabTrigger, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
-import { humanizeError, displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { displayAgent, previewValue, SENSITIVE_LABEL } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { KEYWORD_PAGE, keywordThenRanked, parseSearchQuery } from "../lib/memoriesSearch";
 import { signed, termText, whyTerms } from "../lib/whyNote";
+import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 
 // One recorded search, expanded in place. A person reading "my agent answered badly an
 // hour ago" needs more than the top score and the first eight keys — they need every key
@@ -33,6 +35,14 @@ const QUERY_FOLD_CHARS = 280;
 export function pairKeysWithScores(keys: string[], scores: number[]): { key: string; score: number | null }[] {
   return keys.map((key, i) => ({ key, score: i < scores.length ? scores[i] : null }));
 }
+
+/** The badge's words for the operation that ran a recorded search; its tooltip keeps the name. */
+const SEARCH_VIA: Record<string, string> = {
+  "memory.search": "search",
+  "memory.ask": "question",
+  "context.pack": "session context",
+  "search.query": "agent search tool",
+};
 
 function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
   const [allKeys, setAllKeys] = useState(false);
@@ -86,8 +96,10 @@ function RecallHistoryRow({ r }: { r: SearchTraceLogRow }) {
           )
         )}
         {r.operation !== "" && (
-          <TipTarget tip="The operation that ran this search. memory.ask and the MCP search tool carry the wording a person gave; a direct memory.search carries whatever the calling program composed.">
-            <Badge text={`via ${r.operation}`} state="neutral" size="sm" />
+          <TipTarget
+            tip={`How this search was asked (${r.operation}). A question and the agents' search tool carry the wording a person gave; a direct search carries whatever the calling program composed.`}
+          >
+            <Badge text={`via ${SEARCH_VIA[r.operation] ?? "another call"}`} state="neutral" size="sm" />
           </TipTarget>
         )}
         <span>{displayAgent(r.agent)}</span>
@@ -223,8 +235,8 @@ function RecallHistory() {
           title={runFilter ? "No recorded searches under this run" : "No recorded searches"}
           description={
             runFilter
-              ? "A search counts for a run when the caller passed run_id on it or sent the X-Loom-Run-Id header (the SDK's run scope and the plugin do); this run's searches, if any, carried neither."
-              : "Either nothing has been searched in this window, or per-query recall telemetry is switched off for this deployment."
+              ? "A search is listed under a run when the agent tags it with the run, as the coding-agent plugins and the SDK's run scope do; this run's searches, if any, were not tagged."
+              : "Either nothing has been searched in this window, or this deployment does not record searches; an operator can turn that on."
           }
         />
       )}
@@ -267,7 +279,8 @@ const NUMERIC = "block w-full text-right [@media(max-width:768px)]:text-left tab
 // past the card.
 const CARD = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-1/2";
 const CARD_WIDE = "[@media(max-width:768px)]:min-w-0 [@media(max-width:768px)]:basis-full";
-const SCORE_HEADERS = [
+// Shown to everyone: each row's "Ask", unavailable with why to a role the assistant does not admit.
+const ASK_HEADERS = [
   { label: <span className={NUMERIC}>#</span>, width: "48px" },
   { label: "Key", width: "24%" },
   { label: "Value" },
@@ -275,18 +288,22 @@ const SCORE_HEADERS = [
   { label: "Score", width: "160px" },
   { label: <span className={NUMERIC}>Entity</span>, width: "80px" },
   { label: "Type", width: "140px" },
+  { label: <span className="sr-only">Assistant</span>, width: "96px" },
 ];
 
 /** One scored row: the key opens the memory (a button, so the keyboard reaches it), the
- *  score draws Click UI's table bar against the top ranked hit. */
-function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void): TableRowType {
+ *  score draws Click UI's table bar against the top ranked hit, and the last cell asks the
+ *  assistant about the result (its click, even an unavailable one, opens nothing). */
+function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) => void, query: string): TableRowType {
   const hit = row.hit;
   const terms = whyTerms(hit?.score_components);
   const entity = terms.find((t) => t.label === ENTITY);
   const width = hit && top > 0 ? Math.max(0, Math.min(100, (hit.rank_score / top) * 100)) : 0;
   return {
     id: row.key,
-    onClick: () => open(row.key),
+    onClick: (e) => {
+      if (!e.defaultPrevented) open(row.key);
+    },
     className: "cursor-pointer",
     items: [
       { className: CARD, label: <span className={`${NUMERIC} text-text-muted`}>{i + 1}</span> },
@@ -355,6 +372,19 @@ function scoreRow(row: RecallRow, i: number, top: number, open: (key: string) =>
           </span>
         ),
       },
+      {
+        className: CARD,
+        label: (
+          <AskAboutThis
+            what="result"
+            short
+            item={{
+              chip: `result ${row.key}`,
+              line: `result ${i + 1}, memory ${exact(row.key)}, for the query ${quoted(query)}`,
+            }}
+          />
+        ),
+      },
     ],
   };
 }
@@ -374,6 +404,8 @@ export function RecallLab() {
   }, [runFilter]);
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<RecallRow[] | null>(null);
+  // The query the rows on screen answer (the box may hold a newer one still waiting).
+  const [rowsQuery, setRowsQuery] = useState("");
   const [abstain, setAbstain] = useState(false);
   const [model, setModel] = useState("");
   const [loading, setLoading] = useState(false);
@@ -435,13 +467,14 @@ export function RecallLab() {
         const [r, failure] = await (kw?.entries.length
           ? search.then(
               (res) => [res, null] as const,
-              (e: unknown) => [null, humanizeError(e)] as const,
+              (e: unknown) => [null, humanizeError(e, { bare: true, read: true })] as const,
             )
           : search.then((res) => [res, null] as const));
         if (ac.signal.aborted) return;
         const keyword = new Map((kw?.entries ?? []).map((e) => [e.memory_key, e] as const));
         const ranked = new Map((r?.results ?? []).map((h) => [h.memory_key, h] as const));
         const order = keywordThenRanked([...keyword.keys()], [...ranked.keys()]);
+        setRowsQuery(q);
         setRows(
           order.map((key) => {
             const hit = ranked.get(key);
@@ -476,7 +509,21 @@ export function RecallLab() {
   }, [query, identity, attempt]);
 
   const showResults = !abstain || showWeak;
-  const topScore = Math.max(0, ...(rows ?? []).map((row) => row.hit?.rank_score ?? 0));
+  const scoresTable = useMemo(() => {
+    if (rows == null || rows.length === 0 || !showResults) return null;
+    const topScore = Math.max(0, ...rows.map((row) => row.hit?.rank_score ?? 0));
+    return (
+      <Table
+        aria-label="Recall scores"
+        aria-busy={loading || undefined}
+        size="sm"
+        // Ask about this on every row; a role the assistant's route does not admit sees
+        // it unavailable, with the role it needs.
+        headers={ASK_HEADERS}
+        rows={rows.map((row, i) => scoreRow(row, i, topScore, open, rowsQuery))}
+      />
+    );
+  }, [rows, rowsQuery, open, loading, showResults]);
   const count =
     rows != null && rows.length > 0 && showResults && error == null
       ? `${rows.length} row${rows.length === 1 ? "" : "s"}${model ? ` · ${model}` : ""}`
@@ -560,15 +607,7 @@ export function RecallLab() {
                   )}
                 </div>
               )}
-              {showResults && (
-                <Table
-                  aria-label="Recall scores"
-                  aria-busy={loading || undefined}
-                  size="sm"
-                  headers={SCORE_HEADERS}
-                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open))}
-                />
-              )}
+              {scoresTable}
             </>
           )}
         </Tabs.Content>

@@ -369,7 +369,7 @@ async def _decision_records(ch: RecordingCH, c: dict[str, Any]) -> None:
     try:
         for live in ([("k1", "a", "-", "-")], []):
 
-            async def _writers(*_: Any, live: list[Any] = live) -> list[Any]:
+            async def _writers(*_: Any, live: list[Any] = live, **__: Any) -> list[Any]:
                 return live
 
             pg_memory.live_decision_writers = _writers  # type: ignore[assignment]
@@ -380,8 +380,31 @@ async def _decision_records(ch: RecordingCH, c: dict[str, Any]) -> None:
         rmt_carry.measured_send_deadline = deadline  # type: ignore[assignment]
 
 
+async def _source_retirements(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import source_retirements as queue
+
+    item = queue.Retirement(
+        ORG,
+        NS,
+        "decks",
+        "00000000-0000-0000-0000-000000000001",
+        "gdrive",
+        "acl-" + "a" * 24,
+    )
+    await queue.page(("", ""), ch=ch)
+    await queue.pending(item, ch=ch)
+    await queue.write(item, pending=True, ch=ch)
+    await queue.write(item, pending=False, ch=ch)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "workers.source_retirements",
+            "server.knowledge.store.source_retirements",
+            _source_retirements,
+            {},
+        ),
         Case(
             "workers.decision_records",
             "server.memory.store.records",

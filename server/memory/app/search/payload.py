@@ -14,8 +14,9 @@ from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.tiers import _reader_user_id
 from server.memory.app.search_tag_filter import read_row_tags as _read_row_tags
 from server.memory.domain.decision_schema import is_whole_row
+from server.memory.domain.excerpt import build_excerpt
+from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.domain.sensitivity import reads_high
-from server.memory.store.shared import SHARED_AGENT
 
 log = logging.getLogger(__package__)
 
@@ -117,6 +118,8 @@ async def _fill_hit_usage(hits: list[Any], input: Any, namespaces: list[str] | N
         for h in hits
         if (getattr(h, "source", "fact") or "fact") == "fact"
         and not str(getattr(h, "memory_key", "") or "").startswith("chunk:")
+        # a governed hit's key also names other rows, whose counters are not its own
+        and not getattr(h, "governed", None)
     ]
     if not facts:
         return 0
@@ -228,6 +231,8 @@ async def _fill_hit_tags(
         and getattr(h, "_row_tags", None) is None
         and (getattr(h, "source", "fact") or "fact") == "fact"
         and not str(getattr(h, "memory_key", "") or "").startswith("chunk:")
+        # loom.shared holds no tags; a read by a governed hit's key would return other rows'
+        and not getattr(h, "governed", None)
     ]
     by_key: dict[tuple[str, str], list[str]] = {}
     if gaps:
@@ -299,6 +304,10 @@ async def _expand_unit_bodies(
 
     by_writer: dict[tuple[str, str, str, str], list[Any]] = {}
     for h in hits:
+        # A governed hit carries the admin's text; a read by its key under the caller's
+        # identity could answer with another row of that key.
+        if getattr(h, "governed", None):
+            continue
         if str(getattr(h, "source", "fact") or "fact") in ("fact", "memory", "record"):
             by_writer.setdefault(_writer(h), []).append(h)
 
@@ -346,6 +355,18 @@ async def _expand_unit_bodies(
         order = first + [h for h in hits if h not in first]
     for h in order:
         if str(getattr(h, "source", "fact") or "fact") not in ("fact", "memory", "record"):
+            continue
+        if getattr(h, "governed", None):
+            cost = max(1, len(str(h.content_excerpt)) // 4)
+            if spent + cost <= budget:
+                spent += cost
+                returned += 1
+                tokens += cost
+            else:
+                h.content_excerpt = build_excerpt(h.content_excerpt)
+                h.body_truncated = True
+                h.next = "memory.search with the same arguments and a larger body_budget_tokens"
+                elided += 1
             continue
         body_row = _body_row(h)
         if body_row is None:
@@ -399,6 +420,7 @@ async def _expand_source_bodies(
         h
         for h in hits
         if str(getattr(h, "source", "fact") or "fact") in ("fact", "memory", "record")
+        and not getattr(h, "governed", None)  # it carries the admin's text
     ]
     if not fact_hits:
         return (0, 0)

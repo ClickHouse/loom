@@ -35,12 +35,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from server.clients import notion
+from server.clients._checked_access import Credential
 from server.core.errors import ValidationError
 from server.core.hashing import sha256_text
-from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
+from server.knowledge.app import sources as source_ops
 from server.knowledge.domain import convert
-from server.knowledge.domain.sources import KnowledgeSource, json_object
+from server.knowledge.domain.sources import KnowledgeSource, home, item_ids, json_object
 from server.knowledge.store import sources as store
 from server.settings import settings
 
@@ -79,7 +80,7 @@ class _Turn:
     """One turn's source, token and result, and the pages it handles."""
 
     src: KnowledgeSource
-    token: str
+    token: Credential
     result: sync.TurnResult
     # Known child pages: child page id -> the id of the page it was found on. A child
     # is forgotten in three ways only: its page is read and no longer holds it; a
@@ -113,7 +114,14 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result = sync.TurnResult()
     result.full = bool(detail.get("full")) or not sync.valid_stamp(stamp) or sync.full_due(detail)
     sync.start_waits(result, detail)
-    token = unseal("knowledge_sources.credential", src.credential_enc)
+    try:
+        token = await source_ops.credential_for(
+            src,
+            deadline=run.budget.stop_after,
+        )
+    except (ValidationError, TimeoutError):
+        result.fail("credential_invalid", "the source connection is unavailable")
+        return result
     if not token:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
@@ -124,9 +132,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
         for k, v in (stored_children if isinstance(stored_children, dict) else {}).items()
         if notion.valid_id(str(k))
     }
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
-    }
+    stored = await sync.stored_copies_with_room(src, result)
     t = _Turn(src, token, result, known=known, stored=stored)
     result.kind_state["child_pages"] = t.known
     listed_at = _now()
@@ -146,13 +152,13 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     newest = max((f["modifiedTime"] for f in t.items), default="")
     result.newest = sync.capped(newest, listed_at - timedelta(seconds=_SETTLE_S))
     # Changed pages first: a pass bound spent on settling re-reads delays no edit.
-    t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"])))
+    t.items.sort(key=lambda f: not _changed(f, stored.get(f["id"]), src))
     for f in t.items:  # a child found while syncing is appended and handled too
         if not await _sync_page(t, f, stored.get(f["id"]), run):
             break
     result.documents_seen = len(t.items)
     if trusted and result.complete:
-        addresses = {f["id"]: sync.source_uri_of(f) for f in t.items}
+        addresses = {f["id"]: sync.bound_source_uri(src, sync.source_uri_of(f)) for f in t.items}
         listed = {k: v for k, v in addresses.items() if v.startswith("https://")}
 
         gone = functools.partial(_page_gone, t)
@@ -169,23 +175,24 @@ async def _forget_unlisted_without_documents(t: _Turn) -> None:
     src = t.src
     held = {
         d["file_id"]
-        for d in await store.source_revisions(
-            src.org, src.namespace, src.name, searchable_only=False
-        )
+        for d in await store.source_revisions(src.org, *home(src), searchable_only=False)
     }
     for child_id in list(t.known):
         if child_id in t.absent and child_id not in held:
             t.known.pop(child_id)
 
 
-def _changed(f: dict[str, Any], stored: dict[str, str] | None) -> bool:
+def _changed(
+    f: dict[str, Any], stored: dict[str, str] | None, src: KnowledgeSource | None = None
+) -> bool:
     """Whether a listed page differs from its stored copy: none stored, another
     revision or another address."""
     if stored is None:
         return True
-    return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != (
-        sync.source_uri_of(f)
-    )
+    uri = sync.source_uri_of(f)
+    if src is not None:
+        uri = sync.bound_source_uri(src, uri)
+    return stored["source_revision"] != f["modifiedTime"] or stored["source_uri"] != uri
 
 
 def _item(page: dict[str, Any]) -> dict[str, Any]:
@@ -253,8 +260,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
     `edited_after` when it is set) and the known child pages. A page in the trash or
     a child the store no longer has is left out, so a full listing's lookup retires
     its document."""
-    config = t.src.config
-    for page_id in config.get("page_ids") or []:
+    for page_id in item_ids(t.src.items, "page"):
         try:
             page = await notion.page(t.token, page_id)
         except notion.VendorError as e:
@@ -262,7 +268,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
             continue
         if not page.get("in_trash"):
             t.add(page)
-    for database_id in config.get("database_ids") or []:
+    for database_id in item_ids(t.src.items, "database"):
         try:
             db = await notion.database(t.token, database_id)
         except notion.VendorError as e:
@@ -285,8 +291,7 @@ async def _list(t: _Turn, edited_after: str) -> None:
                     t.add(page)
             if not whole:
                 # Write what it listed, but keep the stamp and retire nothing.
-                t.result.complete = False
-                t.result.note = "listing: incomplete result"
+                t.result.mark(sync.TurnMark.INCOMPLETE_RESULT)
     for child_id in list(t.known):
         try:
             page = await notion.page(t.token, child_id)
@@ -362,8 +367,8 @@ async def _lookup(t: _Turn, page_id: str) -> bool | None:
     if page.get("in_trash"):
         return True
     item = _item(page)
-    if page_id in (t.src.config.get("page_ids") or []) or item["parent_database"] in (
-        t.src.config.get("database_ids") or []
+    if page_id in item_ids(t.src.items, "page") or item["parent_database"] in item_ids(
+        t.src.items, "database"
     ):
         return False
     holder = _holder(t, item)
@@ -428,18 +433,19 @@ async def _sync_page(
     t: _Turn, f: dict[str, Any], prior: dict[str, str] | None, run: sync.Pass
 ) -> bool:
     """Handle one listed page; False when the turn must stop listing."""
-    uri = sync.source_uri_of(f)
-    if (
+    uri = sync.bound_source_uri(t.src, sync.source_uri_of(f))
+    # Read too soon after its revision: a later edit may share the stamp, so the page is
+    # read and written again, with the new read time; once that is past the margin, the
+    # stored copy lets the page be skipped.
+    unsettled = bool(
         prior
         and prior["source_uri"] == uri
         and not _settled(f["modifiedTime"], prior.get("read_at", ""))
-    ):
-        # Read too soon after its revision: a later edit may share the stamp, so the
-        # page is read and written again, with the new read time; once that is past
-        # the margin, the stored copy lets the page be skipped.
-        prior = None
+    )
     fetch_and_write = functools.partial(_fetch_and_write, t, f, uri)
-    if not await sync.sync_item(t.src, f, uri, prior, run, t.result, fetch_and_write):
+    if not await sync.sync_item(
+        t.src, f, uri, prior, run, t.result, fetch_and_write, refetch=unsettled
+    ):
         return False
     # A rate limit or a refused token while listing the page's new children.
     return t.result.status not in ("rate_limited", "credential_invalid")
@@ -531,7 +537,7 @@ def _record_children(
     for child, held_by in list(t.known.items()):
         if whole and held_by == parent and child not in children:
             t.known.pop(child)
-    listed_pages = set(t.src.config.get("page_ids") or [])
+    listed_pages = set(item_ids(t.src.items, "page"))
     over = 0
     for child in children:
         if child in listed_pages or not notion.valid_id(child):

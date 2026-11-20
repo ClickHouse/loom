@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
@@ -10,10 +10,11 @@ import {
   type GuideRevision,
   type NamespaceGuide,
 } from "../api";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { Alert, Loading, Unavailable } from "../components/ui";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { humanizeError, relativeTime } from "../lib/format";
+import { relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 
 interface Props {
@@ -23,9 +24,20 @@ interface Props {
   namespace: string;
   /** A writer or admin edits; everyone else reads. */
   canEdit: boolean;
+  /** Why the caller's role cannot edit, when that is known: Edit stays in view, unavailable,
+   *  with it. */
+  editReason?: string | null;
   /** Open on the editor when the guide's read finds none and the caller can edit (the
    *  Memories header); otherwise on the read view. */
   startEditing?: boolean;
+  /** A draft to edit (the assistant's tune card): the dialog opens on the editor with it,
+   *  saved on top of the guide it reads. */
+  initialContent?: string;
+  /** The guide's revision the draft was written against: when the guide read now is another,
+   *  the editor opens on the conflict view, the current guide shown beside the draft. */
+  baseRevision?: number;
+  /** The draft's "What changed" line, which the editor starts with. */
+  initialNote?: string;
   onSaved: () => void;
 }
 
@@ -48,7 +60,19 @@ const STARTER = `## What this namespace holds
  * when someone saved in between, their text is shown beside the draft to merge before
  * saving again on top of it.
  */
-export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, startEditing, onSaved }: Props) {
+export function GuideDialog({
+  open,
+  onOpenChange,
+  org,
+  namespace,
+  canEdit,
+  editReason = null,
+  startEditing,
+  initialContent,
+  baseRevision,
+  initialNote,
+  onSaved,
+}: Props) {
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -66,19 +90,26 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
         const g = await getNamespaceGuide(org, namespace, { signal });
         if (!live()) return;
         setGuide(g);
+        // A draft opens on the editor, on top of the guide read now; one written against an
+        // older revision shows that guide beside it to merge first.
+        if (initialContent !== undefined && canEdit) {
+          startEdit(g, initialContent);
+          if (baseRevision !== undefined && g.revision !== baseRevision) setConflict(true);
+          return;
+        }
         // Someone may have written one since the caller looked: then it is read first.
         if (startEditing && canEdit && !g.found) startEdit(g);
       } catch (e) {
-        if (live()) setError(humanizeError(e));
+        if (live()) setError(humanizeError(e, { read: true }));
       }
     },
     [org, namespace],
   );
 
-  function startEdit(g: NamespaceGuide) {
-    setContent(g.found ? g.content : STARTER);
+  function startEdit(g: NamespaceGuide, draft?: string) {
+    setContent(draft ?? (g.found ? g.content : STARTER));
     setSummary(g.summary);
-    setNote("");
+    setNote(draft === undefined ? "" : (initialNote ?? ""));
     setBase(g);
     setConflict(false);
     setEditing(true);
@@ -87,8 +118,13 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
   // The outline as given, give or take whitespace anywhere, is not a guide yet.
   const untouched = content.replace(/\s+/g, "") === STARTER.replace(/\s+/g, "");
 
+  // A reason that appears while the editor is open closes it, and its save sends nothing.
+  useEffect(() => {
+    if (!canEdit || editReason) setEditing(false);
+  }, [canEdit, editReason]);
+
   const save = async () => {
-    if (!base || untouched) return;
+    if (!base || untouched || !canEdit || editReason) return;
     setBusy(true);
     try {
       // A summary left as the saved one is not sent, so the server keeps whatever
@@ -109,7 +145,7 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
       onSaved();
       onOpenChange(false);
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
+      toastError("Save failed", e);
     } finally {
       setBusy(false);
     }
@@ -152,10 +188,12 @@ export function GuideDialog({ open, onOpenChange, org, namespace, canEdit, start
             <Button type="secondary" htmlType="button" onClick={() => close(false)}>
               Close
             </Button>
-            {canEdit && (
-              <Button type="primary" htmlType="button" onClick={() => startEdit(guide)}>
-                {guide.found ? "Edit" : "Write the guide"}
-              </Button>
+            {(canEdit || editReason) && (
+              <Unavailable reason={canEdit ? null : editReason}>
+                <Button type="primary" htmlType="button" onClick={() => startEdit(guide)}>
+                  {guide.found ? "Edit" : "Write the guide"}
+                </Button>
+              </Unavailable>
             )}
           </ModalFooter>
         </div>
@@ -235,7 +273,7 @@ function GuideHistory({ org, namespace, current }: { org: string; namespace: str
       setError(null);
       guideHistory(org, namespace, GUIDE_HISTORY_LIMIT, { signal })
         .then((r) => live() && setRevisions(r))
-        .catch((e) => live() && setError(humanizeError(e)));
+        .catch((e) => live() && setError(humanizeError(e, { read: true })));
     },
     [open, reads, org, namespace],
   );

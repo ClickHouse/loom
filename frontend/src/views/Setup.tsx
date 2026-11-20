@@ -4,26 +4,16 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import {
-  listTokens,
-  type TokenEntry,
-  importCuratedDoc,
-  type ImportCuratedResult,
-  countMemories,
-  isAuthDisabled,
-} from "../api";
+import { listTokens, type TokenEntry, importCuratedDoc, type ImportCuratedResult, isAuthDisabled } from "../api";
 import { useStore, useIdentity } from "../lib/state";
-import { shouldShowGettingStarted } from "../lib/onboarding";
-import { GettingStarted, useOnboarding } from "../components/GettingStarted";
-import { toast } from "../components/Toast";
-import { humanizeError } from "../lib/format";
+import { toast, toastError } from "../components/Toast";
 import { PrivacyFilters, type PrivacyFilterStarter } from "./admin/Blacklist";
-import { canCall } from "../lib/canCall";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
-import { Alert, PageHeader, TabTrigger } from "../components/ui";
+import { Alert, PageHeader, TabTrigger, Unavailable } from "../components/ui";
 import { Modal } from "../components/ui/Modal";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
 import { isMemoryNamespace } from "../lib/namespace";
 import { hasPlatformAdminClaim } from "../lib/role";
 import { TokensSection } from "./Tokens";
@@ -67,18 +57,12 @@ export function Setup() {
   const setView = useStore((s) => s.setView);
   const whoami = useStore((s) => s.whoami);
   const canManageModels = isAuthDisabled() || hasPlatformAdminClaim(whoami);
-  const subject = whoami?.subject ?? "";
   // list_mine was fetched once at boot (App.tsx) — reuse it, never re-read.
   const mine = useStore((s) => s.myNamespaces);
-  // A code index or a tracker namespace holds no memories, so the memory-plane reads
-  // below are skipped there — the checklist and the total are about a memory namespace
-  // only.
+  // A code index or a tracker namespace holds no memories: Structure is a memory
+  // namespace's tab only.
   const memoryNamespace = isMemoryNamespace(namespace, mine) ? namespace : "";
-  const memoriesVersion = useStore((s) => s.memoriesVersion);
-  const bumpMemoriesVersion = useStore((s) => s.bumpMemoriesVersion);
 
-  // The tokens list is owned here so the Connect section and the checklist
-  // read the same fetch (a list is one request).
   const [tokens, setTokens] = useState<TokenEntry[] | null>(null);
   const loadTokens = () => {
     listTokens()
@@ -86,47 +70,19 @@ export function Setup() {
       .catch(() => setTokens([]));
   };
   useEffect(loadTokens, []);
-  const [lastMint, setLastMint] = useState<{ token: string; mcpUrl: string } | null>(null);
 
-  // One `memory.list` with `count_only` for the namespace-wide total
-  // (the two cached counts, no page — `limit 1` would read every preview in the
-  // namespace) — the checklist's "is this account new" signal and its "wrote a memory"
-  // tick. Only when the token's role here is known — an unknown role (no grant, no claim
-  // on this namespace) sends nothing and the checklist stays hidden, as it does for a
-  // null total.
-  const role = useNamespaceRole(namespace);
-  const canListMemories = canCall("memory.list", role, whoami);
-  const showStructure = !!memoryNamespace && canCall("memory_schema.list", role, whoami);
-  const [memoryTotal, setMemoryTotal] = useState<number | null>(null);
-  useEffect(() => {
-    if (!memoryNamespace || !canListMemories) {
-      setMemoryTotal(null);
-      return;
-    }
-    let live = true;
-    countMemories(identity)
-      .then((n) => {
-        if (live) setMemoryTotal(n);
-      })
-      .catch(() => {
-        if (live) setMemoryTotal(null);
-      });
-    return () => {
-      live = false;
-    };
-  }, [identity, memoryNamespace, memoriesVersion, canListMemories]);
-
-  // A first visit is the four-step checklist. Once shown it stays (persisted `started`)
-  // until "Skip the tour" or "Hide", so ticking step two — the first memory — never hides
-  // the list mid-tour.
-  const onboarding = useOnboarding(subject);
-  const isNew = shouldShowGettingStarted({ mine, memoryTotal });
-  useEffect(() => {
-    if (isNew) onboarding.start();
-  }, [isNew, onboarding]);
-  const showChecklist = !!memoryNamespace && !onboarding.state.dismissed && (isNew || onboarding.state.started);
-
+  // Structure is a memory namespace's: shown to every role there; one that cannot read it
+  // sees what it needs, and nothing is read.
+  const structureRead = useNamespaceRoleRead(namespace);
+  const structureReason = callReason("memory_schema.list", structureRead, whoami, namespace);
   const [tab, setTab] = useState<SettingsTab>(() => readTabParam() ?? "tokens");
+  // A link that opens Settings on a tab while it already shows (an assistant card's) moves
+  // to that tab: the page is not drawn again.
+  const navSeq = useStore((s) => s.navSeq);
+  useEffect(() => {
+    const asked = readTabParam();
+    if (asked) setTab(asked);
+  }, [navSeq]);
   const selectTab = (t: SettingsTab) => {
     setTab(t);
     writeTabParam(t);
@@ -134,23 +90,17 @@ export function Setup() {
   // The token form is folded once a live token exists; `null` follows the list.
   const [formOpen, setFormOpen] = useState<boolean | null>(null);
 
-  // The checklist's "Mint a token": open the Tokens tab and the form, then
-  // scroll and focus once they have rendered (an effect, not a timer).
-  const [focusRequest, setFocusRequest] = useState(0);
-  const focusConnect = () => {
-    selectTab("tokens");
-    setFormOpen(true);
-    setFocusRequest((n) => n + 1);
-  };
-  useEffect(() => {
-    if (!focusRequest) return;
-    document.getElementById("setup-connect")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    document.getElementById("setup-generate-token")?.focus({ preventScroll: true });
-  }, [focusRequest]);
-
   return (
     <PageContainer>
-      <PageHeader title="Settings" tab={TAB_LABELS[tab]}>
+      <PageHeader
+        title="Settings"
+        tab={TAB_LABELS[tab]}
+        actions={
+          <Button type="secondary" htmlType="button" onClick={() => setView("connected-accounts")}>
+            Connected accounts
+          </Button>
+        }
+      >
         {tab === "models" ? (
           <span className="text-sm text-text-muted">Deployment-wide</span>
         ) : (
@@ -171,11 +121,11 @@ export function Setup() {
           size="medium"
           text={
             <>
-              <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository or
-              tracker source from Repositories, or ask for a grant.
+              <strong>No namespace selected.</strong> Your token can reach no namespace yet. Join a repository from
+              Repositories or a namespace from the namespace picker, or ask for a grant.
               <span className="mt-2 flex flex-wrap items-center gap-3">
                 <Button type="empty" htmlType="button" onClick={() => openNamespacePicker(true)}>
-                  Namespace menu
+                  Namespace picker
                 </Button>
                 {whoami && (
                   <Button type="primary" htmlType="button" iconLeft="code" onClick={() => setView("code")}>
@@ -187,36 +137,6 @@ export function Setup() {
           }
         />
       )}
-      {canManageModels && showChecklist && tab !== "models" && (
-        <Alert
-          className="mb-4"
-          state="info"
-          size="medium"
-          text={
-            <>
-              Set up Loom's LLM and embedding provider before evaluating memory and search quality.
-              <span className="mt-2 flex">
-                <Button type="empty" htmlType="button" onClick={() => selectTab("models")}>
-                  Configure models and keys
-                </Button>
-              </span>
-            </>
-          }
-        />
-      )}
-      {showChecklist && tab !== "models" && (
-        <GettingStarted
-          onboarding={onboarding}
-          identity={identity}
-          mine={mine}
-          memoryTotal={memoryTotal}
-          tokens={tokens}
-          lastMint={lastMint}
-          onConnect={focusConnect}
-          onMemoryAdded={bumpMemoriesVersion}
-        />
-      )}
-
       <Tabs
         value={tab}
         onValueChange={(v) => {
@@ -230,7 +150,7 @@ export function Setup() {
           <TabTrigger value="memory" icon="light-bulb">
             {TAB_LABELS.memory}
           </TabTrigger>
-          {showStructure && (
+          {!!memoryNamespace && (
             <TabTrigger value="structure" icon="table">
               {TAB_LABELS.structure}
             </TabTrigger>
@@ -242,23 +162,19 @@ export function Setup() {
           )}
         </Tabs.TriggersList>
         <Tabs.Content value="tokens">
-          <TokensSection
-            tokens={tokens}
-            reloadTokens={loadTokens}
-            onMinted={setLastMint}
-            formOpen={formOpen}
-            onFormOpenChange={setFormOpen}
-          />
+          <TokensSection tokens={tokens} reloadTokens={loadTokens} formOpen={formOpen} onFormOpenChange={setFormOpen} />
         </Tabs.Content>
         <Tabs.Content value="memory">
           <MemoryTab />
         </Tabs.Content>
         <Tabs.Content value="structure">
           {/* Keyed by scope: another namespace starts with no rows, draft or dialog of this one. */}
-          {showStructure ? (
-            <StructureTab key={`${identity.org}/${namespace}`} />
+          {!memoryNamespace ? (
+            <p>Structure is shown for a memory namespace.</p>
+          ) : structureReason ? (
+            <p className="m-0 text-sm text-text-muted">{structureReason}</p>
           ) : (
-            <p>Structure is shown for a memory namespace you can read.</p>
+            <StructureTab key={`${identity.org}/${namespace}`} />
           )}
         </Tabs.Content>
         <Tabs.Content value="models">
@@ -280,11 +196,16 @@ const PRIVACY_STARTERS: PrivacyFilterStarter[] = [
  *  admin, the namespace's webhooks. */
 function MemoryTab() {
   const [importing, setImporting] = useState(false);
-  // Hidden below namespace ADMIN: the section reads webhook.list on mount.
+  // Shown to every role; below namespace ADMIN it says so and reads no webhook.list.
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
-  const showWebhooks = canCall("webhook.list", role, whoami);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const webhooksReason = callReason("webhook.list", roleRead, whoami, identity.namespace);
+  const importReason = callReason("memory.import_curated", roleRead, whoami, identity.namespace);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (importReason) setImporting(false);
+  }, [importReason]);
   return (
     <div className="max-w-3xl space-y-8">
       <section aria-labelledby="settings-never-save">
@@ -307,9 +228,11 @@ function MemoryTab() {
             <code className="code-inline text-xs">##</code> section.
           </p>
         </div>
-        <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
-          Import a document
-        </Button>
+        <Unavailable reason={importReason}>
+          <Button type="secondary" htmlType="button" iconLeft="upload" onClick={() => setImporting(true)}>
+            Import a document
+          </Button>
+        </Unavailable>
         <Modal
           open={importing}
           onOpenChange={setImporting}
@@ -317,11 +240,11 @@ function MemoryTab() {
           description="Paste a Markdown document; each second-level section becomes one memory."
           className="max-w-[720px] w-full"
         >
-          <ImportCuratedPanel />
+          <ImportCuratedPanel unavailable={importReason} />
         </Modal>
       </section>
 
-      {showWebhooks && <WebhooksSection key={`${identity.org}/${identity.namespace}`} />}
+      <WebhooksSection key={`${identity.org}/${identity.namespace}`} unavailable={webhooksReason} />
     </div>
   );
 }
@@ -333,7 +256,9 @@ const VERDICT_STATES: Record<string, BadgeState> = {
   rejected_pinned: "danger",
 };
 
-function ImportCuratedPanel() {
+/** `unavailable`: why the caller cannot import. The tab closes this dialog when it appears;
+ *  the guard in run covers the render before it does. */
+function ImportCuratedPanel({ unavailable }: { unavailable: string | null }) {
   const identity = useIdentity();
   const [content, setContent] = useState("");
   const [sourceUri, setSourceUri] = useState("AGENTS.md");
@@ -341,6 +266,7 @@ function ImportCuratedPanel() {
   const [result, setResult] = useState<ImportCuratedResult | null>(null);
 
   const run = async () => {
+    if (unavailable) return;
     if (!content.trim()) {
       toast("Paste a doc body first", "info");
       return;
@@ -356,7 +282,7 @@ function ImportCuratedPanel() {
       const tone = r.rejected > 0 ? "error" : r.written > 0 ? "ok" : "info";
       toast(`Import: ${r.written} written · ${r.merged} merged · ${r.rejected} rejected · ${r.skipped} skipped`, tone);
     } catch (e) {
-      toast(`Import failed: ${humanizeError(e)}`, "error");
+      toastError("Import failed", e);
     } finally {
       setSubmitting(false);
     }

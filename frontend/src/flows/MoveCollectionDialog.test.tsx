@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as api from "../api";
 import type { CollectionEntry } from "../api";
+import { onCollectionsChanged } from "../lib/collectionPlaces";
 import { MoveCollectionDialog } from "./MoveCollectionDialog";
 
 vi.mock("../components/Toast", () => ({ toast: vi.fn(), toastError: vi.fn(), ToastViewport: () => null }));
@@ -18,22 +19,26 @@ const entry = (namespace: string, parent = ""): CollectionEntry => ({
   role: "admin",
 });
 
+let unsubscribe = () => {};
+
 afterEach(() => {
+  unsubscribe();
+  unsubscribe = () => {};
   cleanup();
   vi.clearAllMocks();
 });
 
 describe("MoveCollectionDialog", () => {
-  it("moves a collection to the top level", async () => {
-    const onMoved = vi.fn();
+  it("moves a collection to the top level, and tells the Library's lists the collections changed", async () => {
     const onClose = vi.fn();
+    const changed = vi.fn();
+    unsubscribe = onCollectionsChanged(changed);
     render(
       <MoveCollectionDialog
         org="acme"
         collection={entry("q3", "finance")}
         parents={[entry("finance"), entry("q3", "finance")]}
         all={[entry("finance"), entry("q3", "finance")]}
-        onMoved={onMoved}
         onClose={onClose}
       />,
     );
@@ -52,8 +57,8 @@ describe("MoveCollectionDialog", () => {
     ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() => expect(api.moveCollection).toHaveBeenCalledWith("acme", "q3", ""));
-    expect(onMoved).toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+    expect(changed).toHaveBeenCalled();
   });
 
   it("offers no collection inside its own subtree, and says who loses access", async () => {
@@ -70,7 +75,6 @@ describe("MoveCollectionDialog", () => {
           entry("q3-eu", "q3"),
           entry("hr"),
         ]}
-        onMoved={() => {}}
         onClose={() => {}}
       />,
     );
@@ -88,7 +92,6 @@ describe("MoveCollectionDialog", () => {
         collection={entry("q3", "corp")}
         parents={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
         all={[entry("corp"), entry("finance", "corp"), entry("q3", "corp")]}
-        onMoved={() => {}}
         onClose={() => {}}
       />,
     );

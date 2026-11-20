@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import Any
+from unittest.mock import AsyncMock
 
 import jwt as pyjwt
 import pytest
@@ -146,7 +147,7 @@ def test_the_admin_api_registers_and_lists_the_flag(registry, monkeypatch) -> No
 def test_loom_bot_create_takes_the_flag(registry, monkeypatch, capsys) -> None:
     from server.cli import bots as bots_cli
 
-    monkeypatch.setattr(bots_cli, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(bots_cli, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     rc = cli.main(
         [
             "bot",
@@ -181,13 +182,16 @@ def minting(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
 
     monkeypatch.setenv("LOOM_JWT_SECRET", _SECRET)
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
-    # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
-    monkeypatch.setattr(access, "run_connected", lambda run: None)
+    from server.auth import keyring
+
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
+    monkeypatch.setattr(keyring, "load_for_connected_mint", AsyncMock())
+    monkeypatch.setattr("server.cli._ch.check_acceptance", AsyncMock())
     # These mint tests run after every replica has the human-admin guards.
-    monkeypatch.setattr(access, "_platform_admin_rollout_ready", lambda: True)
+    monkeypatch.setattr(access, "_platform_admin_rollout_ready", AsyncMock(return_value=True))
     recorded: list[dict[str, Any]] = []
 
-    def audited(args: Any, summary: dict[str, Any]) -> bool:
+    async def audited(args: Any, summary: dict[str, Any]) -> bool:
         recorded.append({"subject": args.subject, "jti": summary["jti"]})
         return True
 
@@ -236,7 +240,7 @@ def test_a_platform_admin_mint_the_audit_log_misses_is_not_handed_out(
 ) -> None:
     from server.cli import access
 
-    monkeypatch.setattr(access, "_audit_platform_admin_mint", lambda args, summary: False)
+    monkeypatch.setattr(access, "_audit_platform_admin_mint", AsyncMock(return_value=False))
     assert cli.main([*_MINT, "--subject", "sa:cp", "--ttl-days", "7"]) == 1
     out, err = capsys.readouterr()
     assert out == "" and "no token" in err
@@ -255,9 +259,9 @@ def test_the_mint_is_recorded_as_its_own_audit_event(monkeypatch) -> None:
         return "row-hash"
 
     monkeypatch.setattr(audit, "emit", emit)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(None)))
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
     args = SimpleNamespace(subject="sa:cp", org="acme", ttl_days=7)
-    assert access._audit_platform_admin_mint(args, {"jti": "j1", "namespaces": ["*"]})
+    assert asyncio.run(access._audit_platform_admin_mint(args, {"jti": "j1", "namespaces": ["*"]}))
     [(event, kw)] = rows
     assert event == "auth.platform_admin_minted" and kw["org"] == "acme"
     assert kw["subject"] == {"subject": "sa:cp", "jti": "j1", "namespaces": ["*"], "ttl_days": 7}
@@ -266,7 +270,9 @@ def test_the_mint_is_recorded_as_its_own_audit_event(monkeypatch) -> None:
         return ""  # audit.emit's answer when its insert failed
 
     monkeypatch.setattr(audit, "emit", lost)
-    assert not access._audit_platform_admin_mint(args, {"jti": "j2", "namespaces": ["*"]})
+    assert not asyncio.run(
+        access._audit_platform_admin_mint(args, {"jti": "j2", "namespaces": ["*"]})
+    )
 
 
 _CP_BODY = {

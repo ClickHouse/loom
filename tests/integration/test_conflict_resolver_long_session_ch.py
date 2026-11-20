@@ -142,8 +142,63 @@ class _OnlyOrg:
         self.ch, self.org = ch, org
 
     async def query_all(self, sql: str, params: Any = None) -> Any:
-        sql = sql.replace("WHERE ", "WHERE org = {only_org:String} AND ", 1)
+        sql = sql.replace("WHERE ", "WHERE org = {only_org:String} AND ")
         return await self.ch.query_all(sql, params={**(params or {}), "only_org": self.org})
+
+
+@pytest.mark.parametrize("leg", ["owed", "unjudged"])
+async def test_org_queue_scope_precedes_the_candidate_limit(ch, leg: str) -> None:
+    from server.core.vectors.codes_state import stored_width
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.store.inserts import insert_embedding_rows
+    from server.memory.store.rows import build_embedding_row
+
+    orgs = [unique_org("queue-scope") for _ in range(2)]
+    ranked = await ch.query_all(
+        "SELECT org FROM (SELECT arrayJoin({orgs:Array(String)}) AS org)"
+        " ORDER BY cityHash64(org, {ns:String}, toUInt64(0)), org",
+        params={"orgs": orgs, "ns": NS},
+    )
+    foreign, own = [str(row["org"]) for row in ranked]
+    fetch = queue.owed_rows if leg == "owed" else queue.unjudged_conflicted_rows
+
+    dim = stored_width("memory_embeddings", "embedding") or 1
+    created_at = naive_utc_now().replace(microsecond=0)
+
+    def vector(org: str) -> dict[str, Any]:
+        return build_embedding_row(
+            org=org,
+            namespace=NS,
+            agent=AGENT,
+            user_id=USER,
+            session_id="s1",
+            memory_key="pending",
+            memory_type="semantic",
+            scope="private",
+            embedding_model="queue-scope",
+            embedding_dim=dim,
+            embedding=[1.0] + [0.0] * (dim - 1),
+            created_at=created_at - timedelta(seconds=1 if org == foreign else 0),
+            status="active" if leg == "owed" else "conflicted",
+            conflict_checked_at=queue.OWED_MARK if leg == "owed" else None,
+        )
+
+    try:
+        await insert_embedding_rows([vector(foreign)], ch=ch)
+        assert await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, own)) == []
+        await insert_embedding_rows([vector(own)], ch=ch)
+        rows = await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, own))
+        assert [(row["org"], row["memory_key"]) for row in rows] == [(own, "pending")]
+        rows = await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, foreign))
+        assert [(row["org"], row["memory_key"]) for row in rows] == [(foreign, "pending")]
+        assert await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, unique_org("queue-empty"))) == []
+    finally:
+        # Orphan vectors must not consume a later reconcile pass's bounded batch.
+        await ch.execute(
+            "DELETE FROM loom.memory_embeddings WHERE org IN {orgs:Array(String)}"
+            " AND namespace = {ns:String} AND memory_key = 'pending'",
+            params={"orgs": orgs, "ns": NS},
+        )
 
 
 @pytest.fixture

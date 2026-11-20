@@ -39,6 +39,9 @@ def test_registry_row_carries_classification_forward() -> None:
         inp, {"classification": "restricted", "conversation_logging_enabled": False}, now
     )
     assert kept["classification"] == "restricted"
+    assert fresh["title"] == ""
+    titled = {"title": "Q3 Plans", "conversation_logging_enabled": False}
+    assert registry_row(inp, titled, now)["title"] == "Q3 Plans"
     assert fresh["join_policy"] == "inherit"
     assert (
         registry_row(inp, {"join_policy": "closed", "conversation_logging_enabled": False}, now)[
@@ -84,7 +87,7 @@ def test_every_literal_namespaces_insert_is_a_known_writer() -> None:
         "server/code/app/repo_admin.py",  # SELECT * new version: set_access
         "server/identity/app/conversation_logging.py",  # SELECT * new version: set_logging
         "server/identity/app/claim_release.py",  # SELECT * new version: release
-        "server/identity/app/collections.py",  # registry_row
+        "server/identity/app/collections.py",  # registry_row + full-row copy (title)
     }
     found = set()
     for path in (ROOT / "server").rglob("*.py"):

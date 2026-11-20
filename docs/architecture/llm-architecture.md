@@ -121,7 +121,10 @@ A cosine of 0.4 means different things to different embedders. The search gates
 With `LOOM_ADAPTIVE_THRESHOLDS` on (the default), `calibrate_embedder` in
 `server/memory/app/embedder_calibration.py` derives them at boot. It embeds three built-in
 corpora (paraphrase pairs, question-to-fact pairs, distractor pairs) and reads their
-cosine distributions (`derive_thresholds`):
+cosine distributions (`derive_thresholds`). Memory paraphrases use document/document
+vectors; question/fact and distractor pairs use query/document vectors. `code.calibrate`
+explicitly uses query/document vectors for its authored query/code positives in both
+positive distributions, including the persisted conflict and duplicate gates:
 
 | Threshold     | Derived as                                 |
 | ------------- | ------------------------------------------ |
@@ -173,7 +176,7 @@ low.
 `resolve_llm_provider` in `server/core/llm_provider.py` picks the provider:
 
 1. An explicit `LOOM_LLM_PROVIDER` is never overridden.
-2. Else from `LOOM_LLM_MODEL`: `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
+2. Else from `LOOM_LLM_MODEL`: `bedrock:*` is `bedrock`; `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
    `chatgpt*` are `openai`; `fake*` is `fake`.
 3. Else from the key present: `OPENAI_API_KEY` gives `openai` with `gpt-6-luna`, then
    `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-4-5`.
@@ -184,15 +187,86 @@ low.
 an inferred provider. `loom doctor`'s `llm_provider` line warns when the key is missing.
 The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
 
-| Provider    | Module                    | Key                 |
-| ----------- | ------------------------- | ------------------- |
-| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`    |
-| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY` |
-| `fake`      | `server/llm/fake.py`      | none                |
+| Provider    | Module                    | Key                                                  |
+| ----------- | ------------------------- | ---------------------------------------------------- |
+| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`                                     |
+| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY`                                  |
+| `bedrock`   | `server/llm/bedrock.py`   | deployment AWS role or SDK credential chain          |
+| `local`     | `server/llm/local.py`     | none: the OpenAI client at `LOOM_LOCAL_LLM_BASE_URL` |
+| `fake`      | `server/llm/fake.py`      | none                                                 |
 
 Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and the other
 `*_model` settings) build their own client with `get_llm_client_for_model`, inferring
-the provider from the name.
+the provider from the name; the deployment's own `LOOM_LLM_MODEL` named again runs on
+the resolved provider (`Settings.provider_of`), so a local model with a hosted-looking
+name stays local.
+
+### Native Bedrock
+
+The server's `aws` extra supplies the AWS SDK; the server image includes it.
+Activate native Bedrock only after all server and worker processes support this
+provider; a process without the adapter cannot serve its configuration.
+Bedrock uses the deployment's AWS credential chain, including role and web-identity
+credential refresh. AWS access keys are not stored in the model-setup form or Loom's
+saved provider credentials. The region comes from `LOOM_BEDROCK_REGION`, or from the
+SDK's region configuration when that setting is empty.
+
+Set `LOOM_LLM_PROVIDER=bedrock` and set `LOOM_LLM_MODEL` to a model or inference-profile
+ID your role can invoke. There is no implicit Bedrock model. A stage override can
+select native inference with `bedrock:<model-or-inference-profile-id>`, including
+`LOOM_CODE_ASK_LLM_MODEL`; the local `bedrock:` routing prefix is stripped before the
+request. The role needs `bedrock:InvokeModel` for the selected resources.
+
+For text embeddings, select `LOOM_EMBEDDING_PROVIDER=bedrock` and set
+`LOOM_EMBEDDING_MODEL` to a Cohere Embed v4 model or inference-profile ID available
+in the selected region. For a US inference profile, use `us.cohere.embed-v4:0`.
+Some regions require an inference profile rather than the direct model ID;
+`aws bedrock list-inference-profiles --region <region> --type-equals SYSTEM_DEFINED`
+lists the available profiles. The role must allow invocation of the chosen profile
+and its destination models. Cohere Embed v4 supports dimensions 256, 512,
+1024 and 1536; the native default is 1536 when `LOOM_EMBEDDING_DIM` is unset. Single-text
+`embed()` requests use `search_query`; document batches use `search_document`, with at
+most 96 texts per request. Each serialized UTF-8 JSON body is capped at 20,000,000
+bytes, including escaping and metadata. An oversized item is refused before any model
+request from its batch set. Requests refuse silent truncation. Calibration compares
+write-time paraphrases as document/document pairs and retrieval probes as
+query/document pairs, matching the vectors those operations use.
+
+Changing embedding providers requires rebuilding existing vectors; model labels and
+dimensions do not make vectors from different providers interchangeable. Re-index
+code and run `code.calibrate` after the target index is ready. Thresholds remain
+embedder-specific; a threshold measured for one model is not a deployment-wide default.
+
+The Models & keys form can select Bedrock for either role and validates it using the
+server's AWS credentials. Validation makes billable requests only after Test & apply.
+A missing or expired credential is an error, never a fake-provider fallback.
+Documented sampling restrictions omit temperature before the first request,
+including regional model IDs and inference-profile ARNs that name a known model.
+For other models, an explicitly rejected temperature parameter is omitted on one
+bounded retry and later requests. Other validation errors and authorization
+failures propagate unchanged. The elapsed deadline also covers this negotiation.
+`bedrock:messages` and `bedrock:embeddings` feed the existing provider health report;
+a successful later call clears a recorded failure.
+
+The SDK resolves credentials and signs each request; Loom's async HTTP client sends
+model content, so cancelling a request closes its HTTP response. Signed requests do not
+follow redirects, and SDK endpoint overrides cannot redirect model content. The elapsed
+deadline covers credential resolution, signing, retries, backoff and body consumption.
+Credential work may finish after cancellation but cannot send model content. Native
+Bedrock is refused when an inference gateway is required, including saved main, stage
+and verification model routes. In that deployment, use the gateway's configured provider
+endpoint.
+
+LLM usage comes from the Converse response. Embedding usage is recorded only when the
+provider reports it; an unavailable count is not estimated spend. A model missing from
+the pricing table remains unpriced, not evidence of free inference.
+Generation spans mark `loom.llm.cost_unknown`; embedding spans mark
+`loom.embed.cost_unknown` and, when needed, `loom.embed.usage_unknown` instead of
+publishing missing values as zero. Native request metadata records `cloud.region`
+and `aws.bedrock.request.model_id`, including inference-profile IDs as requested.
+
+The wire contracts follow [Converse](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_Converse.html)
+and [Cohere Embed v4](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-embed-v4.html).
 
 ### Protocol
 
@@ -210,10 +284,17 @@ client passes it through. The Anthropic client has no JSON mode: it appends a JS
 directive to the system prompt, strips code fences and marks the system block cacheable.
 The caller parses (`server/llm/json_text.py`).
 
-**Request shape per model, learned.** No model name decides what a request carries.
-Each client builds the request it would like (temperature, the lowest reasoning effort,
-an output cap), and `server/llm/traits.py` learns from the provider's answers, once per
-model per process:
+**Request shape per model.** `server/llm/traits.py` seeds documented sampling
+restrictions for Claude Opus 4.7, 4.8, 5 and 5.5, Sonnet 5 and 5.5, and Haiku 5.5.
+The OpenAI-compatible, Anthropic and Bedrock clients omit temperature for these
+models before the first request, including after a process restart. Loom also uses
+provider-default sampling for `gpt-6-luna`, including through a gateway. Other
+models keep the caller's requested temperature. An opaque gateway alias or application
+inference-profile ARN does not identify its backing model and receives no inferred
+restriction.
+
+Each client builds the rest of its request (the lowest reasoning effort and an
+output cap), and provider responses teach other traits once per model per process:
 
 - a 400 naming a field the model does not take (`temperature`, `reasoning_effort`, an
   `output_config`, the cap field under its other name) drops that field: the call is
@@ -226,8 +307,9 @@ model per process:
   `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX`), added to every caller's cap. A reply that hit
   the cap with no visible text is re-sent once with the ceiling as its reserve.
 
-A new model therefore needs no code change; its first call or two teach the process
-what it takes. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
+An unrecognized model learns traits from its responses. Documented sampling
+restrictions and provider-default sampling avoid an initial temperature request; learned traits supplement
+them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
 
 ### Retries, timeouts, fallback
 

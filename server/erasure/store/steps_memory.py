@@ -42,7 +42,7 @@ from server.erasure.store.scope_reads import (
     user_summary_rows,
 )
 from server.knowledge.domain.ingest_states import OPEN_STATES
-from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
 from server.memory.domain.code_link_keys import IDENTITY, LINK_KEY
 from server.settings import settings
 
@@ -165,22 +165,25 @@ async def scrub_events_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Replace user_id with '<erased>' on loom.agent_events, and the
+    """Replace user_id with '<erased>' on both physical event streams, and the
     `memory_key` column and the identifier entries of `args` that named the
     subject's rows; on an end user's own calls, the `subject` that
     names them (`user:<user_id>`) too. Preserves aggregate cost rollups;
     removes the identity and what it pointed at."""
     where = "org = {org:String} AND (user_id = {uid:String} OR subject = {p:String})"
-    return await count_then_mutate(
-        "loom.agent_events",
-        count_where=where,
-        mutation=EVENTS_SCRUB_MUTATION
-        + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
-        mutation_where=where,
-        params={"org": org, "uid": user_id, "p": "user:" + user_id},
-        final=False,
-        ch=ch,
-    )
+    total = 0
+    for table in ("loom.agent_events", "loom.agent_events_private"):
+        total += await count_then_mutate(
+            table,
+            count_where=where,
+            mutation=EVENTS_SCRUB_MUTATION
+            + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
+            mutation_where=where,
+            params={"org": org, "uid": user_id, "p": "user:" + user_id},
+            final=False,
+            ch=ch,
+        )
+    return total
 
 
 async def delete_last_seen_by_user(
@@ -299,6 +302,19 @@ async def tombstone_embeddings_by_namespace(
 ) -> int:
     return await tombstone_scoped(
         "loom.memory_embeddings", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
+    )
+
+
+async def tombstone_shared_by_namespace(
+    org: str,
+    namespace: str | Sequence[str],
+    *,
+    ch: _CHClient | None = None,
+) -> int:
+    """Every promoted row of the namespace; its `scope = 'shared'` search rows go in
+    `memory_embeddings.tombstone`."""
+    return await tombstone_scoped(
+        "loom.shared", org=org, scope_where=NS_EQ, params={"ns": namespace}, ch=ch
     )
 
 
@@ -1087,24 +1103,29 @@ async def _others_owed_originals(
     org: str, user_id: str, pairs: list[tuple[str, str]]
 ) -> set[tuple[str, str]]:
     """Under the Postgres authority, which of `pairs` (namespace, sha) the originals and
-    extraction artifacts of other writers' unpublished commits in the org are: one batch's
-    worth at most, however many deliveries are owed or parked."""
+    extraction artifacts of other writers' unpublished commits in the org are, or the
+    originals their open ingestion jobs read: one batch's worth at most, however many
+    deliveries or jobs are open."""
     from server.core import pg
 
-    # No delivery holds an org, or a namespace, Postgres cannot store.
+    # No delivery or job holds an org, or a namespace, Postgres cannot store.
     pairs = [p for p in pairs if not pg.unstorable(list(p))]
     if not pg.enabled() or pg.unstorable([org]) or not pairs:
         return set()
-    sql = (
-        f"SELECT DISTINCT namespace, sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
-        f"WHERE org = $1 AND {NEEDS_ORIGINAL} AND (namespace, sha) IN "
-        "(SELECT * FROM unnest($2::text[], $3::text[]))"
+    in_pairs = "(namespace, sha) IN (SELECT * FROM unnest($2::text[], $3::text[]))"
+    args: list[Any] = [org, [p[0] for p in pairs], [p[1] for p in pairs]]
+    others = ""
+    if not pg.unstorable([user_id]):  # else no row is this user's: every one is another's
+        others = " AND user_id <> $4"
+        args.append(user_id)
+    rows = await pg.fetch(
+        f"SELECT namespace, sha FROM loom.knowledge_deliveries, {OWED_SHAS} AS sha "
+        f"WHERE org = $1 AND {NEEDS_ORIGINAL} AND {in_pairs}{others} "
+        "UNION SELECT namespace, sha FROM (SELECT namespace, row->>'sha256' AS sha "
+        f"FROM loom.knowledge_jobs WHERE org = $1 AND {OPEN_JOB}{others}) AS j "
+        f"WHERE {in_pairs}",
+        *args,
     )
-    namespaces, shas = [p[0] for p in pairs], [p[1] for p in pairs]
-    if pg.unstorable([user_id]):  # no delivery is this user's: every one is another's
-        rows = await pg.fetch(sql, org, namespaces, shas)
-    else:
-        rows = await pg.fetch(sql + " AND user_id <> $4", org, namespaces, shas, user_id)
     return {(str(r["namespace"]), str(r["sha"])) for r in rows}
 
 

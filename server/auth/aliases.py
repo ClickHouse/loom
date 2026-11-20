@@ -180,6 +180,23 @@ async def canonical_subject(org: str, subject: str, *, ch: object | None = None)
     return subject
 
 
+async def login_handle(org: str, subject: str, *, ch: object | None = None) -> str | None:
+    """The login handle (`owner_email`) of the one account a verified email ties
+    `subject` to, else `subject`; None when two accounts do. Lower-cased, so one person's
+    tokens count once whatever their case. Read uncached; a failed read raises."""
+    if "@" not in subject:
+        return subject.lower()
+    from server.core.ch import own_write_reads
+
+    # A tie just made must count: one person read as two askers weakens the threshold.
+    with own_write_reads():
+        rows = await _rows(org, subject, ch)
+    handles = {str(r["owner_email"]).lower() for r in rows if r.get("owner_email")}
+    if len(handles) > 1:
+        return None
+    return next(iter(handles), subject.lower())
+
+
 async def verified_spellings(org: str, subject: str, *, ch: object | None = None) -> list[str]:
     """`read_aliases` read past a link or release another process just made: the
     subject alone when it has no aliases. Raises when the directory cannot be read."""
@@ -205,6 +222,7 @@ __all__ = [
     "canonical_subject",
     "invalidate",
     "invalidate_org",
+    "login_handle",
     "read_aliases",
     "spellings",
     "subject_aliases",

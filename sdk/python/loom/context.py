@@ -4,8 +4,8 @@
 memory stack, profile, relevant durable memories, matching procedures,
 and optional knowledge / conversation snippets — assembled server-side
 into one token-budgeted block. The MCP surface exposes it in the `core`
-toolset (`loom_context_pack`) and tells agents to call it at session
-start; this client is the same op for Python callers.
+and `coding` toolsets (`loom_context_pack`) and tells agents to call it
+first in each task; this client is the same op for Python callers.
 
 Use it when you want Loom to decide the context mix. When you want
 granular control (e.g. profile cached once per conversation, memories

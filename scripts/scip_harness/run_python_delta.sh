@@ -69,6 +69,8 @@ async def m():
     from server.code.store.index import CodeRepo
     from server.code.app.index.producer_inference import worker_owns
     from server.code.domain.index.repos import configured_repos
+    from server.code.app.index.repo_registry import read_registry_or_exit
+    await read_registry_or_exit("run_python_delta")
     repo = CodeRepo()
     org = os.environ.get("ORG_ARG") or settings.code_org
     ns = os.environ.get("NS_ARG") or settings.code_namespace

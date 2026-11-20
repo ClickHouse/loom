@@ -1,3 +1,5 @@
-"""Adapters that present loom's memory plane through other agent SDKs'
-memory interfaces. Each module imports its framework lazily, so installing
-loom never pulls the framework in."""
+"""Adapters that present loom's memory and documents through agent frameworks'
+own interfaces. An adapter needs its framework, installed with the SDK extra
+the module names (``pip install 'clickhouse-loom[langchain]'`` and so on);
+the LangGraph and Strands adapters import without theirs, through structural
+twins of its types."""

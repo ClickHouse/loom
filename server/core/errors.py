@@ -43,6 +43,23 @@ class ValidationError(LoomServerError):
     status_code = 422
 
 
+class VectorInputTooLargeError(ValidationError):
+    """422 — an entity filter exceeds 64 raw names, or its canonical aliases or
+    summary seeds exceed 256 distinct names. Narrow the query or filter; entity
+    names are never truncated."""
+
+    code = "VECTOR_INPUT_TOO_LARGE"
+    status_code = 422
+
+
+class BadConfigError(ValidationError):
+    """422 — a document source's config or items it cannot use, or a change it cannot
+    make; the message, Loom's own, names what to fix."""
+
+    code = "BAD_CONFIG"
+    status_code = 422
+
+
 class AuthInsufficientError(LoomServerError, PermissionError):
     """A public 403 that remains catchable as ``PermissionError`` internally.
 
@@ -52,6 +69,16 @@ class AuthInsufficientError(LoomServerError, PermissionError):
 
     code = "AUTH_INSUFFICIENT"
     status_code = 403
+
+
+class SessionProtectionRequiredError(LoomServerError):
+    """409 — session-content operations need the client's protection promise."""
+
+    code = "SESSION_PROTECTION_REQUIRED"
+    status_code = 409
+
+    def __init__(self) -> None:
+        super().__init__("This operation requires a client that protects session content")
 
 
 class IdentityIncompleteError(LoomServerError):
@@ -71,9 +98,11 @@ class NotFoundError(LoomServerError):
 
 
 class PreconditionFailedError(LoomServerError):
-    """409 — `if_match_sha256` mismatch, or an erasure that landed while a
-    `namespace.restore` ran. A mismatch returns the live hash so the caller can retry
-    without a separate read."""
+    """409 — `if_match_sha256` mismatch, an `approved_sha256` that no longer matches
+    the definition's text, or an erasure that landed while a `namespace.restore` ran. A
+    mismatch returns the live hash so the caller can retry without a separate read; for
+    `approved_sha256`, show the current text again and approve that, never resend the
+    returned hash unseen."""
 
     code = "PRECONDITION_FAILED"
     status_code = 409
@@ -82,11 +111,109 @@ class PreconditionFailedError(LoomServerError):
         super().__init__(message, current_sha256=current_sha256)
 
 
+class CollectionNameTakenError(LoomServerError):
+    """409 — no name could be had: the one asked for is used or was a deleted
+    collection's (`deleted`), or every name a title derives is taken; `suggestion` is
+    a free name when one was found, else ''."""
+
+    code = "COLLECTION_NAME_TAKEN"
+    status_code = 409
+
+    def __init__(self, message: str = "", *, deleted: bool = False, suggestion: str = "") -> None:
+        super().__init__(message, deleted=deleted, suggestion=suggestion)
+
+
+class DefinitionPromotionRefusedError(LoomServerError):
+    """422 — a definition is promoted only from its live namespace-wide row under a
+    `definition/` key, to that same key, and a row of another type is never promoted under
+    a `definition/` key."""
+
+    code = "DEFINITION_PROMOTION_REFUSED"
+    status_code = 422
+
+
+class SensitiveDefinitionRefusedError(LoomServerError):
+    """422 — a definition labelled `medium`, or whose value reads as `medium` or `high`, is
+    not promoted: the shared layer serves it to every reader of the namespace."""
+
+    code = "SENSITIVE_DEFINITION_REFUSED"
+    status_code = 422
+
+
+class DefinitionCeilingError(LoomServerError):
+    """409 — the promotion would leave the namespace past `memory_shared_definitions_max`
+    shared definitions: at the ceiling, demote one to add a new key; past it, demote
+    until at most that many remain."""
+
+    code = "DEFINITION_CEILING"
+    status_code = 409
+
+
+class DefinitionNameTakenError(LoomServerError):
+    """409 — another shared definition holds this term or an alias; `conflicting_keys`
+    names those definitions and `names` the folded names they hold."""
+
+    code = "DEFINITION_NAME_TAKEN"
+    status_code = 409
+
+    def __init__(self, message: str = "", *, conflicting_keys: list[str], names: list[str]) -> None:
+        super().__init__(message, conflicting_keys=conflicting_keys, names=names)
+
+
+class TenancyRefusedError(LoomServerError):
+    """503 — this cell's Postgres refused a row for an org the cell holds no tenancy row for
+    (its org triggers), or a tenancy row (its `loom.tenancy` guard;
+    docs/architecture/cells.md): the session that wrote it is not marked as one that ran the
+    tenancy check. Nothing was written. A served request meets it only when this process's
+    sessions lost the marker (a pooler or proxy that drops the startup parameter: point
+    LOOM_PG_DSN straight at Postgres; `loom doctor` names it), a fault of the server, not of
+    the call: not retried, since only an operator clears it. A writer that predates the
+    check, or a script, meets the SQLSTATE itself; a current Loom with LOOM_CELL unset meets
+    this error."""
+
+    code = "TENANCY_REFUSED"
+    status_code = 503
+
+
+class WrongCellError(LoomServerError):
+    """409 — the org a verified call acts in is placed in another cell of this
+    deployment, or in none and the caller may not place it (docs/architecture/cells.md).
+    Nothing was written; the client calls the org's own cell. `detail.org` names the org
+    and `detail.cell` its cell when the router named one ('' otherwise): the SDKs carry
+    both on `WrongCell`, and `GET /cells/lookup` gives that cell's host."""
+
+    code = "WRONG_CELL"
+    status_code = 409
+
+    def __init__(self, org: str, *, cell: str = "") -> None:
+        if cell:
+            message = (
+                f"org {org!r} is not held by this cell: it is placed in cell {cell!r}. "
+                "Call that cell."
+            )
+        else:
+            message = (
+                f"org {org!r} is not held by this cell. An org reaches a cell through a "
+                "request with a token of that org."
+            )
+        super().__init__(message, org=org, cell=cell)
+
+
 class SourceReplacedError(LoomServerError):
     """409 — the document source was removed and added again as another source
-    during the call (a rotate's probe, a sync request); act on the current one."""
+    during the call (an update's or a rotate's probe, a sync request); act on the
+    current one."""
 
     code = "SOURCE_REPLACED"
+    status_code = 409
+
+
+class ErasureRunningError(LoomServerError):
+    """409 — an erasure that will still run covers the namespace: a document source added
+    or updated now would outlast it, since its first step may already have read the
+    namespace's sources. Retry once the erasure finishes (`erasure.status`)."""
+
+    code = "ERASURE_RUNNING"
     status_code = 409
 
 
@@ -127,17 +254,20 @@ class GrantBusyError(LoomServerError):
 
 
 class OverloadedError(LoomServerError):
-    """503 — too busy, retry: the ClickHouse pool or its streams, the document
-    bucket's transfers or streams, an override's lock, a namespace's document-source
-    lease, the blacklist's regex matchers, or a conversation delete or compaction stayed
-    contended. The pool: every pooled connection was busy past `ch_pool_wait_ms`; the
-    lock or lease: a sibling held it past its wait; the matchers: the org's share of them
-    stayed busy, and the write is refused rather than stored unchecked; a conversation
-    delete or compaction: writes to the thread's embeddings kept landing; insights.query
-    while its replica's probe has no answer from ClickHouse, or while ClickHouse is short
-    of memory. Safe to resend
-    on an idempotent op, or when it came before the handler ran; `retry_after_s` is the
-    wait."""
+    """503 — too busy, retry: the ClickHouse pool or its streams, ClickHouse's shared
+    memory, the document bucket's transfers or streams, an override's lock, a
+    namespace's document-source lease or definition-promotion claim, the blacklist's
+    regex matchers, or a conversation delete or compaction stayed contended. The pool:
+    every pooled connection was busy past `ch_pool_wait_ms`; ClickHouse's memory: a
+    statement found the server's or the ClickHouse user's memory, which every query
+    shares, used up; the lock or lease: a sibling held it past its wait; the matchers:
+    the org's share of them stayed busy, and the write is refused rather than stored
+    unchecked; a conversation delete or compaction: writes to the thread's embeddings
+    kept landing; insights.query while its replica's probe has no answer from
+    ClickHouse; a document source a build without items cannot read, while such a build
+    may still serve; a source another write changed during an update's or a rotate's
+    probe. Safe to resend on an idempotent op, or when it came before the handler ran;
+    `retry_after_s` is the wait."""
 
     code = "OVERLOADED"
     status_code = 503
@@ -209,8 +339,12 @@ class ModelCallDeferred(ModelCallRefused):
 
 
 class BackendUnavailableError(LoomServerError):
-    """503 — ClickHouse could not be reached after the bounded reconnect, or
-    the document bucket failed a read, write or delete.
+    """503 — ClickHouse, the document bucket, or a cell's tenancy read or placement
+    failed; the router's lookup and operator API send the code when their directory
+    fails. `retry_after_s` is the wait: 1 s, unless the router named one (at most 60 s).
+
+    The router sends the code without raising this class; on an operator change it means
+    the change may have been made.
 
     The public message deliberately excludes the driver URL and credentials;
     operators get the concrete connection error from health and server logs.
@@ -220,13 +354,18 @@ class BackendUnavailableError(LoomServerError):
     status_code = 503
 
     def __init__(
-        self, message: str = "", *, operation: str = "", outcome_unknown: bool = False
+        self,
+        message: str = "",
+        *,
+        operation: str = "",
+        outcome_unknown: bool = False,
+        retry_after_s: int = 1,
     ) -> None:
         super().__init__(
             message,
             operation=operation,
             outcome_unknown=outcome_unknown,
-            retry_after_s=1,
+            retry_after_s=retry_after_s,
         )
 
 
@@ -378,11 +517,19 @@ class AssistantUnavailableError(LoomServerError):
     """The assistant cannot answer in this web process: no LibreChat is configured
     (`LOOM_ASSISTANT_LIBRECHAT_URL`), auth is off (an answer is delegated from its
     caller's token), or this process's setup has not succeeded yet (at boot, or again
-    after LibreChat refused the stored key), which `/v1/health` names
-    (`assistant_service_failing`)."""
+    after LibreChat refused the stored key). `detail.reason` says which; `/v1/health`
+    (`assistant_service_failing`) names a setup try that failed."""
 
     code = "ASSISTANT_UNAVAILABLE"
     status_code = 503
+
+
+class AssistantSelfCallError(LoomServerError):
+    """An assistant answer's own token, or a token delegated from one, asked the
+    assistant: the assistant never calls itself (docs/architecture/assistant.md)."""
+
+    code = "ASSISTANT_SELF_CALL"
+    status_code = 403
 
 
 class AssistantUpstreamError(LoomServerError):
@@ -410,6 +557,7 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     # statement waits for a pool slot), so there it is not retryable (`handler_failure_detail`).
     "OVERLOADED": ("capacity", True),
     "GRANT_BUSY": ("capacity", True),
+    "ERASURE_RUNNING": ("capacity", True),
     "IDEMPOTENT_IN_PROGRESS": ("capacity", True),
     "MODEL_CALL_DEFERRED": ("capacity", True),
     "MODEL_CHANGE_IN_PROGRESS": ("capacity", True),
@@ -420,7 +568,9 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     # Committed already, and its message says not to make the write again.
     "PUBLICATION_PENDING": ("dependency", False),
     # Only an operator's fix ends these; resending changes nothing.
+    "SESSION_PROTECTION_REQUIRED": ("configuration", False),
     "SCHEMA_PENDING": ("configuration", False),
+    "TENANCY_REFUSED": ("configuration", False),
     "OVERRIDE_NOT_STORED": ("configuration", False),
     "CODED_WIDTH_MISMATCH": ("configuration", False),
     "ANALYSIS_UNAVAILABLE": ("configuration", False),
@@ -430,10 +580,23 @@ CLASS_BY_CODE: dict[str, tuple[ErrorCategory, bool]] = {
     "INTEGRATION_NOT_CONFIGURED": ("configuration", False),
     "MODEL_CALLS_DISABLED": ("configuration", False),
     "NO_SIGNING_KEY": ("configuration", False),
+    # The router's lookup before any cell is registered: a settled answer, not an outage.
+    "NO_CELL": ("configuration", False),
+    # The router's operator API with no LOOM_ROUTER_OPERATOR_SHA256: nothing was done.
+    "NO_OPERATOR_CREDENTIAL": ("configuration", False),
+    # The router's operator API names a cell the directory does not hold: a settled answer.
+    "NO_SUCH_CELL": ("input", False),
+    # The router's placement of a new org name past cell.ORG_MAX_BYTES: no resend places it.
+    "ORG_TOO_LONG": ("input", False),
+    # A registration's probe: the listener is past its rate, unreachable, or unable to
+    # read a store; or the first cell's upstream (its main port) cannot be reached yet.
+    "PROBE_BUSY": ("capacity", True),
+    "PROBE_UNREACHABLE": ("dependency", True),
     # Listed, not left to the status: the MCP screen's refusals carry none.
     "RATE_LIMITED": ("capacity", True),
     "AUTH_INVALID": ("auth", False),
     "AUTH_INSUFFICIENT": ("auth", False),
+    "ASSISTANT_SELF_CALL": ("auth", False),
     "POLICY_FORBIDDEN": ("auth", False),
     "NAMESPACE_NOT_ACCESSIBLE": ("auth", False),
     "ORG_MISMATCH": ("auth", False),
@@ -523,12 +686,14 @@ def register_exception_handler(app: FastAPI) -> None:
     from fastapi.responses import JSONResponse, Response
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
+    from server.core.request_work import flag_response, mirror_marked
+
     @app.exception_handler(LoomServerError)
     async def _handle_loom_error(_: Request, exc: LoomServerError) -> JSONResponse:
         detail = classified(exc.to_detail(), exc.status_code)
         return JSONResponse(
             status_code=exc.status_code,
-            content={"detail": detail},
+            content=flag_response({"detail": detail}),
             headers=_with_help_link(exc.headers(), detail),
         )
 
@@ -538,6 +703,12 @@ def register_exception_handler(app: FastAPI) -> None:
         detail = exc.detail
         if isinstance(detail, dict) and detail.get("code"):
             detail = classified(detail, exc.status_code)
+        if mirror_marked() and exc.status_code not in (204, 304):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=flag_response({"detail": detail}),
+                headers=headers,
+            )
         # Never write onto exc: a module-level HTTPException is raised on every request.
         answer = StarletteHTTPException(exc.status_code, detail=detail, headers=headers)
         return await http_exception_handler(request, answer)
@@ -547,4 +718,4 @@ def register_exception_handler(app: FastAPI) -> None:
         # FastAPI's own 422, except that a non-finite input (`1e400`) is echoed as a
         # string: JSON has no inf, and the response would fail as a 500.
         errors = loads_keeping_non_finite(json.dumps(jsonable_encoder(exc.errors())))
-        return JSONResponse(status_code=422, content={"detail": errors})
+        return JSONResponse(status_code=422, content=flag_response({"detail": errors}))

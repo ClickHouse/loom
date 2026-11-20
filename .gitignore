@@ -20,6 +20,10 @@ secrets.json
 # ============================================================
 frontend/node_modules/
 /node_modules/
+docs/node_modules/
+docs/.blume/
+docs/.blume-content/
+docs/.vercel/
 frontend/dist/
 frontend/.vite/
 frontend/*.log
@@ -33,6 +37,8 @@ frontend/e2e-screenshots/
 # Python
 # ============================================================
 .venv/
+.venv-sdk-adapters/
+.venv-i18n/
 venv/
 __pycache__/
 *.pyc
@@ -198,3 +204,6 @@ skills-lock.json
 
 # scripts/release/prepare.py's notes, pasted into the release pull request.
 /release-notes.md
+
+# The documentation site build (mkdocs build)
+/site/

@@ -2,7 +2,9 @@
 
 Each request flow:
     1. Extract + verify bearer JWT if present (required when auth_required=True)
-    2. Parse + validate body (Pydantic via op.input_model)
+    2. Parse body; on a single-user server, for a call with no token, fill the
+       install's identity (`gates.with_single_user_identity`); validate it
+       (Pydantic via op.input_model)
     3. Authz: role + namespace ACL check (if auth present + payload has identity)
     4. Run handler
     5. Emit one row to loom.agent_events (success or failure)
@@ -22,7 +24,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, HTTPException, Request, Response
 from pydantic import ValidationError
 
-from server.auth.authz import ActedForRevoked
+from server.auth.authz import ActedForRefused
 from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.fail_closed import answered_unverified
 from server.auth.jwt import AuthInfo
@@ -43,7 +45,13 @@ from server.observability.consumer import (
     explicit_consumer,
     set_current_consumer,
 )
-from server.observability.ledger import current_trace_id, emit_agent_event, set_hint_context
+from server.observability.ledger import (
+    current_trace_id,
+    emit_agent_event,
+    required_call_exit,
+    run_id_of,
+    set_hint_context,
+)
 from server.observability.traffic_class import (
     bind_claimed_class,
     current_traffic_class,
@@ -124,7 +132,7 @@ def build_router(components: dict[str, Any] | None = None) -> APIRouter:
     return router
 
 
-def _extract_auth(request: Request) -> AuthInfo | None:
+async def _extract_auth(request: Request) -> AuthInfo | None:
     """Pull a bearer token from the Authorization header and verify it.
 
     Returns None if no token is present (allowed only when auth_required=False).
@@ -132,7 +140,7 @@ def _extract_auth(request: Request) -> AuthInfo | None:
     tokens when auth_required=True.
     """
     # Counts its own refusals; an end-user token is served here.
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if settings.auth_actually_required():
             raise missing_bearer()
@@ -206,9 +214,10 @@ def _stamp_timing(response: Response, elapsed_ms: int) -> None:
 
 @dataclass(slots=True)
 class _HttpCall:
-    """What one request's phases hand each other: its id, the parsed body,
-    the verified token (None when anonymous) and the tenant triple read from
-    the body (authorization fills in the code/tracker plane's defaults)."""
+    """What one request's phases hand each other: its id, the body as admitted
+    (parsed, plus the single-user fill and the `@me` mapping), the verified
+    token (None when anonymous) and the tenant triple read from the body
+    (authorization fills in the code/tracker plane's defaults)."""
 
     request_id: str
     raw_body: dict[str, Any] = field(default_factory=dict)
@@ -414,10 +423,10 @@ async def _authorize(
         # namespace or org it is for.
         raise _refuse(op, call, 400, error_code="IDENTITY_INCOMPLETE", e=e) from e
     except PermissionError as e:
-        # A code/tracker index says why, as MCP's refusal does; a revoked subject a
-        # trusted caller acts for is not an index's refusal.
+        # A code/tracker index says why, as MCP's refusal does; a subject a trusted
+        # caller may not act for is not an index's refusal.
         ns = target.namespace
-        indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRevoked)
+        indexed = ar.is_plane_op(op.name) and not isinstance(e, ActedForRefused)
         unverified = bool(getattr(e, "unverified", False))
         why: dict[str, object] = (
             ar.reason_fields(ns, unverified=unverified)
@@ -513,7 +522,9 @@ async def _bind_context_and_policy(
     return payload
 
 
-def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) -> None:
+def _record_failure(
+    op: Operation, identity: dict[str, str], elapsed_ms: int, error_code: str
+) -> None:
     # Failures must reach the same counter as successes — as mcp.py
     # already does — or `loom.requests{success="false"}` is permanently
     # empty for HTTP and every error-rate panel reads clean while the
@@ -527,6 +538,7 @@ def _record_failure(op: Operation, identity: dict[str, str], elapsed_ms: int) ->
             namespace=identity["namespace"],
             success=False,
             duration_ms=elapsed_ms,
+            error_code=error_code,
         )
     except Exception:  # noqa: BLE001 — telemetry never changes a response
         pass
@@ -604,7 +616,8 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             # request is not a mute row.
             error=_http_exception_note(he),
         )
-        _record_failure(op, identity, elapsed_ms)
+        code = he.detail.get("code") if isinstance(he.detail, dict) else None
+        _record_failure(op, identity, elapsed_ms, str(code or "HANDLER_HTTP_ERROR"))
         detail = handler_failure_detail(he.detail, he.status_code, op.idempotent)
         raise HTTPException(he.status_code, detail=detail, headers=he.headers) from he
     except LoomServerError as le:
@@ -620,7 +633,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             # HANDLER_HTTP_ERROR rows say what failed.
             error=le,
         )
-        _record_failure(op, identity, elapsed_ms)
+        _record_failure(op, identity, elapsed_ms, le.code)
         detail = handler_failure_detail(le.to_detail(), le.status_code, op.idempotent)
         raise HTTPException(status_code=le.status_code, detail=detail, headers=le.headers()) from le
     except Exception as e:
@@ -643,7 +656,7 @@ async def _run_handler(op: Operation, payload: Any, call: _HttpCall) -> tuple[An
             error_code="INTERNAL_ERROR",
             error=e,
         )
-        _record_failure(op, identity, elapsed_ms)
+        _record_failure(op, identity, elapsed_ms, "INTERNAL_ERROR")
         raise HTTPException(
             status_code=500,
             detail={
@@ -741,7 +754,7 @@ async def _finish_success(
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
     async def endpoint(request: Request, response: Response) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
-        # error: token, body, validation, authorization, policy, rate limit,
+        # error: token, session protection, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs
         # when it refuses; a replay is served only to an admitted caller.
         call = _HttpCall(request_id=_begin_request(op, request, response))
@@ -752,14 +765,16 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # code-trace row (the body and validation refusals write both),
         # learns no field errors, and never touches a tenant's rate-limit
         # bucket by naming its namespace.
-        call.auth = auth = _extract_auth(request)
+        call.auth = auth = await _extract_auth(request)
         # Bound before the body is read, as MCP binds it before validation:
         # a refusal's ledger row reads the token's org and pins from it.
         from server.auth.context import set_current_auth
 
         set_current_auth(auth)
         bind_claimed_class(auth)
-        call.raw_body = raw_body = await _read_body(op, request, request_id, auth)
+        await gates.session_content(op, auth)
+        body = await _read_body(op, request, request_id, auth)
+        call.raw_body = raw_body = await gates.with_single_user_identity(op, body, auth)
 
         payload = _validate_payload(
             op, request_id, gates.with_resolved_org(op, raw_body, auth), auth
@@ -774,7 +789,7 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # The shared admission sequence (server/transport/gates.py):
         # authorization target, authorization, read scope, policy, then the limiter.
         call.target = target = await _authorize(op, response, call, payload)
-        payload = gates.with_target(payload, target)
+        payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
@@ -782,11 +797,19 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
             return replay.hit.body
         await _start_telemetry(op, response, call)
 
-        result, elapsed_ms = await _run_handler(op, payload, call)
-        _success_headers(response, elapsed_ms, op, raw_body, result)
-        return await _finish_success(
-            op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
-        )
+        with required_call_exit(
+            op_name=op.name,
+            identity=ledger_identity(raw_body),
+            request_id=request_id,
+            run_id=run_id_of(raw_body),
+            impersonated_by=(auth.impersonated_by or "") if auth is not None else "",
+            **sli_columns(op.name, "http"),
+        ):
+            result, elapsed_ms = await _run_handler(op, payload, call)
+            _success_headers(response, elapsed_ms, op, raw_body, result)
+            return await _finish_success(
+                op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
+            )
 
     return endpoint
 

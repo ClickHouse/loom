@@ -11,8 +11,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, dry_run_orgs, reads, run_connected, writes
 from server.core.error_summary import error_summary
+from server.erasure.domain.failure_reason import REPLAY_PENDING_REASON
 
 
 def _bucket_client_installed() -> bool:
@@ -94,7 +95,7 @@ def _cmd_drops(args: argparse.Namespace) -> int:
         print(_format_drops(rows, namespace=args.namespace, hours=int(args.hours)))
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free=reads("reads"))
 
 
 # ----------------------------------------------------------------------
@@ -245,7 +246,8 @@ def _cmd_namespaces_gc(args: argparse.Namespace) -> int:
             return await _gc_worker_pass(ch, args, explicit=explicit)
         return await _gc_run(ch, args, prefixes=prefixes, explicit=explicit)
 
-    return run_connected(_run)
+    # Without --erase it lists only: a read records no org.
+    return run_connected(_run, orgs=(args.org,) if args.erase else ())
 
 
 async def _gc_worker_pass(ch: Any, args: argparse.Namespace, *, explicit: tuple[str, ...]) -> int:
@@ -303,13 +305,14 @@ def _cmd_namespaces_adopt(args: argparse.Namespace) -> int:
     async def _run(ch: Any) -> int:
         return await _adopt_run(ch, args)
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     import server.operations  # noqa: F401 — wires handlers before importing one
+    from server.auth.authz import identity_write
     from server.identity.api.models import NamespaceRegisterInput
     from server.identity.app.namespace import registry_row
     from server.identity.app.namespace_autoregister import (
@@ -368,7 +371,8 @@ async def _adopt_run(ch: Any, args: argparse.Namespace) -> int:
     for row in batch:
         row["updated_at"] = AUTO_ROW_VERSION  # an explicit row always wins
     for i in range(0, len(batch), 500):
-        await ch.insert("loom.namespaces", batch[i : i + 500])
+        with identity_write():
+            await ch.insert("loom.namespaces", batch[i : i + 500])
     print(f"adopted {len(batch)} namespace(s); retention_days=0 on every row, no TTL altered")
     return 0
 
@@ -493,7 +497,8 @@ def _cmd_erasure_re_verify(args: argparse.Namespace) -> int:
         # One connection for the whole command (see `_cmd_namespaces_gc`).
         return await _re_verify_run(ch, args)
 
-    return run_connected(_run)
+    # --erase files purges for rows already in this cell, which stay erasable.
+    return run_connected(_run, org_free=_re_verify_org_free(args))
 
 
 def _utc_instant(text: str) -> datetime:
@@ -509,21 +514,22 @@ def _utc_instant(text: str) -> datetime:
 
 def _re_verify_scope(row: Mapping[str, Any]) -> tuple[str, str | list[str], bool, bool]:
     """(census scope_type, census scope_value, purge, external) of a ledger row."""
-    from server.erasure.api.erasure import parse_external_flag, parse_purge_flag
-    from server.erasure.domain.scopes import parse_namespace_list
+    from server.erasure.domain.scopes import (
+        applied_purge,
+        parse_external_flag,
+        parse_namespace_list,
+    )
 
     scope_type = str(row["scope_type"])
     scope_value = str(row["scope_value"])
+    purge = applied_purge(scope_type, scope_value, bool(row.get("purge")))
     if scope_type == "namespace_list":
         return (
             "namespace",
             parse_namespace_list(scope_value),
-            parse_purge_flag(scope_value),
+            purge,
             parse_external_flag(scope_value),
         )
-    # A user saga keeps `purge` in its ledger column (a GDPR deletion); a single
-    # namespace's saga never purges.
-    purge = scope_type == "user_id" and bool(row.get("purge"))
     return ("user_id" if scope_type == "user_id" else "namespace", scope_value, purge, True)
 
 
@@ -563,6 +569,7 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     been written after it finished. Only the row links an older build's erasure
     did not know, and whose memory has no live row and no row written since the
     census, are counted (and with `resume`, deleted). 1 while any are left, else 0."""
+    from server.erasure.app.saga_steps import erased_scope
     from server.erasure.store import steps_graph
 
     org = str(row["org"])
@@ -570,26 +577,30 @@ async def _re_verify_completed(ch: Any, row: Mapping[str, Any], *, resume: bool)
     # Memories written since the census are not the saga's, even soft-deleted.
     cut = row["verified_at"]
     print(f"  {row['id']} {org}/{row['scope_type']} completed")
-    orphans = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
-    print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
-    if not found:
-        return 0
-    if not resume:
-        return 1
-    deleted = await steps_graph.delete_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
-    left = await steps_graph.count_orphan_row_links(
-        org, scope_type, scope_value, verified_at=cut, ch=ch
-    )
+    # With the scope's mirrors, as the saga erased them; the orphan-link count and delete
+    # do not depend on the purge mode.
+    async with erased_scope(org, scope_type, scope_value, ch=ch) as scope:
+        orphans = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
+        found = {t.split(".", 1)[-1]: n for t, n in orphans.items() if n}
+        print(f"    orphan row links: {sum(found.values())} {json.dumps(found, sort_keys=True)}")
+        if not found:
+            return 0
+        if not resume:
+            return 1
+        deleted = await steps_graph.delete_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
+        left = await steps_graph.count_orphan_row_links(
+            org, scope_type, scope, verified_at=cut, ch=ch
+        )
     print(f"    deleted {deleted}; left {sum(left.values())}")
     return 1 if any(left.values()) else 0
 
 
 async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
+    from server.erasure.app.saga_steps import census_spellings, erased_scope
     from server.erasure.store import census as erasure_census
     from server.erasure.store import health as erasure_health
     from server.erasure.store import ledger as erasure_ledger
@@ -621,17 +632,32 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
         if completed:
             rc = max(rc, await _re_verify_completed(ch, row, resume=bool(args.resume)))
             continue
+        if row.get("failure_reason") == REPLAY_PENDING_REASON:
+            # A `loom reconcile` replay that did not finish: a census of its scope counts
+            # the user's writes made after the erasure, and a resume would delete them.
+            print(f"  {row['id']} {row['org']}/{row['scope_type']}: {REPLAY_PENDING_REASON}")
+            rc = 1
+            continue
         scope_type, scope_value, purge, _external = _re_verify_scope(row)
-        names = scope_value if isinstance(scope_value, list) else [scope_value]
+        try:
+            spellings = await census_spellings(str(row["org"]), scope_type, scope_value)
+        except Exception as e:  # noqa: BLE001 — one saga's unread directory must not end the run
+            where = f"{row['id']} {row['org']}/{row['scope_type']}"
+            print(f"  {where}: directory unreadable ({error_summary(e)})")
+            rc = 1
+            continue
         with erasure_mutations.purge_scope(purge):
-            census, unread = await erasure_census.evidence_census(
-                str(row["org"]), scope_type, scope_value, ch=ch
-            )
+            async with erased_scope(str(row["org"]), scope_type, scope_value, ch=ch) as scope:
+                census, unread = await erasure_census.evidence_census(
+                    str(row["org"]), scope_type, scope, ch=ch, spellings=spellings
+                )
+                scope_purge = erasure_mutations.purge_mode()
+                scope_names = len(erasure_mutations.namespaces_of(scope))
         residue = {t.removeprefix("loom."): n for t, n in census.items() if n}
         done = list(row.get("steps_completed") or [])
         print(
             f"  {row['id']} {row['org']}/{row['scope_type']} attempts={row['attempts']} "
-            f"steps_done={len(done)} scope={len(names)} name(s) purge={purge}"
+            f"steps_done={len(done)} scope={scope_names} name(s) purge={scope_purge}"
         )
         print(f"    last: {str(row.get('failure_reason') or '')[:160]}")
         print(f"    residue now: {sum(residue.values())} {json.dumps(residue, sort_keys=True)}")
@@ -663,6 +689,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
                     actor=row["actor"],
                     requested_at=row["requested_at"],
                     attempts=int(row["attempts"]) + 1,
+                    mirror_marked=bool(row.get("mirror_marked")),
                 ),
                 erasure_id=str(row["id"]),
                 requested_at=row["requested_at"],
@@ -880,3 +907,10 @@ def _add_namespaces_adopt_parser(sub: Any) -> None:
     add_apply_flags(p_adopt, writes="write the rows")
     p_adopt.add_argument("--show", type=int, default=30, help="Namespaces to print (default 30)")
     p_adopt.set_defaults(func=_cmd_namespaces_adopt)
+
+
+def _re_verify_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.resume or args.erase:
+        return writes("re-verifies and files erasures of this cell's rows")
+    return reads("re-verifies erasures of this cell's rows")

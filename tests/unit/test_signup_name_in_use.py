@@ -301,12 +301,42 @@ def test_every_table_the_lookup_reads_is_ordered_by_org_and_namespace() -> None:
         "loom.qa_sources": "org, name",
         "loom.erasure_requests": "id",
         "loom.sso_links": "email, org, namespace",
+        "loom.sql_access": "user_name, org, namespace",  # one row per SQL user's grant
     }
     for table in [*namespace_tables(), *namespace_census.STATE_TABLES]:
         body = schema.split(f"CREATE TABLE IF NOT EXISTS {table}\n", 1)[1].split(";", 1)[0]
         key = re.search(r"ORDER BY \(?([^)\n]*)", body)
         assert key is not None, table
         assert key.group(1).startswith(lead_of.get(table, "org, namespace")), (table, key)
+
+
+def _directory_in_use(ch: clickhouse_local.LocalCH, **kw: Any) -> bool:
+    from server.identity.app.directory import IdentityDirectory
+
+    return asyncio.run(IdentityDirectory().in_use("dev", "team", ch=ch, **kw))  # type: ignore[arg-type]
+
+
+@needs_clickhouse
+@pytest.mark.parametrize("table", sorted(namespace_census.REQUEST_TRACES))
+def test_a_row_a_request_wrote_about_itself_counts_unless_the_caller_skips_them(
+    table: str,
+) -> None:
+    """A lookup that ran over its latency budget writes a `loom.events` row under the name
+    it asked about, registered or not; the other four tables are written the same way."""
+    traced = _local_ch(f"INSERT INTO {table} (org, namespace) VALUES ('dev', 'team')")
+    assert _directory_in_use(traced)
+    assert not _directory_in_use(traced, skip_request_traces=True)
+
+
+@needs_clickhouse
+def test_data_a_grant_and_a_run_count_beside_a_request_trace() -> None:
+    reading = (
+        "INSERT INTO loom.events (kind, org, namespace) VALUES ('budget_violation', 'dev', 'team')"
+    )
+    # A run's ledger row holds its request and response, which the namespace serves back.
+    run = "INSERT INTO loom.agent_runs (org, namespace, goal) VALUES ('dev', 'team', 'g')"
+    for held in (_MEMORY, _grant("kim", 1), run):
+        assert _directory_in_use(_local_ch(reading, held), skip_request_traces=True), held
 
 
 @needs_clickhouse
@@ -375,6 +405,17 @@ def test_a_live_webhook_marks_the_name_in_use_and_a_deleted_one_does_not() -> No
     assert _in_use(_local_ch(hook.format(deleted=0, version=1)))
     deleted = hook.format(deleted=1, version=2)
     assert not _in_use(_local_ch(hook.format(deleted=0, version=1), deleted))
+
+
+@needs_clickhouse
+def test_a_sql_surface_grant_marks_the_name_in_use_and_a_revoked_one_does_not() -> None:
+    """A SQL user granted the name would read the next owner's rows through the views."""
+    grant = (
+        "INSERT INTO loom.sql_access (user_name, org, namespace, granted, updated_at) VALUES"
+        " ('acme_bi', 'dev', 'team', {granted}, toDateTime64({at}, 3))"
+    )
+    assert _in_use(_local_ch(grant.format(granted=1, at=1)))
+    assert not _in_use(_local_ch(grant.format(granted=1, at=1), grant.format(granted=0, at=2)))
 
 
 @needs_clickhouse

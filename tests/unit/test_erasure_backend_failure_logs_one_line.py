@@ -151,3 +151,26 @@ async def test_an_erasure_for_another_deployment_registers_no_saga(monkeypatch) 
             ErasureRequestInput(org="o", scope_type="namespace", scope_value="ns", requester="t")
         )
     assert written == []
+
+
+async def _sources_busy(org, namespace, *, completed, row, verify=None):
+    from server.core.errors import OverloadedError
+
+    async def _boom() -> int:
+        raise OverloadedError("another change to the document sources of 'ns' is running; retry")
+
+    return [
+        await h._do_step(
+            step_name="knowledge_sources.retire", step_fn=_boom, completed=completed, row=row
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_busy_sources_lease_is_one_warning_line(monkeypatch, caplog) -> None:
+    caplog.set_level(logging.WARNING, logger=h.log.name)
+    out, _, _ = await _run(monkeypatch, saga=_sources_busy)
+    assert out.status == "failed"
+    ours = [r for r in caplog.records if "erasure e1 failed" in r.getMessage()]
+    assert len(ours) == 1 and ours[0].levelno == logging.WARNING and ours[0].exc_info is None
+    assert "knowledge_sources.retire" in ours[0].getMessage()

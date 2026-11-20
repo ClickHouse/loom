@@ -78,6 +78,8 @@ class Operation:
         idempotent: if true, safe to retry on transient failure.
         required_role: minimum role required to call this operation.
         audit: if true, success writes one row to audit_log.
+        session_content: a hook or client sends session text or derived figures
+            without an agent choosing the content, including dual-use operations.
         maturity: ``stable`` | ``experimental`` (MATURITIES).
             Declared per op; the reach census (scripts/codegen/op_reach_census.py,
             tests/unit/test_op_reach_census.py) fails an op that has no
@@ -92,18 +94,19 @@ class Operation:
     required_role: Role
     audit: bool = False
     # Skip the transport-level namespace-access check. Used by self-service
-    # ops where the caller is operating ON a namespace (join, leave,
-    # fresh register) rather than IN one — the handler enforces its own
-    # rules (membership, visibility, owner). Role check still runs.
+    # ops where the caller is operating ON a namespace (join, leave, fresh
+    # register) rather than IN one, and by ops whose target only the handler
+    # can resolve (memory.verify by id, erasure.request by scope, erasure.list
+    # by caller role); the handler enforces its own rules. Role check still runs.
     skip_namespace_authz: bool = False
     # The op reads facts about the DEPLOYMENT (its build, its op registry), not any
     # org's or namespace's data. A scoped token — whose authority is per-namespace and
     # which the transport would otherwise refuse with IDENTITY_INCOMPLETE for want of a
     # namespace — passes the role gate with its best per-namespace role.
     deployment_scoped: bool = False
-    # The op is addressed by an org-wide id (memory_id,
-    # erasure_id, pattern_id) and its handler authorizes the ROW's namespace
-    # (`row_in_scope`) once it has the row. A scoped token has
+    # The op is addressed only by an org-wide id (memory_id, erasure_id,
+    # pattern_id) and its handler authorizes the row's scope, before the read
+    # (`id_namespace.namespace_for_id`) or after it (`row_in_scope`). A scoped token has
     # no namespace to show the transport, so the gate only asks that it hold
     # the role somewhere in the org; the handler decides, and hides a foreign
     # row as not found.
@@ -112,6 +115,7 @@ class Operation:
     # is safe (a feedback row, a watch registration, a seen-marker). Only
     # such ops set it: a WRITER+ role or `audit=True` already says "writes".
     writes: bool = False
+    session_content: bool = False
     maturity: Maturity = "stable"
     # The MCP tool name when it is not derived from `name`: an op MCP serves
     # through a hand-written synthetic descriptor under a name clients already
@@ -122,6 +126,10 @@ class Operation:
     # hashed). `loom.audit_log` outlives erasures, so an op whose input carries a
     # credential leaves it out.
     audit_subject: Callable[[Any, Any], dict[str, Any]] | None = None
+    # The namespace an `audit=True` row is filed under, from the input and the
+    # response, when the op picks it (a collection created from its title); None
+    # files it under the namespace the gate authorized.
+    audit_namespace: Callable[[Any, Any], str] | None = None
 
     @property
     def read_only(self) -> bool:

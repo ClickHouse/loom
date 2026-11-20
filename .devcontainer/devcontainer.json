@@ -1,0 +1,31 @@
+{
+  // A try-out of Loom in GitHub Codespaces: the released stack, started by the
+  // released installer, with Claude Code connected to it. It is not a development
+  // environment: a checkout's own setup is docs/development. Codespaces forwards
+  // port 7777 privately, to the signed-in GitHub user; keep it that way.
+  "name": "Loom try-out",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  // The install lives outside the home directory, which a rebuild replaces, so a
+  // rebuilt container finds the same .env and Compose project.
+  "containerEnv": { "LOOM_INSTALL_DIR": "/workspaces/.loom" },
+  // ClickHouse, the server and the document extractor, with about 3 GB of images.
+  "hostRequirements": { "cpus": 4, "memory": "16gb", "storage": "32gb" },
+  "forwardPorts": [7777],
+  "portsAttributes": {
+    // notify: the port listens before Loom answers, so a tab opened at once would
+    // show an error. requireLocalPort: desktop VS Code forwards to the laptop's
+    // localhost:7777, where the plugin looks, or reports the clash.
+    "7777": {
+      "label": "Loom dashboard",
+      "onAutoForward": "notify",
+      "requireLocalPort": true
+    }
+  },
+  // A resumed codespace starts the stack again by itself: every service restarts
+  // unless stopped.
+  "postCreateCommand": "sh .devcontainer/start-loom.sh"
+}

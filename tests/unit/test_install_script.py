@@ -6,15 +6,23 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+import pty
+import re
+import select
 import shutil
+import signal
 import stat
 import subprocess
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from scripts.release import build_stack_bundle
 from tests.unit.install_versions import GUARD_CASES
+from tests.unit.tracked_files import tracked
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -34,6 +42,20 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
     docker = bin_dir / "docker"
     docker.write_text('#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\n')
     docker.chmod(0o755)
+    # Nothing listens anywhere: the port check's probe is refused (curl's exit 7).
+    curl = bin_dir / "curl"
+    curl.write_text("#!/bin/sh\nexit 7\n")
+    curl.chmod(0o755)
+    # Agent CLIs that do nothing, ahead of any the machine has: a test that runs
+    # the agent step never reaches a real one.
+    for name in ("claude", "codex", "code"):
+        cli = bin_dir / name
+        cli.write_text("#!/bin/sh\nexit 0\n")
+        cli.chmod(0o755)
+    # Node.js 20, whatever the machine has.
+    node = bin_dir / "node"
+    node.write_text("#!/bin/sh\necho 20\n")
+    node.chmod(0o755)
     return {
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "HOME": str(tmp_path),
@@ -41,6 +63,9 @@ def installer_env(tmp_path: Path) -> dict[str, str]:
         "LOOM_INSTALL_BUNDLE": str(archive),
         "LOOM_INSTALL_CHECKSUM": str(checksum),
         "LOOM_SKIP_START": "1",
+        # No agent on the machine running the tests is touched, nor a browser opened.
+        "LOOM_CONNECT": "none",
+        "LOOM_NO_OPEN": "1",
     }
 
 
@@ -271,19 +296,23 @@ def test_switching_an_install_to_an_outside_clickhouse(install) -> None:
     assert list(env).count("LOOM_CH_HOST") == 1
 
 
-def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
-    """Run the installer on a pseudo-terminal, type `answer` at the prompt and
-    wait for it to finish, all within a deadline."""
-    import pty
-    import select
-    import signal
-    import time
-
+def _on_terminal(
+    env: dict[str, str],
+    args: list[str],
+    prompt: bytes | None,
+    answer: bytes = b"",
+    *,
+    ready: Callable[[], bool] | None = None,
+    exit_code: int = 0,
+) -> bytes:
+    """Run the installer on a pseudo-terminal and wait for it to finish, within a
+    deadline, with `exit_code`. `answer` is typed at each `prompt`, or once when
+    `ready()` turns true. Returns what the terminal showed."""
     pid, fd = pty.fork()
     if pid == 0:
-        os.execvpe("sh", ["sh", str(ROOT / "install.sh"), "--clickhouse", url], env)
-    deadline = time.monotonic() + 30
-    seen, answered, status = b"", False, None
+        os.execvpe("sh", ["sh", str(ROOT / "install.sh"), *args], env)
+    deadline = time.monotonic() + 180  # a loaded machine runs the installer slowly
+    seen, answered, status = b"", 0, None
     try:
         while status is None and time.monotonic() < deadline:
             if select.select([fd], [], [], 0.2)[0]:
@@ -291,10 +320,14 @@ def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
                     seen += os.read(fd, 1024)
                 except OSError:  # the child closed the terminal
                     pass
-            if not answered and b"password for" in seen:
-                assert b"(Enter keeps the one saved in .env)" in seen, seen
+            due = (
+                seen.count(prompt) > answered
+                if prompt
+                else bool(ready and not answered and ready())
+            )
+            if due:
                 os.write(fd, answer)
-                answered = True
+                answered += 1
             done, code = os.waitpid(pid, os.WNOHANG)
             if done:
                 status = code
@@ -303,8 +336,68 @@ def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
             os.kill(pid, signal.SIGKILL)
             os.waitpid(pid, 0)
         os.close(fd)
-    assert answered, seen
-    assert status is not None and os.waitstatus_to_exitcode(status) == 0, seen
+    assert answered or (prompt is None and ready is None), seen
+    assert status is not None and os.waitstatus_to_exitcode(status) == exit_code, seen
+    return seen
+
+
+def test_ctrl_c_stops_the_agent_cli_and_cleans_up(
+    installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    """^C while a client CLI runs under `bounded`: the CLI is stopped, the run exits
+    130 and its temporary directory is removed."""
+    _start_stubs(installer_env)
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    pids = bin_dir / "claude.pid"
+    claude = bin_dir / "claude"
+    # Deaf to the terminal's ^C and hangup: only the installer's own kill stops it.
+    claude.write_text(f'#!/bin/sh\ntrap "" HUP INT\necho $$ > "{pids}"\nexec sleep 60\n')
+    claude.chmod(0o755)
+    tmp = tmp_path / "tmp"
+    tmp.mkdir()
+    env = {
+        **installer_env,
+        "LOOM_SKIP_START": "0",
+        "LOOM_CONNECT": "claude-code",
+        "TMPDIR": str(tmp),
+    }
+    _on_terminal(
+        env,
+        [],
+        None,
+        b"\x03",
+        ready=lambda: pids.exists() and bool(pids.read_text().strip()),
+        exit_code=130,
+    )
+    cli = int(pids.read_text())
+    gone = time.monotonic() + 10
+    while _running(cli) and time.monotonic() < gone:
+        time.sleep(0.05)
+    if _running(cli):
+        os.kill(cli, signal.SIGKILL)
+        raise AssertionError(f"claude ({cli}) still runs")
+    assert list(tmp.iterdir()) == []
+
+
+def _running(pid: int) -> bool:
+    """Alive and not a zombie an init that does not reap has kept."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        # Reaped between the two reads, or no /proc (macOS), where kill said alive.
+        return not Path("/proc").exists()
+    except OSError:  # exiting
+        return False
+    return state != "Z"
+
+
+def _answer_prompt(env: dict[str, str], url: str, answer: bytes) -> None:
+    seen = _on_terminal(env, ["--clickhouse", url], b"password for", answer)
+    assert b"(Enter keeps the one saved in .env)" in seen, seen
 
 
 def test_enter_at_a_rerun_prompt_keeps_the_saved_password(install, installer_env) -> None:
@@ -365,9 +458,14 @@ def test_the_health_check_polls_where_loom_is_published(
     run, target = install
     seen = Path(installer_env["HOME"]) / "curl.log"
     curl = Path(installer_env["PATH"].split(":")[0]) / "curl"
-    curl.write_text(f'#!/bin/sh\necho "$@" >> {seen}\necho \'{{"status":"ok"}}\'\n')
+    # The port probe before the pull is refused; the health poll answers ok.
+    curl.write_text(
+        f'#!/bin/sh\necho "$@" >> {seen}\ncase "$*" in *health*) ;; *) exit 7 ;; esac\n'
+        'echo \'{"status":"ok"}\'\n'
+    )
     curl.chmod(0o755)
-    # Every compose call (pull, up) succeeds; only the version is asked for its output.
+    # Every docker call succeeds and prints nothing, so no own server is found; only the
+    # version is asked for its output.
     docker = curl.with_name("docker")
     docker.write_text(
         '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1\nexit 0\n'
@@ -745,3 +843,1192 @@ def test_an_unreachable_docker_daemon_is_named_before_any_pull(
     assert "cannot reach the Docker daemon" in result.stderr
     assert Path(f"{docker}.log").read_text().splitlines() == ["info"]  # no pull
     assert not Path(installer_env["LOOM_INSTALL_DIR"]).exists()  # nor any file written
+
+
+# Fake curls: the working one serves a file from $SERVES when it holds one by that name,
+# else writes an installer creating ~/.loom, to its -o/-O file or to stdout. The failing
+# one does the same, then answers a 404 for install.sh: the file written anyway stands for a
+# copy an earlier attempt left, the text on stdout for what a piped download printed.
+_WORKING_CURL = """#!/bin/sh
+out=
+url=
+save=
+while [ $# -gt 0 ]; do
+  case $1 in -o) out=$2 ;; -*O) save=1 ;; http*|…*) url=$1 ;; esac
+  shift
+done
+[ -n "$save" ] && [ -z "$out" ] && out=${url##*/}
+if [ -n "$SERVES" ] && [ -f "$SERVES/${url##*/}" ]; then
+  cp "$SERVES/${url##*/}" "${out:-/dev/stdout}"
+  exit 0
+fi
+installer='mkdir -p "$HOME/.loom"; echo "$@" >"$HOME/.loom/args"; env | grep ^LOOM_ >"$HOME/.loom/env" || :'
+if [ -z "$out" ] || [ "$out" = - ]; then echo "$installer"; else echo "$installer" >"$out"; fi
+"""
+_FAILING_CURL = (
+    _WORKING_CURL
+    + """case $url in *install.sh) ;; *) exit 0 ;; esac
+echo 'curl: (22) The requested URL returned error: 404' >&2
+exit 22
+"""
+)
+_CODE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```|`([^`\n]+)`", re.MULTILINE | re.DOTALL)
+
+
+def _joined(text: str) -> str:
+    """`text` with each `\\` line continuation joined."""
+    return re.sub(r"\\\n\s*", " ", text)
+
+
+def _documented_installs() -> list[tuple[str, str]]:
+    """(page, example) for every code block or inline command a tracked page shows
+    that downloads `install.sh`, as a copy button pastes it: each `\\` continuation
+    joined and a `<placeholder>` filled."""
+    found = []
+    for name in tracked():
+        # i18n/ copies the English pages' code byte for byte (scripts/i18n/translate.py).
+        if not name.endswith(".md") or name.startswith("i18n/"):
+            continue
+        for block, span in _CODE.findall((ROOT / name).read_text(encoding="utf-8")):
+            lines = [
+                re.sub(r"<[^>]*>", "x", line.strip().replace("\\|", "|"))
+                for line in _joined(block or span).splitlines()
+            ]
+            if any("curl" in line and "install.sh" in line for line in lines):
+                found.append((name, "\n".join(lines)))
+    return found
+
+
+def _run_install(
+    script: str, tmp_path: Path, curl_script: str, serves: Path | None = None
+) -> subprocess.CompletedProcess[str]:
+    """`script` as a terminal runs pasted lines, each after the last whatever it
+    returned, in an empty home with `curl_script` as curl."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    curl = bin_dir / "curl"
+    curl.write_text(curl_script)
+    curl.chmod(0o755)
+    return subprocess.run(
+        ["sh", "-c", script],
+        cwd=tmp_path,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "HOME": str(tmp_path),
+            "SERVES": str(serves or ""),
+        },
+        capture_output=True,
+        text=True,
+    )
+
+
+# `[LOOM_VAR=value …] sh FILE [ARG …]` up to the next `&&`: the step that runs the installer.
+_RUN_STEP = re.compile(
+    r"&&\s*(?P<env>(?:LOOM_\w+=\S*\s+)*)sh\s+\S*loom-install\.sh(?P<args>(?:\s+(?!&&)\S+)*)"
+)
+_INSTALLS = _documented_installs()
+# The inspect path's downloads and checks, which the reader runs before installing.
+_INSPECT = "sha256sum -c"
+
+
+def _inspect_then_install() -> tuple[str, str, str]:
+    """The inspect path's checks followed by its install step, the next code block on the
+    same page, as a reader runs them once the checks look right."""
+    ((page, checks),) = [(p, e) for p, e in _INSTALLS if _INSPECT in e]
+    text = (ROOT / page).read_text(encoding="utf-8")
+    blocks = [m[1] for m in re.finditer(r"^```[^\n]*\n(.*?)^```", text, re.M | re.S)]
+    at = next(i for i, block in enumerate(blocks) if _INSPECT in block)
+    assert at + 1 < len(blocks), page
+    return page, checks, _joined(blocks[at + 1]).strip()
+
+
+def test_the_pages_show_install_commands() -> None:
+    pages = {page for page, _ in _INSTALLS}
+    assert {"README.md", "docs/getting-started/quickstart.md"} <= pages
+    assert any(_INSPECT in example for _, example in _INSTALLS)
+
+
+@pytest.mark.parametrize(("page", "example"), _INSTALLS)
+def test_a_documented_install_stops_on_a_failed_download(
+    page: str, example: str, tmp_path: Path
+) -> None:
+    """Piped into a shell, a download that fails runs what curl wrote and exits 0;
+    every install example a page shows exits with curl's error and runs nothing. The
+    inspect block installs nothing itself, so for it this checks only that `install.sh`
+    is not piped."""
+    result = _run_install(example, tmp_path, _FAILING_CURL)
+    if _INSPECT not in example:  # the inspect block's last line is a check of its own
+        assert result.returncode != 0, (page, example, result)
+    assert "404" in result.stderr, (page, example, result.stderr)
+    assert not (tmp_path / ".loom").exists(), (page, example)
+
+
+@pytest.mark.parametrize(
+    ("page", "example"), [case for case in _INSTALLS if _INSPECT not in case[1]]
+)
+def test_a_documented_install_runs_the_installer_and_cleans_up(
+    page: str, example: str, tmp_path: Path
+) -> None:
+    """With a download that works, every install example runs the installer and leaves
+    no saved copy behind."""
+    result = _run_install(example, tmp_path, _WORKING_CURL)
+    assert result.returncode == 0, (page, example, result)
+    assert (tmp_path / ".loom").exists(), (page, example)
+    assert list(tmp_path.rglob("loom-install.sh")) == [], (page, example)
+    # What the command gives the installer reaches it: the words after the saved file,
+    # and the LOOM_* assignments before `sh`.
+    run = _RUN_STEP.search(example.splitlines()[-1])
+    assert run, (page, example)
+    assert (tmp_path / ".loom" / "args").read_text().split() == run["args"].split(), example
+    passed = (tmp_path / ".loom" / "env").read_text().splitlines()
+    assert all(v in passed for v in run["env"].split()), (example, passed)
+
+
+def test_the_inspect_path_installs_from_the_checked_bundle(tmp_path: Path) -> None:
+    """With a real bundle and checksum served, the inspect checks pass, and the install
+    step runs the saved installer with that bundle and its checksum."""
+    archive, checksum = _build(tmp_path / "release")
+    serves = tmp_path / "serves"
+    serves.mkdir()
+    shutil.copy(archive, serves / "loom-stack.tar.gz")
+    shutil.copy(checksum, serves / "loom-stack.tar.gz.sha256")
+    home = tmp_path / "home"
+    home.mkdir()
+    page, checks, install = _inspect_then_install()
+    script = checks + "\n" + install
+    result = _run_install(script, home, _WORKING_CURL, serves)
+    assert result.returncode == 0, (page, script, result)
+    assert "loom-stack.tar.gz: OK" in result.stdout, (page, script, result)
+    passed = (home / ".loom" / "env").read_text().splitlines()
+    assert f"LOOM_INSTALL_BUNDLE={home}/loom-stack.tar.gz" in passed, passed
+    assert f"LOOM_INSTALL_CHECKSUM={home}/loom-stack.tar.gz.sha256" in passed, passed
+    assert not (home / "loom-install.sh").exists(), (page, install)
+
+
+def _start_stubs(
+    installer_env: dict[str, str],
+    *,
+    docker_body: str = "exit 0",
+    probe_exit: int = 7,
+    connect_time: str = "0.000000",
+    health: str = '{"status":"ok"}',
+    memory_status: int = 200,
+    set_saves: bool = True,
+    delete_status: int = 200,
+    set_status: int | None = None,
+    misses: int = 0,
+) -> tuple[Path, Path]:
+    """Stubs for a started install: a curl whose port probe prints `connect_time` and
+    exits `probe_exit`, whose /v1/health calls print `health`, and whose memory calls
+    answer `memory_status`: memory.get finds the memory once a
+    memory.set saved it (`set_saves`), the body to its -o file; a docker that runs
+    `docker_body`. Both log their arguments; returns (curl log, docker log)."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    curl_log, docker_log = bin_dir / "curl.log", bin_dir / "docker.log"
+    saved = bin_dir / "memory.saved"
+    saved.unlink(missing_ok=True)
+    # `misses` reads after the save answer not found, as a replica that lags would.
+    lag = bin_dir / "memory.lag"
+    lag.write_text("x" * misses)
+    on_set = f"touch {saved}; " if set_saves else ""
+    (bin_dir / "curl").write_text(
+        f'#!/bin/sh\necho "$*" >> {curl_log}\n'
+        'out=; prev=\nfor a in "$@"; do [ "$prev" = -o ] && out=$a; prev=$a; done\n'
+        f"case \"$*\" in *v1/health*) echo '{health}'; exit 0 ;;\n"
+        f"  *v1/memory.get*) if [ -f {saved} ] && [ ! -s {lag} ]; then "
+        f"echo '{{\"found\":true}}'; elif [ -f {saved} ]; then "
+        f'l=$(cat {lag}); printf %s "${{l#x}}" > {lag}; echo \'{{"found":false}}\'; '
+        f'else echo \'{{"found":false}}\'; fi > "$out"; printf {memory_status}; exit 0 ;;\n'
+        f"  *v1/memory.set*) {on_set}echo '{{}}' > \"$out\"; "
+        f"printf {set_status if set_status is not None else memory_status}; exit 0 ;;\n"
+        f"  *v1/memory.delete*) rm -f {saved}; echo '{{}}' > \"$out\"; printf {delete_status}; exit 0 ;;\n"
+        "esac\n"
+        f"printf %s {connect_time}\nexit {probe_exit}\n"
+    )
+    (bin_dir / "docker").write_text(
+        '#!/bin/sh\n[ "$1 $2 $3" = "compose version --short" ] && echo 2.29.1 && exit 0\n'
+        f'echo "$*" >> {docker_log}\n{docker_body}\n'
+    )
+    return curl_log, docker_log
+
+
+def _started(docker_log: Path) -> bool:
+    return any(" pull" in c or " up " in c for c in docker_log.read_text().splitlines())
+
+
+# This install's server runs and Docker publishes it on 7777.
+_OWN_SERVER = """case "$*" in
+  *" ps -q --status running --status restarting loom") echo 3f2a ;;
+  inspect*) echo " 7777" ;;
+esac
+exit 0"""
+
+
+def test_a_port_another_program_holds_stops_before_any_pull(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _, docker_log = _start_stubs(installer_env, probe_exit=0, connect_time="0.000210")
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="28977")
+    assert result.returncode == 1
+    assert "port 28977 on 127.0.0.1 is in use by another program:" in result.stderr
+    assert "again with LOOM_PORT=28978 in front of sh" in result.stderr
+    assert not _started(docker_log)
+
+
+def test_a_listener_that_never_answers_holds_the_port(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A timeout after the connection was made: something accepted it."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=28, connect_time="0.000412")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
+def test_any_exit_after_a_connect_is_a_listener(install, installer_env: dict[str, str]) -> None:
+    """An exit not named as a listener's (6 here) still is one when curl connected."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=6, connect_time="0.000150")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
+@pytest.mark.parametrize("connect_time", ["0.000000", "0.000"])
+def test_a_timeout_with_no_connect_time_names_both_causes(
+    install, installer_env: dict[str, str], connect_time: str
+) -> None:
+    """Zero as curl prints it now and as old releases print it, also for a fast
+    connect: a silent listener and an unreachable address are both named."""
+    run, _ = install
+    _, docker_log = _start_stubs(installer_env, probe_exit=28, connect_time=connect_time)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1 and not _started(docker_log)
+    assert "port 7777 on 127.0.0.1 does not answer:" in result.stderr
+    assert "a program may hold it" in result.stderr and "firewall" in result.stderr
+
+
+@pytest.mark.parametrize("code", [0, 1, 8, 18, 52, 55, 56])
+def test_a_listener_is_named_by_curls_exit_alone(
+    install, installer_env: dict[str, str], code: int
+) -> None:
+    """Old curls print a fast loopback connect as 0.000: the exit code still says a
+    listener answered."""
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=code, connect_time="0.000")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another program" in result.stderr
+
+
+@pytest.mark.parametrize(("port", "suggested"), [("7779", "7780"), ("65535", "7778")])
+def test_the_suggested_port_is_the_next_one(
+    install, installer_env: dict[str, str], port: str, suggested: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env, probe_exit=0, connect_time="0.000100")
+    result = run(LOOM_SKIP_START="0", LOOM_PORT=port)
+    assert f"LOOM_PORT={suggested} in front of sh" in result.stderr
+
+
+def test_a_probe_curl_cannot_make_is_not_called_in_use(
+    install, installer_env: dict[str, str]
+) -> None:
+    """Curl's 6 (the host does not resolve) says nothing about a listener."""
+    run, _ = install
+    _, docker_log = _start_stubs(installer_env, probe_exit=6)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1 and not _started(docker_log)
+    assert "could not check port 7777 on 127.0.0.1 (curl exit 6)" in result.stderr
+    assert "in use" not in result.stderr
+
+
+@pytest.mark.parametrize("status", ["ok", "degraded"])
+def test_a_port_another_loom_holds_is_named_as_loom(
+    install, installer_env: dict[str, str], status: str
+) -> None:
+    """Named from its health body, also the `degraded` one a Loom whose ClickHouse
+    is down answers with a 503, which curl without `-f` passes through."""
+    run, _ = install
+    health = f'{{"status":"{status}","schema_version":"1"}}'
+    _start_stubs(installer_env, probe_exit=0, connect_time="0.000120", health=health)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "port 7777 on 127.0.0.1 is in use by another Loom server" in result.stderr
+
+
+def test_a_rerun_over_its_own_running_server_skips_the_port_check(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    curl_log, docker_log = _start_stubs(
+        installer_env, docker_body=_OWN_SERVER, probe_exit=0, connect_time="0.000100"
+    )
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert not any(c.endswith(":7777/") for c in curl_log.read_text().splitlines())
+    assert any(" up -d" in c for c in docker_log.read_text().splitlines())
+
+
+def test_a_rerun_onto_another_port_probes_that_port(install, installer_env: dict[str, str]) -> None:
+    """Its own server publishes 7777, not the 7778 asked for: 7778 is probed."""
+    run, _ = install
+    _, docker_log = _start_stubs(
+        installer_env, docker_body=_OWN_SERVER, probe_exit=0, connect_time="0.000100"
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="7778")
+    assert result.returncode == 1
+    assert "port 7778 on 127.0.0.1 is in use" in result.stderr
+    assert "LOOM_PORT=7779" in result.stderr
+    assert not _started(docker_log)
+
+
+def test_a_rerun_onto_a_free_port_installs(install, installer_env: dict[str, str]) -> None:
+    """Its own server publishes 7777; 7778, asked for, is probed and free."""
+    run, _ = install
+    curl_log, docker_log = _start_stubs(installer_env, docker_body=_OWN_SERVER)
+    result = run(LOOM_SKIP_START="0", LOOM_PORT="7778")
+    assert result.returncode == 0, result.stderr
+    assert curl_log.read_text().splitlines()[0].endswith(" http://127.0.0.1:7778/")
+    assert any(" up -d" in c for c in docker_log.read_text().splitlines())
+
+
+def test_the_port_probe_goes_where_loom_is_published(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0", LOOM_PORT="28977", LOOM_BIND_HOST="::").returncode == 0
+    assert curl_log.read_text().splitlines()[0].endswith(" http://[::1]:28977/")
+
+
+@pytest.mark.parametrize(("probe_exit", "installs"), [(7, True), (0, False)])
+def test_every_call_to_the_local_server_bypasses_a_proxy(
+    install, installer_env: dict[str, str], probe_exit: int, installs: bool
+) -> None:
+    """A proxy in the shell would answer for 127.0.0.1 and make the port look held:
+    the probe, the health poll and the call that names a holder all go direct."""
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env, probe_exit=probe_exit, connect_time="0.000100")
+    result = run(LOOM_SKIP_START="0", http_proxy="http://proxy.invalid:3128")
+    assert (result.returncode == 0) == installs, result.stderr
+    calls = curl_log.read_text().splitlines()
+    assert any("v1/health" in c for c in calls), calls
+    assert all("--noproxy *" in c for c in calls), calls
+
+
+def test_a_failed_pull_names_dockers_proxy_settings(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    body = 'case "$*" in *" pull"*) exit 1 ;; esac\nexit 0'
+    _, docker_log = _start_stubs(installer_env, docker_body=body)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 1
+    assert "could not pull the Loom images" in result.stderr
+    assert "docs.docker.com/engine/daemon/proxy" in result.stderr
+    assert not any(" up " in c for c in docker_log.read_text().splitlines())
+
+
+def _agent_cli(installer_env: dict[str, str], name: str, plugins: str = "", code: int = 0) -> Path:
+    """A stub agent CLI that logs its arguments, prints `plugins` for `plugin list`
+    (escapes read by printf %b) and exits `code`; returns its log."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    log = bin_dir / f"{name}.log"
+    cli = bin_dir / name
+    cli.write_text(
+        f'#!/bin/sh\necho "$*" >> {log}\n'
+        f'case "$*" in "plugin list") printf \'%b\\n\' "{plugins}" ;; esac\nexit {code}\n'
+    )
+    cli.chmod(0o755)
+    log.write_text("")
+    return log
+
+
+def test_a_new_install_saves_reads_back_and_deletes_a_test_memory(
+    install, installer_env: dict[str, str]
+) -> None:
+    """Proof that writes and reads work, which leaves no memory behind: a kept one
+    would read as the user's first (the dashboard's first-run checklist)."""
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Saved, read back and deleted a test memory: writes and reads work." in result.stdout
+    assert not (target / ".memory-check-pending").exists()
+    calls = curl_log.read_text().splitlines()
+    ops = [op for c in calls for op in ("memory.get", "memory.set", "memory.delete") if op in c]
+    assert ops == ["memory.get", "memory.set", "memory.get", "memory.delete"]
+    sets = [c for c in calls if "memory.set" in c]
+    # Agent "-": the dashboard lists no connected agent for the check.
+    assert '"org":"dev","namespace":"local","agent":"-"' in sets[0]
+    assert '"memory_key":"loom/installer-check"' in sets[0]
+    assert all("--noproxy *" in c for c in calls)
+
+
+def test_a_failed_run_checks_on_the_next_one(install, installer_env: dict[str, str]) -> None:
+    """The marker a new .env comes with stays until the check passes."""
+    run, target = install
+    assert run().returncode == 0  # files only, as a run that stopped early
+    assert (target / ".memory-check-pending").exists()
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert any("memory.set" in c for c in curl_log.read_text().splitlines())
+
+
+def test_a_rerun_writes_no_memory_again(install, installer_env: dict[str, str]) -> None:
+    """The marker is gone once the check passed: a rerun saves no test memory again."""
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    curl_log.write_text("")
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "test memory" not in result.stdout
+    assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
+
+
+def test_an_upgrade_from_before_writes_no_memory(install, installer_env: dict[str, str]) -> None:
+    """An install whose .env came before this release has data of its own."""
+    run, target = install
+    assert run().returncode == 0  # files only
+    (target / ".memory-check-pending").unlink()
+    curl_log, _ = _start_stubs(installer_env)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert not any("memory.set" in c for c in curl_log.read_text().splitlines())
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_sign_in_on_connects_no_agent(install, installer_env: dict[str, str], status: int) -> None:
+    run, _ = install
+    _start_stubs(installer_env, memory_status=status)
+    claude = _agent_cli(installer_env, "claude")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert "Sign-in is on" in result.stdout
+    assert claude.read_text() == ""
+
+
+def test_loom_connect_installs_the_claude_code_plugin(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT="28977")
+    assert result.returncode == 0, result.stderr
+    calls = claude.read_text().splitlines()
+    assert "plugin marketplace add ClickHouse/loom" in calls
+    assert "plugin install loom@loom --config server_url=http://localhost:28977" in calls
+    assert "mcp list" not in calls
+    assert "Claude Code: connected to http://localhost:28977" in result.stdout
+    assert "Connected: Claude Code." in result.stdout
+
+
+@pytest.mark.parametrize("port", ["7777", "28977"])
+def test_a_claude_plugin_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str], port: str
+) -> None:
+    """It keeps the server it was set up for: the run says how to point it here and
+    neither reinstalls it nor counts it as connected."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude", "  ❯ loom@loom\\n    Status: ✔ enabled")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT=port)
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert f"--config server_url=http://localhost:{port}` points it here" in result.stdout
+    assert "Connected:" not in result.stdout
+    assert "Your agents keep the Loom setup they had." in result.stdout
+
+
+def test_without_a_terminal_or_loom_connect_no_agent_is_changed(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    codex = _agent_cli(installer_env, "codex")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="")
+    assert result.returncode == 0, result.stderr
+    # Nothing could be connected, so no client is even looked at.
+    assert claude.read_text() == "" and codex.read_text() == ""
+    assert "Connect an agent:" in result.stdout
+
+
+def test_loom_connect_adds_the_codex_plugin(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert "approve the plugin's hooks" in result.stdout
+
+
+def test_a_first_memory_that_does_not_read_back_is_named(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    _start_stubs(installer_env, set_saves=False)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Saved a test memory but could not read it back" in result.stdout
+    assert (target / ".memory-check-pending").exists()
+
+
+def test_a_namespace_a_json_body_cannot_hold_skips_the_memory_check(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    assert run().returncode == 0
+    with (target / ".env").open("a") as env:
+        env.write('LOOM_DEFAULT_NAMESPACE=my"space\n')
+    curl_log, _ = _start_stubs(installer_env)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Skipped the memory check" in result.stdout
+    assert not any("memory." in c for c in curl_log.read_text().splitlines())
+
+
+def test_codex_on_another_port_is_pointed_at_its_docs(
+    install, installer_env: dict[str, str]
+) -> None:
+    """Codex plugins take no options: its fixed URL cannot reach another port."""
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex", LOOM_PORT="28977")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" not in codex.read_text().splitlines()
+    assert "Codex: its Loom plugin always uses http://localhost:7777" in result.stdout
+    assert "Connected:" not in result.stdout
+
+
+def test_loom_connect_vscode_adds_the_mcp_server(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
+    assert result.returncode == 0, result.stderr
+    assert code.read_text().splitlines() == [
+        '--add-mcp {"name":"loom","type":"http","url":"http://localhost:7777/mcp?toolset=coding"}'
+    ]
+    assert "Connected: VS Code." in result.stdout
+
+
+@pytest.mark.parametrize("remote", ["CODESPACES", "REMOTE_CONTAINERS", "SSH_CONNECTION"])
+def test_vscode_inside_a_remote_is_not_offered(
+    install, installer_env: dict[str, str], remote: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", **{remote: "1"})
+    assert result.returncode == 0, result.stderr
+    assert code.read_text() == ""
+    assert "VS Code: not offered in a remote session or WSL" in result.stdout
+
+
+def test_loom_connect_all_connects_every_client(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    codex = _agent_cli(installer_env, "codex")
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="all")
+    assert result.returncode == 0, result.stderr
+    assert "plugin install loom@loom --config server_url=http://localhost:7777" in (
+        claude.read_text().splitlines()
+    )
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
+    assert "Connected: Claude Code, Codex, VS Code." in result.stdout
+
+
+def test_a_server_error_connects_no_agent(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env, memory_status=500)
+    claude = _agent_cli(installer_env, "claude")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert "Could not read memories (HTTP 500)" in result.stdout
+    assert claude.read_text() == ""
+
+
+@pytest.mark.parametrize("status", [401, 500, None])
+def test_a_server_that_refused_the_check_gets_no_connect_guide(
+    install, installer_env: dict[str, str], status: int | None
+) -> None:
+    """Without a terminal or LOOM_CONNECT: the refusal said why, so no guide follows.
+    None is a namespace no check can use."""
+    run, target = install
+    if status is None:
+        assert run().returncode == 0
+        with (target / ".env").open("a") as env:
+            env.write('LOOM_DEFAULT_NAMESPACE=my"space\n')
+    _start_stubs(installer_env, memory_status=status or 200)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="")
+    assert result.returncode == 0, result.stderr
+    if status is None:
+        assert "Skipped the memory check" in result.stdout
+    assert "Connect an agent:" not in result.stdout
+
+
+def _desktop(installer_env: dict[str, str]) -> tuple[dict[str, str], Path]:
+    """A Linux desktop for a started install: DISPLAY set, a `uname` that says Linux
+    and an `xdg-open` that logs the URL it gets. Returns (env, xdg-open log)."""
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    log = bin_dir / "xdg-open.log"
+    # The installer starts xdg-open in the background and exits: on the test's
+    # pseudo-terminal its exit hangs up the terminal, which must not kill the stub.
+    opener = f'trap \'\' HUP\necho "$*" >> "{log}"'
+    for name, body in (("uname", "echo Linux"), ("xdg-open", opener)):
+        stub = bin_dir / name
+        stub.write_text(f"#!/bin/sh\n{body}\n")
+        stub.chmod(0o755)
+    env = {k: v for k, v in installer_env.items() if k != "LOOM_NO_OPEN"}
+    return {**env, "LOOM_SKIP_START": "0", "DISPLAY": ":0"}, log
+
+
+def _opened(log: Path, wait: float = 1) -> list[str]:
+    """What xdg-open got. It runs in the background, so a call that expects it to
+    have run waits up to `wait` seconds for it."""
+    deadline = time.monotonic() + wait
+    while not (log.exists() and log.read_text()) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return log.read_text().splitlines() if log.exists() else []
+
+
+def test_a_new_install_on_a_desktop_opens_the_dashboard_once(installer_env: dict[str, str]) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    opener = log.parent / "xdg-open"
+    attempts = log.with_suffix(".attempts")
+    # HUP must be ignored before fork, even before the opener can install a trap.
+    opener.write_text(
+        f'#!/bin/sh\necho invoked >> "{attempts}"\nkill -HUP "$$"\necho "$*" >> "{log}"\n'
+    )
+    transcript = _on_terminal(env, [], None)
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"], transcript
+    assert attempts.read_text().splitlines() == ["invoked"]
+    log.unlink()
+    _on_terminal(env, [], None)  # a rerun keeps its .env
+    assert _opened(log) == []
+    assert attempts.read_text().splitlines() == ["invoked"]
+
+
+def test_the_first_run_that_starts_loom_opens_the_dashboard(installer_env: dict[str, str]) -> None:
+    """A run that wrote .env but stopped before Loom was up (a taken port, say)
+    leaves the next one a new install."""
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, "LOOM_SKIP_START": "1"}, [], None)
+    assert _opened(log) == []
+    _on_terminal(env, [], None)
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
+
+
+def test_a_namespace_no_check_can_use_opens_the_dashboard_once(
+    installer_env: dict[str, str],
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, "LOOM_SKIP_START": "1"}, [], None)
+    target = Path(installer_env["LOOM_INSTALL_DIR"])
+    dotenv = target / ".env"
+    dotenv.write_text(dotenv.read_text() + 'LOOM_DEFAULT_NAMESPACE=my"space\n')
+    _on_terminal(env, [], None)
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
+    assert not (target / ".memory-check-pending").exists()
+    log.unlink()
+    _on_terminal(env, [], None)
+    assert _opened(log) == []
+
+
+@pytest.mark.parametrize(
+    "extra", [{"LOOM_NO_OPEN": "1"}, {"SSH_CONNECTION": "10.0.0.1 2 10.0.0.2 22"}]
+)
+def test_the_dashboard_is_not_opened_when_asked_not_to_or_over_ssh(
+    installer_env: dict[str, str], extra: dict[str, str]
+) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({**env, **extra}, [], None)
+    assert _opened(log) == []
+
+
+def test_a_linux_terminal_with_no_display_opens_no_dashboard(installer_env: dict[str, str]) -> None:
+    _start_stubs(installer_env)
+    env, log = _desktop(installer_env)
+    _on_terminal({k: v for k, v in env.items() if k != "DISPLAY"}, [], None)
+    assert _opened(log) == []
+
+
+@pytest.mark.parametrize(
+    ("name", "client", "retry"),
+    [
+        (
+            "claude",
+            "claude-code",
+            "claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom"
+            " --config server_url=http://localhost:7777",
+        ),
+        (
+            "codex",
+            "codex",
+            "codex plugin marketplace add ClickHouse/loom; codex plugin add loom@loom",
+        ),
+    ],
+)
+def test_a_failed_plugin_install_prints_the_commands_to_try_again(
+    install, installer_env: dict[str, str], name: str, client: str, retry: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    cli = Path(installer_env["PATH"].split(":")[0]) / name
+    cli.write_text('#!/bin/sh\ncase "$*" in "plugin list") exit 0 ;; esac\nexit 1\n')
+    cli.chmod(0o755)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT=client)
+    assert result.returncode == 0, result.stderr
+    assert f"to try again: {retry}\n" in result.stdout
+
+
+@pytest.mark.parametrize(("answer", "installs"), [(b"\n", True), (b"n\n", False)])
+def test_a_terminal_is_asked_before_an_agent_is_connected(
+    installer_env: dict[str, str], answer: bytes, installs: bool
+) -> None:
+    """Enter means yes; anything starting with n means no."""
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
+    seen = _on_terminal({**env, "LOOM_SKIP_START": "0"}, [], b"[Y/n]", answer)
+    assert b"Connect Claude Code to Loom? [Y/n]" in seen
+    installed = "plugin install loom@loom --config server_url=http://localhost:7777"
+    assert (installed in claude.read_text().splitlines()) == installs
+
+
+def test_a_codex_marketplace_without_the_plugin_is_offered_the_plugin(
+    install, installer_env: dict[str, str]
+) -> None:
+    """`codex plugin list` shows `not installed` once the marketplace is added."""
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex", "loom@loom  not installed           /x")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert "Codex: connected" in result.stdout
+
+
+def test_a_client_loom_connect_does_not_know_is_refused(install) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT="claude,codex")
+    assert result.returncode == 1
+    assert "LOOM_CONNECT takes claude-code, codex, vscode, all or none" in result.stderr
+    assert ": claude" in result.stderr
+
+
+def test_loom_connect_none_runs_no_agent_cli(install, installer_env: dict[str, str]) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    logs = [
+        _agent_cli(installer_env, name, "  ❯ loom@loom") for name in ("claude", "codex", "code")
+    ]
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert [log.read_text() for log in logs] == ["", "", ""]
+
+
+@pytest.mark.parametrize("status", ["installed, enabled ", "installed, disabled"])
+def test_a_codex_plugin_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str], status: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex", f"loom@loom  {status}  1.2.21  /x")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert "Codex: the Loom plugin is installed already" in result.stdout
+    assert "Connected:" not in result.stdout
+
+
+@pytest.mark.parametrize("value", ["claude-code, codex", "claude-code codex", "*", "Codex"])
+def test_a_loom_connect_with_spaces_or_other_characters_is_refused(install, value: str) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT=value)
+    assert result.returncode == 1
+    assert "LOOM_CONNECT takes claude-code, codex, vscode, all or none" in result.stderr
+
+
+def test_a_loom_mcp_server_vscode_has_is_left_as_it_is(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+
+    user_dir = "Library/Application Support" if platform.system() == "Darwin" else ".config"
+    mcp = Path(installer_env["HOME"]) / user_dir / "Code/User/mcp.json"
+    mcp.parent.mkdir(parents=True)
+    mcp.write_text('{"servers": {"loom": {"type": "http", "url": "https://loom.example/mcp"}}}')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
+    assert result.returncode == 0, result.stderr
+    assert code.read_text() == ""
+    assert "VS Code: a loom MCP server is set up already" in result.stdout
+
+
+def test_a_claude_mcp_entry_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str]
+) -> None:
+    """`claude mcp add loom` (or `loom install`) set it up: the plugin would list
+    every tool twice."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    config = Path(installer_env["HOME"]) / ".claude.json"
+    config.write_text(
+        '{"mcpServers": {"loom": {"type": "http", "url": "http://localhost:7777/mcp"}}}'
+    )
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "Claude Code: a loom MCP server is set up already" in result.stdout
+
+
+def test_a_codex_mcp_entry_from_before_is_left_as_it_is(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    config = Path(installer_env["HOME"]) / ".codex/config.toml"
+    config.parent.mkdir()
+    config.write_text('[mcp_servers.loom]\nurl = "http://localhost:7777/mcp"\n')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert codex.read_text().splitlines() == ["plugin list"]
+    assert "Codex: a loom MCP server is set up already" in result.stdout
+
+
+def test_vscode_under_wsl_is_not_offered(install, installer_env: dict[str, str]) -> None:
+    """There `code` is the Windows VS Code, whose profile this run cannot read."""
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", WSL_DISTRO_NAME="Ubuntu")
+    assert result.returncode == 0, result.stderr
+    assert "VS Code: not offered in a remote session or WSL" in result.stdout
+    assert code.read_text() == ""
+
+
+@pytest.mark.parametrize("name", ["claude", "codex"])
+def test_a_plugin_list_that_fails_leaves_the_client_alone(
+    install, installer_env: dict[str, str], name: str
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    log = _agent_cli(installer_env, name, code=1)
+    client = "claude-code" if name == "claude" else "codex"
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT=client)
+    assert result.returncode == 0, result.stderr
+    assert log.read_text().splitlines() == ["plugin list"]
+    assert "could not list its plugins (above), so it is left as it is" in result.stdout
+
+
+def _node_reports(installer_env: dict[str, str], body: str) -> None:
+    node = Path(installer_env["PATH"].split(":")[0]) / "node"
+    node.write_text(f"#!/bin/sh\n{body}\n")
+
+
+@pytest.mark.parametrize("node", ["exit 127", "echo 16"])
+def test_claude_code_without_node_18_on_path_gets_the_mcp_line_instead(
+    install, installer_env: dict[str, str], node: str
+) -> None:
+    """Its hooks and MCP header helper run the `node` on PATH: no plugin is
+    installed, and the MCP-only line is printed."""
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    _node_reports(installer_env, node)
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert 'claude mcp add --transport http loom "http://localhost:7777/mcp?toolset=coding"' in (
+        result.stdout
+    )
+    assert "Connected:" not in result.stdout
+
+
+def test_a_test_memory_that_does_not_delete_is_tried_again(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A live test memory would turn the dashboard's first-run checklist off."""
+    run, target = install
+    _start_stubs(installer_env, delete_status=500)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "could not delete loom/installer-check; the next run tries again" in result.stdout
+    assert (target / ".memory-check-pending").exists()
+
+
+def test_codex_without_node_on_path_gets_the_mcp_line_too(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    codex = _agent_cli(installer_env, "codex")
+    _node_reports(installer_env, "exit 127")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex")
+    assert result.returncode == 0, result.stderr
+    assert "plugin add loom@loom" in codex.read_text().splitlines()
+    assert 'codex mcp add loom --url "http://localhost:7777/mcp?toolset=coding"' in result.stdout
+
+
+@pytest.mark.parametrize("value", ["none,claude-code", "codex,none"])
+def test_none_with_another_name_is_refused(install, value: str) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT=value)
+    assert result.returncode == 1
+    assert "LOOM_CONNECT=none connects no agent, so it takes no other name" in result.stderr
+
+
+def test_claude_config_dir_is_read_for_an_mcp_entry(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude")
+    config_dir = tmp_path / "claude-config"
+    config_dir.mkdir()
+    (config_dir / ".claude.json").write_text('{"mcpServers": {"loom": {"type": "http"}}}')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", CLAUDE_CONFIG_DIR=str(config_dir))
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text().splitlines() == ["plugin list"]
+    assert "a loom MCP server is set up already" in result.stdout
+
+
+def test_sign_in_on_clears_the_memory_check(install, installer_env: dict[str, str]) -> None:
+    """A server with sign-in has no check to run, on this run or after a switch."""
+    run, target = install
+    _start_stubs(installer_env, memory_status=401)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert not (target / ".memory-check-pending").exists()
+
+
+def test_a_save_that_does_not_read_back_is_still_deleted(
+    install, installer_env: dict[str, str]
+) -> None:
+    """It may have landed after the read: no live test memory stays."""
+    run, _ = install
+    curl_log, _ = _start_stubs(installer_env, set_saves=False)
+    assert run(LOOM_SKIP_START="0").returncode == 0
+    assert any("memory.delete" in c for c in curl_log.read_text().splitlines())
+
+
+@pytest.mark.skipif(
+    any(Path(d, "code").exists() for d in ("/usr/bin", "/bin")),
+    reason="a real VS Code CLI is on the trimmed PATH here",
+)
+def test_a_client_loom_connect_names_but_this_machine_lacks_is_named(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    bin_dir = Path(installer_env["PATH"].split(":")[0])
+    (bin_dir / "code").unlink()
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", PATH=f"{bin_dir}:/usr/bin:/bin")
+    assert result.returncode == 0, result.stderr
+    assert "VS Code: `code` is not on PATH" in result.stdout
+
+
+def test_a_save_without_a_200_keeps_the_marker_and_deletes_nothing_yet(
+    install, installer_env: dict[str, str]
+) -> None:
+    """A slow first save may still land: the next run checks again and deletes it."""
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env, set_status=0)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Could not confirm a test memory saved" in result.stdout
+    assert (target / ".memory-check-pending").exists()
+    assert not any("memory.delete" in c for c in curl_log.read_text().splitlines())
+
+
+def test_loom_connect_naming_one_client_leaves_the_others_alone(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, _ = install
+    _start_stubs(installer_env)
+    claude = _agent_cli(installer_env, "claude", "  ❯ loom@loom")
+    codex = _agent_cli(installer_env, "codex")
+    code = _agent_cli(installer_env, "code")
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode")
+    assert result.returncode == 0, result.stderr
+    assert claude.read_text() == "" and codex.read_text() == ""
+    assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
+
+
+@pytest.mark.parametrize("value", [",codex", "codex,", "claude-code,,codex"])
+def test_an_empty_loom_connect_item_is_refused(install, value: str) -> None:
+    run, _ = install
+    result = run(LOOM_CONNECT=value)
+    assert result.returncode == 1
+    assert "separated by single commas" in result.stderr
+
+
+def test_xdg_config_home_holds_the_vscode_mcp_json(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    if platform.system() == "Darwin":
+        pytest.skip("macOS keeps VS Code's user data under ~/Library")
+    run, _ = install
+    _start_stubs(installer_env)
+    code = _agent_cli(installer_env, "code")
+    mcp = tmp_path / "xdg/Code/User/mcp.json"
+    mcp.parent.mkdir(parents=True)
+    mcp.write_text('{"servers": {"loom": {"type": "http"}}}')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="vscode", XDG_CONFIG_HOME=str(tmp_path / "xdg"))
+    assert result.returncode == 0, result.stderr
+    assert code.read_text() == ""
+
+
+def test_a_read_a_lagging_replica_misses_is_tried_again(
+    install, installer_env: dict[str, str]
+) -> None:
+    run, target = install
+    curl_log, _ = _start_stubs(installer_env, misses=2)
+    result = run(LOOM_SKIP_START="0")
+    assert result.returncode == 0, result.stderr
+    assert "Saved, read back and deleted a test memory" in result.stdout
+    assert not (target / ".memory-check-pending").exists()
+    gets = [c for c in curl_log.read_text().splitlines() if "memory.get" in c]
+    assert len(gets) == 4  # the sign-in read, then two misses and a hit
+
+
+def test_a_codex_mcp_entry_on_another_port_is_kept(
+    install, installer_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Set up by its docs' override (in CODEX_HOME here): not told to do it again."""
+    run, _ = install
+    _start_stubs(installer_env)
+    _agent_cli(installer_env, "codex")
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text('[mcp_servers.loom]\nurl = "http://localhost:28977/mcp"\n')
+    result = run(LOOM_SKIP_START="0", LOOM_CONNECT="codex", LOOM_PORT="28977", CODEX_HOME=str(home))
+    assert result.returncode == 0, result.stderr
+    assert "Codex: a loom MCP server is set up already" in result.stdout
+    assert "always uses" not in result.stdout
+
+
+LOCAL_PRESET = {
+    "LOOM_LLM_PROVIDER": "local",
+    "LOOM_LLM_MODEL": "qwen2.5:3b",
+    "LOOM_LOCAL_LLM_BASE_URL": "http://host.docker.internal:11434/v1",
+    "LOOM_ASSISTANT_PROVIDER": "local",
+    "LOOM_ASSISTANT_MODEL": "qwen2.5:3b",
+    "LOOM_ASSISTANT_ANSWER_CEILING_USD": "0",
+    "LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED": "false",
+    "LOOM_LLM_REQUEST_TIMEOUT_S": "900",
+    "LOOM_LLM_RETRY_ATTEMPTS": "1",
+    "LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS": "1",
+    "LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS": "3600",
+    "LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS": "2",
+    "LOOM_ENTITY_EXTRACT_ENABLED": "false",
+    "LOOM_MEMORY_EXTRACT_VERIFY_MODELS": "",
+    "LOOM_SESSION_BRIEF_LLM_MODEL": "",
+    "LOOM_CODE_BISECT_LLM_RERANK_MODEL": "",
+    "LOOM_TRACKER_DUPCHECK_RERANK_MODEL": "",
+    "LOOM_RETRIEVAL_JUDGE_MODEL": "",
+}
+
+
+def test_local_models_ollama_sets_every_model_job_on_it(install) -> None:
+    run, target = install
+    out = run(LOOM_LOCAL_MODELS="ollama")
+    assert out.returncode == 0, out.stderr
+    assert {k: _env(target)[k] for k in LOCAL_PRESET} == LOCAL_PRESET
+    # The stub curl answers nothing, so the model is not there yet.
+    assert "ollama pull qwen2.5:3b" in out.stdout
+    assert "OLLAMA_CONTEXT_LENGTH=32768" in out.stdout
+    assert "entity tagging too" in out.stdout
+    assert "Models & keys wins over .env" not in out.stdout
+    # A rerun over that .env is told a dashboard configuration still wins.
+    again = run(LOOM_LOCAL_MODELS="ollama")
+    assert again.returncode == 0, again.stderr
+    assert "Models & keys wins over .env" in again.stdout
+
+
+def test_the_local_preset_loads_with_the_verifier_resolver_and_entity_tagging_off(
+    monkeypatch,
+) -> None:
+    from server.settings import Settings
+
+    for key, value in LOCAL_PRESET.items():
+        monkeypatch.setenv(key, value)
+    loaded = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert loaded.llm_provider == "local"
+    assert loaded.memory_extract_verify_models == ""
+    assert loaded.memory_conflict_resolver_enabled is False
+    assert loaded.entity_extract_enabled is False
+    assert loaded.assistant_answer_ceiling_usd == 0
+    # A call with every retry fits in the extraction queue's pass (its lease follows the
+    # pass: test_extraction_queue).
+    tries = loaded.llm_retry_attempts
+    call = loaded.llm_request_timeout_s * tries + loaded.llm_retry_max_wait_s * (tries - 1)
+    assert loaded.extraction_queue_max_pass_seconds > call
+
+
+def test_without_a_terminal_ollama_is_not_offered(install, installer_env) -> None:
+    run, target = install
+    # Ollama answers, so only the missing terminal keeps the offer off.
+    _ollama_answers(installer_env)
+    assert run().returncode == 0
+    assert _env(target)["LOOM_LLM_PROVIDER"] == "fake"
+    assert "LOOM_LOCAL_LLM_BASE_URL" not in _env(target)
+
+
+def test_local_models_takes_only_ollama_or_off(install) -> None:
+    run, _ = install
+    out = run(LOOM_LOCAL_MODELS="llama")
+    assert out.returncode != 0 and "LOOM_LOCAL_MODELS takes ollama or off" in out.stderr
+
+
+def _ollama_answers(installer_env: dict[str, str]) -> None:
+    """Every curl succeeds, as with Ollama listening here and holding the model."""
+    curl = Path(installer_env["PATH"].split(":", 1)[0]) / "curl"
+    curl.write_text('#!/bin/sh\necho \'{"models":[{"name":"qwen2.5:3b"}]}\'\n')
+
+
+def test_a_new_install_on_a_terminal_is_offered_a_running_ollama(installer_env) -> None:
+    _ollama_answers(installer_env)
+    seen = _on_terminal(installer_env, [], b"Use it for extraction", b"\n")
+    assert b"Loom will run its model jobs on Ollama" in seen, seen
+    assert b"ollama pull" not in seen
+    assert _env(Path(installer_env["LOOM_INSTALL_DIR"]))["LOOM_LLM_PROVIDER"] == "local"
+
+
+def test_declining_the_ollama_offer_keeps_the_fake_models(installer_env) -> None:
+    _ollama_answers(installer_env)
+    seen = _on_terminal(installer_env, [], b"Use it for extraction", b"n\n")
+    assert b"Loom will run its model jobs on Ollama" not in seen, seen
+    env = _env(Path(installer_env["LOOM_INSTALL_DIR"]))
+    assert env["LOOM_LLM_PROVIDER"] == "fake"
+    assert "LOOM_LOCAL_LLM_BASE_URL" not in env
+
+
+def test_a_rerun_or_off_is_not_offered_ollama(install, installer_env) -> None:
+    run, target = install
+    assert run().returncode == 0
+    _ollama_answers(installer_env)
+    # A rerun over the .env the first run wrote: its models stay as they are.
+    seen = _on_terminal(installer_env, [], None)
+    assert b"Use it for extraction" not in seen, seen
+    assert _env(target)["LOOM_LLM_PROVIDER"] == "fake"
+    # A new install with LOOM_LOCAL_MODELS=off is not asked either.
+    (target / ".env").unlink()
+    seen = _on_terminal({**installer_env, "LOOM_LOCAL_MODELS": "off"}, [], None)
+    assert b"Use it for extraction" not in seen, seen
+    assert _env(target)["LOOM_LLM_PROVIDER"] == "fake"

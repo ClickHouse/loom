@@ -24,6 +24,7 @@ from server.auth import revocation
 from server.auth.jwt import TokenError, mint_token, verify_token
 from server.core.errors import GrantBusyError
 from server.identity.app import admin_account_routes
+from server.settings import settings
 from tests.unit.revocation_fakes import revocation_read
 
 pytestmark = pytest.mark.usefixtures("stub_model_command")
@@ -55,13 +56,15 @@ def _token(
         "inherit_creator_grants": True,
         "ns_roles": '{"ns": "writer"}',
         "lineage": [created_by] if lineage is None else lineage,
+        "saves_to": "",
     }
 
 
 class _Store:
     """loom.revoked_tokens, loom.service_accounts, the session refresh rows of
     loom.oauth_state, the accounts loom.namespaces ties spellings with, and
-    loom.audit_log, as the revocation path uses them."""
+    loom.audit_log, and an empty connected-account inventory as the revocation
+    path uses them."""
 
     def __init__(self) -> None:
         self.revocations: list[dict[str, Any]] = []
@@ -71,6 +74,8 @@ class _Store:
         self.audits: list[dict[str, Any]] = []
         self.busy_names: set[str] = set()  # a token name whose revoked row cannot be written
         self.directory_down = False
+
+    connected = False
 
     async def connect(self) -> None:
         pass
@@ -112,6 +117,24 @@ class _Store:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         p = params or {}
+        if sql == (
+            "SELECT org, subject, kind, connection_id, account_id, workspace_id, "
+            "account_email_enc, credential_enc, scopes, active, refresh_id, connected_at, "
+            "disconnected_at, version FROM loom.connected_accounts FINAL "
+            "WHERE subject IN {subjects:Array(String)} "
+            "ORDER BY org, subject, kind LIMIT {limit:UInt64}"
+        ):
+            assert set(p) == {"subjects", "limit"}
+            assert isinstance(p["subjects"], list) and p["subjects"]
+            assert all(isinstance(subject, str) for subject in p["subjects"])
+            assert p["limit"] == settings.knowledge_connected_registry_scan_limit + 1
+            return []
+        if sql == (
+            "SELECT DISTINCT org, subject FROM loom.connected_accounts FINAL "
+            "ORDER BY org, subject LIMIT {limit:UInt64}"
+        ):
+            assert p == {"org": "", "limit": settings.knowledge_connected_registry_scan_limit + 1}
+            return []
         if "loom.revoked_tokens" in sql:  # the refresh, a subject's keys, the list
             keys, since = p.get("keys"), p.get("since")
             rows = [r for k, r in self.revoked().items() if keys is None or k in keys]

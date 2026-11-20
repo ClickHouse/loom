@@ -7,7 +7,7 @@ import { axeViolations } from "../test/axe";
 import { NamespaceNoAccess } from "./NamespaceNoAccess";
 
 // A link to a namespace the account cannot read opens this page in place of any view: it
-// names the namespace and why, and Continue, the picker or Spaces leave it.
+// names the namespace and why, and Continue, the picker or Namespaces in your org leave it.
 
 const team = { org: "dev", namespace: "team", agent: "loom-ui" };
 const pending: MyNamespaceEntry = {
@@ -71,7 +71,7 @@ describe("NamespaceNoAccess", () => {
 
   it("opens the namespace picker from its link", async () => {
     render(<NamespaceNoAccess namespace="group-b-shared" />);
-    await userEvent.click(screen.getByRole("button", { name: "namespace menu" }));
+    await userEvent.click(screen.getByRole("button", { name: "namespace picker" }));
     expect(useStore.getState().namespacePickerOpen).toBe(true);
   });
 
@@ -83,11 +83,11 @@ describe("NamespaceNoAccess", () => {
     ).toBeInTheDocument();
   });
 
-  it("with no namespace to fall back on, offers Spaces instead of Continue", async () => {
+  it("with no namespace to fall back on, offers Namespaces in your org instead of Continue", async () => {
     useStore.setState({ identity: { ...team, namespace: "" } });
     render(<NamespaceNoAccess namespace="group-b-shared" />);
     expect(screen.queryByRole("button", { name: /^Continue/ })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Browse and join spaces" }));
+    await userEvent.click(screen.getByRole("button", { name: "Find public namespaces to join" }));
     expect(useStore.getState()).toMatchObject({ view: "browse", deniedNamespace: null });
   });
 });

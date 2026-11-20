@@ -29,6 +29,7 @@ test runner.
 | Tracker                  | Does `tracker.similar` find the older duplicate an issue was closed against?                   | `tracker_similar_bench.py`                                                                                                       |
 | Latency and index health | Where does search time go; would a vector index return what brute force does?                  | `search_latency.py`, `vector_tenant_recall.py`, `ann_final_staleness.py`, `vector_index_vs_exact.py`, `scripts/ops/benchmark.py` |
 | Write load               | What latency and how many ClickHouse parts does a sustained write rate cost?                   | `write_rate.py`                                                                                                                  |
+| Scale                    | Which ceiling does memory hit first as namespaces, orgs and keys grow?                         | `scale_load.py`                                                                                                                  |
 | Consumer acceptance      | Does one kind of deployment get precise answers at an acceptable cost?                         | `acceptance/{code_agent,memory_app,plugin,harness}.py`                                                                           |
 
 [`bench/memoryarena/`](../../bench/memoryarena/README.md) (an agent gym that scores later

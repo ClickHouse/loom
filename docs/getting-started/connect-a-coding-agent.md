@@ -1,12 +1,17 @@
-# Connect a coding agent
+# Shared memory for Claude Code, Codex and Cursor
 
-This page connects Claude Code, Codex, Cursor or another MCP client to a running Loom
-server. Install the plugin (or wire the MCP entry), point it at the server, and work as
-usual. Loom captures each session, and the next session starts with what the last one
-saved. To run a server yourself, start with the [quickstart](quickstart.md); to have your agent
-install a pinned release and prove it works, give it the latest release's
-`https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt`
-([Set up Loom with your coding agent](agent-setup.md)).
+Loom gives Claude Code, Codex and Cursor shared long-term memory through plugins or MCP
+tools connected to the same self-hosted server. Give each teammate a token with access
+to the team's namespace so their agents can find the facts others save. Install the
+plugin or MCP entry below; the next session can recall what an agent saved. What the Claude Code and Codex
+plugins send to Loom is in [data
+handling](../features/integrations/claude-code.md#data-handling). Conversation recording
+is off by default; the namespace owner turns it on with the **Record conversations**
+switch on the dashboard's Conversations page, or with `conversation.set_logging`. To run a
+server yourself, start with the [quickstart](quickstart.md); to have your agent install a
+pinned release and prove it works, give it the latest release's
+`https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt` ([Set up
+Loom with your coding agent](agent-setup.md)).
 
 ## What you need
 
@@ -15,13 +20,22 @@ install a pinned release and prove it works, give it the latest release's
 - **The server URL**, for example `https://loom.example.com`, or `http://localhost:7777`
   for a stack started with `loom up`.
 - **A writer token for your namespace**, except against a single-user server on the same
-  machine: there the plugins connect without one. Create one in the dashboard at
+  machine: there the plugins and the install links for
+  [Cursor](../features/integrations/cursor.md#mcp-tools) and
+  [VS Code](../features/integrations/vscode.md#local-single-user-server) connect without one.
+  Create one in the dashboard at
   `<server>/settings` → **Tokens**, or ask an operator to run
   `loom mint-token --subject you --org <org> --namespaces <namespace> --roles writer`.
   On a server with self-signup open, the Claude Code plugin can sign the machine up by
   itself on the first session. See [what happens with no credential](#no-token-yet).
 
-## Claude Code
+<a id="claude-code"></a>
+
+## How do I give Claude Code shared memory?
+
+Install the Loom plugin with the server URL and a writer token for the namespace you
+want to share. The plugin loads relevant memories at session start and gives the agent
+tools to save and search facts.
 
 ```bash
 claude plugin marketplace add ClickHouse/loom
@@ -33,7 +47,8 @@ claude plugin install loom@loom \
 Both `--config` values are optional; without them Claude Code asks once. Start a new
 session. Loom's session primer arrives at the top, and from then on:
 
-- the hooks capture the conversation and tool observations into Loom;
+- the hooks send Loom what [data handling](../features/integrations/claude-code.md#data-handling)
+  lists;
 - the `loom-memory`, `loom-code`, `loom-session` and other skills tell Claude when to save
   a fact, when to search, and how to use the code index;
 - `loom_search`, `loom_memory_set` and the code tools are available as MCP tools.
@@ -41,7 +56,13 @@ session. Loom's session primer arrives at the top, and from then on:
 Everything the plugin installs, and how to configure it, is on the
 [Claude Code](../features/integrations/claude-code.md) page.
 
-## Codex
+<a id="codex"></a>
+
+## How do I give Codex shared memory?
+
+Install the Loom plugin, connect its hooks and MCP entry to the same server, and use a
+token with access to the shared namespace. The plugin loads a memory primer when a
+session starts; its hooks need the approval described below.
 
 ```bash
 codex plugin marketplace add ClickHouse/loom
@@ -59,20 +80,133 @@ The Codex plugin ships the same hooks and skills; the differences are on the
 [Codex](../features/integrations/codex.md) page. Don't also run `codex mcp add loom` with
 the plugin installed: an entry with the same name replaces the plugin's.
 
-## Cursor and other MCP clients
+<a id="cursor-and-other-mcp-clients"></a>
 
-With the `loom` CLI installed (`pip install -e .` from a clone of the repository):
+## How do I give Cursor or another MCP client shared memory?
+
+Connect the client to Loom's MCP endpoint with a token for the shared namespace, then
+add the agent instructions linked below. The tools save and recall facts; capturing
+the session transcript also needs the client's hook integration.
+
+On a Cursor Teams or Enterprise plan, a team admin can import the [Cursor
+plugin](../features/integrations/cursor.md#plugin) (untested in Cursor), which carries the
+MCP entry and Loom's skills.
+
+For Cursor or VS Code against a single-user server on the same machine, no token is needed:
+use the [Cursor](../features/integrations/cursor.md#mcp-tools) or
+[VS Code](../features/integrations/vscode.md#local-single-user-server) install link. Otherwise, in the dashboard,
+open **Settings → Tokens**, fill in the **New token** form (press **New token** first if a
+token exists) and press **Create token**, then choose your client (Cursor, VS Code, Cline,
+Windsurf, Zed, Gemini CLI or Claude Desktop) under **Connect**: the dialog shows the entry for its
+config file, with the token in it. For any other MCP client, copy the entry from
+[MCP clients](../features/integrations/mcp-clients.md). With the `loom` CLI installed
+(`pip install -e .` from a clone of the repository), one command writes the entry instead:
 
 ```bash
 loom install --client cursor --server-url https://loom.example.com --token "$LOOM_API_KEY"
 ```
 
 Restart the client afterwards. `--client` also takes `claude-desktop`, `vscode`, `cline`,
-`windsurf` and `zed`; without it, `loom install` wires every client it finds. These clients
+`windsurf`, `zed` and `gemini`; without it, `loom install` wires every client it finds. These clients
 get the tools; transcript capture needs a hook, which [Cursor](../features/integrations/cursor.md)
 has and the others take from a [transcript template](../features/integrations/index.md#transcript-capture-hooks).
 [MCP clients](../features/integrations/mcp-clients.md) covers toolsets and the entry the
-command writes.
+command writes. Then add the [agent instructions](../features/integrations/agent-instructions.md)
+block to a coding client's rule file, so the agent knows when to call the tools; for a
+client other than Cursor, add `?toolset=coding` to the entry's URL (`--toolset coding`
+with `loom install`) so the tools the block names are listed.
+
+## Share a team namespace with separate credentials
+
+Use an [authenticated multi-user deployment](quickstart.md#2-open-the-dashboard)
+with TLS for remote clients. Single-user mode does not enforce team access boundaries.
+The server must support create-if-absent memory writes through
+`if_match_sha256: "absent"`, and its session-protection policy must admit the write.
+Token minting and namespace roles alone do not establish these prerequisites.
+A precondition or protection refusal stops this walkthrough; it does not qualify
+the access check. Keep the precondition when diagnosing a refusal.
+
+The operator chooses an ordinary, disposable memory namespace used only for this check,
+shown as `acme/team-alpha`, with no existing `example/team-access-check` key. The other
+team's example namespace, `team-beta`, is also a memory namespace, not an org-readable
+code namespace. Restricted namespaces
+also require their [explicit grants](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
+
+As the operator, run these commands in the server's signing-key environment, following
+[Mint a token](../guides/tokens-and-grants.md#mint-a-token). The CLI ships with the server,
+not the SDK. Do not give clients the signing key or use a wildcard namespace:
+
+```bash
+ALPHA_WRITER=$(loom mint-token --subject sa:team-author --org acme \
+  --namespace-role team-alpha=writer --ttl-days 1)
+ALPHA_READER=$(loom mint-token --subject sa:team-reader --org acme \
+  --namespace-role team-alpha=viewer --ttl-days 1)
+```
+
+These are distinct authenticated principals because the token subjects differ. The
+writer may save and read memory; the viewer may only read. Both tokens are scoped to
+`team-alpha`. For ordinary plugin use, give each teammate their own scoped **writer**
+token and follow the client setup above; the viewer here tests read-only access. Deliver
+each token privately to its intended client, never in a shared repository or transcript.
+
+With `curl` and `jq` installed, set the server URL and select the test row. Run the write
+with the author's token and the read with the reader's token, on their respective clients.
+The tokens below are shell variables containing the issued credentials, not placeholder
+credentials to send literally:
+
+```bash
+LOOM_BASE_URL=https://loom.example.com
+DEMO_ROW='{"org":"acme","namespace":"team-alpha","agent":"team-author","user_id":"sample-user","session_id":"team-check","memory_key":"example/team-access-check"}'
+
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.set" \
+  -H "Authorization: Bearer $ALPHA_WRITER" -H 'Content-Type: application/json' \
+  --data "$(jq '. + {value:"Review deployment changes before release.",if_match_sha256:"absent"}' <<<"$DEMO_ROW")"
+
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.get" \
+  -H "Authorization: Bearer $ALPHA_READER" -H 'Content-Type: application/json' \
+  --data "$DEMO_ROW"
+```
+
+The write's `absent` precondition refuses an existing live row; do not remove it to retry.
+Require a successful write receipt, then `found: true`, the saved `value` and the selected
+`agent`, `user_id` and `session_id` in the read. The server records the writer's token
+principal as `actor`. The request's `agent` is a memory identity label, not an access grant
+or a way to become that principal. The requested tuple is tried first; if absent,
+`memory.get` can fall back to another agent's row for the same user. A returned tuple
+that differs from the one selected does not pass this check.
+
+Keep the reader token unchanged and request another team's namespace:
+
+```bash
+curl --silent --show-error --write-out '\nHTTP %{http_code}\n' \
+  "$LOOM_BASE_URL/v1/memory.get" \
+  -H "Authorization: Bearer $ALPHA_READER" -H 'Content-Type: application/json' \
+  --data "$(jq '.namespace = "team-beta"' <<<"$DEMO_ROW")"
+```
+
+For this namespace-addressed read, expect HTTP 403 with `AUTH_INSUFFICIENT`, and no fact.
+It is a scope check, not a test that a particular row exists in `team-beta`. A 401,
+transport error, provider failure or session-protection refusal does not establish that
+this check passed. Stop on unexpected responses and diagnose them; do not disable auth
+or weaken a token's scope to make a check succeed. By-ID reads have a different
+[missing-row contract](../concepts/identities-and-namespaces.md#who-may-call-what).
+
+After confirming the positive read, the author can tombstone the example while the
+disposable namespace remains otherwise unused:
+
+```bash
+curl --fail-with-body --silent --show-error "$LOOM_BASE_URL/v1/memory.delete" \
+  -H "Authorization: Bearer $ALPHA_WRITER" -H 'Content-Type: application/json' \
+  --data "$DEMO_ROW"
+unset ALPHA_WRITER ALPHA_READER DEMO_ROW
+```
+
+Unsetting a shell variable does not revoke its token; follow
+[token revocation](../guides/tokens-and-grants.md#revoke-and-rotate) when the test credentials
+are no longer needed. These commands describe the expected contract, not a captured
+deployment result. Record actual responses separately, then run the remaining
+[shared-memory evaluation checks](evaluate.md#shared-memory-across-clients), including
+revoked credentials and by-ID reads, before relying on a team deployment.
 
 ## Check that it works
 
@@ -81,8 +215,8 @@ command writes.
    reached the server.
 2. Tell the agent something durable, for example "our deploy window is Tuesday and
    Thursday only". In a new session, ask "when can we deploy?". The answer comes from Loom.
-3. Open the dashboard (`<server>/`). The session's conversation and the saved fact are there, and you can
-   correct or delete either.
+3. Open the dashboard (`<server>/`). The saved fact is there, and the session's
+   conversation too while conversation recording is on; you can correct or delete either.
 
 `loom doctor --client` adds the local wiring checks when you have the CLI.
 

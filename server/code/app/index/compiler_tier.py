@@ -21,16 +21,19 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from server.code.app.index import tier_health
 from server.code.app.index.entry_lock import EntryLockHeld, EntryLockLost, check_held, entry_lock
+from server.code.app.index.git_proxy import GitProxyRefused, NetworkGit
 from server.code.app.index.gitrepo import is_local_remote, upload_pack_args
 from server.code.app.index.producer_inference import worker_owns
 from server.code.app.index.repo_modes import PRIVATE_DIR_MODE, set_repo_dir_mode
-from server.code.app.index.sandbox import run_job, sandbox_available
+from server.code.app.index.sandbox import JobOptions, run_job, sandbox_available
 from server.code.domain.index.repos import checkout_for
+from server.core.errors import caller_text
 from server.settings import settings
 from server.workers import pass_context
 from server.workers.status import log_pass_errors, record_pass
 
 if TYPE_CHECKING:
+    from server.code.app.index.delta_file import DeltaFile
     from server.code.domain.index.repos import RepoConfig
     from server.code.store.index import CodeRepo
 
@@ -154,9 +157,10 @@ async def _gc_checkout(cfg: RepoConfig, producer: str) -> None:
 
     from server.code.app.index.mirrors import gc_if_due
 
-    git_dir = Path(checkout_for(cfg, producer)) / ".git"
+    checkout = Path(checkout_for(cfg, producer))
+    git_dir = checkout / ".git"
     try:
-        if await asyncio.to_thread(git_dir.is_dir):
+        if await asyncio.to_thread(_checkout_metadata_error, checkout) is None:
             await gc_if_due(str(git_dir))
     except Exception as e:  # noqa: BLE001 — housekeeping never fails the tier: a pass not due records nothing to clear it
         logger.warning(
@@ -169,20 +173,30 @@ UNSANDBOXED_NETWORK_SKIP = (
     "self-registered repository with a network remote, no clone, fetch or tier "
     "without the sandbox (nothing would vet the hosts it connects to)"
 )
+UNSANDBOXED_TIER_SKIP = (
+    "self-registered repository with a network remote, no compiler tier without the "
+    "sandbox (LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED covers its clone and fetch only)"
+)
 SANDBOX_REQUIRED_SKIP = (
     "LOOM_CODE_SANDBOX_REQUIRED is set and the sandbox cannot run here: no clone, fetch or tier"
 )
 _unsandboxed_logged: set[tuple[str, str, str]] = set()
 
 
-def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = False) -> str:
+def unsandboxed_skip(
+    cfg: RepoConfig, worker: str, *, runs_repo_code: bool = False, git_only: bool = False
+) -> str:
     """Why `worker` must not run this entry's repository jobs, '' when it may.
-    Only a host without the sandbox refuses, and only an entry a viewer added
-    from the Repositories page (`source == "registry"`): a job running its own
-    build, or any job of an entry whose remote is reached over the network,
-    since the plain-process fallback has no egress proxy. An operator's entry,
-    and a self-registered local mirror's non-build jobs, run either way, unless
-    LOOM_CODE_SANDBOX_REQUIRED says every entry waits for the sandbox.
+    Only a host without the sandbox refuses, and only an entry added through
+    `code.repo.add` or `code.repo.add_branch` (`source == "registry"`): a job
+    running its own build, or any job of an entry whose remote is reached over
+    the network, since the plain-process fallback has no egress proxy. An
+    operator's entry, and a self-registered local mirror's non-build jobs, run
+    either way, unless LOOM_CODE_SANDBOX_REQUIRED says every entry waits for the
+    sandbox. `git_only` marks a caller that only clones or fetches the entry:
+    with LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED those jobs reach a network remote
+    as plain processes. Every other caller keeps the skip, so no compiler tier of
+    that entry (dependency installs, module downloads, submodules) runs.
     Logged once per entry and worker."""
     required = settings.code_sandbox_required
     if (cfg.source != "registry" and not required) or sandbox_available():
@@ -191,10 +205,14 @@ def unsandboxed_skip(cfg: RepoConfig, worker: str, *, runs_repo_code: bool = Fal
         reason = SANDBOX_REQUIRED_SKIP
     elif runs_repo_code:
         reason = UNSANDBOXED_SKIP
-    elif not is_local_remote(cfg.git_remote):
-        reason = UNSANDBOXED_NETWORK_SKIP
-    else:
+    elif is_local_remote(cfg.git_remote):
         return ""
+    elif not settings.code_self_service_git_unsandboxed:
+        reason = UNSANDBOXED_NETWORK_SKIP
+    elif git_only:
+        return ""
+    else:
+        reason = UNSANDBOXED_TIER_SKIP
     key = (worker, cfg.org, cfg.namespace)
     if key not in _unsandboxed_logged:
         _unsandboxed_logged.add(key)
@@ -224,37 +242,77 @@ def tier_outcome(result: TierResult, **extra: Any) -> dict[str, Any]:
     }
 
 
-def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | None]:
-    """(checkout, bare clone, missing) for `producer` on this entry. Sync: callers run
-    it in a thread, the worker convention that keeps the event loop free of filesystem
-    calls. The checkout is absolute because a harness hands it to the converter after
-    `cd`-ing into it; the bare clone is shared by every branch of the repository."""
-    checkout = Path(checkout_for(cfg, producer)).absolute()
-    bare = Path(cfg.git_dir)
-    if not bare.exists():
-        return checkout, bare, f"bare clone missing at {bare}"
-    if not checkout.exists():
-        # The checkout follows the lease: a new leader (or a new pod) starts from an
-        # empty repository, and the tier fetches the target from the mirror. The C++
-        # harness configures its build tree on the first run.
-        from server.code.app.index.gitrepo import auth_env
+def _checkout_git_path(checkout: Path, flag: str) -> Path | None:
+    """Resolve Git's path without inherited repository or worktree overrides."""
+    from server.code.app.index.gitrepo import auth_env
 
-        # Made before `git init`, which keeps its mode, so an entry restricted later
-        # needs no window closed.
+    probe = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", flag],
+        capture_output=True,
+        text=True,
+        env=auth_env(),
+        timeout=settings.code_git_timeout_s,
+    )
+    return Path(probe.stdout.removesuffix("\n")).resolve() if probe.returncode == 0 else None
+
+
+def _checkout_metadata_error(checkout: Path) -> str | None:
+    """Validate local Git metadata without creating or changing any directory."""
+    metadata = checkout / ".git"
+    if metadata.is_symlink() or not metadata.is_dir() or (metadata / "commondir").exists():
+        return "compiler checkout needs a standalone .git directory; use a separate empty path"
+    if _checkout_git_path(checkout, "--absolute-git-dir") != metadata.resolve():
+        return "Git metadata does not match the checkout's local .git directory"
+    if _checkout_git_path(checkout, "--show-toplevel") != checkout.resolve():
+        return "not the root of its Git working tree"
+    return None
+
+
+def _prepare_checkout(checkout: Path) -> str | None:
+    """Initialize only empty directories; an existing tree must own its Git root."""
+    from server.code.app.index.gitrepo import auth_env
+
+    if not checkout.exists():
         try:
             os.makedirs(checkout, mode=PRIVATE_DIR_MODE, exist_ok=True)
             set_repo_dir_mode(str(checkout))
         except OSError as e:
             logger.warning("compiler tier: could not create %s: %s", checkout, e)
-            return checkout, bare, f"checkout missing at {checkout} (mkdir failed)"
-        init = subprocess.run(
-            ["git", "init", "-q", str(checkout)], capture_output=True, text=True, env=auth_env()
-        )
-        if init.returncode:
-            reason = init.stderr.strip()
-            return checkout, bare, f"checkout missing at {checkout} (git init: {reason})"
-    if not checkout.exists():
-        return checkout, bare, f"checkout missing at {checkout}"
+            return "mkdir failed"
+    try:
+        if not checkout.is_dir():
+            return "not a directory"
+        if not any(checkout.iterdir()):
+            set_repo_dir_mode(str(checkout))
+            init = subprocess.run(
+                ["git", "init", "-q", str(checkout)],
+                capture_output=True,
+                text=True,
+                env=auth_env(),
+                timeout=settings.code_git_timeout_s,
+            )
+            if init.returncode:
+                return f"git init: {init.stderr.strip()}"
+        return _checkout_metadata_error(checkout)
+    except OSError as e:
+        logger.warning("compiler tier: checkout %s unavailable: %s", checkout, e)
+        return f"checkout unavailable: {caller_text(e)}"
+    except subprocess.TimeoutExpired:
+        return "checkout Git command timed out"
+
+
+def resolve_checkout(cfg: RepoConfig, producer: str) -> tuple[Path, Path, str | None]:
+    """Resolve the producer's checkout and mirror, or explain why they are unusable.
+
+    Callers run this in a thread. The checkout is absolute because a harness changes
+    into it before consuming the converter's paths; every branch shares the mirror.
+    """
+    checkout = Path(checkout_for(cfg, producer)).absolute()
+    bare = Path(cfg.git_dir)
+    if not bare.exists():
+        return checkout, bare, f"bare clone missing at {bare}"
+    if reason := _prepare_checkout(checkout):
+        return checkout, bare, f"checkout missing at {checkout} ({reason})"
     return checkout, bare.resolve(), None
 
 
@@ -305,14 +363,14 @@ async def compiler_target(repo: CodeRepo, cfg: RepoConfig) -> str:
     return head or watermark
 
 
-def gone_documents(live: set[str], delta: Any, producer: str) -> list[str]:
+def gone_documents(live: set[str], delta: DeltaFile, producer: str) -> list[str]:
     """The live compiler-tier paths of `producer`'s languages the full-run delta does
     not mention, joined with the paths it already marks deleted — sorted, so the apply
     is deterministic. Another tier's documents in the same namespace are never gone:
     a full TypeScript run must not retire the Python tier's rows."""
     from server.code.domain.index.compiler_tiers import owns_path
 
-    present = {f.path for f in delta.files}
+    present = set(delta.paths)
     mine = {p for p in live if owns_path(producer, p)}
     return sorted((mine - present) | set(delta.deleted_files))
 
@@ -363,13 +421,16 @@ async def git(
     network: bool = False,
     token: str = "",
     remote: str = "",
+    proxy_identity: str = "",
 ) -> None:
     """Run one git command in a checkout, as a repository job: the checkout writable,
     `local_remote` (the bare clone a fetch reads) read-only, the network only with
     `network`. `token` authenticates to the owner of `remote` (the repository's own
-    https remote), so a private submodule of that owner can be fetched. On timeout,
-    name the command (a bare TimeoutError says nothing) and retry `retries` times — a
-    stall is usually transient contention on the shared bare clone."""
+    https remote), so a private submodule of that owner can be fetched; with an
+    operator's git proxy the network job goes through it as `proxy_identity` (the
+    entry's git_proxy_identity). On timeout, name the command (a bare TimeoutError says
+    nothing) and retry `retries` times — a stall is usually transient contention on
+    the shared bare clone."""
     from server.code.app.index.gitrepo import auth_env
 
     # The file transport follows the bare clone alone, never the entry's remote.
@@ -377,6 +438,17 @@ async def git(
         env = auth_env(token, remote)
     else:
         env = auth_env(remote=str(local_remote or ""))
+    job: JobOptions = {
+        "env": env,
+        "timeout_s": timeout_s,
+        "writable": [cwd],
+        "readonly": [local_remote] if local_remote else [],
+        "network": network,
+        "merge_stderr": True,
+    }
+    if network:
+        # It follows the URLs .gitmodules names, not the entry's remote: no remote to name.
+        job["network_git"] = NetworkGit(identity=proxy_identity)
 
     attempt = 0
     while True:
@@ -384,13 +456,10 @@ async def git(
             done = await run_job(
                 # never a repack inside a fetch: the tier's own gc does it (`gc_checkout`)
                 ["git", "-C", str(cwd), "-c", "gc.auto=0", "-c", "maintenance.auto=false", *args],
-                env=env,
-                timeout_s=timeout_s,
-                writable=[cwd],
-                readonly=[local_remote] if local_remote else [],
-                network=network,
-                merge_stderr=True,
+                **job,
             )
+        except GitProxyRefused as e:
+            raise tier_health.ToolOutputError(e.reason) from None
         except TimeoutError:
             attempt += 1
             if attempt > retries:

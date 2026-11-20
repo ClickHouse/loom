@@ -118,9 +118,9 @@ describe("Runs table", () => {
     expect(goals[1]).toHaveFocus();
   });
 
-  // Grouped by session, the runs of every group are still one list: one tab stop, and j
-  // moves from run to run inside a group and across groups.
-  it("grouped by session, is one tab stop and j moves to the next run", async () => {
+  // Grouped by session, the runs of every group are still one list: one tab stop, and
+  // ArrowDown moves from run to run inside a group and across groups.
+  it("grouped by session, is one tab stop and ArrowDown moves to the next run", async () => {
     listRuns.mockResolvedValue([run("r-1", "first", "s-1"), run("r-2", "second", "s-2"), run("r-3", "third", "s-2")]);
     render(<Runs />);
     await screen.findByRole("button", { name: "first" });
@@ -129,7 +129,7 @@ describe("Runs table", () => {
     const goals = ["first", "second", "third"].map((n) => screen.getByRole("button", { name: n }));
     expect(goals.map((g) => g.tabIndex)).toEqual([0, -1, -1]);
     act(() => goals[1].focus());
-    fireEvent.keyDown(goals[1], { key: "j" });
+    fireEvent.keyDown(goals[1], { key: "ArrowDown" });
     expect(goals[2]).toHaveFocus();
     expect(goals.map((g) => g.tabIndex)).toEqual([-1, -1, 0]);
   });

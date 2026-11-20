@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextvars
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -42,6 +43,12 @@ SENTINEL = "-"
 from loom.errors import from_response  # noqa: E402
 from loom.records import MemoryRecordClient, MemorySchemaClient  # noqa: E402
 from loom.run import credit_answer, current_run_id  # noqa: E402  (after the module constants)
+from loom.session_protection import (  # noqa: E402
+    SessionProtection,
+    automatic_for,
+    automatic_roots,
+    require_automatic_allowed,
+)
 
 # Set coalescing. From the COALESCE_MIN_BURST-th `set` inside
 # one COALESCE_WINDOW_S window per identity, sets are gathered and flushed at
@@ -76,10 +83,14 @@ _IDENTITY_KEYS = ("org", "namespace", "agent", "user_id", "session_id", "run_id"
 
 
 class _CoalesceWindow:
-    __slots__ = ("t0", "count", "pending", "timer", "identity", "first_sets")
+    __slots__ = ("t0", "count", "pending", "timer", "identity", "first_sets", "roots", "context")
 
-    def __init__(self, t0: float, identity: dict[str, str]) -> None:
+    def __init__(
+        self, t0: float, identity: dict[str, str], roots: tuple[SessionProtection, ...]
+    ) -> None:
         self.t0 = t0
+        self.roots = roots
+        self.context = contextvars.copy_context()
         self.count = 0
         self.pending: list[tuple[dict[str, Any], asyncio.Future[dict[str, Any]]]] = []
         self.timer: asyncio.TimerHandle | None = None
@@ -121,19 +132,21 @@ class _SetCoalescer:
         loop = asyncio.get_running_loop()
         now = loop.time()
         key = self._key(identity)
+        roots = automatic_roots(getattr(self._transport, "session_protection", None))
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
         window = self._windows.get(key)
-        if window is not None and now - window.t0 >= COALESCE_WINDOW_S:
+        if window is not None and (now - window.t0 >= COALESCE_WINDOW_S or window.roots != roots):
             self._close(key, window)  # its timer has not run yet: its flush goes first
             window = None
         if window is None:
-            window = _CoalesceWindow(now, identity)
+            window = _CoalesceWindow(now, identity, roots)
             self._windows[key] = window
             # It ends at its time, flushed if it gathered sets, so an idle one is not kept.
             window.timer = loop.call_later(COALESCE_WINDOW_S, self._close, key, window)
         window.count += 1
         if window.count < COALESCE_MIN_BURST:
             first = self._after(
-                [self._flushes.get(key)], lambda: self._transport.post("/v1/memory.set", payload)
+                [self._flushes.get(key)], lambda: self._post("/v1/memory.set", payload), window
             )
             window.first_sets.append(first)
             self._inflight.add(first)
@@ -158,7 +171,9 @@ class _SetCoalescer:
         batch, window.pending = window.pending, []
         first_sets, window.first_sets = window.first_sets, []
         task = self._after(
-            [self._flushes.get(key), *first_sets], lambda: self._flush(window.identity, batch)
+            [self._flushes.get(key), *first_sets],
+            lambda: self._flush(window.identity, batch),
+            window,
         )
         self._flushes[key] = task
         self._inflight.add(task)
@@ -166,7 +181,10 @@ class _SetCoalescer:
         task.add_done_callback(lambda done: self._flush_done(key, done, batch))
 
     def _after(
-        self, before: list[asyncio.Task[Any] | None], request: Callable[[], Awaitable[_T]]
+        self,
+        before: list[asyncio.Task[Any] | None],
+        request: Callable[[], Awaitable[_T]],
+        window: _CoalesceWindow,
     ) -> asyncio.Task[_T]:
         """A task that runs `request()` once every task in `before` is done."""
 
@@ -174,9 +192,17 @@ class _SetCoalescer:
             waits = [t for t in before if t is not None]
             if waits:
                 await asyncio.wait(waits)
-            return await request()
+            with automatic_for(window.roots):
+                return await request()
 
-        return asyncio.get_running_loop().create_task(run())
+        # Manual flush callers cannot replace a producer's family or SDK run context.
+        return asyncio.get_running_loop().create_task(run(), context=window.context.copy())
+
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
+        out: dict[str, Any] = await self._transport.post(path, payload)
+        require_automatic_allowed(getattr(self._transport, "session_protection", None))
+        return out
 
     def _flush_done(
         self,
@@ -239,7 +265,7 @@ class _SetCoalescer:
         `sizes`, by future) of the ones it did check."""
         payload: dict[str, Any] = dict(identity)
         payload["entries"] = [entry for entry, _ in batch]
-        res = await self._transport.post("/v1/memory.bulk_set", payload)
+        res = await self._post("/v1/memory.bulk_set", payload)
         # Results are matched by key, in order, not by position: an older server leaves
         # a blacklisted entry out of `written`, which would shift every later result.
         rows_by_key: dict[str, list[dict[str, Any]]] = {}
@@ -284,7 +310,7 @@ class _SetCoalescer:
     ) -> None:
         """Send one entry as a memory.set and hand its caller the answer."""
         try:
-            res = await self._transport.post("/v1/memory.set", {**identity, **entry})
+            res = await self._post("/v1/memory.set", {**identity, **entry})
         except Exception as e:  # noqa: BLE001 — hand the caller its own failure
             if not fut.done():
                 fut.set_exception(e)
@@ -386,6 +412,9 @@ class MemorySearchHit:
     # response's gate used; the server sends the key only
     # when set. Drop these rows for an "abstain means abstain" reading.
     below_threshold: bool = False
+    # True on a governed definition, served first because the query names its term or
+    # an alias; the server sends the key only when set.
+    governed: bool = field(default=False, kw_only=True)
     # Date metadata from the row; empty when the row had no date dimension.
     temporal_anchor: str = ""
     # How precisely the source pinned temporal_anchor (0..1; 0 = unscored).
@@ -426,6 +455,7 @@ class MemorySearchHit:
     source_resource_id: str = ""
     verified: bool = False
     # The identity axes the row was written under, when the server read them.
+    agent: str = field(default="", kw_only=True)
     user_id: str = ""
     session_id: str = ""
     speaker: str = ""
@@ -460,7 +490,10 @@ class MemorySearchResult(list[MemorySearchHit]):
       • ``abstain_code`` — "" | "no_match" | "below_threshold" |
         "entity_absent" | "low_calibrated_confidence" | "page_expired".
         Branch on it; ``abstain_reason`` is free text with the values in it.
-      • ``retrieval_risk`` — "low" | "medium" | "high" | "abstain".
+      • ``retrieval_risk`` — "low" | "medium" | "high" | "abstain", for the
+        hits that are not governed.
+      • ``term_leg`` — what the governed-definition leg did: "complete" |
+        "empty" | "capped" | "timed_out" | "failed" | "off".
       • ``reinforcement`` — "credited", "not_credited (measurement_label |
         no_consumer | no_closer)", or "" when the read asked for no credit
         (``auto_touch=False``). A reader is credited when it names a
@@ -482,6 +515,7 @@ class MemorySearchResult(list[MemorySearchHit]):
         abstain_reason: str = "",
         abstain_code: str = "",
         retrieval_risk: str = "",
+        term_leg: str = "",
         reinforcement: str = "",
         pending_extraction: int = 0,
         degraded: tuple[str, ...] = (),
@@ -493,6 +527,7 @@ class MemorySearchResult(list[MemorySearchHit]):
         self.abstain_code = abstain_code
         self.reinforcement = reinforcement
         self.retrieval_risk = retrieval_risk
+        self.term_leg = term_leg
         self.pending_extraction = pending_extraction
         self.degraded = degraded
         self.next = next
@@ -589,6 +624,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         code_state=str(r.get("code_state") or ""),
         rank_score=float(r.get("rank_score") or 0.0),
         below_threshold=bool(r.get("below_threshold") or False),
+        governed=bool(r.get("governed") or False),
         temporal_anchor=str(r.get("temporal_anchor") or ""),
         temporal_confidence=float(r.get("temporal_confidence") or 0.0),
         valid_at=str(r.get("valid_at") or ""),
@@ -611,6 +647,7 @@ def _parse_search_hit(r: dict[str, Any]) -> MemorySearchHit:
         source_class=str(r.get("source_class") or ""),
         source_resource_id=str(r.get("source_resource_id") or ""),
         verified=bool(r.get("verified") or False),
+        agent=str(r.get("agent") or ""),
         user_id=str(r.get("user_id") or ""),
         session_id=str(r.get("session_id") or ""),
         speaker=str(r.get("speaker") or ""),
@@ -636,6 +673,7 @@ def _search_result(result: dict[str, Any]) -> MemorySearchResult:
         abstain_reason=str(result.get("abstain_reason") or ""),
         abstain_code=str(result.get("abstain_code") or ""),
         retrieval_risk=str(result.get("retrieval_risk") or ""),
+        term_leg=str(result.get("term_leg") or ""),
         reinforcement=str(result.get("reinforcement") or ""),
         pending_extraction=int(result.get("pending_extraction") or 0),
         degraded=tuple(str(x) for x in (result.get("degraded") or ())),
@@ -782,6 +820,7 @@ class MemoryClient:
         *,
         tags: list[str] | None = None,
         entities: list[str] | None = None,
+        files: list[str] | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
         run_id: str | None = None,
@@ -811,6 +850,11 @@ class MemoryClient:
         find them immediately — without waiting on server-side LLM extraction
         (which skips point writes under a keyless/fake provider). Stored
         lowercased.
+
+        `files`: repository-relative references for file context and code linking.
+        A code namespace or explicit `repo:<id>` tag selects the repository.
+        None detects from the value and retains prior references on an empty
+        detection; [] clears them. Linking runs asynchronously after the write.
 
         `valid_at`: real-world time when this fact became true. Distinct
         from `created_at` (when Loom records the row). Read paths accept
@@ -888,6 +932,8 @@ class MemoryClient:
             relations=[list(f) for f in relations or []],
             dry_run=dry_run,
         )
+        if files is not None:
+            payload["files"] = list(files)  # [] explicitly clears prior references
         coalescer = self._set_coalescer()
         if coalescer is not None and set(payload) - set(_IDENTITY_KEYS) <= _BULK_ENTRY_KEYS:
             # From the third set inside one 200 ms window this
@@ -1424,7 +1470,8 @@ class MemoryClient:
         """List memory entries under this identity tuple.
 
         Two modes:
-          • `sort_by="recency"` (default) — order by memory_key.
+          • `sort_by="recency"` (default) — newest first by `created_at` (whole
+            seconds), then by memory_key within a second.
           • `sort_by="score"` — order by `evidence_count + recall_count*0.5`
             DESC. The "hot memory" view. Optional `quotas: dict[memory_type, int]`
             caps per-type slot counts.
@@ -1604,13 +1651,17 @@ class MemoryClient:
         reversible_for_days: int = 7,
         user_id: str | None = None,
         session_id: str | None = None,
+        approved_sha256: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Promote a private memory to this namespace's shared layer.
 
         Reversible within `reversible_for_days` (default 7) via demote.
-        After the window, demote still works but requires admin role.
+        After the window, demote still works but requires admin role. A definition
+        is promoted from its namespace-wide row (`agent_id="-"` and no `user_id` or
+        `session_id`) and names the `content_sha256` it approves in `approved_sha256`.
         """
-        payload: dict[str, Any] = self._identity(user_id, session_id)
+        payload: dict[str, Any] = self._identity(user_id, session_id, agent_id=agent_id)
         payload["memory_key"] = memory_key
         payload["rationale"] = rationale
         payload["reversible_for_days"] = reversible_for_days
@@ -1618,6 +1669,8 @@ class MemoryClient:
             payload["target_key"] = target_key
         if approver is not None:
             payload["approver"] = approver
+        if approved_sha256 is not None:
+            payload["approved_sha256"] = approved_sha256
         return await self._agent.transport.post("/v1/memory.promote", payload)
 
     async def get_by_id(
@@ -1923,6 +1976,8 @@ class MemoryClient:
         approver: str | None = None,
         user_id: str | None = None,
         session_id: str | None = None,
+        approved_sha256: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Share a per-agent memory with every agent in this namespace.
 
@@ -1930,7 +1985,10 @@ class MemoryClient:
         intent: *"this learning should propagate"*. Other agents in the
         namespace pick it up automatically through `memory.search(scope="shared")`.
 
-        Reversible within `reversible_for_days` (default 7) via `demote()`.
+        Reversible within `reversible_for_days` (default 7) via `demote()`. A
+        definition is shared from its namespace-wide row (`agent_id="-"` and no
+        `user_id` or `session_id`) and names the `content_sha256` it approves in
+        `approved_sha256`.
         """
         return await self.promote(
             memory_key,
@@ -1940,6 +1998,8 @@ class MemoryClient:
             approver=approver,
             user_id=user_id,
             session_id=session_id,
+            approved_sha256=approved_sha256,
+            agent_id=agent_id,
         )
 
     async def demote(
@@ -2035,7 +2095,7 @@ class MemoryClient:
         record_schema: dict[str, str | builtins.list[str]] | None = None,
         memory_key: str | None = None,
         judge_extraction: bool = False,
-        defer: bool = False,
+        defer: bool | None = None,
     ) -> dict[str, object]:
         """Extract memorable facts from a raw conversation and save them.
 
@@ -2060,13 +2120,13 @@ class MemoryClient:
         records that moment and facts about the user's state at the time of
         speaking are anchored to the turn, not the session day.
 
-        `defer=True` queues the request instead of extracting inline: the
-        call returns in tens of milliseconds with `deferred: True` and a
-        `queue_id`; the server's extraction_queue worker writes the same
-        memories shortly after. Until then `search`/`ask` report
-        `pending_extraction > 0` for the scope, and `extraction_status()`
-        shows the batch. Use on an agent's hot path; keep the default when
-        you need the written keys back now.
+        `defer=True` queues the request: the call returns in tens of
+        milliseconds with `deferred: True` and a `queue_id`; the server's
+        extraction_queue worker writes the same memories shortly after. Until
+        then `search`/`ask` report `pending_extraction > 0` for the scope, and
+        `extraction_status()` shows the batch. Use on an agent's hot path.
+        `defer=False` extracts inline whatever `extraction_defer_agents` says,
+        and returns the written keys; unset leaves the choice to that setting.
 
         Returns a dict with `written: list[{memory_key, version}]`,
         `refused: list[{memory_key, verdict}]` (the extracted facts the write
@@ -2079,8 +2139,8 @@ class MemoryClient:
         )
         payload["messages"] = list(messages)
         payload["max_tokens"] = max_tokens
-        if defer:
-            payload["defer"] = True
+        if defer is not None:
+            payload["defer"] = defer
         if judge_extraction:
             payload["judge_extraction"] = True
         if extra_tags:

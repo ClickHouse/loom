@@ -3,7 +3,21 @@
 // server/identity/app/token_clients.py builds the same setups, held together by
 // clientSetups.fixture.json.
 
-export type ClientId = "claude-desktop" | "claude-code" | "codex" | "cursor" | "vscode" | "cline" | "windsurf" | "zed";
+/** A token made in this visit is polled for its first call this long, every 15 s (the
+ *  Tokens page and the first-run checklist), so a never-used token is not polled forever. */
+export const FIRST_CALL_WAIT_MS = 10 * 60_000;
+export const FIRST_CALL_POLL_MS = 15_000;
+
+export type ClientId =
+  | "claude-desktop"
+  | "claude-code"
+  | "codex"
+  | "cursor"
+  | "vscode"
+  | "cline"
+  | "windsurf"
+  | "zed"
+  | "gemini";
 
 interface MCPClient {
   id: ClientId;
@@ -19,6 +33,7 @@ export const CLIENTS: MCPClient[] = [
   { id: "cline", label: "Cline" },
   { id: "windsurf", label: "Windsurf" },
   { id: "zed", label: "Zed" },
+  { id: "gemini", label: "Gemini CLI" },
 ];
 
 /** True for a value naming one of CLIENTS — a stored or picked id is checked, not cast. */
@@ -28,14 +43,13 @@ export function isClientId(v: string | null): v is ClientId {
 
 // Clients that speak MCP only over stdio — need the npx mcp-remote shim to
 // bridge to a remote HTTP MCP server. Mirrors server/identity/app/token_clients.py.
-const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "zed", "cline"]);
+const STDIO_VIA_NPX: ReadonlySet<ClientId> = new Set(["claude-desktop", "cline"]);
 
-// Coding agents mount the `coding` toolset: 19 tools, where the deployment default `core`
-// lists 41 once the code tools are on — over Cursor's historical 40-tool cap, and ~14k
-// tokens of listing per turn for Claude Code. `?toolset=` rides the URL, so one server
-// serves both.
+// Coding agents mount the `coding` toolset: the memory verbs they call plus the code
+// tools, which the deployment default `core` lists only with LOOM_MCP_CODE_TOOLS.
+// `?toolset=` rides the URL, so one server serves both.
 const CODING_TOOLSET = "coding";
-export const CODING_TOOLSET_CLIENTS: ReadonlySet<ClientId> = new Set(["claude-code", "codex", "cursor"]);
+export const CODING_TOOLSET_CLIENTS: ReadonlySet<ClientId> = new Set(["claude-code", "codex", "cursor", "gemini"]);
 
 // Codex reads the bearer from an environment variable it is told the NAME of;
 // the token itself never sits in ~/.codex/config.toml.
@@ -116,8 +130,9 @@ export function formatMcpConfig(args: { client: ClientId; token: string; mcpUrl:
         args: ["-y", "mcp-remote", mcpUrl, "--allow-http", "--header", authHeader],
       }
     : (() => {
+        // Gemini CLI reads a streamable-HTTP server from `httpUrl` (`url` means SSE there).
         const e: Record<string, unknown> = {
-          url: mcpUrl,
+          [args.client === "gemini" ? "httpUrl" : "url"]: mcpUrl,
           headers: { Authorization: `Bearer ${args.token}` },
         };
         if (args.client === "claude-code" || args.client === "vscode") {

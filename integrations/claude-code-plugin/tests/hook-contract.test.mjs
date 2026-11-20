@@ -25,10 +25,9 @@ function wired() {
   for (const [event, groups] of Object.entries(manifest.hooks)) {
     for (const g of groups) {
       for (const h of g.hooks) {
-        // The sh line of the command: hooks/<script>" <Event> ends it.
-        const m = h.command.match(/hooks\/([a-z-]+\.mjs)" (\w+)$/m);
-        assert.ok(m, `unparsed command: ${h.command}`);
-        assert.equal(m[2], event, `${h.command} names the event it is wired under`);
+        const m = (h.args?.[0] ?? "").match(/hooks\/([a-z-]+\.mjs)$/);
+        assert.ok(m, `unparsed hook: ${JSON.stringify(h)}`);
+        assert.equal(h.args[1], event, `${h.args[0]} names the event it is wired under`);
         out.push({ event, script: m[1] });
       }
     }

@@ -1,5 +1,6 @@
 # Loom on Kubernetes. Every pod is a full replica over one ClickHouse service:
-# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this.
+# docs/operations/kubernetes.md. Values-eks.yaml and values-kind.yaml layer on this, and
+# values-clickhouse-cloud.yaml on values-eks.yaml.
 
 image:
   repository: ghcr.io/clickhouse/loom
@@ -30,6 +31,45 @@ clickhouse:
   readerUser: ""
   # LOOM_CH_CLUSTER: the cluster clusterAllReplicas reads ("default" on Cloud).
   cluster: default
+
+# An external Postgres as the memory authority (docs/operations/postgres.md). With
+# `host` set the chart sets LOOM_STORAGE_AUTHORITY=postgres and connects over
+# verify-full; the authority is chosen at first boot, so start on an empty ClickHouse.
+postgres:
+  # The direct endpoint, never a transaction pooler. "" = the ClickHouse authority.
+  # Both Secrets are required with it, and the names it renders (LOOM_STORAGE_AUTHORITY,
+  # LOOM_PG_DSN, LOOM_PG_DURABILITY, LOOM_PG_POOL_MAX_SIZE, PGPASSWORD) are refused in env,
+  # extraEnv, secrets.extra and, as settings, settingsFile.
+  host: ""
+  # 1 to 65535.
+  port: 5432
+  database: loom
+  # A role that owns the database. The host, database and user go into the DSN as
+  # written: strings of letters, digits, '.', '_' and '-' only.
+  user: loom
+  # The Secret key holding the role's password, passed to the driver as PGPASSWORD.
+  # Keys take Kubernetes' Secret key characters: letters, digits, '.', '_' and '-', not
+  # '.' and not starting '..'.
+  passwordSecret:
+    name: ""
+    key: password
+  # The Secret key holding the PEM bundle of every root the service's CA publishes,
+  # mounted at /etc/loom/pg-ca.
+  caSecret:
+    name: ""
+    key: ca.crt
+  # LOOM_PG_DURABILITY: synchronous refuses to start when the server's
+  # synchronous_standby_names is empty; local accepts commits the primary alone holds.
+  durability: synchronous
+  # LOOM_PG_POOL_MAX_SIZE: connections per Loom process, at least LOOM_PG_POOL_MIN_SIZE
+  # (2 by default); a smaller pool fails at boot.
+  poolMaxSize: 20
+
+# Private deployment-identity listener on web and workers Deployment pods.
+# 0 disables it; otherwise a whole number from 1 to 65535, except the HTTP port 7777.
+# Configure only here, including when external envFrom sources are used.
+cellProbe:
+  port: 0
 
 embedding:
   # Must match on every pod and cannot roll (see mustMatchChange below).
@@ -84,6 +124,17 @@ extraVolumeMounts: []
 # at loopback behind a proxy, every client counts as the proxy for the per-address
 # sign-in limits, so the chart refuses that with ingress.enabled.
 trustedProxies: "127.0.0.1"
+
+# TLS on Loom's own port. secretName names a kubernetes.io/tls Secret: every web and
+# workers pod mounts its tls.crt and tls.key and serves them (LOOM_TLS_CERT_FILE,
+# LOOM_TLS_KEY_FILE), the port then serves HTTPS only, and the probes use HTTPS. Loom
+# serves a renewed pair without a restart once the kubelet updates the mount. The
+# Ingress or proxy in front must connect over HTTPS (on EKS, the ALB's backend-protocol
+# annotation). "" serves plain HTTP.
+tls:
+  secretName: ""
+  # LOOM_TLS_MIN_VERSION: the lowest TLS version the port accepts, "1.2" or "1.3".
+  minVersion: "1.2"
 
 # Seconds uvicorn keeps an idle connection open. Longer than the idle timeout
 # of the balancer in front, or it reuses a connection Loom just closed (a 502).
@@ -171,14 +222,8 @@ serviceAccount:
   name: ""
   # IRSA (eks.amazonaws.com/role-arn) or other cloud identity annotations.
   annotations: {}
-  # Mount the service-account token (retireLostPods mounts it too).
+  # Mount the service-account token for workloads that explicitly need it.
   automountToken: false
-
-# The workers leader retires the provider participant of a pod Kubernetes has
-# deleted (lost with its node, evicted past its grace period), which would
-# otherwise hold the next model change until `loom participant retire`. Grants
-# the service account `get` on pods in this namespace and mounts its token.
-retireLostPods: true
 
 podAnnotations: {}
 podLabels: {}
@@ -348,7 +393,9 @@ extractor:
 assistant:
   enabled: false
   # A Secret in the release namespace with CREDS_KEY (64 hex), CREDS_IV (32 hex),
-  # JWT_SECRET, JWT_REFRESH_SECRET and ANTHROPIC_API_KEY; required when enabled.
+  # JWT_SECRET, JWT_REFRESH_SECRET, and ANTHROPIC_API_KEY while the assistant runs on
+  # Anthropic (LOCAL_LLM_BASE_URL instead for LOOM_ASSISTANT_PROVIDER=local); required when
+  # enabled.
   existingSecret: ""
   image:
     repository: registry.librechat.ai/librechat-ai/librechat
@@ -375,10 +422,11 @@ assistant:
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), the dev
 # ClickHouse (with devClickhouse.enabled), the EKS Pod Identity agent, and TCP
-# 443, the ClickHouse port and 6443 (with retireLostPods) anywhere except
-# `egressExcept` (providers, the IdP and git remotes have no fixed range). Off,
-# `guardMetadata` gives the Loom pods an egress-only policy that allows every pod
-# and every address but `egressExcept`.
+# 443, the ClickHouse port and postgres.port (with postgres.host) anywhere except
+# `egressExcept` (providers, the IdP and git remotes
+# have no fixed range); a ClickHouse or Postgres inside the cluster needs an
+# extraEgress rule. Off, `guardMetadata` gives the Loom pods an egress-only policy
+# that allows every pod and every address but `egressExcept`.
 networkPolicy:
   enabled: false
   # NetworkPolicy peers allowed to reach the pods (the ALB's subnets, the

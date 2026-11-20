@@ -28,6 +28,7 @@ from server.knowledge.api.models_knowledge import (
     KnowledgeIngestStatusInput,
     KnowledgeIngestStatusOutput,
 )
+from server.knowledge.app import ingest_jobs
 from server.knowledge.app.extractors import format_availability
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import ingestions
@@ -79,7 +80,7 @@ async def handle_knowledge_ingest(input: KnowledgeIngestInput) -> KnowledgeInges
         allow_partial=input.allow_partial,
         state="pending",
     )
-    await ingestions.insert_ingestion(row)
+    await ingest_jobs.submit(row)
     return KnowledgeIngestOutput(
         ingestion_id=row["ingestion_id"],
         state="pending",
@@ -131,10 +132,10 @@ async def handle_knowledge_ingest_status(
 
     job_id = _uuid(input.ingestion_id)
     with own_write_reads():
-        job = await ingestions.get_ingestion(input.org, input.namespace, job_id) if job_id else None
+        job = await ingest_jobs.get(input.org, input.namespace, job_id) if job_id else None
         if job is None:
             return KnowledgeIngestStatusOutput(found=False, ingestion_id=input.ingestion_id)
-        cancelled = await ingestions.cancel_requested(
+        cancelled = await ingest_jobs.cancel_requested(
             input.org, input.namespace, job["ingestion_id"]
         )
     return _status(job, cancelled)
@@ -144,24 +145,24 @@ async def handle_knowledge_ingest_cancel(
     input: KnowledgeIngestCancelInput,
 ) -> KnowledgeIngestCancelOutput:
     """A pending job is cancelled at once; a running one stops before it
-    publishes; a finished one stays as it ended. The cancel is a row of its own
-    (`ingestions.insert_cancel`), and the job is read again after it is written:
-    still pending then, no worker has started it, and the one that takes it
-    reads the cancel first."""
+    publishes; a finished one stays as it ended. The cancel is recorded apart from
+    the job's versions (`ingest_jobs.request_cancel`), and the job is read again after
+    it is written: still pending then, no worker has started it, and the one that
+    takes it reads the cancel first."""
     from server.core.ch import own_write_reads
     from server.knowledge.app.writes import authorship_of
 
     job_id = _uuid(input.ingestion_id)
     with own_write_reads():
-        job = await ingestions.get_ingestion(input.org, input.namespace, job_id) if job_id else None
+        job = await ingest_jobs.get(input.org, input.namespace, job_id) if job_id else None
         if job is None:
             return KnowledgeIngestCancelOutput(found=False)
         if job["state"] not in OPEN_STATES:
             return KnowledgeIngestCancelOutput(found=True, state=job["state"], cancelled=False)
         job_id = job["ingestion_id"]
         author = authorship_of(agent="", session_id="", source_class=None)
-        await ingestions.insert_cancel(input.org, input.namespace, job_id, author)
-        job = await ingestions.get_ingestion(input.org, input.namespace, job_id)
+        await ingest_jobs.request_cancel(input.org, input.namespace, job_id, author)
+        job = await ingest_jobs.get(input.org, input.namespace, job_id)
     if job is None:  # erased meanwhile
         return KnowledgeIngestCancelOutput(found=False)
     if job["state"] == "pending":

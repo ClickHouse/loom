@@ -4,6 +4,7 @@ cursors it resumes from."""
 from __future__ import annotations
 
 import json
+import logging
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -17,6 +18,9 @@ from server.code.domain.anchor import (
 from server.code.domain.successor import Successor
 from server.memory.store.code_links import LinkRow
 from server.memory.store.key_write_lock import KeyWriteLocks
+from server.settings import settings
+
+log = logging.getLogger(__name__)
 
 # One host rechecks a repository at a time; the lease outlives the worker's pass budget.
 repository_locks = KeyWriteLocks(wait_s=1.0, ttl_s=900)
@@ -124,6 +128,90 @@ class RepoReads:
             ("renamed", base, head, *paths),
             lambda: code.renamed_from(self.org, self.cns, base, head, paths),
         )
+
+    async def containing(
+        self, base: str, head: str, literal: str, *, limit: int
+    ) -> list[str] | None:
+        """The files `base..head` added or changed whose text at `head` holds the word
+        `literal`, fewer than `limit`, those the ingest would not index left out; an empty
+        list when the range's diff cannot be read (a force-push, a diff git fails on),
+        more than `memory_code_links_mirror_changed_files` changed or `limit` or more
+        hold it; None when the grep cannot be run. A file git then cannot read fails the
+        recheck, as any other file read does."""
+
+        async def read() -> list[str] | None:
+            if not base:
+                return []  # a link never checked at a commit: nothing to search from
+            touched = await self.touched(base, head)
+            if touched is None:
+                log.info(
+                    "memory links: %s not searched for in the mirror: %s..%s of %s cannot be read",
+                    literal,
+                    base[:12],
+                    head[:12],
+                    self.cns,
+                )
+                return []
+            if not touched:
+                return []
+            scope = await self._once(
+                ("scope", head), lambda: code.ingest_scope(self.org, self.cns, head)
+            )
+            if scope is None:
+                return None
+
+            async def in_scope() -> tuple[int, list[str] | None]:
+                # by prefix first: the denylist is matched only on a range within the bound
+                under = [p for p in touched if scope.under(p)]
+                if len(under) > settings.memory_code_links_mirror_changed_files:
+                    return len(under), None
+                return len(under), sorted(filter(scope.takes, under))
+
+            count, paths = await self._once(("indexed paths", base, head), in_scope)
+            if paths is None:
+                log.info(
+                    "memory links: %s not searched for in the mirror: %d files changed "
+                    "in %s..%s of %s, past memory_code_links_mirror_changed_files",
+                    literal,
+                    count,
+                    base[:12],
+                    head[:12],
+                    self.cns,
+                )
+                return []
+            found = await code.grep_words(scope, head, literal, paths, limit=limit)
+            if found is None:
+                return None
+            if len(found) >= limit:  # a cut list is never taken as whole
+                log.info(
+                    "memory links: %s named by %d or more changed files of %s, past "
+                    "memory_code_links_mirror_naming_files: the index decides",
+                    literal,
+                    limit,
+                    self.cns,
+                )
+                return []
+            return [p for p in found if await self._indexed_names(scope, head, p) is not None]
+
+        return await self._once(("containing", head, literal, base), read)
+
+    async def _indexed_names(
+        self, scope: code.IngestScope, head: str, path: str
+    ) -> set[str] | None:
+        """`code.indexed_names`, once per pass: one read answers both the content refusal
+        and the names, which then serve `names` too. None for a file that does not parse
+        as well: the ingest indexes nothing of it."""
+
+        async def read() -> set[str] | None:
+            try:
+                return await code.indexed_names(scope, head, path)
+            except code.ParseFailed:
+                return None
+
+        names = await self._once(("indexed", head, path), read)
+        if names is not None:
+            self._read.setdefault(("names", head, path), names)
+        return names
 
     async def names(self, commit: str, path: str) -> set[str] | None:
         """The qualified names `path` defines at `commit`, read without fingerprints."""

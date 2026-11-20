@@ -5,11 +5,11 @@ only and warns on any other key, so the notes live here. The Codex plugin
 runs byte-identical copies of these scripts with its own wiring
 (`integrations/codex-plugin/hooks/hooks.json`, which says what differs and
 why). `hooks.generic.json` maps the same scripts onto a hand-wired client's
-events. Every script is `sh bin/loom-node <script> <Event> [client]` (Claude
-Code's commands also carry a PowerShell form for Windows without Git Bash): the
-launcher finds Node 18+ (README, "Which Node"), the event name is the first
-argument, the client (`codex`, …) the optional second; the payload is JSON
-on stdin.
+events. Claude Code runs each script as `node <script> <Event>` with no
+shell; the other wirings as `sh bin/loom-node <script> <Event> [client]`,
+where the launcher finds Node 18+ (README, "Which Node"). The event name is
+the first argument, the client (`codex`, …) the optional second; the payload
+is JSON on stdin.
 
 ## What every hook guarantees
 
@@ -17,8 +17,9 @@ on stdin.
   is swallowed. A hook that ends in `runHookMain` (`lib/loom-client.mjs`)
   writes that error's first line to stderr under `LOOM_HOOK_DEBUG=on`, with
   bearer tokens and JWTs redacted; nothing else reaches stderr. The one
-  exception is the launcher finding no Node: it exits 1, a non-blocking
-  error to both clients, with one `loom:` line on stderr.
+  exception is a missing Node: Claude Code reports `node` not found, and the
+  launcher exits 1 with one `loom:` line on stderr; both are non-blocking
+  errors.
 - **It is bounded.** Each request is aborted at the request bound: 5× the
   round trip SessionStart measured against the server, clamped to
   3,000–8,000 ms (`lib/hook-bounds.mjs`); `LOOM_HOOK_TIMEOUT_MS` overrides it.
@@ -57,7 +58,7 @@ receives on stdout.
 
 | Event                                           | Script                | Reads                              | Output                   | Side effects                                                                                                                                                                                                          | Off                                |
 | ----------------------------------------------- | --------------------- | ---------------------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| SessionStart                                    | loom-session-start    | cwd, session_id                    | primer text              | context.pack, code.repos/index_status/map, task.counts, namespace.get, session.brief_list, collection.list; GET /v1/health: its round trip is cached as the RTT bound, its `version` feeds the minServerVersion check | `LOOM_INJECT_CONTEXT=false`        |
+| SessionStart                                    | loom-session-start    | cwd, session_id                    | primer text              | context.pack, code.repos/index_status/map, task.counts, namespace.get, session.brief_list, collection.list; GET /v1/health: its round trip is cached as the RTT bound, its `version` feeds the server version warning | `LOOM_INJECT_CONTEXT=false`        |
 | UserPromptSubmit                                | loom-prompt-pack      | prompt, cwd, session_id            | JSON additionalContext   | code.search                                                                                                                                                                                                           | `LOOM_PROMPT_PACK=off`             |
 | UserPromptSubmit                                | loom-prompt-recall    | prompt, cwd, session_id            | JSON additionalContext   | context.pack                                                                                                                                                                                                          | `LOOM_PROMPT_RECALL=off`           |
 | UserPromptSubmit                                | loom-run              | prompt, session_id                 | none                     | run.begin on the first prompt; appends the turn journal                                                                                                                                                               | `LOOM_RUN_LEDGER=off`              |
@@ -114,8 +115,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   (`LOOM_TASK_INBOX_LINE=off`); the saved-briefs line (only with
   `LOOM_SESSION_BRIEF_PRIMER=on`); the collections line
   (`LOOM_COLLECTIONS_LINE=off`); the recording line, which states the
-  owner's Recording switch; and a once-a-day notice when ~/.claude.json also
-  mounts the same server.
+  owner's Record conversations switch; and a once-a-day notice when
+  ~/.claude.json also mounts the same server.
 - **loom-session-start, collections line.** One `collection.list` for the
   session's org, cached a minute per (server, org, token, toolset); when the token
   reads shared collections, a few lines list up to six (how a search covers
@@ -232,8 +233,8 @@ detached (`lib/flush-job.mjs` holds its job shapes and delivery policy).
   scratchpad block.
 - **loom-conversation.** See the guarantees above. It reads at most 8 MB and
   sends at most 50 turns per Stop from its byte cursor; the rest follows at
-  the next Stop. With the owner's Recording switch cached off it sends
-  nothing and moves the cursor past the window. Without a parseable
+  the next Stop. With the owner's Record conversations switch cached off it
+  sends nothing and moves the cursor past the window. Without a parseable
   transcript it posts the turn journal's rows plus `last_assistant_message`.
 - **loom-session-brief.** Reads the transcript from its byte cursor (the
   window's first 2 MB and last 6 MB when larger), turns it into typed events

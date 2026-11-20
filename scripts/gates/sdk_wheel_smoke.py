@@ -5,7 +5,8 @@ The SDK's unit tests run inside the server's 3.12 environment, whose own
 dependencies can hide one the SDK forgot to declare, and whose interpreter
 hides stdlib the SDK's Python floor lacks. This script runs in a clean venv
 holding only the wheel and its declared deps, on any supported Python: it
-imports every submodule, sends a `memory.search` and a failing `memory.get`
+imports every submodule (an adapter whose framework is an absent extra must
+fail with an ImportError naming it), sends a `memory.search` and a failing `memory.get`
 through a mocked transport, and, given the wheel file, checks it ships
 `py.typed` and the license.
 
@@ -81,6 +82,17 @@ async def exercise() -> None:
             raise SmokeFailure("a 404 did not raise NotFound")
 
 
+def import_submodules() -> None:
+    for mod in pkgutil.walk_packages(loom.__path__, "loom."):
+        try:
+            importlib.import_module(mod.name)
+        except ImportError as e:
+            # A framework adapter needs its extra, and its error names it; no other
+            # module may fail to import.
+            adapter = mod.name.startswith("loom.integrations.")
+            check(adapter and "pip install 'clickhouse-loom[" in str(e), f"{mod.name}: {e}")
+
+
 def main(argv: list[str]) -> int:
     try:
         check(
@@ -88,8 +100,7 @@ def main(argv: list[str]) -> int:
         )
         for wheel in argv:
             check_wheel(wheel)
-        for mod in pkgutil.walk_packages(loom.__path__, "loom."):
-            importlib.import_module(mod.name)
+        import_submodules()
         asyncio.run(exercise())
     except SmokeFailure as e:
         print(f"sdk-wheel-smoke: FAIL — {e}", file=sys.stderr)

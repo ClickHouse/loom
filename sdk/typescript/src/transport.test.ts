@@ -142,6 +142,7 @@ describe("Transport", () => {
       "CODED_WIDTH_MISMATCH",
       "GATEWAY_REQUIRED",
       "MODEL_CALL_UNATTRIBUTED",
+      "TENANCY_REFUSED",
     ]) {
       sleeps.length = 0;
       const { t, calls } = transport([

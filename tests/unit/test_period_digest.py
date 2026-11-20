@@ -206,6 +206,9 @@ class _FakeEmbedder:
     async def embed(self, text: str) -> list[float]:
         return [0.1, 0.2, 0.3]
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 def _written_keys(ch: _FakeCH) -> list[str]:
     return [r["memory_key"] for t, rows in ch.inserts if t == "loom.memory" for r in rows]
@@ -674,7 +677,9 @@ def test_loom_period_digest_writes_as_its_command(monkeypatch: pytest.MonkeyPatc
         return period_digest.PeriodDigestResult()
 
     monkeypatch.setattr(period_digest, "run_period_digest", _run)
-    monkeypatch.setattr(maintenance, "run_connected", lambda go: asyncio.run(go(object())))
+    monkeypatch.setattr(
+        maintenance, "run_connected", lambda go, **_declared: asyncio.run(go(object()))
+    )
     args = argparse.Namespace(
         cmd="period-digest",
         func=maintenance._cmd_period_digest,

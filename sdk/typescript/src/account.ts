@@ -24,6 +24,10 @@ export interface CreateTokenOptions {
   role?: GrantRole;
   /** Days until it expires, 1..3650; 0 never expires; `null` is the server's default (90). Default 90. */
   ttlDays?: number | null;
+  /** A list's save target: one of the list's memory namespaces the token may write; default
+   *  the parent token's when it may write there, else the first.
+   *  With `"*"`, name the namespace before `"*"` instead. */
+  savesTo?: string;
 }
 
 /** One MCP client's setup for a new token. */
@@ -79,6 +83,9 @@ export interface TokenRow {
   revoked_by: string;
   last_used_at: string | null;
   ns_roles: Record<string, GrantRole>;
+  /** Where a list token saves, as minted; `""` for a `*` token, one with no default target,
+   *  or one minted before tokens recorded it; absent from the previous build's answer. */
+  saves_to?: string;
   /** Made by you, under any spelling of yours; absent from the previous build's answer. */
   yours?: boolean;
 }
@@ -119,6 +126,7 @@ export class AccountClient {
     };
     if (options.name !== undefined) body.name = options.name;
     if (options.role !== undefined) body.role = options.role;
+    if (options.savesTo !== undefined) body.saves_to = options.savesTo;
     return this.transport.post<TokenCreated>("me/service_accounts.create", body, opts);
   }
 

@@ -36,7 +36,7 @@ function stubNetwork() {
       const body =
         path === "/v1/knowledge.list"
           ? { rows: knowledgeRows(), total: ROWS, next_cursor: null }
-          : { rows: [], entries: [], total: 0, next_cursor: null, status: "ok" };
+          : { rows: [], entries: [], sources: [], total: 0, next_cursor: null, status: "ok" };
       return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
     }),
   );

@@ -1,17 +1,21 @@
 # Deployment
 
-Loom is one server image plus ClickHouse, with the document extractor service as an
-image of its own ([container images](#container-images)). The server image serves HTTP,
-MCP and the dashboard, and runs the background workers. Its containers keep no durable
-state of their own, so you can replace or add them freely: ClickHouse holds Loom's data,
-uploaded document originals included unless their bytes are kept in an S3-compatible
-bucket ([where originals are
-stored](../features/knowledge.md#where-originals-are-stored)); the code index keeps bare
-git mirrors on disk, a cache of the remotes ClickHouse records. A deployment moves with
-ClickHouse, its env config, `LOOM_JWT_SECRET` and, while rows name objects in it, the
-document bucket ([moving a deployment](./backup-and-recovery.md#moving-a-deployment)).
-The compose files under `dev/` are the supported production files. Every setting named
-here is in the generated [configuration reference](../reference/configuration.md).
+Loom is one server image plus ClickHouse (and Postgres, under
+`LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of
+its own ([container images](#container-images)). The server image serves HTTP, MCP and
+the dashboard, and runs the background workers. Its containers keep no durable state of
+their own, so you can replace or add them freely: ClickHouse holds Loom's data, uploaded
+document originals included unless their bytes are kept in an S3-compatible bucket
+([where originals are stored](../features/knowledge.md#where-originals-are-stored)).
+Under the
+[Postgres memory authority](../architecture/storage-authority.md#why-two-stores),
+Postgres holds live memory and knowledge state. The code index keeps bare git mirrors on
+disk, a cache of the remotes ClickHouse records. A deployment moves with ClickHouse (and
+Postgres, under that authority), its env config, `LOOM_JWT_SECRET` and, while rows name
+objects in it, the document bucket
+([moving a deployment](./backup-and-recovery.md#moving-a-deployment)). The compose files
+under `dev/` are the supported production files. Every setting named here is in the
+generated [configuration reference](../reference/configuration.md).
 
 ## Deployment ladder
 
@@ -37,11 +41,16 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
 `compose.yaml` is the one shipped stack. Its `clickhouse` service runs under the
 `bundled` Compose profile, so `COMPOSE_PROFILES` in `.env` decides the target:
 
-| Target                      | Install                                                                         | `.env`                                           |
-| --------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Bundled container (default) | `curl -fsSL …/install.sh \| sh` (`sh -s -- --bundled` to switch back to it)     | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
-| Self-managed server         | `curl -fsSL …/install.sh \| sh -s -- --clickhouse http://loom@ch.internal:8123` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
-| ClickHouse Cloud            | `curl -fsSL …/install.sh \| sh -s -- --clickhouse https://loom@<host>:8443`     | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| Target                      | Install                                                                                                                               | `.env`                                           |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Bundled container (default) | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh`                                              | `COMPOSE_PROFILES=bundled`, no `LOOM_CH_*`       |
+| Self-managed server         | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse http://loom@ch.example.com:8123 && rm loom-install.sh` | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+| ClickHouse Cloud            | `curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --clickhouse https://loom@<host>:8443 && rm loom-install.sh`        | `COMPOSE_PROFILES=` and `LOOM_CH_*` from the URL |
+
+Run each of these from a directory only you can write to
+([quickstart](../getting-started/quickstart.md#fast-path-released-image-no-clone)).
+`curl -fsSL …/install.sh -o loom-install.sh && sh loom-install.sh --bundled && rm loom-install.sh`
+switches an install back to the bundled container.
 
 - **A Keeper.** The server needs one. Without it `loom ch-setup` stops and prints how
   to add one; `--bundled` switches the install to the bundled ClickHouse instead.
@@ -88,10 +97,13 @@ Sizing (web replicas, uvicorn processes, the workers container) is in
   a server Loom shares, a self-managed admin can keep both to Loom's own:
   `CREATE ROW POLICY loom_own ON system.query_log, system.processes USING user IN ('loom', 'loom_reader') TO loom`;
   ClickHouse Cloud does not allow row policies on system tables.
-- **Switching.** Re-run the installer with `--clickhouse` to move an install to your own
-  server; Loom starts on an empty `loom` database there. The bundled container keeps
-  running on its old volume until you stop it (the installer prints the command); copy
-  the data first with [backup and restore](./backup-and-recovery.md) if you need it.
+- **Log retention.** A self-managed server keeps `system.query_log` and
+  `system.text_log` rows until you set a TTL on them ([log retention](#log-retention)).
+- **Switching.** Run the install command again with `--clickhouse` (the table above) to
+  move an install to your own server; Loom starts on an empty `loom` database there. The
+  bundled container keeps running on its old volume until you stop it (the installer
+  prints the command); copy the data first with
+  [backup and restore](./backup-and-recovery.md) if you need it.
 
 Every boot runs the same checks before it connects (the oldest replica's version, the
 database, the grants, a Keeper) and stops with one line naming the fix. Every Loom process
@@ -139,6 +151,7 @@ The bundled ClickHouse starts with the files in `deploy/clickhouse-config/`:
 | `lemmatizers.xml` + `deploy/lemmagen3/` | The English lemmatizer for ad-hoc `lemmatize('en', …)` queries. Loom lemmatizes in Python.                              |
 | `nlp_user_settings.xml`                 | The `loom_reader` user and profile (below), the per-tenant quota, and the experimental NLP and AI SQL flags.            |
 | `keeper.xml`                            | An embedded single-node Keeper, so the `KeeperMap` tables work.                                                         |
+| `system_logs.xml`                       | `system.query_log` and `system.text_log` keep 30 days of rows ([log retention](#log-retention)).                        |
 | `named_collections.xml`                 | Named collections for ClickHouse's `ai*` SQL functions. Git-ignored; defines none as shipped; keys come via `from_env`. |
 
 - **Read-only user.** Loom runs the reads a caller shapes (`code.grep`, a patterned
@@ -292,7 +305,7 @@ back.
 | ------------------------ | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_AUTH_REQUIRED`     | `true` (the stock `.env` sets `false`) | Keep `true` for anything other people can reach.                                                                        |
 | `LOOM_IDENTITY_PROVIDER` | empty (inferred)                       | Always, in a deployment: `trust-network` or `gateway`. `single-user` turns auth off whatever `LOOM_AUTH_REQUIRED` says. |
-| `LOOM_SELF_SIGNUP`       | `off`                                  | `open` enables browser sign-up in the dashboard (`trust-network`).                                                      |
+| `LOOM_SELF_SIGNUP`       | `off`                                  | `open` enables browser sign-up in the dashboard; a non-loopback bind needs `LOOM_IDENTITY_PROVIDER=trust-network` too.  |
 | `LOOM_SELF_SIGNUP_ORG`   | `dev`                                  | You want signed-up accounts in your own org.                                                                            |
 | `LOOM_DEFAULT_NAMESPACE` | `local`                                | Renaming the one namespace `single-user` mode serves. Ignored when auth is required.                                    |
 | `LOOM_JWT_SECRET`        | the checked-in development secret      | Always, when auth is on.                                                                                                |
@@ -334,15 +347,15 @@ back.
 
 ### Public URL and clients
 
-| Variable               | Default          | Set it when                                                                                                             |
-| ---------------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`. |
-| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                            |
-| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | Required behind a proxy or load balancer: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` count.   |
-| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind start with auth off or the dev JWT secret.                          |
-| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                   |
-| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                 |
-| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.          |
+| Variable               | Default          | Set it when                                                                                                                                                   |
+| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LOOM_PUBLIC_BASE_URL` | empty            | Always, off loopback: a non-loopback `LOOM_BIND_HOST` refuses to start without it. Empty uses the request's own `Host`.                                       |
+| `LOOM_BIND_HOST`       | `127.0.0.1`      | Loom must be reachable by others. In a container it is the address the port is published on.                                                                  |
+| `LOOM_TRUSTED_PROXIES` | `127.0.0.1`      | Required behind a proxy or load balancer: its addresses or CIDRs. Only those peers' `X-Forwarded-For`/`-Proto` count.                                         |
+| `LOOM_ALLOW_INSECURE`  | `false`          | Never on a reachable port. Lets a non-loopback bind skip the startup refusals in [Proxy and TLS](#proxy-and-tls), all but the missing `LOOM_PUBLIC_BASE_URL`. |
+| `LOOM_OAUTH_ENABLED`   | `false`          | You want one-click MCP connect (OAuth 2.1 browser sign-in instead of a pasted token).                                                                         |
+| `LOOM_OAUTH_ISSUER`    | empty            | OAuth is on: the public HTTPS base URL the discovery metadata advertises. Empty derives it per request.                                                       |
+| `LOOM_CORS_ORIGINS`    | empty (CORS off) | A browser application on another origin calls Loom directly. List exactly those origins; `*` refuses to start.                                                |
 
 Sign-in through your identity provider (dashboard, `loom login` and OAuth) needs
 `LOOM_OAUTH_LOGIN_PROVIDER=oidc` and the `LOOM_OIDC_*` settings; [single sign-on](sso.md)
@@ -352,7 +365,7 @@ walks through it.
 
 | Variable                         | Default                     | Set it when                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | -------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_BACKGROUND_WORKERS`        | `auto`                      | Leave it `auto` on every replica: one process per deployment, elected through ClickHouse, runs the workers. `on` skips the election, `off` never runs them.                                                                                                                                                                                                                                                                                         |
+| `LOOM_BACKGROUND_WORKERS`        | `auto`                      | Leave it `auto` on every replica: one process per deployment, elected through ClickHouse, runs the workers. `on` skips the election and writes no lease row: the others report `workers_lease_absent` unless an `auto` process holds the lease. `off` never runs them.                                                                                                                                                                              |
 | `LOOM_WORKERS_PROCESS`           | `child`                     | `inline` runs the workers on the serving event loop (a container that serves no traffic).                                                                                                                                                                                                                                                                                                                                                           |
 | `LOOM_SHUTDOWN_READY_DELAY_S`    | `15`                        | Your load balancer needs longer than 15 s (probe interval × failure threshold) to take a replica out after `/v1/health/ready` turns 503.                                                                                                                                                                                                                                                                                                            |
 | `LOOM_READY_REQUIRES_MIRRORS`    | `false`                     | `true` keeps a replica unready until the mirror warm-up has queued its clones and while a clone runs or waits (a failed clone does not hold it; doctor names it). Needs `LOOM_CODE_MIRROR_WARMUP` on: without it nothing is cloned at boot.                                                                                                                                                                                                         |
@@ -598,6 +611,42 @@ inspect both tables by hand.
 
 Start Loom again after cleanup; each process reads the codec settings when it starts.
 
+### Log retention
+
+ClickHouse records each statement in `system.query_log` and its server log in
+`system.text_log`. A refused statement's error can quote the value it failed on, such as
+a memory key, a title or a user id, and [erasure](../features/memory/retention-and-erasure.md)
+reaches neither log. ClickHouse's default configuration keeps both logs' rows with no TTL.
+
+The bundled ClickHouse and the Helm chart's dev ClickHouse keep 30 days of each, from
+`deploy/clickhouse-config/system_logs.xml`. On a self-managed server, put the same file
+in `/etc/clickhouse-server/config.d/` and restart the server:
+
+```xml
+<clickhouse>
+    <query_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </query_log>
+    <text_log>
+        <ttl>event_date + INTERVAL 30 DAY DELETE</ttl>
+    </text_log>
+</clickhouse>
+```
+
+A `<text_log>` element turns `system.text_log` on, at trace level, on a server whose
+configuration had it off; keep only the `<query_log>` block there.
+
+When a log's definition changes, ClickHouse renames the existing table on the next start
+to the first free name of `query_log_0`, `query_log_1` and so on (`text_log_0` for the
+server log), keeps it with its rows and its old TTL, and creates the log again. A server
+that ran with no TTL keeps those rows in `query_log_0` and `text_log_0` until you drop
+them. Read what you need from the old tables, then drop them:
+
+```sql
+DROP TABLE IF EXISTS system.query_log_0;
+DROP TABLE IF EXISTS system.text_log_0;
+```
+
 ## Providers
 
 For ready-to-use configurations and the distinction between agent subscriptions and
@@ -616,11 +665,12 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 | `text-embedding-3-large`          | 3072                         | `OPENAI_API_KEY`                                       |
 | `gemini-embedding-001`            | 3072                         | `GEMINI_API_KEY` (or `GOOGLE_API_KEY`)                 |
 
-| LLM (`LOOM_LLM_PROVIDER`) | Needs                                | Default `LOOM_LLM_MODEL` |
-| ------------------------- | ------------------------------------ | ------------------------ |
-| `fake`                    | nothing; extraction produces nothing | `fake-echo-1`            |
-| `openai`                  | `OPENAI_API_KEY`                     | `gpt-6-luna`             |
-| `anthropic`               | `ANTHROPIC_API_KEY`                  | `claude-haiku-4-5`       |
+| LLM (`LOOM_LLM_PROVIDER`) | Needs                                                          | Default `LOOM_LLM_MODEL` |
+| ------------------------- | -------------------------------------------------------------- | ------------------------ |
+| `fake`                    | nothing; extraction produces nothing                           | `fake-echo-1`            |
+| `openai`                  | `OPENAI_API_KEY`                                               | `gpt-6-luna`             |
+| `anthropic`               | `ANTHROPIC_API_KEY`                                            | `claude-haiku-4-5`       |
+| `local`                   | a chat-completions server at `LOOM_LOCAL_LLM_BASE_URL`, no key | `qwen2.5:3b`             |
 
 - **Width.** `LOOM_EMBEDDING_DIM` must equal the model's width. It is fixed when the
   tables are created. The server probes the embedder at boot; a mismatch shows as the
@@ -660,8 +710,9 @@ conflicts and writes `memory.ask` answers. Both default to fakes that need no ne
 Every setting that names a model is in the `Models` section of
 [`server/settings/catalog.py`](../../server/settings/catalog.py), one per job. Set any
 of them in `.env` to move that job to another model. The provider comes from the name,
-so a job can run on Claude while the rest run on GPT, as long as both keys are set. An
-empty value uses `LOOM_LLM_MODEL`.
+so a job can run on Claude while the rest run on GPT, as long as both keys are set; a
+job naming `LOOM_LLM_MODEL` itself, or a name with no provider prefix, runs on
+`LOOM_LLM_PROVIDER`. An empty value uses `LOOM_LLM_MODEL`.
 
 | Job                                   | Setting                                 | Default           |
 | ------------------------------------- | --------------------------------------- | ----------------- |
@@ -773,8 +824,8 @@ and what it leaves:
 - The server's default MCP tool list (`LOOM_MCP_TOOLSET=core`, `LOOM_MCP_CODE_TOOLS` off)
   leaves the code tools out, but any client entry whose toolset includes `coding`, `tracker`
   (`code.bisect_candidates`, `code.pr_check`, `code.impact`) or `assistant` (`code.search`,
-  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code
-  and Codex, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
+  `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code,
+  Codex and Cursor, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
   Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
   added where agents use the task inbox): the Claude Code plugin's `toolset` option
   ([options](../features/integrations/claude-code.md#install)),
@@ -836,6 +887,11 @@ sealed credentials. Recreate the Loom container to load the changes, as shown in
 volumes. Signing up does not automatically give a new account access to existing local
 memories: provision the appropriate namespace grants through an operator.
 
+Anyone who reaches the port can sign up and gets a writer token on a namespace of
+their own, so the network is the access boundary. On a non-loopback `LOOM_BIND_HOST` the
+server refuses to start with sign-up open unless `LOOM_IDENTITY_PROVIDER` is
+`trust-network`, and `loom doctor` and `/v1/health` list the open sign-up either way.
+
 People sign up in the dashboard. The first person to claim a namespace name becomes its
 admin. Sign-up refuses a name that is already in use, registered or not, with the same
 answer as a registered one ([what a new name may claim](../architecture/security.md#what-a-new-name-may-claim)).
@@ -862,10 +918,13 @@ LOOM_IDENTITY_PROVIDER=single-user
 LOOM_DEFAULT_NAMESPACE=local   # optional
 ```
 
-Every call resolves to `LOOM_DEFAULT_NAMESPACE` in org `LOOM_SELF_SIGNUP_ORG` (default
-`dev`). The server provisions it at boot as a real namespace with an admin grant, so it
-stays administrable if auth is turned on later. Changing the setting leaves the previous
-namespace's memories in place but out of view (the boot log names them).
+A call that names none resolves to `LOOM_DEFAULT_NAMESPACE` in org `LOOM_SELF_SIGNUP_ORG`
+(default `dev`): on MCP for every op but `code.*`; over HTTP, for a call with no token,
+the org on every op but `code.*` and `tracker.*`, and the namespace on the everyday memory
+and search ops ([which ops](../reference/http-api.md#request)). The server provisions it
+at boot as a real namespace with an admin grant, so it stays administrable if auth is
+turned on later. Changing the setting leaves the previous namespace's memories in place
+but out of view (the boot log names them).
 
 > **Warning.** Never expose `single-user` mode to a network. Anyone who can reach the
 > port is the admin of its namespace.
@@ -888,7 +947,11 @@ ledger row.
 
 ## Proxy and TLS
 
-The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in front.
+Put a TLS-terminating proxy or load balancer in front: it holds the certificate clients
+see, and the checks below assume it. The image serves plain HTTP on its port unless
+`LOOM_TLS_CERT_FILE` and `LOOM_TLS_KEY_FILE` name a certificate and key; then the port
+serves HTTPS only, which encrypts the hop from the proxy to Loom
+([TLS on the Loom port](#tls-on-the-loom-port)).
 
 - Loom sends `Strict-Transport-Security` itself, with `max-age` from
   `LOOM_HSTS_MAX_AGE_SECONDS` (default `31536000`, one year); a browser honours it only
@@ -919,8 +982,9 @@ The image serves plain HTTP. Put a TLS-terminating proxy or load balancer in fro
   control.
 - A non-loopback `LOOM_BIND_HOST` refuses to start without `LOOM_PUBLIC_BASE_URL`, and,
   unless `LOOM_ALLOW_INSECURE=1`, with auth off, `LOOM_MCP_AUTH_MODE=open` (every MCP tool
-  would run with no principal), the dev JWT secret, or a key below the minimum size (an
-  HMAC `LOOM_JWT_SECRET` shorter than 32 bytes, or an RSA root,
+  would run with no principal), `LOOM_SELF_SIGNUP=open` (unless OIDC sign-in closes it)
+  without `LOOM_IDENTITY_PROVIDER=trust-network`, the dev JWT secret, or a key below the
+  minimum size (an HMAC `LOOM_JWT_SECRET` shorter than 32 bytes, or an RSA root,
   `LOOM_JWT_PUBLIC_KEYS_JSON` or inline end-user issuer key under 2048 bits; only the
   length is checked; a key fetched from `jwks_url` is not checked). With auth off, any
   request whose `Host` is not a loopback host or the public URL's host gets `421` (DNS
@@ -953,6 +1017,46 @@ Carry the choices in `deploy/proxy/nginx.conf` over to your own front end:
 | `X-Forwarded-Proto` from the terminator | Keeps the client-facing scheme, so Loom hands clients `https://` URLs.                        |
 | `access_log off`                        | The request ledger (`loom.agent_events`) is the access log.                                   |
 
+### TLS on the Loom port
+
+- `LOOM_TLS_CERT_FILE` is a PEM certificate chain and `LOOM_TLS_KEY_FILE` its PEM key, not
+  encrypted (a key that needs a passphrase is refused); set both or neither. With both, the
+  port answers TLS only: a plain HTTP request gets no answer, so the proxy and every health
+  check use `https://`.
+- Turning TLS on or off on a running deployment changes the port for every client at once:
+  a replica that restarted answers only the new scheme, one that did not only the old. Plan
+  a window for the switch, or start a second deployment with TLS on and move the clients to
+  it.
+- `LOOM_TLS_MIN_VERSION` is the lowest TLS version the port accepts: `1.2` (the default)
+  or `1.3`. Choose `1.3` when every client of the port speaks it.
+- Each web process checks both files at every handshake and loads them again after a
+  change, so a renewed pair is served without a restart; a connection already open keeps
+  the certificate it started with. A pair that does not load (a key that does not match
+  the certificate, or one file replaced before the other) logs a warning and leaves the
+  last good pair in place until the files change again; files the server cannot read yet
+  (their mode, a missing file) leave it in place until a handshake can read them. Replace
+  each file in one rename, or both at once as a Kubernetes Secret mount does. A server
+  that starts while the pair does not load refuses to start. A web process that uvicorn
+  starts in place of one that exited, while the pair does not load, logs it, waits 10 s
+  and exits, and uvicorn starts it again; the other web processes keep serving their last
+  pair.
+- A key file every user on the host can read logs a warning at start.
+- The pair is loaded once before the web processes start, so one that does not load stops
+  the start. `scripts/serve.sh` (the image) and `loom serve` serve it; a server started
+  another way (`uvicorn server.main:app`, `make server`) refuses to start with the
+  settings set rather than serve plain HTTP.
+- The server's user must be able to read both files (`loom`, uid 999, in the image).
+- The image's health check reads `LOOM_TLS_CERT_FILE` from the container's environment
+  to choose `https://`, and does not verify the certificate of its own loopback port:
+  set the pair in the environment, not only in a settings file, or the check fails.
+- The compose files serve plain HTTP: their health checks, which replace the image's, and
+  `loom up` use `http://`.
+- The proxy verifies Loom's certificate against the CA that issued it, under the name it
+  connects to. With nginx: `proxy_ssl_verify on`, `proxy_ssl_trusted_certificate`,
+  `proxy_ssl_name` and `proxy_ssl_server_name on`.
+- The cell probe listener (`LOOM_CELL_PROBE_PORT`) serves plain HTTP, and `loom router
+serve` refuses to start with the settings set.
+
 ## Container images
 
 The repository [`Dockerfile`](../../Dockerfile) builds the server image every rung uses:
@@ -966,9 +1070,10 @@ The repository [`Dockerfile`](../../Dockerfile) builds the server image every ru
 | `node-builder`     | pinned Node, scip-typescript and pnpm for the TypeScript compiler tier; scip-python for the Python tier                                                                             |
 | runtime            | Python 3.12, non-root user `loom` (uid/gid 999), `git`, the `dev/` operator tools, the migrations, `bench/fixtures` for `code.calibrate`, the `local-models` files in `/app/models` |
 
-The runtime exposes 7777, has a built-in `/v1/health` healthcheck (30 s interval), and
-runs `scripts/serve.sh`, which starts `uvicorn server.main:app` with `LOOM_WEB_WORKERS`
-processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
+The runtime exposes 7777, has a built-in `/v1/health/ready` healthcheck (10 s interval,
+over HTTPS when `LOOM_TLS_CERT_FILE` is in its environment), and
+runs `scripts/serve.sh`, which starts uvicorn through `python -m server.core.web_server`
+(which also serves the TLS pair) with `LOOM_WEB_WORKERS` processes (unset: one per CPU the container may use, at most one per GiB of memory and at most 8). `LOOM_UVICORN_LOOP`
 (`asyncio`, `auto`, `uvloop`) and `LOOM_GRACEFUL_SHUTDOWN_S` (default 10) are read by
 that script. Unset, the loop is `asyncio`, in `loom serve` and `make server` too: the
 workers and the code ops spawn git, and uvloop forks the whole process for each spawn,
@@ -1035,11 +1140,29 @@ format unavailable.
 The matching GitHub Release carries `loom-stack.tar.gz`, its SHA-256 file, and
 `install.sh`. The bundle is the supported source-free laptop deployment: it contains
 Compose plus the ClickHouse configuration/dictionary the stack needs, while the UI and
-server stay in the image. Each release's `install.sh` installs that release; rerunning it
-preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and giving an `.env` without
-an extractor token one, and the extractor URL unless it names its own) and volumes. An older
-release's `install.sh` run over a newer install refuses; a downgrade on purpose follows
-[downgrading an installer install](./upgrades.md#downgrading-an-installer-install).
+server stay in the image. Each release's `install.sh` installs that release; running the
+install command again preserves `.env` (apart from advancing the pinned `LOOM_VERSION` and
+giving an `.env` without an extractor token one, and the extractor URL unless it names its
+own) and volumes. An older release's `install.sh` run over a newer install refuses; a
+downgrade on purpose follows [downgrading an installer
+install](./upgrades.md#downgrading-an-installer-install).
+
+## Release files
+
+Each file on a GitHub Release has a keyless signature from the release workflow, in a Sigstore
+bundle beside it named `<file>.sigstore.json` (a release published before the workflow signed its
+files has none). While the workflow publishes a release again, a replaced file verifies once its
+new bundle is attached; one that still does not verify after the release run finished is reported
+as [SECURITY.md](../../SECURITY.md) describes. Download a file with its bundle and check it with
+cosign 3 or later:
+
+```bash
+url=https://github.com/ClickHouse/loom/releases/download/vX.Y.Z
+curl -fsSLO "$url/loom-stack.tar.gz" -O "$url/loom-stack.tar.gz.sigstore.json"
+cosign verify-blob loom-stack.tar.gz --bundle loom-stack.tar.gz.sigstore.json \
+  --certificate-identity https://github.com/ClickHouse/loom/.github/workflows/release.yml@refs/tags/vX.Y.Z \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 ## N identical replicas
 
@@ -1133,8 +1256,8 @@ as the balancer for the sign-in limits.
 ## Zero-downtime pair
 
 `redeploy.sh` runs two copies ("colours") of the stack and switches traffic between them
-at a proxy. It deploys the tip of `origin/main`, so an install that pins a release adapts
-step 1.
+at a proxy. It deploys the tip of `origin/main` by default. To deploy a qualified
+source commit, use `--target-commit <full-sha>` from a clean checkout at that commit.
 
 ```mermaid
 flowchart LR
@@ -1173,7 +1296,7 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 
 [`redeploy.sh`](../../redeploy.sh), run from the deploy checkout:
 
-1. fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
+1. in ordinary mode, fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
    asking before it ships changes to migrations, compose files, the proxy, the
    `Dockerfile`, `.env.example`, the dependency manifests or itself;
 2. runs [`dev/apparmor_check.sh`](../../dev/apparmor_check.sh): the colour compose
@@ -1204,6 +1327,33 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 | `./redeploy.sh --status`   | which colour serves, each colour's build, container state and workers lease              |
 | `loom deploy-delta`        | after about 30 minutes: ledger and ClickHouse statement shapes on each side of the swap  |
 
+To deploy a qualified commit independently of later changes on main, prepare a clean
+deployment checkout at its full commit SHA and run:
+
+```sh
+./redeploy.sh --target-commit <full-commit-sha>
+```
+
+This mode fetches main without rebasing or changing HEAD. Tracked edits and untracked
+files refuse deployment. Keep staged configuration files outside that checkout; the
+ignored deployment `.env` and `var` remain its normal configuration and state bindings.
+The build and health identity use the full commit, and a mismatched idle build cannot
+take traffic. Source identity is checked again after building and before booting.
+
+To apply another configuration at the same source commit, update the deployment's
+`.env` through the normal configuration procedure and run:
+
+```sh
+./redeploy.sh --target-commit <same-full-commit-sha> --reapply-config
+```
+
+This is another ordinary blue/green deployment, with all migration, readiness,
+provider, sandbox, proxy, worker and rollback checks. It admits an intentional
+same-build deployment; it does not permit an unhealthy swap. Keep the same full
+commit for every stage and start final observation after the final configuration.
+Each invocation builds an image: equal source commits do not prove equal image digests.
+The selector does not fetch a release image or select an image digest.
+
 `LOOM_PREFLIGHT_STRICT=0` turns ledger-only rows and checksum drift into a report instead
 of a stop. `LOOM_PUBLIC_HEALTH_URL`, when set, is probed last.
 
@@ -1219,19 +1369,19 @@ proxy (`docker compose -p loom-proxy -f dev/docker-compose.proxy.yml up -d`).
 
 ## Production checklist
 
-| Step            | Do                                                                                                                                                                                                                                                                                                   |
-| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`.                                                                                   |
-| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                    |
-| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                     |
-| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                |
-| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                               |
-| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                |
-| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                           |
-| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                               |
-| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                        |
-| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                     |
-| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)). |
+| Step            | Do                                                                                                                                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ClickHouse      | Cloud or a self-managed server with a Keeper, 26.4 or later, prepared with `loom ch-setup` ([requirements](#clickhouse-requirements)). `LOOM_CH_*` set; TLS on. Across a WAN, `LOOM_LATENCY_BUDGET_MULTIPLIER≈20`. On a self-managed server, `system_logs.xml` in `config.d/` ([log retention](#log-retention)). |
+| Providers       | Real embedder and LLM with keys; `LOOM_REQUIRE_REAL_PROVIDERS=true`. Choose the embedder once. Only the LLM workers you want; check the cost cap.                                                                                                                                                                |
+| Identity        | `LOOM_AUTH_REQUIRED=true` and `LOOM_IDENTITY_PROVIDER` set explicitly. Platform admins named with `loom set-host`. Know `loom claim-release` before you need it.                                                                                                                                                 |
+| Keys and tokens | A generated `LOOM_JWT_SECRET`, stored where a moved deployment can get it; a rotation plan (`loom signing-key rotate`). Service tokens minted with `--ttl-days` and a re-mint schedule; a token without `exp` is retired only by `loom revoke-token`.                                                            |
+| Proxy           | TLS terminator in front; container port not reachable directly; the nginx choices above; CORS off or listed. `LOOM_TRUSTED_PROXIES` set to the proxy or load balancer.                                                                                                                                           |
+| Replicas        | Identical replicas with `LOOM_BACKGROUND_WORKERS=auto`; startup, liveness and readiness probes as in [N identical replicas](#n-identical-replicas); 75 s stop grace. `.env` validated with `docker compose … config`.                                                                                            |
+| Deploys         | A pinned image or commit. With the pair, keep the stopped colour. Read the [upgrade procedure](./upgrades.md#upgrade-procedure) once before the first cut.                                                                                                                                                       |
+| Host            | For the pair, an AppArmor host with `deploy/apparmor/loom-repo-sandbox` loaded and its throwaway-container check passed ([repository-job sandbox](./code-index-operations.md#repository-job-sandbox)).                                                                                                           |
+| Backups         | Cloud's native backups, or `BACKUP DATABASE` / a backup tool on OSS ([choosing a backup](./backup-and-recovery.md#choosing-a-backup)). Rehearse with `./scripts/ops/backup_drill.sh`; after a restore run `python dev/verify_audit_chain.py`.                                                                    |
+| Monitoring      | Route on `/v1/health/ready`, alert on `/v1/health`; run `loom doctor` after each configuration change; wire [the alerts](./monitoring.md#what-to-alert-on); set `LOOM_OTEL_EXPORTER` and `LOOM_LOG_FORMAT=json`.                                                                                                 |
+| Size            | Scale web replicas and `LOOM_WEB_WORKERS` by signal. The live `loom.instances` rows count the replicas the rate limits divide by; `LOOM_REPLICA_COUNT` is only their floor ([failure and recovery](../architecture/failure-and-recovery.md), [performance tuning](../guides/performance-tuning.md)).             |
 
 ## Related
 

@@ -18,6 +18,7 @@ from server.code.domain.anchor import (
     locate,
     recheck,
     resolve,
+    unnumbered,
 )
 from server.code.domain.declaration import fingerprint_version
 from server.code.domain.index.repos import repo_for_namespace
@@ -332,7 +333,18 @@ async def _recheck(
     moves: list[Move] = []
     for r in found:
         renamed, far = r.renamed, []
-        if r.lost and (candidates := elsewhere.get(r.before.qualified_name)):
+        candidates: list[Definition] = []
+        mirror_unsure = False
+        if r.lost:
+            # the index's namesakes, and the mirror's: the index may not hold the files a
+            # commit past the ingest's per-commit cap changed, or still hold their old text
+            mirror = await _in_mirror(files, r, head)
+            # a mirror git cannot read, or a found definition it cannot fingerprint,
+            # leaves the link unsure where the index's namesakes do not settle it
+            mirror_unsure = mirror is None and r.before.state != "missing"
+            both = [*elsewhere.get(r.before.qualified_name, []), *(mirror or [])]
+            candidates = list({(d.path, d.qualified_name): d for d in both}.values())
+        if candidates:
             new = await _namesakes(files, r.before, r.row, candidates, r.range, head)
             if new is None and r.before.state != "missing":
                 renamed = Successor(None, uncertain=True)  # cannot tell: a live link is unsure
@@ -355,13 +367,41 @@ async def _recheck(
             renamed=renamed.definition,
             renamed_exactly=renamed.exact,
             elsewhere=far,
-            uncertain=renamed.uncertain,
+            uncertain=renamed.uncertain or mirror_unsure,
             carried=renamed.carried,
             head=head,
         )
         if after != r.before:
             moves.append(Move(r.row, after))
     return moves
+
+
+async def _in_mirror(files: link_pass.RepoReads, r: _Read, head: str) -> list[Definition] | None:
+    """The definitions of the lost link's name, inside their module, that the mirror holds
+    at `head` in the files changed since `_searched_from`: what the index may not hold
+    yet. It only adds to the index's namesakes; None when git cannot be read or a found
+    definition cannot be fingerprinted: then a live link is unsure."""
+    qn = r.before.qualified_name
+    if r.before.state == "missing" and r.range is None:
+        return []  # a full recheck of a link long gone: the index decides, as before
+    base = _searched_from(r.before, r.row, r.range)
+    limit = settings.memory_code_links_mirror_naming_files
+    paths = await files.containing(base, head, unnumbered(bare_name(qn)), limit=limit)
+    if paths is None:
+        return None
+    local, found = local_name(qn, r.before.read_path), []
+    for path in paths:
+        try:
+            names = await files.names(head, path)
+            # None only for a file missing at head, which `containing` never returns
+            for name in names or ():
+                if local_name(name, path) == local:
+                    found += await files.defs(head, path, name)
+        except code.ParseFailed:
+            # its names were read, its fingerprints were not: the index holds the file's
+            # definitions, so the mirror cannot tell, as on the index's path
+            return None
+    return found
 
 
 async def _namesakes(
@@ -381,6 +421,13 @@ async def _namesakes(
         return None
 
 
+def _searched_from(before: Link, a: LinkRow, changed: link_pass.Range | None) -> str:
+    """The commit a lost link's new place is looked for from: the range's start for a
+    live link, the link's own check for one lost before."""
+    live = changed is not None and before.state not in _LOST_STATES
+    return changed.base if changed is not None and live else str(a["checked_commit"])
+
+
 async def _new_namesakes(
     files: link_pass.RepoReads,
     before: Link,
@@ -389,8 +436,7 @@ async def _new_namesakes(
     changed: link_pass.Range | None,
     head: str,
 ) -> list[Definition] | None:
-    live = changed is not None and before.state not in _LOST_STATES
-    start = changed.base if changed is not None and live else a["checked_commit"]
+    start = _searched_from(before, a, changed)
     local = local_name(before.qualified_name, before.read_path)
     anchor = await _last_in_place(files, before, start, head, local)
     touched = await files.touched(anchor, head) if anchor else None

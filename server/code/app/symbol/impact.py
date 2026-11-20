@@ -318,7 +318,7 @@ async def handle_code_impact(input: CodeImpactInput) -> CodeImpactOutput:
         verdict=verdict,
         consumer=input.consumer,
     )
-    return CodeImpactOutput(
+    out = CodeImpactOutput(
         impacted_symbols=[] if input.summary_only else impacted_rows,
         impacted_tests=[
             {
@@ -345,6 +345,8 @@ async def handle_code_impact(input: CodeImpactInput) -> CodeImpactOutput:
         **(overlay.disclosure() if overlay is not None else {}),
         trace_run_id=trace_run_id,
     )
+    out._paths = list(seed_paths)
+    return out
 
 
 async def _symbol_seeds(

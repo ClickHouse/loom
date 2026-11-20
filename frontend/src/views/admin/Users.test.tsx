@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../../test/rtl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AdminUserRow, AdminUsersResult } from "../../api";
+import { listCollections, type AdminUserRow, type AdminUsersResult } from "../../api";
+import { invalidateShared } from "../../lib/sharedReads";
 import { useStore } from "../../lib/state";
 import { Users } from "./Users";
 import { ApiError } from "../../lib/errors";
@@ -12,7 +13,14 @@ import { ApiError } from "../../lib/errors";
 const adminListUsers = vi.fn();
 vi.mock("../../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../api")>();
-  return { ...actual, adminListUsers: (...a: unknown[]) => adminListUsers(...a) };
+  return {
+    ...actual,
+    adminListUsers: (...a: unknown[]) => adminListUsers(...a),
+    listCollections: vi.fn(async () => ({
+      collections: [{ namespace: "col-r", parent: "", personal: false, role: "admin", title: "Research" }],
+      next_cursor: null,
+    })),
+  };
 });
 
 const user = (i: number, pending = false): AdminUserRow => ({
@@ -54,7 +62,8 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
-  useStore.setState({ identity: null, whoami: null });
+  useStore.setState({ identity: null, whoami: null, myNamespaces: null });
+  invalidateShared();
 });
 
 describe("Users table", () => {
@@ -199,5 +208,107 @@ describe("Users, the service-accounts toggle", () => {
     expect(screen.getByRole("checkbox", { name: "Include service accounts" })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: "Filters and count" })).not.toHaveTextContent(/of 2/);
     expect(screen.getByRole("table", { name: "Users" })).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("tags a grant on a collection as a collection, by its title", async () => {
+    const u = user(1);
+    u.grants = [
+      ...u.grants,
+      { namespace: "col-r", role: "writer", is_owner: false, granted_at: null },
+      { namespace: "col-hidden", role: "viewer", is_owner: false, granted_at: null },
+    ];
+    adminListUsers.mockResolvedValue(result([u]));
+    render(<Users />);
+    expect(await screen.findByText(/collection Research · writer/)).toBeInTheDocument();
+    // One the viewer cannot read keeps its name, still tagged.
+    expect(screen.getByText(/collection col-hidden · viewer/)).toBeInTheDocument();
+    expect(screen.getByText(/team · viewer/)).toBeInTheDocument();
+    // Titles repeat: the collection's place and address are in its tip.
+    const tag = screen.getByText(/collection Research · writer/).closest('[role="note"]') as HTMLElement;
+    tag.focus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("Library · col-r");
+    // One the viewer cannot read: its place is unknown, so the tip claims none.
+    tag.blur();
+    const hidden = screen.getByText(/collection col-hidden · viewer/).closest('[role="note"]') as HTMLElement;
+    hidden.focus();
+    await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(/^col-hidden$/));
+  });
+
+  it("names another person's own collection as a personal collection, never as the admin's My files", async () => {
+    const u = user(1);
+    u.grants = [...u.grants, { namespace: "col-me-bob", role: "admin", is_owner: true, granted_at: null }];
+    adminListUsers.mockResolvedValue(result([u]));
+    render(<Users />);
+    expect(await screen.findByText(/^personal collection · admin · owner$/)).toBeInTheDocument();
+    expect(screen.queryByText(/My files/)).toBeNull();
+  });
+
+  it("tells two of one person's collection grants that look alike apart by name", async () => {
+    const u = user(1);
+    u.grants = [
+      ...u.grants,
+      { namespace: "col-a", role: "viewer", is_owner: false, granted_at: null },
+      { namespace: "col-b", role: "viewer", is_owner: false, granted_at: null },
+    ];
+    adminListUsers.mockResolvedValue(result([u]));
+    invalidateShared();
+    vi.mocked(listCollections).mockResolvedValueOnce({
+      collections: [
+        { namespace: "col-a", parent: "", personal: false, role: "admin", title: "Research" },
+        { namespace: "col-b", parent: "", personal: false, role: "admin", title: "Research" },
+      ],
+      next_cursor: null,
+    });
+    render(<Users />);
+    expect(await screen.findByText(/^collection Research \(col-a\) · viewer$/)).toBeInTheDocument();
+    expect(screen.getByText(/^collection Research \(col-b\) · viewer$/)).toBeInTheDocument();
+  });
+
+  it("names a collection past the list's first page by the title the viewer's own row carries", async () => {
+    const u = user(1);
+    u.grants = [...u.grants, { namespace: "col-z", role: "viewer", is_owner: false, granted_at: null }];
+    adminListUsers.mockResolvedValue(result([u]));
+    useStore.setState({
+      myNamespaces: [
+        {
+          namespace: "col-z",
+          role: "admin",
+          status: "active",
+          visibility: "private",
+          description: "",
+          joined_at: null,
+          is_new: false,
+          kind: "collection",
+          title: "Zeta",
+        },
+      ],
+    });
+    render(<Users />);
+    expect(await screen.findByText(/^collection Zeta · viewer$/)).toBeInTheDocument();
+  });
+
+  it("names a personal collection by its address until the collection read says whose it is", async () => {
+    const u = user(1);
+    u.grants = [...u.grants, { namespace: "col-me-op", role: "admin", is_owner: true, granted_at: null }];
+    adminListUsers.mockResolvedValue(result([u]));
+    invalidateShared();
+    vi.mocked(listCollections).mockReturnValueOnce(new Promise(() => {}));
+    render(<Users />);
+    // It could be the viewer's own (My files): neither "personal collection" nor a guess.
+    expect(await screen.findByText(/^collection col-me-op · admin · owner$/)).toBeInTheDocument();
+    expect(screen.queryByText(/personal collection/)).toBeNull();
+  });
+
+  it("keeps the collection tag on a shared collection whose title reads like a personal one", async () => {
+    const u = user(1);
+    u.grants = [...u.grants, { namespace: "col-p", role: "viewer", is_owner: false, granted_at: null }];
+    adminListUsers.mockResolvedValue(result([u]));
+    invalidateShared();
+    vi.mocked(listCollections).mockResolvedValueOnce({
+      collections: [{ namespace: "col-p", parent: "", personal: false, role: "admin", title: "personal collection" }],
+      next_cursor: null,
+    });
+    render(<Users />);
+    expect(await screen.findByText(/^collection personal collection · viewer$/)).toBeInTheDocument();
   });
 });

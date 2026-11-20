@@ -63,6 +63,7 @@ from server.code.domain.extract.lang_sql_model import Facet, Header, Statement
 from server.code.domain.extract.lang_sql_objects import prefix_parts, reference_facets, sql_edges
 from server.code.domain.extract.tokenize import code_tokens
 from server.code.domain.extract.treesitter import ParsedFile, Symbol, node_text
+from server.core.sql_comments import LEADING_COMMENTS
 
 # the call (or tag) around a literal names the client, the client names the dialect
 TS_SQL_CLIENTS: tuple[tuple[re.Pattern[str], str], ...] = (
@@ -86,10 +87,10 @@ _FILE_DIALECT_CUES: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"sqlite", re.I), "sqlite"),
 )
 _SQL_HEAD_RE = re.compile(
-    r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*"
-    r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
+    LEADING_COMMENTS
+    + r"(SELECT|INSERT|CREATE|DROP|ALTER|WITH|UPDATE|DELETE|OPTIMIZE|SYSTEM|TRUNCATE|EXPLAIN|"
     r"SHOW|DESCRIBE|GRANT|REVOKE|ATTACH|DETACH|COPY|ANALYZE|VACUUM|PRAGMA)\b",
-    re.I | re.S,
+    re.I,
 )
 # The keywords that follow a verb in a statement and never in a UI string: `Delete ${n}
 # items?` and `Show ${n} more` open with a verb too (105 of langfuse's 489 verb-headed
@@ -100,6 +101,10 @@ _SQL_KEYWORD_RE = re.compile(
     re.I,
 )
 _ANCESTOR_DEPTH = 8
+# A client's name sits at the start or the end of a callee's text; a chain of tagged
+# templates makes each enclosing callee as long as the rest of the file
+# not a setting: changing it changes the stored island dialects
+_CALLEE_END_BYTES = 64
 VIA_TEMPLATE = "template"
 
 
@@ -151,21 +156,33 @@ def looks_like_sql(text: str, inside_client: bool = False) -> bool:
     return keywords >= 2 or (m.group(1).isupper() and keywords >= 1)
 
 
-def client_dialect(node: Any, source: bytes) -> str:
+def client_dialect(ancestors: list[Any], source: bytes, seen: dict[tuple[int, int], str]) -> str:
     """The dialect of the client whose call encloses the literal, from the
-    callee's text (`queryClickhouse`, `prisma.$queryRaw`, a `sql` tag)."""
-    cur = node.parent
-    for _ in range(_ANCESTOR_DEPTH):
-        if cur is None:
-            break
+    callee's text (`queryClickhouse`, `prisma.$queryRaw`, a `sql` tag). `ancestors`
+    runs from the root to the literal's parent, kept by the walk: a node's `parent`
+    is found from the root down, so reading it per literal is quadratic in a deep tree.
+    `seen` keeps each callee's dialect for the file's next literals."""
+    for cur in reversed(ancestors[-_ANCESTOR_DEPTH:]):
         if cur.type == "call_expression":
             fn = cur.child_by_field_name("function")
-            callee = node_text(fn, source) if fn is not None else ""
-            for pat, dialect in TS_SQL_CLIENTS:
-                if pat.search(callee):
-                    return dialect
-        cur = cur.parent
+            if fn is None:
+                continue
+            key = (fn.start_byte, fn.end_byte)
+            if key not in seen:
+                callee = _callee_ends(fn, source)
+                seen[key] = next((d for pat, d in TS_SQL_CLIENTS if pat.search(callee)), "")
+            if seen[key]:
+                return seen[key]
     return ""
+
+
+def _callee_ends(fn: Any, source: bytes) -> str:
+    """The callee's text, or its first and last `_CALLEE_END_BYTES` when longer."""
+    start, end = fn.start_byte, fn.end_byte
+    if end - start <= 2 * _CALLEE_END_BYTES:
+        return node_text(fn, source)
+    ends = source[start : start + _CALLEE_END_BYTES] + b" " + source[end - _CALLEE_END_BYTES : end]
+    return ends.decode("utf-8", "replace")
 
 
 def file_dialect(pf: ParsedFile) -> str:
@@ -185,11 +202,15 @@ def find_islands(pf: ParsedFile) -> list[Island]:
     source = pf.source
     default = file_dialect(pf)
 
+    ancestors: list[Any] = []
+    callees: dict[tuple[int, int], str] = {}
+
     def walk(node: Any) -> None:
+        ancestors.append(node)
         for child in node.named_children:
             if child.type == "template_string":
                 text, interpolated = template_text(child, source)
-                client = client_dialect(child, source)
+                client = client_dialect(ancestors, source, callees)
                 if looks_like_sql(text, inside_client=bool(client)):
                     dialect = client or detect_dialect(text)[0] or default
                     out.append(
@@ -203,6 +224,7 @@ def find_islands(pf: ParsedFile) -> list[Island]:
                     )
                 continue
             walk(child)
+        ancestors.pop()
 
     walk(pf.tree.root_node)
     return out

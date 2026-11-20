@@ -50,6 +50,7 @@ const mine: MyNamespaceEntry[] = [
 // A generic body that satisfies every list-shaped reader.
 const GENERIC = {
   rows: [],
+  sources: [],
   entries: [],
   repos: [],
   results: {},
@@ -133,6 +134,9 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
       "/v1/namespace.list_mine": 1,
       "/v1/code.repos": 1,
       "/v1/blacklist.list": 1,
+      // The token form says a token that reads everything reads no collection only to one
+      // who reads a collection, maybe through a group, which list_mine leaves out.
+      "/v1/collection.list": 1,
     },
   },
   Sharing: {
@@ -149,8 +153,15 @@ const BUDGET: Record<string, { render: () => JSX.Element; view: View; allow: Rec
   Documents: {
     render: () => <Documents />,
     view: "knowledge",
-    // The select above the list reads the collections the person can open, once.
-    allow: { "/v1/knowledge.list": 1, "/v1/collection.list": 1 },
+    // The select above the list reads the collections the person can open, once; the
+    // Sources section reads the place's document sources, once; an admin's gaps tile reads
+    // the namespace's gaps, once.
+    allow: {
+      "/v1/knowledge.list": 1,
+      "/v1/collection.list": 1,
+      "/v1/knowledge.source.list": 1,
+      "/v1/knowledge.gaps.list": 1,
+    },
   },
   Repositories: {
     render: () => <CodeView />,

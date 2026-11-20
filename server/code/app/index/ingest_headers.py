@@ -23,6 +23,7 @@ from typing import Any
 from server.code.app.index.ingest_stats import FileIngestStats
 from server.code.domain.extract.bounded_parse import ParseTimeout
 from server.code.domain.extract.edges_treesitter import HeaderDecls, remainder_ctor_sites
+from server.code.domain.extract.lane_units import ancestor_dirs
 from server.code.domain.extract.treesitter import _INCLUDE_RE, ParsedFile
 from server.settings import settings
 
@@ -48,22 +49,25 @@ def forget_header(org: str, ns: str, path: str) -> None:
 
 def include_candidates(from_path: str, include: str) -> list[str]:
     """Indexed paths an include target may name, nearest first: relative to
-    the includer's directory, then to each ancestor directory
-    (`<Processors/Chunk.h>` from `src/Processors/Transforms/X.cpp` is
-    `src/Processors/Chunk.h`), then the target itself."""
+    the includer's directory, then to each ancestor directory, `MAX_ANCESTOR_DIRS`
+    directories in all (`<Processors/Chunk.h>` from
+    `src/Processors/Transforms/X.cpp` is `src/Processors/Chunk.h`), then the target
+    itself."""
     inc = include.strip().lstrip("/")
     if not inc:
         return []
-    out: list[str] = []
-    d = posixpath.dirname(from_path)
-    while True:
-        cand = posixpath.normpath(posixpath.join(d, inc)) if d else posixpath.normpath(inc)
-        if cand and not cand.startswith("..") and cand not in out:
-            out.append(cand)
+    norm = posixpath.normpath(inc)
+    out: dict[str, None] = {}
+    for d in [*ancestor_dirs(from_path), ""]:
         if not d:
-            break
-        d = posixpath.dirname(d)
-    return out
+            cand = norm
+        elif norm.startswith("."):  # `..` climbs out of `d`, `.` is `d` itself
+            cand = posixpath.normpath(posixpath.join(d, inc))
+        else:
+            cand = f"{d}/{norm}"  # a repository directory and a clean relative path
+        if cand and not cand.startswith(".."):
+            out[cand] = None
+    return list(out)
 
 
 _ELIDED_BODY_RE = re.compile(r"/\* … body elided[^*]*\*/")

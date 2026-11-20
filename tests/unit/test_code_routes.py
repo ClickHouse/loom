@@ -119,3 +119,11 @@ def test_a_route_handler_after_a_blank_line_is_on_its_export_line() -> None:
     src = b"import { NextResponse } from 'next/server'\n\nexport async function GET() {}\n"
     pf = parse_file("app/api/x/route.ts", src)
     assert [(f.name, f.line) for f in route_facets(pf)] == [("GET /api/x", 3)]
+
+
+def test_a_long_route_name_is_cut_to_two_hundred_characters() -> None:
+    from server.code.domain.extract.treesitter import ParsedFile
+
+    source = ("@Controller('x')\nclass A {\n@Get('" + "b" * 300 + "') b() {}\n}\n").encode()
+    facets = route_facets(ParsedFile(path="a.ts", lang="typescript", tree=None, source=source))
+    assert [len(f.name) for f in facets] == [200]

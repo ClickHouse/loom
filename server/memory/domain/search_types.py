@@ -12,6 +12,12 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, NamedTuple, Protocol
 
+# The agent of a promoted row's embedding: shared rows are not agent-scoped.
+SHARED_AGENT = "_shared"
+
+# the score components of the rows a search's anchor and recent tiers place
+TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
+
 
 class _CHClient(Protocol):
     async def query_all(
@@ -352,6 +358,12 @@ def _identity(hit: Any) -> RowIdentity | None:
     return who if who is not None else getattr(hit, "identity", None)
 
 
+def is_shared_row(hit: Any) -> bool:
+    """Whether a hit is a promoted row of `loom.shared` (its vector carries `SHARED_AGENT`)."""
+    identity = _identity(hit)
+    return identity is not None and identity[0] == SHARED_AGENT
+
+
 def names_row(hit: Any) -> bool:
     """Whether a hit's leg read the identity of its stored row."""
     return _identity(hit) is not None
@@ -413,3 +425,30 @@ def hit_sort_key(h: Any) -> tuple[float, float, str, str, str, str, str]:
         row.user_id,
         row.session_id,
     )
+
+
+def is_computed_row(hit: Any) -> bool:
+    """Whether a hit is a computed row (a date difference or a derived aggregate), which
+    leads the served list: for a search hit or a wire hit dict alike."""
+    get = hit.get if isinstance(hit, dict) else lambda k: getattr(hit, k, "")
+    return get("source") == "computed" or get("memory_key") == "derived_aggregate"
+
+
+def governed_after_computed(rows: list[Any], namespace: str = "") -> list[Any]:
+    """Governed definitions replace other rows of their namespace/key and follow computed
+    rows, each group in its order: for search hits or wire hit dicts alike."""
+
+    def governed(h: Any) -> bool:
+        return bool(h.get("governed") if isinstance(h, dict) else getattr(h, "governed", None))
+
+    if not any(governed(h) for h in rows):
+        return list(rows)
+    computed = [h for h in rows if is_computed_row(h)]
+    lead = [h for h in rows if governed(h) and not is_computed_row(h)]
+    governed_keys = {hit_row(h, namespace) for h in lead}
+    rest = [
+        h
+        for h in rows
+        if not governed(h) and not is_computed_row(h) and hit_row(h, namespace) not in governed_keys
+    ]
+    return computed + lead + rest

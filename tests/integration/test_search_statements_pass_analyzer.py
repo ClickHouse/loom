@@ -460,7 +460,7 @@ async def test_erasure_census_and_orphan_statements_pass_the_analyzer(ch_client)
 
     ch = _RecordingCH()
     await erasure_census.residue_census("o", "namespace", ["a", "b"], ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     await graph_steps.delete_entity_vectors_by_namespace("o", ["a", "b"], ch=ch)  # type: ignore[arg-type]
     await graph_steps.delete_entity_vectors_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await erasure_ledger.list_failed_requests(org="o", ch=ch)  # type: ignore[arg-type]
@@ -889,7 +889,7 @@ async def test_chunk_provenance_and_rollup_statements_pass_the_analyzer(ch_clien
             return [{"namespace": "n", "memory_key": "k"}] if "FROM loom.memory " in sql else []
 
     ch = _KeysCH()
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await graph_steps.tombstone_source_links_by_namespace("o", ["a", "b"], ch=ch)  # type: ignore[arg-type]
     links = [(sql, p) for sql, p in ch.calls if "loom.memory_chunk_sources" in sql]
@@ -927,10 +927,11 @@ async def test_chunk_provenance_and_rollup_statements_pass_the_analyzer(ch_clien
         from server.core.ch import get_client as _real_get_client
 
         cost_h.get_client = _real_get_client  # type: ignore[assignment]
-    # The default readout also issues the cache-totals
-    # statement (no UNION), so two readouts are four statements.
+    # Both readouts issue a rollup/live-tail merge and a cache-totals read.
+    # Each reads the ordinary/private source union.
     assert len(cost_ch.calls) == 4
-    assert sum("UNION ALL" in sql for sql, _ in cost_ch.calls) == 2
+    assert [sql.count("UNION ALL") for sql, _ in cost_ch.calls] == [2, 1, 2, 1]
+    assert all("FROM loom.agent_events_private)" in sql for sql, _ in cost_ch.calls)
     assert sum(cost_store.CACHE_SELECT in sql for sql, _ in cost_ch.calls) == 2
     statements += cost_ch.calls
     assert len(statements) >= 1 + 3 + 2 + 4
@@ -1415,12 +1416,25 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     from server.erasure.store import mutations as erasure_mutations
     from server.erasure.store import steps_graph as graph_steps
     from server.erasure.store import steps_ledgers as ledger_steps
+    from tests.unit.claims_fake import FakeLockTable
 
     class _One(_RecordingCH):
+        def __init__(self):
+            super().__init__()
+            self.leases = FakeLockTable()
+
         async def query_one(self, sql, params=None):
             self.calls.append((sql, params or {}))
+            if "loom._migration_lock" in sql:
+                return await self.leases.query_one(sql, params)
             # `engine` makes the run-claims step see its KeeperMap table and submit its delete.
             return {"n": 1, "engine": "KeeperMap"}
+
+        async def execute(self, sql, params=None):
+            if "loom._migration_lock" in sql:
+                await self.leases.execute(sql, params)
+            else:
+                await super().execute(sql, params)
 
     mutations: list[tuple[str, str, dict[str, Any]]] = []
 
@@ -1461,7 +1475,8 @@ async def test_uncounted_table_erasure_statements_pass_the_analyzer(ch_client, m
     ):
         await fn("o", "alice", ch=ch)  # type: ignore[arg-type]
     await erasure_census.residue_census("o", "namespace", ns, ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
+    assert ch.leases.keys == {}
     assert len(mutations) >= 29 and len(ch.calls) >= 29 + 50 + 31
     for i, (sql, params) in enumerate(ch.calls):
         try:
@@ -1502,7 +1517,7 @@ async def test_cache_key_axis_and_credential_ledger_statements_pass_the_analyzer
     await graph_steps.delete_entity_communities_by_user("o", "alice", ch=ch)  # type: ignore[arg-type]
     await memory_repo.delete_llm_response_cache_by_key("o", "k1", ch=ch)  # type: ignore[arg-type]
     await memory_repo.delete_ask_precedents_by_key("o", "k1", ch=ch)  # type: ignore[arg-type]
-    await erasure_census.residue_census("o", "user_id", "alice", ch=ch)  # type: ignore[arg-type]
+    await erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])  # type: ignore[arg-type]
     counts = [c for c in ch.calls if c[0].lstrip().startswith("SELECT count()")]
     assert len(counts) >= 5 + 23
     assert any("hasAny(window_keys," in sql for sql, _ in counts)

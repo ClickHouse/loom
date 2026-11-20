@@ -73,7 +73,7 @@ export const TaskBoard = memo(function TaskBoard({
   /** A filter is on: an empty column may hold tasks it hides. */
   filtering: boolean;
 }) {
-  const drag = useTaskDrag(ctx.canWrite, ctx.onDrop);
+  const drag = useTaskDrag(ctx.writeReason === null, ctx.onDrop);
   const [all, setAll] = useState<ReadonlySet<Group>>(new Set());
   const board = useRef<HTMLElement>(null);
   return (

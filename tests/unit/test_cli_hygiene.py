@@ -110,7 +110,9 @@ class _Keyring:
 
 def _keyring_rows(monkeypatch: pytest.MonkeyPatch, rows: list[dict[str, Any]]) -> None:
     """`loom mint-token` reads this keyring instead of ClickHouse."""
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_Keyring(rows))))
+    monkeypatch.setattr(
+        access, "run_connected", lambda run, **_declared: asyncio.run(run(_Keyring(rows)))
+    )
     monkeypatch.setattr(keyring, "_view", keyring._View())
 
 
@@ -169,19 +171,18 @@ def test_mint_token_signs_with_the_keyring_it_reads(
     pyjwt.decode(token, "k" * 40, algorithms=["HS256"], audience=settings.jwt_audience)
 
 
-def test_an_offline_mint_signs_with_the_root_secret(
+def test_an_offline_native_mint_refuses_without_enrollment(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _auth_on_with(monkeypatch, "a-real-secret-that-is-not-the-default")
 
-    def _unreachable(run: Any) -> None:
+    def _unreachable(run: Any, **_declared: object) -> None:
         raise ConnectionError("no clickhouse")
 
     monkeypatch.setattr(access, "run_connected", _unreachable)
-    assert cli.main(_MINT) == 0
+    assert cli.main(_MINT) == 1
     out, err = capsys.readouterr()
-    assert "signing keyring not read; signing as kid" in err
-    assert pyjwt.get_unverified_header(out.strip())["kid"] == "default"
+    assert out == "" and "enrolled scope" in err
 
 
 def _doctor(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> tuple[int, str]:
@@ -318,12 +319,17 @@ def test_a_platform_admin_mint_for_another_deployment_is_refused_as_such(
     from server.cli import access
     from server.core.pg import AuthorityMismatch
 
-    def _refuse(_run: object) -> bool:
+    def _refuse(_run: object, **_declared: object) -> bool:
         raise AuthorityMismatch("this deployment's memory authority is postgres")
 
     monkeypatch.setattr(access, "run_connected", _refuse)
+    parser = argparse.ArgumentParser()
+    access._add_mint_token_parser(parser.add_subparsers())
+    args = parser.parse_args(
+        ["mint-token", "--subject", "sa:test", "--org", "o", "--platform-admin", "--ttl-days", "1"]
+    )
     with pytest.raises(AuthorityMismatch):
-        access._platform_admin_rollout_ready()
+        access._cmd_mint_token(args)
 
 
 def test_a_revocation_for_another_deployment_is_refused_as_such(
@@ -333,7 +339,7 @@ def test_a_revocation_for_another_deployment_is_refused_as_such(
     from server.cli import access, main
     from server.core.pg import AuthorityMismatch
 
-    def _refuse(_run: object) -> int:
+    def _refuse(_run: object, **_declared: object) -> int:
         raise AuthorityMismatch("this deployment's memory authority is postgres")
 
     monkeypatch.setattr(access, "run_connected", _refuse)

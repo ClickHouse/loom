@@ -210,7 +210,7 @@ test.describe("desktop 1360", () => {
     await expect(page.getByRole("heading", { name: "Index your first repository" })).toBeVisible();
     await expect(page.getByText("Add a Git remote and a branch")).toBeVisible();
     await expect(page.getByText("Loom indexes it in the background")).toBeVisible();
-    await expect(page.getByText("Agents search it with code.search")).toBeVisible();
+    await expect(page.getByText("Agents search it", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Add repository" })).toHaveCount(1);
   });
 
@@ -262,7 +262,8 @@ test.describe("desktop 1360", () => {
     expect(unexpected).toEqual([]);
     expect(calls.join).toEqual([]);
     expect(calls.trackerSources).toBe(1);
-    await expect(page.getByRole("button", { name: /rotate|retire|remove|check now/i })).toHaveCount(0);
+    // Check now is a viewer read and stays; the admin verbs are not offered.
+    await expect(page.getByRole("button", { name: /rotate|retire|remove/i })).toHaveCount(0);
     await expect(page.locator("#main").getByText("Settings", { exact: true })).toHaveCount(0);
   });
 });
@@ -396,3 +397,62 @@ test.describe("phone 400, coarse pointer", () => {
     expect(errors).toEqual([]);
   });
 });
+
+// Add repository on a remote with more branches than one page: a text the page cannot
+// answer offers Search the remote. At 375 px the search row wraps (the field keeps the
+// whole width, the count and the button under it) and the dialog never scrolls sideways.
+async function openSearchRemote(page: Page): Promise<Locator> {
+  await installApi(page, { codeRepos: codeReposFixture() });
+  const branches = Array.from({ length: 30 }, (_, i) => ({ name: `26.${i}`, sha: `s${i}` }));
+  await page.route("**/v1/code.repo.remote_branches", (r) =>
+    r.fulfill({
+      json: {
+        org: "dev",
+        repo: "acme/widgets",
+        remote: "https://github.com/acme/widgets.git",
+        provider: "github",
+        warnings: [],
+        default_branch: "26.0",
+        branches,
+        suggested: [],
+        indexed: [],
+        cap: 5,
+        total: 15898,
+        matched: 15898,
+        truncated: true,
+        query: "",
+      },
+    }),
+  );
+  await page.goto("/repositories");
+  await page.getByRole("button", { name: "Add repository" }).first().click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Repository").fill("acme/widgets");
+  await dialog.getByRole("button", { name: "Find branches" }).click();
+  await dialog.getByLabel("Search branches").fill("release-24");
+  return dialog;
+}
+
+for (const width of [375, 1440]) {
+  test.describe(`${width} px, Add repository with a long branch list`, () => {
+    test.use({ viewport: { width, height: 900 } });
+    test("a text the page misses shows Search the remote, and nothing overflows", async ({ page }) => {
+      const errors = collectErrors(page);
+      const dialog = await openSearchRemote(page);
+      const button = dialog.getByRole("button", { name: "Search the remote" });
+      await expect(button).toBeVisible();
+      await noOverflow(dialog);
+      const field = await boxOf(dialog.getByLabel("Search branches"));
+      const content = await boxOf(dialog.getByRole("list", { name: "Branches" }));
+      const box = await boxOf(dialog);
+      // The input keeps most of the content's width (a whole row of its own at 375 px); the
+      // button sits inside the dialog.
+      expect(field.width).toBeGreaterThan(content.width * (width < 640 ? 0.6 : 0.4));
+      const b = await boxOf(button);
+      expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1);
+      const doc = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(doc).toBeLessThanOrEqual(0);
+      expect(errors).toEqual([]);
+    });
+  });
+}

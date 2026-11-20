@@ -26,7 +26,6 @@ describe("createToken", () => {
       ns_roles: { "team-a": "viewer", "team-b": "viewer" },
       created_at: "2026-01-01T00:00:00",
       expires_at: null,
-      restricted_namespaces: [],
     });
     const out = await createToken({ name: "ci", namespaces: ["team-a", "team-b"], ttl_days: 90 });
     expect(out).toMatchObject({
@@ -48,6 +47,5 @@ describe("createToken", () => {
     });
     const out = await createToken({ namespaces: ["me", "*"], ttl_days: 90 });
     expect(out).toMatchObject({ reads_everything: true, saves_to: "me", mcp_url: "https://loom.example/mcp" });
-    expect(out.restricted_namespaces).toEqual([]);
   });
 });

@@ -37,6 +37,11 @@ FROM (
 )"""
 
 
+def is_prefix_twin(label: str) -> bool:
+    """Whether `label` names a configured prefix twin (LOOM_CODE_VECTOR_TABLES)."""
+    return parse_prefix_label(label) is not None and label in mapping()
+
+
 async def fill_twin(ch: Any, org: str, ns: str, label: str) -> int:
     """Fill `label`'s twin for one namespace; returns the twin's live row
     count afterwards. Raises when the label is not a configured prefix twin."""

@@ -1,0 +1,193 @@
+name: Langflow extension package
+
+on:
+  pull_request:
+    paths:
+      - integrations/langflow/**
+      - scripts/gates/langflow_extension_smoke.py
+      - tests/unit/test_langflow_publication.py
+      - .github/workflows/langflow-publish.yml
+  push:
+    tags:
+      - lfx-loom-v*
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+      - name: Validate package identity and publication tag
+        id: publication-tag
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          IS_TAG: ${{ github.ref_type == 'tag' }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import tomllib
+
+          source = Path("integrations/langflow")
+          project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+          manifest = json.loads((source / "extension.json").read_text())
+          assert project["name"] == manifest["id"] == "lfx-loom"
+          version = project["version"]
+          assert re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
+          assert manifest["version"] == version
+          if os.environ["IS_TAG"] == "true":
+              assert os.environ["RELEASE_TAG"] == f"lfx-loom-v{version}"
+          PY
+      - name: Require the publication commit to be on main
+        id: publication-source
+        if: github.ref_type == 'tag'
+        run: git merge-base --is-ancestor HEAD origin/main
+      - name: Build the wheel and source distribution
+        run: |
+          uv build integrations/langflow --out-dir "$RUNNER_TEMP/lfx-dist"
+          mkdir "$RUNNER_TEMP/lfx-sdist"
+          tar -xzf "$RUNNER_TEMP"/lfx-dist/*.tar.gz -C "$RUNNER_TEMP/lfx-sdist"
+          uv build --wheel "$RUNNER_TEMP"/lfx-sdist/* --out-dir "$RUNNER_TEMP/lfx-rebuilt"
+      - name: Check both wheels and the source archive
+        run: |
+          python - <<'PY'
+          from email.parser import BytesParser
+          from pathlib import Path
+          import os
+          import tomllib
+          import zipfile
+
+          from scripts.gates.langflow_extension_smoke import check_sdist, check_wheel, only
+
+          source = Path("integrations/langflow")
+          project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
+          expected = {
+              "lfx_loom/__init__.py": (source / "src/lfx_loom/__init__.py").read_bytes(),
+              "lfx_loom/extension.json": (source / "extension.json").read_bytes(),
+              "lfx_loom/components/loom/loom_component.py": (source / "loom_component.py").read_bytes(),
+          }
+          temporary = Path(os.environ["RUNNER_TEMP"])
+          for directory in ("lfx-dist", "lfx-rebuilt"):
+              wheel = only(temporary / directory, "*.whl")
+              check_wheel(wheel, expected, (source / "LICENSE").read_bytes())
+              with zipfile.ZipFile(wheel) as archive:
+                  names = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
+                  assert len(names) == 1
+                  metadata = BytesParser().parsebytes(archive.read(names[0]))
+                  assert metadata["Name"] == project["name"]
+                  assert metadata["Version"] == project["version"]
+                  assert set(metadata["Requires-Python"].split(",")) == set(project["requires-python"].split(","))
+                  assert set(metadata.get_all("Requires-Dist")) == {"lfx==1.13.3", "clickhouse-loom<2,>=1.2.0"}
+          check_sdist(only(temporary / "lfx-dist", "*.tar.gz"), source)
+          PY
+          cd "$RUNNER_TEMP/lfx-dist"
+          sha256sum ./*.whl ./*.tar.gz > SHA256SUMS
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lfx-loom-distributions
+          path: ${{ runner.temp }}/lfx-dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  install:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ["clickhouse-loom==1.2.0", "clickhouse-loom"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lfx-loom-distributions
+          path: ${{ runner.temp }}/lfx-dist/
+      - name: Install the extension with published dependencies
+        env:
+          SDK_REQUIREMENT: ${{ matrix.sdk }}
+        run: |
+          cd "$RUNNER_TEMP/lfx-dist"
+          sha256sum --check SHA256SUMS
+          uv venv --python 3.11 "$RUNNER_TEMP/lfx-env"
+          uv pip install --python "$RUNNER_TEMP/lfx-env/bin/python" ./*.whl "$SDK_REQUIREMENT"
+          uv pip check --python "$RUNNER_TEMP/lfx-env/bin/python"
+      - name: Discover and load the installed extension
+        env:
+          SDK_REQUIREMENT: ${{ matrix.sdk }}
+        run: |
+          cp scripts/gates/langflow_extension_smoke.py "$RUNNER_TEMP/lfx-checks.py"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/lfx-env/bin/python" - <<'PY'
+          from importlib import metadata
+          import json
+          import os
+          from pathlib import Path
+          import runpy
+          import sys
+
+          checks = runpy.run_path("lfx-checks.py")
+          source = Path(os.environ["GITHUB_WORKSPACE"]) / "integrations/langflow"
+          component = (source / "loom_component.py").read_bytes()
+          expected = {
+              "lfx_loom/__init__.py": (source / "src/lfx_loom/__init__.py").read_bytes(),
+              "lfx_loom/extension.json": (source / "extension.json").read_bytes(),
+              "lfx_loom/components/loom/loom_component.py": component,
+          }
+          assert metadata.version("lfx") == "1.13.3"
+          sdk = metadata.version("clickhouse-loom")
+          if os.environ["SDK_REQUIREMENT"] == "clickhouse-loom==1.2.0":
+              assert sdk == "1.2.0"
+          installed = checks["check_installed"](expected, Path(sys.prefix).resolve())
+          component_id = checks["check_discovery"](installed, component)
+          print(json.dumps({"extension": installed.version, "clickhouse-loom": sdk,
+                            "component": component_id, "scope": "installed discovery; no tool calls or live flow"}))
+          PY
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [build, install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi-lfx-loom
+      url: https://pypi.org/p/lfx-loom
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lfx-loom-distributions
+          path: release/
+      - name: Verify the checked distributions
+        run: |
+          cd release
+          sha256sum --check SHA256SUMS
+          rm SHA256SUMS
+      - name: Publish the checked wheel and sdist with attestations
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: release/

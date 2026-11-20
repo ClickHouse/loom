@@ -21,7 +21,7 @@
  * Five words on both facets: Open · Join · Request access · Withdraw request · Leave. A
  * branch name is never in a button's label; it is in a menu item or the table.
  */
-import { memo, useId, useState, type ReactNode } from "react";
+import { lazy, memo, Suspense, useId, useState, type ReactNode } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
@@ -30,9 +30,9 @@ import { SplitButton } from "../components/ui/SplitButton";
 import { Table, type TableRowType } from "@clickhouse/click-ui/Table";
 import type { CodeRepoSummary } from "../api";
 import { absoluteTime, fmtInt, listTime, parseChTime } from "../lib/format";
-import { stageLabel } from "../lib/codeStage";
-import { freshness, type FreshTone } from "../lib/codeFreshness";
-import { failingTiers, failureSummary, tierName } from "../lib/tierHealth";
+import { BUILDING_STAGES, stageLabel } from "../lib/codeStage";
+import { commits, freshness, type FreshTone } from "../lib/codeFreshness";
+import { failingTiers, failureSummary, kindWord, tierName, unavailableTiers } from "../lib/tierHealth";
 import {
   bindableRecords,
   canAdminister,
@@ -60,10 +60,12 @@ import {
 } from "../lib/repositoryCard";
 import { RecordSourceDetails } from "./TrackerSources";
 import { RepoDocsList } from "./RepoDocs";
-import { RepoSourcesList } from "./RepoSources";
 import { oneOf } from "../lib/oneOf";
 import { canCallOn } from "../lib/canCall";
 import { useStore } from "../lib/state";
+
+// Loaded with an opened card: the Library loads it too, so it is a chunk of its own.
+const SourcesList = lazy(() => import("./SourcesList").then((m) => ({ default: m.SourcesList })));
 
 /** The reader-grant sentence, said once for the whole card: a token reads through its
  *  subject's — or, for an `sa:` token, its creator's — reader grant, so nothing has to
@@ -73,6 +75,7 @@ export const RESTRICTED_SENTENCE =
 
 export const FRESH_STATE: Record<FreshTone, BadgeState> = {
   ok: "success",
+  info: "info",
   warn: "warning",
   bad: "danger",
   muted: "neutral",
@@ -87,21 +90,29 @@ export interface Health {
   state: BadgeState;
   /** What the tooltip says: the detail, the heads and the lag per tier. */
   detail: string;
-  /** Higher is worse: the row shows its worst branch. */
+  /** Higher is worse; unreadable branches rank below readable branches. */
   rank: number;
 }
 
-const BUILDING = new Set(["queued", "cloning", "indexing", "embedding"]);
 const DAY_MS = 24 * 3600_000;
 const short = (sha: string) => sha.slice(0, 12);
 
+/** "N commits", or "an unknown number of commits" when the server answers -1. */
+const lagWords = (n: number) => (n < 0 ? "an unknown number of commits" : commits(n));
+
 function heads(b: CodeRepoSummary): string {
   const fetched = b.clone_head && b.clone_head !== b.git_head ? `, fetched ${short(b.clone_head)}` : "";
-  return `Indexed ${short(b.git_head)}${fetched}; fast tier ${b.fast_tier_lag} behind, compiler tier ${b.scip_lag} behind.`;
+  // No compiler tier (no producer): the repository has no exact cross-file calls to lag.
+  const calls = b.scip_producer ? `, exact cross-file calls ${lagWords(b.scip_lag)} behind` : "";
+  return `Indexed ${short(b.git_head)}${fetched}; search ${lagWords(b.fast_tier_lag)} behind${calls}.`;
 }
 
 /** A branch's index health, worst cause first. */
 export function branchHealth(b: CodeRepoSummary): Health {
+  if (b.readable === false) {
+    const f = freshness(b);
+    return { text: f.label, state: FRESH_STATE[f.tone], rank: -1, detail: f.detail };
+  }
   const stage = b.stage || "";
   const building = stageLabel(b);
   if (stage === "error")
@@ -122,20 +133,30 @@ export function branchHealth(b: CodeRepoSummary): Health {
         .join(" "),
     };
   }
-  if (BUILDING.has(stage))
+  if (BUILDING_STAGES.has(stage))
     return { text: "Indexing", state: "info", rank: 1, detail: `${building?.label}. ${building?.title}` };
   if (!b.git_head || !b.indexed_at)
     return { text: "Not indexed", state: "neutral", rank: 3, detail: "Nothing is indexed on this branch yet." };
   if (b.searchable === false)
     return { text: "Not searchable", state: "neutral", rank: 2, detail: building?.title ?? "Not searchable yet." };
-  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
-  if (behind > 0)
+  // The server answers -1 when it can't read the clone: say so rather than up to date or behind.
+  if (b.fast_tier_lag < 0)
     return {
-      text: `Behind ${fmtInt(behind)} commit${behind === 1 ? "" : "s"}`,
+      text: "Freshness unknown",
+      state: "neutral",
+      rank: 2,
+      detail: `${freshness(b).detail}. ${heads(b)}`,
+    };
+  if (b.fast_tier_lag > 0)
+    return {
+      text: `Behind ${lagWords(b.fast_tier_lag)}`,
       state: "warning",
       rank: 5,
       detail: `${freshness(b).detail}. ${heads(b)}`,
     };
+  // Search is current and only the exact cross-file calls lag: the header's words too.
+  if (b.scip_lag > 0)
+    return { text: "Calls catching up", state: "warning", rank: 5, detail: `${freshness(b).detail}. ${heads(b)}` };
   const at = parseChTime(b.indexed_at);
   if (at && Date.now() - at.getTime() > DAY_MS && b.clone_head && b.clone_head !== b.git_head)
     return {
@@ -148,7 +169,7 @@ export function branchHealth(b: CodeRepoSummary): Health {
     text: "Up to date",
     state: "success",
     rank: 0,
-    detail: `The index matches the fetched branch tip. ${heads(b)}`,
+    detail: `The index matches the last commit Loom fetched from the branch. ${heads(b)}`,
   };
 }
 
@@ -417,7 +438,9 @@ function branchMenu(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Ro
 }
 
 function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): TableRowType {
-  const behind = b.fast_tier_lag > 0 ? b.fast_tier_lag : b.scip_lag;
+  // The column counts search's lag only; a calls-only lag is the badge's "Calls catching up",
+  // and a lag the server can't tell (-1) shows no count.
+  const behind = Math.max(0, b.fast_tier_lag);
   const counts = b.counts?.code_files ? b.counts : null;
   const items = branchMenu(b, actions, busy);
   return {
@@ -438,17 +461,27 @@ function branchRow(b: CodeRepoSummary, actions: CodeActions, busy: boolean): Tab
   };
 }
 
-/** Each failing tier of a branch the person reads: which tier, since when, how far behind,
- *  the error kind and the fix — what an operator needs without opening the API. */
+/** Each failing tier of a branch the person reads (which tier, since when, how far behind,
+ *  the error kind and the fix), then each tier that left out what it cannot fetch here,
+ *  with its fix: what an operator needs without opening the API. */
 function TierFailures({ facet }: { facet: CodeFacet }) {
   const rows = facet.branches.flatMap((b) => failingTiers(b.tier_health).map((t) => ({ b, t })));
-  if (rows.length === 0) return null;
+  const notes = facet.branches.flatMap((b) => unavailableTiers(b.tier_health).map((t) => ({ b, t })));
+  if (rows.length === 0 && notes.length === 0) return null;
   return (
     <ul className="space-y-1.5" data-testid="repo-tier-failures">
       {rows.map(({ b, t }) => (
         <li key={`${b.namespace}:${t.tier}`} className="text-xs">
           <Badge text={tierName(t.tier)} state="warning" size="sm" className="mr-1.5" />
           <span className="font-mono">{b.branch}</span>: {failureSummary(t)}, first failed{" "}
+          <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
+          <span className="break-words">{t.fix}</span>
+        </li>
+      ))}
+      {notes.map(({ b, t }) => (
+        <li key={`${b.namespace}:${t.tier}`} className="text-xs">
+          <Badge text={tierName(t.tier)} state="neutral" size="sm" className="mr-1.5" />
+          <span className="font-mono">{b.branch}</span>: {kindWord(t.kind)}, since{" "}
           <ListTime time={t.failing_since} quiet />. <span className="text-text-muted">Fix: </span>
           <span className="break-words">{t.fix}</span>
         </li>
@@ -885,15 +918,17 @@ export const RepositoryCard = memo(function RepositoryCard({
               </FacetRow>
             )}
             {docs && (
-              // Where those documents are pulled from, and each source's last sync
+              // Shared sources retain the admin gate used for credential rotation.
               <FacetRow icon="connect" label="Sources">
-                <RepoSourcesList
-                  org={docs.org}
-                  docsNamespace={docs.namespace}
-                  repo={card.repo}
-                  manageable={canCallOn("knowledge.source.add", docs, whoami)}
-                  busy={anyBusy}
-                />
+                <Suspense fallback={null}>
+                  <SourcesList
+                    org={docs.org}
+                    namespace={docs.namespace}
+                    place={{ label: card.repo, noun: "repository" }}
+                    manageable={canCallOn("knowledge.source.rotate", docs, whoami)}
+                    busy={anyBusy}
+                  />
+                </Suspense>
               </FacetRow>
             )}
             {card.restricted && card.joinedCount === 0 && card.pendingCount === 0 && (

@@ -54,6 +54,18 @@ afterEach(() => {
 });
 
 describe("WebhooksSection", () => {
+  it("for a role that cannot manage them, says why, reads nothing, and its Add opens nothing", async () => {
+    const reason = "Needs admin on team. An admin of it can grant that.";
+    render(<WebhooksSection unavailable={reason} />);
+    const add = screen.getByRole("button", { name: "Add webhook" });
+    expect(add).toHaveAttribute("aria-disabled", "true");
+    expect(add).toHaveAccessibleDescription(reason);
+    expect(screen.getAllByText(reason).length).toBeGreaterThan(0);
+    await userEvent.click(add);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(api.listWebhooks).not.toHaveBeenCalled();
+  });
+
   it("says a failed list read failed, with Retry, and a failed deliveries read too", async () => {
     vi.mocked(api.listWebhooks).mockRejectedValueOnce(new Error("boom"));
     render(<WebhooksSection />);
@@ -71,11 +83,37 @@ describe("WebhooksSection", () => {
     expect(api.webhookSecretPrefix("acme_x")).toBe("LOOM_WEBHOOK_SECRET_ACME_5FX__");
   });
 
+  it("drops the listed webhooks when the role falls below the gate", async () => {
+    const { rerender } = render(<WebhooksSection />);
+    expect(await screen.findByText(HOOK.url)).toBeInTheDocument();
+    rerender(<WebhooksSection unavailable="Needs admin on team. An admin of it can grant that." />);
+    await waitFor(() => expect(screen.queryByText(HOOK.url)).toBeNull());
+    expect(screen.queryByRole("button", { name: /Deliveries/ })).toBeNull();
+  });
+
   it("lists a webhook and says when the server lacks its secret", async () => {
     render(<WebhooksSection />);
     expect(await screen.findByText(HOOK.url)).toBeInTheDocument();
     expect(screen.getByText("every event", { exact: false })).toBeInTheDocument();
     expect(screen.getByText("Secret not set")).toBeInTheDocument();
+  });
+
+  it("closes an open Deliveries when the role falls below the gate", async () => {
+    const { rerender } = render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: `Deliveries for ${HOOK.url}` }));
+    expect(await screen.findByRole("dialog", { name: "Deliveries" })).toBeInTheDocument();
+    rerender(<WebhooksSection unavailable="Needs admin on team. An admin of it can grant that." />);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Deliveries" })).toBeNull());
+  });
+
+  it("closes an open Add webhook when the role falls below the gate, and sends nothing", async () => {
+    vi.mocked(api.listWebhooks).mockResolvedValueOnce({ webhooks: [] });
+    const { rerender } = render(<WebhooksSection />);
+    await userEvent.click(await screen.findByRole("button", { name: "Add webhook" }));
+    expect(await screen.findByRole("dialog", { name: "Add webhook" })).toBeInTheDocument();
+    rerender(<WebhooksSection unavailable="Needs admin on team. An admin of it can grant that." />);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add webhook" })).toBeNull());
+    expect(api.registerWebhook).not.toHaveBeenCalled();
   });
 
   it("adds a webhook for the events left checked", async () => {

@@ -14,6 +14,7 @@ from server.assistant.api import ops as assistant
 from server.code.api import ops as code
 from server.code.api import ops_coverage_watch as code_watch
 from server.erasure.api import ops as erasure
+from server.help.api import ops as help_docs
 from server.identity.api import ops_admin_users as admin_users
 from server.identity.api import ops_collections as collections
 from server.identity.api import ops_grants as grants
@@ -27,8 +28,12 @@ from server.insights.api import ops_cost as cost
 from server.insights.api import ops_mentor as mentor
 from server.insights.api import ops_ops as ops
 from server.insights.api import ops_ui as ui
+from server.knowledge.api import ops_connections as connections
 from server.knowledge.api import ops_conversations as conversations
+from server.knowledge.api import ops_gaps as knowledge_gaps
 from server.knowledge.api import ops_knowledge as knowledge
+from server.knowledge.api import ops_query_history as query_history
+from server.knowledge.api import ops_source_push as knowledge_source_push
 from server.knowledge.api import ops_sources as knowledge_sources
 from server.memory.api import ops_blacklist as blacklist
 from server.memory.api import ops_brief as memory_brief
@@ -62,6 +67,11 @@ _OPERATION_MODULES = (
     memory_records,
     knowledge,
     knowledge_sources,
+    connections,
+    knowledge_source_push,
+    knowledge_gaps,
+    query_history,
+    help_docs,
     conversations,
     context,
     context_offload,

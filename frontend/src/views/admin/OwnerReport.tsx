@@ -4,7 +4,7 @@ import { Table } from "@clickhouse/click-ui/Table";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { OWNER_READS, OWNER_REPORT_HOURS, getOwnerReport, type OwnerReport } from "../../api";
 import { useIdentity } from "../../lib/state";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { AgentBadge, NameBadge } from "../../components/AgentBadge";
 import { ListTime } from "../../components/ui/ListTime";
 import { Alert, SectionHeading } from "../../components/ui";
@@ -37,7 +37,7 @@ export function OwnerReportSection() {
       const r = await getOwnerReport(identity, userId.trim(), { signal: ctl.signal });
       if (!ctl.signal.aborted) setReport(r);
     } catch (e) {
-      if (!ctl.signal.aborted) setError(humanizeError(e));
+      if (!ctl.signal.aborted) setError(humanizeError(e, { read: true }));
     } finally {
       if (!ctl.signal.aborted) setBusy(false);
     }

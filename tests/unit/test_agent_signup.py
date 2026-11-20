@@ -279,6 +279,7 @@ def test_cli_saves_token_and_config_and_prints_the_claim_once(
     assert "CLAIM-CODE-1" in out and "agent-nightly" in out
     assert "T.T.T" not in out, "the token is saved, never printed"
     assert "codex mcp add" in out and "claude mcp add" in out
+    assert "pip install clickhouse-loom" in out
 
 
 def test_cli_no_files_json_is_one_parseable_document(

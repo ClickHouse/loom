@@ -13,8 +13,12 @@ export function TokenReadScopePanel({
   docsHref,
   included,
   onToggleRepo,
+  readsCollections,
 }: {
   scope: TokenReadScope;
+  /** Whether the person may read a collection (`readsCollections`; implied when one is
+   *  offered): the line about them is said only then. */
+  readsCollections: boolean;
   docsHref?: string;
   /** Restricted repositories added to the token. Each gets a read grant of the token's
    *  own, revoked with it. */
@@ -69,6 +73,14 @@ export function TokenReadScopePanel({
           ))}
         </div>
       </div>
+
+      {/* A `*` claim names no collection, however its owner reaches one. */}
+      {readsCollections && (
+        <div className="text-text-muted" data-testid="token-read-scope-collections">
+          This token reads no collection.
+          {scope.collectionsOffered && " To include a shared collection, pick “Only what you choose” and tick it."}
+        </div>
+      )}
 
       {scope.pending.length > 0 && (
         <div className="text-text-muted">

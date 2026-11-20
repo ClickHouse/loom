@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from datetime import UTC, date, datetime
 from typing import Any
 
+from server.core.event_source import ALL_EVENTS
 from server.core.repo_base import _CHClient, _default_client
 
 # The roll-up's grain and state columns, and the same
@@ -16,16 +17,23 @@ from server.core.repo_base import _CHClient, _default_client
 ROLLUP_DIMS = "org, namespace, agent, day, operation"
 ROLLUP_STATES = (
     "cost_usd_state, tokens_state, embed_tokens_state, ops_state, errors_state, "
-    "latency_sum_state, latency_quantile_state"
+    "latency_sum_state, latency_quantile_state, marked_cost_usd_state, "
+    "marked_tokens_state, marked_embed_tokens_state, marked_ops_state"
 )
 TAIL_STATES = (
-    "sumState(upstream_cost_usd) AS cost_usd_state, "
-    "sumState(toUInt64(input_tokens) + toUInt64(output_tokens)) AS tokens_state, "
-    "sumState(toUInt64(embedding_tokens)) AS embed_tokens_state, "
-    "countState() AS ops_state, "
-    "sumStateIf(toUInt64(1), success = false) AS errors_state, "
-    "sumState(toUInt64(latency_ms)) AS latency_sum_state, "
-    "quantilesState(0.5, 0.95, 0.99)(latency_ms) AS latency_quantile_state"
+    "sumStateIf(upstream_cost_usd, mirror_marked = 0) AS cost_usd_state, "
+    "sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked = 0) "
+    "AS tokens_state, "
+    "sumStateIf(toUInt64(embedding_tokens), mirror_marked = 0) AS embed_tokens_state, "
+    "countStateIf(mirror_marked = 0) AS ops_state, "
+    "sumStateIf(toUInt64(1), mirror_marked = 0 AND success = false) AS errors_state, "
+    "sumStateIf(toUInt64(latency_ms), mirror_marked = 0) AS latency_sum_state, "
+    "quantilesStateIf(0.5, 0.95, 0.99)(latency_ms, mirror_marked = 0) AS latency_quantile_state, "
+    "sumStateIf(upstream_cost_usd, mirror_marked != 0) AS marked_cost_usd_state, "
+    "sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked != 0) "
+    "AS marked_tokens_state, "
+    "sumStateIf(toUInt64(embedding_tokens), mirror_marked != 0) AS marked_embed_tokens_state, "
+    "countStateIf(mirror_marked != 0) AS marked_ops_state"
 )
 
 # The exact-prompt response cache's ledger reading. memory.ask rows carry
@@ -34,8 +42,8 @@ TAIL_STATES = (
 # has no args, so on that path this is its own statement over the window's memory.ask rows
 # (bounded by the same org / namespace / date predicates as the readout).
 CACHE_SELECT = (
-    "sum(toUInt64OrZero(args['out_llm_cache_hits']))       AS cache_hits, "
-    "sum(toFloat64OrZero(args['out_llm_cache_saved_usd'])) AS cache_saved_usd"
+    "sumIf(toUInt64OrZero(args['out_llm_cache_hits']), mirror_marked = 0) AS cache_hits, "
+    "sumIf(toFloat64OrZero(args['out_llm_cache_saved_usd']), mirror_marked = 0) AS cache_saved_usd"
 )
 
 # The optional equality filters of a summary: (column, bound parameter).
@@ -104,6 +112,7 @@ async def summary_rows(
     dims: Sequence[str],
     scan: bool,
     include_cache: bool,
+    include_marked: bool,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The summary grouped by `dims`, at most 5000 rows by ops. `scan` reads
@@ -127,27 +136,33 @@ async def summary_rows(
             "sum(toUInt64(input_tokens) + toUInt64(output_tokens)) AS tokens, "
             "sum(toUInt64(embedding_tokens))                 AS embed_tokens, "
             "count()                                         AS ops, "
-            "countIf(success = false)                        AS errors, "
-            "quantiles(0.5, 0.95, 0.99)(latency_ms)          AS lat_q"
+            "countIf(mirror_marked = 0 AND success = false) AS errors, "
+            "quantilesIf(0.5, 0.95, 0.99)(latency_ms, mirror_marked = 0) AS lat_q"
             + (", " + CACHE_SELECT if include_cache else "")
         )
         sql = f"""
             SELECT {select_dims_scan + (", " if select_dims_scan else "")}{base_select}
-            FROM loom.agent_events
+            FROM {ALL_EVENTS}
             WHERE org = {{org:String}}
               AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
+              {"" if include_marked else "AND mirror_marked = 0"}
               {where}
             {("GROUP BY " + group_by_sql) if group_by_sql else ""}
+            HAVING ops > 0
             ORDER BY ops DESC
             LIMIT 5000
         """
     else:
         select_dims = ", ".join(dims)
+        marked_cost = " + sumMerge(marked_cost_usd_state)" if include_marked else ""
+        marked_tokens = " + sumMerge(marked_tokens_state)" if include_marked else ""
+        marked_embed = " + sumMerge(marked_embed_tokens_state)" if include_marked else ""
+        marked_ops = " + countMerge(marked_ops_state)" if include_marked else ""
         base_select = (
-            "sumMerge(cost_usd_state)      AS cost_usd, "
-            "sumMerge(tokens_state)        AS tokens, "
-            "sumMerge(embed_tokens_state)  AS embed_tokens, "
-            "countMerge(ops_state)         AS ops, "
+            f"sumMerge(cost_usd_state){marked_cost} AS cost_usd, "
+            f"sumMerge(tokens_state){marked_tokens} AS tokens, "
+            f"sumMerge(embed_tokens_state){marked_embed} AS embed_tokens, "
+            f"countMerge(ops_state){marked_ops} AS ops, "
             "sumMerge(errors_state)        AS errors, "
             "quantilesMerge(0.5, 0.95, 0.99)(latency_quantile_state) AS lat_q"
         )
@@ -161,7 +176,7 @@ async def summary_rows(
                   {where}
                 UNION ALL
                 SELECT org, namespace, agent, toDate(ts) AS day, operation, {TAIL_STATES}
-                FROM loom.agent_events
+                FROM {ALL_EVENTS}
                 WHERE org = {{org:String}}
                   AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)
                   AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
@@ -169,6 +184,7 @@ async def summary_rows(
                 GROUP BY {ROLLUP_DIMS}
             )
             {("GROUP BY " + group_by_sql) if group_by_sql else ""}
+            HAVING ops > 0
             ORDER BY ops DESC
             LIMIT 5000
         """
@@ -185,7 +201,7 @@ async def ask_cache_totals(
     rows = await ch.query_all(
         f"""
             SELECT {CACHE_SELECT}
-            FROM loom.agent_events
+            FROM {ALL_EVENTS}
             WHERE org = {{org:String}}
               AND toDate(ts) BETWEEN {{from_d:Date}} AND {{to_d:Date}}
               AND operation = 'memory.ask'
@@ -198,35 +214,6 @@ async def ask_cache_totals(
     return int(rows[0].get("cache_hits") or 0), float(rows[0].get("cache_saved_usd") or 0.0)
 
 
-async def namespace_spend_24h(org: str, namespace: str, *, ch: _CHClient | None = None) -> float:
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-            SELECT sum(upstream_cost_usd) AS spent
-            FROM loom.agent_events
-            WHERE org = {org:String}
-              AND namespace = {ns:String}
-              AND ts > now() - INTERVAL 1 DAY
-            """,
-        params={"org": org, "ns": namespace},
-    )
-    return float((row or {}).get("spent") or 0.0)
-
-
-async def namespace_cap(org: str, namespace: str, *, ch: _CHClient | None = None) -> Any:
-    """The namespace's own `daily_cost_cap_usd`; None without a namespaces row."""
-    ch = ch or _default_client()
-    row = await ch.query_one(
-        """
-            SELECT daily_cost_cap_usd
-            FROM loom.namespaces FINAL
-            WHERE org = {org:String} AND namespace = {ns:String}
-            """,
-        params={"org": org, "ns": namespace},
-    )
-    return (row or {}).get("daily_cost_cap_usd")
-
-
 async def org_spend_24h(
     org: str, scope_where: str, scope_params: dict[str, Any], *, ch: _CHClient | None = None
 ) -> tuple[float, int]:
@@ -236,7 +223,7 @@ async def org_spend_24h(
         f"""
         SELECT sum(upstream_cost_usd) AS spent,
                countDistinct(namespace) AS ns_count
-        FROM loom.agent_events
+        FROM {ALL_EVENTS}
         WHERE org = {{org:String}}
           AND upstream_cost_usd > 0
           AND ts > now() - INTERVAL 1 DAY

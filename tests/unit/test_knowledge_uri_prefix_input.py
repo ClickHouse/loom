@@ -54,7 +54,7 @@ async def test_list_repo_emits_prefix_clause() -> None:
 
     ch = StubCH()
     await documents_repo.list_with_chunk_counts(
-        "o", "n", uri_prefixes=["docs/decisions/", ""], ch=ch
+        "o", ["n"], uri_prefixes=["docs/decisions/", ""], ch=ch
     )
     sql, params = ch.calls[0]
     assert "startsWith(source_uri, {pfx0:String})" in sql

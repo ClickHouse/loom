@@ -50,7 +50,7 @@ describe("Browse: code indexes you manage", () => {
     expect(within(memory).getByText("team")).toBeInTheDocument();
     expect(within(memory).queryByText("code-ch")).toBeNull();
 
-    const fold = screen.getByRole("button", { name: "Code indexes you manage" });
+    const fold = screen.getByRole("button", { name: "Repositories you manage" });
     expect(fold).toHaveAttribute("aria-expanded", "false");
     expect(fold.closest("section")).toHaveTextContent("2");
     expect(screen.queryByText("ClickHouse/ClickHouse @ master")).toBeNull();
@@ -75,10 +75,10 @@ describe("Browse: code indexes you manage", () => {
   it("remembers that the section was opened", async () => {
     mine = [admin("code-ch", "code", "ClickHouse/ClickHouse @ master")];
     const first = render(<Browse />);
-    fireEvent.click(await screen.findByRole("button", { name: "Code indexes you manage" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Repositories you manage" }));
     first.unmount();
     render(<Browse />);
-    expect(await screen.findByRole("button", { name: "Code indexes you manage" })).toHaveAttribute(
+    expect(await screen.findByRole("button", { name: "Repositories you manage" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
@@ -91,7 +91,7 @@ describe("Browse: code indexes you manage", () => {
       "aria-expanded",
       "false",
     );
-    expect(screen.queryByRole("button", { name: "Code indexes you manage" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Repositories you manage" })).toBeNull();
     expect(screen.queryByRole("heading", { name: /Namespaces you manage/ })).toBeNull();
   });
 });

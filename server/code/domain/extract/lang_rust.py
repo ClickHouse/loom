@@ -58,6 +58,9 @@ KIND_MACRO = "macro"
 _MAX_DOC = 2000
 _FILE_MODULES = ("mod.rs", "lib.rs", "main.rs")
 _MAX_CANDIDATES_PER_USE = 12
+# a leaf's path repeats every prefix above it: a long prefix times many leaves is a copy each
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+_MAX_USE_CHARS = 256
 
 
 @lru_cache(maxsize=1)
@@ -94,15 +97,19 @@ def module_scope_rust(path: str) -> str:
     return f"{crate}::{mods}" if mods else crate
 
 
-def _doc_above(node: Any, source: bytes) -> str:
-    """`///` lines (or one `/** */`) right above the item, attributes skipped."""
+def _doc_above(siblings: list[Any], i: int, source: bytes) -> str:
+    """`///` lines (or one `/** */`) right above the item `siblings[i]`, attributes
+    skipped. The siblings are read from the list: a node's `prev_named_sibling` walks its
+    parent's children from the first, quadratic over a long run of items."""
     parts: list[str] = []
-    sib = node.prev_named_sibling
-    expected_end = node.start_point[0]
+    j = i - 1
+    sib = siblings[j] if j >= 0 else None
+    expected_end = siblings[i].start_point[0]
     while sib is not None:
         if sib.type == "attribute_item":
             expected_end = sib.start_point[0]
-            sib = sib.prev_named_sibling
+            j -= 1
+            sib = siblings[j] if j >= 0 else None
             continue
         if sib.type not in {"line_comment", "block_comment"}:
             break
@@ -114,7 +121,8 @@ def _doc_above(node: Any, source: bytes) -> str:
             break
         parts.append(text)
         expected_end = sib.start_point[0]
-        sib = sib.prev_named_sibling
+        j -= 1
+        sib = siblings[j] if j >= 0 else None
     return "\n".join(reversed(parts))[:_MAX_DOC] if parts else ""
 
 
@@ -148,8 +156,9 @@ class _Walker:
     pf: ParsedFile
     source: bytes
     mod: str
-    uses: list[str] = field(default_factory=list)
+    uses: dict[str, None] = field(default_factory=dict)  # ordered, distinct
     _impls: dict[str, int] = field(default_factory=dict)
+    _types: set[str] = field(default_factory=set)  # the structs and enums added so far
 
     def _add(
         self,
@@ -162,6 +171,8 @@ class _Walker:
         has_body: bool = True,
     ) -> str:
         qname = "::".join((self.mod, *scope, name))
+        if kind in {"struct", "enum"}:
+            self._types.add(qname)
         self.pf.symbols.append(
             Symbol(
                 qualified_name=qname,
@@ -178,14 +189,16 @@ class _Walker:
         return qname
 
     def walk(self, node: Any, scope: tuple[str, ...]) -> None:
-        for child in node.named_children:
-            self._item(child, scope)
+        children = node.named_children
+        for i in range(len(children)):
+            self._item(children, i, scope)
 
-    def _item(self, node: Any, scope: tuple[str, ...]) -> None:
+    def _item(self, siblings: list[Any], i: int, scope: tuple[str, ...]) -> None:
+        node = siblings[i]
         t = node.type
         name_node = node.child_by_field_name("name")
         name = node_text(name_node, self.source) if name_node is not None else ""
-        doc = _doc_above(node, self.source)
+        doc = _doc_above(siblings, i, self.source)
         if t == "function_item" and name:
             self._add(scope, name, "function", _signature(node, self.source), node, doc)
         elif t == "function_signature_item" and name:
@@ -214,7 +227,7 @@ class _Walker:
         elif t == "use_declaration":
             arg = node.child_by_field_name("argument")
             if arg is not None:
-                self.uses.extend(_use_paths(arg, self.source))
+                _collect_use_paths(arg, self.source, "", self.uses)
         elif t in {"foreign_mod_item", "extern_block"}:
             self._body(node, scope)
 
@@ -228,7 +241,7 @@ class _Walker:
     def _module(self, node: Any, scope: tuple[str, ...], name: str, doc: str) -> None:
         body = node.child_by_field_name("body")
         if body is None:
-            self.uses.append(f"mod {name}")  # `mod foo;` names a sibling file
+            self.uses[f"mod {name}"] = None  # `mod foo;` names a sibling file
             return
         self._add(scope, name, "module", "", node, doc)
         self.walk(body, (*scope, name))
@@ -248,40 +261,45 @@ class _Walker:
         self._add((*scope, type_name), impl_name, KIND_IMPL, header, node, doc)
         if trait_name:
             struct_qname = "::".join((self.mod, *scope, type_name))
-            if any(
-                s.qualified_name == struct_qname and s.kind in {"struct", "enum"}
-                for s in self.pf.symbols
-            ):
+            if struct_qname in self._types:
                 self.pf.inherits.append((struct_qname, trait_name))
         self._body(node, (*scope, type_name))
 
 
-def _use_paths(arg: Any, source: bytes) -> list[str]:
-    """The module paths a `use` argument names, one per leaf: `a::{b, c::D}`
-    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`."""
+def _collect_use_paths(arg: Any, source: bytes, above: str, out: dict[str, None]) -> None:
+    """The module paths a `use` argument names, one per leaf, into `out`: `a::{b, c::D}`
+    → `a::b`, `a::c::D`; `a::*` → `a`; `a as b` → `a`. `above` is the joined path of the
+    enclosing lists, so each leaf's path is built once; a joined path of `_MAX_USE_CHARS`
+    or more is dropped."""
+
+    def leaf(p: str) -> None:
+        if not above:
+            out[p] = None
+        elif len(above) + 2 + len(p) < _MAX_USE_CHARS:
+            out[f"{above}::{p}"] = None
+
     t = arg.type
     if t == "scoped_use_list":
         path = arg.child_by_field_name("path")
         prefix = node_text(path, source) if path is not None else ""
+        inner = f"{above}::{prefix}" if above and prefix else (above or prefix)
+        if len(inner) >= _MAX_USE_CHARS:
+            return
         lst = arg.child_by_field_name("list")
-        out: list[str] = []
         for item in lst.named_children if lst is not None else []:
-            out.extend(f"{prefix}::{p}" if prefix else p for p in _use_paths(item, source))
-        return out
-    if t == "use_list":
-        out = []
+            _collect_use_paths(item, source, inner, out)
+    elif t == "use_list":
         for item in arg.named_children:
-            out.extend(_use_paths(item, source))
-        return out
-    if t == "use_as_clause":
+            _collect_use_paths(item, source, above, out)
+    elif t == "use_as_clause":
         path = arg.child_by_field_name("path")
-        return _use_paths(path, source) if path is not None else []
-    if t == "use_wildcard":
-        inner = arg.named_children[0] if arg.named_children else None
-        return [node_text(inner, source)] if inner is not None else []
-    if t in {"scoped_identifier", "identifier", "crate", "self", "super"}:
-        return [node_text(arg, source)]
-    return []
+        if path is not None:
+            _collect_use_paths(path, source, above, out)
+    elif t == "use_wildcard":
+        if arg.named_children:
+            leaf(node_text(arg.named_children[0], source))
+    elif t in {"scoped_identifier", "identifier", "crate", "self", "super"}:
+        leaf(node_text(arg, source))
 
 
 def parse_rust(path: str, source: bytes) -> ParsedFile:
@@ -289,7 +307,7 @@ def parse_rust(path: str, source: bytes) -> ParsedFile:
     pf = ParsedFile(path=path, lang=LANG_RUST, tree=tree, source=source)
     w = _Walker(pf=pf, source=source, mod=module_scope_rust(path))
     w.walk(tree.root_node, ())
-    pf.includes = list(dict.fromkeys(w.uses))
+    pf.includes = list(w.uses)
     return pf
 
 
@@ -323,13 +341,14 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
         return []
     head, rest = segs[0], segs[1:]
     if head == "crate":
-        base = root
+        bases: tuple[str, ...] = (root,)
     elif head in {"self", "super"}:
         base = here if posixpath.basename(from_path) in _FILE_MODULES else from_path[:-3]
         for s in segs:
             if s == "super":
                 base = posixpath.dirname(base)
         rest = [s for s in segs if s not in {"self", "super"}]
+        bases = (base,)
     else:
         # `use foo::bar` may name a sibling module `foo` of the current
         # module, or the crate root's `foo` (2018 edition path resolution)
@@ -337,33 +356,34 @@ def use_candidates(from_path: str, use_path: str) -> list[str]:
             base = here
         else:
             base = from_path[:-3]
-        out: list[str] = []
-        for b in (base, root):
-            for n in range(len(segs), 0, -1):
-                out.extend(c for c in _module_files(posixpath.join(b, *segs[:n])) if c not in out)
-        return out[:_MAX_CANDIDATES_PER_USE]
-    out = []
-    for n in range(len(rest), 0, -1):
-        out.extend(c for c in _module_files(posixpath.join(base, *rest[:n])) if c not in out)
-    return out[:_MAX_CANDIDATES_PER_USE]
+        rest = segs
+        bases = (base, root)
+    # the deepest stems up to the cap only: a long path has one per segment
+    out: dict[str, None] = {}
+    for b in bases:
+        for n in range(len(rest), 0, -1):
+            out.update(dict.fromkeys(_module_files(posixpath.join(b, *rest[:n]))))
+            if len(out) >= _MAX_CANDIDATES_PER_USE:
+                return list(out)[:_MAX_CANDIDATES_PER_USE]
+    return list(out)
 
 
 def resolve_uses(from_path: str, uses: list[str], present: set[str]) -> list[str]:
     """The indexed module files the `use` / `mod` paths name (one per path,
     the deepest that exists). Pure; `present` is the oracle."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for u in uses:
         hit = next((c for c in use_candidates(from_path, u) if c in present), None)
-        if hit and hit != from_path and hit not in out:
-            out.append(hit)
-    return out
+        if hit and hit != from_path:
+            out[hit] = None
+    return list(out)
 
 
 def wanted_paths(from_path: str, uses: list[str]) -> list[str]:
-    out: list[str] = []
+    out: dict[str, None] = {}
     for u in uses:
-        out.extend(c for c in use_candidates(from_path, u) if c not in out)
-    return out
+        out.update(dict.fromkeys(use_candidates(from_path, u)))
+    return list(out)
 
 
 __all__ = [

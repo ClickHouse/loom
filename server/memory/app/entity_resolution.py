@@ -16,12 +16,16 @@ from typing import Any, cast
 
 from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
+from server.core.errors import VectorInputTooLargeError
+from server.memory.api.models_search import SEARCH_ENTITY_FILTER_MAX
 from server.memory.domain.graph_quality import canonical_entity_text
 
 _MIN_FUZZY_SCORE = 0.95
 _MAX_NORMALIZED_ENTROPY = 0.55
 _MIN_TOP_GAP = 0.02
 _MAX_NAMESPACE_CANDIDATES = 5000
+# not a setting: the documented entity-filter contract accepts at most 256 effective names.
+_MAX_EFFECTIVE_ENTITY_FILTER = 256
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,13 @@ def entity_similarity(a: str, b: str) -> float:
         return 0.0
     if a_canon == b_canon:
         return 1.0
-    compact_a = compact_entity_text(a_canon)
-    compact_b = compact_entity_text(b_canon)
+    compact_a = "".join(char for char in a_canon if char.isalnum())
+    compact_b = "".join(char for char in b_canon if char.isalnum())
+    return _prepared_similarity(a_canon, b_canon, compact_a, compact_b)
+
+
+def _prepared_similarity(a_canon: str, b_canon: str, compact_a: str, compact_b: str) -> float:
+    """Score unequal, nonempty canonical names with their already prepared compact forms."""
     ratios = [
         SequenceMatcher(None, a_canon, b_canon).ratio(),
         SequenceMatcher(None, compact_a, compact_b).ratio() if compact_a and compact_b else 0.0,
@@ -186,12 +195,18 @@ def _prepare_candidates(candidates: Iterable[str]) -> PreparedCandidates:
     not re-canonicalize, de-duplicate and sort the whole candidate list on
     every call (a further ~6% of the cost).
     """
+    return _prepare_canonical_candidates(
+        canonical_entity_text(raw) if raw else "" for raw in candidates
+    )
+
+
+def _prepare_canonical_candidates(candidates: Iterable[str]) -> PreparedCandidates:
+    """Index normalized names without repeating their idempotent normalization."""
     prepared: dict[str, PreparedCandidate] = {}
-    for raw in candidates:
-        canon = canonical_entity_text(raw) if raw else ""
+    for canon in candidates:
         if not canon or canon in prepared:
             continue
-        compact = compact_entity_text(canon)
+        compact = "".join(char for char in canon if char.isalnum())
         prepared[canon] = (canon, compact, len(canon), len(compact))
     return PreparedCandidates(prepared[k] for k in sorted(prepared))
 
@@ -297,16 +312,21 @@ def choose_canonical_candidate(
     # Block by length (index), then bound by character overlap, then — only
     # for what survives both — run the real similarity. Both bounds are exact
     # (see the note above), so this decides exactly what the full scan would.
-    scored = sorted(
-        (
-            (prepared[i][0], entity_similarity(mention, prepared[i][0]))
-            for i in _blocked_positions(prepared, m_len, m_clen, min_score)
-            if prepared[i][0] != mention
-            and _overlap_admits(prepared, i, m_len, m_clen, m_chars, m_cchars, min_score)
-        ),
-        key=lambda item: item[1],
-        reverse=True,
-    )
+    scored: list[tuple[str, float]] = []
+    gap_blockers = 0
+    for i in _blocked_positions(prepared, m_len, m_clen, min_score):
+        if prepared[i][0] == mention or not _overlap_admits(
+            prepared, i, m_len, m_clen, m_chars, m_cchars, min_score
+        ):
+            continue
+        score = _prepared_similarity(mention, prepared[i][0], m_compact, prepared[i][1])
+        scored.append((prepared[i][0], score))
+        if 1.0 - score < min_gap:
+            gap_blockers += 1
+            # Two scores this close to one leave no room for the required winner gap.
+            if gap_blockers == 2:
+                return EntityResolutionDecision(mention, mention, 1.0, "self")
+    scored.sort(key=lambda item: item[1], reverse=True)
     if not scored:
         return EntityResolutionDecision(mention, mention, 1.0, "self")
     best, best_score = scored[0]
@@ -354,35 +374,29 @@ async def resolve_entities_for_write(
     except Exception:  # noqa: BLE001 — a failed candidate read keeps mentions as written
         return {mention: mention for mention in mentions}
 
-    by_mention = {
-        canonical_entity_text(str(row.get("mention_text") or "")): row
-        for row in rows
-        if row.get("mention_text")
-    }
-    candidates = sorted(
-        {
-            canonical_entity_text(str(row.get("canonical_text") or ""))
-            for row in rows
-            if row.get("canonical_text")
-        }
-    )
-    # Prepared ONCE for all mentions rather than rebuilt inside every
-    # choose_canonical_candidate call.
-    prepared_candidates = _prepare_candidates(candidates)
-    # Direct attestation per surface: the self-row evidence_count records
-    # how often that exact text was itself observed as a mention. Canonical
-    # DIRECTION follows attestation — a merge points at the better-evidenced
-    # variant, so a typo that happened to be written first cannot
-    # permanently canonicalize a correct later spelling into the typo.
-    # Ties keep the earlier-seen canonical.
+    by_mention: dict[str, Any] = {}
+    candidates: set[str] = set()
+    # Direct attestation is the maximum self-row evidence, even if a later
+    # duplicate row is the one the mention lookup retains.
     self_evidence: dict[str, int] = {}
     for row in rows:
-        m_text = canonical_entity_text(str(row.get("mention_text") or ""))
-        c_text = canonical_entity_text(str(row.get("canonical_text") or ""))
+        raw_mention = row.get("mention_text")
+        raw_canonical = row.get("canonical_text")
+        mention_raw = str(raw_mention or "")
+        canonical_raw = str(raw_canonical or "")
+        m_text = canonical_entity_text(mention_raw)
+        c_text = m_text if canonical_raw == mention_raw else canonical_entity_text(canonical_raw)
+        if raw_mention:
+            by_mention[m_text] = row
+        if raw_canonical:
+            candidates.add(c_text)
         if m_text and m_text == c_text:
             self_evidence[m_text] = max(
                 self_evidence.get(m_text, 0), int(row.get("evidence_count") or 0)
             )
+    # The rows are normalized once; ranking still receives the same sorted,
+    # distinct names and uses the same length and character-overlap indexes.
+    prepared_candidates = _prepare_canonical_candidates(candidates)
 
     decisions: list[EntityResolutionDecision] = []
     redirects: dict[str, str] = {}  # flipped canonical -> new canonical
@@ -496,6 +510,8 @@ async def lookup_canonical_entities(
 ) -> list[str]:
     """Return raw canonical texts plus namespace-local resolved aliases."""
 
+    if len(entity_texts) > SEARCH_ENTITY_FILTER_MAX:
+        raise VectorInputTooLargeError("entity_filter accepts at most 64 raw names")
     # Input order is kept (a cited entity precedes a mentioned
     # one, and the bodies="unit" budget reads the list in order); resolved aliases
     # that were not mentioned follow, sorted.
@@ -511,12 +527,13 @@ async def lookup_canonical_entities(
     try:
         rows = await ch.query_all(
             """
-            SELECT canonical_text
+            SELECT DISTINCT canonical_text
             FROM loom.entity_canonical_map FINAL
             WHERE org = {org:String}
               AND namespace IN {namespaces:Array(String)}
               AND mention_text IN {mentions:Array(String)}
               AND tombstoned_at IS NULL
+            LIMIT 257
             """,
             params={
                 "org": org,
@@ -524,12 +541,19 @@ async def lookup_canonical_entities(
                 "mentions": mentions,
             },
         )
+    except VectorInputTooLargeError:
+        raise
     except Exception:  # noqa: BLE001 — a failed alias read keeps the given entities
         return ordered
+    # A full sentinel page cannot prove that omitted aliases fit the bound.
+    if len(rows) > _MAX_EFFECTIVE_ENTITY_FILTER:
+        raise VectorInputTooLargeError("entity alias expansion exceeds 256 names")
     for row in rows:
         canon = canonical_entity_text(str(row.get("canonical_text") or ""))
         if canon:
             out.add(canon)
+    if len(out) > _MAX_EFFECTIVE_ENTITY_FILTER:
+        raise VectorInputTooLargeError("entity alias expansion exceeds 256 names")
     return ordered + sorted(out - set(ordered))
 
 

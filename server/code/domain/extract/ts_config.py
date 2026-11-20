@@ -11,19 +11,20 @@ the namespace holds; it never touches the file system.
 """
 from __future__ import annotations
 
+import bisect
 import json
 import posixpath
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 CONFIG_NAMES = ("tsconfig.json", "jsconfig.json")
 _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 _MAX_EXTENDS = 8
 # A config's `paths` keeps at most this many patterns, and each at most this many
 # targets (real ones: tens and one to three).
-# not a setting: every import specifier is matched against every pattern; a bound on that
+# not a setting: a bound on the lookup a config's `paths` builds
 PATHS_PATTERNS_MAX = 1000
 # not a setting: every target of the matching pattern is a candidate path to look up
 PATHS_TARGETS_MAX = 50
@@ -67,11 +68,59 @@ def parse_jsonc(text: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+class _PathsIndex(NamedTuple):
+    """A `PathsTable`'s lookup: its wildcard patterns by head, then tail, to the pattern's
+    place in `patterns`, with the tail lengths each head holds; the head lengths, shortest
+    first; the patterns in order."""
+
+    heads: dict[str, tuple[dict[str, int], list[int]]]
+    head_lengths: list[int]
+    names: list[str]
+
+
 @dataclass
 class PathsTable:
     """One config's `paths` with the directory its targets are relative to."""
     base: str  # baseUrl resolved against the config dir, or the config dir
     patterns: dict[str, list[str]] = field(default_factory=dict)
+    # built in one assignment at the first lookup, once `patterns` is filled
+    _index: _PathsIndex | None = field(default=None, init=False, repr=False, compare=False)
+
+    def best(self, spec: str) -> tuple[str, str] | None:
+        """(pattern, `*` binding) of the pattern the compiler picks for `spec`: an exact
+        one, else the matching wildcard with the longest head, the first written on a
+        tie; None when none matches. One lookup per head and tail length the table
+        holds that fits the spec, instead of a match against every pattern."""
+        if spec in self.patterns and "*" not in spec:
+            return spec, ""
+        if self._index is None:
+            by_head: dict[str, dict[str, int]] = {}
+            for order, pat in enumerate(self.patterns):
+                if "*" in pat:
+                    head, _, tail = pat.partition("*")
+                    by_head.setdefault(head, {}).setdefault(tail, order)
+            self._index = _PathsIndex(
+                heads={h: (tails, sorted({len(t) for t in tails})) for h, tails in by_head.items()},
+                head_lengths=sorted({len(h) for h in by_head}),
+                names=list(self.patterns),
+            )
+        heads, head_lengths, names = self._index
+        # the head lengths a prefix of the spec can have, longest first
+        fits = bisect.bisect_right(head_lengths, len(spec))
+        for n in reversed(head_lengths[:fits]):
+            if spec[:n] not in heads:
+                continue
+            tails, lengths = heads[spec[:n]]
+            rest = spec[n:]
+            orders = [
+                tails[rest[len(rest) - k :]]
+                for k in lengths[: bisect.bisect_right(lengths, len(rest))]
+                if rest[len(rest) - k :] in tails
+            ]
+            if orders:
+                pat = names[min(orders)]
+                return pat, rest[: len(rest) - len(pat.partition("*")[2])]
+        return None
 
 
 @dataclass
@@ -185,17 +234,6 @@ def _join(here: str, rel: str) -> str:
     return "" if joined == "." else joined
 
 
-def _match(pattern: str, spec: str) -> str | None:
-    """The `*` binding when `pattern` matches `spec`; '' for an exact,
-    star-less match; None otherwise."""
-    if "*" not in pattern:
-        return "" if pattern == spec else None
-    head, _, tail = pattern.partition("*")
-    if spec.startswith(head) and spec.endswith(tail) and len(spec) >= len(head) + len(tail):
-        return spec[len(head): len(spec) - len(tail)]
-    return None
-
-
 def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
     """The repository stems a bare specifier maps to, in the compiler's
     order: the longest-prefix `paths` pattern of the nearest table that
@@ -204,17 +242,10 @@ def paths_candidates(spec: str, cfg: ResolvedConfig) -> list[str]:
     if spec.startswith((".", "/")) or not spec:
         return []
     for table in cfg.tables:
-        best: tuple[int, str, str] | None = None
-        for pat in table.patterns:
-            bound = _match(pat, spec)
-            if bound is None:
-                continue
-            prefix_len = len(pat.partition("*")[0]) if "*" in pat else len(pat) + 1
-            if best is None or prefix_len > best[0]:
-                best = (prefix_len, pat, bound)
+        best = table.best(spec)
         if best is None:
             continue
-        stems = (_join(table.base, t.replace("*", best[2], 1)) for t in table.patterns[best[1]])
+        stems = (_join(table.base, t.replace("*", best[1], 1)) for t in table.patterns[best[0]])
         return [s for s in dict.fromkeys(stems) if s]  # the nearest matching table decides
     if cfg.base_url is not None:
         stem = _join(cfg.base_url, spec)

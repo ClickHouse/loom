@@ -69,7 +69,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
          arm64) GO_SHA256="${GO_SHA256_ARM64}" ;; \
          *) echo "no pinned Go tarball for ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" -o /tmp/go.tgz \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH:-amd64}.tar.gz" -o /tmp/go.tgz \
     && printf '%s  /tmp/go.tgz\n' "${GO_SHA256}" >/tmp/go.tgz.sha256 \
     && sha256sum -c /tmp/go.tgz.sha256 \
     && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz /tmp/go.tgz.sha256
@@ -96,12 +96,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
          arm64) NODE_ARCH=arm64 NODE_SHA256="${NODE_SHA256_ARM64}" ;; \
          *) echo "no pinned Node tarball for ${TARGETARCH}" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.txz \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" -o /tmp/node.txz \
     && printf '%s  /tmp/node.txz\n' "${NODE_SHA256}" >/tmp/node.txz.sha256 \
     && sha256sum -c /tmp/node.txz.sha256 \
     && mkdir -p /usr/local/node && tar -C /usr/local/node --strip-components=1 -xJf /tmp/node.txz && rm /tmp/node.txz /tmp/node.txz.sha256
 ENV PATH=/usr/local/node/bin:$PATH
 COPY scripts/install-code-toolchains.sh /tmp/install-code-toolchains.sh
+COPY scripts/code-toolchains /tmp/code-toolchains
 RUN LOOM_CODE_TOOLCHAIN_PREFIX=/usr/local/node sh /tmp/install-code-toolchains.sh \
     && npm cache clean --force
 
@@ -116,16 +117,19 @@ ARG TARGETARCH
 ARG SCIP_CLANG_VERSION=v0.4.0
 ARG SCIP_CLANG_SHA256_AMD64=06fd18c576f979a726c651594644ec4a35db4f471f2160b3f72eb89fa6001784
 ARG LLVM_SIGNER_FPR=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+# Downloads retry a briefly unreachable host; the key goes to a file so a retry never
+# feeds gpg a repeated partial stream.
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /out/bin \
     && export GNUPGHOME="$(mktemp -d)" \
-    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --batch --import \
+    && curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 https://apt.llvm.org/llvm-snapshot.gpg.key -o /tmp/llvm.key \
+    && gpg --batch --import /tmp/llvm.key \
     && gpg --batch --export "${LLVM_SIGNER_FPR}" >/out/llvm.gpg \
     && [ "$(gpg --show-keys --with-colons /out/llvm.gpg | grep -c '^pub:')" = 1 ] \
     && gpg --show-keys --with-colons /out/llvm.gpg | grep -q "^fpr:::::::::${LLVM_SIGNER_FPR}:" \
     && if [ "${TARGETARCH:-amd64}" = amd64 ]; then \
-         curl -fsSL "https://github.com/sourcegraph/scip-clang/releases/download/${SCIP_CLANG_VERSION}/scip-clang-x86_64-linux" -o /out/bin/scip-clang \
+         curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-delay 3 "https://github.com/sourcegraph/scip-clang/releases/download/${SCIP_CLANG_VERSION}/scip-clang-x86_64-linux" -o /out/bin/scip-clang \
          && printf '%s  /out/bin/scip-clang\n' "${SCIP_CLANG_SHA256_AMD64}" | sha256sum -c \
          && chmod 0755 /out/bin/scip-clang; \
        fi
@@ -194,6 +198,9 @@ COPY scripts/serve.sh ./scripts/serve.sh
 COPY bench/fixtures ./bench/fixtures
 # mentor.guide serves the agent guide (SKILL.md, reference.md) from here.
 COPY skills/loom ./skills/loom
+# help.search and help.get read the documentation from here (its Markdown; the
+# screenshots under docs/images/ stay out of the build context, .dockerignore).
+COPY docs ./docs
 # Dev tooling — loom_init.py, loom_ingest.py, verify_audit_chain.py, backup
 # and restore. Migrations run in the server's startup lifespan; these ship for
 # `docker exec` operational tasks (token mint, knowledge ingest, audit verification).
@@ -213,9 +220,9 @@ USER loom
 
 # LOOM_BIND_HOST is the address the port is published on, which the startup
 # checks read; LOOM_LISTEN_HOST is the one the container listens on, all its
-# interfaces. 0.0.0.0 = reachable by others, so it needs LOOM_PUBLIC_BASE_URL,
-# auth and a real signing secret. A compose stack that publishes on loopback
-# passes its LOOM_BIND_HOST through.
+# interfaces. 0.0.0.0 = reachable by others, so it needs the safeguards in
+# docs/operations/deployment.md ("Proxy and TLS"). A compose stack that
+# publishes on loopback passes its LOOM_BIND_HOST through.
 # PYTHONPATH: the `loom` command imports the same /app tree as the server,
 # not the copy in the venv, which ships without schemas/.
 ENV PYTHONUNBUFFERED=1 \
@@ -232,9 +239,11 @@ COPY --from=local-models --chown=loom:loom /models /app/models
 EXPOSE 7777
 # Readiness, not liveness: healthy once the replica can serve (migrations, keys
 # and warm-up loaded), unhealthy while it drains. The start period covers a
-# boot that waits on another replica's migration lease.
+# boot that waits on another replica's migration lease. With LOOM_TLS_CERT_FILE in
+# the container's environment the check uses HTTPS without verifying the
+# certificate: it reads only the readiness answer of its own loopback port.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=900s --retries=3 \
-    CMD python -c "import urllib.request, sys; r=urllib.request.urlopen('http://127.0.0.1:'+__import__('os').environ.get('PORT','7777')+'/v1/health/ready', timeout=3); sys.exit(0 if r.status==200 else 1)" || exit 1
+    CMD python -c "import os, ssl, sys, urllib.request; tls=bool(os.environ.get('LOOM_TLS_CERT_FILE')); r=urllib.request.urlopen(('https' if tls else 'http')+'://127.0.0.1:'+os.environ.get('PORT','7777')+'/v1/health/ready', timeout=3, context=ssl._create_unverified_context() if tls else None); sys.exit(0 if r.status==200 else 1)" || exit 1
 
 # The web tier: scripts/serve.sh says how it starts and stops. On SIGTERM Loom
 # answers not-ready for LOOM_SHUTDOWN_READY_DELAY_S (15 s) while it serves, uvicorn

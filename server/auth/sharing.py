@@ -26,7 +26,14 @@ from typing import TYPE_CHECKING, Any
 
 from server.core import grant_cache
 from server.core.errors import BACKEND_NOT_NOW
-from server.core.principals import EVERYONE, PERSONAL_PREFIX, USER, personal_name, principal_id
+from server.core.principals import (
+    COLLECTION_PREFIX,
+    EVERYONE,
+    PERSONAL_PREFIX,
+    USER,
+    personal_name,
+    principal_id,
+)
 from server.operations.base import Role, rank_role
 
 if TYPE_CHECKING:
@@ -37,20 +44,26 @@ log = logging.getLogger(__name__)
 # Ancestors a collection inherits from, at most; `collection.move` refuses a
 # deeper tree.
 MAX_DEPTH = 8  # not a setting: a lower value would cut inheritance in trees already stored
-# A collection is known by its name, so the gate needs no read to tell one,
-# and nothing that fails to load can let another rule admit one. The prefixes
-# are reserved: `namespace.register` and `namespace.restore` refuse them.
-COLLECTION_PREFIX = "col-"
 # What a request names its end user's personal collection by.
 PERSONAL_ALIAS = "@me"
 
 
 def is_collection(namespace: str) -> bool:
+    """A collection is known by its name, so the gate needs no read to tell one, and
+    nothing that fails to load can let another rule admit one. The prefixes are
+    reserved: `namespace.register` and `namespace.restore` refuse them."""
     return namespace.startswith(COLLECTION_PREFIX)
 
 
 def is_personal(namespace: str) -> bool:
     return namespace.startswith(PERSONAL_PREFIX)
+
+
+def collection_kind(namespace: str) -> str | None:
+    """`personal` or `collection` for a name with a collection's reserved prefix, else None."""
+    if is_personal(namespace):
+        return "personal"
+    return "collection" if is_collection(namespace) else None
 
 
 @dataclass(frozen=True)
@@ -320,7 +333,10 @@ async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -
     if auth.has_role(Role.PLATFORM_ADMIN):
         return
     # The same words whether or not the collection exists, so they confirm nothing.
-    bare = PermissionError(f"principal {auth.subject!r} cannot access {org}/{namespace}")
+    # "collection" comes from the reserved prefix this gate runs on, not from a lookup.
+    bare = PermissionError(
+        f"principal {auth.subject!r} cannot access the collection {org}/{namespace}"
+    )
     # Another org's caller, and someone else's personal collection (which takes no grant),
     # get the short refusal: the advice below could not work for them.
     if not may_act_in_org(auth, org):

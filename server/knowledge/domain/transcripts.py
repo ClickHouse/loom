@@ -33,6 +33,17 @@ _TAG = re.compile(r"<[^>]*>")
 _STRUCTURE = re.compile(r"^\s*[#>|=~`<-]")
 
 
+_DRIVE_TITLE = re.compile(r"## \*\*([^*\r\n]+)\*\*")
+_DRIVE_CLOCK = r"([0-9]{2}:[0-5][0-9]:[0-5][0-9])"
+_DRIVE_MARKER = re.compile(rf"### {_DRIVE_CLOCK}")
+_DRIVE_END = re.compile(rf"### Meeting ended after {_DRIVE_CLOCK} 👋")
+_DRIVE_PREFIX = re.compile(r"^(?:\s|[*+][ \t]|[0-9]+[.)][ \t])")
+_DRIVE_NOTICE = (
+    "*This editable transcript was computer generated and might contain errors. "
+    "People can also change the text after it was created.*"
+)
+
+
 @dataclass(frozen=True)
 class Entry:
     """One stretch of speech: seconds from the start of the recording."""
@@ -147,11 +158,59 @@ def transcript_markdown(entries: list[Entry]) -> str:
     return "\n\n".join(_section(s) for s in sections)
 
 
+def is_drive_transcript_markdown(text: str) -> bool:
+    """Recognize the observed English export layout without rewriting its text.
+
+    Time headings are coarse source points, not utterance intervals. A match
+    interprets content and establishes no producer, identity or access authority.
+    """
+    paragraphs = text.replace("\r\n", "\n").rstrip("\n").split("\n\n")
+    if len(paragraphs) < 8 or any(not p or "\n" in p or "\r" in p for p in paragraphs):
+        return False
+    title = _DRIVE_TITLE.fullmatch(paragraphs[0])
+    if (
+        title is None
+        or not title.group(1).strip()
+        or paragraphs[1] != "# **Attendees**"
+        or _STRUCTURE.match(paragraphs[2])
+        or _DRIVE_PREFIX.match(paragraphs[2])
+        or paragraphs[3] != "# **Transcript**"
+        or paragraphs[-1] != _DRIVE_NOTICE
+    ):
+        return False
+    footer = _DRIVE_END.fullmatch(paragraphs[-2])
+    if footer is None:
+        return False
+    previous = ""
+    has_turn = False
+    for paragraph in paragraphs[4:-2]:
+        marker = _DRIVE_MARKER.fullmatch(paragraph)
+        if marker is not None:
+            stamp = marker.group(1)
+            if stamp <= previous or (previous and not has_turn):
+                return False
+            previous, has_turn = stamp, False
+        else:
+            speaker = _SPEAKER.fullmatch(paragraph)
+            if (
+                not previous
+                or speaker is None
+                or _STRUCTURE.match(paragraph)
+                or _DRIVE_PREFIX.match(paragraph)
+                or any(char in speaker.group(1) for char in "*`[]")
+                or not speaker.group(2).strip()
+            ):
+                return False
+            has_turn = True
+    return bool(previous and has_turn and footer.group(1) >= previous)
+
+
 __all__ = [
     "Entry",
     "HEADING_WORDS",
     "SECTION_SECONDS",
     "clock",
+    "is_drive_transcript_markdown",
     "parse_time",
     "parse_vtt",
     "transcript_markdown",

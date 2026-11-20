@@ -37,3 +37,6 @@ var/
 # Editor / OS noise.
 .DS_Store
 *.swp
+
+# Screenshots: the image ships the docs for help.search and help.get, which read Markdown only.
+docs/images/

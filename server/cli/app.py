@@ -11,6 +11,7 @@ from typing import Any
 
 from server.cli._apply import add_apply_flags, dry_run_hint
 from server.cli.access import _add_mint_token_parser, _add_revoke_token_parser, _cmd_claim_release
+from server.cli.cell import _add_cell_parser
 from server.cli.doctor import _DOCTOR_HELP, _add_doctor_flags, _cmd_doctor, _cmd_report, _version
 from server.cli.hygiene import _add_namespace_hygiene_parsers, _add_namespaces_adopt_parser
 from server.cli.import_brain import _add_brain_import_parser
@@ -38,6 +39,8 @@ from server.cli.reports import (
     _add_mentor_parser,
     _cmd_export_actions,
 )
+from server.cli.restore import _add_reconcile_parser
+from server.cli.router import _add_router_parser
 from server.cli.serve import _add_serve_and_migrate_parsers
 from server.cli.shell import _add_shell_client_parsers
 from server.cli.tracker import (
@@ -46,6 +49,7 @@ from server.cli.tracker import (
     register_tracker_embed_reset,
     register_tracker_probe,
 )
+from server.cli.tracker_feed import register_tracker_feed
 from server.core.env_file import env_file_path
 from server.wiring import wire
 
@@ -81,6 +85,7 @@ _TRACKER_REGISTRARS = (
     register_tracker_contract_check,
     register_tracker_dupcheck_fit,
     register_tracker_embed_reset,
+    register_tracker_feed,
 )
 
 
@@ -160,7 +165,7 @@ _SPLIT_PARSERS: tuple[Any, ...] = (
 def _add_module_parsers(sub: Any) -> None:
     """Subcommands registered by their own modules: code, decisions, knowledge,
     okf, up, ch-setup, participant, deployment, settings, secrets, signing-key,
-    provider-lock and export-analytics."""
+    provider-lock, export-analytics and sql-access."""
     from server.cli.code import register_code_cli
 
     register_code_cli(sub)
@@ -212,6 +217,10 @@ def _add_module_parsers(sub: Any) -> None:
     from server.cli.analytics_export import register_analytics_export_cli
 
     register_analytics_export_cli(sub)
+
+    from server.cli.sql_access import register_sql_access_cli
+
+    register_sql_access_cli(sub)
 
 
 def _add_claim_release_parser(sub: Any) -> None:
@@ -349,6 +358,9 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
     _add_sso_parsers,
     _add_doctor_report_parsers,
     _add_namespace_hygiene_parsers,
+    _add_reconcile_parser,
+    _add_router_parser,
+    _add_cell_parser,
     *_TRACKER_REGISTRARS,
     _add_namespaces_adopt_parser,
     _add_sensitivity_sweep_parser,

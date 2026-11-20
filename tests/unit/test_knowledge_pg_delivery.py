@@ -224,3 +224,27 @@ def test_a_claim_is_leased_for_the_delivery_workers_lease(monkeypatch: pytest.Mo
     monkeypatch.setattr(settings, "pg_request_lease_seconds", 5)
     claims, deadline = asyncio.run(pg_documents.claim_due(10))
     assert claims == [] and leases == [30.0] and deadline > time.monotonic() + 20
+
+
+def test_the_pass_expires_the_jobs_no_run_saved_for_30_days(
+    store: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under Postgres, whether or not the ingest worker runs: the delivery pass deletes
+    them, bounded by its batch, and reports how many."""
+    from server.knowledge.store import pg_jobs
+
+    limits: list[int] = []
+
+    async def expire(limit: int) -> int:
+        limits.append(limit)
+        return 3
+
+    async def none(limit: int) -> int:
+        return 0
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_documents, "sweep_erasure_evidence", none)
+    monkeypatch.setattr(pg_documents, "sweep_settled", none)
+    monkeypatch.setattr(pg_jobs, "expire", expire)
+    result = asyncio.run(worker.run_pass())
+    assert result.expired_jobs == 3 and limits == [settings.pg_delivery_batch_rows]

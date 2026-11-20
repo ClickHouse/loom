@@ -75,6 +75,7 @@ async def test_lexical_search_sql_shape_and_cold_corpus_short_circuit() -> None:
                 "namespace": "ns",
                 "source_uri": "kb://a",
                 "chunk_idx": 2,
+                "doc_version": 7,
                 "content": "Deploy then rollback",
                 "tags": [],
                 "context": "Ops",

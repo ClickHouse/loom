@@ -146,7 +146,7 @@ export async function remoteBranches(
 
 /** A maintainer retires a repository index they added; `confirm` must equal the
  *  namespace. The rows leave through an erasure saga — `erasure_id` follows it under
- *  Audit → Erasures; the mirror goes when no other branch uses it. Operator-configured
+ *  Audit log → Erasures; the mirror goes when no other branch uses it. Operator-configured
  *  entries are refused. */
 export interface CodeRepoRemoveResult {
   org: string;
@@ -302,7 +302,7 @@ export interface CodeSearchResult {
   trace_run_id?: string;
   abstain_code?: "" | "no_match" | "below_threshold" | "low_calibrated_confidence" | "not_covered";
   as_of?: CodeAsOf;
-  /** "lexical only until embeddings finish (41% embedded)" below the ready threshold; absent/empty otherwise. */
+  /** Warning when embedding coverage or unavailable retrieval limits the results. */
   note?: string;
 }
 
@@ -316,6 +316,7 @@ export async function codeSearch(
     query,
     top_k: opts.top_k ?? 10,
     path_prefix: opts.path_prefix ?? "",
+    include_lessons: false,
   });
 }
 
@@ -360,6 +361,7 @@ export async function codeCallers(id: CodeId, name: string, depth = 1): Promise<
     name,
     depth,
     max_nodes: 100,
+    include_lessons: false,
   });
 }
 
@@ -369,6 +371,7 @@ export async function codeCallees(id: CodeId, name: string): Promise<CodeEdgesRe
     name,
     depth: 1,
     max_nodes: 100,
+    include_lessons: false,
   });
 }
 

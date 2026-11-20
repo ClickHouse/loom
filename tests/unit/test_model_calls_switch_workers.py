@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -535,6 +536,11 @@ def test_code_backfill_stops_on_a_switched_off_org_and_records_its_pass(monkeypa
     monkeypatch.setattr("server.embedding.embedder.get_embedder", lambda: _Embedder())
     monkeypatch.setattr(code_backfill, "_record_manual_pass", record)
     monkeypatch.setattr(code_backfill, "_compact_after_bulk", compact)
+
+    async def declared(*_a: Any) -> None:
+        return None  # the org's declaration (test_cell_cli_orgs.py)
+
+    monkeypatch.setattr(code_backfill, "connect_code_plane", declared)
     switch_off("acme")
     rc = asyncio.run(code_backfill._backfill_embed(_Repo(), "acme", "code-a", argparse.Namespace()))
     assert rc == 1 and pages == [1]
@@ -619,7 +625,11 @@ def test_the_code_backfill_index_run_sends_nothing_for_a_switched_off_org(monkey
         path_prefixes=("",),
         embed_reuse_from="",
     )
-    monkeypatch.setattr("server.core.ch.get_client", lambda: SimpleNamespace(connect=connect))
+    monkeypatch.setattr(
+        "server.core.ch.get_client", lambda: SimpleNamespace(connected=False, connect=connect)
+    )
+    # An org-declaring run checks its deployment first; this fake ClickHouse records none.
+    monkeypatch.setattr("server.core.pg_profile.check_configured", AsyncMock(return_value=None))
     from server.code.store import index as code_index
 
     class _CodeRepo(code_index.CodeRepo):  # static row helpers stay real for later importers

@@ -84,7 +84,7 @@ describe("WorkersPanel", () => {
           last_pass_status: "ok",
           reporting_from: "iso:wt:7801",
           source: "store",
-          namespace: "reporter-public",
+          namespace: "col-research",
           trigger: "manual",
         },
         erasure_recovery: {
@@ -120,8 +120,13 @@ describe("WorkersPanel", () => {
     expect(screen.getAllByText("green").length).toBeGreaterThanOrEqual(2);
     // The namespace a pass reached and a manual run.
     expect(screen.getByText("clickhouse-main")).toBeInTheDocument();
-    expect(screen.getByText("reporter-public")).toBeInTheDocument();
-    expect(screen.getAllByText(/reached:/).length).toBe(2);
+    expect(screen.getByText("col-research")).toBeInTheDocument();
+    expect(screen.getAllByText(/reached/).length).toBe(2);
+    // A collection is named as one, never as a namespace.
+    expect(screen.getByText("col-research").parentElement).toHaveTextContent("last collection reached: col-research");
+    expect(screen.getByText("clickhouse-main").parentElement).toHaveTextContent(
+      "last namespace reached: clickhouse-main",
+    );
     expect(screen.getByText(/manual run/)).toBeInTheDocument();
     expect(screen.getByText(/Timed out at its deadline/)).toBeInTheDocument();
     expect(screen.getByTestId("reporting-colours")).toHaveTextContent("Reporting from green");
@@ -140,8 +145,12 @@ describe("WorkersPanel", () => {
     await waitFor(() => expect(screen.getByText("Memory indexing")).toBeInTheDocument());
     expect(screen.getByText("No workers reporting")).toBeInTheDocument();
     expect(screen.queryByText("All systems running")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/loom\.worker_status/);
-    expect(screen.getByText(/No pass reported yet/)).toBeInTheDocument();
+    // Configured on, no pass yet: the line says what was read, and names no cause.
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "No pass reported yet. This page found no finished pass in this process or in loom.worker_status for the last 7 days.",
+    );
+    // The row says it in the same words.
+    expect(screen.getAllByText(/No pass reported yet/)).toHaveLength(2);
   });
 
   it("keeps the workers on screen, marked busy, while Refresh reads again", async () => {
@@ -258,14 +267,14 @@ describe("WorkersPanel", () => {
     respond({ workers: {}, store: { rows: 0, reporters: [] } });
     render(<WorkersPanel />);
     await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
-    expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
+    expect(screen.getByText("No worker status came back for this page.")).toBeInTheDocument();
   });
 
   it("renders a malformed body as no rows instead of throwing", async () => {
     respond({ workers: { x: 5, y: null, z: "up" }, store: "loom.worker_status" });
     render(<WorkersPanel />);
     await waitFor(() => expect(screen.getByText("No workers reporting")).toBeInTheDocument());
-    expect(screen.getByText(/Neither this process nor loom\.worker_status/)).toBeInTheDocument();
+    expect(screen.getByText("No worker status came back for this page.")).toBeInTheDocument();
     cleanup();
 
     // A list whose entries are not named objects, then a body that is not an object at all.
@@ -325,6 +334,30 @@ describe("Health tabs", () => {
     useStore.setState({ whoami: null, identity: null });
   });
 
+  it("shows the Namespace tab to a role that cannot read it, with why, and reads nothing for it", async () => {
+    as(["VIEWER"]);
+    // list_mine never answers: the role is still loading.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise(() => {})),
+    );
+    useStore.setState({ myNamespaces: null });
+    render(<Health />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Namespace/ }));
+    expect(await screen.findByText("Your role on this namespace is still loading.")).toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls.some((c) => String(c[0]).includes("memory.health"))).toBe(false);
+    cleanup();
+    // list_mine read, no grant here: the role it needs.
+    respond({ rows: [], workers: {} });
+    useStore.setState({ myNamespaces: [] });
+    render(<Health />);
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /Namespace/ }));
+    expect(await screen.findByText("Needs viewer on team-a. An admin of it can grant that.")).toBeInTheDocument();
+    const paths = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(paths.some((u) => u.includes("memory.health"))).toBe(false);
+    useStore.setState({ myNamespaces: null });
+  });
+
   it("an ADMIN claim sees Workers but not Operation mix", () => {
     as(["ADMIN"]);
     render(<Health />);
@@ -339,7 +372,7 @@ describe("Health tabs", () => {
     expect(screen.getByRole("tab", { name: /Operation mix/ })).toBeInTheDocument();
   });
 
-  it("falls back to Extraction quality when a switch hides the open Repairs tab", async () => {
+  it("keeps the open Repairs tab across a switch to a namespace the role cannot repair, each repair unavailable", async () => {
     as(["VIEWER"]);
     useStore.setState({
       myNamespaces: [
@@ -350,9 +383,34 @@ describe("Health tabs", () => {
     render(<Health />);
     fireEvent.mouseDown(screen.getByRole("tab", { name: /Repairs/ }));
     expect(screen.getByRole("tab", { name: /Repairs/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Apply expiries now" })).not.toHaveAttribute("aria-disabled");
     act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
-    expect(screen.queryByRole("tab", { name: /Repairs/ })).toBeNull();
-    expect(screen.getByRole("tab", { name: /Extraction quality/ })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: /Repairs/ })).toHaveAttribute("aria-selected", "true");
+    const reason = "Needs admin on team-b. An admin of it can grant that.";
+    const sweep = screen.getByRole("button", { name: "Apply expiries now" });
+    expect(sweep).toHaveAttribute("aria-disabled", "true");
+    expect(sweep).toHaveAccessibleDescription(reason);
+    expect(screen.getByRole("button", { name: "Roll back" })).toHaveAccessibleDescription(reason);
+    expect(screen.getByLabelText("Extractor")).toBeDisabled();
+    expect(screen.getByLabelText("As of")).toBeDisabled();
+    for (const name of [
+      "Apply expiries now",
+      "Re-embed stale vectors",
+      "Roll back",
+      "Remove facts",
+      "Download snapshot",
+      "Restore a snapshot",
+    ])
+      fireEvent.click(screen.getByRole("button", { name }));
+    await new Promise((r) => setTimeout(r, 20));
+    const paths = vi.mocked(fetch).mock.calls.map((c) => String(c[0]));
+    expect(
+      paths.some((u) =>
+        /memory\.sweep_expired|memory\.reindex|namespace\.rollback|facts\.expire_by_adapter|namespace\.snapshot|namespace\.restore/.test(
+          u,
+        ),
+      ),
+    ).toBe(false);
     useStore.setState({ myNamespaces: null });
   });
 });

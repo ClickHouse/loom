@@ -10,6 +10,7 @@ from typing import Any
 
 from server.core.datetimes import naive_utc_now
 from server.core.naming import named
+from server.embedding.documents import document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
@@ -51,8 +52,8 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
     Positive appends an evidence usage event (feeds ranking + promote gate).
     Negative is audit-logged and counted; once the negative count crosses
     LOOM_MEMORY_NEGATIVE_DEMOTE_THRESHOLD (>0) the memory is auto-quarantined
-    (status -> 'rejected') unless it is locked. The evidence count is read back
-    from the totals table and is eventually consistent.
+    (status -> 'rejected') unless it is locked or a definition's namespace-wide row. The
+    evidence count is read back from the totals table and is eventually consistent.
     """
     import server.memory.store as memory_repo
     from server.core.ch import get_client
@@ -145,7 +146,8 @@ async def handle_memory_outcome(input: MemoryOutcomeInput) -> MemoryOutcomeOutpu
                 "AND memory_id = {mid:String} AND event_type = 'rejection'",
                 params={"org": input.org, "ns": input.namespace, "mid": memory_id},
             )
-            # A locked memory is not quarantined; the reject skips any locked copy.
+            # A locked memory, or a definition's namespace-wide row, is not quarantined; the
+            # reject skips every copy that is either.
             if int((cnt or {}).get("n") or 0) >= threshold and not refuses_retirement(row):
                 # The row resolved above, as the authority holds it.
                 try:
@@ -351,12 +353,7 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
     # embeds both), strictly paired back.
     keyed = [i for i, (_e, _t, key) in enumerate(texts) if key]
     batch = [t for _e, t, _k in texts] + [texts[i][2] for i in keyed]
-    if hasattr(embedder, "embed_many"):
-        vectors = await embedder.embed_many(batch)
-    else:
-        vectors = [await embedder.embed(t) for t in batch]
-    if len(vectors) != len(batch):
-        raise ValueError(f"embed_many returned {len(vectors)} vectors for {len(batch)} inputs")
+    vectors = await document_vectors(embedder, batch)
     key_vecs: dict[int, list[float]] = {i: vectors[len(rows) + j] for j, i in enumerate(keyed)}
 
     # The embedding row mirrors its memory row (status, validity, provenance,

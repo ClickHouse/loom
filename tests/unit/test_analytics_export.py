@@ -14,12 +14,15 @@ from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
 from server.cli import analytics_export as cli
+from server.core.event_source import ALL_EVENTS
 from server.insights.app.analytics_export import export_day, name_hash_key, object_key, s3_put
 from server.insights.store.analytics_export import (
     ENTITIES,
     STATEMENT_SETTINGS,
 )
 from server.settings import settings
+from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH
+from tests.unit.clickhouse_local import ddl as local_ddl
 
 
 def test_object_keys_are_one_per_entity_and_day() -> None:
@@ -179,10 +182,14 @@ _NEVER = ("memory_key", "value", "args", "subject", "owner_email", "impersonated
 
 @pytest.mark.parametrize("entity", sorted(ENTITIES))
 def test_statements_export_no_content_and_no_person(entity: str) -> None:
-    sql = ENTITIES[entity]
+    # Input storage names do not leave the export. Every projection after the
+    # explicit physical source must still exclude content and direct identities.
+    sql = ENTITIES[entity].replace(ALL_EVENTS, "event_rows")
+    assert not re.search(r"SELECT\s+\*", sql, re.IGNORECASE)
     for column in _NEVER:
         assert not re.search(rf"\b{column}\b", sql), column
-    rest = re.sub(r"uniqExactIf\((user_id|session_id), \1 != '-'\)", "", sql)
+    rest = re.sub(r"uniqExactIf\((user_id|session_id), mirror_marked = 0 AND \1 != '-'\)", "", sql)
+    rest = re.sub(r"raw\.(user_id|session_id) AS \1", "", rest)
     assert not re.search(r"\b(user_id|session_id)\b", rest)
 
 
@@ -238,6 +245,8 @@ class _ConnectingCh(_Ch):
         self.read_timeout_at_connect = 0
         self.disconnected = False
 
+    connected = False
+
     async def connect(self) -> None:
         from server.core.ch import _driver_read_timeout_s
 
@@ -248,7 +257,10 @@ class _ConnectingCh(_Ch):
 
 
 def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_the_key(
-    now: datetime, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    stub_model_command,
+    now: datetime,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from server.core import ch as ch_module
     from server.insights.app import analytics_export as app
@@ -372,3 +384,38 @@ async def test_a_body_that_is_not_a_whole_parquet_file_is_never_uploaded() -> No
     with pytest.raises(ValueError, match="not a whole Parquet file"):
         await export_day(date(2026, 10, 9), prefix="", put=put, name_key=(1, 2), ch=_CutOff())  # type: ignore[arg-type]
     assert uploaded == []
+
+
+_MIRROR = "acl-0123456789abcdef01234567"
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
+@pytest.mark.parametrize("entity", sorted(ENTITIES))
+async def test_an_export_leaves_out_a_mirror(entity: str) -> None:
+    day = date(2026, 1, 2)
+    rows = [
+        f"INSERT INTO loom.{table} (org, namespace{cols}) VALUES ('o', '{ns}'{vals})"
+        for ns in ("team", _MIRROR)
+        for table, cols, vals in (
+            ("namespaces", "", ""),
+            (
+                "memory",
+                ", agent, user_id, session_id, memory_key, value",
+                ", 'a', '-', '-', 'k', 'v'",
+            ),
+            (
+                "agent_events_private" if ns == _MIRROR else "agent_events",
+                ", ts, operation, kind",
+                ", '2026-01-02 10:00:00', 'memory.get', 'request'",
+            ),
+        )
+    ]
+    ch = LocalCH(
+        local_ddl("namespaces"),
+        local_ddl("memory"),
+        local_ddl("agent_events"),
+        local_ddl("agent_events_private"),
+        *rows,
+    )
+    out = await ch.query_all(ENTITIES[entity], {"day": day})
+    assert {r["namespace"] for r in out} == {"team"}

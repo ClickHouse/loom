@@ -1,12 +1,13 @@
 /**
- * Adding, checking, syncing, rotating and retiring a repository's document source.
- * Loaded on first use, behind `lazy()`, by the repository card's Sources facet.
+ * Adding, checking, syncing, rotating and retiring a namespace's document source.
+ * Loaded on first use, behind `lazy()`, by the Sources list (a repository card's, or the
+ * Library's).
  *
  * Add probes first: the form takes a kind and that kind's ids, Check sends
  * `knowledge.source.add` with `dry_run` (the credential is tried, nothing is stored) and
  * shows what the source holds; Add stays off until the form it would send is the one
  * that passed. A credential is typed into a password field, held in the dialog's state
- * only, sent once and never shown back. Changing the kind or the provider clears it, so
+ * only, sent once and never shown back. Changing the kind clears it, so
  * a credential is only ever sent to the store it was typed for.
  */
 import { useState } from "react";
@@ -22,7 +23,7 @@ import {
   rotateKnowledgeSource,
   syncKnowledgeSourceNow,
 } from "../api/knowledgeSources";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import {
   credentialLabel,
@@ -32,7 +33,6 @@ import {
   KIND_OPTIONS,
   normalisedName,
   probeCount,
-  RECORDING_PROVIDERS,
   retiredMessage,
   sourceFormFingerprint,
   sourceFormProblems,
@@ -79,7 +79,7 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
 type SetField = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => void;
 
 /** The chosen kind's ids and filters, as the server's config for that kind takes them. */
-function SourceFields({ form, set, busy }: { form: SourceForm; set: SetField; busy: boolean }) {
+function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
   switch (form.kind) {
     case "gdrive":
       return (
@@ -141,27 +141,14 @@ function SourceFields({ form, set, busy }: { form: SourceForm; set: SetField; bu
       );
     case "recording":
       return (
-        <>
-          <ChoiceGroup
-            label="Provider"
-            disabled={busy}
-            value={form.provider}
-            onChange={(v) => set("provider", v)}
-            options={RECORDING_PROVIDERS}
-          />
-          <TextAreaField
-            id="ksrc-meetings"
-            label={
-              form.provider === "meet"
-                ? "Meeting spaces (space ids, one per line)"
-                : "Meetings (meeting ids, one per line)"
-            }
-            rows={3}
-            className="font-mono"
-            value={form.meetings}
-            onChange={(v) => set("meetings", v)}
-          />
-        </>
+        <TextAreaField
+          id="ksrc-meetings"
+          label="Meetings (meeting ids, one per line)"
+          rows={3}
+          className="font-mono"
+          value={form.meetings}
+          onChange={(v) => set("meetings", v)}
+        />
       );
   }
 }
@@ -171,23 +158,21 @@ export function AddSourceDialog({
   onOpenChange,
   org,
   namespace,
-  repo,
+  label,
   onAdded,
-}: DialogProps & { repo: string; onAdded: (name: string) => void }) {
+}: DialogProps & { label: string; onAdded: (name: string) => void }) {
   const [form, setForm] = useState<SourceForm>(emptySourceForm);
   const [checked, setChecked] = useState<{ fingerprint: string; probe: KnowledgeSourceProbe } | null>(null);
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set: SetField = (key, value) => {
-    // Another kind or provider: its credential and the last error were the old one's,
-    // and so were the ids typed for the old provider (its rule reads them differently).
-    const switched = (key === "kind" || key === "provider") && value !== form[key];
+    // The credential and last error belong to the kind they were entered for.
+    const switched = key === "kind" && value !== form.kind;
     if (switched) setError(null);
     setForm((f) => ({
       ...f,
       [key]: value,
       ...(switched ? { credential: "" } : {}),
-      ...(switched && key === "provider" ? { meetings: "" } : {}),
     }));
   };
   const problems = sourceFormProblems(form);
@@ -218,7 +203,7 @@ export function AddSourceDialog({
       open={open}
       onOpenChange={onOpenChange}
       width={560}
-      title={`Add a document source · ${repo}`}
+      title={`Add a document source · ${label}`}
       description={KIND_FORM[form.kind].about}
       footer={
         <>
@@ -261,7 +246,7 @@ export function AddSourceDialog({
         onChange={(v) => set("kind", v)}
         options={KIND_OPTIONS}
       />
-      <SourceFields form={form} set={set} busy={busy !== null} />
+      <SourceFields form={form} set={set} />
       <PasswordField
         label={credentialLabel(form.kind)}
         value={form.credential}
@@ -344,7 +329,7 @@ export function SyncNowDialog({
       const out = await syncKnowledgeSourceNow({ org, namespace }, name, full);
       toast(
         out.enabled
-          ? `Sync requested: the worker starts its next pass with ${name}`
+          ? `Sync requested: ${name} is synced next`
           : `Sync requested; sync is off on this deployment, so it waits until it is on`,
         "ok",
       );
@@ -362,7 +347,7 @@ export function SyncNowDialog({
       onOpenChange={onOpenChange}
       width={460}
       title={`Sync ${name} now`}
-      description="Records a request: the sync worker starts its next pass with this source. Nothing is fetched while you wait."
+      description="Records a request: this source is the next one Loom syncs. Nothing is fetched while you wait."
       footer={
         <>
           <CancelButton />
@@ -373,7 +358,7 @@ export function SyncNowDialog({
       }
     >
       <Checkbox
-        label="List every document, not only those changed since the last pass"
+        label="List every document, not only those changed since the last sync"
         checked={full}
         onCheckedChange={(v) => setFull(v === true)}
       />

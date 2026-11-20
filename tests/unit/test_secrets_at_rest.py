@@ -169,6 +169,112 @@ async def test_reseal_rewrites_only_what_the_previous_root_opens(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_reseal_push_registry_uses_the_supplied_client(
+    monkeypatch: pytest.MonkeyPatch, dry_run: bool
+) -> None:
+    from contextlib import asynccontextmanager
+    from dataclasses import asdict
+
+    from server.cli import secrets as cli
+    from server.core import ch as ch_module
+    from server.knowledge.app import source_push as push
+    from server.knowledge.domain.source_push import PushRegistration, writer_lease_name
+
+    monkeypatch.setattr(settings, "jwt_secret", "old-root-secret")
+    stale = seal(push.domain.SECRET_PURPOSE, "push-verification-secret")
+    monkeypatch.setattr(settings, "jwt_secret", "new-root-secret")
+    monkeypatch.setattr(settings, "jwt_secret_previous", "old-root-secret")
+    row = asdict(
+        PushRegistration(
+            org="o",
+            namespace="docs",
+            name="source",
+            source_id="source-id",
+            provider="notion",
+            generation="generation",
+            fingerprint="fingerprint",
+            secret_enc=stale,
+        )
+    )
+    calls: list[str] = []
+    inserted: list[tuple[str, list[dict]]] = []
+    uncertainties: list[bool] = []
+
+    class Ch:
+        async def query_all(self, sql: str, params: dict | None = None) -> list[dict]:
+            if "loom.knowledge_source_push" in sql:
+                calls.append("scan")
+                assert params is not None
+                return [dict(row)] if params["after"] == ("", "", "") else []
+            if "loom.erasure_requests" in sql:
+                calls.append("erasure")
+            if "loom.instances" in sql:
+                calls.append("fleet")
+                return [{"schema_version": push.PUSH_MIGRATION}]
+            return []
+
+        async def query_one(self, sql: str, params: dict | None = None) -> dict | None:
+            if "loom.knowledge_source_push" in sql:
+                calls.append("reread")
+                assert params == {"org": "o", "ns": "docs", "source": "source-id"}
+                return dict(row)
+            if "loom.knowledge_sources" in sql:
+                calls.append("source")
+                return {**row, "kind": "notion", "active": 1}
+            return None
+
+        async def insert(self, table: str, rows: list[dict], settings: dict | None = None) -> None:
+            inserted.append((table, rows))
+
+    ch = Ch()
+
+    def no_global_client():
+        pytest.fail("reseal must use the supplied ClickHouse client")
+
+    @asynccontextmanager
+    async def source_lease(name: str, *, ttl_s: float, wait_s: float, ch=None):
+        assert ch is client and name == "knowledge-source:o:docs"
+        assert ttl_s == 60.0 and wait_s == 5.0
+        calls.append("lease")
+        yield True
+
+    @asynccontextmanager
+    async def writer_fence(name: str, *, ch=None):
+        assert ch is client and name == writer_lease_name("o", "docs")
+        calls.append("fence")
+        yield uncertainties.append
+
+    client = ch
+    monkeypatch.setattr(ch_module, "get_client", no_global_client)
+    monkeypatch.setattr(push, "get_client", no_global_client)
+    monkeypatch.setattr(push.leases, "holding", source_lease)
+    monkeypatch.setattr(push, "fenced", writer_fence)
+    counts, lost, _ = await cli.reseal_all(client, dry_run=dry_run)
+    assert counts["loom.knowledge_source_push.secret_enc"] == 1 and lost == {}
+    assert calls == ["scan", "lease", "erasure", "reread", "source"] + (
+        [] if dry_run else ["fence", "fleet"]
+    ) + ["scan"]
+    if dry_run:
+        assert inserted == [] and uncertainties == []
+    else:
+        [(table, [rewritten])] = inserted
+        assert table == "loom.knowledge_source_push"
+        assert rewritten == {
+            **row,
+            "secret_enc": rewritten["secret_enc"],
+            "actor": "process:source-push",
+            "source_class": "derived",
+        }
+        assert uncertainties == [True, False]
+        monkeypatch.setattr(settings, "jwt_secret_previous", "")
+        assert (
+            unseal(push.domain.SECRET_PURPOSE, rewritten["secret_enc"])
+            == "push-verification-secret"
+        )
+
+
+@pytest.mark.asyncio
 async def test_reseal_reaches_a_rebuild_recipe_and_waits_out_a_running_rebuild(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -275,7 +381,7 @@ def test_reseal_check_fails_while_values_need_the_previous_root(
 
     monkeypatch.setattr(cli, "reseal_all", fake)
     monkeypatch.setattr(cli, "in_flight", none_in_flight)
-    monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(object())))
+    monkeypatch.setattr(cli, "run_connected", lambda go, **_declared: asyncio.run(go(object())))
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 0
 
@@ -314,7 +420,7 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
         async def query_all(self, sql: str, params: dict | None = None) -> list[dict]:
             return list(keeper) if "oauth_signin_state" in sql else []
 
-    monkeypatch.setattr(cli, "run_connected", lambda go: asyncio.run(go(Ch())))
+    monkeypatch.setattr(cli, "run_connected", lambda go, **_declared: asyncio.run(go(Ch())))
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 1
     out = capsys.readouterr().out
     assert "1 sign-in in flight" in out and "2030-03-17T17:46:40Z" in out

@@ -7,6 +7,8 @@ docs/concepts/identities-and-namespaces.md#read-scope-inside-a-namespace.
 * The result is a (`user_id`, `session_id`) pair of predicates. Both transports resolve it
   once at admission (`server.transport.gates.read_scope`); every store reader of memory
   rows takes it as a required `scope` argument, so no op can skip it.
+* One exception: `memory.search`'s term leg serves a governed definition, which an admin
+  published for every reader of the namespace, under any read scope.
 """
 
 from __future__ import annotations
@@ -263,7 +265,8 @@ def pin_read_filters[M: BaseModel](input: M, auth: Any) -> tuple[M, bool]:
 # unavailable to it until someone classifies it.
 #
 # Ops whose every read of memory rows (and of what is derived from them)
-# carries the request's read scope.
+# carries the request's read scope, but for the governed definitions memory.search's term
+# leg serves, which every reader of the namespace reads.
 SCOPED_OPS = frozenset(
     {
         "context.pack",
@@ -319,6 +322,9 @@ SCOPED_OPS = frozenset(
 )
 
 _CODE_INDEX = "the code index: repository content, no user's memory"
+# A code answer that carries `lessons` (memories about its files or symbol) reads none for
+# a narrowed token: those rows are not filtered by user.
+_CODE_LESSONS = "the code index; its memory lessons are left out for a narrowed token"
 
 # Ops a narrowed token may call as they are, with the reason: they return no
 # other user's memory, either none at all or only what they read under the
@@ -334,9 +340,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.bisect_candidates": _CODE_INDEX,
     "code.blame_range": _CODE_INDEX,
     "code.calibrate": _CODE_INDEX,
-    "code.callees": _CODE_INDEX,
-    "code.callers": _CODE_INDEX,
-    "code.context_pack": _CODE_INDEX,
+    "code.callees": _CODE_LESSONS,
+    "code.callers": _CODE_LESSONS,
+    "code.context_pack": _CODE_LESSONS,
     "code.context_packs": _CODE_INDEX,
     "code.conventions": _CODE_INDEX,
     "code.coverage": _CODE_INDEX,
@@ -349,12 +355,12 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.first_build": _CODE_INDEX,
     "code.grep": _CODE_INDEX,
     "code.history": _CODE_INDEX,
-    "code.impact": _CODE_INDEX,
+    "code.impact": _CODE_LESSONS,
     "code.index_errors": _CODE_INDEX,
     "code.index_status": _CODE_INDEX,
     "code.map": _CODE_INDEX,
     "code.outcome": _CODE_INDEX,
-    "code.outline": _CODE_INDEX,
+    "code.outline": _CODE_LESSONS,
     "code.path_guards": _CODE_INDEX,
     "code.pr_check": _CODE_INDEX,
     "code.recent_commits": _CODE_INDEX,
@@ -371,10 +377,9 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "code.scip_ingest": _CODE_INDEX,
     "code.scip_status": _CODE_INDEX,
     # The tie-break reads the files named by memories inside the caller's read scope.
-    "code.search": _CODE_INDEX,
+    "code.search": _CODE_LESSONS,
     "code.setting_facts": _CODE_INDEX,
-    # Attaches no lessons under a narrowed scope.
-    "code.symbol": _CODE_INDEX,
+    "code.symbol": _CODE_LESSONS,
     "code.symbol_history": _CODE_INDEX,
     "code.test_gate": _CODE_INDEX,
     "code.test_home": _CODE_INDEX,
@@ -385,7 +390,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # The groups below are planes with no path to memory rows.
     "tracker.": "tracker records: issues and their sources, no user's memory",
     "knowledge.": "namespace documents: access is the namespace's; the user column is authorship",
-    "task.": "the task inbox: tasks, not memory",
+    "task.": "shared task inboxes; budget warnings carry the caller's read scope",
     "inbox.": "inbox registrations and policies",
     "grants.": "namespace grants",
     # Not policy.set / policy.delete: a rule is namespace-wide and denies every user's
@@ -396,13 +401,15 @@ NARROW_SAFE_OPS: dict[str, str] = {
     # Not cost.agent_summary: it has no user axis, and its session_id grouping lists
     # every user's sessions and spend.
     "cost.summary": "the caller's own cost counters (pinned through its user_id)",
-    "cost.budget_status": "the namespace's budget counters",
+    "cost.budget_status": "namespace counters, or the token-pinned user's counters",
     "cost.record_turns": "the caller's own model turns (usage rows, no memory)",
     # Not ops.projection_failures.*: a failure row has no user axis, and carries
     # other users' memory keys and payloads.
     "ops.capabilities": "the deployment's capabilities",
     "ops.health": "deployment health",
     "mentor.guide": "the deployment's static agent guide, no memory",
+    "help.search": "the deployment's shipped documentation, no memory",
+    "help.get": "the deployment's shipped documentation, no memory",
     # Not blacklist.*: a pattern has no user axis (created_by is the token subject,
     # which many users' tokens can share). List, remove and sweep would reach another
     # user's patterns, and an add would be a namespace-wide Refuse the token can't manage.
@@ -495,8 +502,15 @@ def with_read_identity[M: BaseModel](input: M, scope: ReadFilters) -> M:
     return input.model_copy(update=update) if update else input
 
 
+# Ops under a NARROW_SAFE_OPS prefix that still refuse a narrowed token: a knowledge
+# gap lists other people's questions.
+NARROW_REFUSED_PREFIXES: tuple[str, ...] = ("knowledge.gaps.", "knowledge.query_history.")
+
+
 def honours_read_scope(op_name: str) -> bool:
     """Whether `op_name` may be served to a token bounded below the namespace."""
+    if op_name.startswith(NARROW_REFUSED_PREFIXES):
+        return False
     if op_name in SCOPED_OPS or op_name in NARROW_SAFE_OPS:
         return True
     return any(k.endswith(".") and op_name.startswith(k) for k in NARROW_SAFE_OPS)

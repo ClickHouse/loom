@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections.abc import Callable
 from typing import Any, Literal
 
 from server.core.datetimes import naive_utc_now
+from server.core.errors import ValidationError
 from server.core.pg_lease import PublicationPending
 from server.memory.api.models_crud import MemorySetInput
 from server.memory.api.models_learnings import (
@@ -21,9 +23,14 @@ from server.memory.api.models_learnings import (
 )
 from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import blacklist_guard
+from server.memory.app.definition_queue import writing
+from server.memory.app.learning_access import private_candidates_visible
+from server.memory.app.provenance import writer_actor
 from server.memory.domain import assistant_rules
+from server.memory.domain.definitions import DEFINITION_DRAFT_KINDS
+from server.memory.domain.memory_types import is_definition
 from server.memory.store import learnings as learnings_repo
-from server.memory.store.rows import next_version
+from server.memory.store.rows import version_over
 
 
 async def handle_learnings_list(
@@ -32,12 +39,18 @@ async def handle_learnings_list(
     """Page through the review queue. Defaults to status='pending'."""
 
     status_filter = input.status or "pending"
+    exclude = (
+        ()
+        if await private_candidates_visible(input.org, input.namespace)
+        else DEFINITION_DRAFT_KINDS
+    )
     rows = await learnings_repo.list_by_status(
         input.org,
         input.namespace,
         status_filter,
         limit=input.limit,
         source_kind=input.source_kind,
+        exclude_source_kinds=exclude,
     )
     support = await _assistant_turn_support(input.org, input.namespace, rows)
     entries = []
@@ -60,6 +73,7 @@ async def handle_learnings_list(
                 supporters=list(r["supporters"]),
                 rationale=r["rationale"],
                 source_kind=r.get("source_kind", "memory_supporters"),
+                source_resource_id=str(r.get("source_resource_id") or ""),
                 agent=str(r.get("agent") or ""),
                 status=r["status"],
                 proposed_at=r["proposed_at"],
@@ -114,7 +128,6 @@ async def handle_learnings_quality(
     counts and queue depths across the org's namespaces.
     """
     from server.auth.context import resolve_org_scope
-    from server.core.ch import get_client
 
     params: dict[str, Any] = {"org": input.org}
     where = "org = {org:String}"
@@ -127,26 +140,13 @@ async def handle_learnings_quality(
             return LearningsQualityOutput(rows=[])
         where += scope.where
         params.update(scope.params)
-    if input.source_kind:
+    if input.source_kind is not None:
         where += " AND source_kind = {sk:String}"
         params["sk"] = input.source_kind
-    rows = await get_client().query_all(
-        f"""
-        SELECT
-            namespace,
-            countIf(status='pending')  AS pending,
-            countIf(status='promoted') AS promoted,
-            countIf(status='rejected') AS rejected,
-            if(countIf(status IN ('promoted','rejected')) > 0,
-               countIf(status='promoted') / countIf(status IN ('promoted','rejected')),
-               0.0) AS approve_ratio
-        FROM loom.learnings_queue FINAL
-        WHERE {where}
-        GROUP BY namespace
-        ORDER BY pending DESC, namespace
-        """,
-        params=params,
-    )
+    private_namespaces = None
+    if input.source_kind is None or input.source_kind in DEFINITION_DRAFT_KINDS:
+        private_namespaces = await _private_quality_namespaces(input, where, params)
+    rows = await learnings_repo.quality_by_namespace(where, params, private_namespaces)
     return LearningsQualityOutput(
         rows=[
             LearningsQualityRow(
@@ -159,6 +159,21 @@ async def handle_learnings_quality(
             for r in rows
         ]
     )
+
+
+async def _private_quality_namespaces(
+    input: LearningsQualityInput, where: str, params: dict[str, Any]
+) -> list[str] | None:
+    """Private counts enter the rollup only in namespaces this caller administers."""
+    from server.auth.context import current_auth
+    from server.settings import settings
+
+    if current_auth() is None:
+        return [] if settings.auth_actually_required() else None
+    if input.namespace:
+        return None if await private_candidates_visible(input.org, input.namespace) else []
+    names = await learnings_repo.private_candidate_namespaces(where, params)
+    return [name for name in names if await private_candidates_visible(input.org, name)]
 
 
 async def handle_learnings_review(
@@ -182,6 +197,42 @@ async def handle_learnings_review(
         input.namespace,
         input.candidate_id,
     )
+    if row is not None and row.get("source_kind") in DEFINITION_DRAFT_KINDS:
+        if not await private_candidates_visible(input.org, input.namespace):
+            raise HTTPException(status_code=404, detail={"code": "RESOURCE_NOT_FOUND"})
+        from server.core import leases
+        from server.core.errors import OverloadedError
+
+        claim = f"definition.review/{input.org}/{input.namespace}/{input.candidate_id}"
+        async with leases.holding(claim, ttl_s=30) as held:
+            if not held:
+                raise OverloadedError("another reviewer is deciding this draft", retry_after_s=1)
+            from server.memory.app.definition_review import require_draft_fleet
+
+            await require_draft_fleet()
+            row = await learnings_repo.find_candidate(
+                input.org, input.namespace, input.candidate_id
+            )
+            if row is not None and row.get("proposed_value"):
+                async with writing(
+                    {**row, "org": input.org, "namespace": input.namespace}
+                ) as uncertain:
+                    return await _review(input, row, uncertain=uncertain)
+            return await _review(input, row)
+    return await _review(input, row)
+
+
+async def _review(
+    input: LearningsReviewInput,
+    row: dict[str, Any] | None,
+    *,
+    uncertain: Callable[[bool], None] | None = None,
+) -> LearningsReviewOutput:
+    from fastapi import HTTPException
+
+    if row is not None and row.get("source_kind") in DEFINITION_DRAFT_KINDS:
+        if not row.get("proposed_value"):
+            row = None
     # A bot rule with no supporter left (blanked once decided, deleted once pending
     # by the erasure that took its last supporter): there is no rule left to review,
     # so it answers as a missing candidate does.
@@ -203,6 +254,7 @@ async def handle_learnings_review(
             },
         )
 
+    private_definition = row.get("source_kind") in DEFINITION_DRAFT_KINDS
     now = naive_utc_now()
     target_status: Literal["promoted", "rejected"] = (
         "promoted" if input.decision == "promote" else "rejected"
@@ -234,7 +286,24 @@ async def handle_learnings_review(
             )
         wants_memory = destination in ("memory", "both")
         wants_knowledge = destination in ("knowledge", "both")
-        if wants_memory:
+        if private_definition:
+            if destination != "memory":
+                raise ValidationError("a definition draft is promoted only to memory")
+            from server.memory.app.definition_review import promote_candidate
+
+            assert uncertain is not None  # private reviews hold the evidence writer fence
+            await promote_candidate(
+                input.org, input.namespace, row, input.reason, uncertain=uncertain
+            )
+            promoted_to_shared = True
+        if wants_memory and is_definition(row) and not private_definition:
+            # A definition reaches memory only through memory.promote of its namespace-wide
+            # row, which checks the approved hash.
+            raise ValidationError(
+                "a definition candidate is not promoted to memory by review: write the "
+                "definition as the namespace-wide row and promote it with memory.promote"
+            )
+        if wants_memory and not private_definition:
             await _do_promote(
                 input.org,
                 input.namespace,
@@ -257,6 +326,8 @@ async def handle_learnings_review(
     # column is carried from the candidate — `seeded_from_*` keeps its conversation
     # back-pointer (read by memory.lineage), and the support counts and proposal time
     # stay what learnings.list and the lineage's candidate report.
+    if uncertain is not None:
+        uncertain(True)
     await learnings_repo.insert_row(
         {
             "candidate_id": str(row["candidate_id"]),
@@ -270,17 +341,27 @@ async def handle_learnings_review(
             "supporters": list(row["supporters"]),
             "rationale": row["rationale"],
             "source_kind": row.get("source_kind", "memory_supporters"),
+            "source_resource_id": str(row.get("source_resource_id") or ""),
             "agent": str(row.get("agent") or ""),
             "seeded_from_thread_id": row.get("seeded_from_thread_id"),
             "seeded_from_msg_id": row.get("seeded_from_msg_id"),
             "status": target_status,
-            "proposed_at": row.get("proposed_at") or now,
+            "proposed_at": row.get("proposed_at")
+            if private_definition
+            else row.get("proposed_at") or now,
             "decided_at": now,
-            "decided_by": input.approver,
+            "decided_by": (
+                writer_actor("learnings-reviewer")
+                if row.get("source_kind") in DEFINITION_DRAFT_KINDS
+                else input.approver
+            ),
             "decision_reason": input.reason,
-            "version": next_version(),
+            "version": version_over(int(row.get("version") or 0)),
         }
     )
+
+    if uncertain is not None:
+        uncertain(False)
 
     return LearningsReviewOutput(
         candidate_id=str(row["candidate_id"]),
@@ -386,9 +467,10 @@ async def _promote_via_memory_set(
     """Seeder and bot-rule path: the candidate has no source memory yet. Write it
     as a new memory via handle_memory_set so check_on_commit enforces the same
     pinned-reject / dedup / canonical-merge verdicts a regular write would get. A
-    seeder candidate lands at namespace scope under the approver; a bot rule
-    (`assistant_turn`) as its agent's namespace-wide row (`user_id` '-'), which
-    reads bounded to one user do not serve, with the supporters' mean confidence."""
+    seeder candidate lands under the approver's `user_id`, judged against that user's
+    rows as any write naming its user is; a bot rule (`assistant_turn`) as its agent's
+    namespace-wide row (`user_id` '-'), which reads bounded to one user do not serve,
+    with the supporters' mean confidence."""
     from server.memory.app.write import handle_memory_set
 
     deserialized = _proposed_value(candidate_row)
@@ -399,7 +481,7 @@ async def _promote_via_memory_set(
         # The candidate, not one supporter's session, is where it came from.
         source_trace = f"learning:{candidate_row['candidate_id']}"
     else:
-        # A seeder candidate: namespace scope, under the approver's user_id.
+        # A seeder candidate, under the approver's user_id.
         agent, user_id = "-", approver or "-"
         # The originating conversation, so the row keeps a path back to its thread
         # once the candidate ages out.
@@ -487,3 +569,9 @@ async def _do_promote_to_knowledge(
     with contextlib.suppress(PublicationPending):
         await handle_knowledge_upsert(request)
     return source_uri
+
+
+def learnings_review_audit_subject(input: LearningsReviewInput, response: Any) -> dict[str, Any]:
+    from server.observability import audit
+
+    return {**audit.input_subject(input), "approver": writer_actor("learnings-reviewer")}

@@ -57,10 +57,10 @@ async def claim_release(
 ) -> ClaimReleaseOutput:
     """Release a self-signup claim: revoke its grants, clear the owner, deactivate it;
     the name stays reserved."""
-    from server.insights.app.admin_routes import refuse_foreign_org, require_org_admin
+    from server.insights.app.admin_routes import admit_org, require_org_admin
 
     info = await require_org_admin(request)
-    refuse_foreign_org(info, input.org, "release a claim in")
+    await admit_org(info, input.org, "release a claim in")
     actor_subject = info.subject if info is not None else "local"
     not_found = HTTPException(
         status_code=404,
@@ -155,6 +155,7 @@ async def _release(
     # SELECT * so the release row mirrors EVERY column forward: loom.namespaces is
     # ReplacingMergeTree(updated_at), and an omitted column would reset to its schema
     # default under FINAL (a restricted namespace would read back as standard).
+    from server.auth.authz import identity_write
     from server.identity.store import namespaces as namespaces_repo
 
     existing = await namespaces_repo.fetch_row(org, namespace, ch=ch)
@@ -221,7 +222,8 @@ async def _release(
     row["description"] = f"Released by {actor_subject}" + (f" ({reason})" if reason else "")
     row["updated_at"] = max(now, existing.get("updated_at") or now)
     rewritten.append(True)
-    await ch.insert("loom.namespaces", [row])
+    with identity_write():
+        await ch.insert("loom.namespaces", [row])
 
     # A bot's exchange reads its live namespaces sequentially, so no token
     # issued from here on carries this one: the bots' cutoff is taken now.

@@ -722,6 +722,7 @@ def test_under_postgres_the_memory_section_reads_the_authoritys_heads(monkeypatc
     [(sql, args)] = seen
     assert "FROM loom.memory_current" in sql and "user_id = $2" in sql
     assert "row->>'tombstoned_at' IS NULL" in sql
+    assert "namespace !~ '^acl-[0-9a-f]{24}$'" in sql  # no mirror is exported
     assert args == (ORG, "u", 2, [PRIV], "col-", ["col-a"])
 
 

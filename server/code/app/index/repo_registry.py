@@ -122,6 +122,7 @@ def row_to_config(r: dict[str, Any]) -> RepoConfig:
         git_branch=str(r.get("git_branch") or "master"),
         path_prefixes=tuple(str(p) for p in (r.get("path_prefixes") or ()) if str(p)),
         github_token=decrypt_token(str(r.get("github_token_enc") or "")),
+        git_proxy_identity=str(r.get("git_proxy_identity") or ""),
         org_readable=False,
         scip_checkout_dir=checkout_dir_for(namespace),
         exclude=tuple(str(p) for p in (r.get("exclude") or ()) if str(p)),
@@ -170,6 +171,18 @@ async def read_registry(ch: Any | None = None) -> bool:
         return False
 
 
+# What a command says when it needs the registry and its read failed.
+REGISTRY_UNREAD_MESSAGE = "the self-service repository registry could not be read; retry"
+
+
+async def read_registry_or_exit(who: str) -> None:
+    """For a process outside the server and the `loom code` CLI (a harness, a bench):
+    read the registry once, or exit naming `who`, since `configured_repos` and
+    `repo_for_namespace` refuse until it is read."""
+    if not await read_registry():
+        raise SystemExit(f"{who}: {REGISTRY_UNREAD_MESSAGE}")
+
+
 def registry_read() -> bool:
     """The snapshot holds what loom.code_repos held at some read, or there is no registry
     (self-service off): False while every read since the process started failed. Reads
@@ -211,16 +224,6 @@ def reset_for_tests() -> None:
     _LOADED_AT = -1e12
 
 
-async def row_active(org: str, namespace: str, ch: Any | None = None) -> bool:
-    """Whether the namespace's loom.code_repos row is active, read now (not the snapshot)."""
-    from server.code.store.index import CodeRepo
-    from server.core.ch import sequential_reads
-
-    with sequential_reads():
-        row = await CodeRepo(ch).code_repo_row(org, namespace)
-    return bool(row and row.get("active"))
-
-
 async def active_count(org: str, ch: Any | None = None) -> int:
     from server.code.store.index import CodeRepo
 
@@ -242,6 +245,7 @@ async def insert_entry(
     git_remote: str = "",
     exclude_generated: bool = True,
     scip_producer: str = "",
+    git_proxy_identity: str = "",
     ch: Any | None = None,
 ) -> None:
     from datetime import UTC, datetime
@@ -264,6 +268,7 @@ async def insert_entry(
             "classification": classification,
             "join_policy": join_policy,
             "github_token_enc": encrypt_token(github_token),
+            "git_proxy_identity": git_proxy_identity,
             "created_by": created_by,
             "active": True,
             "created_at": now,
@@ -394,10 +399,13 @@ async def _ls_remote(
     *refs: str,
     timeout_s: float,
     git_remote: str = "",
+    proxy_identity: str = "",
 ) -> str:
     """`git ls-remote <flag> <remote> <refs>` against the repository's remote: its
     stdout, or ValueError with a sentence a person can act on. Authenticates through the
-    environment (the token never reaches argv); the child never outlives the call."""
+    environment (the token never reaches argv); the child never outlives the call.
+    `proxy_identity` names the repository to an operator's git proxy: no row holds it yet."""
+    from server.code.app.index.git_proxy import GitProxyRefused, refused_by_proxy
     from server.code.app.index.gitrepo import auth_env, remote_access
     from server.code.app.index.sandbox import run_job
 
@@ -409,13 +417,20 @@ async def _ls_remote(
             env=auth_env(token, remote),
             timeout_s=timeout_s,
             keep_stdout=True,
-            **remote_access(remote),
+            **remote_access(remote, proxy_identity),
         )
     except TimeoutError:
         raise ValueError(f"{provider} remote did not answer in time; try again") from None
+    except GitProxyRefused as e:
+        raise ValueError(e.reason) from None
     out, err = done.stdout, done.stderr
     if done.returncode != 0:
-        text = err.decode(errors="replace").lower()
+        said = err.decode(errors="replace")
+        # An add's first contact with the remote: the operator's git proxy is named when
+        # it is what refused.
+        if refused := refused_by_proxy(said):
+            raise ValueError(f"git ls-remote failed for {repo}: {refused}")
+        text = said.lower()
         if "not found" in text or "authentication" in text or "could not read" in text:
             raise ValueError(
                 f"{provider} remote refused {repo}: the repository does not exist, "
@@ -427,7 +442,12 @@ async def _ls_remote(
 
 
 async def remote_branches(
-    repo: str, token: str, *, git_remote: str = "", timeout_s: float = 25.0
+    repo: str,
+    token: str,
+    *,
+    git_remote: str = "",
+    proxy_identity: str = "",
+    timeout_s: float = 25.0,
 ) -> dict[str, Any]:
     """Every branch of the remote with its head sha, and the default branch (chosen at
     add time). Raises ValueError with a sentence a person can act on; the token never
@@ -440,6 +460,7 @@ async def remote_branches(
         "refs/heads/*",
         timeout_s=timeout_s,
         git_remote=git_remote,
+        proxy_identity=proxy_identity,
     )
     parsed = parse_ls_remote(out)
     if not parsed["branches"]:
@@ -453,6 +474,7 @@ async def remote_has_branch(
     token: str,
     *,
     git_remote: str = "",
+    proxy_identity: str = "",
     timeout_s: float = 25.0,
 ) -> str:
     """Return the branch's remote sha, or raise ValueError with a sentence a person can
@@ -464,6 +486,7 @@ async def remote_has_branch(
         f"refs/heads/{branch}",
         timeout_s=timeout_s,
         git_remote=git_remote,
+        proxy_identity=proxy_identity,
     )
     line = out.strip().splitlines()
     if not line:

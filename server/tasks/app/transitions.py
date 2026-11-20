@@ -487,7 +487,7 @@ async def handle_task_heartbeat(input: TaskHeartbeatInput) -> TaskOutput:
 
 
 async def handle_task_progress(input: TaskProgressInput) -> TaskOutput:
-    """Record a progress note on a claimed task and extend its lease."""
+    """Record a progress note on a claimed task without extending its lease."""
 
     task = await _load_owned(input.org, input.task_id, agent=input.agent, fence=input.fence)
     row, seq = await _record(

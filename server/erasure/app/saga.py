@@ -23,28 +23,39 @@ from typing import Any
 from server.core import pg
 from server.core.background import register_deferred_task
 from server.core.error_summary import error_summary
-from server.core.errors import BackendUnavailableError, caller_text
+from server.core.errors import BackendUnavailableError, OverloadedError, caller_text
+from server.core.naming import is_mirror_name
 from server.core.pg import PostgresUnavailableError
 from server.erasure.api.erasure import (
     ErasureRequestInput,
     ErasureRequestOutput,
     _ErasureStepResult,
-    parse_external_flag,
-    parse_purge_flag,
 )
 from server.erasure.app import backends as erasure_backends
 from server.erasure.app.backends import ErasureBackendError, ExternalEraseBackend, StubBackend
 from server.erasure.app.saga_steps import (
     NAMESPACE_STEPS,
+    PG_ONLY_STEPS,
     USER_STEPS,
     ErasureStepError,
     _step_verify_residue,
     authority_steps,
+    census_spellings,
+    erased_scope,
 )
-from server.erasure.domain.scopes import parse_namespace_list
+from server.erasure.domain.receipts import audit_subject, receipt_version
+from server.erasure.domain.scopes import (
+    applied_purge,
+    parse_external_flag,
+    parse_namespace_list,
+    parse_purge_flag,
+    shown_scope,
+)
 from server.erasure.store import census as erasure_census
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store import mutations as erasure_mutations
+from server.erasure.store import pg_ledger as erasure_pg_ledger
+from server.erasure.store.provider_copies import fold_census
 from server.erasure.store.rows import CheckpointRow, RequestRow, VerifyColumns, census_kept
 from server.memory.app import webhooks
 from server.memory.app.provenance import writer_actor
@@ -52,14 +63,20 @@ from server.observability import audit
 
 log = logging.getLogger(__name__)
 
-# A store that refused or timed out: the recovery worker retries the saga.
-_BACKEND_FAILURES = (ErasureBackendError, BackendUnavailableError, PostgresUnavailableError)
+# Failures of the moment (a store that refused or timed out, a busy lease): one
+# warning line, no traceback.
+_TRANSIENT_FAILURES = (
+    ErasureBackendError,
+    BackendUnavailableError,
+    PostgresUnavailableError,
+    OverloadedError,
+)
 
 
 def audit_namespace(scope_type: str, scope_value: str) -> str:
     """The namespace an erasure's audit rows carry: the scope's own for a
-    single-namespace scope, `-` for one that spans namespaces."""
-    return scope_value if scope_type == "namespace" else "-"
+    single-namespace scope, `-` for one that spans namespaces or is a mirror."""
+    return shown_scope(scope_type, scope_value) if scope_type == "namespace" else "-"
 
 
 # ============================================================
@@ -98,6 +115,7 @@ def request_row_template(
     actor: str,
     requested_at: datetime,
     attempts: int,
+    mirror_marked: bool = False,
 ) -> RequestRow:
     """Common columns for every erasure_requests row we write. `actor` is the
     request's audit actor (`writer_actor` at request time, '' on a row an older
@@ -110,8 +128,11 @@ def request_row_template(
         "requester": input.requester,
         "actor": actor,
         "urgency": input.urgency,
-        "purge": bool(input.purge),
+        # The scope's mode (a single namespace's: tombstone, whatever was asked); a scope
+        # that holds a mirror is purged anyway (`saga_steps.erased_scope`).
+        "purge": applied_purge(input.scope_type, input.scope_value, bool(input.purge)),
         "attempts": attempts,
+        "mirror_marked": mirror_marked,
         "requested_at": requested_at,
     }
 
@@ -137,7 +158,7 @@ async def checkpoint(
         "completed_at": completed_at,
         "steps_completed": steps_completed,
         "last_checkpoint_at": datetime.now(UTC).replace(tzinfo=None),
-        "version": time.time_ns(),
+        "version": receipt_version(time.time_ns(), mirror_marked=bool(row.get("mirror_marked"))),
     }
     await erasure_ledger.insert_request_checkpoint(ck)
 
@@ -185,12 +206,24 @@ async def begin_erasure(
         attempts=1,
     )
 
-    await checkpoint(
-        row=row,
-        status="in_progress",
-        steps_completed=[],
-        current_step=0,
-    )
+    if pg.enabled():
+        # First, so a ClickHouse restore cannot lose an erasure ClickHouse never recorded.
+        await erasure_pg_ledger.record(row)
+    try:
+        await checkpoint(
+            row=row,
+            status="in_progress",
+            steps_completed=[],
+            current_step=0,
+        )
+    except Exception:
+        if pg.enabled():
+            # The request fails: its open ledger row goes, or a reconcile after a
+            # ClickHouse restore would find it and run an erasure its caller was told had
+            # failed. Not marked ended: the insert may have landed, and a saga the
+            # recovery worker then resumes records the row again (`run_saga`).
+            await _forget_ledger_row(input.org, erasure_id)
+        raise
 
     await audit.emit(
         event_type="erasure.started",
@@ -200,7 +233,7 @@ async def begin_erasure(
         subject={
             "erasure_id": erasure_id,
             "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
+            "scope_value": shown_scope(input.scope_type, input.scope_value),
             "requester": input.requester,
         },
         request_id=erasure_id,
@@ -246,6 +279,57 @@ async def run_erasure_detached(input: ErasureRequestInput) -> str:
     return erasure_id
 
 
+async def _reopen_checkpointed_steps(
+    org: str,
+    erasure_id: str,
+    previously_completed: set[str],
+    residue: Mapping[str, Any] | str | None,
+    census_scope_type: str,
+) -> set[str]:
+    """The checkpointed steps a run of the saga skips. The census always runs again: a
+    run that stopped between it and the terminal row left no census on the ledger, so a
+    resume that skipped it would complete without one. A step that owns a table the last
+    census found rows in runs again, and under Postgres its mark in the ledger row is
+    dropped (`pg_ledger.unmark_steps`)."""
+    completed = set(previously_completed) - {"verify.residue"}
+    reopened = erasure_census.steps_to_reopen(residue, census_scope_type) & completed
+    if reopened:
+        log.warning(
+            "erasure %s: re-opening %s — the last census found rows in tables these "
+            "checkpointed steps own",
+            erasure_id,
+            sorted(reopened),
+        )
+        completed -= reopened
+        if pg.enabled() and reopened & PG_ONLY_STEPS:
+            await erasure_pg_ledger.unmark_steps(org, erasure_id, sorted(reopened & PG_ONLY_STEPS))
+    return completed
+
+
+class MirrorMarkUnavailable(RuntimeError):
+    """The scope's privacy mark could not be persisted: no census may count it."""
+
+
+async def _mark_mirrored(row: RequestRow, scope: str | Sequence[str], completed: set[str]) -> None:
+    if row.get("mirror_marked") or not any(
+        is_mirror_name(ns) for ns in erasure_mutations.namespaces_of(scope)
+    ):
+        return
+    # Failure paths must already be opaque if persisting the mark fails.
+    row["mirror_marked"] = True
+    try:
+        if pg.enabled():
+            await erasure_pg_ledger.record(row)
+        await checkpoint(
+            row=row,
+            status="in_progress",
+            steps_completed=sorted(completed),
+            current_step=len(completed),
+        )
+    except Exception as e:  # no mirror count precedes its durable privacy mark
+        raise MirrorMarkUnavailable from e
+
+
 async def run_saga(
     *,
     input: ErasureRequestInput,
@@ -265,32 +349,28 @@ async def run_saga(
     resume.
     """
     await pg.verify_deployment()  # a resumed saga too: refused before any step writes
+    if pg.enabled():
+        # A saga a process of the previous build registered has no Postgres ledger row,
+        # and its Postgres steps would mark none (`steps_pg._mark_step`).
+        await erasure_pg_ledger.record(row)
     steps: list[_ErasureStepResult] = []
-    completed = set(previously_completed)
     # What the census tail counts if a step fails before `verify.residue`:
     # the saga's scope, and whether it purges.
     census_scope_type = "user_id" if input.scope_type == "user_id" else "namespace"
-    reopened = erasure_census.steps_to_reopen(residue, census_scope_type) & completed
-    if reopened:
-        log.warning(
-            "erasure %s: re-opening %s — the last census found rows in tables these "
-            "checkpointed steps own",
-            erasure_id,
-            sorted(reopened),
-        )
-        completed -= reopened
+    completed = await _reopen_checkpointed_steps(
+        input.org, erasure_id, previously_completed, residue, census_scope_type
+    )
     # Filled by the verify step; read back for the terminal row.
     verify: dict[str, Any] = {}
     census_scope_value: str | Sequence[str] = input.scope_value
-    census_purge = False
+    census_purge = applied_purge(input.scope_type, input.scope_value, bool(input.purge))
     # The saga id names every mutation this run submits,
     # so a resumed step finds its own pending mutation instead of adding one.
     with erasure_mutations.saga_scope(erasure_id):
         try:
             if input.scope_type == "user_id":
-                # A user's erasure purges when asked (a GDPR deletion): the rows
-                # leave the parts, not just the readable set.
-                census_purge = bool(input.purge)
+                # A user's erasure purges when asked: the rows leave the parts, not just
+                # the readable set.
                 with erasure_mutations.purge_scope(census_purge):
                     steps = await _saga_user_id(
                         input.org,
@@ -314,7 +394,6 @@ async def run_saga(
                 # saga honours it) turns the tombstone steps into deletes.
                 names = parse_namespace_list(input.scope_value)
                 census_scope_value = names
-                census_purge = parse_purge_flag(input.scope_value, default=bool(input.purge))
                 with erasure_mutations.purge_scope(census_purge):
                     steps = await _saga_namespace(
                         input.org,
@@ -334,10 +413,11 @@ async def run_saga(
             # a traceback is for the unexpected case.
             cause = getattr(e, "cause", None)
             if isinstance(e, ErasureStepError) and (
-                isinstance(cause, _BACKEND_FAILURES) or (cause is not None and pg.is_outage(cause))
+                isinstance(cause, _TRANSIENT_FAILURES)
+                or (cause is not None and pg.is_outage(cause))
             ):
                 log.warning(
-                    "erasure %s failed at step %s (backend, will retry): %s: %s",
+                    "erasure %s failed at step %s (transient, will retry): %s: %s",
                     erasure_id,
                     e.step,
                     type(cause).__name__,
@@ -354,9 +434,17 @@ async def run_saga(
             # residue under `residue_count = 0`. The tail fills the holder and
             # never replaces the step's error: the reason stays the step's, the
             # residue is evidence beside it.
-            await _census_tail(
-                input.org, census_scope_type, census_scope_value, verify, purge=census_purge
-            )
+            if not isinstance(getattr(e, "cause", e), MirrorMarkUnavailable):
+                await _census_tail(
+                    input.org,
+                    census_scope_type,
+                    census_scope_value,
+                    verify,
+                    purge=census_purge,
+                    row=row,
+                    completed=completed,
+                )
+            census = _census(verify)
             completed_at = datetime.now(UTC).replace(tzinfo=None)
             await checkpoint(
                 row=row,
@@ -372,12 +460,15 @@ async def run_saga(
                 org=input.org,
                 namespace=audit_namespace(input.scope_type, input.scope_value),
                 actor=audit_actor(row),
-                subject={
-                    "erasure_id": erasure_id,
-                    "requester": input.requester,
-                    "error": reason[:512],
-                    "steps_completed": sorted(completed),
-                },
+                subject=audit_subject(
+                    row,
+                    {
+                        "erasure_id": erasure_id,
+                        "requester": input.requester,
+                        "error": reason[:512],
+                        "steps_completed": sorted(completed),
+                    },
+                ),
                 request_id=erasure_id,
             )
             return ErasureRequestOutput(
@@ -389,21 +480,19 @@ async def run_saga(
                 residue_count=int(verify.get("count") or 0),
                 residue={t: n for t, n in (verify.get("per_table") or {}).items() if n},
                 verified_at=verify.get("verified_at"),
+                census=census,
+                purge=census_purge,
                 failure_reason=reason[:512],
                 steps_completed=sorted(completed),
             )
     # After the census and before the checkpoint: a crash in between reopens the saga,
     # which announces again under the same event id. The event names the erasure only,
     # never the user or a key.
-    erased_namespaces: list[str] | None = None  # a user's erasure: every namespace
-    if input.scope_type != "user_id":
-        erased_namespaces = (
-            [census_scope_value]
-            if isinstance(census_scope_value, str)
-            else list(census_scope_value)
-        )
-    await webhooks.announce_erasure(input.org, erased_namespaces, erasure_id)
+    await webhooks.announce_erasure(
+        input.org, _erased_namespaces(input.scope_type, census_scope_value), erasure_id
+    )
     completed_at = datetime.now(UTC).replace(tzinfo=None)
+    census = _census(verify)
     await checkpoint(
         row=row,
         status="completed",
@@ -412,21 +501,10 @@ async def run_saga(
         completed_at=completed_at,
         extra=_verify_columns(verify),
     )
+    if pg.enabled():
+        await _complete_ledger_row(input.org, erasure_id, completed_at)
 
-    await audit.emit(
-        event_type="erasure.completed",
-        org=input.org,
-        namespace=audit_namespace(input.scope_type, input.scope_value),
-        actor=audit_actor(row),
-        subject={
-            "erasure_id": erasure_id,
-            "scope_type": input.scope_type,
-            "scope_value": input.scope_value,
-            "requester": input.requester,
-            "steps": [s.model_dump() for s in steps],
-        },
-        request_id=erasure_id,
-    )
+    await _audit_completed(input, row, erasure_id, steps, census)
 
     return ErasureRequestOutput(
         erasure_id=erasure_id,
@@ -437,8 +515,72 @@ async def run_saga(
         residue_count=int(verify.get("count") or 0),
         residue={},
         verified_at=verify.get("verified_at"),
+        census=census,
+        purge=census_purge,
         steps_completed=sorted(completed),
     )
+
+
+async def _audit_completed(
+    input: ErasureRequestInput,
+    row: RequestRow,
+    erasure_id: str,
+    steps: list[_ErasureStepResult],
+    census: dict[str, int] | None,
+) -> None:
+    """The durable receipt is safe for the namespace administrator who reads it."""
+    await audit.emit(
+        event_type="erasure.completed",
+        org=input.org,
+        namespace=audit_namespace(input.scope_type, input.scope_value),
+        actor=audit_actor(row),
+        subject=audit_subject(
+            row,
+            {
+                "erasure_id": erasure_id,
+                "scope_type": input.scope_type,
+                "scope_value": shown_scope(input.scope_type, input.scope_value),
+                "requester": input.requester,
+                "steps": [s.model_dump() for s in steps],
+                # Counts only: a copy of the receipt that outlives the ledger row.
+                "census": census,
+            },
+        ),
+        request_id=erasure_id,
+    )
+
+
+async def _forget_ledger_row(org: str, erasure_id: str) -> None:
+    """The open Postgres ledger row of a request that failed before its first checkpoint,
+    deleted; never raises, since the request's own error is what it reports."""
+    try:
+        await erasure_pg_ledger.forget(org, erasure_id)
+    except Exception as e:  # noqa: BLE001 — the request already fails with its own error
+        log.warning(
+            "erasure %s: ledger row of a failed request not closed: %s",
+            erasure_id,
+            error_summary(e),
+        )
+
+
+async def _complete_ledger_row(org: str, erasure_id: str, completed_at: datetime) -> None:
+    """The Postgres ledger row marked completed, tried three times. A row left open is
+    copied completed from ClickHouse's ledger by the recovery pass (`pg_ledger.backfill`),
+    and a reconcile after a ClickHouse restore that finds the restored row completed
+    completes it (`replay.requeue`)."""
+    for attempt in range(3):
+        try:
+            await erasure_pg_ledger.complete(org, erasure_id, completed_at)
+            return
+        except Exception as e:  # noqa: BLE001 — the erasure is done; the pass copies the state
+            log.warning(
+                "erasure %s: ledger row not completed (attempt %d): %s",
+                erasure_id,
+                attempt + 1,
+                error_summary(e),
+            )
+            if attempt < 2:
+                await asyncio.sleep(0.5 * (attempt + 1))
 
 
 async def _census_tail(
@@ -448,6 +590,8 @@ async def _census_tail(
     verify: dict[str, Any],
     *,
     purge: bool,
+    row: RequestRow,
+    completed: set[str],
 ) -> None:
     """Run the residue census after a step failure, filling `verify` as the step does
     (`verified_at` only when every store was counted), never raising: residue here is
@@ -455,8 +599,14 @@ async def _census_tail(
     if verify:
         return
     try:
+        spellings = await census_spellings(org, scope_type, scope_value)
         with erasure_mutations.purge_scope(purge):
-            per_table, unread = await erasure_census.evidence_census(org, scope_type, scope_value)
+            async with erased_scope(org, scope_type, scope_value) as scope:
+                if scope_type != "user_id":
+                    await _mark_mirrored(row, scope, completed)
+                per_table, unread = await erasure_census.evidence_census(
+                    org, scope_type, scope, spellings=spellings
+                )
     except Exception as e:  # noqa: BLE001 — the step's error is the reason; this is a footnote
         log.warning("erasure: census tail failed after a step failure: %s", error_summary(e))
         return
@@ -478,6 +628,7 @@ def verify_columns_from_output(out: ErasureRequestOutput | None) -> VerifyColumn
         "residue_count": out.residue_count,
         "verified_at": out.verified_at,
         "residue": json.dumps(out.residue, sort_keys=True),
+        "census": _census_column(out.census),
     }
 
 
@@ -493,7 +644,28 @@ def _verify_columns(verify: dict[str, Any]) -> VerifyColumns:
         "residue": json.dumps(
             {t: n for t, n in (verify.get("per_table") or {}).items() if n}, sort_keys=True
         ),
+        "census": _census_column(_census(verify)),
     }
+
+
+def _erased_namespaces(scope_type: str, scope_value: str | Sequence[str]) -> list[str] | None:
+    """The namespaces an erasure webhook names; None for a user's erasure (every one)."""
+    if scope_type == "user_id":
+        return None
+    return [scope_value] if isinstance(scope_value, str) else list(scope_value)
+
+
+def _census_column(census: dict[str, int] | None) -> str:
+    """The ledger's `census` text: '' for no receipt."""
+    return json.dumps(census, sort_keys=True) if census is not None else ""
+
+
+def _census(verify: dict[str, Any]) -> dict[str, int] | None:
+    """Every count of a census that counted every store, the rebuild copies folded
+    into one key; None when a store went uncounted (`verified_at` unset)."""
+    if verify.get("verified_at") is None:
+        return None
+    return fold_census({str(t): int(n) for t, n in (verify.get("per_table") or {}).items()})
 
 
 async def _do_step(
@@ -605,8 +777,13 @@ async def _saga_namespace(
             )
         )
 
+    async def _marked(fn: Callable[..., Awaitable[int]]) -> int:
+        async with erased_scope(org, "namespace", namespace) as scope:
+            await _mark_mirrored(row, scope, completed)
+            return await fn(org, scope)
+
     for name, fn in authority_steps(NAMESPACE_STEPS):
-        await _step(name, fn, org, namespace)
+        await _step(name, _marked, fn)
 
     # External backends fail closed — see _saga_user_id. A namespace_list erasure may
     # run loom-only (`external=false`): the backends erase per namespace — Langfuse
@@ -632,5 +809,9 @@ async def _saga_namespace(
         )
     # Verified forgetting: the census is the last step and the
     # only one that can fail the saga on its own evidence.
-    await _step("verify.residue", _step_verify_residue, org, "namespace", namespace, verify)
+    await _step(
+        "verify.residue",
+        _marked,
+        lambda o, ns: _step_verify_residue(o, "namespace", ns, verify),
+    )
     return results

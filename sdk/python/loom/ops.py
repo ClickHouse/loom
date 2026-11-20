@@ -109,6 +109,8 @@ OpName = Literal[
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
+    "connection.disconnect",
+    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -155,6 +157,8 @@ OpName = Literal[
     "grants.revoke",
     "grants.share_agent",
     "grants.unshare_agent",
+    "help.get",
+    "help.search",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -171,14 +175,20 @@ OpName = Literal[
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.draft",
+    "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
+    "knowledge.query_history.add",
+    "knowledge.query_history.list",
+    "knowledge.query_history.remove",
     "knowledge.reads",
     "knowledge.restore",
     "knowledge.search",
@@ -186,9 +196,14 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.parse_links",
+    "knowledge.source.push_configure",
+    "knowledge.source.push_confirm",
+    "knowledge.source.push_status",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
+    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -212,6 +227,7 @@ OpName = Literal[
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -471,6 +487,8 @@ OP_NAMES: tuple[str, ...] = (
     "conflicts.list",
     "conflicts.propose_revision",
     "conflicts.resolve",
+    "connection.disconnect",
+    "connection.list",
     "consolidations.list",
     "context.fetch",
     "context.offload",
@@ -517,6 +535,8 @@ OP_NAMES: tuple[str, ...] = (
     "grants.revoke",
     "grants.share_agent",
     "grants.unshare_agent",
+    "help.get",
+    "help.search",
     "inbox.list",
     "inbox.policy_list",
     "inbox.policy_set",
@@ -533,14 +553,20 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.dedup_resolve",
     "knowledge.delete",
     "knowledge.formats",
+    "knowledge.gaps.draft",
+    "knowledge.gaps.list",
     "knowledge.get",
     "knowledge.ingest",
     "knowledge.ingest_cancel",
     "knowledge.ingest_status",
     "knowledge.inspect",
     "knowledge.list",
+    "knowledge.move",
     "knowledge.outline",
     "knowledge.query",
+    "knowledge.query_history.add",
+    "knowledge.query_history.list",
+    "knowledge.query_history.remove",
     "knowledge.reads",
     "knowledge.restore",
     "knowledge.search",
@@ -548,9 +574,14 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.parse_links",
+    "knowledge.source.push_configure",
+    "knowledge.source.push_confirm",
+    "knowledge.source.push_status",
     "knowledge.source.remove",
     "knowledge.source.rotate",
     "knowledge.source.sync_now",
+    "knowledge.source.update",
     "knowledge.synthesize",
     "knowledge.update_metadata",
     "knowledge.upsert",
@@ -574,6 +605,7 @@ OP_NAMES: tuple[str, ...] = (
     "memory.dedup_collapse",
     "memory.dedup_list",
     "memory.dedup_resolve",
+    "memory.definitions.list",
     "memory.delete",
     "memory.delete_version",
     "memory.demonstrate",
@@ -1603,6 +1635,30 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "connection.disconnect": OpSpec(
+        "connection.disconnect",
+        "ConnectionDisconnectInput",
+        "ConnectionDisconnectBody",
+        "ConnectionDisconnectOutput",
+        True,
+        "viewer",
+        "experimental",
+        30000,
+        False,
+        False,
+    ),
+    "connection.list": OpSpec(
+        "connection.list",
+        "ConnectionListInput",
+        "ConnectionListBody",
+        "ConnectionListOutput",
+        True,
+        "viewer",
+        "experimental",
+        1000,
+        False,
+        True,
+    ),
     "consolidations.list": OpSpec(
         "consolidations.list",
         "ConsolidationsListInput",
@@ -2155,6 +2211,30 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "help.get": OpSpec(
+        "help.get",
+        "HelpGetInput",
+        "HelpGetBody",
+        "HelpGetOutput",
+        True,
+        "viewer",
+        "experimental",
+        20,
+        False,
+        True,
+    ),
+    "help.search": OpSpec(
+        "help.search",
+        "HelpSearchInput",
+        "HelpSearchBody",
+        "HelpSearchOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
+    ),
     "inbox.list": OpSpec(
         "inbox.list",
         "InboxListInput",
@@ -2347,6 +2427,30 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.gaps.draft": OpSpec(
+        "knowledge.gaps.draft",
+        "KnowledgeGapsDraftInput",
+        "KnowledgeGapsDraftBody",
+        "KnowledgeGapsDraftOutput",
+        True,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.gaps.list": OpSpec(
+        "knowledge.gaps.list",
+        "KnowledgeGapsListInput",
+        "KnowledgeGapsListBody",
+        "KnowledgeGapsListOutput",
+        True,
+        "admin",
+        "experimental",
+        300,
+        False,
+        False,
+    ),
     "knowledge.get": OpSpec(
         "knowledge.get",
         "KnowledgeGetInput",
@@ -2419,6 +2523,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.move": OpSpec(
+        "knowledge.move",
+        "KnowledgeMoveInput",
+        "KnowledgeMoveBody",
+        "KnowledgeMoveOutput",
+        True,
+        "writer",
+        "experimental",
+        8000,
+        True,
+        False,
+    ),
     "knowledge.outline": OpSpec(
         "knowledge.outline",
         "KnowledgeOutlineInput",
@@ -2442,6 +2558,42 @@ OPS: dict[str, OpSpec] = {
         1500,
         False,
         True,
+    ),
+    "knowledge.query_history.add": OpSpec(
+        "knowledge.query_history.add",
+        "KnowledgeQueryHistoryAddInput",
+        "KnowledgeQueryHistoryAddBody",
+        "KnowledgeQueryHistoryAddOutput",
+        False,
+        "admin",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.query_history.list": OpSpec(
+        "knowledge.query_history.list",
+        "KnowledgeQueryHistoryListInput",
+        "KnowledgeQueryHistoryListBody",
+        "KnowledgeQueryHistoryListOutput",
+        True,
+        "admin",
+        "experimental",
+        250,
+        False,
+        False,
+    ),
+    "knowledge.query_history.remove": OpSpec(
+        "knowledge.query_history.remove",
+        "KnowledgeQueryHistoryRemoveInput",
+        "KnowledgeQueryHistoryRemoveBody",
+        "KnowledgeQueryHistoryRemoveOutput",
+        True,
+        "admin",
+        "experimental",
+        1000,
+        True,
+        False,
     ),
     "knowledge.reads": OpSpec(
         "knowledge.reads",
@@ -2485,9 +2637,9 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceAddBody",
         "KnowledgeSourceAddOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
-        30000,
+        60000,
         True,
         False,
     ),
@@ -2497,7 +2649,7 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceCheckBody",
         "KnowledgeSourceCheckOutput",
         True,
-        "admin",
+        "writer",
         "experimental",
         30000,
         False,
@@ -2527,13 +2679,61 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "knowledge.source.parse_links": OpSpec(
+        "knowledge.source.parse_links",
+        "KnowledgeSourceParseLinksInput",
+        "KnowledgeSourceParseLinksBody",
+        "KnowledgeSourceParseLinksOutput",
+        True,
+        "viewer",
+        "experimental",
+        50,
+        False,
+        True,
+    ),
+    "knowledge.source.push_configure": OpSpec(
+        "knowledge.source.push_configure",
+        "KnowledgeSourcePushConfigureInput",
+        "KnowledgeSourcePushConfigureBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        60000,
+        True,
+        False,
+    ),
+    "knowledge.source.push_confirm": OpSpec(
+        "knowledge.source.push_confirm",
+        "KnowledgeSourcePushConfirmInput",
+        "KnowledgeSourcePushConfirmBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        1000,
+        True,
+        False,
+    ),
+    "knowledge.source.push_status": OpSpec(
+        "knowledge.source.push_status",
+        "KnowledgeSourcePushStatusInput",
+        "KnowledgeSourcePushStatusBody",
+        "PushStatusOutput",
+        False,
+        "admin",
+        "experimental",
+        1000,
+        False,
+        False,
+    ),
     "knowledge.source.remove": OpSpec(
         "knowledge.source.remove",
         "KnowledgeSourceRemoveInput",
         "KnowledgeSourceRemoveBody",
         "KnowledgeSourceRemoveOutput",
         False,
-        "admin",
+        "writer",
         "experimental",
         400,
         True,
@@ -2557,9 +2757,21 @@ OPS: dict[str, OpSpec] = {
         "KnowledgeSourceSyncNowBody",
         "KnowledgeSourceSyncNowOutput",
         True,
-        "admin",
+        "writer",
         "experimental",
         300,
+        True,
+        False,
+    ),
+    "knowledge.source.update": OpSpec(
+        "knowledge.source.update",
+        "KnowledgeSourceUpdateInput",
+        "KnowledgeSourceUpdateBody",
+        "KnowledgeSourceUpdateOutput",
+        False,
+        "writer",
+        "experimental",
+        60000,
         True,
         False,
     ),
@@ -2837,6 +3049,18 @@ OPS: dict[str, OpSpec] = {
         "stable",
         400,
         True,
+        False,
+    ),
+    "memory.definitions.list": OpSpec(
+        "memory.definitions.list",
+        "MemoryDefinitionsListInput",
+        "MemoryDefinitionsListBody",
+        "MemoryDefinitionsListOutput",
+        True,
+        "admin",
+        "experimental",
+        400,
+        False,
         False,
     ),
     "memory.delete": OpSpec(
@@ -5171,20 +5395,24 @@ class AssistantAskBody(TypedDict, total=False):
 
 
 class AssistantAskOutput(TypedDict, total=False):
+    mirrored: NotRequired[bool]
     answer: NotRequired[str]
     run_id: NotRequired[str]
     model: NotRequired[str]
     citations: NotRequired[list["AssistantCitation"]]
+    support: NotRequired[str]
+    unknown_names: NotRequired[list[str]]
 
 
 class AssistantCitation(TypedDict, total=False):
     "One citation an answer wrote, as Loom checked it when the answer ended."
 
-    kind: Required[Literal["memory", "doc", "code", "sql"]]
+    kind: Required[Literal["memory", "doc", "help", "code", "sql"]]
     text: Required[str]
     verified: NotRequired[bool]
     reason: NotRequired[str]
     ref: NotRequired[str]
+    anchor: NotRequired[str]
 
 
 class AuditListInput(TypedDict, total=False):
@@ -5224,6 +5452,8 @@ class AuditListRow(TypedDict, total=False):
 
 
 class BlacklistAddInput(TypedDict, total=False):
+    "Refuse future memory writes whose value matches a pattern."
+
     org: Required[str]
     namespace: Required[str]
     pattern: Required[str]
@@ -5235,6 +5465,8 @@ class BlacklistAddInput(TypedDict, total=False):
 
 
 class BlacklistAddBody(TypedDict, total=False):
+    "Refuse future memory writes whose value matches a pattern."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     pattern: Required[str]
@@ -5382,6 +5614,10 @@ class CodeAskBody(TypedDict, total=False):
 
 class CodeAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    partial: NotRequired[bool]
+    partial_reason: NotRequired[str]
+    note: NotRequired[str]
+    coverage: NotRequired[Literal["", "full", "partial", "none"]]
     citations: NotRequired[list[dict[str, Any]]]
     source: Required[Literal["cached", "synthesized", "abstained"]]
     cache_similarity: NotRequired[float]
@@ -5675,6 +5911,8 @@ class CodeCalibrateOutput(TypedDict, total=False):
 
 
 class CodeCallersInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -5696,6 +5934,8 @@ class CodeCallersInput(TypedDict, total=False):
 
 
 class CodeCallersBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -5717,6 +5957,8 @@ class CodeCallersBody(TypedDict, total=False):
 
 
 class CodeCallersOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     edges: Required[list["CodeEdgeWire"]]
     seed_symbols: Required[list[str]]
     overlay: NotRequired[bool]
@@ -5788,6 +6030,8 @@ class CodeCandidateSiteWire(TypedDict, total=False):
 
 
 class CodeContextPackInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -5802,6 +6046,8 @@ class CodeContextPackInput(TypedDict, total=False):
 
 
 class CodeContextPackBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -5816,6 +6062,8 @@ class CodeContextPackBody(TypedDict, total=False):
 
 
 class CodeContextPackOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     context: Required[str]
     tokens_used: Required[int]
     source: Required[Literal["precomputed", "task", "orientation", "unavailable"]]
@@ -6388,6 +6636,8 @@ class CodeHistoryOutput(TypedDict, total=False):
 class CodeImpactInput(TypedDict, total=False):
     "Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -6412,6 +6662,8 @@ class CodeImpactInput(TypedDict, total=False):
 class CodeImpactBody(TypedDict, total=False):
     "Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     pr_files: NotRequired[dict[str, str]]
     pr_diff: NotRequired[str]
     pr_head_sha: NotRequired[str]
@@ -6434,6 +6686,8 @@ class CodeImpactBody(TypedDict, total=False):
 
 
 class CodeImpactOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     impacted_symbols: Required[list[dict[str, Any]]]
     impacted_tests: Required[list[dict[str, Any]]]
     co_change_files: Required[list[dict[str, Any]]]
@@ -6671,6 +6925,8 @@ class CodeOutcomeOutput(TypedDict, total=False):
 class CodeOutlineInput(TypedDict, total=False):
     '"What is in this file?" \u2014 the question a whole-file read answers at'
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6684,6 +6940,8 @@ class CodeOutlineInput(TypedDict, total=False):
 class CodeOutlineBody(TypedDict, total=False):
     '"What is in this file?" \u2014 the question a whole-file read answers at'
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6695,6 +6953,8 @@ class CodeOutlineBody(TypedDict, total=False):
 
 
 class CodeOutlineOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     path: Required[str]
     entries: Required[list[dict[str, Any]]]
     total: Required[int]
@@ -6893,6 +7153,7 @@ class CodeRepoAddInput(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -6909,6 +7170,7 @@ class CodeRepoAddBody(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -6954,6 +7216,7 @@ class CodeRepoRemoteBranchesInput(TypedDict, total=False):
     org: Required[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -6964,6 +7227,7 @@ class CodeRepoRemoteBranchesBody(TypedDict, total=False):
     org: NotRequired[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -7302,6 +7566,8 @@ class CodeScipStatusOutput(TypedDict, total=False):
 
 
 class CodeSearchInput(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7339,6 +7605,8 @@ class CodeSearchInput(TypedDict, total=False):
 
 
 class CodeSearchBody(TypedDict, total=False):
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -7376,6 +7644,8 @@ class CodeSearchBody(TypedDict, total=False):
 
 
 class CodeSearchOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     results: Required[list["CodeUnit"]]
     route: Required[str]
     next_cursor: NotRequired[str]
@@ -7857,7 +8127,9 @@ class CollectionCreateInput(TypedDict, total=False):
     "Create a collection: a namespace read and written only through grants."
 
     org: Required[str]
-    namespace: Required[str]
+    namespace: NotRequired[str]
+    title: NotRequired[str]
+    derive_name: NotRequired[bool]
     parent: NotRequired[str]
     description: NotRequired[str]
 
@@ -7867,6 +8139,8 @@ class CollectionCreateBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    title: NotRequired[str]
+    derive_name: NotRequired[bool]
     parent: NotRequired[str]
     description: NotRequired[str]
 
@@ -7875,6 +8149,7 @@ class CollectionCreateOutput(TypedDict, total=False):
     namespace: Required[str]
     parent: Required[str]
     created: Required[bool]
+    title: NotRequired[str]
 
 
 class CollectionDeleteInput(TypedDict, total=False):
@@ -7903,6 +8178,7 @@ class CollectionListInput(TypedDict, total=False):
 
     org: Required[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -7911,6 +8187,7 @@ class CollectionListBody(TypedDict, total=False):
 
     org: NotRequired[str]
     limit: NotRequired[int]
+    include_document_counts: NotRequired[bool]
     cursor: NotRequired[Optional[str]]
 
 
@@ -7925,6 +8202,8 @@ class CollectionEntry(TypedDict, total=False):
     personal: Required[bool]
     role: Required[str]
     description: NotRequired[str]
+    title: NotRequired[str]
+    document_count: NotRequired[Optional[int]]
 
 
 class CollectionMoveInput(TypedDict, total=False):
@@ -8105,6 +8384,48 @@ class ConflictsResolveOutput(TypedDict, total=False):
     affected_memory_ids: Required[list[str]]
     resolved_at: NotRequired[Optional[str]]
     total: NotRequired[Optional[int]]
+
+
+class ConnectionDisconnectInput(TypedDict, total=False):
+    "Disconnect the caller's own provider account and stop its connected sources."
+
+    org: Required[str]
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+
+
+class ConnectionDisconnectBody(TypedDict, total=False):
+    "Disconnect the caller's own provider account and stop its connected sources."
+
+    org: NotRequired[str]
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+
+
+class ConnectionDisconnectOutput(TypedDict, total=False):
+    disconnected: Required[bool]
+
+
+class ConnectionListInput(TypedDict, total=False):
+    "List the signed-in caller's own connected provider accounts."
+
+    org: Required[str]
+
+
+class ConnectionListBody(TypedDict, total=False):
+    "List the signed-in caller's own connected provider accounts."
+
+    org: NotRequired[str]
+
+
+class ConnectionListOutput(TypedDict, total=False):
+    connections: Required[list["ConnectionEntry"]]
+
+
+class ConnectionEntry(TypedDict, total=False):
+    kind: Required[Literal["gdrive", "notion", "linear"]]
+    connected: Required[bool]
+    account_email: NotRequired[Optional[str]]
+    scopes: NotRequired[list[str]]
+    connect_url: Required[str]
 
 
 class ConsolidationsListInput(TypedDict, total=False):
@@ -8913,19 +9234,25 @@ class CostAgentSummaryRow(TypedDict, total=False):
 class CostBudgetStatusInput(TypedDict, total=False):
     org: Required[str]
     namespace: NotRequired[Optional[str]]
+    user_id: NotRequired[Optional[str]]
 
 
 class CostBudgetStatusBody(TypedDict, total=False):
     org: NotRequired[str]
     namespace: NotRequired[Optional[str]]
+    user_id: NotRequired[Optional[str]]
 
 
 class CostBudgetStatusOutput(TypedDict, total=False):
     namespace: Required[str]
-    spent_24h_usd: Required[float]
+    user_id: NotRequired[Optional[str]]
+    spent_24h_usd: Required[Optional[float]]
     cap_usd: Required[float]
-    cap_source: Required[Literal["namespace", "global", "uncapped", "org"]]
+    cap_source: Required[
+        Literal["namespace", "global", "namespace_user", "global_user", "uncapped", "org"]
+    ]
     over_cap: Required[bool]
+    namespace_over_cap: NotRequired[Optional[bool]]
     pct_of_cap: NotRequired[Optional[float]]
     namespaces_with_spend: NotRequired[int]
 
@@ -9323,6 +9650,8 @@ class ErasureRequestOutput(TypedDict, total=False):
     residue_count: NotRequired[int]
     residue: NotRequired[dict[str, int]]
     verified_at: NotRequired[Optional[str]]
+    census: NotRequired[Optional[dict[str, int]]]
+    purge: NotRequired[bool]
     failure_reason: NotRequired[str]
     steps_completed: NotRequired[list[str]]
 
@@ -9356,6 +9685,8 @@ class ErasureStatusOutput(TypedDict, total=False):
     residue_count: NotRequired[int]
     residue: NotRequired[dict[str, int]]
     verified_at: NotRequired[Optional[str]]
+    census: NotRequired[Optional[dict[str, int]]]
+    purge: NotRequired[bool]
 
 
 class ExtractionPolicyClearInput(TypedDict, total=False):
@@ -9792,6 +10123,77 @@ class GrantsUnshareAgentBody(TypedDict, total=False):
 class GrantsUnshareAgentOutput(TypedDict, total=False):
     revoked: Required[bool]
     revoked_at: NotRequired[Optional[str]]
+
+
+class HelpGetInput(TypedDict, total=False):
+    "Read one page of this build's documentation, or one section of it."
+
+    org: NotRequired[str]
+    path: Required[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    offset: NotRequired[int]
+
+
+class HelpGetBody(TypedDict, total=False):
+    "Read one page of this build's documentation, or one section of it."
+
+    org: NotRequired[str]
+    path: Required[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    offset: NotRequired[int]
+
+
+class HelpGetOutput(TypedDict, total=False):
+    available: Required[bool]
+    found: Required[bool]
+    path: Required[str]
+    title: NotRequired[str]
+    section: NotRequired[str]
+    anchor: NotRequired[str]
+    audience: NotRequired[Literal["user", "operator"]]
+    text: NotRequired[str]
+    truncated: NotRequired[bool]
+    next_offset: NotRequired[int]
+    sections: NotRequired[list["HelpOutlineEntry"]]
+
+
+class HelpOutlineEntry(TypedDict, total=False):
+    section: Required[str]
+    anchor: Required[str]
+    heading: NotRequired[str]
+
+
+class HelpSearchInput(TypedDict, total=False):
+    "Search this build's documentation."
+
+    org: NotRequired[str]
+    query: Required[str]
+    limit: NotRequired[int]
+
+
+class HelpSearchBody(TypedDict, total=False):
+    "Search this build's documentation."
+
+    org: NotRequired[str]
+    query: Required[str]
+    limit: NotRequired[int]
+
+
+class HelpSearchOutput(TypedDict, total=False):
+    available: Required[bool]
+    hits: Required[list["HelpHit"]]
+
+
+class HelpHit(TypedDict, total=False):
+    path: Required[str]
+    title: Required[str]
+    section: Required[str]
+    anchor: Required[str]
+    audience: Required[Literal["user", "operator"]]
+    snippet: Required[str]
+    score: Required[float]
 
 
 class InboxListInput(TypedDict, total=False):
@@ -10362,6 +10764,58 @@ class KnowledgeFormat(TypedDict, total=False):
     available: NotRequired[Optional[bool]]
 
 
+class KnowledgeGapsDraftInput(TypedDict, total=False):
+    "Draft a definition from a knowledge gap for an admin to review."
+
+    org: Required[str]
+    namespace: Required[str]
+    gap_id: Required[str]
+
+
+class KnowledgeGapsDraftBody(TypedDict, total=False):
+    "Draft a definition from a knowledge gap for an admin to review."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    gap_id: Required[str]
+
+
+class KnowledgeGapsDraftOutput(TypedDict, total=False):
+    candidate_id: Required[str]
+
+
+class KnowledgeGapsListInput(TypedDict, total=False):
+    "The questions people keep asking in a namespace that nothing answers."
+
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeGapsListBody(TypedDict, total=False):
+    "The questions people keep asking in a namespace that nothing answers."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeGapsListOutput(TypedDict, total=False):
+    gaps: NotRequired[list["KnowledgeGap"]]
+    built_at: NotRequired[Optional[str]]
+    capturing: NotRequired[Optional[bool]]
+    enabled: NotRequired[bool]
+
+
+class KnowledgeGap(TypedDict, total=False):
+    gap_id: Required[str]
+    head: Required[str]
+    samples: NotRequired[list[str]]
+    askers: Required[int]
+    asks: Required[int]
+    last_at: Required[str]  # date-time as ISO-8601 text
+
+
 class KnowledgeGetInput(TypedDict, total=False):
     "Fetch a single document by source_uri."
 
@@ -10795,10 +11249,11 @@ class MemoryFindingRef(TypedDict, total=False):
 
 
 class KnowledgeListInput(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, for curation tools."
+    "Paginated listing of the documents of one namespace or several, for curation tools."
 
     org: Required[str]
     namespace: Required[str]
+    namespaces: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
@@ -10809,10 +11264,11 @@ class KnowledgeListInput(TypedDict, total=False):
 
 
 class KnowledgeListBody(TypedDict, total=False):
-    "Paginated listing of documents in a namespace, for curation tools."
+    "Paginated listing of the documents of one namespace or several, for curation tools."
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    namespaces: NotRequired[list[str]]
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     uri_prefix: NotRequired[list[str]]
@@ -10828,6 +11284,7 @@ class KnowledgeListOutput(TypedDict, total=False):
 
 
 class KnowledgeListEntry(TypedDict, total=False):
+    namespace: Required[str]
     source_uri: Required[str]
     title: Required[str]
     description: NotRequired[str]
@@ -10840,6 +11297,36 @@ class KnowledgeListEntry(TypedDict, total=False):
     blob_content_type: NotRequired[str]
     original_filename: NotRequired[str]
     content_preview: NotRequired[str]
+
+
+class KnowledgeMoveInput(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
+
+    org: Required[str]
+    namespace: Required[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveBody(TypedDict, total=False):
+    "Move documents to another namespace of the org: a collection, `@me` (an end user's"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    to_namespace: Required[str]
+    source_uris: Required[list[str]]
+
+
+class KnowledgeMoveOutput(TypedDict, total=False):
+    found: Required[bool]
+    to_namespace: NotRequired[str]
+    results: NotRequired[list["KnowledgeMoveResult"]]
+
+
+class KnowledgeMoveResult(TypedDict, total=False):
+    source_uri: Required[str]
+    moved: NotRequired[bool]
+    reason: NotRequired[Literal["", "not_found", "exists", "synced", "busy", "erased"]]
 
 
 class KnowledgeOutlineInput(TypedDict, total=False):
@@ -11000,6 +11487,92 @@ class QuerySnapshot(TypedDict, total=False):
     schema_state: Required[str]
 
 
+class KnowledgeQueryHistoryAddInput(TypedDict, total=False):
+    "Register a read-only ClickHouse query-history source for definition drafts."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    host: Required[str]
+    port: NotRequired[int]
+    secure: NotRequired[bool]
+    user: Required[str]
+    password: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+
+
+class KnowledgeQueryHistoryAddBody(TypedDict, total=False):
+    "Register a read-only ClickHouse query-history source for definition drafts."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    host: Required[str]
+    port: NotRequired[int]
+    secure: NotRequired[bool]
+    user: Required[str]
+    password: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+
+
+class KnowledgeQueryHistoryAddOutput(TypedDict, total=False):
+    name: Required[str]
+    source_id: Required[str]
+    kind: NotRequired[Literal["clickhouse_queries"]]
+    host: Required[str]
+    port: Required[int]
+    secure: Required[bool]
+    user: Required[str]
+    databases: Required[list[str]]
+    cluster: NotRequired[str]
+    created_at: Required[str]  # date-time as ISO-8601 text
+
+
+class KnowledgeQueryHistoryListInput(TypedDict, total=False):
+    "List the namespace's registered query-history sources."
+
+    fields: NotRequired[Optional[list[str]]]
+    org: Required[str]
+    namespace: Required[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryHistoryListBody(TypedDict, total=False):
+    "List the namespace's registered query-history sources."
+
+    fields: NotRequired[Optional[list[str]]]
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    limit: NotRequired[int]
+
+
+class KnowledgeQueryHistoryListOutput(TypedDict, total=False):
+    enabled: NotRequired[bool]
+    sources: NotRequired[list["KnowledgeQueryHistoryAddOutput"]]
+
+
+class KnowledgeQueryHistoryRemoveInput(TypedDict, total=False):
+    "Remove a query-history source registration from the namespace."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+
+
+class KnowledgeQueryHistoryRemoveBody(TypedDict, total=False):
+    "Remove a query-history source registration from the namespace."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+
+
+class KnowledgeQueryHistoryRemoveOutput(TypedDict, total=False):
+    removed: Required[bool]
+
+
 class KnowledgeReadsInput(TypedDict, total=False):
     "How often agents opened each document over the last `days` (`knowledge.get`"
 
@@ -11099,6 +11672,7 @@ class KnowledgeSearchOutput(TypedDict, total=False):
     reranked_by: NotRequired[str]
     embedding_model: Required[str]
     namespaces_skipped: NotRequired[list[str]]
+    stale_dropped: NotRequired[int]
 
 
 class SearchHit(TypedDict, total=False):
@@ -11132,26 +11706,34 @@ class SearchHit(TypedDict, total=False):
 
 
 class KnowledgeSourceAddInput(TypedDict, total=False):
-    "Register a document source on a repository's trunk code namespace: a kind,"
+    "Register a document source on a namespace: a kind, what it reads (items"
 
     org: Required[str]
     namespace: Required[str]
     name: Required[str]
     kind: Required[str]
-    config: Required[dict[str, Any]]
-    credential: Required[str]
+    items: NotRequired[Optional[list[dict[str, Any]]]]
+    links: NotRequired[Optional[list[str]]]
+    config: NotRequired[Optional[dict[str, Any]]]
+    include: NotRequired[Optional[list[str]]]
+    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential: NotRequired[str]
     dry_run: NotRequired[bool]
 
 
 class KnowledgeSourceAddBody(TypedDict, total=False):
-    "Register a document source on a repository's trunk code namespace: a kind,"
+    "Register a document source on a namespace: a kind, what it reads (items"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
     name: Required[str]
     kind: Required[str]
-    config: Required[dict[str, Any]]
-    credential: Required[str]
+    items: NotRequired[Optional[list[dict[str, Any]]]]
+    links: NotRequired[Optional[list[str]]]
+    config: NotRequired[Optional[dict[str, Any]]]
+    include: NotRequired[Optional[list[str]]]
+    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential: NotRequired[str]
     dry_run: NotRequired[bool]
 
 
@@ -11159,6 +11741,8 @@ class KnowledgeSourceAddOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
     namespace: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     probe: NotRequired["KnowledgeSourceProbe"]
     dry_run: NotRequired[bool]
@@ -11170,10 +11754,12 @@ class KnowledgeSourceProbe(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
+    checked: NotRequired[int]
+    sampled: NotRequired[bool]
 
 
 class KnowledgeSourceCheckInput(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check"
+    "Probe a registered document source with its stored credential now (a check of"
 
     org: Required[str]
     namespace: Required[str]
@@ -11181,7 +11767,7 @@ class KnowledgeSourceCheckInput(TypedDict, total=False):
 
 
 class KnowledgeSourceCheckBody(TypedDict, total=False):
-    "Probe a registered document source with its stored credential now (a check"
+    "Probe a registered document source with its stored credential now (a check of"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11194,12 +11780,14 @@ class KnowledgeSourceCheckOutput(TypedDict, total=False):
     documents: NotRequired[int]
     more: NotRequired[bool]
     sample: NotRequired[list[str]]
+    checked: NotRequired[int]
+    sampled: NotRequired[bool]
     summary: NotRequired[str]
     checked_at: NotRequired[str]
 
 
 class KnowledgeSourceInspectInput(TypedDict, total=False):
-    "One registered document source: its config, its sync state and the"
+    "One registered document source: its items, its sync state and the"
 
     org: Required[str]
     namespace: Required[str]
@@ -11207,7 +11795,7 @@ class KnowledgeSourceInspectInput(TypedDict, total=False):
 
 
 class KnowledgeSourceInspectBody(TypedDict, total=False):
-    "One registered document source: its config, its sync state and the"
+    "One registered document source: its items, its sync state and the"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11217,6 +11805,11 @@ class KnowledgeSourceInspectBody(TypedDict, total=False):
 class KnowledgeSourceInspectOutput(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    credential_mode: NotRequired[str]
+    access: NotRequired[str]
+    owner_subject: NotRequired[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
@@ -11253,14 +11846,14 @@ class KnowledgeSourceDocument(TypedDict, total=False):
 
 
 class KnowledgeSourceListInput(TypedDict, total=False):
-    "The document sources registered on a repository's code namespace, with each"
+    "The document sources registered on a namespace, with each one's sync"
 
     org: Required[str]
     namespace: Required[str]
 
 
 class KnowledgeSourceListBody(TypedDict, total=False):
-    "The document sources registered on a repository's code namespace, with each"
+    "The document sources registered on a namespace, with each one's sync"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -11269,15 +11862,125 @@ class KnowledgeSourceListBody(TypedDict, total=False):
 class KnowledgeSourceListOutput(TypedDict, total=False):
     sources: NotRequired[list["KnowledgeSourceEntry"]]
     enabled: NotRequired[bool]
+    accepts_sources: NotRequired[bool]
 
 
 class KnowledgeSourceEntry(TypedDict, total=False):
     name: Required[str]
     kind: Required[str]
+    credential_mode: NotRequired[str]
+    access: NotRequired[str]
+    owner_subject: NotRequired[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
     config: NotRequired[dict[str, Any]]
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceParseLinksInput(TypedDict, total=False):
+    "Read pasted links as a source's items, with no request to any store and"
+
+    org: Required[str]
+    namespace: Required[str]
+    links: Required[list[str]]
+
+
+class KnowledgeSourceParseLinksBody(TypedDict, total=False):
+    "Read pasted links as a source's items, with no request to any store and"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    links: Required[list[str]]
+
+
+class KnowledgeSourceParseLinksOutput(TypedDict, total=False):
+    links: NotRequired[list["KnowledgeSourceParsedLink"]]
+
+
+class KnowledgeSourceParsedLink(TypedDict, total=False):
+    link: Required[str]
+    kind: NotRequired[str]
+    item: NotRequired[dict[str, Any]]
+    unreadable: NotRequired[str]
+
+
+class KnowledgeSourcePushConfigureInput(TypedDict, total=False):
+    "Enable provider sync hints for an existing source, or disable its setup."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    enabled: NotRequired[bool]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+
+
+class KnowledgeSourcePushConfigureBody(TypedDict, total=False):
+    "Enable provider sync hints for an existing source, or disable its setup."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    enabled: NotRequired[bool]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+
+
+class PushStatusOutput(TypedDict, total=False):
+    enabled: NotRequired[bool]
+    status: NotRequired[str]
+    provider: NotRequired[str]
+    generation: NotRequired[str]
+    callback_url: NotRequired[str]
+    provider_id: NotRequired[str]
+    challenge_fingerprint: NotRequired[str]
+    verification_token: NotRequired[str]
+    channels: NotRequired[int]
+    expires_at: NotRequired[float]
+
+
+class KnowledgeSourcePushConfirmInput(TypedDict, total=False):
+    "Activate the exact pending setup."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    generation: Required[str]
+    challenge_fingerprint: NotRequired[str]
+    signing_secret: NotRequired[str]
+
+
+class KnowledgeSourcePushConfirmBody(TypedDict, total=False):
+    "Activate the exact pending setup."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    generation: Required[str]
+    challenge_fingerprint: NotRequired[str]
+    signing_secret: NotRequired[str]
+
+
+class KnowledgeSourcePushStatusInput(TypedDict, total=False):
+    "Read push setup as a namespace admin."
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    reveal_challenge: NotRequired[bool]
+
+
+class KnowledgeSourcePushStatusBody(TypedDict, total=False):
+    "Read push setup as a namespace admin."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    reveal_challenge: NotRequired[bool]
 
 
 class KnowledgeSourceRemoveInput(TypedDict, total=False):
@@ -11352,11 +12055,48 @@ class KnowledgeSourceSyncNowOutput(TypedDict, total=False):
     enabled: NotRequired[bool]
 
 
+class KnowledgeSourceUpdateInput(TypedDict, total=False):
+    "Add items to a registered document source or remove them, or change a gdrive"
+
+    org: Required[str]
+    namespace: Required[str]
+    name: Required[str]
+    add_items: NotRequired[list[dict[str, Any]]]
+    add_links: NotRequired[list[str]]
+    remove_items: NotRequired[list[dict[str, Any]]]
+    remove_links: NotRequired[list[str]]
+    include: NotRequired[Optional[list[str]]]
+
+
+class KnowledgeSourceUpdateBody(TypedDict, total=False):
+    "Add items to a registered document source or remove them, or change a gdrive"
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    name: Required[str]
+    add_items: NotRequired[list[dict[str, Any]]]
+    add_links: NotRequired[list[str]]
+    remove_items: NotRequired[list[dict[str, Any]]]
+    remove_links: NotRequired[list[str]]
+    include: NotRequired[Optional[list[str]]]
+
+
+class KnowledgeSourceUpdateOutput(TypedDict, total=False):
+    name: Required[str]
+    items: NotRequired[list[dict[str, Any]]]
+    include: NotRequired[list[str]]
+    config: NotRequired[dict[str, Any]]
+    added: NotRequired[list[dict[str, Any]]]
+    removed: NotRequired[list[dict[str, Any]]]
+    probe: NotRequired["KnowledgeSourceProbe"]
+
+
 class KnowledgeSynthesizeInput(TypedDict, total=False):
     "Complete a task over WHOLE documents, not a search slice:"
 
     org: Required[str]
     namespace: Required[str]
+    user_id: NotRequired[str]
     source_uris: NotRequired[list[str]]
     datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
@@ -11370,6 +12110,7 @@ class KnowledgeSynthesizeBody(TypedDict, total=False):
 
     org: NotRequired[str]
     namespace: NotRequired[str]
+    user_id: NotRequired[str]
     source_uris: NotRequired[list[str]]
     datasets: NotRequired[list["QueryDataset"]]
     task: Required[str]
@@ -11529,6 +12270,7 @@ class LearningEntry(TypedDict, total=False):
     supporters: Required[list[str]]
     rationale: Required[str]
     source_kind: NotRequired[str]
+    source_resource_id: NotRequired[str]
     agent: NotRequired[str]
     status: Required[Literal["pending", "promoted", "rejected"]]
     proposed_at: Required[str]  # date-time as ISO-8601 text
@@ -11989,6 +12731,7 @@ class MemorySearchHit(TypedDict, total=False):
     distance: Required[float]
     similarity: Required[float]
     below_threshold: NotRequired[Optional[bool]]
+    governed: NotRequired[Optional[bool]]
     tags: NotRequired[Optional[list[str]]]
     reinforcement_count: NotRequired[Optional[int]]
     used_count: NotRequired[Optional[int]]
@@ -12003,6 +12746,7 @@ class MemorySearchHit(TypedDict, total=False):
     valid_at: NotRequired[str]
     via_path: NotRequired[list[str]]
     entities: NotRequired[list[str]]
+    agent: NotRequired[str]
     user_id: NotRequired[str]
     source: NotRequired[str]
     parent_memory_key: NotRequired[str]
@@ -12651,6 +13395,58 @@ class MemoryDedupResolveOutput(TypedDict, total=False):
     canonical_tombstoned: NotRequired[bool]
     duplicate_tombstoned: NotRequired[bool]
     ignored_args: NotRequired[list[str]]
+
+
+class MemoryDefinitionsListInput(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: Required[str]
+    namespace: Required[str]
+
+
+class MemoryDefinitionsListBody(TypedDict, total=False):
+    "The namespace's shared definitions and whether each is governed."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+
+
+class MemoryDefinitionsListOutput(TypedDict, total=False):
+    count: Required[int]
+    ceiling: Required[int]
+    definitions: Required[list["DefinitionEntry"]]
+
+
+class DefinitionEntry(TypedDict, total=False):
+    memory_key: Required[str]
+    promoted_at: Required[str]  # date-time as ISO-8601 text
+    capped: NotRequired[bool]
+    term: NotRequired[Optional[str]]
+    aliases: NotRequired[list[str]]
+    verdict: NotRequired[Optional[Literal["governed", "lapsed"]]]
+    lapse_reason: NotRequired[
+        Optional[
+            Literal[
+                "not_namespace_wide",
+                "no_term",
+                "gone",
+                "superseded",
+                "conflicted",
+                "duplicate",
+                "not_active",
+                "expired",
+                "ended",
+                "changed",
+                "sensitive",
+            ]
+        ]
+    ]
+    lost: NotRequired[list["LostName"]]
+
+
+class LostName(TypedDict, total=False):
+    name: Required[str]
+    winner: Required[str]
 
 
 class MemoryDeleteInput(TypedDict, total=False):
@@ -14213,6 +15009,7 @@ class MemoryPromoteInput(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteBody(TypedDict, total=False):
@@ -14229,12 +15026,14 @@ class MemoryPromoteBody(TypedDict, total=False):
     approver: NotRequired[Optional[str]]
     reversible_for_days: NotRequired[int]
     promoted_from_candidate_id: NotRequired[Optional[str]]
+    approved_sha256: NotRequired[Optional[str]]
 
 
 class MemoryPromoteOutput(TypedDict, total=False):
     shared_memory_key: Required[str]
     promotion_event: Required[str]
     reversible_until: Required[str]  # date-time as ISO-8601 text
+    ignored_args: NotRequired[list[str]]
 
 
 class MemoryProposalDecideInput(TypedDict, total=False):
@@ -14993,6 +15792,7 @@ class MemorySearchOutput(TypedDict, total=False):
     score_explanation: NotRequired[str]
     retrieval_confidence: NotRequired[float]
     retrieval_risk: NotRequired[Literal["low", "medium", "high", "abstain"]]
+    term_leg: NotRequired[Literal["complete", "empty", "capped", "timed_out", "failed", "off"]]
     route_agreement: NotRequired[float]
     calibration_explanation: NotRequired[str]
     fallback_rounds_used: NotRequired[int]
@@ -15916,6 +16716,7 @@ class MentorHint(TypedDict, total=False):
     text: Required[str]
     ops: NotRequired[list[str]]
     evidence: NotRequired[dict[str, Any]]
+    plane: NotRequired[Optional[str]]
 
 
 class MentorAdoption(TypedDict, total=False):
@@ -16109,6 +16910,7 @@ class NamespaceDeleteOutput(TypedDict, total=False):
     deleted: Required[bool]
     namespace: Required[str]
     updated_at: Required[str]  # date-time as ISO-8601 text
+    sources_retired: NotRequired[list[str]]
 
 
 class NamespaceGetInput(TypedDict, total=False):
@@ -16134,6 +16936,8 @@ class NamespaceGetOutput(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]
@@ -16364,6 +17168,8 @@ class NamespaceEntry(TypedDict, total=False):
     active: Required[bool]
     consolidation_enabled: NotRequired[bool]
     daily_cost_cap_usd: NotRequired[float]
+    daily_user_cost_cap_usd: NotRequired[float]
+    budget_alert_inbox: NotRequired[str]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[int]
     warm_days: NotRequired[int]
@@ -16416,6 +17222,7 @@ class MineEntry(TypedDict, total=False):
     pending_admins: NotRequired[list[str]]
     visibility: NotRequired[Literal["private", "public"]]
     kind: NotRequired[str]
+    title: NotRequired[str]
     description: NotRequired[str]
     joined_at: NotRequired[Optional[str]]
     is_new: NotRequired[bool]
@@ -16483,6 +17290,8 @@ class NamespaceRegisterInput(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]
@@ -16503,7 +17312,7 @@ class NamespaceRegisterInput(TypedDict, total=False):
 
 
 class NamespaceRetrievalDefaults(TypedDict, total=False):
-    "What an unpinned memory.search on this namespace runs."
+    "What an unpinned memory search on this namespace runs."
 
     search_mode: NotRequired[
         Optional[
@@ -16556,6 +17365,8 @@ class NamespaceRegisterBody(TypedDict, total=False):
     coverage_sweep: NotRequired[Optional[bool]]
     consolidation_enabled: NotRequired[Optional[bool]]
     daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
     conflict_threshold: NotRequired[Optional[float]]
     retention_days: NotRequired[Optional[int]]
     warm_days: NotRequired[Optional[int]]
@@ -18372,6 +19183,7 @@ class SearchQueryInput(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -18390,6 +19202,7 @@ class SearchQueryBody(TypedDict, total=False):
     ]
     bodies: NotRequired[Literal["full", "excerpt", "none", "unit"]]
     explain: NotRequired[bool]
+    live: NotRequired[bool]
     page: NotRequired[str]
 
 
@@ -18397,12 +19210,31 @@ class SearchQueryOutput(TypedDict, total=False):
     'The sections, each `{"results": [...], ...}` as its plane\'s search'
 
     tracker: NotRequired[Optional[dict[str, Any]]]
+    live: NotRequired[Optional["LiveSearchResults"]]
     memory: NotRequired[dict[str, Any]]
     knowledge: NotRequired[dict[str, Any]]
     profile: NotRequired[dict[str, Any]]
     conversations: NotRequired[dict[str, Any]]
     withheld: NotRequired[Optional[dict[str, Any]]]
     namespaces_skipped: NotRequired[list[str]]
+
+
+class LiveSearchResults(TypedDict, total=False):
+    "Connected-source results returned only in this response."
+
+    live: NotRequired[Literal[True]]
+    results: NotRequired[list["LiveSearchHit"]]
+
+
+class LiveSearchHit(TypedDict, total=False):
+    "One ephemeral result from the asker's connected source."
+
+    id: Required[str]
+    title: Required[str]
+    url: Required[str]
+    provider: Required[Literal["gdrive", "notion", "linear"]]
+    content: NotRequired[str]
+    live: NotRequired[Literal[True]]
 
 
 class SessionBriefDeleteInput(TypedDict, total=False):
@@ -20004,6 +20836,8 @@ class WebhookRemoveOutput(TypedDict, total=False):
 
 
 class WorkingMemoryAppendInput(TypedDict, total=False):
+    "Append text to a working-memory block, creating it when missing."
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -20016,6 +20850,8 @@ class WorkingMemoryAppendInput(TypedDict, total=False):
 
 
 class WorkingMemoryAppendBody(TypedDict, total=False):
+    "Append text to a working-memory block, creating it when missing."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -20154,6 +20990,8 @@ class WorkingMemoryReplaceBody(TypedDict, total=False):
 
 
 class WorkingMemorySetInput(TypedDict, total=False):
+    "Overwrite one working-memory block."
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -20166,6 +21004,8 @@ class WorkingMemorySetInput(TypedDict, total=False):
 
 
 class WorkingMemorySetBody(TypedDict, total=False):
+    "Overwrite one working-memory block."
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]

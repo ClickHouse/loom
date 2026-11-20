@@ -42,8 +42,8 @@ TARGET = GeneratedFile(ROOT / "schemas" / "schema.sql", "make schema-dump")
 DIFF_LINES = 40
 
 
-def list_objects(client: Any) -> tuple[list[str], list[str]]:
-    """(tables, materialized views) as `database.name`, each sorted by
+def list_objects(client: Any) -> tuple[list[str], list[str], list[str]]:
+    """(tables, views, materialized views) as `database.name`, each sorted by
     database then name, internals excluded."""
     rows = client.query(
         "SELECT database, name, engine FROM system.tables "
@@ -51,9 +51,12 @@ def list_objects(client: Any) -> tuple[list[str], list[str]]:
         "ORDER BY indexOf({dbs:Array(String)}, database), name",
         parameters={"dbs": [physical(db) for db in DATABASES]},
     ).result_rows
-    tables = [f"{logical(d)}.{n}" for d, n, engine in rows if engine != "MaterializedView"]
-    views = [f"{logical(d)}.{n}" for d, n, engine in rows if engine == "MaterializedView"]
-    return tables, views
+
+    names = [(f"{logical(d)}.{n}", engine) for d, n, engine in rows]
+    tables = [n for n, engine in names if engine not in ("View", "MaterializedView")]
+    plain_views = [n for n, engine in names if engine == "View"]
+    views = [n for n, engine in names if engine == "MaterializedView"]
+    return tables, plain_views, views
 
 
 _VECTOR_INDEX_RE = re.compile(
@@ -87,7 +90,7 @@ def add_if_not_exists(ddl: str) -> str:
     return _CREATE_PREFIX_RE.sub(r"\1 IF NOT EXISTS ", ddl, count=1)
 
 
-def header(tables: int, views: int) -> str:
+def header(tables: int, plain_views: int, views: int) -> str:
     dumped = " and ".join(f"`{db}.*`" for db in DATABASES)
     created = "\n".join(f"CREATE DATABASE IF NOT EXISTS `{db}`;" for db in DATABASES)
     return f"""-- schemas/schema.sql
@@ -108,7 +111,7 @@ def header(tables: int, views: int) -> str:
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: {tables} tables + {views} materialized views.
+-- Counts: {tables} tables + {plain_views} views + {views} materialized views.
 
 {created}
 """
@@ -123,10 +126,15 @@ def section(title: str, statements: list[tuple[str, str]]) -> list[str]:
     return out
 
 
-def render(tables: list[tuple[str, str]], views: list[tuple[str, str]]) -> str:
+def render(
+    tables: list[tuple[str, str]],
+    plain_views: list[tuple[str, str]],
+    views: list[tuple[str, str]],
+) -> str:
     """The file from `(name, SHOW CREATE)` pairs. Pure."""
-    out = [header(len(tables), len(views))]
+    out = [header(len(tables), len(plain_views), len(views))]
     out += section("Tables", tables)
+    out += section("Views", plain_views)
     out += section("Materialized views", views)
     return "\n".join(out)
 
@@ -141,9 +149,10 @@ def show_create(client: Any, name: str) -> tuple[str, str]:
 
 
 def dump(client: Any) -> str:
-    tables, views = list_objects(client)
+    tables, plain_views, views = list_objects(client)
     return render(
         [show_create(client, n) for n in tables],
+        [show_create(client, n) for n in plain_views],
         [show_create(client, n) for n in views],
     )
 

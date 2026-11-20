@@ -100,7 +100,8 @@ describe("TaskInboxBell", () => {
     render(<TaskInboxBell />);
     await screen.findByText("3");
     await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
-    expect(screen.getByText("private-bot")).toBeInTheDocument();
+    // The list loads on the first open.
+    expect(await screen.findByText("private-bot")).toBeInTheDocument();
     expect(screen.getByText("2 in triage", { exact: false })).toBeInTheDocument();
     expect(
       screen.getByText("1 blocked on a person · 5 blocked on a sender or external event", { exact: false }),
@@ -119,7 +120,7 @@ describe("TaskInboxBell", () => {
     render(<TaskInboxBell />);
     await screen.findByText("3");
     await user.click(screen.getByRole("button", { name: "Tasks waiting for a person, 3" }));
-    await user.click(screen.getByText("pool"));
+    await user.click(await screen.findByText("pool"));
     expect(window.location.pathname).toBe("/tasks");
     expect(window.location.search).toBe("?namespace=team&inbox=pool");
     // Back: the page left keeps its URL and the state the app keeps in it.

@@ -660,13 +660,12 @@ def _verify_clients(state: WorkflowState) -> list[Any]:
     names = [m.strip() for m in str(settings.memory_extract_verify_models).split(",")]
     if settings.llm_provider == "fake":  # a dev/test stack: no model to ask
         return []
-    from server.core.llm_provider import provider_for_model
     from server.llm.client import get_llm_client_for_model, provider_key_missing
     from server.memory.app.extract import extractor_llm_cache_on
 
     clients: list[Any] = []
     for name in (n for n in names if n):
-        if provider_key_missing(provider_for_model(name, settings.llm_provider)):
+        if provider_key_missing(settings.provider_of(name)):
             continue  # a fake stand-in's vote would count as a real one
         client: Any = get_llm_client_for_model(name)
         if extractor_llm_cache_on(state.llm_cache):

@@ -449,6 +449,8 @@ async def test_make_writer_in_process_routes_ops_and_disconnects(monkeypatch) ->
     events: list[str] = []
 
     class _CH:
+        connected = False
+
         async def connect(self) -> None:
             events.append("connect")
 
@@ -461,7 +463,9 @@ async def test_make_writer_in_process_routes_ops_and_disconnects(monkeypatch) ->
         events.append(f"set:{p['k']}")
 
     writer, closer = await import_recall._make_writer(
-        argparse.Namespace(base_url=None, token=None), lambda: {"memory.set": _set}, timeout_s=1.0
+        argparse.Namespace(base_url=None, token=None, org="o"),
+        lambda: {"memory.set": _set},
+        timeout_s=1.0,
     )
     await writer("memory.set", {"k": "a"})
     with pytest.raises(ValueError, match="unknown op"):
@@ -529,6 +533,8 @@ async def test_a_write_awaiting_publication_is_done_over_http_and_in_process(mon
     await closer()
 
     class _CH:
+        connected = False
+
         async def connect(self) -> None: ...
 
         async def disconnect(self) -> None: ...
@@ -539,7 +545,7 @@ async def test_a_write_awaiting_publication_is_done_over_http_and_in_process(mon
         raise PublicationPending()
 
     writer, closer = await import_recall._make_writer(
-        argparse.Namespace(base_url=None, token=None),
+        argparse.Namespace(base_url=None, token=None, org="o"),
         lambda: {"knowledge.add": _pending},
         timeout_s=1.0,
     )

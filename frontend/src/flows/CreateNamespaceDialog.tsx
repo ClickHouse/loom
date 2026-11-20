@@ -8,7 +8,7 @@ import { toast } from "../components/Toast";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { NAMESPACE_NAME } from "../lib/namespace";
 
 interface Props {
@@ -25,7 +25,7 @@ interface Props {
  * to private — public is the deliberate choice for team scratchpads.
  *
  * After creation the SPA switches identity to the new namespace so the
- * user lands in their fresh workspace.
+ * user lands in their fresh namespace.
  */
 export function CreateNamespaceDialog({ open, onOpenChange, onCreated }: Props) {
   const identity = useStore((s) => s.identity);

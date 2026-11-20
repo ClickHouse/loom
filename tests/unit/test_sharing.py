@@ -5,7 +5,9 @@ three new tables hold."""
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -260,6 +262,8 @@ def test_a_refusal_points_at_the_library_and_confirms_nothing(
     # No tool route: the gate knows no transport (an assistant connection has no loom_op).
     assert "collection.list (or the dashboard's Library) lists the ones you can read" in messages[0]
     assert messages[0] == messages[1], "an existing and a missing collection read the same"
+    # It names a collection, from the reserved prefix alone, never a namespace.
+    assert messages[0].startswith("principal 'user:alice' cannot access the collection acme/<name>")
     # Someone else's personal collection takes no grant: no advice to ask for one.
     with pytest.raises(PermissionError) as refused:
         asyncio.run(sharing.check(_user("alice"), Role.VIEWER, ORG, "col-me-0123456789abcdef"))
@@ -477,6 +481,22 @@ def test_a_delegated_token_reaches_a_collection_no_further_than_its_creator(
     assert _role(token, "col-q3") is None, "the creator holds nothing there"
 
 
+def test_a_delegated_everything_token_reads_no_collection_its_claim_does_not_name(
+    org_state: dict[str, Any],
+) -> None:
+    """A `*` claim never names a collection: a delegated token reads one only when its claim
+    lists it, whatever the grants of the token and its creator hold. The dashboard's
+    Everything token therefore lists no collection as read."""
+    org_state["grants"] = {"sa:ci": {"col-q3": 2}, "ann@acme.io": {"col-q3": 2}}
+    everything = _person(namespaces=("*",), roles=(Role.WRITER,), creator="ann@acme.io")
+    assert _role(everything, "col-q3") is None
+    with pytest.raises(PermissionError, match="claim must name it"):
+        asyncio.run(sharing.check(everything, Role.VIEWER, ORG, "col-q3"))
+    listed = _person(namespaces=("col-q3",), roles=(Role.WRITER,), creator="ann@acme.io")
+    assert _role(listed, "col-q3") is Role.WRITER
+    asyncio.run(sharing.check(listed, Role.VIEWER, ORG, "col-q3"))
+
+
 def test_a_trusted_caller_cannot_become_a_grant_principal(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.settings import settings
 
@@ -556,6 +576,32 @@ def test_a_collection_outside_the_tree_admits_no_one(org_state: dict[str, Any]) 
     assert roles == {"col-gone": None, "col-q3": Role.ADMIN}
 
 
+def test_collection_list_with_auth_off_answers_admin(
+    org_state: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With auth off there is no caller to rank: `collection.list` lists every collection in
+    the tree as admin, so the dashboard offers Share, not See who, to the operator."""
+    from server.auth import context
+    from server.identity.api.models_collections import CollectionListInput
+    from server.identity.app import collections
+
+    async def _labels(*_a: Any) -> dict[str, dict[str, str]]:
+        return {}
+
+    monkeypatch.setattr(collections.namespaces_repo, "labels", _labels)
+
+    async def _list() -> Any:
+        context.set_current_auth(None)
+        return await collections.handle_collection_list(CollectionListInput(org=ORG))
+
+    out = asyncio.run(_list())
+    assert {(c.namespace, c.role) for c in out.collections} == {
+        ("col-hr", "admin"),
+        ("col-q3", "admin"),
+        ("col-q3-docs", "admin"),
+    }
+
+
 def test_a_collection_is_never_adopted() -> None:
     from server.identity.app.grants import adopt_namespace
 
@@ -622,8 +668,6 @@ def test_no_collection_is_hidden_with_auth_off_or_from_a_platform_admin(
 
 def test_a_document_rewrite_keeps_who_wrote_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """A metadata edit or a delete writes the next version from the row read."""
-    from datetime import datetime
-
     from server.knowledge.store import documents
 
     stored = {
@@ -668,7 +712,7 @@ def test_an_erasure_or_export_of_no_user_is_refused(value: str) -> None:
         ErasureRequestInput(**scope)
 
 
-def test_an_end_user_token_is_served_only_where_end_users_are(
+async def test_an_end_user_token_is_served_only_where_end_users_are(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The op endpoint and downloads serve it; `/v1/me/*`, the admin routes and
@@ -677,14 +721,16 @@ def test_an_end_user_token_is_served_only_where_end_users_are(
 
     from server.auth import bearer
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice"))
+    monkeypatch.setattr(
+        bearer, "verify_bearer", AsyncMock(side_effect=lambda _token: _user("alice"))
+    )
     with pytest.raises(HTTPException) as refused:
-        bearer.verify_bearer_header("Bearer eu")
+        (await bearer.verify_bearer_header("Bearer eu"))
     assert refused.value.status_code == 403
-    assert bearer.verify_bearer_header("Bearer eu", acts_for_end_users=True) is not None
+    assert (await bearer.verify_bearer_header("Bearer eu", acts_for_end_users=True)) is not None
 
 
-def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
+async def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -692,8 +738,10 @@ def test_the_op_endpoint_runs_an_end_user_token_as_its_user(
     from server.auth import bearer
     from server.transport import http
 
-    monkeypatch.setattr(bearer, "verify_bearer", lambda _token: _user("alice", "helper"))
-    auth = http._extract_auth(SimpleNamespace(headers={"Authorization": "Bearer eu"}))  # type: ignore[arg-type]
+    monkeypatch.setattr(
+        bearer, "verify_bearer", AsyncMock(side_effect=lambda _token: _user("alice", "helper"))
+    )
+    auth = await http._extract_auth(SimpleNamespace(headers={"Authorization": "Bearer eu"}))  # type: ignore[arg-type]
     assert auth is not None and (auth.subject, auth.agent_principal) == (
         "user:alice",
         "agent:helper",
@@ -709,6 +757,11 @@ def test_a_tree_or_group_row_outranks_the_row_it_replaces_whatever_the_clock() -
     )
 
 
+async def _no_sources(*_a: Any) -> list[str]:
+    """A namespace delete's retirement of its document sources, which hold none here."""
+    return []
+
+
 def test_a_collection_delete_cut_short_is_closed_by_its_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -718,7 +771,13 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
 
     from server.identity.app import collections, namespace
 
-    directory = {"org": ORG, "namespace": "col-hr", "kind": "collection", "active": True}
+    directory = {
+        "org": ORG,
+        "namespace": "col-hr",
+        "kind": "collection",
+        "active": True,
+        "updated_at": datetime(2026, 1, 1),
+    }
     retired: list[str] = []
 
     @asynccontextmanager
@@ -742,6 +801,8 @@ def test_a_collection_delete_cut_short_is_closed_by_its_retry(
         return None
 
     monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "sources_lease", _claim)
+    monkeypatch.setattr(namespace, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(namespace, "get_client", lambda: _CH())
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _row)
     monkeypatch.setattr(namespace.grant_cache, "changed", _changed)
@@ -794,7 +855,7 @@ def test_a_grant_to_a_group_is_written_under_the_groups_claim(
         asyncio.run(_run("group:gone"))
 
 
-def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
+async def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from types import SimpleNamespace
@@ -804,10 +865,10 @@ def test_mcp_refuses_an_end_user_token_as_not_allowed_not_as_invalid(
     from server.auth import jwt
     from server.transport import mcp_auth
 
-    monkeypatch.setattr(jwt, "verify_token", lambda _token: _user("alice"))
+    monkeypatch.setattr(jwt, "verify_token", lambda _token, *, secret=None: _user("alice"))
     request = SimpleNamespace(headers={"authorization": "Bearer eu"})
     with pytest.raises(PermissionError) as refused:
-        mcp_auth._verify_bearer(request)  # type: ignore[arg-type]
+        (await mcp_auth._verify_bearer(request))  # type: ignore[arg-type]
     response = Response()
     answer = mcp_auth._not_on_mcp(response, {"id": 7}, refused.value)
     assert response.status_code == 403 and answer["id"] == 7
@@ -830,8 +891,6 @@ def test_the_gate_never_takes_me_as_a_namespace_name(auth: str | None) -> None:
 
 
 def test_a_write_of_the_same_text_keeps_its_author_and_new_text_takes_the_writer() -> None:
-    from datetime import datetime
-
     from server.knowledge.app.writes import _author_for
     from server.knowledge.store.documents import DocumentRow
 
@@ -992,8 +1051,6 @@ def test_blanking_the_issuer_keeps_a_revoke_that_landed_meanwhile(
 ) -> None:
     """The row is read again under its claim: a revoke written after the list
     read is carried, never undone by the rewrite."""
-    from datetime import datetime
-
     from server.identity.app import grants
 
     listed = _grant_row("user:carol", version=5, granted_by="user:bob")
@@ -1058,7 +1115,7 @@ def test_an_unreadable_grant_refuses_with_the_short_words(
     monkeypatch.setattr(sharing, "tree", _broken)
     with pytest.raises(PermissionError) as refused:
         asyncio.run(sharing.check(_user("alice"), Role.WRITER, ORG, "col-hr"))
-    assert str(refused.value) == f"principal 'user:alice' cannot access {ORG}/col-hr"
+    assert str(refused.value) == f"principal 'user:alice' cannot access the collection {ORG}/col-hr"
 
 
 def test_every_op_an_end_user_reaches_without_a_namespace_is_known() -> None:
@@ -1103,6 +1160,8 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
         return True
 
     monkeypatch.setattr(namespace, "account_change", _claim)
+    monkeypatch.setattr(namespace, "sources_lease", _claim)
+    monkeypatch.setattr(namespace, "deactivate_namespace_sources", _no_sources)
     monkeypatch.setattr(namespace, "get_client", lambda: object())
     monkeypatch.setattr(namespace.namespaces_repo, "fetch_row", _no_row)
     monkeypatch.setattr(collections, "retire", _retire)
@@ -1118,8 +1177,6 @@ def test_a_collection_whose_create_stopped_short_is_still_deleted(
 def test_an_end_users_original_never_passes_to_another_writer_of_new_text() -> None:
     """Without fresh bytes a write carries the prior original, but not an end
     user's to someone else: that user's erasure must still find it."""
-    from datetime import datetime
-
     from server.knowledge.app.writes import _original_of
     from server.knowledge.store.documents import DocumentRow
 
@@ -1164,8 +1221,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
 ) -> None:
     from server.auth import authz, context
     from server.core.errors import AuthInsufficientError
-    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.knowledge.app import knowledge_search
+    from server.knowledge.app.readable import readable_namespaces
 
     user = _user("alice")
     readable = {"col-agent-helper", personal_name(ORG, "user:alice")}
@@ -1177,10 +1233,7 @@ def test_a_search_naming_its_namespaces_reads_those_alone_and_each_must_be_reada
     monkeypatch.setattr(authz, "check_authorized", _check)
 
     def _named(*names: str) -> list[str]:
-        query = KnowledgeSearchInput(
-            org=ORG, namespace="col-agent-helper", query="q", namespaces=list(names)
-        )
-        return asyncio.run(knowledge_search._named_namespaces(query))
+        return asyncio.run(readable_namespaces(ORG, "col-agent-helper", list(names)))
 
     context.set_current_auth(user)
     try:

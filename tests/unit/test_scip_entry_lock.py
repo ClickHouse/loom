@@ -27,6 +27,11 @@ def _lock_dir(monkeypatch, tmp_path, request):
     from server.settings import settings
 
     monkeypatch.setattr(settings, "code_scip_lock_dir", str(tmp_path / "locks"))
+
+    async def _connected(*_a: Any) -> None:
+        return None  # `entry-lock` connects for its org; the lock is what is tested here
+
+    monkeypatch.setattr("server.cli.code_scip.connect_code_plane", _connected)
     if not {"keeper", "no_clickhouse"} & set(request.fixturenames):
         # The deployment-wide lease is tested below against a fake lock table.
         held_leases(monkeypatch)

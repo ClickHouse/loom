@@ -20,6 +20,7 @@ the test skips.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import uuid
 from dataclasses import dataclass, field
@@ -217,8 +218,19 @@ QUERIES = [
 ]
 
 
+async def _post(c: httpx.AsyncClient, url: str, **kw: Any) -> httpx.Response:
+    """`c.post`, waiting out a 429 for its `Retry-After` header: the corpus is ingested
+    back to back, faster than the namespace's ingest rate refills."""
+    for _ in range(10):
+        r = await c.post(url, **kw)
+        if r.status_code != 429:
+            return r
+        await asyncio.sleep(float(r.headers["Retry-After"]))
+    return r
+
+
 async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
-    r = await c.post(f"/v1/{op}", json=body)
+    r = await _post(c, f"/v1/{op}", json=body)
     assert r.status_code == 200, r.text
     return dict(r.json())
 
@@ -230,7 +242,8 @@ async def _ingest(
     from server.knowledge.app import ingest_run
     from server.knowledge.store import ingestions
 
-    up = await c.post(
+    up = await _post(
+        c,
         "/v1/knowledge.upload",
         params={
             "org": org,

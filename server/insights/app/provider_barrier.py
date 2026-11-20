@@ -11,6 +11,7 @@ it blocks a reconfiguration until it beats again and drains, or is retired.
 import asyncio
 import contextlib
 import logging
+import os
 import threading
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -18,10 +19,18 @@ from time import monotonic, time_ns
 from typing import Any
 from uuid import UUID
 
+from server.core import pg, pg_profile, retirement
 from server.core.background import drain_task_sets, flush_registered_buffers
 from server.core.ch import query_tag
 from server.core.model_work_gate import get_model_work_gate
-from server.core.provider_process import host_proof, pod_gone, process_identity, proves_stopped
+from server.core.provider_process import (
+    LIFECYCLE,
+    has_certificate,
+    participant_proof,
+    process_identity,
+    proves_stopped,
+)
+from server.core.repo_base import _default_client
 from server.insights.store.provider_participants import (
     OWN_VERSION_SQL,
     SEQUENTIAL,
@@ -30,8 +39,10 @@ from server.insights.store.provider_participants import (
     participants,
     prune_retired,
     record_participant,
+    record_retirement,
     running_queries,
 )
+from server.settings import settings
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +73,8 @@ class _Own:
     ) -> tuple[UUID, str, int]:
         with self.lock:
             if transition is not None and state is not None:
+                if self.state == "retired" and state != "retired":
+                    raise retirement.ProcessStopping("A retired UUID cannot re-enroll")
                 self.transition, self.state = transition, state
             self.version = max(time_ns(), self.version + 1, floor + 1)
             return self.transition, self.state, self.version
@@ -109,7 +122,7 @@ class _Heartbeat:
         transition, state, version = _OWN.stamp(floor=seen)
         if state == "retired":
             return
-        row = [me, transition, state, version, STALE_AFTER_S, host_proof()]
+        row = [me, transition, state, version, STALE_AFTER_S, participant_proof()]
         self.ch.insert(TABLE, [row], column_names=_COLUMNS, settings=_TAG)
 
     def _run(self) -> None:
@@ -146,6 +159,7 @@ class _Heartbeat:
 
 _HEARTBEAT = _Heartbeat()
 _registered = False
+_process_pid = os.getpid()
 
 
 async def register_process() -> None:
@@ -155,11 +169,20 @@ async def register_process() -> None:
     startup loads the pending gate or the committed replacement before admission.
     A second call (boot enrolls before its migrations) keeps the state.
     """
-    global _registered
+    global _registered, _process_pid, _OWN, _HEARTBEAT
+    if _process_pid != os.getpid():
+        _process_pid = os.getpid()
+        _registered, _OWN, _HEARTBEAT = False, _Own(), _Heartbeat()
+        from server.core import cell
+
+        cell.discard_inherited_view()
+    if retirement.get_gate().closed:
+        raise retirement.ProcessStopping("A retired participant cannot re-enroll")
     if not _registered:
         _OWN.stamp(UUID(int=0), "running")
     await asyncio.to_thread(_HEARTBEAT.start)
     _registered = True
+    retirement.get_gate().enrolled = True
 
 
 async def enroll_before_migrations(ch: Any) -> None:
@@ -175,7 +198,7 @@ async def enroll_before_migrations(ch: Any) -> None:
         await register_process()
 
 
-async def _server_side_settled() -> bool:
+async def _server_side_settled(*, ch: Any = None) -> bool:
     """No write of this process can still land: no carried insert in flight or
     pinned (a cancelled one may still run or start), and no insert of its own
     running on any replica (a cancelled request's insert outlives its task)."""
@@ -183,7 +206,7 @@ async def _server_side_settled() -> bool:
 
     if rmt_carry.unsettled():
         return False
-    return await running_queries(str(process_identity()), inserts=True) == 0
+    return await running_queries(str(process_identity()), ch=ch, inserts=True) == 0
 
 
 async def acknowledge_drain(transition: UUID) -> bool:
@@ -215,20 +238,77 @@ async def distributed_drain(transition: UUID) -> bool:
     return all(r["state"] == "drained" and str(r["transition_id"]) == str(transition) for r in rows)
 
 
-async def retire_process() -> bool:
-    """Retire only when no admitted or registered deferred writer remains, and no
-    write of this process can still land on the server."""
-    global _registered
-    if get_model_work_gate().active or not await drain_task_sets(timeout_s=0):
+async def _authority_settled(
+    ch: Any, participant: UUID, proof: str, *, end: float, own: bool = False
+) -> bool:
+    """Fresh authority selection and positive absence, under one caller-owned end."""
+    try:
+        async with asyncio.timeout_at(end):
+            recorded = await pg_profile.recorded_authority(ch)
+            if (
+                recorded is None
+                or recorded.get("authority") not in ("clickhouse", "postgres")
+                or recorded["authority"] != settings.storage_authority
+                or type(recorded.get("epoch")) is not int
+                or recorded["epoch"] <= 0
+                or UUID(str(recorded.get("deployment_id"))).int == 0
+            ):
+                return False
+            parts = proof.split("|")
+            if len(parts) == 9:
+                if parts[8] != LIFECYCLE or not has_certificate(proof):
+                    return False
+                legacy = False
+            elif len(parts) in (6, 7, 8):
+                legacy = True
+            else:
+                return False
+            if recorded["authority"] == "clickhouse":
+                return not own or not pg.authority_state_present()
+            if not settings.pg_dsn:
+                return False
+            return await pg.retirement_settled(participant, recorded, legacy=legacy, end=end)
+    except Exception:  # noqa: BLE001 — missing or inconsistent authority evidence refuses retirement.
         return False
-    if not await _server_side_settled():
-        return False
+
+
+async def retire_process(ch: Any, *, end: float) -> bool:
+    """Certify permanent local ownership and both stores' positive settlement."""
+    gate = retirement.get_gate()
+    gate.close()
     _HEARTBEAT.signal_stop()
-    _, _, version = _OWN.stamp(UUID(int=0), "retired")
-    with query_tag(_TAG["log_comment"]):
-        await record_participant(process_identity(), UUID(int=0), "retired", version=version)
-    _registered = False
-    return True
+    async with asyncio.timeout_at(end):
+        if not gate.quiescent or get_model_work_gate().active:
+            return False
+        if not await drain_task_sets(timeout_s=0):
+            return False
+        if not gate.pg_sealed:
+            if not await flush_registered_buffers() or not await drain_task_sets(timeout_s=0):
+                return False
+            if not gate.quiescent or get_model_work_gate().active:
+                return False
+            gate.pg_sealed = True
+        # A CH authority must not silently discard contradictory local PG ownership.
+        if settings.storage_authority == "clickhouse" and pg.authority_state_present():
+            return False
+        if not await pg.close_pool_until(end=end) or not gate.quiescent:
+            return False
+        if not await _authority_settled(
+            ch, process_identity(), participant_proof(), end=end, own=True
+        ):
+            return False
+        if not await _server_side_settled(ch=ch):
+            return False
+        if _HEARTBEAT.running or await running_queries(str(process_identity()), ch=ch) != 0:
+            return False
+        if not gate.quiescent or get_model_work_gate().active:
+            return False
+        _, _, version = _OWN.stamp(UUID(int=0), "retired")
+        proof = retirement.guarded_proof(process_identity(), version=version)
+        with query_tag(_TAG["log_comment"]):
+            await record_retirement(proof, ch=ch)
+        pg.finish_retirement()
+        return True
 
 
 # How long shutdown keeps trying to retire beyond what the drains left unused
@@ -243,20 +323,13 @@ async def retire_at_shutdown(ch: Any, *, budget_s: float = SHUTDOWN_RETIRE_S) ->
     Every attempt, settle and pause ends by `budget_s` from now."""
     from server.core import rmt_carry
 
-    deadline = monotonic() + budget_s
     try:
-        async with asyncio.timeout(budget_s):
-            while True:
-                if await retire_process():
-                    return True
-                with contextlib.suppress(Exception):
-                    await rmt_carry.settle(ch)
-                await asyncio.sleep(min(1.0, max(0.0, deadline - monotonic())))
+        return await _retire_until(ch, monotonic() + budget_s)
     except TimeoutError:
         log.warning(
             "provider participant not retired at shutdown: %d carried write(s) unsettled "
             "or an insert of this process still running; retire it with "
-            "`loom participant retire --participant %s --yes` once it stopped",
+            "`loom participant retire --participant %s` on its trusted host once it stopped",
             rmt_carry.unsettled(),
             process_identity(),
         )
@@ -265,10 +338,23 @@ async def retire_at_shutdown(ch: Any, *, budget_s: float = SHUTDOWN_RETIRE_S) ->
     return False
 
 
+async def _retire_until(ch: Any, deadline: float) -> bool:
+    """Retry the existing settlement checks under the caller's absolute deadline."""
+    from server.core import rmt_carry
+
+    async with asyncio.timeout_at(deadline):
+        while True:
+            if await retire_process(ch, end=deadline):
+                return True
+            with contextlib.suppress(Exception):
+                await rmt_carry.settle(ch)
+            await asyncio.sleep(min(1.0, max(0.0, deadline - monotonic())))
+
+
 def participant_lifespan[T](
     lifespan: Callable[[T], AbstractAsyncContextManager[None]],
 ) -> Callable[[T], AbstractAsyncContextManager[None]]:
-    """A boot that fails after enrolling retires its row instead of leaving one per attempt."""
+    """A failed boot stops known producers but never certifies an incomplete shutdown."""
 
     @asynccontextmanager
     async def wrapped(app: T) -> AsyncIterator[None]:
@@ -279,60 +365,89 @@ def participant_lifespan[T](
                 yield
         except BaseException:
             if not started and _registered:
-                try:
-                    await retire_process()
-                except Exception as e:  # noqa: BLE001 — the row expires by heartbeat instead
-                    log.warning("provider participant not retired after failed boot: %s", e)
+                _HEARTBEAT.signal_stop()
+                gate = retirement.get_gate()
+                gate.close()
+                for producer in tuple(gate.producers):
+                    producer.cancel()
             raise
 
     return wrapped
 
 
-async def retire_participant(participant: UUID, *, ch: Any = None) -> str:
-    """`retired`, `absent` (no live row), or `live`: its heartbeat is fresh or a
-    query tagged with its id still runs."""
-    row = next(
-        (r for r in await participants(ch=ch) if str(r["participant_id"]) == str(participant)),
-        None,
-    )
-    if row is None:
-        return "absent"
-    if str(participant) == str(process_identity()):
-        return "live"
-    if not row.get("expired"):
-        return "live"
+async def retire_reaped_process(host_proof: str, end: float) -> None:
+    """Retire only the one recorded process matching its owner's captured birth."""
+    ch = _default_client()
+    async with asyncio.timeout_at(end):
+        rows = await participants(ch=ch, host_proof=host_proof)
+        if len(rows) != 1 or rows[0].get("host_proof") != host_proof:
+            return
+        await retire_participant(
+            UUID(str(rows[0]["participant_id"])), ch=ch, expected_proof=host_proof, end=end
+        )
+
+
+async def _retire_dead_row(ch: Any, row: dict[str, Any], *, end: float) -> bool:
+    participant = UUID(str(row["participant_id"]))
+    physical = str(row.get("host_proof") or "")
+    if str(participant) == str(process_identity()) or not proves_stopped(physical):
+        return False
+    if not await _authority_settled(ch, participant, physical, end=end):
+        return False
     if await running_queries(participant, ch=ch) != 0:
+        return False
+    proof = retirement.death_proof(participant, physical, after=int(row["version"]))
+    if proof is None:
+        return False
+    await record_retirement(proof, ch=ch)
+    return True
+
+
+async def retire_participant(
+    participant: UUID, *, ch: Any = None, expected_proof: str | None = None, end: float
+) -> str:
+    """Retire only exact physical death with both stores positively settled."""
+    client = ch if ch is not None else _default_client()
+    try:
+        async with asyncio.timeout_at(end):
+            rows = (
+                await participants(ch=client)
+                if expected_proof is None
+                else await participants(ch=client, host_proof=expected_proof)
+            )
+            row = next((r for r in rows if str(r["participant_id"]) == str(participant)), None)
+            if row is None:
+                return "absent"
+            if expected_proof is not None and (
+                len(rows) != 1 or row.get("host_proof") != expected_proof
+            ):
+                return "live"
+            return "retired" if await _retire_dead_row(client, row, end=end) else "live"
+    except TimeoutError:
         return "live"
-    await record_participant(participant, UUID(int=0), "retired", after=int(row["version"]), ch=ch)
-    return "retired"
 
 
 _last_here = -float("inf")
 HERE_S = 10.0
 
 
-async def retire_dead_here(*, now: float | None = None) -> int:
-    """Retire the participants this host proves stopped (`proves_stopped`: a
-    restarted container or a respawned worker) with no query of theirs left
-    running. Every process's job, every `HERE_S`; how many it retired."""
+async def retire_dead_here(*, end: float, now: float | None = None) -> int:
+    """Exact local deaths still need positive settlement of both stores."""
     global _last_here
     t = monotonic() if now is None else now
     if t - _last_here < HERE_S:
         return 0
     _last_here = t
-    me = str(process_identity())
     retired = 0
-    for row in await participants():
-        participant = str(row["participant_id"])
-        if participant == me or not proves_stopped(str(row.get("host_proof") or "")):
-            continue
-        if await running_queries(participant) != 0:
-            continue
-        await record_participant(
-            UUID(participant), UUID(int=0), "retired", after=int(row["version"])
-        )
-        log.info("provider participant %s retired: its process on this host is gone", participant)
-        retired += 1
+    ch = _default_client()
+    async with asyncio.timeout_at(end):
+        for row in await participants(ch=ch):
+            if await _retire_dead_row(ch, row, end=end):
+                log.info(
+                    "provider participant %s retired: its process on this host is gone",
+                    row["participant_id"],
+                )
+                retired += 1
     return retired
 
 
@@ -347,33 +462,33 @@ def stale_participants() -> tuple[dict[str, str], ...] | None:
     return _STALE
 
 
-async def sweep_stopped(*, now: float | None = None) -> None:
-    """Retire the expired participants with no query left whose Kubernetes pod is
-    gone (`pod_gone`), and remember the rest that block a reconfiguration (only
-    their process, Kubernetes or an operator can say they stopped). The workers
-    leader's job."""
+async def sweep_stopped(*, end: float, now: float | None = None) -> None:
+    """Remember stale blockers; exact death and both stores authorize retirement."""
     global _STALE, _last_sweep, _last_prune
     t = monotonic() if now is None else now
     if _STALE is not None and t - _last_sweep < SWEEP_S:
         return
     _last_sweep = t
-    if _last_prune is None or t - _last_prune >= PRUNE_S:
-        _last_prune = t
-        await prune_retired()
-    me = str(process_identity())
-    stale: list[dict[str, str]] = []
-    for row in await participants():
-        participant = str(row["participant_id"])
-        if participant == me:
-            continue
-        entry = {"participant_id": participant, "heartbeat_at": str(row.get("heartbeat_at", ""))}
-        if row.get("expired"):
-            running = await running_queries(participant) != 0
-            if not running and await pod_gone(str(row.get("host_proof") or "")):
-                await record_participant(
-                    UUID(participant), UUID(int=0), "retired", after=int(row["version"])
-                )
-                log.info("provider participant %s retired: Kubernetes deleted its pod", participant)
+    ch = _default_client()
+    async with asyncio.timeout_at(end):
+        if _last_prune is None or t - _last_prune >= PRUNE_S:
+            _last_prune = t
+            await prune_retired(ch=ch)
+        me = str(process_identity())
+        stale: list[dict[str, str]] = []
+        for row in await participants(ch=ch):
+            participant = str(row["participant_id"])
+            if participant == me:
                 continue
-            stale.append({**entry, "reason": "queries_running" if running else "heartbeat_expired"})
-    _STALE = tuple(stale)
+            entry = {
+                "participant_id": participant,
+                "heartbeat_at": str(row.get("heartbeat_at", "")),
+            }
+            if row.get("expired"):
+                if await _retire_dead_row(ch, row, end=end):
+                    continue
+                running = await running_queries(participant, ch=ch) != 0
+                stale.append(
+                    {**entry, "reason": "queries_running" if running else "heartbeat_expired"}
+                )
+        _STALE = tuple(stale)

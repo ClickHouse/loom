@@ -17,7 +17,7 @@ import pytest
 from server.clients import linear
 from server.core.secrets_at_rest import seal
 from server.knowledge.app import source_sync
-from server.knowledge.domain.sources import SYNC_WORKER_ACTOR
+from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, items_from_config
 from server.settings import settings
 from tests.unit.test_knowledge_source_sync import _detail, _source, _World
 from tests.unit.test_knowledge_source_sync import world as world  # the fixture
@@ -122,9 +122,11 @@ def _graphql_error(status: int, code: str, message: str = "x") -> httpx.Response
 
 def _linear_source(**kw: Any) -> Any:
     """The harness's source, of this kind."""
+    config = kw.pop("config", {"project_ids": [PROJECT, OTHER]})
     fields = {
         "kind": "linear",
-        "config": {"project_ids": [PROJECT, OTHER]},
+        "config": config,
+        "items": items_from_config("linear", config),
         "credential_enc": seal("knowledge_sources.credential", KEY),
         **kw,
     }
@@ -377,6 +379,16 @@ def test_the_document_bound_cuts_the_turn(
     assert world.states["decks"]["state_value"] == ""
     second = _sync()
     assert second.changed == 1 and _detail(world)["error"] == ""
+
+
+def test_a_project_source_at_its_bound_writes_no_new_document(
+    world: _World, tracker: _Tracker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "knowledge_source_max_documents", 2)
+    tracker.projects[PROJECT] = [_node(n, f"2026-01-0{n}T00:00:00.000Z") for n in (1, 2, 3)]
+    result = _sync()
+    assert result.changed == 2 and not result.cut
+    assert _detail(world)["error"] == "too_many_documents: 1 new files past 2"
 
 
 def test_a_credential_that_no_longer_opens_calls_nothing(world: _World, tracker: _Tracker) -> None:

@@ -11,22 +11,34 @@ LibreChat sends back to Loom on every tool call (docs/architecture/assistant.md)
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import itertools
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Iterator
+from dataclasses import asdict, dataclass, field
 from typing import Any, NoReturn
 
 import httpx
 
 from server.assistant.api.models import MAX_HISTORY, MAX_MESSAGE_CHARS, AssistantCitation
-from server.assistant.app import citations, service
-from server.auth.authz import check_authorized
+from server.assistant.app import citations, service, support
+from server.assistant.domain.steps import Step, steps_of
+from server.assistant.domain.support import UNCHECKED
+from server.assistant.store import ledger
+from server.auth import fail_closed, sharing
+from server.auth.answer_tokens import ANSWER_JTI_PREFIX, is_answer_token
+from server.auth.authz import CachedGate, check_authorized
 from server.auth.delegation import delegate
-from server.auth.jwt import AuthInfo
+from server.auth.directory import directory
+from server.auth.jwt import AuthInfo, new_jti
+from server.auth.session_protection import protected_for
+from server.core import request_tail, request_work, shielded
+from server.core.ch import set_query_tag
+from server.core.diagnostics import private_work
 from server.core.errors import (
+    AssistantSelfCallError,
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
@@ -39,6 +51,7 @@ from server.core.errors import (
     error_kind,
 )
 from server.identity.domain.read_scope import request_read_narrowed
+from server.knowledge.app import source_access
 from server.llm.customer import ModelCallsDisabled, switched_off
 from server.observability import cost_accumulator
 from server.observability.budget import operation_over_share
@@ -77,6 +90,10 @@ class Ticket:
     slot: int
     # The caller's subject: its answer's tool calls are ledgered under it.
     subject: str
+    # Loom's line about the caller's credential (`asker_line`), the last line of the
+    # question LibreChat is sent.
+    asker: str
+    mirrored: bool = False
 
     def release(self) -> None:
         """Give the answer's slot back; a second call does nothing."""
@@ -87,6 +104,7 @@ class Ticket:
 class Answer:
     """What one answer produced, filled while it streams."""
 
+    mirrored: bool = False
     run_id: str = ""
     text: list[str] = field(default_factory=list)
     prompt_tokens: int = 0
@@ -97,6 +115,11 @@ class Answer:
     error: str = ""
     # Each citation the answer wrote, checked (citations.verify), once it ended.
     citations: list[AssistantCitation] = field(default_factory=list)
+    # How far the answer rests on Loom (support.answer_support, or support.streamed_support
+    # for a streamed one), once it ended.
+    support: str = UNCHECKED
+    # The op and LOOM_* names it wrote that the build neither serves nor documents.
+    unknown_names: list[str] = field(default_factory=list)
 
 
 def admitted_messages(messages: Any) -> list[dict[str, str]]:
@@ -130,8 +153,16 @@ def refuse_org_wide(auth: AuthInfo) -> None:
     """An org-wide (`*`) token cannot ask: an answer reads one org."""
     if auth.org == "*":
         raise AuthInsufficientError(
-            "an org-wide token cannot ask the assistant: an answer reads one org"
+            "an org-wide token cannot ask the assistant: an answer reads one org",
+            reason="org_wide",
         )
+
+
+def refuse_self_call(auth: AuthInfo) -> None:
+    """ASSISTANT_SELF_CALL for an answer's own token (consumer `loom-assistant`) or any
+    token delegated from one: calls go one way, so an answer never asks the assistant."""
+    if is_answer_token(auth):
+        raise AssistantSelfCallError("an assistant answer's token cannot ask the assistant")
 
 
 async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
@@ -140,19 +171,24 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
     these, and the cost checks after them (`open_answer`)."""
     if not settings.assistant_librechat_url:
         raise AssistantUnavailableError(
-            "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)"
+            "no LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL)",
+            reason="not_configured",
         )
     refuse_org_wide(auth)
+    refuse_self_call(auth)
     if request_read_narrowed(auth):
         raise AuthInsufficientError(
-            "a token whose reads are narrower than its namespace cannot ask the assistant"
+            "a token whose reads are narrower than its namespace cannot ask the assistant",
+            reason="narrowed",
         )
     if auth.expires_at is not None and not (auth.session_id and auth.first_party):
-        left = auth.expires_at - int(time.time())
+        left = max(auth.expires_at - int(time.time()), 0)
         if left < int(settings.assistant_answer_ttl_s):
             raise AuthInsufficientError(
-                f"the token expires in {max(left, 0)} s, sooner than an answer may run "
-                f"({int(settings.assistant_answer_ttl_s)} s)"
+                f"the token expires in {left} s, sooner than an answer may run "
+                f"({int(settings.assistant_answer_ttl_s)} s)",
+                reason="token_expires_soon",
+                left_s=left,
             )
     try:
         await check_authorized(auth, Role.VIEWER, org, namespace)
@@ -163,13 +199,71 @@ async def authorize(auth: AuthInfo, org: str, namespace: str) -> None:
         raise AuthInsufficientError(f"the caller cannot read {namespace!r} in {org!r}") from e
 
 
+async def asker_line(auth: AuthInfo, org: str, namespace: str) -> str:
+    """One line, in fixed words, of what the caller asks with: the kind of credential, the
+    role the gate gives it here and the kind of namespace. The agent reads it to answer
+    "how do I…" for this caller; it carries no subject or name, and grants nothing (the
+    answer's token decides every read). Run once an answer is admitted, it never refuses
+    one: a check that cannot run gives the role as unknown."""
+    try:
+        role = await _gate_role(auth, org, namespace)
+        place = _place(org, namespace)
+    except Exception as e:  # noqa: BLE001 — the line never refuses an answer
+        log.warning("the assistant could not tell the caller's role: %s", e)
+        role, place = "unknown", "namespace"
+    return (
+        f"Loom, for how-to answers only: this question comes with {_credential(auth)}, "
+        f"whose role in this {place} is {role}."
+    )
+
+
+def _credential(auth: AuthInfo) -> str:
+    """What decides the caller's role, most specific first: a dashboard or `loom login`
+    session, a token capped by the grant of the person who made it, a token whose claim
+    names its role per namespace, or another token."""
+    if auth.session_id and auth.first_party:
+        return "a sign-in session"
+    if auth.creator:
+        return "a delegated token"
+    if auth.has_ns_roles():
+        return "a scoped token"
+    return "a token"
+
+
+async def _gate_role(auth: AuthInfo, org: str, namespace: str) -> str:
+    """The highest role the gate gives the caller here, from the cached grant maps the
+    listings use: viewer already passed; `unknown` when a check was refused because a
+    read it needed failed, not for the role."""
+    gate = CachedGate(auth, org)
+    for role in (Role.ADMIN, Role.WRITER):
+        if await gate.admits(namespace, role):
+            return role.name.lower()
+        if fail_closed.unreadable():
+            return "unknown"
+    return "viewer"
+
+
+def _place(org: str, namespace: str) -> str:
+    """The kind of namespace, which decides who can change a role in it: by name for a
+    collection, then the directory's cached classification (no read)."""
+    if sharing.is_personal(namespace):
+        return "personal collection"
+    if sharing.is_collection(namespace):
+        return "collection"
+    if directory().is_restricted_cached(org, namespace):
+        return "restricted namespace"
+    return "namespace"
+
+
 async def _afford(org: str, namespace: str) -> tuple[str, str]:
     """The org makes model calls and the assistant's share of the namespace's daily cap
     is not spent; (agent id, API key) when so."""
     answering = service.answering()
     if answering is None:
         raise AssistantUnavailableError(
-            "the assistant is not set up in this web process yet: /v1/health names a failed try"
+            "the assistant is not set up in this web process yet: detail.reason says "
+            "whether it is starting or failing, and /v1/health names a failed try",
+            reason=service.unready_reason(),
         )
     if await switched_off(org):
         raise ModelCallsDisabled(f"model calls are switched off for org {org!r}")
@@ -190,7 +284,7 @@ async def _afford(org: str, namespace: str) -> tuple[str, str]:
     return answering
 
 
-async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
+async def answer_token(auth: AuthInfo, org: str, namespace: str, *, mirrored: bool = False) -> str:
     """The token one answer's tool calls read under: delegated from the caller's,
     `viewer` on the namespace alone, no longer-lived than an answer may run, and ended
     with the caller's token, subject or sign-in session."""
@@ -203,7 +297,17 @@ async def answer_token(auth: AuthInfo, org: str, namespace: str) -> str:
         is_service_account=auth.is_service_account,
         ends_with_session=True,
     )
-    return delegated.mint(auth.subject, consumer=ASSISTANT_CONSUMER)
+    from server.auth.reader_identity import reader_subject
+
+    reader = reader_subject(auth)
+    return delegated.mint(
+        auth.subject,
+        consumer=ASSISTANT_CONSUMER,
+        jti=f"{ANSWER_JTI_PREFIX}{new_jti()}",
+        reads_as_creator=bool(reader and reader == delegated.creator),
+        session_protection=protected_for(auth),
+        answer_mirrors=mirrored and protected_for(auth),
+    )
 
 
 def _take_slot(org: str, namespace: str) -> int:
@@ -221,17 +325,51 @@ def _take_slot(org: str, namespace: str) -> int:
 
 async def open_answer(auth: AuthInfo, org: str, namespace: str) -> Ticket:
     """After `authorize` and the caller's rate-limit buckets: the cost refusals, the
-    answer's slot and its token, run before anything streams, so a refused request is an
-    HTTP error. The stream gives the slot back; so does `Ticket.release` on a refusal
-    after this."""
-    agent_id, api_key = await _afford(org, namespace)
-    slot = _take_slot(org, namespace)
+    answer's slot, its token and its asker line, run before anything streams, so a
+    refused request is an HTTP error and pays for no line. The stream gives the slot
+    back; so does `Ticket.release` on a refusal after this."""
+    mirrored = await _mirror_admission(org, namespace)
+    with private_work() if mirrored else contextlib.nullcontext():
+        agent_id, api_key = await _afford(org, namespace)
+        slot = _take_slot(org, namespace)
+        try:
+            token = await answer_token(auth, org, namespace, mirrored=mirrored)
+            asker = await asker_line(auth, org, namespace)
+        except BaseException:
+            _give_back(org, namespace, slot)
+            raise
+    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject, asker, mirrored)
+
+
+async def _mirror_admission(org: str, namespace: str) -> bool:
+    """Fix the answer's privacy before model work, without reading private evidence."""
+    if not settings.auth_actually_required():
+        return False  # mirror reads require authenticated serving
+    set_query_tag("assistant.mirror.admission")
     try:
-        token = await answer_token(auth, org, namespace)
-    except BaseException:
-        _give_back(org, namespace, slot)
-        raise
-    return Ticket(org, namespace, agent_id, api_key, token, slot, auth.subject)
+        sources = await source_access.has_active_mirrored_sources(org, namespace)
+    except Exception:  # noqa: BLE001 — unknown admission must never become an ordinary answer
+        request_work.mark_mirrored(unread=True)
+        with private_work():
+            pass
+        raise BackendUnavailableError(
+            "the assistant's source access could not be checked"
+        ) from None
+    if not sources:
+        return False
+    if not request_work.mark_mirrored():
+        raise BackendUnavailableError("the assistant's source access could not be checked")
+    # Install diagnostic filters before the marked answer's first further await.
+    with private_work():
+        pass
+    return True
+
+
+def _with_asker(messages: list[dict[str, str]], asker: str) -> list[dict[str, str]]:
+    """`messages` with Loom's asker line as the last line of the question (the last
+    message), after the person's own words; every earlier turn as the caller sent it."""
+    *earlier, question = messages
+    return [*earlier, {**question, "content": f"{question['content']}\n\n{asker}"}]
 
 
 def _give_back(org: str, namespace: str, slot: int) -> None:
@@ -241,8 +379,121 @@ def _give_back(org: str, namespace: str, slot: int) -> None:
         _running.pop((org, namespace), None)
 
 
+# The poll for a streaming answer's steps reads at once, then after 1 s, 2 s and every 4 s
+# to the answer's end (it never resets).
+_TICKS = (1.0, 2.0)
+_TICK_CAP_S = 4.0  # not a setting: progress text, read at most every 4 s per answer
+# Lines and step lists waiting for the caller: the reader waits for LibreChat's next line
+# only once the caller has taken these.
+_QUEUE_MAX = 8  # not a setting: a hand-off buffer between two tasks of one answer
+
+
+async def _tick(seconds: float) -> None:
+    """The pause between two reads of a streaming answer's steps: a seam the tests replace."""
+    await asyncio.sleep(seconds)
+
+
+def _ticks() -> Iterator[float]:
+    yield from _TICKS
+    while True:
+        yield _TICK_CAP_S
+
+
+def _event(obj: str, run_id: str, **fields: Any) -> bytes:
+    """One of Loom's own events, in the usage chunk's shape (`choices` empty, no model, no
+    usage), so a client that guards for no choices skips it."""
+    event = {"object": obj, "id": run_id, "choices": [], **fields}
+    return f"data: {json.dumps(event)}\n\n".encode()
+
+
+def _step_fields(steps: list[Step], cut: bool) -> dict[str, Any]:
+    """`steps` for an event, and `steps_cut` only when the run was cut."""
+    return {"steps": [asdict(s) for s in steps], **({"steps_cut": True} if cut else {})}
+
+
+async def _read_lines(
+    r: httpx.Response, deadline: float, out: asyncio.Queue[tuple[str, Any]]
+) -> None:
+    """LibreChat's lines, forwarded raw to `out`, then ("end", None); an error reading them
+    (past the deadline, a broken connection) goes as ("error", e). The deadline bounds each
+    read from LibreChat, never a hand-off to the caller."""
+    try:
+        lines = r.aiter_lines()
+        while True:
+            async with asyncio.timeout_at(deadline):
+                try:
+                    line = await anext(lines)
+                except StopAsyncIteration:
+                    break
+            await out.put(("line", line))
+    except Exception as e:  # noqa: BLE001 — the relay must learn the reader ended, however it did
+        await out.put(("error", e))
+        return
+    await out.put(("end", None))
+
+
+async def _poll_steps(
+    ticket: Ticket, answer: Answer, started: float, out: asyncio.Queue[tuple[str, Any]]
+) -> None:
+    """The answer's own calls as they land, sent to `out` as the whole step list whenever it
+    changed: read at once, then after each tick, until the answer ends (the generator cancels
+    this). A read that fails stops the steps; the answer goes on."""
+    # A loop of its own (the task runs in a copied context): its reads are named in
+    # system.query_log, not left to the frame-walk fallback.
+    set_query_tag("assistant.steps")
+    shown: tuple[list[Step], bool] = ([], False)
+    ticks = _ticks()
+    try:
+        while True:
+            rows = await ledger.live_rows(
+                ticket.org,
+                answer.run_id,
+                ticket.subject,
+                namespace=ticket.namespace,
+                started=started,
+            )
+            now = steps_of(rows)
+            if now != shown:
+                shown = now
+                await out.put(("steps", now))
+            await _tick(next(ticks))
+    except Exception as e:  # noqa: BLE001 — steps are progress text: the answer never fails
+        log.warning("reading an answer's steps failed, no more are shown: %s", e)
+
+
+async def _relay(
+    ticket: Ticket, answer: Answer, queue: asyncio.Queue[tuple[str, Any]]
+) -> AsyncGenerator[bytes]:
+    """What the reader and the poll put on `queue`, for the caller: LibreChat's chunks (each
+    noted into `answer`) and the step lists, until LibreChat's stream ends. A read error is
+    raised as it came; an error chunk raises ASSISTANT_UPSTREAM_FAILED."""
+    while True:
+        kind, item = await queue.get()
+        if kind == "end":
+            return
+        if kind == "error":
+            raise item
+        if kind == "steps":
+            yield _event("loom.step", answer.run_id, **_step_fields(*item))
+            continue
+        line = str(item)
+        if not line.startswith("data: ") or line == "data: [DONE]":
+            continue
+        _note(answer, line[6:])
+        if answer.error:
+            log.warning(
+                "LibreChat ended an answer with an error: %s", _redacted(ticket, answer.error)
+            )
+            raise AssistantUpstreamError("LibreChat ended the answer with an error")
+        yield (line + "\n\n").encode()
+
+
 async def stream(
-    ticket: Ticket, messages: list[dict[str, str]], answer: Answer
+    ticket: Ticket,
+    messages: list[dict[str, str]],
+    answer: Answer,
+    *,
+    live: bool = False,
 ) -> AsyncIterator[bytes]:
     """The admitted answer as LibreChat's agents API streams it (OpenAI chat-completion
     chunks as server-sent events), with `answer` filled as it goes, for at most
@@ -250,10 +501,71 @@ async def stream(
     an error or running past the limit raises ASSISTANT_UPSTREAM_FAILED, naming none of
     LibreChat's text. Once LibreChat's stream has begun, the answer's spend is charged
     however it ends. An answer that ended keeps its slot through its citation checks and
-    ends with their `loom.citations` event, then `[DONE]`."""
+    ends with their `loom.citations` event, then `[DONE]`; however the caller leaves, the
+    slot is given back.
+
+    `live` (the streaming chat route only): while LibreChat streams, the answer's own
+    calls are read as their ledger rows land and sent as `loom.step` events, each carrying
+    the whole list so far; a `loom.text_done` event says the text is complete before the
+    checks start; the `loom.citations` event then carries the steps of one read of the run
+    after it ends."""
+    answer.mirrored = ticket.mirrored
+    if ticket.mirrored:
+        yield b'data: {"mirrored":true}\n\n'
+    chunks = _stream(ticket, messages, answer, live=live)
+    try:
+        while True:
+            with private_work() if ticket.mirrored else contextlib.nullcontext():
+                try:
+                    chunk = await anext(chunks)
+                except StopAsyncIteration:
+                    break
+            yield chunk
+    finally:
+        with private_work() if ticket.mirrored else contextlib.nullcontext():
+            if ticket.mirrored:
+                await _close_owned(chunks.aclose(), name="assistant.stream.producer")
+            else:
+                await chunks.aclose()
+
+
+@contextlib.asynccontextmanager
+async def _answer_client(
+    ticket: Ticket, http_timeout: httpx.Timeout
+) -> AsyncIterator[httpx.AsyncClient]:
+    client = httpx.AsyncClient(base_url=str(settings.assistant_librechat_url), timeout=http_timeout)
+    try:
+        yield client
+    finally:
+        if ticket.mirrored:
+            await _close_owned(client.aclose(), name="assistant.stream.client")
+        else:
+            await client.aclose()
+
+
+async def _close_upstream(response: httpx.Response, tasks: list[asyncio.Task[None]]) -> None:
+    for task in tasks:
+        task.cancel()
+    try:
+        await response.aclose()
+    finally:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _close_owned(action: Awaitable[None], *, name: str) -> None:
+    async def bounded() -> None:
+        async with asyncio.timeout(request_tail.REQUIRED_STEP_TIMEOUT_S):
+            await action
+
+    await shielded.to_its_end(bounded(), name=name)
+
+
+async def _stream(
+    ticket: Ticket, messages: list[dict[str, str]], answer: Answer, *, live: bool
+) -> AsyncGenerator[bytes]:
     body = {
         "model": ticket.agent_id,
-        "messages": messages,
+        "messages": _with_asker(messages, ticket.asker),
         "stream": True,
         "stream_options": {"include_usage": True},
         # The answer's token: the agent's MCP server sends it back as its bearer.
@@ -263,11 +575,11 @@ async def stream(
     ttl = float(settings.assistant_answer_ttl_s)
     timeout = httpx.Timeout(ttl, connect=_CONNECT_S)
     deadline = asyncio.get_running_loop().time() + ttl
+    # The ledger's clock: the steps read from the answer's start.
+    started = time.time()
     answered = False  # LibreChat's stream ended: the slot is held through the checks
     try:
-        async with httpx.AsyncClient(
-            base_url=str(settings.assistant_librechat_url), timeout=timeout
-        ) as client:
+        async with _answer_client(ticket, timeout) as client:
             async with asyncio.timeout_at(deadline):
                 r = await client.send(
                     client.build_request(
@@ -275,33 +587,27 @@ async def stream(
                     ),
                     stream=True,
                 )
+            tasks: list[asyncio.Task[None]] = []
             try:
                 if r.status_code != 200:
                     # Its status says it all: the body is not read, so no stalled, endless
                     # or broken body holds the answer, and no secret it echoes is logged.
                     _refused(ticket, r.status_code)
                 answer.started = True
-                lines = r.aiter_lines()
-                while True:
-                    # The deadline bounds each read from LibreChat, never a send to the
-                    # caller: nothing is yielded inside it.
-                    async with asyncio.timeout_at(deadline):
-                        try:
-                            line = await anext(lines)
-                        except StopAsyncIteration:
-                            break
-                    if not line.startswith("data: ") or line == "data: [DONE]":
-                        continue
-                    _note(answer, line[6:])
-                    if answer.error:
-                        log.warning(
-                            "LibreChat ended an answer with an error: %s",
-                            _redacted(ticket, answer.error),
-                        )
-                        raise AssistantUpstreamError("LibreChat ended the answer with an error")
-                    yield (line + "\n\n").encode()
+                queue: asyncio.Queue[tuple[str, Any]] = asyncio.Queue(maxsize=_QUEUE_MAX)
+                tasks.append(asyncio.create_task(_read_lines(r, deadline, queue)))
+                if live:
+                    tasks.append(asyncio.create_task(_poll_steps(ticket, answer, started, queue)))
+                async with contextlib.aclosing(_relay(ticket, answer, queue)) as relayed:
+                    async for chunk in relayed:
+                        yield chunk
             finally:
-                await r.aclose()
+                # A marked answer joins response, reader and poll cleanup despite
+                # repeated cancellation, before final usage can be captured.
+                if ticket.mirrored:
+                    await _close_owned(_close_upstream(r, tasks), name="assistant.stream.upstream")
+                else:
+                    await _close_upstream(r, tasks)
         answered = True
     except httpx.HTTPError as e:
         log.warning("reaching LibreChat for an answer failed: %s", e)
@@ -313,32 +619,96 @@ async def stream(
             ticket.release()
         if answer.started:
             _charge(answer)
-    yield await _checked(ticket, answer)
-    yield b"data: [DONE]\n\n"
+    async with contextlib.aclosing(_ended(ticket, answer, live=live)) as ended:
+        async for chunk in ended:
+            yield chunk
 
 
-async def _checked(ticket: Ticket, answer: Answer) -> bytes:
-    """The answer's citations, checked inside its slot (the checks are the answer's
-    too), as the stream's `loom.citations` event; the slot is given back after."""
+async def _ended(ticket: Ticket, answer: Answer, *, live: bool) -> AsyncGenerator[bytes]:
+    """The stream's last events once LibreChat's ended: `loom.text_done` (`live` only), the
+    checks' `loom.citations`, then `[DONE]`."""
     try:
-        answer.citations = await citations.verify(
-            "".join(answer.text),
-            org=ticket.org,
-            namespace=ticket.namespace,
-            token=ticket.token,
-            run_id=answer.run_id,
-            subject=ticket.subject,
-        )
+        if live:
+            yield _event("loom.text_done", answer.run_id)
+        yield await _checked(ticket, answer, live=live)
+        yield b"data: [DONE]\n\n"
+    finally:
+        # The checks give the slot back before their event goes out, so the next question
+        # never finds it held; this covers a caller that leaves at `loom.text_done`.
+        ticket.release()
+
+
+async def _checked(ticket: Ticket, answer: Answer, *, live: bool = False) -> bytes:
+    """The answer's citations, checked inside its slot (the checks are the answer's
+    too), as the stream's `loom.citations` event; the slot is given back after. A streamed
+    answer's run is read once beside the checks, for its support and its steps: the event
+    carries `steps` (empty when the run made no call) whenever that read succeeded, and none
+    when it did not, so the dashboard keeps the steps it showed live only then."""
+    try:
+        text = "".join(answer.text)
+        steps: dict[str, Any] = {}
+        if live:
+            steps = await _check_streamed(ticket, answer, text)
+        else:
+            await _check_whole(ticket, answer, text)
     finally:
         ticket.release()
-    event = {
-        "object": "loom.citations",
-        "id": answer.run_id,
-        # The usage chunk's shape: a client that guards for no choices skips it.
-        "choices": [],
-        "citations": [c.model_dump() for c in answer.citations],
-    }
-    return f"data: {json.dumps(event)}\n\n".encode()
+    return _event(
+        "loom.citations",
+        answer.run_id,
+        citations=[c.model_dump() for c in answer.citations],
+        support=answer.support,
+        unknown_names=answer.unknown_names,
+        **steps,
+    )
+
+
+async def _cite(ticket: Ticket, answer: Answer, text: str) -> list[citations.Checked]:
+    """The answer's citations checked, set on `answer` with the unknown names it writes."""
+    checked = await citations.verify(
+        text,
+        org=ticket.org,
+        namespace=ticket.namespace,
+        token=ticket.token,
+        run_id=answer.run_id,
+        subject=ticket.subject,
+    )
+    answer.citations = [c.citation for c in checked]
+    answer.unknown_names = await citations.unknown_names(text)
+    return checked
+
+
+async def _check_streamed(ticket: Ticket, answer: Answer, text: str) -> dict[str, Any]:
+    """Check a streamed answer: its citations (_cite) and, beside them, one read of its run
+    for its support and steps, the support set on `answer`. Answers the event's step
+    fields, none when the run could not be read. A check that fails ends the read too, and
+    it is awaited, so no task outlives the answer."""
+    calls = asyncio.create_task(support.streamed_calls(ticket.org, answer.run_id, ticket.subject))
+    try:
+        checked = await _cite(ticket, answer, text)
+        rows = await calls
+    except BaseException:
+        calls.cancel()
+        await asyncio.gather(calls, return_exceptions=True)
+        raise
+    answer.support = support.streamed_support(
+        checked, text, rows, unknown_names=answer.unknown_names
+    )
+    return {} if rows is None else _step_fields(*steps_of(rows))
+
+
+async def _check_whole(ticket: Ticket, answer: Answer, text: str) -> None:
+    """Check a whole answer: its citations and support, set on `answer` (its run read only
+    when it cites nothing)."""
+    checked = await _cite(ticket, answer, text)
+    answer.support = await support.answer_support(
+        checked,
+        text,
+        org=ticket.org,
+        run_id=answer.run_id,
+        subject=ticket.subject,
+        unknown_names=answer.unknown_names,
+    )
 
 
 def _redacted(ticket: Ticket, text: str) -> str:
@@ -361,7 +731,7 @@ def _refused(ticket: Ticket, status: int) -> NoReturn:
         if stored is None or stored == (ticket.agent_id, ticket.api_key):
             # Dropped by this answer, or by another that met the same stale key first.
             if stored is not None:
-                service.forget_answering(f"LibreChat refused the stored key or agent ({status})")
+                service.forget_answering()
             raise AssistantUpstreamError(
                 f"LibreChat refused the stored key or agent ({status}); this web process is "
                 "setting the assistant up again: ask again shortly"
@@ -407,7 +777,7 @@ def _note(answer: Answer, data: str) -> None:
 
 def _charge(answer: Answer) -> None:
     """The answer's spend: its usage at the model's price, or the per-answer ceiling
-    when the usage never arrived or the model has no price, so no answer is free."""
+    when the usage never arrived or the model has no price."""
     model = str(service.current_definition().model)
     if answer.usage_seen and cost_accumulator.is_priced(model):
         cost_accumulator.report_llm(model, answer.prompt_tokens, answer.completion_tokens)
@@ -428,7 +798,7 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
     kept = admitted_messages(messages)
     await authorize(auth, org, namespace)
     ticket = await open_answer(auth, org, namespace)
-    answer = Answer()
+    answer = Answer(mirrored=ticket.mirrored)
     try:
         async for _ in stream(ticket, kept, answer):
             pass
@@ -440,11 +810,13 @@ async def ask(auth: AuthInfo, org: str, namespace: str, messages: Any) -> Answer
 
 
 __all__ = [
+    "ANSWER_JTI_PREFIX",
     "ASSISTANT_OP",
     "Answer",
     "Ticket",
     "authorize",
     "refuse_org_wide",
+    "refuse_self_call",
     "admitted_messages",
     "answer_token",
     "ask",

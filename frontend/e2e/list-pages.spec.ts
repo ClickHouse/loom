@@ -322,10 +322,10 @@ test.describe("a touch pointer at 375 px", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
-  // A member's guide summary in Spaces is a 12 px line of text, but its link is a button,
+  // A member's guide summary in Namespaces in your org is a 12 px line of text, but its link is a button,
   // and every button is a 44 px target under a coarse pointer: a tap near either edge opens
   // the guide, not the row's join.
-  test("a Spaces row's guide summary link is a 44 px target", async ({ page }) => {
+  test("a public namespace row's guide summary link is a 44 px target", async ({ page }) => {
     await installApi(page, {
       browseRows: 3,
       mine: [
@@ -337,6 +337,8 @@ test.describe("a touch pointer at 375 px", () => {
     await page.goto("/spaces");
     const link = page.locator("[data-guide-link]");
     await expect(link).toBeVisible();
+    // Clear of the phone's bottom tab bar, which would take the lower tap.
+    await link.evaluate((e) => e.scrollIntoView({ block: "center" }));
     const box = await link.boundingBox();
     if (!box) throw new Error("the guide link has no box");
     expect(Math.round(box.height)).toBeGreaterThanOrEqual(44);
@@ -418,19 +420,16 @@ test.describe("a touch pointer at 375 px", () => {
   });
 });
 
-test("Insights holds the usage audit and the mentor, and the list is a tab away", async ({ page }) => {
+test("an old Insights link shows the list, with the audit's card in the assistant panel", async ({ page }) => {
   await installApi(page, { memoryRows: 12 });
   await page.goto("/memories?section=insights");
-  await expect(page.getByRole("tab", { name: "Insights" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("button", { name: "Usage audit", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Mentor", exact: true })).toBeVisible();
-  await expect(page.locator("main .list-row")).toHaveCount(0);
-  expect(await violations(page)).toEqual([]);
-  await page.getByRole("tab", { name: "Memories" }).click();
   await expect(page).toHaveURL(new RegExp(`/memories\\?namespace=${NAMESPACE}$`));
+  await expect(page.getByRole("tab", { name: "Insights" })).toHaveCount(0);
   await expect(page.locator("main .list-row").first()).toBeVisible();
-  await page.goBack();
-  await expect(page.getByRole("button", { name: "Usage audit", exact: true })).toBeVisible();
+  await expect(page.locator("[data-card='namespace.audit']")).toBeVisible();
+  expect(await violations(page)).toEqual([]);
+  // The header's Insights button opens the starters again.
+  await expect(page.getByRole("button", { name: "Insights" })).toBeVisible();
 });
 
 test("the Profile's sections are a list with a selection toolbar", async ({ page }) => {
@@ -442,13 +441,13 @@ test("the Profile's sections are a list with a selection toolbar", async ({ page
   expect(await violations(page)).toEqual([]);
 });
 
-// The Kbd and Recall Lab bar rules use Click UI's radius tokens, not raw 4 px and 2 px (the
+// The Recall Lab bar rules use Click UI's radius tokens, not raw 4 px and 2 px (the
 // computed values match, so the stylesheet itself is read). It runs here, not in vitest,
 // whose CSS handling empties a `.css` import.
-test("styles.css draws the Kbd and the score bar on radius tokens", () => {
+test("styles.css draws the score bar on radius tokens", () => {
   const css = fs.readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
   const rule = (selector: string) => css.slice(css.indexOf(`${selector} {`)).split("}")[0];
-  for (const selector of [".kbd", ".recall-bar", ".recall-bar > span"]) {
+  for (const selector of [".recall-bar", ".recall-bar > span"]) {
     expect(rule(selector), selector).toMatch(/border-radius: var\(--/);
   }
 });
@@ -457,7 +456,7 @@ test("styles.css draws the Kbd and the score bar on radius tokens", () => {
 // the row (a member's Request upgrade), not the guide.
 test.describe("1400 px, the guide summary line", () => {
   test.use({ viewport: { width: 1400, height: 900 } });
-  test("a click beside a Spaces row's guide link is the row's", async ({ page }) => {
+  test("a click beside a public namespace row's guide link is the row's", async ({ page }) => {
     await installApi(page, {
       browseRows: 3,
       mine: [

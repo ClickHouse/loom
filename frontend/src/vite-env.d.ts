@@ -5,6 +5,8 @@ interface Window {
   __LOOM_PROXY_AUTH?: boolean;
   __LOOM_AUTH_DISABLED?: boolean;
   __LOOM_SELF_SIGNUP?: boolean;
+  /** Whether the assistant panel's chat is set up; missing reads as on. */
+  __LOOM_ASSISTANT?: boolean;
   __LOOM_SSO?: boolean;
   __LOOM_DEFAULT_NAMESPACE?: string;
   /** Whether a page of Loom's own origin asked for this load (`Sec-Fetch-Site`, else the `Referer`). */

@@ -193,6 +193,10 @@ External harnesses with loom plugged in live in their own folders:
 
 ## Agents, operations and cost
 
+- **`sdk_issue_resolution.py`** — paired issue-resolution agent with identical local
+  tools and instructions, an optional Loom Python SDK code binding, and separate
+  external patch grading. [Protocol and artifact schema](../docs/benchmarks/sdk-issue-resolution.md).
+
 - **`op_planning.py`** — did the agent pick the right loom operation (tool,
   required args, literal args, no extras), and does the gold plan leave the
   store in the right state? Tasks in `fixtures/op_planning_tasks.jsonl`, or
@@ -319,6 +323,14 @@ Latency, throughput and storage at scale.
   providers. Writes go under a per-run org (`write-rate-<run>`); the in-process
   run deletes its conversation rows at the end, the server run keeps its rows,
   so point it at a private ClickHouse.
+- **`scale_load.py`** — memory at scale: loads synthetic memories straight into
+  ClickHouse (`loom.memory`, `loom.memory_versions`, `loom.memory_embeddings`) and
+  copies them into the Postgres authority's heads and revisions, in one namespace or
+  Zipf-sized over many orgs, then measures the memory ops through a server under either
+  authority, the parts and the vector leg's read, `OPTIMIZE`, erasure by user and by
+  org, Postgres sizes, vacuum and a one-org dump, and `memory.set` at fixed rates over
+  several servers. Free with the fake providers; point it only at a private ClickHouse
+  and Postgres ([results](../docs/benchmarks/results.md#memory-at-scale)).
 - **`ch_cost_by_op.py`** — ClickHouse cost per loom operation from
   `system.query_log`, joined through the `log_comment` tag every loom query
   carries (`"<op> <request_id>"` / `"worker.<name>"`).

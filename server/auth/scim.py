@@ -16,24 +16,54 @@ Leases are always taken in this order: the user's, then a userName's it takes
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.auth import login, revocation, service_accounts
-from server.core import leases
+from server.auth.scim_people import refuses_subject as refuses_subject
+from server.auth.scim_people import requires_provisioning as requires_provisioning
+from server.core import leases, scim_tokens, shielded
 from server.core.ch import get_client, own_write_reads
 from server.core.datetimes import as_aware_utc
 from server.core.grant_sql import LIVE_GRANT
+from server.core.scim_tokens import tokens as tokens
 from server.core.versions import next_version
 from server.observability import audit
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.auth.jwt import AuthInfo
+
+
+async def refuses_auth(auth: AuthInfo, *, org: str | None = None) -> bool:
+    """Check the effective person and every bearer, creator and parent behind it."""
+    from server.auth.gateway import is_end_user
+    from server.auth.scim_people import MAX_ITEMS
+
+    if (
+        is_end_user(auth)
+        and auth.impersonated_by
+        and auth.read_scope == "own_user"
+        and auth.read_user_id
+    ):
+        return False
+    if len(auth.parent_subjects) >= MAX_ITEMS:
+        return True
+    extra = (*auth.parent_subjects,)
+    if auth.creator:
+        extra += (auth.creator,)
+    if auth.impersonated_by:
+        extra += (auth.impersonated_by,)
+    return await refuses_subject(auth.subject, org=auth.org if org is None else org, also=extra)
+
 
 log = logging.getLogger(__name__)
 
@@ -73,9 +103,34 @@ class Busy(Exception):
     """Another request is changing this user; retry shortly."""
 
 
-def tokens(raw: str) -> list[str]:
-    """The SCIM bearer tokens a `LOOM_SCIM_TOKEN` value lists; none means SCIM is off."""
-    return [t.strip() for t in raw.split(",") if t.strip()]
+def authorized(presented: str) -> bool:
+    """Compare all configured candidates after the cell's token policy admits them."""
+    from server.auth.jwt import AuthUnavailable, TokenError
+    from server.core import cell
+
+    configured = tokens(settings.scim_token)
+    if not configured:
+        return False
+    named = None
+    if settings.cell:
+        try:
+            named = scim_tokens.token_cell(presented)
+        except ValueError:
+            raise TokenError("invalid SCIM token", reason="invalid") from None
+        if named is not None and named != settings.cell:
+            raise TokenError("SCIM token names another cell", reason="invalid")
+        problem = scim_tokens.cell_policy_problem(
+            settings.scim_token, settings.cell, cell.first_identity()
+        )
+        if problem is None:
+            raise AuthUnavailable("the cell's SCIM identity is not read yet; retry")
+        if problem:
+            raise AuthUnavailable("the cell's SCIM token configuration is not valid")
+    matches = [hmac.compare_digest(presented.encode(), token.encode()) for token in configured]
+    matched = any(matches)
+    if named is not None and not matched:
+        raise TokenError("invalid SCIM token", reason="invalid")
+    return matched
 
 
 def normalized(address: str) -> str:
@@ -151,32 +206,45 @@ async def create(
     back, still deactivated unless `active`. `emails` is the provider's list
     the email was keyed from."""
     uid = user_id(email)
-    async with _held(_user_lease(uid)), _held(_name_lease(user_name)):
-        row = await _row(uid)
-        exists = row is not None and not row["deleted"]
-        if row is None:
-            row = {
-                "id": uid,
-                "email": normalized(email),
-                "emails": "[]",
-                "active": 1,
-                "deleted": 0,
-                "subjects": [],
-                "created_at": datetime.now(UTC),
-            }
-        cutoff = None
-        if exists:
-            # A provider retrying a create that failed or timed out finishes it,
-            # waits out what is left of its cutoff, then gets its 409.
-            if bool(row["active"]) == active:
-                row, cutoff = await _set_active(row, active)
-        else:
-            await _refuse_taken(user_name, uid)
-            _note_another_name(uid, user_name, email)
-            changes = {"user_name": user_name.strip(), "deleted": 0, "emails": json.dumps(emails)}
-            row, cutoff = await _set_active(row, active, **changes)
+    cleanup_row: dict[str, Any] | None = None
+    try:
+        async with _held(_user_lease(uid)), _held(_name_lease(user_name)):
+            row = await _row(uid)
+            exists = row is not None and not row["deleted"]
+            if row is None:
+                row = {
+                    "id": uid,
+                    "email": normalized(email),
+                    "emails": "[]",
+                    "active": 1,
+                    "deleted": 0,
+                    "subjects": [],
+                    "created_at": datetime.now(UTC),
+                }
+            cutoff = None
+            previous_subjects = list(row["subjects"])
+            if exists:
+                # A provider retrying a create that failed or timed out finishes it,
+                # waits out what is left of its cutoff, then gets its 409.
+                if bool(row["active"]) == active:
+                    cleanup_row = row if not active else None
+                    row, cutoff = await _set_active(row, active)
+            else:
+                await _refuse_taken(user_name, uid)
+                _note_another_name(uid, user_name, email)
+                changes = {
+                    "user_name": user_name.strip(),
+                    "deleted": 0,
+                    "emails": json.dumps(emails),
+                }
+                cleanup_row = row if not active else None
+                row, cutoff = await _set_active(row, active, **changes)
+    except BaseException:  # A failed or cancelled deactivation still fences its connections.
+        if cleanup_row is not None:
+            await _repair_failed_connections(cleanup_row, erase_owner=False)
+        raise
     if not row["active"]:  # a retry too: it finishes what a failed try left
-        await _revoke_tokens(row)
+        await _revoke_tokens(row, previous_subjects=previous_subjects)
     await _wait_out(cutoff)
     if exists:
         raise Exists
@@ -195,23 +263,36 @@ async def update(
     the provider's `emails` list; None when there is no such user. `patched`
     computes the userName and list from the row read under the user's lease,
     so two PATCHes at once each apply to what the other left."""
-    async with _held(_user_lease(uid)):
-        row = await get(uid)
-        if row is None:
-            return None
-        if patched is not None:
-            user_name, emails = patched(row)
-        changes = {} if emails is None else {"emails": json.dumps(emails)}
-        if not user_name or user_name.strip() == row["user_name"]:
-            new, cutoff = await _set_active(row, active, **changes)
-        else:
-            async with _held(_name_lease(user_name)):
-                await _refuse_taken(user_name, uid)
-                renamed = user_name.strip()  # kept as sent, matched in any case
-                _note_another_name(uid, renamed, row["email"])
-                new, cutoff = await _set_active(row, active, user_name=renamed, **changes)
+    cleanup_row: dict[str, Any] | None = None
+    try:
+        async with _held(_user_lease(uid)):
+            row = await get(uid)
+            if row is None:
+                return None
+            previous_subjects = list(row["subjects"])
+            if patched is not None:
+                user_name, emails = patched(row)
+            changes = {} if emails is None else {"emails": json.dumps(emails)}
+            if not user_name or user_name.strip() == row["user_name"]:
+                cleanup_row = (
+                    row if active is False or (active is None and not row["active"]) else None
+                )
+                new, cutoff = await _set_active(row, active, **changes)
+            else:
+                async with _held(_name_lease(user_name)):
+                    await _refuse_taken(user_name, uid)
+                    renamed = user_name.strip()  # kept as sent, matched in any case
+                    _note_another_name(uid, renamed, row["email"])
+                    cleanup_row = (
+                        row if active is False or (active is None and not row["active"]) else None
+                    )
+                    new, cutoff = await _set_active(row, active, user_name=renamed, **changes)
+    except BaseException:  # A failed or cancelled deactivation still fences its connections.
+        if cleanup_row is not None:
+            await _repair_failed_connections(cleanup_row, erase_owner=False)
+        raise
     if not new["active"]:  # a retry too: it finishes what a failed try left
-        await _revoke_tokens(new)
+        await _revoke_tokens(new, previous_subjects=previous_subjects)
     await _wait_out(cutoff)
     return new
 
@@ -239,14 +320,22 @@ def is_primary(value: Any) -> bool:
 async def delete(uid: str) -> bool:
     """A SCIM DELETE: the user is deactivated and answers 404 from now on.
     A retry of one whose token step failed finishes it, and still answers 404."""
-    async with _held(_user_lease(uid)):
-        row = await _row(uid)
-        if row is None:
-            return False
-        deleted = bool(row["deleted"])
-        # A retry finishes a failed try. The addresses beside the email keep no one out.
-        row, _ = await _set_active(row, False, deleted=1, emails="[]")
-    await _revoke_tokens(row)
+    cleanup_row: dict[str, Any] | None = None
+    try:
+        async with _held(_user_lease(uid)):
+            row = await _row(uid)
+            if row is None:
+                return False
+            previous_subjects = list(row["subjects"])
+            deleted = bool(row["deleted"])
+            # A retry finishes a failed try. The addresses beside the email keep no one out.
+            cleanup_row = row
+            row, _ = await _set_active(row, False, deleted=1, emails="[]")
+    except BaseException:  # A failed or cancelled deactivation still fences its connections.
+        if cleanup_row is not None:
+            await _repair_failed_connections(cleanup_row, erase_owner=True)
+        raise
+    await _revoke_tokens(row, previous_subjects=previous_subjects)
     return not deleted
 
 
@@ -304,11 +393,36 @@ async def _row(uid: str) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-async def _revoke_tokens(row: dict[str, Any]) -> None:
+async def _revoke_tokens(row: dict[str, Any], *, previous_subjects: Sequence[str] = ()) -> None:
     # Past the leases, as it may claim many token names. It lists revoked the
     # tokens the revocations kill and frees their names; one made after a
     # reactivation's or an operator's cutoff stays live.
+    from server.auth.account_lifecycle import stop_connections
+
+    await stop_connections(
+        sorted(set(row["subjects"]) | set(previous_subjects)),
+        erase_owner=bool(row["deleted"]),
+        respect_cutoff=True,
+    )
     await service_accounts.revoke_created_by(row["subjects"], revoked_by=_BY)
+
+
+async def _repair_failed_connections(row: dict[str, Any], *, erase_owner: bool) -> None:
+    """Outside SCIM leases, finish local cleanup without provider work on an error tail."""
+    from server.auth.account_lifecycle import stop_connections
+
+    async def repair() -> None:
+        # Directory discovery and every local cleanup write share the same finite bound.
+        async with asyncio.timeout(settings.knowledge_connected_stop_timeout_s):
+            subjects = sorted(set(row["subjects"]) | set(await _subjects(row["email"])))
+            await stop_connections(
+                subjects, revoke=False, erase_owner=erase_owner, respect_cutoff=True
+            )
+
+    try:
+        await shielded.to_its_end(repair(), name="SCIM connection cleanup")
+    except Exception:  # noqa: BLE001 — preserve the failed request; no cleanup success is reported
+        pass
 
 
 async def _wait_out(cutoff: datetime | None) -> None:
@@ -403,6 +517,7 @@ async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
     audit nothing: so the row is read back, and what landed is audited."""
     from server.auth.authz import forget_ended
 
+    forget_ended("scim", row["email"])
     try:
         if new != row or "version" not in row:  # a change, or a user not yet written
             await _write(new)

@@ -11,7 +11,6 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -250,8 +249,43 @@ def test_a_set_gap_never_clears_a_change_to_one_of_its_peers() -> None:
         embedding=[1.0, 0.0],
         reach=0.3,
         peer_ids={str(far["memory_id"])},
+        user_id="-",
     )
     assert not check([far])
+
+
+def test_a_set_gap_for_a_named_user_ignores_another_users_unpinned_row() -> None:
+    """Another user's row is no peer of the write, so committing it inside the reach
+    leaves the verdict standing; the same row is a peer of a write with no user."""
+    near = _row("near", user_id="alice")
+    pg_admission.remember(identity_key(near), 1, [1.0, 0.1])
+
+    def check(user: str) -> bool:
+        gap = pg_admission.set_gap_check(
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            reach=0.3,
+            peer_ids=set(),
+            user_id=user,
+        )
+        return gap([near])
+
+    assert check("bob")
+    assert not check("-")
+
+
+def test_a_named_users_peers_keep_only_its_rows_and_every_pinned_one() -> None:
+    from server.memory.app.conflicts import could_be_peer, trim_peers
+
+    alices = {**_row("a1", user_id="alice"), "dist": 0.1}
+    alices_pin = {**_row("a2", user_id="alice", pinned=1), "dist": 0.2}
+    bobs = {**_row("b1", user_id="bob"), "dist": 0.3}
+    assert not could_be_peer(alices, "bob") and could_be_peer(alices, "-")
+    assert could_be_peer(alices_pin, "bob") and could_be_peer(bobs, "bob")
+    kept = trim_peers([alices, alices_pin, bobs], "bob")
+    assert [r["memory_key"] for r in kept] == ["b1", "a2"]
+    assert len(trim_peers([alices, alices_pin, bobs], "-")) == 3  # a write with no user: every row
 
 
 def test_every_postgres_table_is_classified_for_erasure() -> None:
@@ -431,6 +465,7 @@ async def test_a_connection_failure_counts_only_while_clickhouse_answers(
         (DatabaseError("Code: 241. Memory limit (total) exceeded: would use 30 GiB"), True),
         (DatabaseError("Code: 241. DB::Exception: (total) memory limit exceeded: would use"), True),
         (DatabaseError("Code: 241. Memory limit (for user) exceeded: would use 12 GiB"), True),
+        (DatabaseError("Code: 241. DB::Exception: User memory limit exceeded: would use"), True),
         (DatabaseError("Code: 241. Memory limit (for query) exceeded: would use 9 GiB"), False),
     ],
 )
@@ -674,9 +709,11 @@ async def test_a_cli_connection_to_another_deployments_postgres_is_refused(
     class _Pool:
         terminated = False
 
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
         def terminate(self) -> None:
             _Pool.terminated = True
@@ -873,7 +910,11 @@ async def test_boot_refuses_by_the_configured_durability(monkeypatch: pytest.Mon
     async def _fetchrow(sql: str, *args: object) -> dict[str, object]:
         return {"names": "", "sync": 0, "hidden": 0}
 
+    async def _message_allowed() -> None:
+        return None
+
     monkeypatch.setattr(pg_profile.pg, "fetchrow", _fetchrow)
+    monkeypatch.setattr(pg_profile.pg, "check_durable_message", _message_allowed)
     monkeypatch.setattr(settings, "pg_durability", "synchronous")
     with pytest.raises(pg_profile.DurabilityRefused):
         await pg_profile.check_durability()
@@ -1213,23 +1254,24 @@ def test_a_nul_character_is_refused_before_the_commit() -> None:
 async def test_a_write_that_starts_over_embeds_each_text_once() -> None:
     from server.memory.app.reused_vectors import ReusedVectors
 
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
     class _Counting:
         model_name, dim = "m", 1
 
         async def embed(self, text: str) -> list[float]:
-            calls.append(text)
-            return [float(len(text))]
+            calls.append(("query", text))
+            return [float(len(text) + 10)]
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            return [await self.embed(t) for t in texts]
+            calls.extend(("document", text) for text in texts)
+            return [[float(len(text))] for text in texts]
 
     vectors = ReusedVectors(_Counting())
     assert await vectors.embed_many(["a", "bb", "a"]) == [[1.0], [2.0], [1.0]]
-    assert await vectors.embed("bb") == [2.0]
+    assert await vectors.embed("bb") == [12.0]
     assert await vectors.embed_many(["ccc", "a"]) == [[3.0], [1.0]]
-    assert calls == ["a", "bb", "ccc"]
+    assert calls == [("document", "a"), ("document", "bb"), ("query", "bb"), ("document", "ccc")]
 
 
 class _Unavailable(Exception):
@@ -1265,7 +1307,7 @@ def _fake_connection(monkeypatch: pytest.MonkeyPatch, tx: _FakeTx) -> None:
             return False
 
         async def execute(self, sql: str) -> None:
-            assert sql == "SET LOCAL statement_timeout = 0"  # the commit's own bound
+            raise AssertionError(f"the transaction ran {sql!r} of its own")
 
     @asynccontextmanager
     async def _connection():
@@ -1398,7 +1440,7 @@ def test_only_an_op_whose_answer_replays_marks_its_key_committed() -> None:
     assert idempotency.bound_key() is None
 
 
-def test_the_authoritys_erasure_step_runs_first_and_only_under_it(
+def test_the_authoritys_erasure_step_leads_the_erasing_steps_and_runs_only_under_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from server.erasure.app.saga_steps import NAMESPACE_STEPS, USER_STEPS, authority_steps
@@ -1406,8 +1448,15 @@ def test_the_authoritys_erasure_step_runs_first_and_only_under_it(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "storage_authority", "postgres")
-    for steps in (USER_STEPS, NAMESPACE_STEPS):
-        assert authority_steps(steps)[0][0] == "pg_memory.delete"
+    assert authority_steps(USER_STEPS)[0][0] == "pg_memory.delete"
+    # A namespace's sources stop first, so no sync turn writes into what the steps erase.
+    names = [name for name, _ in authority_steps(NAMESPACE_STEPS)]
+    assert names[:4] == [
+        "knowledge_sources.retire",
+        "knowledge_source_push.delete",
+        "pg_memory.delete",
+        "pg_knowledge.delete",
+    ]
     assert set(PG_CENSUS) <= set(census_tables("user_id"))
     monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     for steps in (USER_STEPS, NAMESPACE_STEPS):
@@ -1608,6 +1657,7 @@ def test_a_parked_page_keeps_what_its_hits_are_checked_by(monkeypatch: pytest.Mo
     hit._row_chunk, hit._chunk_typed = ("a", "u", 2, "sha"), True
     back = search_pages.unparked(json.loads(json.dumps(search_pages._parked(hit))))
     assert back is not None
+    assert back.model_dump()["agent"] == "a"
     assert (back._row_identity, back._row_chunk, back._chunk_typed) == (
         ("a", "u", "s"),
         ("a", "u", 2, "sha"),
@@ -1634,7 +1684,9 @@ def _parked_page(hits: list[Any], **kw: Any) -> dict[str, Any]:
 
 
 def _page_input(top_k: int) -> Any:
-    return SimpleNamespace(org="o", namespace="n", top_k=top_k)
+    from server.memory.api.models_search import MemorySearchInput
+
+    return MemorySearchInput(org="o", namespace="n", query="q", top_k=top_k)
 
 
 @pytest.mark.asyncio
@@ -1714,7 +1766,10 @@ def test_a_page_parked_under_clickhouse_carries_no_postgres_fields() -> None:
 
     hit = _hit("k1")
     hit._row_version, hit._row_chunk = 42, ("a", "u", 3, "sha")
-    assert not {"row_identity", "row_chunk", "row_version"} & set(_parked(hit))
+    parked = _parked(hit)
+    assert not {"row_chunk", "row_version"} & set(parked)
+    # The row's identity is kept: a later page tells a shared definition by it.
+    assert "row_identity" in parked
 
 
 @pytest.mark.asyncio
@@ -2009,7 +2064,7 @@ async def test_a_refused_audit_row_fails_the_attempt_after_the_search_document_i
     monkeypatch.setattr("server.memory.store.insert_embedding_rows", _insert)
     monkeypatch.setattr("server.memory.store.index_late_rows", _no_late_rows)
 
-    async def _all_heads(claims: Any) -> Any:
+    async def _all_heads(claims: Any, deadline: float) -> Any:
         return claims
 
     monkeypatch.setattr(pg_delivery, "_still_heads", _all_heads)
@@ -2779,27 +2834,18 @@ async def test_a_cancel_while_the_connection_is_released_is_marked_only_after_th
     assert pg.may_have_committed(raised.value) is landed
 
 
-@pytest.mark.parametrize("at", ["start", "statement_timeout"])
 @pytest.mark.asyncio
-async def test_a_cancel_before_the_commit_is_not_marked(
-    monkeypatch: pytest.MonkeyPatch, at: str
-) -> None:
+async def test_a_cancel_before_the_commit_is_not_marked(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.core import pg
 
     class _Cancelled(_PgConn):
-        async def execute(self, *a: object) -> str:
-            if at == "statement_timeout":
-                raise asyncio.CancelledError()
-            return "SET"
-
         def transaction(self) -> Any:
             tx = super().transaction()
-            if at == "start":
 
-                async def _start() -> None:
-                    raise asyncio.CancelledError()
+            async def _start() -> None:
+                raise asyncio.CancelledError()
 
-                tx.start = _start
+            tx.start = _start
             return tx
 
     _pg_pool(monkeypatch, _Cancelled())
@@ -2877,6 +2923,7 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     than its parent's time left."""
     from contextlib import ExitStack
 
+    from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search import handler, pg_validation
 
     seen: list[tuple[str, list[str], float | None]] = []
@@ -2888,8 +2935,9 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     monkeypatch.setattr(pg_validation, "admit", _admit)
     run = SimpleNamespace(namespaces=["n"], sequential_scope=ExitStack())
     budget = SimpleNamespace(wall_left_s=lambda: 0.4)
-    search = SimpleNamespace(org="o", _pass_depth=depth)
-    await handler._admit(search, run, budget)
+    search = MemorySearchInput(org="o", namespace="n", query="q", memory_type="semantic")
+    search._pass_depth = depth
+    await handler._admit(search, run, budget, None, "fake-ngram-1024")
     assert seen == [("o", ["n"], cap)]
 
 
@@ -3504,6 +3552,7 @@ async def test_a_no_migration_boot_only_checks_the_record(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_refused_by_an_erasure_answers_not_found(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3556,6 +3605,7 @@ async def test_a_restore_refused_by_an_erasure_answers_not_found(
     ],
 )
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     monkeypatch: pytest.MonkeyPatch, error: Exception, checked: bool
 ) -> None:
@@ -3601,6 +3651,7 @@ async def test_a_restore_checks_the_key_only_when_its_outcome_is_unknown(
     ("memory_type", "sensitivity", "owed"),
     [("semantic", "", True), ("episodic", "", False), ("semantic", "high", False)],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_committed_restore_whose_document_failed_owes_it_only_when_embedded(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3736,6 +3787,7 @@ async def test_on_clickhouse_the_status_before_a_retirement_is_read_by_the_rows_
     assert (params["id"], params["version"]) == ("mid", 9)
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_logged(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -3775,6 +3827,7 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
     assert "search document failed for k" in caplog.text
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mirrors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3816,6 +3869,7 @@ async def test_a_clickhouse_restore_that_lost_its_answer_still_announces_and_mir
         (False, None, [False]),  # unknown: fenced on the context's own settled read
     ],
 )
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_postgres_restore_of_a_high_key_is_fenced_once_its_commit_may_have_landed(
     monkeypatch: pytest.MonkeyPatch, committed: bool, reread: bool | None, fenced: list[bool]
 ) -> None:
@@ -3883,8 +3937,20 @@ async def test_a_boot_without_migrations_lists_the_postgres_files_it_skips(
     monkeypatch.setattr(pg, "enabled", lambda: True)
     monkeypatch.setattr(pg_profile, "start", _start)
     monkeypatch.setattr(pg_profile, "require_authority", _nothing)
+
+    async def _deployment_id() -> str:
+        return "dep-1"
+
+    # The boot reads the deployment id both stores record, for the cell fingerprint.
+    monkeypatch.setattr(pg_profile, "deployment_id", _deployment_id)
     monkeypatch.setattr(boot, "SKIPPED_PENDING_MIGRATIONS", ("900_ch.sql",))
     monkeypatch.setattr(boot, "SKIPPED_PG_MIGRATIONS", ())
+    from server.core import cell
+
+    # The boot records the deployment id and the code orgs' reader too: restored after,
+    # as the lists above are.
+    monkeypatch.setattr(cell, "_deployment_id", cell.deployment_id())
+    monkeypatch.setattr(cell, "_code_orgs", None)
     for _ in range(2):
         await boot.require_storage_authority(object())
     assert boot.skipped_migrations() == ("900_ch.sql", "pg:002_more.sql")
@@ -4106,6 +4172,7 @@ async def test_a_gap_is_measured_by_the_embedders_own_model(
     assert asked == ["model-now"]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_leaves_out_the_memories_whose_erasure_evidence_is_kept(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4145,18 +4212,26 @@ def test_a_non_finite_or_out_of_range_float32_is_refused(confidence: float) -> N
         pg_memory.encode_row({"confidence": confidence})
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A large restore commits batch by batch, each within a commit's lease. Once one's
     publication is pending, the rest are only committed, without waiting on ClickHouse
     again, and the restore completes: the delivery worker publishes them."""
-    from server.memory.app import snapshot_rows
+    from server.memory.app import blacklist_guard, snapshot_rows
     from server.settings import settings
 
     calls: list[tuple[int, bool]] = []
+    checked_policy = {("", "*"): 1, ("o", "*"): 4}
 
-    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True) -> int:
+    async def checked(rows: Any) -> dict[tuple[str, str], int]:
+        return checked_policy
+
+    monkeypatch.setattr(blacklist_guard, "enforce_rows", checked)
+
+    async def _insert(rows: Any, *, ch: Any, publish_now: bool = True, policy: Any) -> int:
+        assert policy == checked_policy, "every batch keeps the policy checked for the payload"
         calls.append((len(rows), publish_now))
         if len(calls) == 2:
             raise pg_lease.PublicationPending()
@@ -4169,6 +4244,7 @@ async def test_a_restore_commits_in_batches_and_leaves_a_pending_rest_to_the_wor
     assert calls == [(2, True), (2, True), (2, False), (1, False)]
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_an_erasure_between_batches_refuses_the_batch_it_meets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4208,7 +4284,10 @@ async def test_a_decision_record_is_judged_by_the_writers_the_authority_holds(
         async def execute(self, sql: str, params: Any = None, settings: Any = None) -> None:
             self.sent.append((sql, params, settings))
 
-    async def _writers(org: str, ns: str, keys: list[str]) -> list[tuple[str, str, str, str]]:
+    async def _writers(
+        org: str, ns: str, keys: list[str], *, durable: bool = False
+    ) -> list[tuple[str, str, str, str]]:
+        assert durable  # a retirement acts on a writer's absence
         return [("k", "a", "-", "-")]
 
     from server.core import rmt_carry
@@ -4980,7 +5059,8 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
         events.append("drawn")
         return 42
 
-    async def _live(org: str, ns: str, keys: list[str]) -> list[Any]:
+    async def _live(org: str, ns: str, keys: list[str], *, durable: bool = False) -> list[Any]:
+        assert durable
         events.append("live")
         return [(keys[0], "a", "-", "-")]
 
@@ -5001,6 +5081,7 @@ async def test_a_deleted_decisions_record_retires_where_it_is_published(
     monkeypatch.setattr(pg_memory, "live_decision_writers", _live)
     monkeypatch.setattr(pg_memory, "complete", _complete)
     monkeypatch.setattr(pg_lease, "check_lease", lambda deadline: None)
+    monkeypatch.setattr(pg_lease, "check_lease_after_durable_read", lambda deadline: None)
     monkeypatch.setattr(pg_publish, "tombstone_decision_records", _records)
     owing = [owe("a", "k1", 1), owe("a", "k2", 2), owe("b", "k3", 3)]
     assert await pg_publish.retire_decision_records(owing, deadline=0.0, ch=object()) is None
@@ -5497,8 +5578,13 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         "unhashed": {**newer, "memory_key": "unhashed", "content_sha256": ""},
     }
 
-    async def _heads(keys: list[Any], *, include_tombstoned: bool) -> dict[Any, Any]:
+    reads: list[bool] = []
+
+    async def _heads(
+        keys: list[Any], *, include_tombstoned: bool, durable: bool = False
+    ) -> dict[Any, Any]:
         assert include_tombstoned
+        reads.append(durable)
         return {identity_key(h): h for h in heads.values()}
 
     monkeypatch.setattr(pg_memory, "heads_by_keys", _heads)
@@ -5507,8 +5593,9 @@ async def test_a_search_document_is_built_only_while_the_head_serves_it(
         for i, k in enumerate([*heads, "gone"])
     ]
     claims[-2] = replace(claims[-2], row={**claims[-2].row, "content_sha256": ""})
-    served = await pg_delivery._still_heads(claims)
+    served = await pg_delivery._still_heads(claims, time.monotonic() + 60)
     assert [(c.row["memory_key"], c.row["version"]) for c in served] == [("same", 1), ("copy", 2)]
+    assert reads == [False, True]  # the copy is another commit: read again durably
     assert served[1].row["status"] == "superseded"  # the head's own row, not the revision's
 
 
@@ -5924,9 +6011,11 @@ async def test_verify_deployment_checks_a_pool_already_open(
             return {"epoch": 1, "deployment_id": "other"}
 
     class _Pool:
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
     async def _open() -> _Pool:
         return _Pool()
@@ -6586,6 +6675,7 @@ async def test_a_clickhouse_restore_never_settles_that_it_did_not_land(
     assert await restore._restore_landed(None, _row("k", version=7)) is landed
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6616,6 +6706,7 @@ async def test_a_clickhouse_restore_whose_reread_misses_answers_outcome_unknown(
     assert raised.value.extra["outcome_unknown"] is True
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_a_restore_cancelled_while_it_reads_a_lost_commit_back_is_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6948,3 +7039,195 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     row = pg_memory.MEMORY_ROW | pg_memory.AUDIT_ROW
     doc = row | pg_memory.SEARCH_DOC
     assert seen == [[doc if both_embedded else row, doc]]
+
+
+@pytest.mark.asyncio
+async def test_a_connection_lost_in_a_transaction_is_503_not_the_drivers_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """asyncpg detaches a pooled connection's proxy when its connection is lost: the
+    terminate and is_closed calls on it raise InterfaceError, which must not replace the
+    outage the block raised."""
+    import asyncpg
+
+    from server.core import pg
+
+    class _Detached(_PgConn):
+        def terminate(self) -> None:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+        def is_closed(self) -> bool:
+            raise asyncpg.InterfaceError("connection has been released back to the pool")
+
+    _pg_pool(monkeypatch, _Detached())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            raise asyncpg.exceptions.ConnectionDoesNotExistError("connection was closed")
+    assert raised.value.status_code == 503
+    assert isinstance(raised.value.__cause__, asyncpg.exceptions.ConnectionDoesNotExistError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("closed", [True, False])
+@pytest.mark.parametrize("block", ["transaction", "rolled_back"])
+async def test_the_drivers_own_error_on_a_lost_connection_is_503(
+    monkeypatch: pytest.MonkeyPatch, closed: bool, block: str
+) -> None:
+    """The server ended the connection between two statements: which error the next one
+    raises depends on when the driver noticed. Its protocol caught mid-switch
+    (InternalClientError) is an outage either way; any error once the connection reads
+    closed is too."""
+    import asyncpg
+
+    from server.core import pg
+
+    class _Ended(_PgConn):
+        def is_closed(self) -> bool:
+            return closed
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with getattr(pg, block)():
+            if closed:
+                raise asyncpg.InterfaceError("connection is closed")
+            raise asyncpg.exceptions.InternalClientError("cannot switch to state 15")
+    assert raised.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_a_commit_on_a_lost_connection_is_503_with_its_outcome_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncpg
+
+    from server.core import pg
+
+    class _Tx:
+        async def start(self) -> None:
+            return None
+
+        async def commit(self) -> None:
+            raise asyncpg.InterfaceError("connection is closed")
+
+        async def rollback(self) -> None:
+            return None
+
+    class _Ended(_PgConn):
+        def transaction(self) -> _Tx:
+            return _Tx()
+
+        def is_closed(self) -> bool:
+            return True
+
+    _pg_pool(monkeypatch, _Ended())
+    with pytest.raises(pg.PostgresUnavailableError) as raised:
+        async with pg.transaction():
+            pass
+    assert raised.value.status_code == 503
+    assert pg.may_have_committed(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_a_durable_read_on_a_demoted_primary_is_the_read_only_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its logical message cannot take an xid in recovery (XX000), which counts as the
+    demoted primary's 25006: the caller gets a 503 and the pool is expired."""
+    from server.core import pg
+
+    class _InRecovery(Exception):
+        sqlstate = "XX000"
+
+    class _Demoted(_PgConn):
+        async def execute(self, *a: object) -> str:
+            raise _InRecovery("cannot assign TransactionIds during recovery")
+
+    expired: list[bool] = []
+    conn = _Demoted()
+
+    class _Pool:
+        async def acquire(self, **_: float) -> _PgConn:
+            return conn
+
+        async def release(self, c: _PgConn, **_: float) -> None:
+            return None
+
+        async def expire_connections(self) -> None:
+            expired.append(True)
+
+    async def _pool() -> _Pool:
+        return _Pool()
+
+    monkeypatch.setattr(pg, "_pool_for_loop", _pool)
+    with pytest.raises(pg.PostgresUnavailableError):
+        async with pg.durable_transaction() as c:
+            await c.fetch("SELECT 1")
+    assert expired == [True] and conn.terminated
+    assert not pg.is_outage(_InRecovery("some other internal error"))
+
+
+async def test_a_postgres_point_write_reads_the_peers_of_its_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+
+    from server.memory.api.models_crud import MemorySetInput
+    from server.memory.app import conflicts, set_commit
+
+    reads: list[dict[str, object]] = []
+
+    async def distance(*a: object, **kw: object) -> float:
+        return 0.3
+
+    async def peer_rows(**kw: object) -> list[object]:
+        reads.append(kw)
+        return []
+
+    monkeypatch.setattr(conflicts, "peer_distance", distance)
+    monkeypatch.setattr(conflicts, "peer_rows", peer_rows)
+    input = MemorySetInput(
+        org="o", namespace="n", agent="a", user_id="bob", memory_key="seat", value="aisle"
+    )
+    w = set_commit._SetWrite(
+        input=input, version=1, retyped_from="", existing=None, expires_at=None
+    )
+    w.embedding = [0.1, 0.2]
+    await set_commit._pg_peer_rows(w, SimpleNamespace(policy="auto_reinforce"))
+    assert [r["user_id"] for r in reads] == ["bob"]
+
+
+async def test_absorb_rejoins_a_gap_row_only_for_a_write_it_could_be_a_peer_of(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A commit of Alice's unpinned row inside the reach joins the peers of a write with no
+    user, and is no peer of Bob's write, as on the verdict's first round."""
+    alices = _row("hers", user_id="alice", value="Prefers aisle seats", run_id="-", valid_at=None)
+    pg_admission.remember(identity_key(alices), 1, [1.0, 0.0])
+
+    async def gap(*_a: object) -> tuple[int, list[dict[str, object]]]:
+        return 7, [alices]
+
+    async def measure(*_a: object) -> list[list[float] | None]:
+        return [[1.0, 0.0]]
+
+    monkeypatch.setattr(pg_admission, "_gap", gap)
+    monkeypatch.setattr(pg_admission, "_measure", measure)
+
+    async def peers(user: str) -> list[str]:
+        out = await pg_admission.absorb(
+            captured={},
+            moved={},
+            org="o",
+            namespace="n",
+            memory_type="semantic",
+            memory_key="mine",
+            embedding=[1.0, 0.0],
+            max_distance=0.3,
+            peers=[],
+            user_id=user,
+        )
+        assert out is not None
+        return [str(r["memory_key"]) for r in out[1]]
+
+    assert await peers("bob") == []
+    assert await peers("-") == ["hers"]

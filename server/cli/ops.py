@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from server.cli._apply import add_apply_flags
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, dry_run_orgs, reads, run_connected, writes
 
 
 def _cmd_recalibrate(args: argparse.Namespace) -> int:
@@ -43,7 +43,7 @@ def _cmd_recalibrate(args: argparse.Namespace) -> int:
                 print(f"    - {w}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, org_free=writes("the embedder's calibration, deployment-wide"))
 
 
 # ----------------------------------------------------------------------
@@ -70,12 +70,14 @@ async def rechunk_namespace(
     from server.knowledge.store import documents as documents_repo
 
     docs: list[Mapping[str, Any]] = []
-    cursor: tuple[Any, str] | None = None
+    cursor: tuple[Any, str, str] | None = None
     while True:
         page = await documents_repo.list_with_chunk_counts(
             org,
-            namespace,
+            [namespace],
             include_superseded=False,
+            # One source reads its own prefix of the namespace, not the whole of it.
+            uri_prefixes=[source_uri] if source_uri else None,
             cursor=cursor,
             limit=page_size,
         )
@@ -83,7 +85,7 @@ async def rechunk_namespace(
             break
         docs.extend(page)
         last = page[-1]
-        cursor = (last["ingested_at"], last["source_uri"])
+        cursor = (last["ingested_at"], namespace, last["source_uri"])
         if len(page) < page_size:
             break
     if source_uri:
@@ -162,7 +164,7 @@ def _cmd_rechunk(args: argparse.Namespace) -> int:
             print(f"  failed: {f}")
         return 1 if out["failed"] else 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=dry_run_orgs(args))
 
 
 # ----------------------------------------------------------------------
@@ -187,7 +189,7 @@ def _cmd_lexical_stats_rebuild(args: argparse.Namespace) -> int:
             print(f"{plane}: replaced {n} aggregate row(s) for {args.org}/{args.namespace}")
         return 0
 
-    return run_connected(_run)
+    return run_connected(_run, orgs=(args.org,))
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +206,10 @@ def _cmd_sensitivity_sweep(args: argparse.Namespace) -> int:
     vectors, tags a `medium` row's embedding rows. The closing line is the
     high-sensitivity invariant: live `high` rows that still have a live embedding row.
     """
-    return run_connected(lambda ch: _sensitivity_sweep_run(ch, args))
+    return run_connected(
+        lambda ch: _sensitivity_sweep_run(ch, args),
+        org_free=_sweep_org_free(args),
+    )
 
 
 async def _sensitivity_sweep_run(ch: Any, args: argparse.Namespace) -> int:
@@ -263,7 +268,10 @@ def _cmd_integrity_repair(args: argparse.Namespace) -> int:
     """Read the three row-level invariants and, with
     `--apply`, re-emit the dim-0-with-vector rows with their true dimension.
     The drift and valid_to counts are listed, not repaired."""
-    return run_connected(lambda ch: _integrity_repair_run(ch, args))
+    return run_connected(
+        lambda ch: _integrity_repair_run(ch, args),
+        org_free=_repair_org_free(args),
+    )
 
 
 async def _integrity_repair_run(ch: Any, args: argparse.Namespace) -> int:
@@ -356,3 +364,17 @@ def _add_recalibrate_parser(sub: Any) -> None:
         "(otherwise this runs weekly via the recalibration worker).",
     )
     p_recal.set_defaults(func=_cmd_recalibrate)
+
+
+def _sweep_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("counts what a sweep would label")
+    return writes("sweeps the cell's own rows: every org it touches is held")
+
+
+def _repair_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("counts the invariants a repair would fix")
+    return writes("repairs the cell's own rows: every org it touches is held")

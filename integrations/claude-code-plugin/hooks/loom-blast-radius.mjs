@@ -34,7 +34,7 @@ import {
 import { relativeForLookup, targetPath } from "../lib/file-context.mjs";
 import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
-import { blastPayload, blastSignature, decideEmit, renderBlast } from "../lib/blast-radius.mjs";
+import { blastPayload, blastSignature, decideEmit, impactBody, renderBlast } from "../lib/blast-radius.mjs";
 
 const ENABLED = envSwitch("LOOM_BLAST_RADIUS", true);
 const MAX_NAMES = Number(process.env.LOOM_BLAST_MAX_NAMES || 5);
@@ -97,20 +97,10 @@ async function main() {
     return;
   }
 
-  const impact = await postBounded(
-    "code.impact",
-    // per_hop_limit keeps a hub's fan-out to one page; by_hop_counts still
-    // carries the true total, so one round trip says both.
-    {
-      org: repo.org,
-      namespace: repo.namespace,
-      diff: outline,
-      depth: DEPTH,
-      per_hop_limit: PER_HOP,
-      consumer: "claude-code-blast",
-    },
-    { token, serverUrl: resolveServerUrl() },
-  );
+  const impact = await postBounded("code.impact", impactBody(repo, outline, { depth: DEPTH, perHop: PER_HOP }), {
+    token,
+    serverUrl: resolveServerUrl(),
+  });
   if (!impact) {
     scheduleExit(0);
     return;

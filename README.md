@@ -1,28 +1,98 @@
-<h1 align="center">Loom</h1>
+<h1 align="center">ClickHouse Loom</h1>
 
 <p align="center">
-  <b>Shared memory and code intelligence for AI agents.</b><br>
-  Agents remember what they learned, find code with evidence and hand work to each other. Self-hosted on ClickHouse.
+  <b>Shared memory, document search and code intelligence for AI agents.</b><br>
+  For Claude Code, Codex, Cursor and your own agents.
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/clickhouse-loom/"><img alt="Python SDK on PyPI" src="https://img.shields.io/pypi/v/clickhouse-loom?label=python%20sdk"></a>
+  <a href="https://www.npmjs.com/package/@clickhouse/loom"><img alt="TypeScript SDK on npm" src="https://img.shields.io/npm/v/%40clickhouse%2Floom?label=typescript%20sdk"></a>
+  <a href="./LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue"></a>
+  <a href="https://glama.ai/mcp/servers/ClickHouse/loom"><img alt="MCP server score" src="https://glama.ai/mcp/servers/ClickHouse/loom/badges/score.svg"></a>
+  <a href="https://github.com/ClickHouse/loom/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush"><img alt="CI on main" src="https://github.com/ClickHouse/loom/actions/workflows/ci.yml/badge.svg?branch=main&amp;event=push"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/ClickHouse/loom"><img alt="OpenSSF Scorecard" src="https://api.scorecard.dev/projects/github.com/ClickHouse/loom/badge"></a>
+</p>
+
+<p align="center">
+  <!-- languages -->
+  English · <a href="./i18n/zh-CN/README.md">简体中文</a> · <a href="./i18n/ja/README.md">日本語</a> · <a href="./i18n/ko/README.md">한국어</a> · <a href="./i18n/pt-BR/README.md">Português (Brasil)</a> · <a href="./i18n/es/README.md">Español</a>
+  <!-- /languages -->
+</p>
+
+<p align="center">
+  <a href="#what-loom-is-for">What Loom is for</a> ·
   <a href="#measured-results">Benchmarks</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#why-loom">Capabilities</a> ·
   <a href="#integrations">Integrations</a> ·
-  <a href="./docs/index.md">Documentation</a>
+  <a href="https://clickhouse.github.io/loom/">Documentation</a>
 </p>
 
-![Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts](./docs/images/dashboard-memories.png)
+<p>
+  <img src="./docs/assets/screenshots/memories.webp" width="32%" alt="Loom dashboard showing shared agent memories, a pinned fact and flagged conflicts">
+  <img src="./docs/assets/screenshots/document-search.webp" width="32%" alt="Library search: three passages from a refunds policy, an on-call runbook and an FX note, each cited by document, revision and lines">
+  <img src="./docs/assets/screenshots/code-callers.webp" width="32%" alt="A repository's Explore tab: payments.fx.convert with its definition and callers">
+</p>
 
 Loom is an open-source, self-hosted MCP server that gives your agents long-term, shared
-memory: one place to remember decisions, find relevant code and documents, and hand work
-to each other. Context persists across tools and sessions, so the next agent can build on
-what the previous one learned.
+memory: what one agent learns in a session, the next agent or tool can find.
+In an authenticated team deployment, each agent uses a token scoped to namespaces and
+read or write roles. [Check shared memory and denied access](./docs/getting-started/connect-a-coding-agent.md#share-a-team-namespace-with-separate-credentials).
 
-Connect Claude Code, Codex, Cursor or your own agents through MCP, HTTP, Python or
-TypeScript. Self-host with Docker; agent context and index data live in ClickHouse.
-The dashboard brings memories, repositories, tasks and runs into one place.
+Agents connect through MCP, HTTP, Python or TypeScript. Self-host with Docker or
+[on Kubernetes with the Helm chart](./docs/operations/kubernetes.md); agent context and
+index data live in [ClickHouse](./docs/use-cases/self-hosted-clickhouse.md), and a
+deployment can choose [Postgres at first boot](./docs/operations/postgres.md) for live
+memory and knowledge state. The dashboard brings memories, repositories, tasks and runs
+into one place.
+
+## What Loom is for
+
+- **Long-term memory shared across your coding agents**, with plugins that load context
+  at session start and capture the session as it runs.
+  [Agent memory](./docs/use-cases/agent-memory.md) ·
+  [Connect a coding agent](./docs/getting-started/connect-a-coding-agent.md)
+- **Memory for an agent application**, per user, from the Python or TypeScript
+  SDK. [Your first agent](./docs/getting-started/first-agent.md)
+- **A multi-user MCP memory server** with namespaces, roles and tokens.
+  [Multi-user mode](./docs/getting-started/quickstart.md#start-in-multi-user-mode) ·
+  [Namespaces and sharing](./docs/features/namespaces-and-sharing.md)
+- **A code index of your repositories** that coding agents query for definitions,
+  callers and change impact. [Code index](./docs/use-cases/code-intelligence.md) ·
+  [Language support and limits](./docs/features/code-index/overview.md#language-support)
+- **Memories linked to the code they are about**, which follow it through refactors, are
+  flagged when it changes and appear when an agent reads or edits it.
+  [Memory linked to code](./docs/use-cases/memory-linked-to-code.md)
+- **Lower model cost for coding agents**, as [measured](#measured-results) below.
+  [Coding-agent cost](./docs/use-cases/coding-agent-cost.md)
+- **Document search with citations (RAG)**, including PDF, `.docx` and `.pptx` files the
+  extractor service converts. [Document search](./docs/use-cases/document-search.md)
+- **Shared context for multi-agent workflows**: shared memory, task inboxes and
+  decisions. [Multi-agent](./docs/use-cases/multi-agent.md)
+- **Memory, recall, audit and erasure for autonomous agents.**
+  [Autonomous agents](./docs/use-cases/autonomous-agents.md)
+- **A record of agent work**, with searchable conversations (when recording is on),
+  session briefs to resume from, runs with their goals, outcomes and model costs when
+  supplied, and PR and tracker history.
+  [Runs and PR history](./docs/use-cases/runs-and-pr-history.md)
+
+**Memory for a software factory.** Loom gives implementation and review agents shared
+lessons, issue context and source provenance across sessions. Scope each principal's
+access with tokens, await required writes and task handoffs in your application, and
+recheck code-linked lessons against the current source before review. The same service
+supports multi-agent workflows and autonomous bots; your orchestration runs the agents,
+tests and approvals. Offering a tool does not guarantee the model uses it.
+[Multi-agent workflow](./docs/use-cases/multi-agent.md) ·
+[Autonomous-agent memory](./docs/use-cases/autonomous-agents.md)
+
+Every use case, and when another tool fits better: [use cases](./docs/use-cases/index.md).
+
+Read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939)
+for memory architecture choices, data ownership and operating responsibilities.
+
+Loom is not an in-process library for one agent's short-lived memory, nor an agent
+framework. [When Loom does not fit](./docs/getting-started/overview.md#when-it-does-not-fit)
 
 ## Measured results
 
@@ -36,7 +106,8 @@ Both coding setups use Claude Code (`claude-sonnet-5`) on the ClickHouse codebas
 cost is the whole session's model bill, excluding Loom's server-side model calls, hosting
 and indexing. Answer quality
 measures coverage of a verified answer's key points, with a contradiction penalty.
-File localization counts the right file among three named files.
+File localization counts whether the right file is among the up to three files the agent is
+asked to name at the end of its answer.
 
 The memory row compares retrieved memories with full conversation history using
 the same `gpt-5` reader. Token savings exclude memory construction; the 94% vs 90%
@@ -66,20 +137,31 @@ Single-user is not a reduced-feature edition. You can also
 [switch an existing installation without deleting its data](./docs/getting-started/quickstart.md#2-open-the-dashboard);
 grant new accounts access to the existing namespaces.
 
-For the default personal installation, with Docker installed:
+To try it with nothing installed, open it in a codespace:
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ClickHouse/loom?quickstart=1)
+([what it runs and who can reach it](./docs/getting-started/quickstart.md#try-it-in-github-codespaces))
+
+For the default personal installation, with Docker installed (on Windows, in a WSL 2
+terminal where `docker` works: Docker Desktop with its WSL integration on, or Docker Engine
+installed in the distribution):
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/latest/download/install.sh -o loom-install.sh && sh loom-install.sh && rm loom-install.sh
 ```
 
+Run it from your home directory, or another
+[directory only you can write to](./docs/getting-started/quickstart.md#fast-path-released-image-no-clone).
 The installer starts Loom and ClickHouse, applies migrations and prints the dashboard URL:
-**http://localhost:7777/**. The image includes the server, workers, dashboard and
-Python, TypeScript and Go compiler indexers; TypeScript dependencies are prepared
-automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
+**http://localhost:7777/**; on a new install it then checks that a memory saves and reads
+back. On a terminal it also offers to connect the coding agents it finds (Claude Code, Codex,
+VS Code) and, on a new install, opens the dashboard. The image includes the server,
+workers, dashboard and Python, TypeScript and Go compiler indexers, plus the C++ one on
+`amd64`; TypeScript dependencies are prepared automatically. [Quickstart and pinned releases](./docs/getting-started/quickstart.md)
 
 The installation lives in `~/.loom` (`LOOM_INSTALL_DIR` chooses another directory): the
-Compose file and the startup settings in `~/.loom/.env`. Re-running the installer upgrades
-in place and keeps your `.env` settings.
+Compose file and the startup settings in `~/.loom/.env`. Running the install command again
+upgrades in place and keeps your `.env` settings.
 
 Keep single-user mode localhost-only. For shared access, follow the
 [team deployment guide](./docs/operations/deployment.md#identity-modes), including TLS.
@@ -129,7 +211,8 @@ where each value came from ([runtime settings](./docs/operations/runtime-setting
 
 ### 3. Connect your agents
 
-On the machine running a personal installation, the plugins need no token:
+If the installer connected your agent, skip the commands below. On the machine running a
+personal installation, the plugins need no token:
 
 ```bash
 # Claude Code
@@ -145,6 +228,21 @@ Start a new session; the first one connects to `http://localhost:7777`. In Codex
 `codex` interactively once and approve the plugin's hooks; until then only the tools
 work. Tell the agent something worth keeping, then ask about it in the next session.
 
+For Cursor, on a Teams or Enterprise plan, a team admin can import this repository as a
+team marketplace; its [Cursor plugin](./docs/features/integrations/cursor.md#plugin),
+untested in Cursor, installs the MCP entry and Loom's skills. On the machine running a
+personal installation, the button below adds the [local MCP
+entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
+
+[![Add Loom to Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=loom&config=eyJ1cmwiOiJodHRwOi8vbG9jYWxob3N0Ojc3NzcvbWNwP3Rvb2xzZXQ9Y29kaW5nIn0%3D)
+
+For VS Code agent mode on the machine running a personal installation, the buttons below
+add the [local MCP entry](./docs/features/integrations/vscode.md#local-single-user-server),
+which needs no token:
+
+[![Add Loom to VS Code](https://img.shields.io/badge/VS_Code-Add_Loom-0098FF?logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D)
+[![Add Loom to VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Add_Loom-24bfa5?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect?url=vscode-insiders%3Amcp%2Finstall%3F%257B%2522name%2522%253A%2522loom%2522%252C%2522type%2522%253A%2522http%2522%252C%2522url%2522%253A%2522http%253A%252F%252Flocalhost%253A7777%252Fmcp%2522%257D)
+
 For a team server, pass `--config server_url=… --config token=…` to Claude Code, or
 point Codex at it as described in
 [connect a coding agent](./docs/getting-started/connect-a-coding-agent.md). Create
@@ -158,35 +256,27 @@ tokens in **Settings → Tokens**. Cursor and other MCP clients, and
   corrections traceable, and a namespace can be rolled back to any point in time.
   [Memory](./docs/concepts/memory.md)
 - **Code intelligence with evidence.** Find definitions, callers, change impact and
-  relevant tests; connect code to commits, pull requests and issues. Results identify
-  their revision, source location and completeness. [Code index](./docs/features/code-index/overview.md)
+  relevant tests; connect code to commits, pull requests and issues. Use source
+  locations, completeness signals and per-tier freshness to check a result.
+  [Code index](./docs/features/code-index/overview.md)
 - **Grounded retrieval.** Search permitted memories, documents, conversations and
   tracker records. Answers cite their sources; low-confidence retrieval can abstain.
   [Retrieval](./docs/concepts/retrieval-and-ranking.md)
-- **Multi-agent handoffs.** Share findings and assign work through durable task inboxes
-  with leases, retries, review rules and outcomes. Your agents execute the workflow;
-  Loom preserves the handoffs. [Task queues](./docs/features/tasks-and-decisions.md)
+- **Multi-agent handoffs.** Assign work through durable task inboxes with leases,
+  retries, review rules and outcomes. Your agents execute the workflow; Loom
+  preserves the handoffs. [Task queues](./docs/features/tasks-and-decisions.md)
 - **Control over agent data.** Manage namespace access, provenance, retention, audit
   records and verified erasure. Context remains queryable in ClickHouse.
   [Security](./docs/architecture/security.md)
 
-A research agent can post a task, a coding agent can claim it, and a reviewer can
-inspect the outcome—all using shared findings. Two or more agents can coordinate in
-either deployment mode.
-
-[Conversations](./docs/features/conversations-and-sessions.md) preserve searchable
-dialogue when recording is enabled; session briefs help resume work.
-[Runs](./docs/features/runs.md) record goals, outcomes, memories used and model costs
-when supplied.
-
 ## Integrations
 
-| Integration                                                                                                                           | What it connects                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Claude Code, Codex, Cursor and other MCP clients](./docs/features/integrations/index.md)                                             | Memory and code intelligence in your existing agent workflow.                 |
-| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md) and [HTTP](./docs/reference/operations.md) | Your own agents and applications.                                             |
-| [Langfuse](./docs/features/integrations/langfuse.md)                                                                                  | Request traces, model costs, retrieval scores and prompt-version attribution. |
-| [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                    | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
+| Integration                                                                                                                                                                                                                                                                                   | What it connects                                                              |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Claude Code](./docs/features/integrations/claude-code.md), [Codex](./docs/features/integrations/codex.md), [Cursor](./docs/features/integrations/cursor.md) and [other MCP clients](./docs/features/integrations/mcp-clients.md) ([all integrations](./docs/features/integrations/index.md)) | Memory and code intelligence in your existing agent workflow.                 |
+| [Python](./docs/reference/python-sdk.md), [TypeScript](./docs/reference/typescript-sdk.md), [Rust](./sdk/rust/README.md), [Go](./sdk/go/README.md), [.NET](./sdk/dotnet/README.md) and [HTTP](./docs/reference/operations.md)                                                                 | Your own agents and applications.                                             |
+| [Langfuse](./docs/features/integrations/langfuse.md)                                                                                                                                                                                                                                          | Request traces, model costs, retrieval scores and prompt-version attribution. |
+| [ClickStack / HyperDX](./docs/features/integrations/clickstack.md)                                                                                                                                                                                                                            | OpenTelemetry traces, logs and metrics in ClickHouse.                         |
 
 Langfuse and ClickStack are optional integrations, not bundled services in the Docker stack.
 
@@ -216,11 +306,12 @@ and the full protocols, models and artifacts.
 ## Documentation and contributing
 
 For shared agent context, code intelligence and permissioned retrieval, start with the
-[documentation](./docs/index.md). For deployment requirements and when Loom is a good fit,
-see the [fit guide](./docs/getting-started/overview.md#when-loom-fits).
+[documentation](https://clickhouse.github.io/loom/). For deployment requirements, see the
+[prerequisites](./docs/getting-started/overview.md#prerequisites).
 
 [Deployment](./docs/operations/deployment.md) · [FAQ](./docs/faq.md) ·
 [Contributing](./CONTRIBUTING.md) · [Security reporting](./SECURITY.md) ·
-[`llms.txt`](./llms.txt)
+[`llms.txt`](https://clickhouse.github.io/loom/llms.txt) ·
+[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt)
 
 Apache-2.0 · [License](./LICENSE) · [Notice](./NOTICE)

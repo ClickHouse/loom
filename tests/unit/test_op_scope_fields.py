@@ -39,12 +39,26 @@ _READABLE_INBOX = "server.tasks.app.common._load_readable_inbox"
 
 # (op, field) -> the function that authorizes the field's value.
 AUTHORIZED: dict[tuple[str, str], str] = {
+    ("namespace.register", "budget_alert_inbox"): (
+        "server.tasks.app.budget_notifications.inbox_owned_by"
+    ),
     ("code.search", "namespaces"): _FANOUT,
     ("code.symbol", "namespaces"): _FANOUT,
     ("code.grep", "namespaces"): _FANOUT,
     ("code.symbol", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.callees", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.callers", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    (
+        "code.context_pack",
+        "lesson_namespaces",
+    ): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.impact", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.outline", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.search", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
     ("code.verify_citations", "base_namespace"): "server.code.app.citations._readable_namespaces",
-    ("knowledge.search", "namespaces"): "server.knowledge.app.knowledge_search._named_namespaces",
+    ("knowledge.search", "namespaces"): "server.knowledge.app.readable.readable_namespaces",
+    ("knowledge.list", "namespaces"): "server.knowledge.app.readable.readable_namespaces",
+    ("knowledge.move", "to_namespace"): "server.knowledge.app.move.handle_knowledge_move",
     ("memory.for_file", "extra_namespaces"): "server.memory.app.for_file._readable_extras",
     ("memory.cross_promote", "from_namespace"): _PROMOTE,
     ("memory.cross_promote", "to_namespace"): _PROMOTE,

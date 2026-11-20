@@ -32,6 +32,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from server.auth import tenancy
 from server.auth.attempts import Attempts, client_address
 from server.auth.claim_codes import hash_claim_code_off_loop
 from server.auth.directory import directory
@@ -70,31 +71,34 @@ async def provision_account(
     can't drift. password_hash="" = no password sign-in. `ch` defaults to
     the server's client.
     """
+    from server.auth.authz import identity_write
+
     ch = ch or get_client()
     now = naive_utc_now_seconds()
-    await ch.insert(
-        "loom.namespaces",
-        [
-            {
-                "org": org,
-                "namespace": namespace,
-                "owner_email": subject,
-                "contact_email": contact_email,
-                "password_hash": password_hash,
-                "description": description,
-                "tags": list(tags or []),
-                "active": True,
-                "conflict_threshold": None,
-                "retention_days": 0,
-                "warm_days": 0,
-                "visibility": "private",
-                "classification": "standard",
-                "join_policy": "inherit",
-                "created_at": now,
-                "updated_at": now,
-            }
-        ],
-    )
+    with identity_write():
+        await ch.insert(
+            "loom.namespaces",
+            [
+                {
+                    "org": org,
+                    "namespace": namespace,
+                    "owner_email": subject,
+                    "contact_email": contact_email,
+                    "password_hash": password_hash,
+                    "description": description,
+                    "tags": list(tags or []),
+                    "active": True,
+                    "conflict_threshold": None,
+                    "retention_days": 0,
+                    "warm_days": 0,
+                    "visibility": "private",
+                    "classification": "standard",
+                    "join_policy": "inherit",
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+        )
     await insert_owner_grant(org, namespace, subject, ch=ch)
 
 
@@ -154,7 +158,7 @@ def _signup_gate() -> None:
                 "message": "this deployment uses SSO; sign in via your identity provider",
             },
         )
-    if settings.self_signup != "open":
+    if not settings.self_signup_served():
         raise HTTPException(
             status_code=404,
             detail={
@@ -175,6 +179,9 @@ async def self_signup(input: SelfSignupInput, request: Request) -> SelfSignupOut
     namespace = _claimable_namespace(input.namespace)
     if not await _human_signups.allow(client_address(request)):
         raise _rate_limited(f"at most {HUMAN_SIGNUPS_PER_HOUR} sign-ups per address per hour")
+    # A cell signs up only into an org it holds (no principal yet: nothing places one),
+    # checked after the per-address limit so a refused sign-up costs a counted attempt.
+    await tenancy.ensure_held(org, None)
     # The name's claim, then the email's: each check-then-insert runs under its
     # deployment-wide claim, so a second sign-up on any replica is refused.
     # The account claim too, which namespace.register holds (order: `grant_claims`).
@@ -554,6 +561,8 @@ async def agent_signup(input: AgentSignupInput, request: Request) -> AgentSignup
             },
         )
     org = signup_org(input.org)
+    # A cell signs up only into an org it holds (no principal yet: nothing places one).
+    await tenancy.ensure_held(org, None)
     async with _claimed(name_claim(org, namespace)), _account_claimed(org, namespace):
         with sequential_reads():
             return await _provision_agent(input, request, org, namespace)
@@ -591,6 +600,8 @@ async def _single_user_agent(input: AgentSignupInput, request: Request) -> Agent
 async def _provision_agent(
     input: AgentSignupInput, request: Request, org: str, namespace: str
 ) -> AgentSignupOutput:
+    from server.auth.authz import identity_write
+
     ch = get_client()
     existing = await ch.query_one(
         """
@@ -647,29 +658,30 @@ async def _provision_agent(
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     await grant_cache.changed(org, [sa_subject])
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": org,
-                "name": f"{AGENT_NAME_PREFIX}{input.name.strip()}",
-                "sa_subject": sa_subject,
-                "namespaces": [namespace],
-                "roles": ["writer"],
-                "ttl_days": int(input.ttl_days or 0),
-                "created_by": namespace,
-                "created_at": now,
-                "expires_at": expires_at,
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": time.time_ns(),
-                "kind": "agent",
-                "client": AGENT_CLIENT,
-                "inherit_creator_grants": False,
-                "ns_roles": json.dumps({namespace: "writer"}),
-            }
-        ],
-    )
+    with identity_write():
+        await ch.insert(
+            "loom.service_accounts",
+            [
+                {
+                    "org": org,
+                    "name": f"{AGENT_NAME_PREFIX}{input.name.strip()}",
+                    "sa_subject": sa_subject,
+                    "namespaces": [namespace],
+                    "roles": ["writer"],
+                    "ttl_days": int(input.ttl_days or 0),
+                    "created_by": namespace,
+                    "created_at": now,
+                    "expires_at": expires_at,
+                    "revoked_at": None,
+                    "revoked_by": "",
+                    "version": time.time_ns(),
+                    "kind": "agent",
+                    "client": AGENT_CLIENT,
+                    "inherit_creator_grants": False,
+                    "ns_roles": json.dumps({namespace: "writer"}),
+                }
+            ],
+        )
     return AgentSignupOutput(
         token=token,
         namespace=namespace,

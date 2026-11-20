@@ -1,19 +1,23 @@
 """Keep the model control plane reachable while data-plane work is draining,
-and refuse work on a process whose configuration drifted from the deployment's."""
+refuse work on a process whose configuration drifted from the deployment's, and
+refuse everything but the health probes on a cell its own rows do not let serve, or
+on a process its deployment's cell state gates."""
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from server.core import deployment_config
+from server.core import cell, deployment_config, retirement
 from server.core.errors import classified
 from server.core.model_work_gate import ModelChangeInProgress, ModelWorkGate, get_model_work_gate
+from server.settings import settings
+
+# The probes a load balancer or orchestrator reads: every gate here lets them through.
+_HEALTH_PATHS = ("/v1/health", "/v1/health/live", "/v1/health/ready", "/v1/health/deployment")
 
 
 def _control_request(scope: Scope) -> bool:
     path = scope.get("path", "").rstrip("/")
-    if path in ("/v1/health", "/v1/whoami", "/v1/auth/login", "/v1/admin/models"):
-        return True
-    if path in ("/v1/health/live", "/v1/health/ready"):
+    if path in _HEALTH_PATHS or path in ("/v1/whoami", "/v1/auth/login", "/v1/admin/models"):
         return True
     # The JWKS too: a gateway verifying the identity token of the model calls a
     # model change makes reads it there.
@@ -27,11 +31,43 @@ def _control_request(scope: Scope) -> bool:
 
 def _probe_or_page(scope: Scope) -> bool:
     path = scope.get("path", "").rstrip("/")
-    if path in ("/v1/health", "/v1/health/live", "/v1/health/ready"):
+    if path in _HEALTH_PATHS:
         return True
     return scope.get("method") in ("GET", "HEAD") and not (
         path in ("/v1", "/mcp", "/oauth") or path.startswith(("/v1/", "/mcp/", "/oauth/"))
     )
+
+
+def _health_probe(scope: Scope) -> bool:
+    return scope.get("path", "").rstrip("/") in _HEALTH_PATHS
+
+
+async def _refuse(
+    scope: Scope, receive: Receive, send: Send, *, code: str, message: str, retry_after: str
+) -> None:
+    """A 503 that also closes the connection, or a websocket close 1013."""
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 1013})
+        return
+    response = _unavailable(
+        code=code,
+        message=message,
+        headers={"Retry-After": retry_after, "Cache-Control": "no-store", "Connection": "close"},
+    )
+    await response(scope, receive, send)
+
+
+async def _refuse_cell(scope: Scope, receive: Receive, send: Send, reason: str) -> None:
+    """A cell whose own rows are unread, absent, or do not accept this process's
+    configuration serves nothing but its health probes: no sign-in, mint, refresh,
+    SCIM call or page, so nothing reaches it that its directory did not accept. A
+    process with LOOM_CELL unset on a deployment whose cell state gates it answers
+    the same way: another process behind the same address may serve the call."""
+    if settings.cell:
+        message = f"This server cannot serve as its cell yet: {reason}. Retry shortly."
+    else:
+        message = f"This server serves nothing now: {reason}."
+    await _refuse(scope, receive, send, code="AUTH_UNAVAILABLE", message=message, retry_after="5")
 
 
 def _unavailable(*, code: str, message: str, headers: dict[str, str]) -> JSONResponse:
@@ -45,16 +81,10 @@ async def _refuse_drifted(scope: Scope, receive: Receive, send: Send) -> None:
     """Not-ready stops new connections only. A drifted process would keep
     serving the open ones in another embedding space or under another root
     secret, so it answers 503 and closes each until it is replaced."""
-    if scope["type"] == "websocket":
-        await send({"type": "websocket.close", "code": 1013})
-        return
-    response = _unavailable(
-        code="CONFIG_DRIFT",
-        message="This server's configuration differs from the deployment's. "
-        "Retry: another server answers.",
-        headers={"Retry-After": "1", "Cache-Control": "no-store", "Connection": "close"},
+    message = (
+        "This server's configuration differs from the deployment's. Retry: another server answers."
     )
-    await response(scope, receive, send)
+    await _refuse(scope, receive, send, code="CONFIG_DRIFT", message=message, retry_after="1")
 
 
 async def _refuse_refused_configuration(scope: Scope, receive: Receive, send: Send) -> None:
@@ -80,6 +110,23 @@ class ModelMaintenanceMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
+            return
+        try:
+            async with retirement.get_gate().admit():
+                await self._dispatch(scope, receive, send)
+        except retirement.ProcessStopping:
+            await _refuse(
+                scope,
+                receive,
+                send,
+                code="PROCESS_STOPPING",
+                message="This server is stopping. Retry another server.",
+                retry_after="1",
+            )
+
+    async def _dispatch(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if (reason := cell.gate_reason()) and not _health_probe(scope):
+            await _refuse_cell(scope, receive, send, reason)
             return
         if deployment_config.drift() and not _probe_or_page(scope):
             await _refuse_drifted(scope, receive, send)

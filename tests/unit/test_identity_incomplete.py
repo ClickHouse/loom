@@ -76,7 +76,8 @@ def test_only_the_org_level_listings_are_deployment_scoped() -> None:
     # namespace either — list_mine refused every scoped token over MCP.
     # The org's tracker reads (the contract, the source list
     # and a source's check) name no namespace; the writes stay unscoped-only.
-    # The static agent guide (mentor.guide) names no namespace.
+    # The static agent guide (mentor.guide) and the shipped docs (help.*) name no
+    # namespace.
     # Collections are listed and made by grant, not by a namespace the call
     # names; a scoped token reaches them no further than its claim.
     assert scoped == [
@@ -84,6 +85,8 @@ def test_only_the_org_level_listings_are_deployment_scoped() -> None:
         "collection.create",
         "collection.list",
         "grants.pending_for_me",
+        "help.get",
+        "help.search",
         "mentor.guide",
         "namespace.browse",
         "namespace.list_mine",

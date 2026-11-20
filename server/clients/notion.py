@@ -17,6 +17,7 @@ import re
 import time
 from typing import Any
 
+from server.clients._checked_access import CheckedAccess, Credential
 from server.clients._http import get_client
 from server.clients._vendor import (
     CredentialRefused,
@@ -54,8 +55,10 @@ def _valid_stamp(stamp: str) -> bool:
     return bool(_STAMP_RE.fullmatch(stamp))
 
 
-def valid_token(credential: str) -> bool:
+def valid_token(credential: Credential) -> bool:
     """Whether `credential` can be an integration token: one printable word."""
+    if isinstance(credential, CheckedAccess):
+        return credential.kind == "notion"
     return bool(re.fullmatch(r"[\x21-\x7e]{8,256}", credential))
 
 
@@ -65,7 +68,7 @@ def valid_token(credential: str) -> bool:
 _next_request_at: dict[str, float] = {}
 
 
-async def _pace(token: str) -> None:
+async def _pace(token: Credential) -> None:
     """Wait until PAGE_PACE_S has passed since this integration's previous request."""
     now = time.monotonic()
     if len(_next_request_at) > 64:
@@ -73,7 +76,11 @@ async def _pace(token: str) -> None:
         for key, at in list(_next_request_at.items()):
             if at <= now:
                 del _next_request_at[key]
-    key = hashlib.sha256(token.encode()).hexdigest()[:16]
+    key = (
+        token.pacing_key()
+        if isinstance(token, CheckedAccess)
+        else hashlib.sha256(token.encode()).hexdigest()[:16]
+    )
     start = max(now, _next_request_at.get(key, 0.0))
     _next_request_at[key] = start + PAGE_PACE_S
     if start > now:
@@ -81,13 +88,24 @@ async def _pace(token: str) -> None:
 
 
 async def _call(
-    method: str, path: str, token: str, what: str, *, params: Any = None, body: Any = None
+    method: str, path: str, token: Credential, what: str, *, params: Any = None, body: Any = None
 ) -> dict[str, Any]:
-    await _pace(token)
-    headers = {"Authorization": f"Bearer {token}", "Notion-Version": API_VERSION}
-    return await request_json(
-        get_client(), method, f"{_API_URL}{path}", what, headers=headers, params=params, json=body
-    )
+    checked = token if isinstance(token, CheckedAccess) else None
+    async with asyncio.timeout_at(checked.deadline if checked is not None else None):
+        await _pace(token)
+        headers = {"Notion-Version": API_VERSION}
+        if checked is None:
+            headers["Authorization"] = f"Bearer {token}"
+        return await request_json(
+            get_client(),
+            method,
+            f"{_API_URL}{path}",
+            what,
+            headers=headers,
+            params=params,
+            json=body,
+            checked=checked,
+        )
 
 
 def _checked(object_id: str) -> str:
@@ -96,17 +114,27 @@ def _checked(object_id: str) -> str:
     return object_id
 
 
-async def page(token: str, page_id: str) -> dict[str, Any]:
+async def page(token: Credential, page_id: str) -> dict[str, Any]:
     """A page's properties, address, last edit and trash flag."""
     return await _call("GET", f"/pages/{_checked(page_id)}", token, f"page {page_id}")
 
 
-async def block(token: str, block_id: str) -> dict[str, Any]:
+async def workspace_id(token: Credential) -> str:
+    """The bot credential's workspace, for binding incoming notifications."""
+    answer = await _call("GET", "/users/me", token, "push identity")
+    bot = answer.get("bot")
+    value = bot.get("workspace_id") if isinstance(bot, dict) else None
+    if not isinstance(value, str) or not valid_id(value):
+        raise VendorError("push identity unavailable")
+    return value
+
+
+async def block(token: Credential, block_id: str) -> dict[str, Any]:
     """A block, with its parent (a page, another block or the workspace)."""
     return await _call("GET", f"/blocks/{_checked(block_id)}", token, f"block {block_id}")
 
 
-async def database(token: str, database_id: str) -> dict[str, Any]:
+async def database(token: Credential, database_id: str) -> dict[str, Any]:
     """A database's title, trash flag and data sources."""
     return await _call(
         "GET", f"/databases/{_checked(database_id)}", token, f"database {database_id}"
@@ -135,7 +163,7 @@ def _query_body(edited_after: str) -> dict[str, Any]:
     return body
 
 
-async def _query(token: str, data_source_id: str, body: dict[str, Any]) -> dict[str, Any]:
+async def _query(token: Credential, data_source_id: str, body: dict[str, Any]) -> dict[str, Any]:
     path = f"/data_sources/{_checked(data_source_id)}/query"
     return await _call("POST", path, token, f"data source {data_source_id}", body=body)
 
@@ -146,7 +174,7 @@ def _pages_of(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
-async def first_pages(token: str, data_source_id: str) -> tuple[list[dict[str, Any]], bool]:
+async def first_pages(token: Credential, data_source_id: str) -> tuple[list[dict[str, Any]], bool]:
     """The first listing page (100 at most) of a data source's pages, newest edit
     first, and whether more follow."""
     body = _query_body("")
@@ -156,7 +184,7 @@ async def first_pages(token: str, data_source_id: str) -> tuple[list[dict[str, A
 
 
 async def query_pages(
-    token: str, data_source_id: str, *, edited_after: str = ""
+    token: Credential, data_source_id: str, *, edited_after: str = ""
 ) -> tuple[list[dict[str, Any]], bool]:
     """Every page of a database's data source, oldest edit first, or only those edited
     after `edited_after` (a stamp the store issued), and whether the store returned them all:
@@ -176,7 +204,9 @@ async def query_pages(
         body = {**body, "start_cursor": cursor}
 
 
-async def page_blocks(token: str, page_id: str, *, max_requests: int) -> list[dict[str, Any]]:
+async def page_blocks(
+    token: Credential, page_id: str, *, max_requests: int
+) -> list[dict[str, Any]]:
     """A page's blocks in order, each block with children carrying them under
     `children`; child pages and databases are not read into it. A synced copy whose
     original the integration cannot see (404, 403) is marked `unreadable` and read

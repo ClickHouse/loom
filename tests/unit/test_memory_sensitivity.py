@@ -207,8 +207,7 @@ def test_recent_recall_admits_medium_only_on_contact_intent() -> None:
 
 @pytest.mark.asyncio
 async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypatch) -> None:
-    from types import SimpleNamespace
-
+    from server.memory.api.models_lifecycle import MemoryStackInput
     from server.memory.app import handlers as mem
     from server.memory.app import restore as _restore_mod
     from server.memory.app import stack as _stack_mod
@@ -236,7 +235,7 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
     monkeypatch.setattr(
         "server.memory.app.profile.handle_profile_render", _no_profile, raising=False
     )
-    inp = SimpleNamespace(
+    inp = MemoryStackInput(
         org="o",
         namespace="n",
         agent="a",
@@ -250,13 +249,8 @@ async def test_memory_stack_recent_recall_sql_carries_the_medium_guard(monkeypat
         knowledge_top_k=0,
         seed_query="who reviewed the rota?",
         procedure_limit=0,
-        include_procedures=False,
-        sections=None,
     )
-    try:
-        await stack_mod.handle_memory_stack(inp)
-    except Exception:  # noqa: BLE001 — must not raise: later sections may need unstubbed fields
-        pass  # sections after recent_recall may need fields this stub lacks
+    await stack_mod.handle_memory_stack(inp)
     recent = [(sql, p) for sql, p in seen if "recall_count > 0" in sql]
     assert recent, "recent_recall query not issued"
     sql, params = recent[0]
@@ -764,12 +758,13 @@ def test_has_email_finds_what_the_email_regex_finds() -> None:
     assert not has_email("x" * 65 + "@x.com")
 
 
-def _fastest(read: Callable[[str], object], text: str) -> float:
+def _fastest_seconds[T](read: Callable[[T], object], arg: T) -> float:
+    """The fastest of three reads in CPU time: another process holding the CPU does not count."""
     times = []
     for _ in range(3):
-        started = time.perf_counter()
-        read(text)
-        times.append(time.perf_counter() - started)
+        started = time.process_time()
+        read(arg)
+        times.append(time.process_time() - started)
     return min(times)
 
 
@@ -783,23 +778,13 @@ def _fastest(read: Callable[[str], object], text: str) -> float:
 def test_an_email_is_read_once_from_its_at(text: str) -> None:
     # A regex starting at every word boundary rescans up to 64 characters, and the domain
     # again, from each one: about a hundred times one pass over the text.
-    one_pass = _fastest(re.compile(r"[^\x00-\x7f]").search, text)
-    assert _fastest(has_email, text) < 20 * one_pass
+    one_pass = _fastest_seconds(re.compile(r"[^\x00-\x7f]").search, text)
+    assert _fastest_seconds(has_email, text) < 20 * one_pass
 
 
 def _read_escaped_quotes(n: int) -> None:
     # each escaped quote is a possible key start: a key reads at most 200 characters
     assert not reads_high('\\"' * n)
-
-
-def _fastest_seconds(read: Callable[[int], None], n: int) -> float:
-    """The fastest of three reads, so one stall on a busy runner does not count."""
-    times = []
-    for _ in range(3):
-        started = time.perf_counter()
-        read(n)
-        times.append(time.perf_counter() - started)
-    return min(times)
 
 
 @pytest.mark.parametrize(("read", "n"), [(_read_long_runs, 50_000), (_read_escaped_quotes, 5_000)])

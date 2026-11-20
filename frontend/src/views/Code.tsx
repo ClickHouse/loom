@@ -8,7 +8,7 @@
  * (search/symbol/callers — the same ops agents call), PR packs (precomputed
  * per-PR context), Access (who can read it, how tokens get the claim).
  */
-import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -22,21 +22,25 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { VerticalStepper } from "@clickhouse/click-ui/VerticalStepper";
 import { PageContainer } from "../layout/PageContainer";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
+import { restrictedReason } from "../lib/namespaceUpdate";
+import { useGrantRows } from "../lib/useGrantRows";
 import { useStore, useIdentity } from "../lib/state";
-import { holdsAdminGrant } from "../lib/role";
-import { fmtInt, relativeTime, humanizeError, listTime, parseChTime, refreshDetail } from "../lib/format";
+import { hasPlatformAdminClaim, holdsAdminGrant } from "../lib/role";
+import { fmtInt, relativeTime, listTime, parseChTime, refreshDetail } from "../lib/format";
+import { humanizeError, errorLine } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { EmptyState } from "../components/EmptyState";
 import { IconButton } from "../components/IconButton";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowSkeleton, Skeleton, SkeletonCard } from "../components/Skeleton";
-import { type ToastKind, type ToastOpts, toast } from "../components/Toast";
+import { toast, toastError, type ToastKind, type ToastOpts } from "../components/Toast";
 import { ListPager, usePageSize } from "../components/ui/ListPager";
 import { ListState } from "../components/ui/ListState";
 import { ListToolbar } from "../components/ui/ListToolbar";
 import { BusyButton } from "../components/ui/BusyButton";
-import { stageFlips } from "../lib/codeStage";
+import { stageFlips, stageLabel } from "../lib/codeStage";
 import { confirmAction } from "../components/ConfirmDialog";
 import {
   listCodeRepos,
@@ -83,12 +87,13 @@ import {
   remoteBranches,
   type CodeRepoRemoteBranches,
   type CodeWorkerStatus,
+  isAuthDisabled,
 } from "../api";
 import { invalidateShared, sharedHealth, sharedIndexStatus } from "../lib/sharedReads";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { CodeReindexDialog } from "../flows/CodeReindexDialog";
 import { joinTarget, withdrawTarget, leaveTarget, type JoinTarget } from "../lib/joinActions";
-import { freshness, type Fresh } from "../lib/codeFreshness";
+import { freshness, type Fresh, lagLabel } from "../lib/codeFreshness";
 import { tierCards, type TierIcon } from "../lib/compilerTiers";
 import { branchState, branchOrder, buildCards, type CodeFacet } from "../lib/repositoryCard";
 import { RepositoryCard, BranchChip, FRESH_STATE, type CodeActions, type RecordActionProps } from "./RepositoryCard";
@@ -109,7 +114,10 @@ import {
   TextClamp,
   Tip,
   TipTarget,
+  Unavailable,
 } from "../components/ui";
+import { GatedIconButton } from "../components/ui/GatedIconButton";
+import { callReason, loadingLine, needsMaintainer, scopedUnseen, serverDecides, unreadLine } from "../lib/callReason";
 import { isRecord } from "../lib/guards";
 import { oneOf } from "../lib/oneOf";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
@@ -169,7 +177,7 @@ export function CodeView() {
           setError(null);
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (live()) setError(humanizeError(e, { read: true }));
         });
     },
     [identity.org],
@@ -424,6 +432,8 @@ function RepositoriesHome({
   // The add-a-tracker dialog, from a card (that repository) or the page (none)
   const [registering, setRegistering] = useState<{ group: RepoGroup | null } | null>(null);
   const org = useStore((s) => s.identity)?.org ?? repos?.[0]?.org ?? "";
+  // The deployment's own settings are named only to whoever runs it.
+  const operator = useStore((s) => isAuthDisabled() || hasPlatformAdminClaim(s.whoami));
   const [query, setQuery] = useState("");
   // Most orgs hold a handful of repositories: the pager draws once there are more than fit
   // the smallest page.
@@ -484,7 +494,7 @@ function RepositoriesHome({
       toast(...linkedToast(g.primary.repo, out));
       onChanged();
     } catch (e) {
-      toast(`Couldn't link the tracker: ${humanizeError(e)}`, "error");
+      toastError("Couldn't link the tracker", e);
     }
   };
   const refreshBranch = async (b: CodeRepoSummary) => {
@@ -497,14 +507,14 @@ function RepositoriesHome({
         "ok",
       );
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     }
   };
   const removeBranch = async (b: CodeRepoSummary) => {
     if (
       !(await confirmAction({
         title: `Retire ${b.repo} @ ${b.branch}?`,
-        message: `The index ${b.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the branch again re-indexes from scratch.`,
+        message: `The index ${b.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit log → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the branch again re-indexes from scratch.`,
         confirmLabel: "Retire index",
         danger: true,
       }))
@@ -515,7 +525,7 @@ function RepositoriesHome({
       toast(`Retired ${out.repo} @ ${out.branch} · its rows are purging in the background`, "ok");
       onChanged();
     } catch (e) {
-      toast(humanizeError(e), "error");
+      toastError(`Couldn't retire ${b.namespace}`, e);
     }
   };
   /** The links a repository holds now, primary first. */
@@ -546,7 +556,7 @@ function RepositoriesHome({
         await setCodeRepoAccess(b.org, b.namespace, classification, join_policy, opening ? b.namespace : "");
         done += 1;
       } catch (e) {
-        toast(`${b.namespace}: ${humanizeError(e)}`, "error");
+        toastError(`Couldn't change access on ${b.namespace}`, e);
       }
     }
     if (done)
@@ -705,7 +715,9 @@ function RepositoriesHome({
             canAdd
               ? "Loom indexes a Git branch so you and your agents can search and ask about its code."
               : sandbox === "warn"
-                ? "This server cannot add repositories from this page, because it runs without the repository-job sandbox. Ask the operator to list them in LOOM_CODE_REPOS_JSON."
+                ? `This server cannot add repositories from this page, because it runs without the repository-job sandbox. ${
+                    operator ? "List them in LOOM_CODE_REPOS_JSON." : "Ask the operator to add them."
+                  }`
                 : "This server cannot index repositories until its repository-job sandbox runs. Ask the operator."
           }
           action={org && canAdd ? { label: "Add repository", onClick: () => setAdding(true) } : undefined}
@@ -832,7 +844,7 @@ function OnboardingSteps() {
   const steps = [
     ["Add a Git remote and a branch", "You become the repository's maintainer."],
     ["Loom indexes it in the background", "Minutes for about 10,000 files; the row says how far it is."],
-    ["Agents search it with code.search", "Join the repository, then mint a token for your agents."],
+    ["Agents search it", "Join the repository, then mint a token for your agents."],
   ];
   return (
     <div className="mt-6 w-full max-w-md text-left">
@@ -1172,8 +1184,8 @@ export function AddRepositoryDialog({
   const overCap = remote !== null && chosen.length > Math.max(0, remote.cap);
   const valid = repoValid && (!showToken || token.trim().length > 0) && (remote ? chosen.length > 0 && !overCap : true);
   /** Ask the remote which branches exist (the first 60 matching `q`; default and
-   *  indexed always ride); a refusal becomes the token step. A search on a
-   *  truncated list asks the server again with the query. */
+   *  indexed always ride); a refusal becomes the token step. A search the shown page
+   *  cannot answer asks the server again with the query. */
   const lookup = async (q = "") => {
     if (!repoValid || looking) return;
     setLooking(true);
@@ -1206,6 +1218,13 @@ export function AddRepositoryDialog({
       .map((n) => remote.branches.find((b) => b.name === n) ?? { name: n, sha: "" });
     return [...filtered, ...kept];
   })();
+  // The text matches no branch shown, and the shown page is not all the remote holds for it:
+  // the list was cut, or it answered an earlier query. The remote's full list may hold it.
+  const askRemote =
+    !!remote &&
+    !!q &&
+    (remote.truncated || (!!remote.query && q !== remote.query.toLowerCase())) &&
+    !shownBranches.some((b) => b.name.toLowerCase().includes(q));
   const visibleSuggested = remote
     ? shownBranches.map((b) => b.name).filter((n) => remote.suggested.includes(n) && !picked.has(n))
     : [];
@@ -1341,8 +1360,9 @@ export function AddRepositoryDialog({
                   )}
                 </div>
                 {(remote.total > remote.branches.length || remote.query) && (
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="flex-1">
+                  // Below sm the field takes the whole row; the count and the button wrap under it.
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    <div className="basis-full sm:basis-auto sm:flex-1">
                       <SearchField
                         aria-label="Search branches"
                         value={search}
@@ -1358,10 +1378,17 @@ export function AddRepositoryDialog({
                     </div>
                     <span className="text-xs text-text-muted whitespace-nowrap tabular">
                       showing {shownBranches.length} of {fmtInt(remote.total)}
-                      {remote.truncated && q && !shownBranches.some((b) => b.name.toLowerCase().includes(q))
-                        ? " — press Enter to search the remote's full list"
-                        : ""}
                     </span>
+                    {askRemote && (
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        loading={looking}
+                        onClick={() => void lookup(search.trim())}
+                      >
+                        Search the remote
+                      </Button>
+                    )}
                   </div>
                 )}
                 <ul className="flex flex-wrap gap-2 list-none p-1 m-0 max-h-56 overflow-y-auto" aria-label="Branches">
@@ -1425,7 +1452,7 @@ export function AddRepositoryDialog({
               <div className="w-48">
                 <TextField id="add-branch" label="Branch" value={branch} onChange={(v) => setBranch(v)} />
                 <div className="text-xs text-text-muted mt-1">
-                  Or press Find branches to choose from what the remote shows.
+                  Or use Find branches to choose from what the remote shows.
                 </div>
               </div>
             )}
@@ -1540,8 +1567,8 @@ export function AddRepositoryDialog({
                   ))}
                 </Select>
                 <div className="text-xs text-text-muted mt-1">
-                  Exact cross-file calls on top of the parser tier; detected from go.mod, tsconfig, CMakeLists or
-                  pyproject when left to the tree.
+                  A parser indexes the repository's files; a compiler tier adds exact cross-file calls on top. Left to
+                  the tree, the tier is detected from go.mod, tsconfig, CMakeLists or pyproject.
                 </div>
               </div>
             </div>
@@ -1664,7 +1691,7 @@ function RepoDetail({
   onJoined: () => void;
 }) {
   const id: CodeId = { org: repo.org, namespace: repo.namespace };
-  const f = freshness(repo);
+  const f = freshness(repo, stageLabel(repo)?.title);
   const actions = useJoinActions(onJoined);
   const [joinTarget, setJoinTarget] = useState<{ repo: CodeRepoSummary; role: RepoRole } | null>(null);
   const others = siblings.filter((s) => s.namespace !== repo.namespace).sort(branchOrder);
@@ -1729,7 +1756,7 @@ function RepoDetail({
         {/* Each tab is keyed by branch: another branch starts each one fresh (its status,
             results, open pack and filter), and the tab the reader is on stays selected. */}
         <Tabs.Content value="health">
-          <HealthTab key={repo.namespace} id={id} />
+          <HealthTab key={repo.namespace} id={id} repo={repo} />
         </Tabs.Content>
         <Tabs.Content value="explore">
           <ExploreTab key={repo.namespace} id={id} />
@@ -1768,10 +1795,11 @@ const TIER_ICONS: Record<TierIcon, IconName> = {
 };
 
 function lagText(lag: number, watermark: string): { text: string; tone: Fresh["tone"] } {
-  if (!watermark) return { text: "unset", tone: "muted" };
-  if (lag < 0) return { text: "lag unknown", tone: "muted" };
-  if (lag === 0) return { text: "at tip", tone: "ok" };
-  return { text: `${lag} behind`, tone: lag > 20 ? "bad" : "warn" };
+  if (!watermark) return { text: "Unset", tone: "muted" };
+  const text = lagLabel(lag, false);
+  if (lag < 0) return { text, tone: "muted" };
+  if (lag === 0) return { text, tone: "ok" };
+  return { text, tone: lag > 20 ? "bad" : "warn" };
 }
 
 // PR history's watermark is a merge time, not a commit, so no commit lag
@@ -1781,15 +1809,15 @@ export function passFreshness(
   w: CodeWorkerStatus | undefined,
   now = Date.now(),
 ): { text: string; tone: Fresh["tone"] } {
-  if (!w) return { text: "not on this replica", tone: "muted" };
-  if (!w.enabled) return { text: "disabled", tone: "muted" };
-  if (w.consecutive_failures > 0) return { text: "failing", tone: "bad" };
+  if (!w) return { text: "Not on this replica", tone: "muted" };
+  if (!w.enabled) return { text: "Disabled", tone: "muted" };
+  if (w.consecutive_failures > 0) return { text: "Failing", tone: "bad" };
   const lastRun = parseChTime(w.last_run_at);
-  if (!lastRun) return { text: "pending", tone: "muted" };
+  if (!lastRun) return { text: "Pending", tone: "muted" };
   const age = (now - lastRun.getTime()) / 1000;
   return age <= 2 * w.interval_seconds + w.last_duration_ms / 1000
-    ? { text: "current", tone: "ok" }
-    : { text: "stale", tone: "warn" };
+    ? { text: "Current", tone: "ok" }
+    : { text: "Stale", tone: "warn" };
 }
 
 // A commit watermark shows as a short sha, a time watermark to the minute.
@@ -1859,7 +1887,32 @@ function StageCard({
   );
 }
 
-export function HealthTab({ id }: { id: CodeId }) {
+/**
+ * Why the caller cannot call code.refresh (WRITER) on the repository, or null: `callReason`
+ * named by the repository's label, as the Access tab names it. A repository has readers and
+ * maintainers only, so the grant that reaches WRITER is maintainer. A restricted one's gate
+ * asks more, of an admin claim's token too (`restrictedMisses`), from grant rows read even
+ * where the role read skips list_mine.
+ */
+function useRefreshReason(id: CodeId, repo: CodeRepoSummary): string | null {
+  const read = useNamespaceRoleRead(id.namespace);
+  const whoami = useStore((s) => s.whoami);
+  const restricted = repo.classification === "restricted" && whoami?.authenticated !== false;
+  const grants = useGrantRows(id.org, restricted);
+  const name = `${repo.repo} @ ${repo.branch}`;
+  if (restricted) {
+    const gate = restrictedReason(grants, whoami, id, {
+      name,
+      adminWord: "maintainer",
+      what: "its index",
+      role: "writer",
+    });
+    if (gate) return gate;
+  }
+  return callReason("code.refresh", read, whoami, id.namespace, name);
+}
+
+export function HealthTab({ id, repo }: { id: CodeId; repo: CodeRepoSummary }) {
   const [st, setSt] = useState<CodeIndexStatus | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -1868,6 +1921,9 @@ export function HealthTab({ id }: { id: CodeId }) {
   const [cov, setCov] = useState<CodeCoverage | null | undefined>(undefined);
   const [recent, setRecent] = useState<CodeRecentCommitRow[] | "failed" | null>(null);
   const [errs, setErrs] = useState<{ rows: CodeIndexErrorRow[]; total: number } | null | undefined>(undefined);
+  // Why each section's first read failed, said beside its "Couldn't load" line; kept while it
+  // keeps failing, so its alert is not said again.
+  const [why, setWhy] = useState<{ cov?: string; recent?: string; errs?: string }>({});
   const [showErrs, setShowErrs] = useState(false);
   const [spend, setSpend] = useState<{ usd: number; ops: number } | null | undefined>(undefined);
 
@@ -1884,28 +1940,35 @@ export function HealthTab({ id }: { id: CodeId }) {
           if (live()) setError(e);
         });
       // A failed poll after a good read keeps that read, as the status above does; only a
-      // section with nothing read yet says its read failed.
+      // section with nothing read yet says its read failed. The first failure's line stands,
+      // so a lasting outage does not re-announce its alert each minute with a new request id.
       codeCoverage(id, { signal })
         .then((c) => {
           if (live()) setCov(c);
         })
-        .catch(() => {
-          if (live()) setCov((c) => c ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setCov((c) => c ?? null);
+          setWhy((w) => ({ ...w, cov: w.cov || errorLine(e, { read: true }) }));
         });
       codeRecentCommits(id, 15, { signal })
         .then((r) => {
           if (live()) setRecent(r.rows);
         })
-        .catch(() => {
+        .catch((e: unknown) => {
           // Said as a failure: "no commits recorded yet" would be a claim.
-          if (live()) setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          if (!live()) return;
+          setRecent((r) => (Array.isArray(r) ? r : "failed"));
+          setWhy((w) => ({ ...w, recent: w.recent || errorLine(e, { read: true }) }));
         });
       codeIndexErrors(id, 100, { signal })
         .then((e) => {
           if (live()) setErrs(e);
         })
-        .catch(() => {
-          if (live()) setErrs((x) => x ?? null);
+        .catch((e: unknown) => {
+          if (!live()) return;
+          setErrs((x) => x ?? null);
+          setWhy((w) => ({ ...w, errs: w.errs || errorLine(e, { read: true }) }));
         });
       listCostRollup(id, { days: 7, groupBy: ["operation"], signal })
         .then((r) => {
@@ -1928,14 +1991,16 @@ export function HealthTab({ id }: { id: CodeId }) {
   useAbortableEffect((signal, live) => load(signal, live), [load]);
   useVisiblePoll(load, 60_000);
 
+  const refreshReason = useRefreshReason(id, repo);
   const onRefresh = async () => {
+    if (refreshReason) return;
     setRefreshing(true);
     try {
       const r = await codeRefresh(id);
       toast(r.already_running ? "An ingest pass is already running" : "Ingest pass triggered", "ok");
       setTimeout(load, 2500);
     } catch (e) {
-      toast(`Refresh failed: ${humanizeError(e)}`, "error");
+      toastError("Refresh failed", e);
     } finally {
       setRefreshing(false);
     }
@@ -1965,7 +2030,7 @@ export function HealthTab({ id }: { id: CodeId }) {
     <div className="space-y-6">
       {!!error && (
         <div className="text-xs text-text-muted" role="status">
-          {`Couldn't refresh the index status (${humanizeError(error)}); showing the last read.`}
+          {`Showing the last read; couldn't refresh the index status: ${humanizeError(error, { bare: true, read: true })}`}
         </div>
       )}
       <div className="text-xs text-text-muted">
@@ -2002,9 +2067,7 @@ export function HealthTab({ id }: { id: CodeId }) {
         <Stat
           label="Spend · 7d"
           value={spend === undefined ? "…" : spend === null ? "—" : `$${spend.usd.toFixed(2)}`}
-          hint={
-            spend ? `${fmtInt(spend.ops)} metered ops (embeddings, describes, code.ask)` : "cost rollup unavailable"
-          }
+          hint={spend ? `${fmtInt(spend.ops)} operations recorded in the last 7 days` : "cost rollup unavailable"}
         />
       </div>
 
@@ -2055,8 +2118,8 @@ export function HealthTab({ id }: { id: CodeId }) {
             note={
               cov
                 ? cov.pr_history_enabled
-                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? listTime(cov.pr_history_last_fetch_at) : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
-                  : `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)}, then stopped: worker disabled — set LOOM_CODE_PR_HISTORY_ENABLED=true (a token is optional for public repos). New packs show no PR titles until then.`
+                  ? `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)} · last fetch ${cov.pr_history_last_fetch_at ? listTime(cov.pr_history_last_fetch_at) : "pending"}${cov.pr_history_auth === "anonymous" ? " · anonymous GitHub API (60 req/h; an operator can set LOOM_CODE_GITHUB_TOKEN for headroom)" : ""}`
+                  : `PRs ${cov.pr_history_from.slice(0, 10)} → ${cov.pr_history_to.slice(0, 10)}, then stopped: PR history is off on this deployment — an operator sets LOOM_CODE_PR_HISTORY_ENABLED=true (a token is optional for public repos). New packs show no PR titles until then.`
                 : st.state.pr_backfill_date
                   ? `backfilled to ${st.state.pr_backfill_date.value}`
                   : undefined
@@ -2071,7 +2134,9 @@ export function HealthTab({ id }: { id: CodeId }) {
         {cov === undefined ? (
           <Loading layout="inline" label="Loading coverage" />
         ) : cov === null ? (
-          <div className="text-xs text-text-muted">Couldn't load coverage.</div>
+          <div role="alert" className="text-xs text-text-muted">
+            Couldn't load coverage: {why.cov}
+          </div>
         ) : (
           <div className="space-y-2">
             <Table
@@ -2185,7 +2250,9 @@ export function HealthTab({ id }: { id: CodeId }) {
           {recent === null ? (
             <Loading layout="inline" label="Loading recent commits" />
           ) : recent === "failed" ? (
-            <div className="text-xs text-text-muted">Couldn't load the recent commits.</div>
+            <div role="alert" className="text-xs text-text-muted">
+              Couldn't load the recent commits: {why.recent}
+            </div>
           ) : recent.length === 0 ? (
             <div className="text-xs text-text-muted">No commits recorded yet.</div>
           ) : (
@@ -2232,7 +2299,11 @@ export function HealthTab({ id }: { id: CodeId }) {
             {errs ? <span className="tabular text-text-muted">({fmtInt(errs.total)})</span> : null}
           </button>
           {errs === undefined && <Loading layout="inline" label="Loading the index errors" className="mt-2" />}
-          {errs === null && <div className="mt-2 text-xs text-text-muted">Couldn't load the index errors.</div>}
+          {errs === null && (
+            <div role="alert" className="mt-2 text-xs text-text-muted">
+              Couldn't load the index errors: {why.errs}
+            </div>
+          )}
           {errs && errs.total === 0 && (
             <div className="mt-2 text-xs text-text-muted">
               Every file under the indexed prefixes parsed and chunked.
@@ -2267,7 +2338,7 @@ export function HealthTab({ id }: { id: CodeId }) {
           <div className="mt-1 text-xs text-text-muted">
             {st.last_refresh_at ? (
               <>
-                Last <Mono>code.refresh</Mono> received {relativeTime(st.last_refresh_at)}
+                Last refresh request received {relativeTime(st.last_refresh_at)}
                 {refreshDetail(st.last_refresh_detail) && (
                   <>
                     {" "}
@@ -2284,9 +2355,11 @@ export function HealthTab({ id }: { id: CodeId }) {
             )}
           </div>
         </div>
-        <Button type="primary" htmlType="button" iconLeft="refresh" loading={refreshing} onClick={onRefresh}>
-          Refresh now
-        </Button>
+        <Unavailable reason={refreshReason}>
+          <Button type="primary" htmlType="button" iconLeft="refresh" loading={refreshing} onClick={onRefresh}>
+            Refresh now
+          </Button>
+        </Unavailable>
       </div>
 
       <div>
@@ -2500,7 +2573,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setRes(await codeSearch(id, query.trim(), { top_k: 10, path_prefix: prefix.trim() }));
     } catch (e) {
-      setError(humanizeError(e));
+      setError(humanizeError(e, { read: true }));
     } finally {
       setBusy(false);
     }
@@ -2516,7 +2589,7 @@ function ExploreTab({ id }: { id: CodeId }) {
       ]);
       setSym({ name, defs: s.definitions, callers: callers.edges, callees: callees.edges, ambiguous: s.ambiguous });
     } catch (e) {
-      toast(`Symbol lookup failed: ${humanizeError(e)}`, "error");
+      toastError("Symbol lookup failed", e, { read: true });
     } finally {
       setSymBusy(false);
     }
@@ -2527,7 +2600,7 @@ function ExploreTab({ id }: { id: CodeId }) {
     try {
       setMap((await codeMap(id, { token_budget: 1500 })).map);
     } catch (e) {
-      toast(`Map failed: ${humanizeError(e)}`, "error");
+      toastError("Map failed", e, { read: true });
     } finally {
       setMapBusy(false);
     }
@@ -2563,8 +2636,8 @@ function ExploreTab({ id }: { id: CodeId }) {
         </BusyButton>
       </form>
       <p className="text-xs text-text-muted">
-        Runs the same <span className="font-mono">code.search</span> / <span className="font-mono">code.symbol</span> /{" "}
-        <span className="font-mono">code.callers</span> ops agents call. Click a symbol to see its definition and graph.
+        Runs the same code search, symbol lookup and caller lookup your agents use. Click a symbol to see its definition
+        and graph.
       </p>
 
       {error && <div className="text-sm text-danger">{error}</div>}
@@ -2608,7 +2681,7 @@ function ExploreTab({ id }: { id: CodeId }) {
         <div className="space-y-2" aria-busy={busy || undefined}>
           <div className="flex items-center gap-3 text-xs text-text-muted tabular flex-wrap">
             <span>
-              route <Mono>{res.route}</Mono>
+              search used <Mono>{res.route}</Mono>
             </span>
             <span>confidence {res.retrieval_confidence.toFixed(2)}</span>
             <Badge
@@ -2625,17 +2698,9 @@ function ExploreTab({ id }: { id: CodeId }) {
               </TipTarget>
             )}
             {res.as_of && typeof res.as_of.lag_commits === "number" && (
-              <TipTarget tip="as_of.stale is what an agent gates on before trusting a hit for HEAD-accurate work">
+              <TipTarget tip="An agent checks whether the index is stale before trusting a hit for work that needs the latest commit">
                 <Badge
-                  text={
-                    res.as_of.lag_commits < 0
-                      ? "lag unknown"
-                      : res.as_of.stale
-                        ? `stale · ${res.as_of.lag_commits} behind`
-                        : res.as_of.lag_commits === 0
-                          ? "at tip"
-                          : `${res.as_of.lag_commits} behind`
-                  }
+                  text={lagLabel(res.as_of.lag_commits, Boolean(res.as_of.stale))}
                   state={res.as_of.stale ? "warning" : res.as_of.lag_commits === 0 ? "success" : "neutral"}
                   size="sm"
                 />
@@ -2643,10 +2708,8 @@ function ExploreTab({ id }: { id: CodeId }) {
             )}
           </div>
           {res.note && (
-            <div className="text-xs text-warn">
-              <TipTarget tip="The vector leg covers less than the ready share of this repository's chunks; results come from the lexical leg alone until it does.">
-                {res.note}
-              </TipTarget>
+            <div role="status" className="text-xs text-warn">
+              {res.note}
             </div>
           )}
           {res.abstain && res.abstain_code === "not_covered" && (
@@ -2654,8 +2717,8 @@ function ExploreTab({ id }: { id: CodeId }) {
               state="danger"
               text={
                 <>
-                  <strong className="font-medium">Not covered.</strong> {res.abstain_reason} An agent receives{" "}
-                  <Mono>abstain_code = not_covered</Mono> here, distinct from a genuine miss.
+                  <strong className="font-medium">Not covered.</strong> {res.abstain_reason} An agent is told this part
+                  of the repository is not covered, which it can tell apart from a genuine miss.
                 </>
               }
             />
@@ -2683,8 +2746,7 @@ function ExploreTab({ id }: { id: CodeId }) {
         <div className="p-4 rounded-xl border border-dashed border-border">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm text-text-muted">
-              Not sure where to start? Load the repo orientation map agents get from{" "}
-              <span className="font-mono">code.map</span>.
+              Not sure where to start? Load the orientation map agents get for this repository.
             </div>
             <BusyButton type="secondary" htmlType="button" onClick={loadMap} busy={mapBusy}>
               Show map
@@ -2780,7 +2842,7 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
       const p = await codeContextPack(id, pr, 6000);
       setPack({ pr, text: p.context, tokens: p.tokens_used, source: p.source });
     } catch (e) {
-      toast(`Pack load failed: ${humanizeError(e)}`, "error");
+      toastError("Pack load failed", e, { read: true });
       // Fold the row back rather than leave it loading.
       setOpen((o) => (o === pr ? null : o));
     }
@@ -2790,8 +2852,8 @@ export function PacksTab({ id, repo }: { id: CodeId; repo: string }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs text-text-muted max-w-2xl">
-          One precomputed briefing per merged PR, built by the fast tier as the merge lands. A review bot fetches it
-          with <span className="font-mono">code.context_pack</span> at analysis start instead of exploring cold.
+          One precomputed briefing per merged PR, built as the merge is indexed. A review bot fetches it when it starts
+          a review instead of exploring cold.
         </p>
         <div className="w-28 shrink-0">
           <TextField
@@ -2986,6 +3048,8 @@ export function AccessTab({
   const [ns, setNs] = useState<NamespaceInfo | null | undefined>(undefined);
   const [grants, setGrants] = useState<GrantEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // grants.list refused the caller (a viewer read): not a reader, so not a maintainer.
+  const [refused, setRefused] = useState(false);
   const [subject, setSubject] = useState("");
   const [role, setRole] = useState<GrantRole>("viewer");
   const [busy, setBusy] = useState<string | null>(null);
@@ -3011,10 +3075,13 @@ export function AccessTab({
           if (live()) {
             setGrants(r.rows);
             setError(null);
+            setRefused(false);
           }
         })
         .catch((e) => {
-          if (live()) setError(humanizeError(e));
+          if (!live()) return;
+          setError(humanizeError(e, { read: true }));
+          setRefused(e instanceof ApiError && e.status === 403);
         });
     },
     // `id` is a fresh object each parent render; its two fields are the identity.
@@ -3025,7 +3092,30 @@ export function AccessTab({
 
   const me = whoami?.subject;
   const myGrant = grants?.find((g) => g.subject === me);
-  const canManage = holdsAdminGrant(whoami, myGrant);
+  // A restricted repository's gate refuses a maintainer's token that does not name it, or
+  // whose claim is below admin, and an admin claim with no direct grant (`restrictedMisses`).
+  const repoName = repoRow ? `${repoRow.repo} @ ${repoRow.branch}` : id.namespace;
+  const restricted = repoRow?.classification === "restricted" && whoami?.authenticated !== false;
+  const grantRows = useGrantRows(id.org, restricted);
+  const gateReason = restricted
+    ? restrictedReason(grantRows, whoami, id, { name: repoName, adminWord: "maintainer", what: "its access" })
+    : null;
+  const canManage = holdsAdminGrant(whoami, myGrant) && gateReason === null;
+  // A maintainer's controls stay in view for anyone else once the readers are read, with what
+  // they need, named by the repository's label; grants.list is a viewer read.
+  const lockedId = useId();
+  const manageNeeds = (): string | null => {
+    if (canManage) return null;
+    if ((grants !== null || refused) && gateReason) return gateReason;
+    if (grants === null) {
+      if (refused && repoRow?.classification !== "restricted") return needsMaintainer(repoName);
+      return error ? unreadLine(false, repoName) : null;
+    }
+    if (!whoami) return loadingLine(repoName, id.namespace);
+    if (scopedUnseen(whoami, !!myGrant)) return serverDecides(repoName);
+    return needsMaintainer(repoName);
+  };
+  const manageReason = manageNeeds();
   const roleWord = (r: string) => (r === "viewer" ? "reader" : r === "admin" ? "maintainer" : r);
   const active = (grants || []).filter((g) => g.status === "active");
   // Two shapes of "waiting" (namespace.join): no access yet (status pending),
@@ -3058,7 +3148,7 @@ export function AccessTab({
       toast(`${id.namespace} is now ${RULE_META[next].label.toLowerCase()}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't change the rule: ${humanizeError(err)}`, "error");
+      toastError("Couldn't change the rule", err);
     } finally {
       setBusy(null);
     }
@@ -3079,7 +3169,7 @@ export function AccessTab({
       );
       load();
     } catch (err) {
-      toast(humanizeError(err), "error");
+      toastError(`Couldn't decide ${g.subject}'s request`, err);
     } finally {
       setBusy(null);
     }
@@ -3104,7 +3194,7 @@ export function AccessTab({
   const onAdd = async (e: React.FormEvent) => {
     e.preventDefault();
     const s = subject.trim();
-    if (!s) return;
+    if (!s || !canManage) return;
     setBusy("add");
     try {
       await createGrant(id, s, role);
@@ -3112,7 +3202,7 @@ export function AccessTab({
       setSubject("");
       load();
     } catch (err) {
-      toast(`Couldn't add: ${humanizeError(err)}`, "error");
+      toastError("Couldn't add", err);
     } finally {
       setBusy(null);
     }
@@ -3133,7 +3223,7 @@ export function AccessTab({
       toast(`Removed ${g.subject}`, "ok");
       load();
     } catch (err) {
-      toast(`Couldn't remove: ${humanizeError(err)}`, "error");
+      toastError("Couldn't remove", err);
     }
   };
 
@@ -3172,6 +3262,7 @@ export function AccessTab({
   }, [canManage, waiting.length, others.map((b) => b.namespace).join("|")]);
 
   const approveEverywhere = async (g: GrantEntry) => {
+    if (!canManage) return;
     const targets = [
       { org: id.org, namespace: id.namespace },
       ...(siblingWaiting[g.subject] ?? []).map((b) => ({ org: b.org, namespace: b.namespace })),
@@ -3215,10 +3306,11 @@ export function AccessTab({
                 </div>
                 <p className="mt-1.5 text-xs text-text-muted max-w-2xl">{RULE_META[rule].detail}</p>
               </div>
-              {canManage && (
+              {(canManage || manageReason) && (
                 <div className="flex flex-col items-end gap-2">
                   {/* A select, not radios: arrow keys in a radio group would ask for one
-                      confirmation per press. Cancelling leaves the current rule selected. */}
+                      confirmation per press. Cancelling leaves the current rule selected. A
+                      caller who is no maintainer sees it locked, with the line below. */}
                   <Select
                     label="Join rule"
                     value={rule}
@@ -3226,7 +3318,8 @@ export function AccessTab({
                       const next = oneOf(JOIN_RULES, v);
                       if (next) void setRule(next);
                     }}
-                    disabled={busy !== null}
+                    disabled={busy !== null || !!manageReason}
+                    triggerProps={{ "aria-describedby": manageReason ? lockedId : undefined }}
                   >
                     {JOIN_RULES.map((r) => (
                       <Select.Item
@@ -3237,9 +3330,20 @@ export function AccessTab({
                       />
                     ))}
                   </Select>
-                  <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettingsOpen(true)}>
-                    Description & more
-                  </Button>
+                  <Unavailable reason={manageReason}>
+                    <Button type="empty" htmlType="button" iconLeft="gear" onClick={() => setSettingsOpen(true)}>
+                      Description & more
+                    </Button>
+                  </Unavailable>
+                  {manageReason && (
+                    <p
+                      id={lockedId}
+                      className="m-0 max-w-xs text-right text-xs text-text-muted"
+                      data-testid="access-locked"
+                    >
+                      {manageReason}
+                    </p>
+                  )}
                 </div>
               )}
             </div>
@@ -3281,10 +3385,12 @@ export function AccessTab({
               <Icon name="clock" size="sm" color="var(--color-warn)" aria-hidden="true" /> Waiting for a maintainer{" "}
               <span className="tabular text-text-muted">({waiting.length})</span>
             </div>
-            {canManage && waiting.length > 1 && (
-              <Button type="empty" htmlType="button" onClick={() => void approveAll()} disabled={busy !== null}>
-                Approve all
-              </Button>
+            {waiting.length > 1 && (
+              <Unavailable reason={manageReason}>
+                <Button type="empty" htmlType="button" onClick={() => void approveAll()} disabled={busy !== null}>
+                  Approve all
+                </Button>
+              </Unavailable>
             )}
           </div>
           {waiting.map((g) => {
@@ -3303,20 +3409,20 @@ export function AccessTab({
                 <span className="text-text-muted tabular hidden md:inline">
                   <ListTime time={g.pending_since} quiet />
                 </span>
-                {canManage ? (
-                  <div className="flex flex-wrap items-center gap-2">
-                    {asked === "admin" && (
-                      <Tip content="Admit as a reader instead of a maintainer">
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          onClick={() => void decide(g, "approve", "viewer")}
-                          disabled={busy !== null}
-                        >
-                          Reader instead
-                        </Button>
-                      </Tip>
-                    )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {asked === "admin" && (
+                    <Unavailable reason={manageReason} tip="Admit as a reader instead of a maintainer">
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        onClick={() => void decide(g, "approve", "viewer")}
+                        disabled={busy !== null}
+                      >
+                        Reader instead
+                      </Button>
+                    </Unavailable>
+                  )}
+                  <Unavailable reason={manageReason}>
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -3326,20 +3432,23 @@ export function AccessTab({
                     >
                       Decline
                     </Button>
-                    {alsoOn.length > 0 && (
-                      <Tip content={`Also waiting on ${alsoOn.map((b) => b.branch).join(", ")}`}>
-                        <Button
-                          type="secondary"
-                          htmlType="button"
-                          iconLeft="check"
-                          onClick={() => void approveEverywhere(g)}
-                          disabled={busy !== null}
-                        >
-                          Approve on all {alsoOn.length + 1} branches
-                        </Button>
-                      </Tip>
-                    )}
-                    {/* One primary per surface: a page of requests has none per row. */}
+                  </Unavailable>
+                  {/* Only a maintainer reads the other branches' requests, so this never needs a reason. */}
+                  {canManage && alsoOn.length > 0 && (
+                    <Tip content={`Also waiting on ${alsoOn.map((b) => b.branch).join(", ")}`}>
+                      <Button
+                        type="secondary"
+                        htmlType="button"
+                        iconLeft="check"
+                        onClick={() => void approveEverywhere(g)}
+                        disabled={busy !== null}
+                      >
+                        Approve on all {alsoOn.length + 1} branches
+                      </Button>
+                    </Tip>
+                  )}
+                  {/* One primary per surface: a page of requests has none per row. */}
+                  <Unavailable reason={manageReason}>
                     <Button
                       type="secondary"
                       htmlType="button"
@@ -3349,10 +3458,8 @@ export function AccessTab({
                     >
                       Approve as {ROLE_WORD[asked]}
                     </Button>
-                  </div>
-                ) : (
-                  <span className="text-text-muted">waiting</span>
-                )}
+                  </Unavailable>
+                </div>
               </div>
             );
           })}
@@ -3390,7 +3497,7 @@ export function AccessTab({
                 { label: "Reader" },
                 { label: "Role", width: "200px" },
                 { label: "Added", width: "220px" },
-                ...(canManage ? [{ label: <span className="sr-only">Actions</span>, width: "56px" }] : []),
+                { label: <span className="sr-only">Actions</span>, width: "56px" },
               ]}
               rows={active.map((g) => ({
                 id: g.subject,
@@ -3425,28 +3532,28 @@ export function AccessTab({
                       </span>
                     ),
                   },
-                  ...(canManage
-                    ? [
-                        {
-                          label:
-                            g.subject !== me ? (
-                              <IconButton
-                                icon="trash"
-                                size="sm"
-                                label={`Remove ${g.subject}`}
-                                tooltip="Remove reader"
-                                onClick={() => void onRevoke(g)}
-                              />
-                            ) : null,
-                        },
-                      ]
-                    : []),
+                  {
+                    label:
+                      g.subject !== me ? (
+                        <GatedIconButton
+                          icon="trash"
+                          size="sm"
+                          label={`Remove ${g.subject}`}
+                          tooltip="Remove reader"
+                          reason={manageReason}
+                          onClick={() => void onRevoke(g)}
+                        />
+                      ) : null,
+                  },
                 ],
               }))}
             />
           )}
 
-          {canManage && hasAdmin && (
+          {/* One form for a maintainer and anyone else once the readers are read, so its Add
+              keeps its focus as the gate resolves: below it the fields are disabled and Add
+              says what it needs. */}
+          {(canManage || manageReason) && hasAdmin && (
             <form onSubmit={onAdd} className="flex flex-wrap gap-2 items-end" aria-label="Add a reader">
               <div className="flex-1 min-w-64">
                 <TextField
@@ -3454,11 +3561,13 @@ export function AccessTab({
                   onChange={(v) => setSubject(v)}
                   placeholder="login handle (sign-in namespace), verified email or service-account subject"
                   aria-label="Subject to add"
+                  disabled={!canManage}
                 />
               </div>
               <div className="w-full sm:w-80">
                 <Select
                   value={role}
+                  disabled={!canManage}
                   triggerProps={{ "aria-label": "Role" }}
                   onSelect={(value) => {
                     const v = oneOf(
@@ -3475,9 +3584,16 @@ export function AccessTab({
                   ))}
                 </Select>
               </div>
-              <Button type="primary" htmlType="submit" iconLeft="plus" disabled={busy !== null || !subject.trim()}>
-                Add
-              </Button>
+              <Unavailable reason={manageReason}>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  iconLeft="plus"
+                  disabled={canManage && (busy !== null || !subject.trim())}
+                >
+                  Add
+                </Button>
+              </Unavailable>
               <span className="text-xs text-text-muted basis-full">
                 Adding someone by name works under every rule. Agents read with a token that names this repository.
               </span>
@@ -3489,7 +3605,7 @@ export function AccessTab({
       {/* 4. Retire — the one irreversible verb, last, red, and
              behind a confirmation that spells out what goes. Operator-configured
              entries say who owns them instead. */}
-      {canManage && repoRow && (
+      {(canManage || manageReason) && repoRow && (
         <section
           className="rounded-xl border border-border p-4 flex items-start justify-between gap-4 flex-wrap"
           aria-label="Retire"
@@ -3504,8 +3620,8 @@ export function AccessTab({
                     {repoRow.repo} @ {repoRow.branch}
                   </b>
                   : readers lose access, tokens naming it stop working, every indexed row is purged by an erasure you
-                  can follow under Audit → Erasures, and the mirror is deleted when no other branch uses it. Adding it
-                  again re-indexes from scratch.
+                  can follow under Audit log → Erasures, and the mirror is deleted when no other branch uses it. Adding
+                  it again re-indexes from scratch.
                 </>
               ) : (
                 <>
@@ -3515,8 +3631,10 @@ export function AccessTab({
               )}
             </p>
           </div>
-          <Tip
-            content={
+          {/* A configured index is the deployment's for everyone: natively off, with its tip. */}
+          <Unavailable
+            reason={repoRow.source === "registry" ? manageReason : null}
+            tip={
               repoRow.source === "registry"
                 ? "Irreversible; a confirmation follows"
                 : "Managed by the deployment config"
@@ -3526,12 +3644,12 @@ export function AccessTab({
               type="danger"
               htmlType="button"
               iconLeft="trash"
-              disabled={repoRow.source !== "registry" || busy !== null}
+              disabled={repoRow.source !== "registry" || (!manageReason && busy !== null)}
               onClick={async () => {
                 if (
                   !(await confirmAction({
                     title: `Retire ${repoRow.repo} @ ${repoRow.branch}?`,
-                    message: `The index ${id.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the repository again re-indexes from scratch.`,
+                    message: `The index ${id.namespace} is retired now: its readers are refused from this moment, its rows are purged by an erasure that runs in the background (Audit log → Erasures), and the mirror goes if no other branch uses it. This cannot be undone; adding the repository again re-indexes from scratch.`,
                     confirmLabel: "Retire index",
                     danger: true,
                   }))
@@ -3546,7 +3664,7 @@ export function AccessTab({
                   );
                   onRetired?.();
                 } catch (err) {
-                  toast(humanizeError(err), "error");
+                  toastError("Couldn't retire the repository", err);
                 } finally {
                   setBusy(null);
                 }
@@ -3554,7 +3672,7 @@ export function AccessTab({
             >
               Retire…
             </Button>
-          </Tip>
+          </Unavailable>
         </section>
       )}
 
@@ -3566,6 +3684,7 @@ export function AccessTab({
         }}
         org={id.org}
         namespace={id.namespace}
+        label={repoRow ? `${repoRow.repo} @ ${repoRow.branch}` : undefined}
       />
     </div>
   );

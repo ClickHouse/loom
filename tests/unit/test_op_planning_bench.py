@@ -79,7 +79,7 @@ def test_fixture_exercises_the_revision_path(settings_override) -> None:
         any(g["tool"] == "loom_memory_apply" for g in t["gold"]) for t in retired
     )
     assert not ({t["id"] for t in retired} & {t["id"] for t in tasks})
-    # `dry_run` and the new verbs are on the core surface the bench lists
+    # `dry_run` and the new verbs are on the `all` surface the bench lists
     assert "dry_run" in (tools["loom_memory_set"].get("properties") or {})
     for t in revision:
         for g in t["gold"]:
@@ -376,7 +376,7 @@ def test_archetype_cohort_is_the_tasks_a_toolset_lists_every_gold_tool_of(
         {"lock-direct-01", "apply-label-direct-01", "ask-indirect-01", "history-direct-01"} & ids
     )
     assert B.gaps(cohort, coding) == [] and B.gaps(cohort, core_code) == []
-    # the coding listing is 20 tools (including tracker.duplicate_check,
+    # the coding listing is 21 tools (including tracker.duplicate_check,
     # bisect candidates, PR check and blast radius) and carries
     # the code tools without the flag
     assert (
@@ -386,7 +386,8 @@ def test_archetype_cohort_is_the_tasks_a_toolset_lists_every_gold_tool_of(
     )
     assert "loom_code_bisect_candidates" in coding and "loom_code_pr_check" in coding
     assert len(B.load_tools("coding", "standard", "on")) == 21
-    assert len(B.load_tools("core", "standard", "off")) == 34  # + loom_op
+    # 10 ops + loom_search, loom_activate, loom_op
+    assert len(B.load_tools("core", "standard", "off")) == 13
     # the summary names the arm's settings
     res = {
         "model": "m",

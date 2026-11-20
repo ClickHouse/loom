@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from server.cli._ch import connect_code_plane
 from server.cli.code_run import _identity, _note, _repo_cfg
 from server.core.datetimes import naive_utc_now
 
@@ -30,7 +31,7 @@ async def _backfill_prs(args: argparse.Namespace) -> int:
             "expect rate-limit stops, re-run to resume",
             file=sys.stderr,
         )
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
 
@@ -78,7 +79,7 @@ async def _backfill_reviews(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = cfg.org, cfg.namespace
     repo = CodeRepo()
     rows = await repo._ch.query_all(
@@ -132,7 +133,7 @@ async def _backfill_items(args: argparse.Namespace) -> int:
     if not cfg.github_token:
         print("backfill-items: LOOM_CODE_GITHUB_TOKEN required", file=sys.stderr)
         return 2
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = cfg.org, cfg.namespace
     repo = CodeRepo()
     if args.since:
@@ -195,7 +196,7 @@ async def _backfill_assignees(args: argparse.Namespace) -> int:
     if not cfg.github_token:
         print("backfill-assignees: LOOM_CODE_GITHUB_TOKEN required", file=sys.stderr)
         return 2
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = cfg.org, cfg.namespace
     repo = CodeRepo()
     try:

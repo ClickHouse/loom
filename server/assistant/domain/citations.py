@@ -1,5 +1,6 @@
 """The citations an assistant answer writes, as its instructions ask for them:
 `[memory:<key>@v<version>]`, `[doc:<source_uri> § <section>]` (the section optional),
+`[help:<docs path> § <section>]` (a page of Loom's documentation, the section optional),
 `[code:<path>:<line>]`, and each fenced `sql` block, which holds a statement exactly as
 `insights.query` ran it. Pure: the checks against Loom are in the app layer."""
 
@@ -15,16 +16,17 @@ _MEMORY = re.compile(r"\[memory:(?P<key>[^\]\s]+)@v(?P<version>\d+)\]")
 _DOC = re.compile(
     r"\[doc:(?P<uri>[^\]§]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*(?:,\s*revision\s+\d+)?\]"
 )
+_HELP = re.compile(r"\[help:(?P<path>[^\]§\s]+?)(?:\s*§\s*(?P<section>[^\]]+?))?\s*\]")
 _CODE = re.compile(r"\[code:(?P<path>[^\]\s]+?):(?P<line>\d+)\]")
 _SQL = re.compile(r"```sql[ \t]*\n(?P<sql>.*?)\n```", re.DOTALL | re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class Citation:
-    """One citation: its kind (`memory`, `doc`, `code`, `sql`), its text as written,
-    and what it names."""
+    """One citation: its kind (`memory`, `doc`, `help`, `code`, `sql`), its text as
+    written, and what it names."""
 
-    kind: Literal["memory", "doc", "code", "sql"]
+    kind: Literal["memory", "doc", "help", "code", "sql"]
     text: str
     key: str = ""
     source_uri: str = ""
@@ -34,8 +36,14 @@ class Citation:
 
     @property
     def ref(self) -> str:
-        """What a reader opens: the memory key, the document's source, the code path."""
-        return {"memory": self.key, "doc": self.source_uri, "code": self.path}.get(self.kind, "")
+        """What a reader opens: the memory key, the document's source, the docs page or the
+        code path."""
+        return {
+            "memory": self.key,
+            "doc": self.source_uri,
+            "help": self.path,
+            "code": self.path,
+        }.get(self.kind, "")
 
 
 def section_path(section: str) -> tuple[str, ...]:
@@ -53,6 +61,9 @@ def parse(answer: str) -> list[Citation]:
         found.append(
             (m.start(), Citation("doc", m.group(0), source_uri=m["uri"].strip(), section=section))
         )
+    for m in _HELP.finditer(answer):
+        section = section_path(m["section"] or "")
+        found.append((m.start(), Citation("help", m.group(0), path=m["path"], section=section)))
     for m in _CODE.finditer(answer):
         found.append((m.start(), Citation("code", m.group(0), path=m["path"])))
     for m in _SQL.finditer(answer):

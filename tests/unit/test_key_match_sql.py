@@ -1,12 +1,19 @@
-"""The key-match arm's statement, run on clickhouse-local against the real
+"""The key-match arm's statements, run on clickhouse-local against the real
 `loom.memory_embeddings`: at most `per_key` rows of a key, in one order however the parts
-are read."""
+are read; a key is split at `_` and at whitespace before it is stemmed, as `key_parts`
+splits it, and a key without whitespace reads as it did at the `_` split alone."""
 
 from __future__ import annotations
 
 import pytest
 
-from server.memory.app.search.sql import key_match_sql
+from server.memory.app.search.key_match import key_match_query_stems, key_parts
+from server.memory.app.search.sql import (
+    KEY_PARTS,
+    key_match_component_sql,
+    key_match_precheck_sql,
+    key_match_sql,
+)
 from tests.unit.clickhouse_local import CLICKHOUSE, EMBEDDINGS, VECTOR, run
 
 pytestmark = pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse binary not installed")
@@ -55,3 +62,80 @@ def test_two_keys_that_tie_keep_one_order_at_the_limit() -> None:
     )
     rows = run(setup, _SQL, _params(per_key=3, limit=1))
     assert [r["memory_key"] for r in rows] == ["user_task_worktree"]
+
+
+# A key with whitespace in a part (`stem()` refuses one) beside one split at `_` alone.
+_SPACED = ("communication style", "user_communication_style")
+
+
+def test_a_key_with_whitespace_is_split_before_it_is_stemmed() -> None:
+    setup = _setup(*(_row("s1", key) for key in _SPACED))
+    params = {**_params(per_key=3, limit=10), "stems": key_match_query_stems("communication style")}
+    assert run(setup, key_match_precheck_sql(), params) == [{"any_key": 1}]
+    alone = _setup(_row("s1", "communication style"))
+    assert run(alone, key_match_precheck_sql(), params) == [{"any_key": 1}]
+    assert sorted(r["memory_key"] for r in run(setup, _SQL, params)) == sorted(_SPACED)
+    component = key_match_component_sql("e.org = {org:String} AND e.tombstoned_at IS NULL")
+    rows = run(setup, component, {**params, "pool_keys": list(_SPACED)})
+    assert sorted(r["memory_key"] for r in rows) == sorted(_SPACED)
+
+
+def test_key_parts_in_python_are_the_statements_parts_for_an_ascii_key() -> None:
+    keys = [
+        "user_task_worktree",
+        "a__b",
+        "_lead",
+        "communication style",
+        "x\ty\nz",
+        "p/q-r s",
+        # each escape in the statement's literal is whitespace, not its letter
+        "pref\x0bvim\x0cfoo\rbar_vfr",
+    ]
+    rows = run(
+        [],
+        f"SELECT {KEY_PARTS} AS parts FROM (SELECT arrayJoin({{keys:Array(String)}}) AS memory_key)",
+        {"keys": keys},
+    )
+    assert [r["parts"] for r in rows] == [key_parts(k) for k in keys]
+
+
+_KEYS = (
+    "user_task_worktree",
+    "worktree_path",
+    "user_prs_open_count",
+    "pr_review_policy",
+    "a__task",
+    "_task_lead",
+    "Task_Owner",
+    "pref/editor_theme",
+    "ci-run_flaky_tests",
+)
+
+
+@pytest.mark.parametrize(
+    ("query", "keys"),
+    [
+        ("task worktree path", ["worktree_path", "user_task_worktree"]),
+        # `pref/editor` stays one part: one of two matched
+        ("editor theme", []),
+        ("flaky CI tests", ["ci-run_flaky_tests"]),
+    ],
+)
+def test_a_key_without_whitespace_reads_as_it_did_at_the_underscore_split(
+    query: str, keys: list[str], tmp_path
+) -> None:
+    """Every statement returns the same rows, in the same order, as it did when keys were
+    split at `_` alone: their parts, counts and document frequencies are unchanged."""
+    run(_setup(*(_row(f"s{i % 3}", key) for i, key in enumerate(_KEYS))), "SELECT 1", path=tmp_path)
+    params = {**_params(per_key=3, limit=10), "stems": key_match_query_stems(query)}
+    where = "e.org = {org:String} AND e.tombstoned_at IS NULL"
+    statements = [
+        (key_match_precheck_sql(), params),
+        (_SQL, params),
+        (key_match_component_sql(where), {**params, "pool_keys": list(_KEYS)}),
+    ]
+    for sql, p in statements:
+        before = sql.replace(KEY_PARTS, "splitByChar('_', lower(memory_key))")
+        assert before != sql
+        assert run([], sql, p, path=tmp_path) == run([], before, p, path=tmp_path)
+    assert [r["memory_key"] for r in run([], _SQL, params, path=tmp_path)] == keys

@@ -1,4 +1,4 @@
-import { act, render, screen } from "../test/rtl";
+import { act, render, screen, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 
 /** The badge reads leave after paint + idle (two animation frames, then a timer in
@@ -10,8 +10,9 @@ async function painted(): Promise<void> {
 }
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { useStore } from "../lib/state";
+import { useStore, viewHref } from "../lib/state";
 import { Sidebar } from "./Sidebar";
+import { MobileNav } from "./MobileNav";
 import { invalidateShared } from "../lib/sharedReads";
 
 // The Admin drawer — and the conflicts.list / cost.budget_status / agents.connected polls
@@ -207,6 +208,157 @@ describe("Sidebar admin drawer", () => {
     render(<Sidebar />);
     expect(screen.getByRole("button", { name: /Admin/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Admin/ })).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("the admin list on every width", () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    invalidateShared();
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null, adminBadges: null });
+  });
+
+  it("names the audit feed Audit log, apart from the rail's Activity group", () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: "Audit log" })).toHaveAttribute("href", viewHref("admin:activity"));
+    expect(screen.queryByRole("link", { name: "Activity" })).toBeNull();
+  });
+
+  it("is the same on the phone's More sheet: the drawer's entries in its order, Review queue and its count included", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["PLATFORM_ADMIN"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    const drawer = screen.getByRole("button", { name: /Admin/ }).parentElement as HTMLElement;
+    const hrefs = (el: HTMLElement) =>
+      within(el)
+        .getAllByRole("link")
+        .map((a) => a.getAttribute("href"));
+    const sidebar = hrefs(drawer);
+    expect(sidebar[0]).toBe(viewHref("admin:review_queue"));
+    expect(sidebar).toContain(viewHref("admin:settings"));
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(hrefs(admin)).toEqual(sidebar);
+    expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+  });
+
+  it("keeps the sheet's Review queue past the badge cache's minute: the sheet reads the store", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    render(<Sidebar />);
+    await painted();
+    const later = Date.now() + 61_000;
+    vi.spyOn(Date, "now").mockReturnValue(later);
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(within(admin).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+  });
+
+  it("redraws the open sheet when a new badge answer lands", async () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ adminBadges: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } });
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const review = () => within(sheet).getByRole("link", { name: /Review queue/ });
+    expect(review()).toHaveTextContent("3");
+    act(() => useStore.setState({ adminBadges: { conflicts: 5, autoResolved: false, overCap: false, newAgents: 0 } }));
+    expect(review()).toHaveTextContent("5");
+  });
+
+  it("drops the previous namespace's Review queue from the open sheet on a namespace switch", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin"), row("team-b", "admin")]);
+    render(<Sidebar />);
+    await painted();
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = () => within(sheet).getByRole("navigation", { name: "Admin" });
+    expect(within(admin()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    act(() => useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" } }));
+    expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await painted();
+    expect(within(admin()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
+  it("shows no badge from the other org after an org switch", async () => {
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["PLATFORM_ADMIN"] }, null);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team-a", agent: "loom-ui" } }));
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await painted();
+    expect(countConflicts).toHaveBeenLastCalledWith({ org: "other", namespace: "team-a" });
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
+  it("draws Usage's warning dot and the Agents count on the More sheet", async () => {
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ adminBadges: { conflicts: null, autoResolved: false, overCap: true, newAgents: 2 } });
+    render(<MobileNav />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
+    const sheet = await screen.findByRole("dialog", { name: "More" });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    const usage = within(admin).getByRole("link", { name: /Usage/ });
+    expect(within(usage).getByRole("img", { name: "Attention required" })).toBeInTheDocument();
+    expect(within(admin).getByRole("link", { name: /Agents/ })).toHaveTextContent("2");
+  });
+
+  it("writes nothing once unmounted while a read is out", async () => {
+    let settle: (n: number) => void = () => {};
+    vi.mocked(countConflicts).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    const { unmount } = render(<Sidebar />);
+    await painted();
+    expect(countConflicts).toHaveBeenCalledTimes(1);
+    unmount();
+    await act(async () => settle(3));
+    expect(useStore.getState().adminBadges).toBeNull();
+    expect(sessionStorage.getItem("loom_badge_v1:badges:dev/team-a")).toBeNull();
+  });
+
+  it("hides a badge whose read fails, though the session remembered one", async () => {
+    sessionStorage.setItem(
+      "loom_badge_v1:badges:dev/team-a",
+      JSON.stringify({ at: Date.now(), v: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } }),
+    );
+    vi.mocked(countConflicts).mockRejectedValueOnce(new Error("offline"));
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    await painted();
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+  });
+
+  it("shows the reads' answers together, once the slowest settles", async () => {
+    let settle: (n: number) => void = () => {};
+    vi.mocked(countNewAgents).mockReturnValueOnce(new Promise<number>((r) => (settle = r)));
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    await act(async () => settle(2));
+    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    expect(screen.getByRole("link", { name: /Agents/ })).toHaveTextContent("2");
   });
 });
 

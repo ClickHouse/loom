@@ -61,6 +61,12 @@ writeFileSync(
       typeRoots: [join(root, "node_modules", "@types")],
       paths: {
         "@clickhouse/loom": [join(root, "src", "index.ts")],
+        "@clickhouse/loom/integrations/ai-sdk": [join(root, "src", "integrations", "ai-sdk.ts")],
+        "@clickhouse/loom/integrations/claude-memory": [join(root, "src", "integrations", "claude-memory.ts")],
+        "@clickhouse/loom/integrations/google-adk": [join(root, "src", "integrations", "google-adk.ts")],
+        "@clickhouse/loom/integrations/langchain": [join(root, "src", "integrations", "langchain.ts")],
+        "@clickhouse/loom/integrations/mastra": [join(root, "src", "integrations", "mastra.ts")],
+        "@clickhouse/loom/integrations/openai-agents": [join(root, "src", "integrations", "openai-agents.ts")],
         "@clickhouse/loom/integrations/strands": [join(root, "src", "integrations", "strands.ts")],
       },
     },

@@ -86,6 +86,36 @@ def test_schema_status_returns_drift_shape(
     assert "drift" in body
 
 
+@pytest.mark.parametrize(
+    ("missing_view", "extra_view"), [(False, False), (True, False), (False, True)]
+)
+def test_schema_status_accounts_for_boot_view_and_keeps_missing_and_extra_drift(
+    client, monkeypatch, tmp_path, missing_view, extra_view
+):
+    from server.insights.app import admin_routes
+    from server.insights.domain.analysis import EVENTS_VIEW
+
+    (tmp_path / "001_base.sql").write_text("CREATE TABLE loom.memory (value UInt8);")
+    monkeypatch.setattr(admin_routes, "MIGRATIONS_DIR", tmp_path)
+    present = ["memory", "_migration_lock"]
+    if not missing_view:
+        present.append(EVENTS_VIEW)
+    if extra_view:
+        present.append("unexpected_view")
+
+    async def listed():
+        return present
+
+    monkeypatch.setattr(admin_repo, "list_loom_tables", listed)
+    response = client.get("/v1/admin/schema.status")
+    assert response.status_code == 200
+    body = response.json()
+    assert EVENTS_VIEW in body["expected"]
+    assert body["missing"] == ([EVENTS_VIEW] if missing_view else [])
+    assert body["extra"] == (["unexpected_view"] if extra_view else [])
+    assert body["drift"] is (missing_view or extra_view)
+
+
 def test_audit_summary_default_window(
     client: TestClient,
     monkeypatch: pytest.MonkeyPatch,
@@ -127,11 +157,16 @@ def test_events_tail_filters_thread_through(
     captured: dict[str, Any] = {}
 
     async def fake(
-        since_seconds: int, limit: int, *, filters: dict[str, Any] | None = None
+        since_seconds: int,
+        limit: int,
+        *,
+        filters: dict[str, Any] | None = None,
+        operator: bool = False,
     ) -> list[dict[str, Any]]:
         captured["since"] = since_seconds
         captured["limit"] = limit
         captured["filters"] = filters
+        captured["operator"] = operator
         return []
 
     monkeypatch.setattr(admin_repo, "events_tail", fake)
@@ -146,6 +181,7 @@ def test_events_tail_filters_thread_through(
         },
     )
     assert r.status_code == 200
+    assert captured["operator"] is False
     assert captured["since"] == 120
     assert captured["limit"] == 5
     assert captured["filters"] == {"org": "clickhouse", "agent": "bot", "success": False}
@@ -281,6 +317,9 @@ def test_token_mint_happy_path_when_auth_not_required(
                 return {"v": time.time_ns()}
             return None
 
+        async def query_all(self, sql: str, params: object = None) -> list[dict]:
+            return []  # the directory holds no kinds: every namespace is memory
+
         async def insert(self, table: str, rows: list[dict], **kw: object) -> None:
             saved.extend(rows)
 
@@ -309,6 +348,15 @@ def test_token_mint_happy_path_when_auth_not_required(
     assert body["roles"] == ["writer"] and body["ttl_seconds"] == 90 * 86400
     assert body["subject"].startswith("sa:alice-bot-")
     assert [row["sa_subject"] for row in saved] == [body["subject"]]
+    # A list token saves to its one writable entry, recorded on its row.
+    assert body["saves_to"] == saved[0]["saves_to"] == "personal-alice"
+    # A `*` token minted with auth off has no creator, so no home before `*`: it names none.
+    r = client.post(
+        "/v1/admin/token.mint",
+        json={"name": "alice-all", "org": "clickhouse", "namespaces": ["personal-alice", "*"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["saves_to"] == ""
 
 
 def test_customer_list_endpoint_removed(client: TestClient) -> None:

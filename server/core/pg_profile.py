@@ -84,6 +84,18 @@ async def standby_state() -> tuple[str, int | None]:
 
 
 async def check_durability() -> Durability:
+    # A durable re-read (`pg.durable_transaction`) commits a logical message: a role that
+    # may not write one refuses the boot, not every publish that re-reads a head.
+    import asyncpg
+
+    try:
+        await pg.check_durable_message()
+    except asyncpg.InsufficientPrivilegeError as e:
+        raise DurabilityRefused(
+            "this role may not run pg_logical_emit_message, which a publisher's durable "
+            "re-read commits: GRANT EXECUTE on its text overload to the role (`\\df "
+            "pg_logical_emit_message` lists that overload's arguments on this Postgres)"
+        ) from e
     names, sync = await standby_state()
     verdict = durability_verdict(settings.pg_durability, names, sync)
     if verdict.refusal:
@@ -131,6 +143,12 @@ async def _ch_record_if_migrated(ch: Any, *, warn: bool = True) -> dict[str, Any
         return None
 
 
+async def recorded_authority(ch: Any) -> dict[str, Any] | None:
+    """The authority this ClickHouse records, refusing one this configuration does not
+    match (`AuthorityMismatch`); None before a deployment's first boot."""
+    return await _recorded_matching(ch, warn=False)
+
+
 async def check_configured(ch: Any) -> None:
     """Refuse a CLI command configured for another deployment than the one recorded: an
     erasure or an import run against the wrong store would leave or write another's rows.
@@ -138,7 +156,7 @@ async def check_configured(ch: Any) -> None:
     `LOOM_PG_DSN` names is checked on the command's first connection
     (`pg.expect_deployment`), so a command that never touches memory (a token
     revocation) runs while Postgres is down."""
-    recorded = await _recorded_matching(ch, warn=False)
+    recorded = await recorded_authority(ch)
     if settings.storage_authority == "postgres":
         if not settings.pg_dsn:
             raise AuthorityMismatch(pg.NO_DSN)
@@ -169,6 +187,12 @@ async def _ch_write(ch: Any, authority: str, epoch: int, deployment_id: str) -> 
 async def _pg_record() -> dict[str, Any] | None:
     row = await pg.fetchrow("SELECT authority, epoch, deployment_id FROM loom.authority")
     return dict(row) if row else None
+
+
+async def deployment_id() -> str:
+    """The deployment id Postgres records ('' when it records none)."""
+    held = await _pg_record()
+    return str(held["deployment_id"]) if held else ""
 
 
 async def require_authority(ch: Any) -> None:
@@ -259,8 +283,7 @@ async def _require_authority(ch: Any) -> None:
         if held is None:
             # Postgres first: a boot cut off between the two completes the record next time.
             held = {"authority": "postgres", "epoch": 1, "deployment_id": str(uuid.uuid4())}
-            # In a transaction: its commit waits for the standby, which a single statement's
-            # timeout would cut short.
+            # In a transaction, whose cut-off commit is reported `outcome_unknown`.
             async with pg.transaction() as conn:
                 await conn.execute(
                     "INSERT INTO loom.authority (authority, epoch, deployment_id) "

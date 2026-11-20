@@ -20,6 +20,7 @@ import {
   NETWORK_ERROR_CODE,
   TimeoutError,
 } from "./errors.js";
+import { type SessionCapture, SessionProtectionUnavailable } from "./session-protection.js";
 import type { Transport } from "./transport.js";
 
 export const ASSISTANT_ROUTE = "/v1/assistant/chat/completions";
@@ -29,12 +30,28 @@ export const DEFAULT_READ_TIMEOUT_MS = 300_000;
 
 /** One citation the answer wrote, whether Loom verified it, and why not. */
 export interface AssistantCitation {
-  kind: "memory" | "doc" | "code" | "sql" | string;
+  kind: "memory" | "doc" | "help" | "code" | "sql" | string;
   text: string;
   verified: boolean;
   reason: string;
-  /** The memory key, document source or code path it names ('' for sql). */
+  /** The memory key, document source, documentation page or code path it names ('' for sql). */
   ref: string;
+  /** A verified help citation's section anchor on its page; '' otherwise. */
+  anchor: string;
+}
+
+/** How far an answer rests on what Loom holds: `supported`, `unsupported`, `unchecked` or
+ *  `none`, as docs/architecture/assistant.md#support defines them; a value this SDK does
+ *  not know, or none from an older server, reads as `unchecked`. */
+export type AssistantSupport = "supported" | "unsupported" | "unchecked" | "none";
+
+/** One tool call the answer made, as its ledger row shows it: the op, a line saying what it
+ *  did (such as "Couldn't search memories" when the call failed or was refused), and whether
+ *  it succeeded. */
+export interface AssistantStep {
+  op: string;
+  text: string;
+  ok: boolean;
 }
 
 /** The whole answer; `runId` is the `run_id` of its ledger rows. */
@@ -43,8 +60,16 @@ export interface AssistantAnswer {
   runId: string;
   model: string;
   citations: AssistantCitation[];
+  support: AssistantSupport;
   promptTokens: number;
   completionTokens: number;
+  /** Op and LOOM_* names the answer wrote that the server neither serves nor documents. */
+  unknownNames: string[];
+  /** What it read, oldest first: sent on a streamed answer by a server that has them; [] too
+   *  when the server could not read the run (a run that made no call has none either). */
+  steps: AssistantStep[];
+  /** The run held more ledger rows than one read takes (200), so `steps` is a part of it. */
+  stepsCut: boolean;
 }
 
 export type AssistantEvent = { type: "text"; text: string } | { type: "answer"; answer: AssistantAnswer };
@@ -63,6 +88,8 @@ export interface AskInput {
   signal?: AbortSignal;
   /** How long the request, and then each read, waits for data (`DEFAULT_READ_TIMEOUT_MS`). */
   readTimeoutMs?: number;
+  /** Contributing conversations retained for an automatic invocation. */
+  capture?: SessionCapture;
 }
 
 /** The methods bound to a transport; `LoomClient` merges them into `loom.assistant`. */
@@ -110,7 +137,7 @@ export function assistantChat(transport: Transport): AssistantChat {
       touch();
       let res: Response;
       try {
-        res = await transport.stream(ASSISTANT_ROUTE, body, { headers, signal: cut.signal });
+        res = await transport.stream(ASSISTANT_ROUTE, body, { headers, signal: cut.signal, capture: input.capture });
       } catch (e) {
         throw timedOut(e);
       }
@@ -120,12 +147,21 @@ export function assistantChat(transport: Transport): AssistantChat {
         runId: "",
         model: "",
         citations: [],
+        support: "unchecked",
         promptTokens: 0,
         completionTokens: 0,
+        unknownNames: [],
+        steps: [],
+        stepsCut: false,
       };
+      let complete = false;
       try {
         for await (const data of events(res, transport.baseUrl, requestId, cut.signal, touch)) {
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            complete = true;
+            continue;
+          }
+          if (complete) continue;
           const event = parse(data);
           if (!event) continue;
           if (isObject(event.error)) {
@@ -145,6 +181,7 @@ export function assistantChat(transport: Transport): AssistantChat {
       }
       if (!answer.runId)
         throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before the answer began`, { requestId });
+      if (!complete) throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before completion`, { requestId });
       pause();
       yield { type: "answer", answer };
     } finally {
@@ -168,6 +205,8 @@ async function* events(
   if (!reader) return;
   const decoder = new TextDecoder();
   let buffered = "";
+  let skipLF = false;
+  let fields: string[] = [];
   try {
     for (;;) {
       let chunk: ReadableStreamReadResult<Uint8Array>;
@@ -175,6 +214,7 @@ async function* events(
         chunk = await reader.read();
         touch();
       } catch (e) {
+        if (e instanceof SessionProtectionUnavailable) throw e;
         if (signal?.aborted) {
           const aborted = new LoomError(`${ASSISTANT_ROUTE}: aborted by caller`, {
             op: ASSISTANT_ROUTE,
@@ -191,18 +231,33 @@ async function* events(
         });
         throw classed(cut, "dependency", false);
       }
-      buffered += decoder.decode(chunk.value, { stream: !chunk.done });
-      let end = buffered.indexOf("\n\n");
-      while (end >= 0) {
-        for (const line of buffered.slice(0, end).split("\n")) if (line.startsWith("data: ")) yield line.slice(6);
-        buffered = buffered.slice(end + 2);
-        end = buffered.indexOf("\n\n");
+      for (const character of decoder.decode(chunk.value, { stream: !chunk.done })) {
+        if (skipLF) {
+          skipLF = false;
+          if (character === "\n") continue;
+        }
+        if (character !== "\r" && character !== "\n") {
+          buffered += character;
+          continue;
+        }
+        skipLF = character === "\r";
+        const line = buffered;
+        buffered = "";
+        if (!line) {
+          if (fields.length) yield fields.join("\n");
+          fields = [];
+        } else if (line === "data") fields.push("");
+        else if (line.startsWith("data:")) {
+          const value = line.slice(5);
+          fields.push(value.startsWith(" ") ? value.slice(1) : value);
+        }
       }
       if (chunk.done) return;
     }
   } finally {
     // A caller that stops reading closes the answer: the server stops it too.
     await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
 }
 
@@ -225,6 +280,13 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+const SUPPORTS: readonly string[] = ["supported", "unsupported", "unchecked", "none"];
+
+/** The support the server sent; a value this SDK does not know, or none, reads as unchecked. */
+function supportOf(v: unknown): AssistantSupport {
+  return typeof v === "string" && SUPPORTS.includes(v) ? (v as AssistantSupport) : "unchecked";
+}
+
 /** Fold one chunk into `answer`; the text it adds. */
 function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
   if (event.object === "loom.citations") {
@@ -234,9 +296,20 @@ function fold(event: Record<string, unknown>, answer: AssistantAnswer): string {
       verified: c.verified === true,
       reason: String(c.reason ?? ""),
       ref: String(c.ref ?? ""),
+      anchor: String(c.anchor ?? ""),
     }));
+    answer.support = supportOf(event.support);
+    answer.unknownNames = (Array.isArray(event.unknown_names) ? event.unknown_names : []).map(String);
+    answer.steps = (Array.isArray(event.steps) ? event.steps : []).filter(isObject).map((s) => ({
+      op: String(s.op ?? ""),
+      text: String(s.text ?? ""),
+      ok: s.ok === true,
+    }));
+    answer.stepsCut = event.steps_cut === true;
     return "";
   }
+  // The steps so far, while the answer streams: the answer carries them once it ends.
+  if (event.object === "loom.step") return "";
   answer.runId ||= String(event.id ?? "");
   answer.model ||= String(event.model ?? "");
   if (isObject(event.usage)) {

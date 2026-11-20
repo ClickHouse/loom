@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from server.boot import InsecureBindRefused, require_safe_bind
+from server.main import attach_browser_middleware
 from server.settings import settings
 from tests.unit.security_headers import assert_security_headers
 
@@ -30,6 +31,7 @@ def _bind(**over: object) -> None:
         "dev_secret": False,
         "allow_insecure": False,
         "mcp_open": False,
+        "open_signup_without_trust_network": False,
         "weak_keys": [],
     }
     kw.update(over)
@@ -58,6 +60,53 @@ def test_mcp_open_on_a_reachable_bind_is_refused() -> None:
         _bind(mcp_open=True)
     _bind(mcp_open=True, allow_insecure=True)
     _bind(bind_host="127.0.0.1", mcp_open=True)
+
+
+def test_open_self_signup_on_a_reachable_bind_needs_trust_network_named() -> None:
+    """Open self-signup hands a writer token to anyone who reaches the port: a
+    reachable bind starts with it only when LOOM_IDENTITY_PROVIDER=trust-network
+    says reachability is the access boundary."""
+    with pytest.raises(InsecureBindRefused, match="LOOM_SELF_SIGNUP=open"):
+        _bind(open_signup_without_trust_network=True)
+    _bind(open_signup_without_trust_network=True, allow_insecure=True)
+    _bind(bind_host="127.0.0.1", open_signup_without_trust_network=True)
+
+
+@pytest.mark.parametrize(
+    ("provider", "login", "expected"),
+    [
+        ("", "password", True),
+        ("gateway", "password", True),
+        ("trust-network", "password", False),
+        ("", "oidc", False),
+    ],
+)
+def test_startup_passes_open_signup_unless_trust_network_is_named(
+    monkeypatch: pytest.MonkeyPatch, provider: str, login: str, expected: bool
+) -> None:
+    from server import main
+
+    seen: dict[str, object] = {}
+
+    def record(**kw: object) -> None:
+        seen.update(kw)
+        raise InsecureBindRefused("stop")
+
+    monkeypatch.setenv("LOOM_INSTANCE_LABEL", "test")
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "jwt_secret", "s" * 48)
+    monkeypatch.setattr(settings, "self_signup", "open")
+    monkeypatch.setattr(settings, "identity_provider", provider)
+    monkeypatch.setattr(settings, "oauth_login_provider", login)
+    monkeypatch.setattr(main.boot, "require_safe_bind", record)
+
+    async def start() -> None:
+        async with main.lifespan(main.app):
+            pass
+
+    with pytest.raises(InsecureBindRefused):
+        asyncio.run(start())
+    assert seen["open_signup_without_trust_network"] is expected
 
 
 def test_a_weak_root_key_on_a_reachable_bind_is_refused() -> None:
@@ -221,6 +270,46 @@ def test_health_reports_mcp_open_and_a_weak_root_key_on_a_reachable_bind(
     assert not found & {"insecure_bind_mcp_open", "insecure_bind_weak_key"}
 
 
+@pytest.mark.parametrize(
+    ("provider", "allow_insecure", "login", "bind", "expected"),
+    [
+        ("", False, "password", "0.0.0.0", "error"),
+        ("gateway", False, "password", "0.0.0.0", "error"),
+        ("", True, "password", "0.0.0.0", "warn"),
+        ("trust-network", False, "password", "0.0.0.0", "info"),
+        ("", False, "oidc", "0.0.0.0", None),  # OIDC sign-in closes self-signup
+        ("", False, "password", "127.0.0.1", None),
+    ],
+)
+def test_health_reports_open_self_signup_on_a_reachable_bind(
+    monkeypatch: pytest.MonkeyPatch,
+    provider: str,
+    allow_insecure: bool,
+    login: str,
+    bind: str,
+    expected: str | None,
+) -> None:
+    """Unnamed, it is what the next start refuses; with trust-network named it
+    is still listed, as info."""
+    from server.observability import problems
+
+    monkeypatch.setattr(settings, "bind_host", bind)
+    monkeypatch.setattr(settings, "public_base_url", "https://loom.example")
+    monkeypatch.setattr(settings, "allow_insecure", allow_insecure)
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "self_signup", "open")
+    monkeypatch.setattr(settings, "identity_provider", provider)
+    monkeypatch.setattr(settings, "oauth_login_provider", login)
+    found = [
+        p
+        for p in problems.collect_problems(settings, problems.HealthState(env={}))
+        if p.code == "insecure_bind_open_signup"
+    ]
+    assert [p.severity for p in found] == ([expected] if expected else [])
+    for p in found:
+        assert p.fix.startswith("Set LOOM_") and p.fix.endswith("."), p.fix
+
+
 def test_a_pem_root_that_is_not_rsa_is_not_weak(monkeypatch: pytest.MonkeyPatch) -> None:
     """An EC key cannot sign as kid `default` at all, so the size check passes it."""
     from cryptography.hazmat.primitives import serialization
@@ -291,6 +380,9 @@ def test_the_dev_stack_publishes_its_stores_on_loopback_only() -> None:
     for name in ("dev/ci_start_clickhouse.sh", "dev/ci_start_postgres.sh"):
         flags = re.findall(r'-p "([^"]*)"', (root / name).read_text())
         assert flags and all(f.startswith("127.0.0.1:") for f in flags), (name, flags)
+    # On the host network, so it listens on loopback itself.
+    pgch = (root / "dev/ci_start_pg_clickhouse.sh").read_text()
+    assert "--network host" in pgch and "-c listen_addresses=127.0.0.1" in pgch
 
 
 def test_allow_insecure_lets_either_start() -> None:
@@ -336,8 +428,6 @@ def auth_off(monkeypatch: pytest.MonkeyPatch) -> None:
 def _gated_client(base_url: str) -> TestClient:
     """An app behind the web gate and the header middleware, as server.main attaches them."""
     from fastapi import FastAPI
-
-    from server.main import attach_browser_middleware
 
     app = FastAPI()
     app.get("/")(lambda: {"ok": True})

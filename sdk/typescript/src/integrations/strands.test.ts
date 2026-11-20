@@ -55,7 +55,14 @@ describe("LoomMemoryStore (Strands adapter)", () => {
     });
     const store = new LoomMemoryStore(agent, { tags: ["customer"], memoryType: "preference" });
     const hits = await store.search("seat", { maxSearchResults: 1 });
-    expect(calls[0].body).toMatchObject({ query: "seat", top_k: 1, tags: ["customer"], memory_type: "preference" });
+    expect(calls[0].body).toMatchObject({
+      query: "seat",
+      top_k: 1,
+      bodies: "full", // the stored clip whatever the top_k
+      explain: false,
+      tags: ["customer"],
+      memory_type: "preference",
+    });
     expect(hits).toEqual([
       {
         content: "aisle seat",
@@ -63,6 +70,23 @@ describe("LoomMemoryStore (Strands adapter)", () => {
         metadata: { memory_key: "k1", memory_type: "semantic", similarity: 0.9123, source: "chat" },
       },
     ]);
+  });
+
+  it("leaves out a hit below the floor, unless told to keep it", async () => {
+    const reply = {
+      results: [
+        { memory_key: "k1", memory_type: "semantic", content_excerpt: "aisle", similarity: 0.9 },
+        { memory_key: "k2", memory_type: "semantic", content_excerpt: "x", similarity: 0.2, below_threshold: true },
+        { memory_key: "k3", memory_type: "semantic", content_excerpt: "espresso", similarity: 0.8 },
+      ],
+    };
+    // three rows for two results: the floor is applied before the cut
+    const strict = await new LoomMemoryStore(harness(reply).agent, { maxSearchResults: 2 }).search("q");
+    expect(strict.map((e) => e.metadata?.memory_key)).toEqual(["k1", "k3"]);
+    const loose = await new LoomMemoryStore(harness(reply).agent, { maxSearchResults: 2, honourAbstain: false }).search(
+      "q",
+    );
+    expect(loose.map((e) => e.metadata?.memory_key)).toEqual(["k1", "k2"]);
   });
 
   it("returns nothing when loom abstains, unless told to keep the hits", async () => {

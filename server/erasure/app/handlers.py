@@ -19,7 +19,8 @@ from server.auth import context as auth_context
 from server.auth.jwt import AuthInfo
 from server.core import pg
 from server.core.errors import AuthInsufficientError
-from server.core.principals import personal_name
+from server.core.naming import MIRROR_REFUSED, is_mirror_name
+from server.core.principals import COLLECTION_PREFIX, personal_name
 from server.erasure.api.erasure import (
     ErasureExportInput,
     ErasureExportOutput,
@@ -35,6 +36,8 @@ from server.erasure.api.erasure import (
 )
 from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
 from server.erasure.domain.failure_reason import caller_audit_subject, shown_reason
+from server.erasure.domain.receipts import codes_only
+from server.erasure.domain.scopes import applied_purge, names_mirror, only_mirrors, shown_scope
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
 from server.erasure.store.rows import RequestStatusRow
@@ -45,13 +48,27 @@ from server.operations.base import Role
 from server.settings import settings
 
 
+def _is_flat_platform_admin(auth: AuthInfo | None) -> bool:
+    """A flat platform-admin token: the only caller that names a mirror in an erasure or
+    sees a saga naming mirrors only. A scoped token's authority is its namespaces, so its
+    flat platform-admin role confers nothing here."""
+    return auth is not None and auth.has_role(Role.PLATFORM_ADMIN) and not auth.has_ns_roles()
+
+
+def _scope_for_reader(auth: AuthInfo | None, scope_type: str, scope_value: str) -> str:
+    """A saga's scope as its reader gets it: whole to a platform admin, the only reader of
+    a mirror's saga; without its mirrors (`shown_scope`) to everyone else."""
+    if _is_flat_platform_admin(auth):
+        return scope_value
+    return shown_scope(scope_type, scope_value)
+
+
 def _org_wide_admin(auth: AuthInfo, org: str) -> bool:
     """The org-wide view of erasure: a flat ORG_ADMIN of `org` (or of every
     org) or a PLATFORM_ADMIN. Never a scoped token: its authority is its
     namespaces, so its flat roles confer nothing org-wide."""
-    return not auth.has_ns_roles() and (
-        auth.has_role(Role.PLATFORM_ADMIN)
-        or (auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org))
+    return _is_flat_platform_admin(auth) or (
+        not auth.has_ns_roles() and auth.has_role(Role.ORG_ADMIN) and auth.org in ("*", org)
     )
 
 
@@ -61,6 +78,9 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
     # canonical check (a scoped token's ns_roles entry is its ceiling there);
     # user_id and namespace_list span namespaces → the org-wide view.
     auth = auth_context.current_auth()
+    # Only a platform admin's token names a mirror; with auth off nobody does.
+    if names_mirror(input.scope_type, input.scope_value) and not _is_flat_platform_admin(auth):
+        raise AuthInsufficientError(f"{MIRROR_REFUSED}: only a platform admin erases one")
     if auth is not None:
         allowed = _org_wide_admin(auth, input.org) or (
             input.scope_type == "namespace"
@@ -73,12 +93,17 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
             )
 
     input, row, erasure_id, now = await begin_erasure(input)
-    return await run_saga(
+    out = await run_saga(
         input=input,
         row=row,
         erasure_id=erasure_id,
         requested_at=now,
         previously_completed=set(),
+    )
+    return (
+        ErasureRequestOutput.model_validate(codes_only(out.model_dump()))
+        if row.get("mirror_marked")
+        else out
     )
 
 
@@ -95,8 +120,13 @@ async def erase_namespace(org: str, namespace: str, *, requester: str) -> Erasur
         purge=True,
     )
     input, row, erasure_id, now = await begin_erasure(input)
-    return await run_saga(
+    out = await run_saga(
         input=input, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
+    )
+    return (
+        ErasureRequestOutput.model_validate(codes_only(out.model_dump()))
+        if row.get("mirror_marked")
+        else out
     )
 
 
@@ -213,6 +243,9 @@ async def _export_audit_log(
 
 async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutput:
     now = datetime.now(UTC).replace(tzinfo=None)
+    # The export reads every scope but a user id as one namespace's name.
+    if input.scope_type != "user_id" and is_mirror_name(input.scope_value):
+        raise AuthInsufficientError(f"{MIRROR_REFUSED}: no export names one")
 
     # The input carries no `namespace`, so the transport bound an org-only check. A
     # namespace export is authorized against the namespace itself (a restricted one needs
@@ -252,7 +285,6 @@ async def handle_erasure_export(input: ErasureExportInput) -> ErasureExportOutpu
     shown = erasure_exports.Shown(
         hidden=tuple(sorted(hidden)),
         collections=None if readable_collections is None else tuple(sorted(readable_collections)),
-        collection_prefix=sharing.COLLECTION_PREFIX,
     )
     mem_rows, mem_count, mem_trunc = await _export_memory(
         input.org,
@@ -364,10 +396,12 @@ async def _authorize_status_read(row: RequestStatusRow) -> bool:
     held by a token of the saga's org. Other scopes need flat membership of
     the saga's org. False on refusal, so the caller answers found=False
     exactly as for an unknown id — a 403 would confirm the id exists and name
-    its org. True when auth is disabled
-    (LOOM_AUTH_REQUIRED=false).
+    its org. True when auth is disabled (LOOM_AUTH_REQUIRED=false), but for a saga
+    whose scope names mirrors only, which only a platform admin's token reads.
     """
     auth = auth_context.current_auth()
+    if only_mirrors(str(row["scope_type"]), str(row["scope_value"])):
+        return _is_flat_platform_admin(auth)
     if auth is None:
         return True
     row_org = str(row["org"])
@@ -391,12 +425,13 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
         return ErasureStatusOutput(found=False, erasure_id=input.erasure_id)
     if not await _authorize_status_read(row):
         return ErasureStatusOutput(found=False, erasure_id=input.erasure_id)
-    return ErasureStatusOutput(
+    auth = auth_context.current_auth()
+    out = ErasureStatusOutput(
         found=True,
         erasure_id=str(row["id"]),
         org=row["org"],
         scope_type=row["scope_type"],
-        scope_value=row["scope_value"],
+        scope_value=_scope_for_reader(auth, str(row["scope_type"]), str(row["scope_value"])),
         requester=row["requester"],
         status=cast("ErasureStatus", row["status"]),
         current_step=int(row["current_step"]),
@@ -405,17 +440,26 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
         # A build from before the upgrade stored the driver's text; it is cut here.
         failure_reason=shown_reason(str(row["failure_reason"] or "")) or None,
         residue_count=int(row.get("residue_count") or 0),
-        residue=_parse_residue(row.get("residue")),
+        residue=_parse_counts(row.get("residue")) or {},
         verified_at=row.get("verified_at"),
+        census=_parse_counts(row.get("census")),
+        purge=applied_purge(
+            str(row["scope_type"]), str(row["scope_value"]), bool(row.get("purge"))
+        ),
     )
 
+    if row.get("mirror_marked") and not _is_flat_platform_admin(auth):
+        return ErasureStatusOutput.model_validate(codes_only(out.model_dump()))
+    return out
 
-def _parse_residue(raw: str | None) -> dict[str, int]:
+
+def _parse_counts(raw: str | None) -> dict[str, int] | None:
+    """A ledger column of per-table counts; None when it is empty or does not parse."""
     try:
-        data = json.loads(raw) if raw else {}
+        data = json.loads(raw) if raw else None
     except (TypeError, ValueError):
-        return {}
-    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+        return None
+    return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else None
 
 
 async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
@@ -425,16 +469,19 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
     Even that view leaves out the restricted namespaces the caller holds no grant +
     claim for. A namespace-wildcard flat token sees every namespace's sagas under the
     same restricted rule; everyone else sees the namespace sagas of the namespaces it
-    may read (restricted ones only with the grant)."""
+    may read (restricted ones only with the grant). Only a platform admin sees a saga
+    whose scope names mirrors only."""
     auth = auth_context.current_auth()
     if auth is None:
-        return "", {}
+        return erasure_ledger.NOT_ONLY_MIRRORS, {}
     admin_view = _org_wide_admin(auth, org)
     if admin_view or (not auth.has_ns_roles() and "*" in (auth.namespaces or ())):
         hidden = await auth_context.restricted_namespaces_hidden_from(org)
         if hidden == ["*"]:
             return None
         where = "" if admin_view else " AND scope_type = 'namespace'"
+        if not _is_flat_platform_admin(auth):
+            where += erasure_ledger.NOT_ONLY_MIRRORS
         params: dict[str, object] = {}
         if not (admin_view or auth.has_role(Role.PLATFORM_ADMIN)):
             # A collection's erasures show only to whom the collection shows, and
@@ -444,7 +491,7 @@ async def _list_scope(org: str) -> tuple[str, dict[str, Any]] | None:
                 " OR NOT startsWith(scope_value, {col_prefix:String})"
                 " OR scope_value IN {col_readable:Array(String)})"
             )
-            params["col_prefix"] = sharing.COLLECTION_PREFIX
+            params["col_prefix"] = COLLECTION_PREFIX
             params["col_readable"] = await sharing.readable(auth, org)
         if hidden:
             where += " AND NOT (scope_type = 'namespace' AND scope_value IN {hidden:Array(String)})"
@@ -466,6 +513,7 @@ async def handle_erasure_list(input: ErasureListInput) -> ErasureListOutput:
     scope = await _list_scope(input.org)
     if scope is None:
         return ErasureListOutput(rows=[])
+    auth = auth_context.current_auth()
     rows = await erasure_ledger.list_requests(
         input.org,
         status=input.status or None,
@@ -473,12 +521,14 @@ async def handle_erasure_list(input: ErasureListInput) -> ErasureListOutput:
         scope_where=scope[0],
         scope_params=scope[1],
     )
+    if not _is_flat_platform_admin(auth):
+        rows = [codes_only(r) if r.get("mirror_marked") else r for r in rows]
     return ErasureListOutput(
         rows=[
             ErasureListRow(
                 erasure_id=str(r["id"]),
                 scope_type=str(r["scope_type"]),
-                scope_value=str(r["scope_value"]),
+                scope_value=_scope_for_reader(auth, str(r["scope_type"]), str(r["scope_value"])),
                 requester=str(r["requester"]),
                 status=cast("ErasureStatus", r["status"]),
                 requested_at=r["requested_at"],

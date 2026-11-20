@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor, within } from "../test/rtl";
+import { act, cleanup, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryListEntry } from "../api";
@@ -15,10 +15,14 @@ vi.mock("../api", async (importOriginal) => {
     listMemories: vi.fn(),
     conflictKeys: vi.fn(async (): Promise<string[]> => []),
     listMine: vi.fn(async () => []),
+    restoreMemory: vi.fn(async () => ({ restored: true })),
+    pinMemory: vi.fn(),
+    deleteMemory: vi.fn(),
     isAuthDisabled: () => false,
   };
 });
-import { listMemories } from "../api";
+import { listMemories, restoreMemory, type MyNamespaceEntry } from "../api";
+import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 
 const entry = (key: string, tombstoned = false): MemoryListEntry => ({
   memory_key: key,
@@ -141,5 +145,77 @@ describe("Recently deleted status", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Memories list writes by role", () => {
+  const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
+    namespace: "ns-a",
+    role,
+    status: "active",
+    visibility: "private",
+    description: "",
+    joined_at: null,
+    is_new: false,
+  });
+  function seed(role: MyNamespaceEntry["role"]) {
+    resetNamespaceRoleCache();
+    vi.mocked(restoreMemory).mockClear();
+    vi.mocked(listMemories).mockImplementation(async (_id, _limit, opts) =>
+      opts?.include_tombstoned
+        ? { entries: [entry("gone/key", true)], total: 1, truncated: false, today: 0 }
+        : { entries: [entry("live/key")], total: 1, truncated: false, today: 1 },
+    );
+    useStore.setState({
+      authed: true,
+      whoami: { authenticated: true, subject: "p@example.com", org: "dev", roles: ["USER"], namespaces: ["ns-a"] },
+      myNamespaces: [grant(role)],
+      identity: { org: "dev", namespace: "ns-a", agent: "loom-ui" },
+      view: "memories",
+    });
+  }
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+  async function showDeleted() {
+    await userEvent.click(screen.getAllByRole("button", { name: "Status" })[0]);
+    await waitFor(() => expect(item("deleted")).not.toBeNull());
+    await userEvent.click(item("deleted") as HTMLElement);
+    await screen.findByText("gone/key");
+  }
+
+  it("shows a viewer Restore unavailable with why, sends nothing, and offers no selection", async () => {
+    seed("viewer");
+    render(<Recent />);
+    await screen.findByText("live/key");
+    // The selection holds only Pin and Delete, which a viewer cannot call.
+    expect(screen.queryByRole("checkbox", { name: "Select live/key" })).toBeNull();
+    await showDeleted();
+    const restore = screen.getByRole("button", { name: "Restore" });
+    expect(restore).toHaveAttribute("aria-disabled", "true");
+    expect(restore).toHaveAccessibleDescription("Needs writer on ns-a. An admin of it can grant that.");
+    await userEvent.click(restore);
+    expect(restoreMemory).not.toHaveBeenCalled();
+  });
+
+  it("drops the selection bar when the role falls short with rows selected", async () => {
+    seed("writer");
+    render(<Recent />);
+    await userEvent.click(await screen.findByRole("checkbox", { name: "Select live/key" }));
+    expect(await screen.findByRole("button", { name: /^Delete/ })).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("viewer")] }));
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Select live/key" })).toBeNull());
+    expect(screen.queryByRole("button", { name: /^Delete/ })).toBeNull();
+  });
+
+  it("lets a writer restore a deleted memory and select rows", async () => {
+    seed("writer");
+    render(<Recent />);
+    await screen.findByText("live/key");
+    expect(screen.getByRole("checkbox", { name: "Select live/key" })).toBeInTheDocument();
+    await showDeleted();
+    await userEvent.click(screen.getByRole("button", { name: "Restore" }));
+    await waitFor(() => expect(restoreMemory).toHaveBeenCalled());
   });
 });

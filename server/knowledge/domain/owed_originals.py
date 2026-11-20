@@ -1,5 +1,6 @@
-"""The originals a knowledge document commit still owes ClickHouse names, as one
-Postgres fragment for the originals sweep and a user erasure's shared-originals check.
+"""The originals a knowledge document commit still owes ClickHouse names, and those an
+open ingestion job reads, as Postgres fragments for the originals sweep and a user
+erasure's shared-originals check.
 
 `loom.knowledge_deliveries` holds each unpublished commit's row as JSON. A row needs
 what it names while it is a live document whose original is not erased (a JSON null or
@@ -19,3 +20,6 @@ OWED_SHAS = (
 )
 # WHERE ... AND <this>: the deliveries whose row still needs what it names.
 NEEDS_ORIGINAL = "NOT settled AND row->>'superseded_at' IS NULL AND row->>'blob_erased_at' IS NULL"
+# FROM loom.knowledge_jobs WHERE ... AND <this>: the open ingestion jobs, each of which
+# reads its original (`row->>'sha256'`).
+OPEN_JOB = "state IN ('pending', 'processing')"

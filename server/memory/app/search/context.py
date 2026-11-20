@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
+from server.memory.api.models_search import MemorySearchInput, TermLegStatus, _MemorySearchHit
 
 if TYPE_CHECKING:
     from server.embedding import Embedder
@@ -104,6 +104,8 @@ class SearchContext:
     # assemble stage.
     page_tail: list[_MemorySearchHit] = field(default_factory=list)
     candidates_total: int = 0
+    # What the term leg did (`MemorySearchOutput.term_leg`), set when it is joined.
+    term_leg_status: TermLegStatus = "off"
     # Under the Postgres authority: the hits validation dropped (`pg_validation`).
     stale_dropped: int = 0
     # The versions it dropped, so a tier does not count them again.

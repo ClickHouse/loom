@@ -47,11 +47,14 @@ This copy names no release, so its commands do not run as they are. Follow the
 ## 1. Install the release
 
 ```sh
-curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" | sh
+mkdir -p ~/loom-agent-setup
+curl -fsSL "https://github.com/ClickHouse/loom/releases/download/v<version>/install.sh" \
+  -o ~/loom-agent-setup/loom-install.sh && sh ~/loom-agent-setup/loom-install.sh \
+  && rm ~/loom-agent-setup/loom-install.sh
 ```
 
 The installer verifies the bundle's SHA-256, installs under `~/.loom`, starts the stack
-and waits for the server's `/v1/health`. If it fails, the report is its `install`
+and waits for the server's `/v1/health`. If the command fails, the report is its `install`
 line alone; do not go on. The [quickstart](quickstart.md#1-boot-the-stack) says what the
 installer does in full.
 
@@ -60,7 +63,6 @@ installer does in full.
 The plugin comes from the same release's source, so it matches the server:
 
 ```sh
-mkdir -p ~/loom-agent-setup
 curl -fsSL "https://github.com/ClickHouse/loom/archive/refs/tags/v<version>.tar.gz" \
   | tar -xz -C ~/loom-agent-setup
 ```
@@ -262,7 +264,7 @@ On a failure the summary reads `<n> check(s) failed: <names>`, and the first `FA
 is the one to fix. A step that stops the run is one line and its summary:
 
 - a rule that stops you before step 1: `[FAIL]  setup  <what was missing or found>`;
-- a failed install: `[FAIL]  install  <the installer's last line>`;
+- a failed install: `[FAIL]  install  <the command's last line>`;
 - a failed step 2: `[FAIL]  plugin  <the failed command's last line>`;
 
 each followed by `1 check(s) failed: <its name>`.

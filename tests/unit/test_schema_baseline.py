@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from tests.unit.schema_ddl import ddl, objects, schema_text, tables, ttl
+from tests.unit.schema_ddl import ddl, objects, schema_text, tables, ttl, views
 
 MIGRATIONS = Path(__file__).resolve().parents[2] / "schemas" / "migrations"
 BASELINE = MIGRATIONS / "016_baseline.sql"
@@ -22,6 +22,8 @@ BASELINE = MIGRATIONS / "016_baseline.sql"
 TRANSIENT_TABLES = {
     "events": "the raw event stream; the per-event views copy what is kept",
     "search_trace_log": "a per-search trace for tuning, not a record anyone wrote",
+    "search_misses": "the searches that found nothing, kept to group into knowledge gaps",
+    "knowledge_gaps": "the gaps grouped from the misses, rebuilt daily",
     "memory_exposures": "an access log of which rows a read served",
     "code_search_trace": "a per-search trace of code search",
     "code_search_outcome": "the outcome of each traced code search",
@@ -143,6 +145,30 @@ def test_the_journal_files() -> None:
         "087_analysis_secrets.sql",
         "088_assistant_service.sql",
         "089_code_repo_row_kind.sql",
+        "090_sql_surface.sql",
+        "091_erasure_census.sql",
+        "092_collection_titles.sql",
+        "093_service_account_saves_to.sql",
+        "094_cell_heartbeats.sql",
+        "095_knowledge_gaps.sql",
+        "096_knowledge_source_items.sql",
+        "097_mirror_names_reserved.sql",
+        "098_knowledge_mirrors.sql",
+        "099_document_access_lists.sql",
+        "100_knowledge_source_listings.sql",
+        "101_erasure_mirror_mark.sql",
+        "102_query_history_sources.sql",
+        "103_sso_domain_evidence.sql",
+        "104_knowledge_group_members.sql",
+        "105_mirror_access_candidates.sql",
+        "106_marked_request_measures.sql",
+        "107_user_cost_budgets.sql",
+        "108_knowledge_mirror_latch.sql",
+        "109_knowledge_source_push.sql",
+        "110_private_event_storage.sql",
+        "111_connected_accounts.sql",
+        "112_code_repo_git_proxy_identity.sql",
+        "113_oauth_verified_email.sql",
     ]
 
 
@@ -181,8 +207,10 @@ def test_the_dump_declares_exactly_what_the_journal_leaves() -> None:
     assert dumped | {name for _, name in telemetry} == {n for n in live if not n.startswith("_")}
     kinds = [kind for kind, _ in telemetry]
     n_tables = len(tables()) + kinds.count("TABLE")
-    n_views = len(dumped) - len(tables()) + kinds.count("MATERIALIZED VIEW")
-    assert f"-- Counts: {n_tables} tables + {n_views} materialized views." in schema_text()
+    n_views = len(views()) + kinds.count("MATERIALIZED VIEW")
+    n_plain = len(dumped) - len(tables()) - len(views())
+    counts = f"-- Counts: {n_tables} tables + {n_plain} views + {n_views} materialized views."
+    assert counts in schema_text()
 
 
 def test_removed_objects_stay_removed() -> None:

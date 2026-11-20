@@ -23,7 +23,7 @@ import {
   type TaskRow,
 } from "../api/tasks";
 import { ACTION_LABEL, PRIORITY_LABEL, actionDone, isoFromLocal, type TaskAction } from "../lib/tasks";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { toast } from "../components/Toast";
 import { CancelButton, DateTimeField, DialogFrame, ErrorNote } from "./TaskDialogFrame";
 import { oneOf } from "../lib/oneOf";

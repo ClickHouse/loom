@@ -14,12 +14,13 @@ same delta converges to the same live set.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
-from collections.abc import Callable
-from typing import Any, Literal
+from collections.abc import Callable, Generator
+from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
 from server.code.app.index.entry_lock import check_held
 from server.code.domain.extract.treesitter import symbol_id
@@ -71,21 +72,36 @@ STATE_SCIP_CTOR_CALLS = "scip_ctor_calls"
 
 
 class ScipDelta(BaseModel):
+    """A delta held whole: an upload's (`code.scip_ingest`). A harness's delta file is
+    read a round at a time (`delta_file.DeltaFile`); `apply_delta` takes either through
+    `_Delta`."""
+
     delta_version: int = DELTA_VERSION
-    commit: str
-    base: str = ""
+    # a commit is a sha (40 or 64 hex); the header stays small for the whole apply
+    commit: str = Field(max_length=64)
+    base: str = Field(default="", max_length=64)
     files: list[ScipFile] = Field(default_factory=list)
     deleted_files: list[str] = Field(default_factory=list)
-    features: list[str] = Field(default_factory=list)
+    features: list[Annotated[str, Field(max_length=64)]] = Field(
+        default_factory=list, max_length=16
+    )
+
+    def rounds(self, max_files: int, keep: Callable[[str], bool]) -> Generator[list[ScipFile]]:
+        """Its kept files, then its deleted paths, `max_files` a round."""
+        todo = [f for f in self.files if keep(f.path)]
+        todo += [ScipFile(path=path, deleted=True) for path in self.deleted_files]
+        for start in range(0, len(todo), max_files):
+            yield todo[start : start + max_files]
 
 
-def parse_delta(raw: bytes | bytearray) -> ScipDelta:
-    """A harness's JSON delta as a ScipDelta. An invalid one raises a short ValueError:
-    a ValidationError names every bad item, so its text grows with the delta."""
-    try:
-        return ScipDelta.model_validate_json(raw)
-    except ValidationError as e:
-        raise ValueError(f"delta invalid: {e.error_count()} errors") from None
+class _Delta(Protocol):
+    """What the apply reads of a delta: `ScipDelta` or `delta_file.DeltaFile`."""
+
+    commit: str
+    deleted_files: list[str]
+    features: list[str]
+
+    def rounds(self, max_files: int, keep: Callable[[str], bool]) -> Generator[list[ScipFile]]: ...
 
 
 class ScipApplyStats(BaseModel):
@@ -209,38 +225,45 @@ def _has_round_reads(repo: Any) -> bool:
     return isinstance(repo, CodeRepo) or getattr(repo, "supports_round_reads", False) is True
 
 
-async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: ScipDelta) -> ScipApplyStats:
+async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: _Delta) -> ScipApplyStats:
+    """Apply `delta` a round of files at a time, each round read off the event loop;
+    its deleted paths go last."""
     stats = ScipApplyStats()
     prefixes = _indexable_prefixes(org, ns)
     refused = _path_refusal(org, ns)
-    files: list[ScipFile] = []
-    for f in delta.files:
-        # Server-side scope enforcement: a full scip index sweeps the whole
-        # compile graph (contrib/, build/, system headers). Only the repo's
-        # configured prefixes belong in the index.
-        if prefixes and not any(f.path.startswith(p) for p in prefixes):
+
+    def keep(path: str) -> bool:
+        # Server-side scope enforcement: a full scip index sweeps the whole compile
+        # graph (contrib/, build/, system headers). Only the repo's configured
+        # prefixes belong in the index.
+        if prefixes and not any(path.startswith(p) for p in prefixes):
             stats.files_skipped_out_of_scope += 1
-            continue
+            return False
         # The entry's path denylist (exclude globs, the built-in rules) binds the
         # compiler tier too — a path the parser tier refuses must not enter through a
         # scip index. The content rule (generated headers) is the producer's
         # (`scip_to_delta.py --exclude-generated`): the delta carries no source.
-        if refused(f.path):
+        if refused(path):
             stats.files_skipped_excluded += 1
-            continue
-        files.append(f)
-    files.extend(ScipFile(path=path, deleted=True) for path in delta.deleted_files)
-    if _has_round_reads(repo):
-        for start in range(0, len(files), APPLY_ROUND_FILES):
-            # A pass that lost its workers' lease writes no further round.
-            pass_context.check_stop()
-            chunk = files[start : start + APPLY_ROUND_FILES]
-            await _apply_round(repo, org, ns, delta.commit, chunk, stats)
-    else:
-        for f in files:
-            pass_context.check_stop()
-            await _apply_file(repo, org, ns, delta.commit, f, stats)
-            stats.files += 1
+            return False
+        return True
+
+    rounds = delta.rounds(APPLY_ROUND_FILES, keep)
+    reading = False
+    try:
+        while True:
+            reading = True
+            batch = await asyncio.to_thread(next, rounds, None)
+            reading = False
+            if batch is None:
+                break
+            await _apply_files(repo, org, ns, delta.commit, batch, stats)
+            del batch  # freed before the next round is read
+    finally:
+        # a failed apply releases the read's file now; a read cancelled while it runs in
+        # its thread keeps it until that read returns and the rounds are collected
+        if not reading:
+            rounds.close()
     if FEATURE_CTOR_CALLS in delta.features:
         check_held()
         await repo.set_state(
@@ -252,6 +275,22 @@ async def apply_delta(repo: CodeRepo, org: str, ns: str, delta: ScipDelta) -> Sc
         )
         stats.ctor_calls_recorded = True
     return stats
+
+
+async def _apply_files(
+    repo: Any, org: str, ns: str, commit: str, files: list[ScipFile], stats: ScipApplyStats
+) -> None:
+    """One round of files: one read and insert per table where the store has the round
+    reads, else file by file."""
+    # A pass that lost its workers' lease writes no further round.
+    pass_context.check_stop()
+    if _has_round_reads(repo):
+        await _apply_round(repo, org, ns, commit, files, stats)
+        return
+    for f in files:
+        pass_context.check_stop()
+        await _apply_file(repo, org, ns, commit, f, stats)
+        stats.files += 1
 
 
 async def _publish(repo: Any, table: str, rows: list[dict[str, Any]]) -> None:

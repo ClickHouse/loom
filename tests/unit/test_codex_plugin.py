@@ -135,17 +135,12 @@ def test_manifests_agree_and_marketplace_points_at_the_plugin() -> None:
 def test_claude_hooks_json_still_passes_no_client_argument() -> None:
     """Claude Code stays the default client: its wiring passes no client
     argument, so the scripts fall back to `claude-code`."""
-    # sh runs each command's second line; PowerShell runs the node call on
-    # its fourth: neither names a client.
-    for _, cmd in _commands(_hooks(CLAUDE / "hooks" / "hooks.json")):
-        lines = cmd.split("\n")
-        assert re.fullmatch(
-            r'exec sh "\$\{CLAUDE_PLUGIN_ROOT\}/bin/loom-node" "\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs" \w+',
-            lines[1],
-        ), cmd
-        assert re.search(r'node "\$env:CLAUDE_PLUGIN_ROOT/hooks/[a-z-]+\.mjs" \w+ \}', lines[3]), (
-            cmd
-        )
+    for groups in _hooks(CLAUDE / "hooks" / "hooks.json").values():
+        for g in groups:
+            for h in g["hooks"]:
+                assert h["command"] == "node", h
+                assert len(h["args"]) == 2, h
+                assert re.fullmatch(r"\$\{CLAUDE_PLUGIN_ROOT\}/hooks/[a-z-]+\.mjs", h["args"][0]), h
 
 
 # ---- loom install --client codex -------------------------------------------
@@ -260,15 +255,34 @@ def test_both_plugins_ship_one_version() -> None:
     assert codex == claude
 
 
-def test_both_plugins_declare_one_minimum_server_version() -> None:
-    """Both manifests name one X.Y.Z minimum, no newer than the server (when it rises: .claude/rules/plugins.md)."""
-    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
-    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
-    minimum = claude["minServerVersion"]
-    assert codex["minServerVersion"] == minimum
-    assert re.fullmatch(r"\d+\.\d+\.\d+", minimum), minimum
+def test_the_minimum_server_version_is_no_newer_than_the_server() -> None:
+    """lib/server-version.mjs names one X.Y.Z minimum, synced into both plugins, no
+    newer than the server (when it rises: .claude/rules/plugins.md)."""
+    source = (CLAUDE / "lib" / "server-version.mjs").read_text()
+    match = re.search(r'^export const MIN_SERVER_VERSION = "(\d+\.\d+\.\d+)";$', source, re.M)
+    assert match, "MIN_SERVER_VERSION is not a plain X.Y.Z literal"
+    minimum = match.group(1)
     current = tuple(int(p) for p in server.__version__.split("-")[0].split("."))
     assert tuple(int(p) for p in minimum.split(".")) <= current
+
+
+def test_plugins_carry_nothing_the_plugin_directory_warns_about() -> None:
+    """The plugin directory's validator warns on a skill's `allowed-tools`, on a
+    manifest field Claude Code does not know and on a tool matcher for a server
+    the plugin does not ship (`claude plugin validate --profile directory
+    --strict`)."""
+    for plugin in (CLAUDE, CODEX):
+        for skill in (plugin / "skills").glob("*/SKILL.md"):
+            frontmatter = skill.read_text().split("\n---", 1)[0]
+            assert "allowed-tools:" not in frontmatter, skill
+    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
+    assert "minServerVersion" not in claude
+    # A plugin's own server's tools are mcp__plugin_<plugin>_<server>__<tool>.
+    matchers = [
+        g.get("matcher", "") for g in _hooks(CLAUDE / "hooks" / "hooks.json")["PostToolUse"]
+    ]
+    assert "mcp__plugin_loom_loom__.*" in matchers
+    assert not any("mcp__loom__" in m for m in matchers), matchers
 
 
 def test_listing_icons_are_files_the_plugins_ship() -> None:
@@ -291,39 +305,6 @@ def test_codex_default_prompts_fit_the_directory() -> None:
     assert isinstance(prompts, list)
     assert 1 <= len(prompts) <= 3
     assert all(len(p) <= 128 for p in prompts)
-
-
-def test_both_plugins_link_the_data_handling_section() -> None:
-    """The privacy link of both listings is an absolute URL, which the doc-link check does
-    not follow; renaming the section would leave both listings pointing at nothing."""
-    claude = json.loads((CLAUDE / ".claude-plugin" / "plugin.json").read_text())
-    codex = json.loads((CODEX / ".codex-plugin" / "plugin.json").read_text())
-    url = claude["privacyPolicyUrl"]
-    assert url == codex["interface"]["privacyPolicyURL"]
-    page, _, anchor = url.removeprefix("https://github.com/ClickHouse/loom/blob/main/").partition(
-        "#"
-    )
-    assert anchor == "data-handling" and "\n## Data handling\n" in (ROOT / page).read_text()
-
-
-def test_listing_links_into_the_repository_resolve() -> None:
-    """The registry listing and both plugin manifests publish absolute links into this
-    repository, which the doc-link check does not follow; a renamed file breaks them."""
-    text = "".join(
-        (ROOT / f).read_text()
-        for f in (
-            "server.json",
-            "integrations/claude-code-plugin/.claude-plugin/plugin.json",
-            "integrations/codex-plugin/.codex-plugin/plugin.json",
-        )
-    )
-    links = re.findall(
-        r"https://(?:github\.com/ClickHouse/loom/blob/main|raw\.githubusercontent\.com/ClickHouse/loom/main)/([^\"#]+)",
-        text,
-    )
-    assert links
-    for path in links:
-        assert (ROOT / path).is_file(), path
 
 
 def test_skills_find_the_codex_plugin_root_under_the_loom_marketplace() -> None:

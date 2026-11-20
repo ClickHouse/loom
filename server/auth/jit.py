@@ -196,6 +196,11 @@ async def _provision_jit(org: str, ident: str, base: str) -> login.Identity | No
     if found is _Name.NONE_FREE:
         log.warning("oidc jit: no free name for %r in %s", ident, org)
         return None
+    # On a cell, an account is written only in an org it holds (recorded, or 503 for a
+    # configured org not placed yet).
+    from server.auth import tenancy
+
+    await tenancy.ensure_held(org, None)
     await provision_account(
         org=org,
         namespace=name,

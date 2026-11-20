@@ -13,9 +13,10 @@ the write limit (`ch.write_limit_s`, `pg.wait_out`). The ClickHouse steps that f
 then find every copy that arrives within that bound.
 
 `pg_knowledge.delete` does the same for knowledge documents: it removes the scope's
-heads and deliveries under the namespaces' document lock, keeps the document ids of
-every version of the scope's documents as evidence that refuses a write built from
-them (`loom.erased_documents`), and waits out the removed deliveries' publishers.
+heads, deliveries, ingestion jobs and dataset catalog rows under the namespaces' document
+lock, keeps the document ids of every version of the scope's documents as evidence that
+refuses a write built from them (`loom.erased_documents`), and waits out the removed
+deliveries' publishers.
 """
 
 from __future__ import annotations
@@ -201,7 +202,18 @@ async def _erase_once(
             f"RETURNING org, namespace, memory_id), {_evidence()} SELECT count(*) FROM gone",
             *args,
         )
+        await _mark_step(conn, org)
     return int(revisions or 0) + int(heads or 0), [float(x) for x in leases]
+
+
+async def _mark_step(conn: Any, org: str) -> None:
+    """The running saga's step recorded in its ledger row, in this step's transaction
+    (`pg_ledger.mark_step`); outside a saga, nothing."""
+    from server.erasure.store import mutations, pg_ledger
+
+    saga, step = mutations.current_saga()
+    if saga and step:
+        await pg_ledger.mark_step(conn, org, saga, step)
 
 
 async def _lock_user_scope(
@@ -247,10 +259,11 @@ async def delete_pg_memory_by_user(org: str, user_id: str) -> int:
 
 
 async def _erase_knowledge(org: str, namespaces: list[str] | None, user_id: str | None) -> int:
-    """The scope's knowledge heads and deliveries (`loom.knowledge_heads`,
-    `loom.knowledge_deliveries`) out of Postgres, their documents' ids kept as deletion
-    evidence, then the wait for the publishers of those deliveries, so the documents
-    step below finds every copy they could land."""
+    """The scope's knowledge heads, deliveries, ingestion jobs and dataset catalog rows
+    (`loom.knowledge_heads`, `loom.knowledge_deliveries`, `loom.knowledge_jobs`,
+    `loom.knowledge_datasets`) out of Postgres, their documents' ids kept as deletion
+    evidence, then the wait for the publishers of those deliveries, so the documents step
+    below finds every copy they could land."""
     removed, leases = await _after_deadlocks(_erase_knowledge_once, org, namespaces, user_id)
     await pg.wait_out(leases)
     return removed
@@ -303,7 +316,23 @@ async def _erase_knowledge_once(
         await _keep_evidence(conn, org, removed, quiet_s)
         async for page in documents_in_clickhouse(org, scoped, user_id):
             await _keep_evidence(conn, org, page, quiet_s)
-    return len(heads) + len(leases), [*left, *earlier]
+        # Last, so their row locks are held only to the commit (a take skips a locked job,
+        # `pg_jobs.take`); a run's next read or save of a deleted job finds no row and
+        # stops (`JobGone`).
+        jobs = await conn.fetchval(
+            f"WITH gone AS (DELETE FROM loom.knowledge_jobs WHERE {where} RETURNING 1)"
+            " SELECT count(*) FROM gone",
+            org,
+            arg,
+        )
+        catalog = await conn.fetchval(
+            f"WITH gone AS (DELETE FROM loom.knowledge_datasets WHERE {where} RETURNING 1)"
+            " SELECT count(*) FROM gone",
+            org,
+            arg,
+        )
+        await _mark_step(conn, org)
+    return len(heads) + len(leases) + int(jobs) + int(catalog), [*left, *earlier]
 
 
 async def documents_in_clickhouse(
@@ -396,8 +425,12 @@ async def _lock_knowledge(conn: Any, org: str, namespaces: list[str]) -> None:
 
 
 async def _lock_user_knowledge(conn: Any, org: str, user_id: str) -> None:
-    """Lock every namespace holding the user's documents, reading again once they are
-    locked until no namespace more holds one: a commit landed meanwhile is in scope."""
+    """Lock every namespace holding the user's documents or the dataset catalog rows
+    Postgres holds of theirs (a headless source's, which an approval writes under this
+    lock), reading again once they are locked until no namespace more holds one: a commit
+    landed meanwhile is in scope. An approval adding a first Postgres row elsewhere (of a
+    dataset only ClickHouse held) is found by the residue census, and the saga runs
+    again."""
     locked: set[str] = set()
     while True:
         held = {
@@ -405,6 +438,8 @@ async def _lock_user_knowledge(conn: Any, org: str, user_id: str) -> None:
             for r in await conn.fetch(
                 "SELECT namespace FROM loom.knowledge_heads WHERE org = $1 AND user_id = $2 "
                 "UNION SELECT namespace FROM loom.knowledge_deliveries "
+                "WHERE org = $1 AND user_id = $2 "
+                "UNION SELECT namespace FROM loom.knowledge_datasets "
                 "WHERE org = $1 AND user_id = $2",
                 org,
                 user_id,
@@ -477,10 +512,23 @@ PG_CENSUS: dict[str, str] = {
     "pg:loom.idempotency": "idempotency.delete",
     "pg:loom.knowledge_heads": "pg_knowledge.delete",
     "pg:loom.knowledge_deliveries": "pg_knowledge.delete",
+    "pg:loom.knowledge_jobs": "pg_knowledge.delete",
+    "pg:loom.knowledge_datasets": "pg_knowledge.delete",
 }
 # The Postgres tables that hold none, with the reason.
 PG_NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.authority": "the deployment's recorded authority and epoch; no tenant data.",
+    "loom.cell_first": "whether this cell is the deployment's first, and its name; no tenant data.",
+    "loom.tenancy_mode": "the cell's tenancy mode (recording or enforced); no tenant data.",
+    "loom.cell_probe": "a nonce `loom cell prepare` writes and deletes; no tenant data.",
+    "loom.tenancy": (
+        "the orgs this cell holds, by name and since when; no memory content, and kept "
+        "after an erasure so an org's name never comes free for another cell."
+    ),
+    "loom.cell_self": (
+        "the configuration fingerprints the directory accepted for this cell (hosts, "
+        "issuers, org patterns, store ids); no tenant data."
+    ),
     "loom.scope_generations": "a counter per (org, scope); no content.",
     "loom.memory_deliveries": (
         "which targets a revision still owes, by (org, namespace, seq); deleted with "
@@ -494,6 +542,10 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
         "deletion evidence: the namespace and id of each erased memory, when, and when "
         "its publishers are quiet; no content; swept after LOOM_PG_ERASURE_EVIDENCE_HOURS."
     ),
+    "loom.erasure_ledger": (
+        "the erasures requested of the deployment (the scope each matched, no content), "
+        "which a restore runs again; swept after LOOM_ERASURE_LEDGER_DAYS."
+    ),
     "loom.erased_documents": (
         "deletion evidence: the namespace and doc_id of each version of an erased knowledge "
         "document, when, and when its publishers are quiet; no content; swept after "
@@ -506,20 +558,23 @@ PG_NO_MEMORY_CONTENT: dict[str, str] = {
 }
 
 
-# The Postgres tables a namespace's memory or knowledge documents live in, which the
-# in-use check reads.
+# The Postgres tables a namespace's memory, knowledge documents, ingestion jobs or
+# datasets live in, which the in-use check reads.
 PG_IN_USE_TABLES = (
     "loom.memory_current",
     "loom.memory_revisions",
     "loom.knowledge_heads",
     "loom.knowledge_deliveries",
+    "loom.knowledge_jobs",
+    "loom.knowledge_datasets",
 )
 
 
 async def pg_holds_namespace(org: str, namespace: str) -> bool:
-    """Whether the Postgres authority holds a memory head or revision, or a knowledge
-    document head or delivery, of (org, namespace): one committed but not yet delivered
-    to ClickHouse is in no census table there."""
+    """Whether the Postgres authority holds a memory head or revision, a knowledge
+    document head or delivery, an ingestion job or a dataset catalog row of (org,
+    namespace): one committed but not yet delivered to ClickHouse is in no census table
+    there."""
     if not pg.enabled() or pg.unstorable(org) or pg.unstorable(namespace):
         return False
     branches = [f"SELECT 1 FROM {t} WHERE org = $1 AND namespace = $2" for t in PG_IN_USE_TABLES]

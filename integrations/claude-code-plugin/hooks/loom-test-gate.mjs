@@ -18,7 +18,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
 import {
   git,
   gitToplevel,
@@ -36,45 +35,17 @@ import { resolveIndexedRepo } from "../lib/repo-scope.mjs";
 import { readSessionState, writeSessionState } from "../lib/tmp-state.mjs";
 import { readAllLines } from "../lib/transcript.mjs";
 import {
+  checkoutPython,
   commentOnlyDiff,
   decideBlock,
   gatePayload,
   gateSignature,
   renderGate,
   sessionScope,
-  venvPython,
 } from "../lib/test-gate.mjs";
 
 const ENABLED = envSwitch("LOOM_TEST_GATE", true);
 const DEPTH = Math.min(3, Math.max(1, Number(process.env.LOOM_TEST_GATE_DEPTH || 2)));
-
-/** The interpreter that runs this checkout's pytest: its own virtualenv
- *  first, then an active one, then a PATH python that imports pytest; ""
- *  when none does, so the gate can say there is none instead of sending the
- *  agent to look. */
-function checkoutPython(root) {
-  const cands = [
-    venvPython(path.join(root, ".venv")),
-    venvPython(path.join(root, "venv")),
-    process.env.VIRTUAL_ENV ? venvPython(process.env.VIRTUAL_ENV) : "",
-  ].filter(Boolean);
-  for (const c of cands) {
-    try {
-      if (fs.statSync(c).isFile()) return pathUnder(root, c) ?? c;
-    } catch {
-      /* next */
-    }
-  }
-  for (const py of ["python3", "python"]) {
-    try {
-      execFileSync(py, ["-c", "import pytest"], { cwd: root, timeout: 1500, stdio: "ignore", windowsHide: true });
-      return py;
-    } catch {
-      /* next */
-    }
-  }
-  return "";
-}
 
 async function main() {
   if (!ENABLED) {

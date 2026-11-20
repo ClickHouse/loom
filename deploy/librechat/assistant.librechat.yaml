@@ -41,6 +41,18 @@ endpoints:
     # Tools only: no actions (which call any URL), code execution, file search, web
     # search, skills or subagents, so the agent's only way out is Loom's tools.
     capabilities: ["tools"]
+  custom:
+    # A model server the operator runs, for LOOM_ASSISTANT_PROVIDER=local: Ollama,
+    # llama.cpp's server or another chat-completions server at LOCAL_LLM_BASE_URL. It
+    # takes no key; LibreChat needs one written. The agent may name a model off the
+    # list, which is never fetched, so a deployment without the server logs nothing.
+    - name: local
+      apiKey: local
+      baseURL: "${LOCAL_LLM_BASE_URL}"
+      models:
+        default: ["qwen2.5:3b"]
+        fetch: false
+      titleConvo: false
 
 mcpSettings:
   allowedAddresses:

@@ -24,6 +24,7 @@ def _row() -> dict[str, Any]:
         "namespace": "ns",
         "source_uri": "kb://policy.md",
         "chunk_idx": 0,
+        "doc_version": 11,
         "content": "Deploy Tue/Thu.",
         "context": "Runbook\nOps > Deploys",
         "tags": ["policy"],
@@ -56,6 +57,8 @@ async def test_hybrid_search_emits_canonical_filters() -> None:
     assert "ORDER BY distance ASC" in sql
     assert params["model"] == "text-embedding-3-small"
     assert len(out) == 1 and isinstance(out[0], ChunkHit)
+    # Which write inserted the chunk: what the Postgres authority's check reads.
+    assert "doc_version," in sql and out[0].doc_version == 11
     assert "context," in sql and out[0].context == "Runbook\nOps > Deploys"
 
 

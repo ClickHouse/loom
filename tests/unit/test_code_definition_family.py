@@ -223,9 +223,18 @@ def test_reading_a_namespace_is_linear_in_its_rows() -> None:
 def test_reading_many_declarators_of_one_binding_is_linear() -> None:
     from tests.unit.step_count import steps
 
+    # Load grammars and start the parser child before comparing per-file work.
+    assert file_definitions("warm.js", b"const warm = () => 0;\n")
+
     def work(n: int) -> int:
-        src = "const " + ",\n  ".join(f"v{i} = () => {i} // c" for i in range(n)) + ";\n"
-        return steps(lambda: file_definitions("a.js", src.encode()))
+        src = "const " + ",\n  ".join(f"v{i} = () => {i} /* c */" for i in range(n)) + ";\n"
+
+        def read():
+            definitions = file_definitions("a.js", src.encode())
+            assert len(definitions) == n
+            return definitions
+
+        return steps(read)
 
     assert work(800) / work(100) < 12
 

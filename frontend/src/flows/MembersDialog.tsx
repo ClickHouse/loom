@@ -1,27 +1,147 @@
 import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
+import { IconButton as ClickIconButton } from "@clickhouse/click-ui/IconButton";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import {
-  listGrants,
   createGrant,
   revokeGrant,
   approveGrant,
   cancelNamespaceRequest,
   type GrantEntry,
   type GrantRole,
+  isAuthDisabled,
 } from "../api";
 import { useStore } from "../lib/state";
 import { holdsAdminGrant } from "../lib/role";
-import { toast } from "../components/Toast";
+import { needsRole } from "../lib/namespaceRole";
+import { needsMaintainer, scopedUnseen, serverDecides } from "../lib/callReason";
+import { toast, toastError, toastErrorLine } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
 import { IconButton } from "../components/IconButton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { fieldError, ListTime, Loading, Tip } from "../components/ui";
+import { fieldError, ListTime, Loading, Unavailable } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { oneOf } from "../lib/oneOf";
+import { isCollectionName } from "../lib/namespace";
+import { allGrants, GRANTS_READ } from "../lib/grantPages";
+import { andList, fmtInt } from "../lib/format";
+import { MORE_SHOWN, type ShowMoreRows, useShowMore } from "../lib/useShowMore";
+import { grantSpellings, mySpellings, namesMe, subjectLabel } from "../lib/grantSubject";
+import { PlaceLink } from "../components/ui/PlaceLink";
+
+/** What Remove's confirm says: who still gets in once the grant here goes. Sign-in off serves
+ *  every request, so it says only that the grant is revoked. */
+function removeConfirm(o: {
+  toEveryone: boolean;
+  who: string;
+  name: string;
+  org: string;
+  signInOff: boolean;
+  /** Another grant here, to everyone. */
+  everyoneHere: boolean;
+  /** The parents whose grants still let them in. */
+  through: string[];
+  /** Parents being read, or not all read: they may let anyone in. */
+  unknownAbove: boolean;
+  /** No collection it sits in: a top-level collection. */
+  noParents: boolean;
+  /** A collection; a namespace's Remove keeps its own words. */
+  collection: boolean;
+}): { title: string; message: string } {
+  if (o.toEveryone) {
+    const title = `Stop sharing ${o.name} with everyone in ${o.org}?`;
+    const revoked = "The grant here is revoked.";
+    if (o.signInOff) return { title, message: revoked };
+    if (o.through.length) {
+      return { title, message: `${revoked} Everyone in ${o.org} can still see it through ${andList(o.through)}.` };
+    }
+    if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let others in.` };
+    return {
+      title,
+      message: o.noParents
+        ? `${revoked} Only those named here, and the members of groups named, keep access.`
+        : `${revoked} Only those named here or on a parent, and the members of groups named, keep access.`,
+    };
+  }
+  const title = `Remove ${o.who} from ${o.name}?`;
+  // A namespace keeps its own words: no parent, and a token's roles may still let them in.
+  if (!o.collection) {
+    return {
+      title,
+      message:
+        "Their JWT keeps any org-level roles, but the namespace-specific grant is revoked. They can re-request access later.",
+    };
+  }
+  const revoked = "Their grant here is revoked.";
+  if (o.signInOff) return { title, message: revoked };
+  if (o.everyoneHere) return { title, message: `${revoked} Everyone in ${o.org} can still see it.` };
+  if (o.through.length) return { title, message: `${revoked} They can still see it through ${andList(o.through)}.` };
+  if (o.unknownAbove) return { title, message: `${revoked} A collection it sits in may still let them in.` };
+  return { title, message: revoked };
+}
+
+/** A row's Remove: the grant to everyone is no member, so removing it stops sharing. */
+function removeLabel(subject: string, org: string): string {
+  return subject === "everyone" ? `Stop sharing with everyone in ${org}` : `Remove ${subjectLabel(subject, org)}`;
+}
+
+/** A row's name: the subject as a person reads it, with the subject itself beneath when the
+ *  two differ. */
+function SubjectName({ r, me, org }: { r: GrantEntry; me: readonly string[]; org: string }) {
+  const label = subjectLabel(r.subject, org);
+  return (
+    <>
+      {/* Wrapped, not cut: a long subject (an email on a request) is read whole. */}
+      <div className="break-all text-sm">
+        {label}
+        {namesMe(r, me) && <span className="ml-2 text-xs text-text-muted">(you)</span>}
+      </div>
+      {label !== r.subject && <div className="break-all font-mono text-xs text-text-muted">{r.subject}</div>}
+    </>
+  );
+}
+
+/** A members list drawn a step at a time: rows by subject, each focusing its first control,
+ *  else itself. */
+const MEMBER_ROWS: ShowMoreRows<GrantEntry> = {
+  key: (r) => r.subject,
+  rows: (list) =>
+    [...(list?.querySelectorAll<HTMLLIElement>(":scope > li[data-subject]") ?? [])].map((li) => [
+      li.dataset.subject ?? "",
+      li.querySelector<HTMLElement>("button") ?? li,
+    ]),
+};
+
+/** Show more under a list drawn a step at a time. */
+function MoreButton({ label, onClick }: { label: string | null; onClick: () => void }) {
+  if (!label) return null;
+  return (
+    <Button type="empty" htmlType="button" onClick={onClick}>
+      {label}
+    </Button>
+  );
+}
+
+/** Who else can see a collection through one of the collections it sits in: read-only. */
+export interface InheritedAccess {
+  /** The parent's name, which keys its section; "" for the one entry that is no parent the
+   *  person can open (one they cannot, or the parents when their grants failed to read). */
+  namespace: string;
+  /** The parent's title, or words for the "" entry. */
+  title: string;
+  /** Its grants; null when there are none to show (`note` says why). */
+  rows: GrantEntry[] | null;
+  /** More grants followed than were read. */
+  cut?: boolean;
+  /** Said in place of the rows when there are none to show; "Its members couldn't be read."
+   *  when unset. */
+  note?: string;
+  /** Shows the parent (`namespace`) in the Library, on a plain click of its link. */
+  onOpen?: () => void;
+}
 
 interface Props {
   open: boolean;
@@ -29,7 +149,7 @@ interface Props {
   org: string;
   namespace: string;
   /** "code" switches the dialog to repository mode: members are readers (viewer only);
-   *  maintainers (admin) are named by an org admin. */
+   *  maintainers (admin) are named by an org admin or a maintainer of it. */
   kind?: string;
   /** A human name for the namespace — for a code index "owner/name @ branch"
    *  — shown in the heading with the identifier beneath it, so the approver
@@ -40,13 +160,32 @@ interface Props {
    *  per person and repository is what the approver decides on, never a branch at a time.
    *  */
   pendingElsewhere?: Record<string, { namespace: string; label: string }[]>;
-  /** Fires after a member is added — the Setup checklist ticks "Invite a
-   * teammate" on it. */
+  /** Fires after the dialog changes who holds a grant: an add, a role change, a removal, an
+   *  approval or a rejection. Withdrawing one's own request changes no live grant. */
   onChanged?: () => void;
-  /** The caller is known to be an admin here though no grant row names them: a
-   *  collection's role reaches through its parents and the caller's groups. */
-  admin?: boolean;
+  /** Whether the caller may change the members, when the page knows it: a collection's role
+   *  from `collection.list`, the gate's own answer (it reaches through parents and groups,
+   *  and no token claim reaches a collection). Unset: the token's claims and the caller's
+   *  own grant decide. */
+  manage?: boolean;
+  /** A collection's parents, nearest first, and who can see it through each: listed under
+   *  its own members, read-only, since they are changed on the parent. Null while they are
+   *  read: the dialog says nothing of an empty list until it knows who else can see it. */
+  inherited?: InheritedAccess[] | null;
+  /** Where the focus goes as the dialog closes; unset, back to the control that opened it. */
+  onCloseAutoFocus?: (e: Event) => void;
 }
+
+/** A collection holds documents: its roles say what they let one do with them. */
+const COLLECTION_ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
+  { value: "viewer", label: "Viewer", desc: "Read its documents" },
+  { value: "writer", label: "Writer", desc: "Read, add, move and delete documents, and add collections inside" },
+  {
+    value: "admin",
+    label: "Admin",
+    desc: "What a writer does, and manage its members and sources, move it and delete it",
+  },
+];
 
 const ROLES: Array<{ value: GrantRole; label: string; desc: string }> = [
   { value: "viewer", label: "Viewer", desc: "Read only" },
@@ -63,23 +202,27 @@ export function MembersDialog({
   label,
   pendingElsewhere,
   onChanged,
-  admin = false,
+  manage,
+  inherited = [],
+  onCloseAutoFocus,
 }: Props) {
   const whoami = useStore((s) => s.whoami);
   const isCode = kind === "code";
-  // A code index has two roles: readers (viewer) and maintainers (admin),
-  // and only an org admin may name a maintainer (the server enforces the
-  // same ceiling — ROLE_CEILING).
-  // Any maintainer may name another maintainer.
-  const roles = isCode
-    ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
-        r.value === "viewer"
-          ? { ...r, label: "Reader", desc: "Read the index (read-only)" }
-          : { ...r, label: "Maintainer", desc: "Approve readers, set how people join" },
-      )
-    : ROLES;
+  // A code index has two roles: readers (viewer) and maintainers (admin); an org admin or a
+  // maintainer of it names a maintainer (the server enforces the ceiling — ROLE_CEILING).
+  const roles = isCollectionName(namespace)
+    ? COLLECTION_ROLES
+    : isCode
+      ? ROLES.filter((r) => r.value === "viewer" || r.value === "admin").map((r) =>
+          r.value === "viewer"
+            ? { ...r, label: "Reader", desc: "Read the index (read-only)" }
+            : { ...r, label: "Maintainer", desc: "Approve readers, set how people join" },
+        )
+      : ROLES;
   const roleValues = roles.map((r) => r.value);
   const [rows, setRows] = useState<GrantEntry[] | null>(null);
+  // More members followed than the pages read.
+  const [cut, setCut] = useState(false);
   const [adding, setAdding] = useState(false);
   const [newSubject, setNewSubject] = useState("");
   // A code index has no writer role, so its default must be one the select offers.
@@ -103,17 +246,22 @@ export function MembersDialog({
   if (rowsFor !== rowsKey) {
     setRowsFor(rowsKey);
     setRows(null);
+    setCut(false);
     setLoadError(null);
   }
 
   useEffect(() => {
     if (!open) return;
     let live = true;
+    // A read of many pages stops when the dialog closes, moves or reads again.
+    const ctl = new AbortController();
     setRefreshing(true);
     setLoadError(null);
-    listGrants({ org, namespace })
+    allGrants({ org, namespace }, ctl.signal)
       .then((r) => {
-        if (live) setRows(r.rows || []);
+        if (!live) return;
+        setRows(r.rows);
+        setCut(!!r.cut);
       })
       .catch((e) => {
         if (live) setLoadError(e);
@@ -123,16 +271,35 @@ export function MembersDialog({
       });
     return () => {
       live = false;
+      ctl.abort();
     };
   }, [open, org, namespace, reloadSeq]);
 
-  const me = whoami?.subject || "";
+  // The person under every spelling a grant here or on a parent ties to whoami's.
+  const me = mySpellings(whoami?.subject || "", [...(rows ?? []), ...(inherited ?? []).flatMap((p) => p.rows ?? [])]);
   const canManage =
-    admin ||
+    manage ??
     holdsAdminGrant(
       whoami,
-      rows?.find((r) => r.subject === me),
+      rows?.find((r) => namesMe(r, me)),
     );
+  // Named by its label (a repository's "owner/name @ branch", a collection's title), else
+  // by its address.
+  const name = label ?? namespace;
+  // A scoped token with no grant here may be an admin the client cannot see; a grant of its own caps it.
+  const manageReason =
+    canManage || rows === null
+      ? null
+      : manage === false
+        ? needsRole("admin", name)
+        : scopedUnseen(
+              whoami,
+              rows.some((r) => namesMe(r, me)),
+            )
+          ? serverDecides(name)
+          : isCode
+            ? needsMaintainer(name)
+            : needsRole("admin", name);
 
   const onAdd = async () => {
     const subj = newSubject.trim();
@@ -141,7 +308,7 @@ export function MembersDialog({
     setErr(null);
     try {
       await createGrant({ org, namespace }, subj, newRole);
-      toast(`Added ${subj} as ${newRole}`, "ok");
+      toast(`Added ${subjectLabel(subj, org)} as ${newRole}`, "ok");
       setNewSubject("");
       setNewRole(defaultRole);
       setAdding(false);
@@ -160,22 +327,49 @@ export function MembersDialog({
       // The role Select is the one deliberate "lower this member" control;
       // it says so to the server. onAdd never does.
       await createGrant({ org, namespace }, subject, role, { replace: true });
-      toast(`${subject} → ${role}`, "ok");
+      toast(`${subjectLabel(subject, org)} → ${role}`, "ok");
       load();
+      onChanged?.();
     } catch (e) {
-      toast(`Update failed: ${humanizeError(e)}`, "error");
+      toastError("Update failed", e);
     } finally {
       setBusy(null);
     }
   };
 
   const onRemove = async (subject: string) => {
+    const signInOff = isAuthDisabled();
+    // Who still lets them in: a grant to everyone here, else a parent whose grants name them
+    // under any spelling, or name everyone.
+    const theirs = grantSpellings(rows?.find((r) => r.subject === subject) ?? { subject });
+    const reaches = (list: GrantEntry[] | null | undefined) =>
+      !!list?.some(
+        (x) =>
+          x.status === "active" && (x.subject === "everyone" || grantSpellings(x).some((sp) => theirs.includes(sp))),
+      );
+    const everyoneHere = !!rows?.some((x) => x.status === "active" && x.subject === "everyone");
+    const through = (inherited ?? []).filter((p) => reaches(p.rows)).map((p) => p.title);
+    // Parents still being read (null), or one whose grants were not all read (unread,
+    // hidden, or cut), may let anyone in.
+    const unknownAbove = inherited === null || inherited.some((p) => p.rows === null || p.cut);
+    const who = subjectLabel(subject, org);
+    // The grant to everyone is no member: removing it narrows the collection to who is named.
+    const toEveryone = subject === "everyone";
     if (
       !(await confirmAction({
-        title: `Remove ${subject} from ${namespace}?`,
-        message:
-          "Their JWT keeps any org-level roles, but the namespace-specific grant is revoked. They can re-request access later.",
-        confirmLabel: "Remove",
+        ...removeConfirm({
+          toEveryone,
+          who,
+          name,
+          org,
+          signInOff,
+          everyoneHere,
+          through,
+          unknownAbove,
+          noParents: inherited !== null && inherited.length === 0,
+          collection: isCollectionName(namespace),
+        }),
+        confirmLabel: toEveryone ? "Stop sharing" : "Remove",
         danger: true,
       }))
     )
@@ -183,10 +377,11 @@ export function MembersDialog({
     setBusy(subject);
     try {
       await revokeGrant({ org, namespace }, subject);
-      toast(`Removed ${subject}`, "ok");
+      toast(toEveryone ? `Stopped sharing with everyone in ${org}` : `Removed ${who}`, "ok");
       load();
+      onChanged?.();
     } catch (e) {
-      toast(`Remove failed: ${humanizeError(e)}`, "error");
+      toastError("Remove failed", e);
     } finally {
       setBusy(null);
     }
@@ -213,14 +408,18 @@ export function MembersDialog({
       }
     }
     const verb = decision === "approve" ? "Approved" : "Rejected";
+    const who = subjectLabel(subject, org);
     if (ok === targets.length) {
-      toast(targets.length > 1 ? `${verb} ${subject} on ${ok} branches` : `${verb} ${subject}`, "ok");
+      toast(targets.length > 1 ? `${verb} ${who} on ${ok} branches` : `${verb} ${who}`, "ok");
+    } else if (ok === 0) {
+      toastError(`Couldn't ${decision} ${who}`, firstError);
     } else {
-      toast(`${verb} ${subject} on ${ok} of ${targets.length} branches — ${humanizeError(firstError)}`, "error");
+      const msg = `${verb} ${who} on ${ok} of ${targets.length} branches; the rest failed: ${humanizeError(firstError, { bare: true })}`;
+      toastErrorLine(msg, firstError);
     }
     setBusy(null);
     load();
-    onChanged?.();
+    if (ok > 0) onChanged?.();
   };
 
   type PendingEntry = GrantEntry & { requested_role: GrantRole };
@@ -232,6 +431,11 @@ export function MembersDialog({
   }));
 
   const addLabel = isCode ? "Add reader" : "Add member";
+  const inheritedSeen = (inherited ?? []).some((p) => p.rows === null || p.rows.some((r) => r.status === "active"));
+  // Up to GRANTS_READ grants are read, so the counts and "(you)" cover them; the rows are
+  // drawn a step at a time.
+  const members = useShowMore(activeRows, MORE_SHOWN, MEMBER_ROWS);
+  const pending = useShowMore(pendingRows, MORE_SHOWN, MEMBER_ROWS);
 
   return (
     <Modal
@@ -246,8 +450,14 @@ export function MembersDialog({
       title={`${isCode ? "Readers of" : "Members of"} ${label ?? namespace}`}
       description={label ? namespace : undefined}
       className="w-full max-w-[600px]"
+      onCloseAutoFocus={onCloseAutoFocus}
     >
       <div data-testid="members-body" aria-busy={(rows !== null && refreshing) || undefined}>
+        {isAuthDisabled() && (
+          <p className="mb-3 text-sm text-text-muted">
+            Sign-in is off: everyone who can reach this server can see it, whoever is listed here.
+          </p>
+        )}
         {rows === null && loadError === null && <Loading label={isCode ? "Loading readers" : "Loading members"} />}
         {loadError !== null && rows === null && (
           <ListState kind="error" things={isCode ? "readers" : "members"} error={loadError} onRetry={load} />
@@ -257,28 +467,38 @@ export function MembersDialog({
             {`Couldn't refresh the ${isCode ? "readers" : "members"}; showing the last read.`}
           </div>
         )}
-        {rows !== null && rows.length === 0 && (
-          <div className="py-8 text-center text-sm text-text-muted">
-            No members yet.{canManage && ` Click ${addLabel} below to invite the first one.`}
+        {rows !== null && rows.length === 0 && inherited !== null && (
+          <div className={`text-center text-sm text-text-muted ${inherited.length > 0 ? "py-3" : "py-8"}`}>
+            {/* Seen through a parent only when one names someone, or may (unread or hidden). */}
+            {inheritedSeen
+              ? "No one is named here; who can see it comes from the collections it sits in."
+              : "No members yet."}
+            {canManage &&
+              ` Click ${addLabel} below to ${inheritedSeen ? "name someone here" : "invite the first one"}.`}
           </div>
+        )}
+        {cut && (
+          <p className="mb-3 text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} grants were read.`}</p>
         )}
         {pendingRows.length > 0 && (
           <div className="mb-4">
-            <div className="mb-2 text-xs font-medium text-info">Pending requests ({pendingRows.length})</div>
-            <div className="space-y-1">
-              {pendingRows.map((r) => {
+            <div className="mb-2 text-xs font-medium text-info">{`Pending requests (${fmtInt(pendingRows.length)})`}</div>
+            <ul ref={pending.list} className="space-y-1">
+              {pending.shown.map((r) => {
                 const sinceDate = r.pending_since || r.granted_at;
                 const hasBase = !!r.pending_role && r.role !== r.requested_role;
                 const elsewhere = pendingElsewhere?.[r.subject] ?? [];
                 const targets = targetsFor(r.subject).length;
                 return (
-                  <div
+                  <li
                     key={`p-${r.subject}`}
+                    data-subject={r.subject}
+                    tabIndex={-1}
                     className="flex items-center gap-3 rounded-lg border border-info/40 bg-info/10 p-2.5"
                   >
                     <RoleIcon role={r.requested_role} />
                     <div className="min-w-0 flex-1">
-                      <div className="break-all font-mono text-sm">{r.subject}</div>
+                      <SubjectName r={r} me={me} org={org} />
                       <div className="text-xs text-text-muted">
                         {hasBase ? (
                           <>
@@ -298,11 +518,11 @@ export function MembersDialog({
                         )}
                       </div>
                     </div>
-                    {canManage ? (
+                    {!namesMe(r, me) || canManage ? (
                       <>
-                        <Tip
-                          content={`Also approves: ${elsewhere.map((t) => t.label).join(", ")}`}
-                          disabled={targets <= 1}
+                        <Unavailable
+                          reason={manageReason}
+                          tip={targets > 1 ? `Also approves: ${elsewhere.map((t) => t.label).join(", ")}` : undefined}
                         >
                           <Button
                             type="secondary"
@@ -312,24 +532,26 @@ export function MembersDialog({
                           >
                             {`Approve as ${isCode ? (r.requested_role === "admin" ? "maintainer" : "reader") : r.requested_role}${targets > 1 ? ` on ${targets} branches` : ""}`}
                           </Button>
-                        </Tip>
-                        <Button
-                          type="empty"
-                          htmlType="button"
-                          onClick={() => onApprove(r.subject, "reject")}
-                          disabled={busy === r.subject}
-                        >
-                          Reject
-                        </Button>
+                        </Unavailable>
+                        <Unavailable reason={manageReason}>
+                          <Button
+                            type="empty"
+                            htmlType="button"
+                            onClick={() => onApprove(r.subject, "reject")}
+                            disabled={busy === r.subject}
+                          >
+                            Reject
+                          </Button>
+                        </Unavailable>
                       </>
-                    ) : r.subject === me ? (
+                    ) : (
                       <Button
                         type="secondary"
                         htmlType="button"
                         onClick={async () => {
                           if (
                             !(await confirmAction({
-                              title: `Withdraw your ${r.requested_role} request on ${namespace}?`,
+                              title: `Withdraw your ${r.requested_role} request on ${name}?`,
                               message: "Keeps any current access; the request just leaves the admin queue.",
                               confirmLabel: "Withdraw",
                             }))
@@ -341,7 +563,7 @@ export function MembersDialog({
                             toast(`Withdrew ${r.requested_role} request`, "ok");
                             load();
                           } catch (e) {
-                            toast(`Cancel failed: ${humanizeError(e)}`, "error");
+                            toastError("Cancel failed", e);
                           } finally {
                             setBusy(null);
                           }
@@ -350,62 +572,85 @@ export function MembersDialog({
                       >
                         Withdraw
                       </Button>
-                    ) : (
-                      <span className="px-2 text-xs text-text-muted">awaiting admin</span>
                     )}
-                  </div>
+                  </li>
                 );
               })}
-            </div>
+            </ul>
+            <MoreButton label={pending.moreLabel} onClick={pending.showMore} />
           </div>
         )}
         {activeRows.length > 0 && (
           <div className="space-y-1">
-            {pendingRows.length > 0 && (
-              <div className="mb-1 text-xs font-medium text-text-muted">Members ({activeRows.length})</div>
-            )}
-            {activeRows.map((r) => (
-              <div key={r.subject} className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2">
-                <RoleIcon role={r.role} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-mono text-sm">
-                    {r.subject}
-                    {r.subject === me && <span className="ml-2 font-sans text-xs text-text-muted">(you)</span>}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
-                  </div>
-                </div>
-                {canManage && r.subject !== me ? (
-                  <>
-                    <div className="w-36 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Role for ${r.subject}` }}
-                        value={r.role}
-                        disabled={busy === r.subject}
-                        onSelect={(value) => {
-                          const role = oneOf(roleValues, value);
-                          if (role !== null && role !== r.role) onChangeRole(r.subject, role);
-                        }}
-                        options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
-                      />
-                    </div>
-                    <IconButton
-                      icon="trash"
-                      type="danger"
-                      size="sm"
-                      label={`Remove ${r.subject}`}
-                      tooltip="Remove from namespace"
-                      onClick={() => onRemove(r.subject)}
-                      disabled={busy === r.subject}
-                    />
-                  </>
-                ) : (
-                  <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
-                )}
+            {(pendingRows.length > 0 || activeRows.length > MORE_SHOWN) && (
+              <div className="mb-1 text-xs font-medium text-text-muted">
+                {`${isCode ? "Readers" : "Members"} (${fmtInt(activeRows.length)})`}
               </div>
-            ))}
+            )}
+            <ul ref={members.list} className="space-y-1">
+              {members.shown.map((r) => (
+                <li
+                  key={r.subject}
+                  data-subject={r.subject}
+                  tabIndex={-1}
+                  className="flex items-center gap-3 rounded-lg p-2.5 hover:bg-surface-2"
+                >
+                  <RoleIcon role={r.role} />
+                  <div className="min-w-0 flex-1">
+                    <SubjectName r={r} me={me} org={org} />
+                    <div className="text-xs text-text-muted">
+                      Granted <ListTime time={r.granted_at} quiet /> by {r.granted_by}
+                    </div>
+                  </div>
+                  {canManage && !namesMe(r, me) ? (
+                    <>
+                      <div className="w-36 shrink-0">
+                        <Select
+                          triggerProps={{ "aria-label": `Role for ${subjectLabel(r.subject, org)}` }}
+                          value={r.role}
+                          disabled={busy === r.subject}
+                          onSelect={(value) => {
+                            const role = oneOf(roleValues, value);
+                            if (role !== null && role !== r.role) onChangeRole(r.subject, role);
+                          }}
+                          options={roles.map((opt) => ({ value: opt.value, label: opt.label }))}
+                        />
+                      </div>
+                      <IconButton
+                        icon="trash"
+                        type="danger"
+                        size="sm"
+                        label={removeLabel(r.subject, org)}
+                        tooltip={r.subject === "everyone" ? removeLabel(r.subject, org) : `Remove from ${name}`}
+                        onClick={() => onRemove(r.subject)}
+                        disabled={busy === r.subject}
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+                      {manageReason && !namesMe(r, me) && (
+                        <Unavailable reason={manageReason}>
+                          <ClickIconButton
+                            type="danger"
+                            size="sm"
+                            icon="trash"
+                            aria-label={removeLabel(r.subject, org)}
+                          />
+                        </Unavailable>
+                      )}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+            <MoreButton label={members.moreLabel} onClick={members.showMore} />
           </div>
+        )}
+        {inherited === null ? (
+          <Loading label="Loading who else can see it" />
+        ) : (
+          inherited.map((p) => <InheritedSection key={p.namespace} access={p} me={me} org={org} />)
         )}
       </div>
 
@@ -439,6 +684,15 @@ export function MembersDialog({
         </div>
       )}
 
+      {manageReason && (
+        <ModalFooter>
+          <Unavailable reason={manageReason}>
+            <Button type="primary" htmlType="button" iconLeft="plus">
+              {addLabel}
+            </Button>
+          </Unavailable>
+        </ModalFooter>
+      )}
       {canManage && (
         <ModalFooter>
           {adding ? (
@@ -473,6 +727,59 @@ export function MembersDialog({
         </ModalFooter>
       )}
     </Modal>
+  );
+}
+
+/** "Also can see it, through <parent>": the parent's active members, read-only, and its link. */
+function InheritedSection({ access, me, org }: { access: InheritedAccess; me: readonly string[]; org: string }) {
+  const active = (access.rows ?? []).filter((r) => r.status === "active");
+  const heading = `Also can see it, through ${access.title}`;
+  const rows = useShowMore(active, MORE_SHOWN, MEMBER_ROWS);
+  return (
+    <section aria-label={heading} className="mt-4 border-t border-border pt-3">
+      <div className="mb-1 text-xs font-medium text-text-muted">
+        {"Also can see it, through "}
+        {access.onOpen ? (
+          // A real link: a modified click opens it in a new tab, a plain one in place.
+          <PlaceLink collection={access.namespace} onOpen={access.onOpen}>
+            {access.title}
+          </PlaceLink>
+        ) : (
+          access.title
+        )}
+      </div>
+      {access.rows === null ? (
+        <p className="py-1 text-sm text-text-muted">{access.note ?? "Its members couldn't be read."}</p>
+      ) : active.length === 0 ? (
+        <p className="py-1 text-sm text-text-muted">No one is named there.</p>
+      ) : (
+        <div className="space-y-1">
+          {active.length > MORE_SHOWN && (
+            <div className="text-xs text-text-muted">{`Members there (${fmtInt(active.length)})`}</div>
+          )}
+          <ul ref={rows.list} className="space-y-1">
+            {rows.shown.map((r) => (
+              <li
+                key={r.subject}
+                data-subject={r.subject}
+                tabIndex={-1}
+                className="flex items-center gap-3 rounded-lg p-2.5"
+              >
+                <RoleIcon role={r.role} />
+                <div className="min-w-0 flex-1">
+                  <SubjectName r={r} me={me} org={org} />
+                </div>
+                <span className="px-2 text-xs capitalize text-text-muted">{r.role}</span>
+              </li>
+            ))}
+          </ul>
+          <MoreButton label={rows.moreLabel} onClick={rows.showMore} />
+        </div>
+      )}
+      {access.cut && (
+        <p className="text-xs text-text-muted">{`Only the first ${fmtInt(GRANTS_READ)} grants there were read.`}</p>
+      )}
+    </section>
   );
 }
 

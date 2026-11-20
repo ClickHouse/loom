@@ -14,10 +14,11 @@ import httpx
 
 from server.clients._http_errors import provider_error_code
 from server.core.errors import GatewayRequiredError
-from server.core.llm_provider import provider_for_model
+from server.core.llm_provider import provider_of
 from server.core.schema.vector_codec_ddl import codable
 from server.core.vectors import codes_state
 from server.embedding._provider import MalformedEmbedding
+from server.embedding.bedrock import BedrockEmbedder
 from server.embedding.compatible import CompatibleEmbedder
 from server.embedding.gemini import GeminiEmbedder
 from server.embedding.openai import OpenAIEmbedder
@@ -28,6 +29,7 @@ from server.insights.api.models_provider_setup import (
 )
 from server.llm import customer, gateway
 from server.llm.anthropic import AnthropicLLMClient
+from server.llm.bedrock import BedrockLLMClient
 from server.llm.openai import OpenAILLMClient
 from server.observability import provider_health
 from server.observability.genai import llm_stage
@@ -37,9 +39,13 @@ from server.settings.budgets import llm_max_tokens
 
 async def _probe_llm(provider: str, model: str, key: str) -> None:
     client = (
-        AnthropicLLMClient(model, api_key=key)
-        if provider == "anthropic"
-        else OpenAILLMClient(model, api_key=key)
+        BedrockLLMClient(model)
+        if provider == "bedrock"
+        else (
+            AnthropicLLMClient(model, api_key=key)
+            if provider == "anthropic"
+            else OpenAILLMClient(model, api_key=key)
+        )
     )
     with llm_stage("provider_validation"), customer.system():
         result = await client.complete(
@@ -60,18 +66,22 @@ async def _probe_embedding(
     send_dimensions: bool = False,
 ) -> None:
     client = (
-        CompatibleEmbedder(
-            model=model,
-            dim=dimensions,
-            api_key=key,
-            base_url=base_url,
-            send_dimensions=send_dimensions,
-        )
-        if provider == "compatible"
+        BedrockEmbedder(model=model, dim=dimensions)
+        if provider == "bedrock"
         else (
-            OpenAIEmbedder(model=model, dim=dimensions, api_key=key)
-            if provider == "openai"
-            else GeminiEmbedder(model=model, dim=dimensions, api_key=key)
+            CompatibleEmbedder(
+                model=model,
+                dim=dimensions,
+                api_key=key,
+                base_url=base_url,
+                send_dimensions=send_dimensions,
+            )
+            if provider == "compatible"
+            else (
+                OpenAIEmbedder(model=model, dim=dimensions, api_key=key)
+                if provider == "openai"
+                else GeminiEmbedder(model=model, dim=dimensions, api_key=key)
+            )
         )
     )
     # Bypass the vector cache: a cache hit would falsely validate an invalid key.
@@ -96,10 +106,12 @@ async def _check(
     check = ProviderCheck(
         role=role, provider=provider, model=model, ready=False, code="provider_error"
     )
-    if provider not in ("openai", "anthropic", "gemini", "compatible"):
+    if provider not in ("openai", "anthropic", "gemini", "compatible", "bedrock"):
         check.code = "unsupported_provider"
         return check
-    keyless = provider in ("openai", "anthropic", "compatible") and gateway.keyless()
+    keyless = provider == "bedrock" or (
+        provider in ("openai", "anthropic", "compatible") and gateway.keyless()
+    )
     if not key.strip() and not keyless:
         check.code = "missing_key"
         return check
@@ -156,7 +168,10 @@ async def validate_providers(
     models: set[tuple[str, str]] = {(setup.llm.provider, setup.llm.model)}
     extra = list(setup.llm.overrides.values())
     extra.extend(setup.llm.verification_models or [])
-    models.update((provider_for_model(model, setup.llm.provider), model) for model in extra)
+    # The provider each job will run on, by the rule the runtime applies.
+    models.update(
+        (provider_of(model, setup.llm.model, setup.llm.provider), model) for model in extra
+    )
     checks = [
         await _check("llm", provider, model, keys.get(provider, ""), 0)
         for provider, model in sorted(models)

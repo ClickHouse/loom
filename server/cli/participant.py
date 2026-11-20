@@ -1,22 +1,23 @@
 """`loom participant retire`: the manual recovery for a Loom process that died
 without shutting down.
 
-Every Loom process registers a provider participant row, and a provider
-reconfiguration waits until each live participant acknowledges the drain. A
-participant that stops beating expires by itself; this retires one at once,
-once an operator has confirmed its process is gone.
+A participant retires only after permanent guarded shutdown or verifiable exact
+physical death on a trusted host, with its cross-replica queries settled.
+Heartbeat age and an operator affirmation are not evidence of death.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from time import monotonic
 from typing import Any
+
+from server.cli._ch import writes
 
 
 def _cmd_retire(args: argparse.Namespace) -> int:
-    """Retire a provider participant row whose process died without shutting
-    down, so a provider reconfiguration need not wait for it to expire."""
+    """Verify exact process death and retire the participant after its queries settle."""
     from uuid import UUID
 
     from server.cli._ch import run_connected
@@ -26,27 +27,22 @@ def _cmd_retire(args: argparse.Namespace) -> int:
     except ValueError:
         print(f"  ✗ {args.participant!r} is not a participant id", file=sys.stderr)
         return 2
-    if not args.yes:
-        print(
-            "  ✗ retiring a participant that is still running lets a reconfiguration proceed "
-            "under its writes; confirm its process is stopped, then pass --yes",
-            file=sys.stderr,
-        )
-        return 2
 
     async def _go(ch: Any) -> str:
-        from server.insights.app.provider_barrier import retire_participant
+        from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S, retire_participant
 
-        return await retire_participant(participant, ch=ch)
+        end = monotonic() + SHUTDOWN_RETIRE_S
+        return await retire_participant(participant, ch=ch, end=end)
 
-    outcome = run_connected(_go)
+    outcome = run_connected(_go, org_free=writes("a participant row of this cell"))
     if outcome == "absent":
         print(f"  ✗ no live participant {participant}", file=sys.stderr)
         return 1
     if outcome == "live":
         print(
-            f"  ✗ participant {participant} is still running: its heartbeat is fresh or "
-            "a query of its own still runs",
+            f"  ✗ participant {participant} has no verifiable exact physical-death proof "
+            "or its cross-replica queries have not settled; run on its trusted host after "
+            "the exact process stops. Expiry and Kubernetes object deletion are not proof",
             file=sys.stderr,
         )
         return 1
@@ -59,9 +55,8 @@ def register_participant_cli(sub: Any) -> None:
     ssub = p.add_subparsers(dest="participant_cmd", required=True)
     r = ssub.add_parser(
         "retire",
-        help="Retire the provider participant of a process that died without shutting "
-        "down (its id is `participant_id` in that process's /v1/health).",
+        help="Verify exact physical death on this trusted host and retire its participant "
+        "after all queries settle (the id is participant_id in /v1/health).",
     )
     r.add_argument("--participant", required=True, help="The participant id to retire")
-    r.add_argument("--yes", action="store_true", help="Its process is confirmed stopped")
     r.set_defaults(func=_cmd_retire)

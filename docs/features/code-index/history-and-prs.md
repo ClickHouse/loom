@@ -219,6 +219,32 @@ The rerank needs a real LLM provider; the other stages run on the stock stack on
 history is loaded. The bisect settings are listed in the
 [configuration reference](../../reference/configuration.md#code).
 
+The example below ranks the merged PRs that landed between a good release and a bad one
+and touched the files of a crashing function. `bad_version` is the first release where the
+bug was seen and `good_version` the newest release seen clean; Loom tests neither.
+
+The version window needs a tracker namespace linked to the repository whose PR records carry `minor_version` (the [record contract](../tracker/record-contract.md)). With merged-PR history alone
+(`LOOM_CODE_PR_HISTORY_ENABLED` or `loom code backfill-prs`; see [first index](../../operations/code-index-operations.md#first-index)), the versions
+do not bound the scan: the op reads the last `LOOM_CODE_BISECT_HISTORY_DAYS` (90 by default) instead.
+
+```python
+from loom import Agent
+
+async with Agent(org="acme", namespace="code-widgets", agent="triage-bot") as bot:
+    result = await bot.call(
+        "code.bisect_candidates",
+        bad_version="26.3",
+        good_version="26.2",
+        symbols=["UploadClient.send"],
+    )
+    for candidate in result["candidates"]:
+        print(candidate["pr_number"], candidate["score"])
+```
+
+The candidates come back ranked. The `score` says which PRs to investigate first; it does
+not show that a PR caused the bug. An engineer or a CI job still has to reproduce the
+bug and test the candidates.
+
 The final verification remains external to this operation: an engineer, CI workflow or
 testing agent must reproduce the issue and test the ranked candidates.
 

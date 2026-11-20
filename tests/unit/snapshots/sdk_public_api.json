@@ -13,7 +13,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "Agent.methods": {
     "call": [
@@ -82,7 +83,8 @@
       "session_id",
       "run_id",
       "only",
-      "max_result_chars"
+      "max_result_chars",
+      "code_namespace"
     ]
   },
   "Datapack.__init__": [
@@ -98,7 +100,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "SyncAgent.__init__": [
     "org",
@@ -115,7 +118,8 @@
     "retry",
     "consumer",
     "mentor_brief",
-    "profile"
+    "profile",
+    "session_protection"
   ],
   "clients": {
     "account": {
@@ -125,7 +129,8 @@
           "namespaces",
           "name",
           "role",
-          "ttl_days"
+          "ttl_days",
+          "saves_to"
         ],
         "revoke_token": [
           "name"
@@ -554,6 +559,19 @@
             ]
           }
         },
+        "connection": {
+          "class": "ConnectionOps",
+          "methods": {
+            "disconnect": [
+              "body",
+              "options"
+            ],
+            "list": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "consolidations": {
           "class": "ConsolidationsOps",
           "methods": {
@@ -783,6 +801,19 @@
             ]
           }
         },
+        "help": {
+          "class": "HelpOps",
+          "methods": {
+            "get": [
+              "body",
+              "options"
+            ],
+            "search": [
+              "body",
+              "options"
+            ]
+          }
+        },
         "inbox": {
           "class": "InboxOps",
           "methods": {
@@ -860,6 +891,14 @@
               "body",
               "options"
             ],
+            "gaps_draft": [
+              "body",
+              "options"
+            ],
+            "gaps_list": [
+              "body",
+              "options"
+            ],
             "get": [
               "body",
               "options"
@@ -884,11 +923,27 @@
               "body",
               "options"
             ],
+            "move": [
+              "body",
+              "options"
+            ],
             "outline": [
               "body",
               "options"
             ],
             "query": [
+              "body",
+              "options"
+            ],
+            "query_history_add": [
+              "body",
+              "options"
+            ],
+            "query_history_list": [
+              "body",
+              "options"
+            ],
+            "query_history_remove": [
               "body",
               "options"
             ],
@@ -920,6 +975,22 @@
               "body",
               "options"
             ],
+            "source_parse_links": [
+              "body",
+              "options"
+            ],
+            "source_push_configure": [
+              "body",
+              "options"
+            ],
+            "source_push_confirm": [
+              "body",
+              "options"
+            ],
+            "source_push_status": [
+              "body",
+              "options"
+            ],
             "source_remove": [
               "body",
               "options"
@@ -929,6 +1000,10 @@
               "options"
             ],
             "source_sync_now": [
+              "body",
+              "options"
+            ],
+            "source_update": [
               "body",
               "options"
             ],
@@ -1031,6 +1106,10 @@
               "options"
             ],
             "dedup_resolve": [
+              "body",
+              "options"
+            ],
+            "definitions_list": [
               "body",
               "options"
             ],
@@ -1909,7 +1988,8 @@
           "max_nodes",
           "min_confidence",
           "include_ambiguous",
-          "candidate_min_confidence"
+          "candidate_min_confidence",
+          "include_lessons"
         ],
         "callers": [
           "name",
@@ -1919,7 +1999,8 @@
           "min_confidence",
           "include_ambiguous",
           "candidate_min_confidence",
-          "pr_number"
+          "pr_number",
+          "include_lessons"
         ],
         "context_pack": [
           "pr_number",
@@ -2003,7 +2084,8 @@
           "files",
           "diff",
           "exclude_authors",
-          "pr_number"
+          "pr_number",
+          "include_lessons"
         ],
         "index_status": [
           "org",
@@ -2027,7 +2109,8 @@
         "outline": [
           "path",
           "kinds",
-          "token_budget"
+          "token_budget",
+          "include_lessons"
         ],
         "pr_check": [
           "title",
@@ -2063,7 +2146,8 @@
           "path_globs",
           "exclude_globs",
           "langs",
-          "namespaces"
+          "namespaces",
+          "include_lessons"
         ],
         "symbol": [
           "name",
@@ -2597,7 +2681,10 @@
           "tags_every",
           "include_superseded",
           "limit",
-          "cursor"
+          "cursor",
+          "namespaces",
+          "uri_prefix",
+          "fields"
         ],
         "outline": [
           "source_uri",
@@ -2622,7 +2709,8 @@
           "datasets",
           "window_chars",
           "max_answer_chars",
-          "max_windows"
+          "max_windows",
+          "user_id"
         ],
         "upload": [
           "data",
@@ -2888,7 +2976,9 @@
           "approver",
           "reversible_for_days",
           "user_id",
-          "session_id"
+          "session_id",
+          "approved_sha256",
+          "agent_id"
         ],
         "provenance": [
           "memory_key"
@@ -2997,6 +3087,7 @@
           "memory_type",
           "tags",
           "entities",
+          "files",
           "user_id",
           "session_id",
           "run_id",
@@ -3037,7 +3128,9 @@
           "reversible_for_days",
           "approver",
           "user_id",
-          "session_id"
+          "session_id",
+          "approved_sha256",
+          "agent_id"
         ],
         "timeline": [
           "entity",
@@ -3756,6 +3849,7 @@
     "AgentTools",
     "AssistantAnswer",
     "AssistantCitation",
+    "AssistantStep",
     "AssistantText",
     "AuthInsufficient",
     "AuthInvalid",
@@ -3782,6 +3876,7 @@
     "SyncAgent",
     "TokenClaims",
     "ValidationError",
+    "WrongCell",
     "__version__",
     "decode_token_claims",
     "login",

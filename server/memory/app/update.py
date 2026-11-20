@@ -21,6 +21,8 @@ from server.core.hashing import sha256_value as _content_sha256
 from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector, document_vectors
+from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
     MemoryUpdateByIdInput,
@@ -61,18 +63,11 @@ if TYPE_CHECKING:
 async def _embed_value_and_key(
     embedder: Any, embed_text: str, key_text: str
 ) -> tuple[list[float], list[float]]:
-    """The value and key vectors of one write in one round trip: `embed_many` when the
-    embedder has it (one API call, as memory.set), else the two calls concurrently. No key
-    text, no key vector."""
+    """Document vectors for the value and optional key in one provider request."""
     if not key_text:
-        return await embedder.embed(embed_text), []
-    embed_many = getattr(embedder, "embed_many", None)
-    if embed_many is not None:
-        vectors = await embed_many([embed_text, key_text])
-        if len(vectors) == 2:
-            return vectors[0], vectors[1]
-    value_vec, key_vec = await asyncio.gather(embedder.embed(embed_text), embedder.embed(key_text))
-    return value_vec, key_vec
+        return await document_vector(embedder, embed_text), []
+    vectors = await document_vectors(embedder, [embed_text, key_text])
+    return vectors[0], vectors[1]
 
 
 def _pinned_conflict(op: str, existing: Any, conflict_result: Any) -> HTTPException:
@@ -125,6 +120,7 @@ async def _revision_supersession(
             "memory_id": str(existing.memory_id),
             "memory_key": existing.memory_key,
             "value": serialized_value,
+            "user_id": existing.user_id,
         }
     ]
     await supersede_same_key_rows(
@@ -244,6 +240,23 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
     under the namespace, newest version first, narrowed by whichever
     identity fields the caller supplied. Expired rows are included: the
     update path answers 409 EXPIRED with a revive hint for them."""
+    # "-" means unset, and "*" too for agent, as in memory.ask.
+    narrowing = {
+        "agent": named(input.agent, wildcard=True),
+        "user_id": named(input.user_id),
+        "session_id": named(input.session_id),
+    }
+    if pg.enabled():
+        # A new key can be committed before its ClickHouse projection is published.
+        return await pg_memory.update_key_candidates(
+            input.org,
+            input.namespace,
+            input.memory_key,
+            scope=request_scope(),
+            agent=narrowing["agent"],
+            user_id=narrowing["user_id"],
+            session_id=narrowing["session_id"],
+        )
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
@@ -255,13 +268,6 @@ async def _live_rows_for_key(input: MemoryUpdateInput, ch: Any) -> list[dict[str
         "org": input.org,
         "ns": input.namespace,
         "key": input.memory_key,
-    }
-    # "-" (the identity sentinel the SDKs stamp) means unset, and "*" too for agent,
-    # as in memory.ask.
-    narrowing = {
-        "agent": named(input.agent, wildcard=True),
-        "user_id": named(input.user_id),
-        "session_id": named(input.session_id),
     }
     for col, val in narrowing.items():
         if val is not None:
@@ -508,6 +514,7 @@ async def _update_conflict_check(
             memory_key=existing.memory_key,
             new_value=serialized_value,
             new_embedding=embedding,
+            new_user_id=existing.user_id,
             **(await cfg_task).check_kwargs(),
         )
     if conflict_result.verdict == "rejected":

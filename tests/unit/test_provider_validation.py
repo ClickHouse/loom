@@ -32,6 +32,24 @@ async def test_missing_keys_never_call_providers(monkeypatch: pytest.MonkeyPatch
 
 
 @pytest.mark.asyncio
+async def test_native_bedrock_uses_deployment_credentials_without_saved_keys(monkeypatch):
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    setup = setup_input(
+        llm={"provider": "bedrock", "model": "bedrock:profile"},
+        embedding={"provider": "bedrock", "model": "cohere.embed-v4:0"},
+    )
+    result = await validation.validate_providers(setup, {})
+    assert result.ready
+    assert setup.embedding.dimensions == 1536
+    llm.assert_awaited_once_with("bedrock", "bedrock:profile", "")
+    embed.assert_awaited_once_with("bedrock", "cohere.embed-v4:0", "", 1536, "", False)
+    with pytest.raises(ValueError):
+        setup_input(keys={"bedrock": "not-a-supported-secret"})
+
+
+@pytest.mark.asyncio
 async def test_keys_are_used_without_mutating_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     llm, embed = AsyncMock(), AsyncMock()
     monkeypatch.setattr(validation, "_probe_llm", llm)
@@ -93,6 +111,22 @@ async def test_advanced_models_require_their_own_keys(monkeypatch: pytest.Monkey
     assert len(result.checks) == 3
     assert next(c for c in result.checks if c.model == "gpt-other").code == "missing_key"
     llm.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_job_naming_the_main_model_is_checked_on_the_main_provider(monkeypatch):
+    # A Claude-named model served by an OpenAI-compatible endpoint: the verifier naming it
+    # runs on openai at runtime, so the check needs no Anthropic key.
+    llm, embed = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(validation, "_probe_llm", llm)
+    monkeypatch.setattr(validation, "_probe_embedding", embed)
+    setup = setup_input(
+        llm={"provider": "openai", "model": "claude-x", "verification_models": ["claude-x"]},
+        keys={"openai": "one-test-key"},
+    )
+    result = await validation.validate_providers(setup, {})
+    assert result.ready
+    assert {check.provider for check in result.checks} == {"openai"}
 
 
 @pytest.mark.asyncio

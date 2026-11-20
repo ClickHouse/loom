@@ -34,7 +34,7 @@ from starlette.responses import StreamingResponse
 
 from server.settings import settings
 from server.tasks.app import wakeups as task_wakeups
-from server.tasks.app.common import _err
+from server.tasks.app.common import _err, _warning_read_filters
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store.rows import TaskEventRow
 
@@ -111,7 +111,7 @@ async def event_stream(
         await wait(key, min(beat_in, deadline - now))
 
 
-def _bearer_auth(request: Request) -> Any:
+async def _bearer_auth(request: Request) -> Any:
     """The verified principal — the HTTP transport's rule: a bearer that is
     present is verified whether or not the deployment requires one (a CI
     server runs with LOOM_AUTH_REQUIRED=false and its tests still mint
@@ -119,7 +119,7 @@ def _bearer_auth(request: Request) -> Any:
     and None (no principal, every scope check answers yes) otherwise."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    auth = await verify_bearer_header(request.headers.get("Authorization"))
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     return auth
@@ -144,6 +144,7 @@ async def _resolve_key(
     """(wake-up key, inbox filter, from_subject filter) for the side asked for,
     after the handlers' authorization rule; an admitted inbox watch leaves the
     restricted-access row for the inbox's owner namespace."""
+    from server.auth import tenancy
     from server.auth.authz import may_act_in_org
     from server.identity.app.restricted_access import note_restricted_access
     from server.tasks.app.common import _caller_subject, _in_scope
@@ -151,6 +152,7 @@ async def _resolve_key(
 
     if auth is not None and not may_act_in_org(auth, org):
         raise _err(403, "AUTH_INSUFFICIENT", "token is for another org")
+    await tenancy.ensure_held(org, auth)
     if inbox:
         row = await repo.fetch_inbox_row(org, inbox)
         # Someone who cannot even read the owner namespace gets the unknown-
@@ -196,11 +198,12 @@ async def task_watch(
     # Not a registry op, so no transport tags this route's reads; the stream's
     # iteration inherits the tag.
     set_query_tag("task.watch")
-    auth = _bearer_auth(request)
+    auth = await _bearer_auth(request)
     set_current_auth(auth)
     key, inbox_filter, subject = await _resolve_key(
         org, inbox, bool(posted_by_me), from_subject, auth
     )
+    warning_scope = _warning_read_filters()
 
     async def read(cursor: int) -> list[TaskEventRow]:
         return await repo.events_since(
@@ -209,6 +212,7 @@ async def task_watch(
             lag_s=task_cursors.LAG_SECONDS,
             inbox=inbox_filter,
             from_subject=subject,
+            warning_scope=warning_scope,
             limit=READ_LIMIT,
         )
 

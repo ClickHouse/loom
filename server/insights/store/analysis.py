@@ -23,7 +23,6 @@ log = logging.getLogger(__name__)
 # ClickHouse's answer to a read of a setting nobody set: an unsigned read of a
 # table under Loom's scope policy, or a profile with no version stamp yet.
 UNKNOWN_SETTING = 115
-_ACCESS_DENIED = 497
 
 
 class _AnalystClient(_CHClient, Protocol):
@@ -150,11 +149,11 @@ async def stored_caps_digest(names: boundary.SettingNames, *, ch: _CHClient | No
 
 
 def foreign_policies_sql(db: str) -> str:
-    """Permissive row policies on the allowlisted tables that Loom did not
-    write, in the database the SQL expression `db` names. ClickHouse ORs
-    permissive policies, so Loom's `USING 1` policy for every other user
-    would widen what each of them lets its users read."""
-    tables = ", ".join(sql_string(t) for t in boundary.allowlisted_tables())
+    """Permissive row policies Loom did not write on the tables it writes its policy for
+    every other user on, in the database the SQL expression `db` names. ClickHouse ORs
+    permissive policies, so Loom's `USING 1` policy for every other user would widen what
+    each of them lets its users read."""
+    tables = ", ".join(sql_string(t) for t in boundary.others_policy_tables())
     ours = ", ".join(sql_string(n) for n in (boundary.POLICY_NAME, boundary.OTHERS_POLICY_NAME))
     return (
         f"SELECT short_name, table FROM system.row_policies WHERE database = {db} "
@@ -170,13 +169,6 @@ def other_deployments_sql(db: str) -> str:
         "SELECT DISTINCT database FROM system.row_policies WHERE short_name = "
         f"{sql_string(boundary.POLICY_NAME)} AND database != {db} ORDER BY database"
     )
-
-
-def printed_checks() -> list[str]:
-    """Both checks naming Loom's database, for an admin whose session may
-    sit in another one."""
-    db = sql_string(database())
-    return [f"{foreign_policies_sql(db)};", f"{other_deployments_sql(db)};"]
 
 
 async def foreign_policies(*, ch: _CHClient | None = None) -> list[str]:
@@ -212,7 +204,7 @@ async def analyst_user_absent(*, ch: _CHClient | None = None) -> bool:
             {"user": boundary.ANALYST_USER},
         )
     except Exception as e:
-        if error_code(e) == _ACCESS_DENIED:
+        if error_code(e) == boundary.ACCESS_DENIED:
             return False  # a user without access management cannot tell
         raise  # no answer: the caller must not draw on a guess
     return row is not None and int(row["n"]) == 0
@@ -224,7 +216,7 @@ async def can_manage_access(*, ch: _CHClient | None = None) -> bool:
     try:
         await ch.query_one("SELECT count() AS n FROM system.users")
     except Exception as e:
-        if error_code(e) == _ACCESS_DENIED:
+        if error_code(e) == boundary.ACCESS_DENIED:
             return False  # a user without access management cannot
         raise  # no answer: the caller cannot tell, and must not guess
     return True
@@ -273,24 +265,20 @@ async def own_grants(
     return frozenset(out)
 
 
-async def own_grant_lines(
-    *, password: str, extra: dict[str, Any], ch: _AnalystClient | None = None
-) -> list[str]:
-    """The analyst's own SHOW GRANTS, line by line, read as the analyst."""
-    ch = ch or _analyst_client()
-    with as_analyst(boundary.ANALYST_USER, password, extra):
-        _, _, rows = await ch.query_columns("SHOW GRANTS")
-    return [str(line) for (line,) in rows]
-
-
-async def write_entities(statements: list[str], *, ch: _CHClient | None = None) -> None:
+async def write_entities(
+    statements: list[str], *, names: boundary.SettingNames, ch: _CHClient | None = None
+) -> None:
     """Send the entity statements in order; the first refusal stops them.
     They hold the analyst's password and the scope key, so their text stays
     out of system.query_log, and they stay out of the statement capture file."""
     ch = ch or _default_client()
+    if any(sql.startswith("GRANT ") for sql in statements):
+        from server.insights.store.event_cutover import confirm_ordinary_events
+
+        await confirm_ordinary_events(ch=ch)
     with uncaptured():
         for sql in statements:
-            await ch.execute(sql, settings=boundary.LOG_TEXT_CUT)
+            await ch.execute(sql, settings=boundary.provisioning_settings(names))
 
 
 def target_database() -> str:
@@ -302,6 +290,10 @@ def target_database() -> str:
 # it holds grants on, so the probe asks for what it must not. LIMIT 1: a
 # LIMIT 0 statement can finish before ClickHouse checks columns.
 REFUSED_READS = {
+    "agent_events_private": "SELECT count() FROM {db}.agent_events_private",
+    "agent_events_private.upstream_cost_usd": (
+        "SELECT upstream_cost_usd FROM {db}.agent_events_private LIMIT 1"
+    ),
     "system.query_log": "SELECT count() FROM system.query_log",
     "system.users": "SELECT count() FROM system.users",
     "memory.value": "SELECT toString(value) FROM {db}.memory LIMIT 1",

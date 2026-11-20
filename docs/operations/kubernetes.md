@@ -2,8 +2,10 @@
 
 `deploy/helm/loom` runs Loom as [N identical replicas](./replicas.md) on Kubernetes: one
 Deployment of web pods over one ClickHouse service, each pod a full replica. It works on
-any conformant cluster; `values-eks.yaml` sets it up on EKS and `values-kind.yaml` runs
-it on a laptop.
+any conformant cluster; `values-eks.yaml` sets it up on EKS, `values-kind.yaml` runs it on
+a laptop, and `values-clickhouse-cloud.yaml`, over the EKS one, adds ClickHouse Managed
+Postgres as the memory authority ([ClickHouse Cloud and Managed
+Postgres](./clickhouse-cloud.md)).
 
 | Object                                | What it does                                                                                                                                                  |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -55,7 +57,8 @@ The embedding settings go through `embedding.*`, and the root secret and its pre
 value through `secrets.jwtSecret` and `secrets.jwtSecretPrevious`; the chart guards these
 (below). The root secret can instead live in the `secrets.existingSecret` Secret, whose
 contents the chart cannot check. The chart refuses all of them in `env`, `extraEnv`,
-`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
+`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. The
+deployment probe port goes through `cellProbe.port` below. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
 the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
 settings as the YAML settings file holds them, lowercase and typed:
@@ -76,6 +79,44 @@ in the same upgrade, but it refuses to start on a value only the new build accep
 new choice of an existing setting, a widened bound). Set such a value in the upgrade
 after the one that changes the image. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
+
+### Preparing a cell
+
+For [cell preparation](../architecture/cells.md#preparing-a-cell), enable the private
+deployment-identity listener in the release's values:
+
+```yaml
+cellProbe:
+  port: 8777
+```
+
+Upgrade the release and wait for the web and, when enabled, workers Deployments to
+finish rolling before running prepare. Both pod types run the listener; a separate
+workers child does not. The listener requires Postgres and authentication; this
+value does not configure those prerequisites.
+
+The chart creates a ClusterIP Service named `<fullname>-cell-probe`, shortening the
+fullname to keep the suffix within 63 characters. It publishes unready pod addresses
+and selects only those two workload types. Its configured origin is
+`http://<probe-service>.<namespace>.svc:<port>`. A later cell passes that origin as
+`--probe-url`; the router appends `/v1/health/deployment`. For the first cell, put the
+origin in the router's `LOOM_ROUTER_UPSTREAM_PROBE_URL` instead and omit `--probe-url`
+from prepare. The full direct diagnostic endpoint is
+`http://<probe-service>.<namespace>.svc:<port>/v1/health/deployment`.
+
+The default port is zero, which disables the listener and Service. Enabled ports
+must be whole numbers from 1 to 65535 except 7777. Set the port only through
+`cellProbe.port`: the chart refuses it in `env`, `extraEnv`, `secrets.extra` and
+`settingsFile`, and renders an explicit value, including zero, over `envFrom`.
+The endpoint membership label `loom.clickhouse.com/cell-probe` is chart-owned when
+enabled. Application traffic and health probes continue to use the HTTP port.
+
+ClusterIP supplies routing, not authentication. The listener is unauthenticated and
+returns nonsecret deployment identity. With the chart's ingress NetworkPolicy on,
+add a separate ingress policy allowing the probe port from router pods and the CLI's
+location; without ingress isolation, cluster peers can reach it. The chart does not
+add that rule. A load-balanced response does not prove every process was sampled;
+the cell preparation checks remain required.
 
 ### On a laptop
 
@@ -187,17 +228,19 @@ graceful stop, and within the 30 s lease TTL when a pod or node dies. Every pod 
 labelled `deploy:k8s:<pod>`, so a new leader runs the workers whose last pass is
 overdue rather than waiting out their interval again.
 
-A pod that dies without stopping (node loss, eviction past the grace period) leaves its
-provider participant row, which would hold the next embedding or model change from the
-dashboard. With `retireLostPods` (the default) the workers leader retires it once its
-heartbeat expired, no query of it runs and Kubernetes says the pod is gone: its object
-deleted or replaced, or the pod `Failed` (evicted). That is a minute or two after a
-deletion or an eviction, and after a node loss once Kubernetes deletes the node's pods
-(five minutes of `NotReady` by default). It needs `get` on pods in the namespace (a Role
-the chart creates for the release's service account) and that account's token, which only
-the pods that may hold the workers lease mount. Without it, `/v1/health` names the row;
-once the pod is gone, retire it with
-`loom participant retire --participant <id> --yes` ([replicas](./replicas.md#stopping-a-replica)).
+A pod that dies without stopping leaves its provider participant row. A missing
+or replaced pod object, a Failed/Succeeded API phase and a completed rollout do
+not prove that an old process on a partitioned node stopped. Such rows remain
+blockers until guarded shutdown or verified exact physical death with settled
+queries. Loom requests no pod-read permission or service-account token for
+participant retirement. The explicit `serviceAccount.automountToken` value stays
+available for workloads that need a token for another integration.
+
+Use `loom participant retire --participant <id>` on the trusted host where its
+exact PID/namespace/start identity is verifiable. If that evidence is unavailable,
+use the [quiescent lifecycle recovery](../architecture/cells.md#participant-lifecycle-baseline)
+after positively terminating or fencing every relevant runtime. API object
+cleanup alone cannot authorize retirement.
 
 There is no migration Job. Every pod migrates at boot under a ClickHouse lease, so a
 Job would only repeat that step, and a pre-upgrade hook would run the new schema while
@@ -332,8 +375,13 @@ Loom runs them under bubblewrap, which needs unprivileged user namespaces. The d
 pod security does not allow them, so by default (`sandbox.required: false`) the compiler
 tiers of the repositories the operator lists in `LOOM_CODE_REPOS_JSON` run as plain
 processes in the pod, and a repository added from the dashboard is refused. List only
-repositories you trust. With `sandbox.required: true` a pod is not ready until the sandbox
-works, so set it only once the nodes are prepared:
+repositories you trust. `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` and
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` in `env` let platform admins add repositories
+with `code.repo.add` in such pods: their clone and fetches run as plain processes too,
+and they get no compiler tier
+([without the sandbox](./code-index-operations.md#repository-job-sandbox)). With
+`sandbox.required: true` a pod is not ready until the sandbox works, so set it only once
+the nodes are prepared:
 
 1. Run Loom on nodes whose OS allows unprivileged user namespaces.
 2. Install `dev/seccomp/loom-repo-sandbox.json` under the kubelet's seccomp directory
@@ -386,13 +434,48 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   release: Helm refuses to take over an object it does not own, so the upgrade fails.
 - An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
   endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
-  Identity agent, and the API server (which `retireLostPods` calls) where the engine
+  Identity agent, where the engine
   gives it an identity of its own. Turn on the engine's node matching, or set
   `guardMetadata: false` and allow them in your own policy.
 
 A `helm upgrade --reuse-values` from a chart with a shorter `egressExcept` keeps that
 list: set `networkPolicy.egressExcept` again, or upgrade with `--reset-then-reuse-values`
 (Helm 3.14 or later).
+
+## TLS on the Loom port
+
+`tls.secretName` names a `kubernetes.io/tls` Secret in the release's namespace. Every web
+and workers pod mounts its `tls.crt` and `tls.key` (mode 0440, group
+`podSecurityContext.fsGroup`), serves them on port 7777 with HTTPS only and probes over
+HTTPS; the Service marks the port `appProtocol: https`. `tls.minVersion` sets
+`LOOM_TLS_MIN_VERSION`. The chart refuses the `LOOM_TLS_*` settings anywhere else: the
+mount and the HTTPS probes come with `tls.secretName`.
+
+A controller that renews the Secret in place needs no restart. The kubelet updates the
+mount within its sync period, and each web process serves the new pair from its next
+handshake ([TLS on the Loom port](deployment.md#tls-on-the-loom-port)). The Secret must
+exist before the pods start.
+
+The Ingress or proxy in front then connects over HTTPS. On EKS, add
+`alb.ingress.kubernetes.io/backend-protocol: HTTPS` to `ingress.annotations`: the chart
+refuses an `alb` Ingress without it, or with another `backend-protocol` or
+`healthcheck-protocol` in `ingress.annotations` or `service.annotations` (the controller
+reads both, the Service's first). With ingress-nginx, set
+`nginx.ingress.kubernetes.io/backend-protocol: HTTPS`; other controllers have their own
+setting, which the chart does not check. Setting or
+clearing `tls.secretName` on a running release breaks requests until the rollout ends:
+the balancer and in-cluster clients switch scheme for every pod at once, while the pods
+restart one at a time. Plan a window, or install a second release with TLS and move the
+clients to it. A client in the cluster that calls the Service by URL, such as
+`deploy/okf-sync/cronjob.yaml` (`PRIVATE_URL`), switches to `https://` and trusts the CA
+that issued the certificate. For the `loom` CLI, `SSL_CERT_FILE` names that CA and
+replaces the system roots, so set it on the command that calls the Service only, or point
+it at a bundle of the system roots and the CA. The assistant calls the port
+over plain HTTP, so the chart refuses `assistant.enabled` with `tls.secretName`. The hop
+from Loom to the release's extractor (`extractor.enabled`) stays plain HTTP. Keep
+`tls.minVersion` at `"1.2"` unless every client of the port, the balancer included,
+speaks TLS 1.3. `helm test` calls the Service over HTTPS without verifying the
+certificate.
 
 ## Separate workers
 
@@ -431,7 +514,9 @@ until every roll finishes.
 replaced rather than rolled and restarted when its configuration changes, its Service
 and ConfigMap, and a MongoDB StatefulSet with `assistant.mongo.storage` of disk. It
 needs `assistant.existingSecret`, a Secret with `CREDS_KEY`, `CREDS_IV`, `JWT_SECRET`,
-`JWT_REFRESH_SECRET` and `ANTHROPIC_API_KEY`; the chart refuses to render without it.
+`JWT_REFRESH_SECRET`, and `ANTHROPIC_API_KEY` while the assistant runs on Anthropic or
+`LOCAL_LLM_BASE_URL` for `LOOM_ASSISTANT_PROVIDER=local`; the chart refuses to render
+without it.
 The Loom pods get `LOOM_ASSISTANT_LIBRECHAT_URL` pointing at it, unless `env` or
 `extraEnv` sets one, and set the service user and agent up at boot. LibreChat's
 NetworkPolicy admits only the release's Loom pods and lets it reach DNS, its MongoDB,
@@ -439,6 +524,12 @@ the Loom pods and TCP 443 for its model provider; MongoDB's admits only LibreCha
 reaches nothing, and Loom's own policy admits LibreChat when it names its peers. Both
 run non-root on a read-only root filesystem. `assistant.nodeSelector`,
 `assistant.tolerations` and `imagePullSecrets` apply to both pods.
+
+For `LOOM_ASSISTANT_PROVIDER=local`, a model server you run instead of Anthropic, add
+`LOCAL_LLM_BASE_URL` to the Secret and write a NetworkPolicy of your own that lets the
+LibreChat pod reach the server; the
+[local-model setup](../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+lists the rest.
 
 ## Analytics export
 
@@ -533,6 +624,76 @@ env:
   LOOM_INFERENCE_GATEWAY_HOSTS: gateway.example
   LOOM_INFERENCE_IDENTITY_HEADERS_JSON: '{"X-Agent": "{agent}"}'
 ```
+
+## Git through a forward proxy
+
+To send the code index's network git through a forward proxy
+([git through a forward proxy](./code-index-operations.md#git-through-a-forward-proxy)),
+give every Loom pod the proxy's address, a token file for its password and, for a proxy
+that terminates TLS under its own authority, the CA bundle:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: http://git-proxy.example:3128
+  LOOM_CODE_GIT_PROXY_TOKEN_FILE: /var/run/secrets/git-proxy/token
+  LOOM_CODE_GIT_PROXY_CA_FILE: /etc/git-proxy/ca.crt
+  LOOM_CODE_GIT_PROXY_IDENTITY: loom
+extraVolumes:
+  - name: git-proxy-token
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: git-proxy.example # what the proxy expects
+            expirationSeconds: 21600 # well above the longest git job
+            path: token
+  - name: git-proxy-ca
+    configMap:
+      name: git-proxy-ca
+extraVolumeMounts:
+  - name: git-proxy-token
+    mountPath: /var/run/secrets/git-proxy
+    readOnly: true
+  - name: git-proxy-ca
+    mountPath: /etc/git-proxy
+    readOnly: true
+```
+
+`env` and the two mounts reach the web pods and the workers alike: both fetch mirrors.
+The kubelet renews the token file and Loom reads it again for every git job, so nothing
+restarts. A job presents the token it read at its start for as long as it runs (a fetch
+up to `LOOM_CODE_GIT_FETCH_TIMEOUT_S`, an hour by default), so the proxy must accept a
+token for that long after Loom read it. With `networkPolicy.enabled`, a proxy on a port
+other than 443 needs a `networkPolicy.extraEgress` rule.
+
+An `http://` proxy URL, as above, sends the identity and the token to the proxy in clear
+on every job: keep that path inside a network you trust, or give the proxy an `https://`
+URL. Git then verifies the proxy's certificate before it sends them, against its default
+roots. For a certificate under an authority of your own, mount that authority's bundle
+and name it:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: https://git-proxy.example:8443
+  LOOM_CODE_GIT_PROXY_TLS_CA_FILE: /etc/git-proxy/proxy-ca.crt
+```
+
+`proxy-ca.crt` is one more key of the `git-proxy-ca` config map here. It is not
+`LOOM_CODE_GIT_PROXY_CA_FILE`, which verifies the remotes behind a proxy that terminates
+their TLS: a proxy that does both under one authority gets the same file in both
+settings. The proxy's certificate must name `git-proxy.example`, the host the URL
+spells.
+
+The proxy and the [repository-job sandbox](#repository-job-sandbox) are not used
+together. `sandbox.required: false` alone does not keep the sandbox off: a pod whose
+profiles let bubblewrap run uses it whatever that value says, and then every network git
+job is refused. Where the proxy is set, leave `sandbox.securityContext` and
+`sandbox.hostUsers` at their defaults as well. Repository jobs are then plain processes:
+a compiler tier's build runs as Loom's user and can read the token file, so run compiler
+tiers there only for repositories you trust. To add repositories with `code.repo.add` in
+such pods, set `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` and
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` as well
+([repository-job sandbox](#repository-job-sandbox)): their git goes through the proxy
+under the identity the add names, else the default one.
 
 ## Related
 

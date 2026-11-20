@@ -18,13 +18,15 @@ subscription credentials or API keys to Loom.
 ## What works without provider keys?
 
 The released Docker installation embeds with `local` (bge-small, 384 dimensions, on CPU
-from files the image carries) and selects the `fake-echo-1` LLM. It boots without provider
-keys or network: storage, the dashboard, structural code indexing and semantic search
-work, though a hosted embedder retrieves better on paraphrase-heavy questions. The fake
-LLM does not produce meaningful extracted facts, summaries or generated answers. A
-checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character overlap.
-An upgraded installation keeps the embedder its `~/.loom/.env` names; switching it to
-`local` is a model change like any other, and re-embeds what is stored.
+from files the image carries) and selects the `fake-echo-1` LLM, unless the installer
+set a local model server ([a model server on your
+machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider keys or
+network: storage, the dashboard, structural code indexing and semantic search work,
+though a hosted embedder retrieves better on paraphrase-heavy questions. The fake LLM
+does not produce meaningful extracted facts, summaries or generated answers. A
+checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character
+overlap. An upgraded installation keeps the embedder its `~/.loom/.env` names; switching
+it to `local` is a model change like any other, and re-embeds what is stored.
 
 For stronger retrieval over paraphrase-heavy content, configure a hosted embedding
 provider. For automatic fact extraction, summaries and generated answers, configure an
@@ -41,11 +43,12 @@ keyless providers a degraded-health condition.
 
 ## Choose a setup
 
-| What your organization has                    | Loom LLM                  | Embeddings                                             |
-| --------------------------------------------- | ------------------------- | ------------------------------------------------------ |
-| OpenAI API access                             | An available OpenAI model | OpenAI; one API key can serve both roles.              |
-| Anthropic plus an approved embedding provider | An available Claude model | OpenAI, Gemini or a compatible endpoint, with its key. |
-| Anthropic API access only                     | An available Claude model | Add an embedding provider and its API key.             |
+| What your organization has                     | Loom LLM                  | Embeddings                                             |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------ |
+| OpenAI API access                              | An available OpenAI model | OpenAI; one API key can serve both roles.              |
+| Anthropic plus an approved embedding provider  | An available Claude model | OpenAI, Gemini or a compatible endpoint, with its key. |
+| Anthropic API access only                      | An available Claude model | Add an embedding provider and its API key.             |
+| No provider key; a model server on the machine | A local model (`local`)   | The `local` embedder the image carries.                |
 
 **One OpenAI API key is enough for both roles; an Anthropic key is not required.**
 In Models & keys, choose one main LLM and leave per-job overrides blank. All enabled
@@ -194,6 +197,114 @@ Using one model across jobs is a convenience configuration, not the configuratio
 every published benchmark. Tune individual jobs later using
 [models per job](../operations/deployment.md#models-per-job).
 
+### A model server on your machine, no API key
+
+`LOOM_LLM_PROVIDER=local` runs Loom's LLM jobs on a chat-completions server you run:
+[Ollama](https://ollama.com), llama.cpp's `llama-server`, or any server that speaks the
+OpenAI chat-completions format. Loom sends it no key. With the released stack's `local`
+embedder, nothing leaves the machine.
+
+A new install run from a terminal offers this when Ollama answers on `localhost:11434`;
+`LOOM_LOCAL_MODELS=ollama` in front of `sh loom-install.sh` sets it without asking, on a
+new install or an existing one, and `LOOM_LOCAL_MODELS=off` never offers it. It writes:
+
+```dotenv
+LOOM_LLM_PROVIDER=local
+LOOM_LLM_MODEL=qwen2.5:3b
+LOOM_LOCAL_LLM_BASE_URL=http://host.docker.internal:11434/v1
+LOOM_ASSISTANT_PROVIDER=local
+LOOM_ASSISTANT_MODEL=qwen2.5:3b
+LOOM_ASSISTANT_ANSWER_CEILING_USD=0
+LOOM_MEMORY_EXTRACT_VERIFY_MODELS=
+LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=false
+LOOM_LLM_REQUEST_TIMEOUT_S=900
+LOOM_LLM_RETRY_ATTEMPTS=1
+LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS=1
+LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS=3600
+LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2
+LOOM_ENTITY_EXTRACT_ENABLED=false
+LOOM_SESSION_BRIEF_LLM_MODEL=
+LOOM_CODE_BISECT_LLM_RERANK_MODEL=
+LOOM_TRACKER_DUPCHECK_RERANK_MODEL=
+LOOM_RETRIEVAL_JUDGE_MODEL=
+```
+
+The preset turns off the two jobs that remove facts on a model's judgment, whose
+thresholds were set on hosted models: the capture verifier, which drops a fact every
+verifier model calls not durable, and the background
+[conflict resolver](../features/memory/conflicts-and-refusal.md#the-conflict-resolver),
+which retires an older row it judges replaced. A small model's misjudgment there would
+lose facts. Writes still flag conflicts for the Review queue; set
+`LOOM_MEMORY_CONFLICT_RESOLVER_ENABLED=true` with the key for
+`LOOM_CONFLICT_RESOLVER_MODEL` (`gpt-6.1-sol`, OpenAI) to judge them. On an existing
+install, a configuration saved in Models & keys wins over `.env`: after the restart,
+choose **Use environment configuration** there for the preset to apply.
+
+Pull the model first (`ollama pull qwen2.5:3b`, about 2 GB), and give Ollama a context
+window that holds Loom's prompts: extraction sends about 15,000 tokens, and Ollama cuts a
+longer prompt to its window without an error, so run it with
+`OLLAMA_CONTEXT_LENGTH=32768` (the window `qwen2.5` takes). A CPU can take minutes to
+read a prompt that long, so the preset waits `LOOM_LLM_REQUEST_TIMEOUT_S=900` seconds for
+a reply rather than the hosted default of 300, and tries it once
+(`LOOM_LLM_RETRY_ATTEMPTS=1`): a server that timed out answers no faster a second time.
+
+The worker that replays the captures the coding plugins send gives a pass a deadline, so
+the preset lets a deferred-extraction pass run an hour on one batch
+(`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`, by default four of its intervals, at least 60 s
+and at most 900; a batch's lease is kept at least a minute longer). On a `local` provider
+a capture cut short (at that deadline, or by Loom shutting down) or whose call ran out its
+timeout spends one of its `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS=2` attempts, so a session
+too long for the machine ends `failed` (`memory.extraction_status` shows `cancelled` or
+the timeout) instead of holding the queue: a long session can need several calls in a
+row, each up to the timeout. On a server that answers one request at a time the timeout
+also counts the wait behind other calls, and the assistant and `memory.ask` share the
+server, so heavy use of them during a capture can fail it too; raise
+`LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` if it does. Entity tagging
+(`LOOM_ENTITY_EXTRACT_ENABLED`) is off: it would queue behind extraction on a server that
+answers one request at a time, and its pass, cut at its deadline, writes nothing, so
+search does without entity matches. The other workers that
+call a model are not tuned for a local one: observe extraction (off by default), whose
+pass of up to 10 sessions is cut at 900 s and starts again from the newest session, and
+conversation titles and structured profiles, which run once conversation logging or a
+profile schema is set up.
+
+For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
+(`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves;
+for a local assistant, also set `LIBRECHAT_LOCAL_LLM_BASE_URL` to that root and
+`LOOM_ASSISTANT_MODEL` to that name. A server run from a checkout reaches the model at
+`localhost`, the setting's default (`http://localhost:11434/v1`).
+
+A per-job model whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes
+to that hosted provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way
+(`gpt-oss`) runs locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that
+setting names the same model.
+
+- **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
+  Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
+  listen beyond loopback (`OLLAMA_HOST=0.0.0.0`, with port 11434 closed to the network).
+  Under the Helm chart with `networkPolicy.enabled`, add the server's port to
+  `networkPolicy.extraEgress`.
+- **The assistant.** `LOOM_ASSISTANT_PROVIDER=local` moves the assistant's agent to
+  LibreChat's `local` endpoint, which calls `LIBRECHAT_LOCAL_LLM_BASE_URL` (default
+  `http://host.docker.internal:11434/v1`), and needs `LOOM_ASSISTANT_MODEL`. The assistant
+  answers by calling Loom's tools, so pick a model the server runs with tool calls (Ollama
+  marks them). A local model has no price, so each answer counts
+  `LOOM_ASSISTANT_ANSWER_CEILING_USD` ($0.10 by default) against the assistant's share of
+  the namespace's daily model cost cap, as any unpriced model does: at the default cap
+  and share, five answers a day. The preset sets the ceiling to `0`, so local answers
+  cost nothing; it is also what an answer cut before its usage arrived costs, so keep it
+  at its default when a hosted model serves the assistant. Under the Helm chart, add
+  `LOCAL_LLM_BASE_URL` to the assistant's Secret; the chart's policy lets LibreChat reach
+  only DNS, its database, Loom and TCP 443, so the model server needs a NetworkPolicy of
+  your own that selects the LibreChat pod.
+- **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
+  published benchmark covers a local one, so treat a small model as a way to try Loom
+  with no key or to keep everything on the machine, not as an equal: expect extraction,
+  `memory.ask` answers and the assistant's tool use to be weaker, by an amount nobody
+  has measured. A small model on a CPU is slow on long prompts such as extraction, so a
+  busy capture queue backs up; a GPU, or a larger model on a machine with the memory for
+  it, helps. For a team server, a hosted model answers better.
+
 ### Through an inference gateway
 
 A gateway that speaks the OpenAI or Anthropic API in front of the providers
@@ -224,7 +335,8 @@ matches only if it is listed.
 
 - **At start**, Loom refuses to load with no `LOOM_INFERENCE_GATEWAY_HOSTS`,
   or while `LOOM_OPENAI_BASE_URL`, `LOOM_ANTHROPIC_BASE_URL`,
-  `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` or an entry of
+  `LOOM_EMBEDDING_BASE_URL`, `LOOM_INFERENCE_TOKEN_URL` (and `LOOM_LOCAL_LLM_BASE_URL`
+  while `LOOM_LLM_PROVIDER=local`) or an entry of
   `LOOM_RERANK_ENDPOINTS_JSON` names another host, while the embedder is
   Gemini's, or while `LOOM_CODE_SEARCH_RERANK_DEFAULT` or
   `LOOM_KNOWLEDGE_SEARCH_RERANK_DEFAULT` is `builtin:cohere`.

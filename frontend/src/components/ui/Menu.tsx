@@ -14,15 +14,21 @@ import * as RadixPopover from "@radix-ui/react-popover";
  * skip link and other focusable elements stay in it; focus still moves into the menu and
  * back to the trigger on Escape.
  */
-// Props and ref pass through, so a Tip can wrap a trigger.
+// Props and ref pass through, so a Tip can wrap a trigger. A wrapping tooltip's own
+// `data-state` is dropped: Radix's trigger spreads its props after its own, and the
+// trigger's `data-state` must stay the menu's open state, which styles read.
+type WithState = { "data-state"?: string };
+
 export const MenuTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<typeof DropdownMenu.Trigger>>(
   function MenuTrigger(props, ref) {
-    return <DropdownMenu.Trigger asChild ref={ref} {...props} />;
+    const { "data-state": _tooltipState, ...rest } = props as typeof props & WithState;
+    return <DropdownMenu.Trigger asChild ref={ref} {...rest} />;
   },
 );
 
 export const PopoverTrigger = forwardRef<HTMLButtonElement, ComponentPropsWithoutRef<typeof RadixPopover.Trigger>>(
   function PopoverTrigger(props, ref) {
-    return <RadixPopover.Trigger asChild ref={ref} {...props} />;
+    const { "data-state": _tooltipState, ...rest } = props as typeof props & WithState;
+    return <RadixPopover.Trigger asChild ref={ref} {...rest} />;
   },
 );

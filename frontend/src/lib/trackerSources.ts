@@ -124,10 +124,10 @@ export function operatorOwned(source: Pick<TrackerSource, "origin">): boolean {
   return source.origin !== "registry";
 }
 
-/** Whether the caller may see the source's admin verbs (a request the token cannot make
- *  is never offered): a registry source the caller maintains, once the write ops
- *  (`tracker.source.add/check/rotate/remove`) are listed by `ops.capabilities`. Which of
- *  them it may use is `trackerVerbs`. */
+/** Whether the caller may see the source's admin verbs, Edit mapping, Rotate and Retire
+ *  (a request the token cannot make is never offered): a registry source the caller
+ *  maintains, once the deployment's tracker listing reports self-service on. Which of them
+ *  it may use is `trackerVerbs`. */
 export function canAdminister(source: Pick<TrackerSource, "namespaces" | "origin">, opsPresent: boolean): boolean {
   return opsPresent && source.origin === "registry" && source.namespaces.some((n) => n.member_role === "admin");
 }
@@ -517,7 +517,7 @@ export function templatesFile(cat: TrackerContractCatalogue, tables: readonly st
   const head = [
     `-- Views Loom reads, in ${cat.database}. Replace <your_table> with the table each record lives in,`,
     "-- map every column marked MUST map, keep a default only where you have no data, then run this",
-    "-- in your ClickHouse and press Check in Loom.",
+    "-- in your ClickHouse and choose Check in Loom.",
     "-- Keep DEFINER (Loom's user reads the views, not your tables) and loom_uuid5 (the ids Loom computes).",
     "",
   ].join("\n");

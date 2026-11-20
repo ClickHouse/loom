@@ -143,7 +143,7 @@ class LangfuseBackend:
 
     # Langfuse has no bulk-by-filter delete, so erasure is query-then-delete:
     # find the matching trace ids, then delete them in batches. Bounded so a
-    # runaway filter cannot loop forever on a GDPR path that must terminate.
+    # runaway filter cannot loop forever on an erasure path that must terminate.
     _PAGE_SIZE: ClassVar[int] = 100
     _DELETE_BATCH: ClassVar[int] = 100
     _MAX_TRACES: ClassVar[int] = 100_000
@@ -161,7 +161,7 @@ class LangfuseBackend:
     _LIST_FIELDS: ClassVar[str] = "core"
     # A page that times out or returns 5xx/429 is retried this many times with
     # exponential backoff before the step fails closed (the recovery worker
-    # then retries the whole step). Bounded: a GDPR path must terminate.
+    # then retries the whole step). Bounded: an erasure path must terminate.
     _PAGE_ATTEMPTS: ClassVar[int] = 3
     _PAGE_BACKOFF_S: ClassVar[float] = 2.0
 
@@ -288,7 +288,7 @@ class LangfuseBackend:
         `first` are found when it is set.
 
         A whole-set read (`first` 0, which erasure always asks for) fails closed
-        on both partial outcomes. Erasure is a GDPR path, and its
+        on both partial outcomes. Erasure must collect every row, and its
         callers turn a returned count into a `completed` saga step that the
         recovery worker will never retry — so under-collecting here is silent,
         permanent non-erasure:

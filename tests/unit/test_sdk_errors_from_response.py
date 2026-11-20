@@ -27,11 +27,12 @@ from loom.errors import (
     RateLimited,
     SchemaPending,
     ValidationError,
+    WrongCell,
     from_response,
 )
 from loom.transport import Transport, unreachable_error
 
-from server.core.errors import LoomServerError
+from server.core.errors import LoomServerError, WrongCellError
 
 
 def test_code_in_detail_wins_over_status() -> None:
@@ -118,12 +119,15 @@ def test_a_5xx_is_backend_unavailable_and_a_429_rate_limited_whatever_the_code()
 # Every server error code and the SDK class a caller catches it as (docs/reference/python-sdk.md).
 _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "VALIDATION_FAILED": ValidationError,
+    "VECTOR_INPUT_TOO_LARGE": ValidationError,
+    "BAD_CONFIG": ValidationError,  # a 422 a document source's config or item is refused with
     "AUTH_INSUFFICIENT": AuthInsufficient,
     "IDENTITY_INCOMPLETE": ValidationError,
     "RESOURCE_NOT_FOUND": NotFound,
     "PRECONDITION_FAILED": PreconditionFailed,
     "GRANT_WOULD_DOWNGRADE": PreconditionFailed,
     "READS_LLM_FREE": PreconditionFailed,
+    "SESSION_PROTECTION_REQUIRED": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
     "BACKEND_UNAVAILABLE": BackendUnavailable,
@@ -131,6 +135,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "SCHEMA_PENDING": SchemaPending,
     "CODED_WIDTH_MISMATCH": CodedWidthMismatch,
     "POLICY_FORBIDDEN": AuthInsufficient,
+    "ASSISTANT_SELF_CALL": AuthInsufficient,
     "EMBED_TIMEOUT": BackendUnavailable,  # a 503 with no SDK class: mapped by status
     "GRANT_BUSY": BackendUnavailable,
     "NO_SIGNING_KEY": BackendUnavailable,  # a 503 with no SDK class: mapped by status
@@ -138,6 +143,14 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "OVERRIDE_NOT_STORED": LoomError,  # a 409 refusal by ClickHouse: no precondition, not retried
     "ENTRY_LEASE_NOT_HELD": PreconditionFailed,  # the uploading pass no longer holds its entry
     "SOURCE_REPLACED": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "COLLECTION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_CEILING": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_NAME_TAKEN": PreconditionFailed,  # a 409 with no SDK class: mapped by status
+    "DEFINITION_PROMOTION_REFUSED": ValidationError,  # a 422 with no SDK class
+    "SENSITIVE_DEFINITION_REFUSED": ValidationError,  # a 422 with no SDK class
+    "ERASURE_RUNNING": PreconditionFailed,  # a 409 the server names retryable
+    "WRONG_CELL": WrongCell,
+    "TENANCY_REFUSED": BackendUnavailable,  # a 503 with no SDK class, never retried
     "MODEL_CALL_UNATTRIBUTED": BackendUnavailable,  # a 500 with no SDK class: mapped by status
     "MODEL_CALLS_DISABLED": AuthInsufficient,  # a 403 with no SDK class: mapped by status
     "MODEL_CALL_REFUSED": AuthInsufficient,  # a 403 with no SDK class, never retried
@@ -206,8 +219,9 @@ def test_category_and_retryable_without_a_named_class() -> None:
     assert (misuse.category, misuse.retryable) == ("input", False)
 
 
-def test_a_configuration_code_without_the_fields_is_not_retryable() -> None:
-    e = from_response({"detail": {"code": "GATEWAY_REQUIRED", "message": "m"}}, 503)
+@pytest.mark.parametrize("code", ["GATEWAY_REQUIRED", "TENANCY_REFUSED"])
+def test_a_configuration_code_without_the_fields_is_not_retryable(code: str) -> None:
+    e = from_response({"detail": {"code": code, "message": "m"}}, 503)
     assert (e.category, e.retryable) == ("configuration", False)
 
 
@@ -421,3 +435,13 @@ def test_an_answer_the_server_classes_configuration_is_not_retried() -> None:
 
     err = _sent("memory.get", answer, attempts=3)
     assert (err.retryable, len(calls)) == (False, 1)
+
+
+def test_a_wrong_cell_error_names_the_org_and_its_cell() -> None:
+    """The server's detail carries both; a caller looks the cell's host up and calls it."""
+    detail = WrongCellError("acme", cell="eu-2").to_detail()
+    err = from_response({"detail": detail}, 409)
+    assert isinstance(err, WrongCell) and isinstance(err, PreconditionFailed)
+    assert (err.org, err.cell) == ("acme", "eu-2")
+    unnamed = from_response({"detail": WrongCellError("acme").to_detail()}, 409)
+    assert isinstance(unnamed, WrongCell) and (unnamed.org, unnamed.cell) == ("acme", "")

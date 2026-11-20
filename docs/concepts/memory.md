@@ -10,19 +10,26 @@ against what is stored, and how rows change over time.
 ## Rows in ClickHouse
 
 Memories, document chunks, conversation turns, entity edges, code symbols, runs, audit
-entries and erasure requests are all rows in one ClickHouse database, created by
-numbered migrations the server applies on boot. Uploaded document originals are rows
-too (`loom.document_blobs`), unless the deployment keeps their bytes in an S3-compatible
-bucket. Outside ClickHouse and that bucket, Loom keeps the code index's git mirrors, a
-cache of the remotes ClickHouse records, and the rate-limit buckets on a shared volume.
+entries and erasure requests are all rows in ClickHouse, created by numbered migrations
+the server applies on boot. Under the
+[Postgres memory authority](../architecture/storage-authority.md#why-two-stores),
+Postgres holds live memory and knowledge state, and ClickHouse keeps the vectors, search
+and history. Uploaded document originals are ClickHouse rows too
+(`loom.document_blobs`), unless the deployment keeps their bytes in an S3-compatible
+bucket. Outside ClickHouse, Postgres and that bucket, Loom keeps the code index's git
+mirrors, a cache of the remotes ClickHouse records, and the rate-limit buckets on a
+shared volume.
 
 - **The identity tuple leads the sort keys.** `loom.memory` is ordered by
   `(org, namespace, agent, user_id, session_id, memory_key)`, so scoping a read to a
-  namespace, user or session is a primary-key range.
+  namespace is a primary-key range; a user narrows it fully only under a named agent,
+  a session only under a named agent and user.
   [Identities and namespaces](identities-and-namespaces.md) covers the tuple.
-- **One engine.** Vector search, lexical search, the graph walk, filters, audit and
-  erasure are SQL over the same rows. There is no second store to keep in step. The cost
-  is that every read is a query, not a key-value hit.
+- **One engine.** Under the default ClickHouse authority, vector search, lexical search,
+  the graph walk, filters, audit and erasure are SQL over the same rows, with no second
+  store to keep in step. The cost is that every read is a query, not a key-value hit.
+  Under the Postgres authority, point reads (by key or id, outside an `as_of` replay)
+  are answered from Postgres.
 - **A write is a new version.** The memory tables are `ReplacingMergeTree(version)` read
   with `FINAL`. A revision, tombstone, pin or restore inserts a new version row.
 
@@ -44,8 +51,8 @@ flowchart LR
 
 1. **Write.** `memory.set` runs its checks ([below](#how-a-write-is-judged)), embeds the
    value inline, and inserts the memory row, its embedding row, verbatim chunks for long
-   values and a hash-only audit row. If the inline embed fails, a stub is written and the
-   `embedding_worker` fills it later; search does not see the row until then.
+   values and a hash-only audit row. If the inline embed fails, the call fails and nothing
+   is written.
    `memory.set_from_messages` has the LLM pick the durable facts in a transcript and
    writes through the same bulk path.
 2. **Derive.** Workers add what is too slow for the write path: entity tags
@@ -176,21 +183,28 @@ A searchable `memory.set` runs these checks in order:
 3. **Precondition.** `if_match_sha256` makes the write land only if the live row's hash
    still matches; otherwise 409 `PRECONDITION_FAILED`. The current hash rides every
    `memory.get`, `memory.get_by_id` and `memory.set` response (`content_sha256`).
-4. **Restatement.** A value byte-identical to the live row bumps `reinforcement_count`
-   instead of writing a version. The bulk path (`memory.bulk_set`, used by
-   `set_from_messages`) treats any live row with the same hash in
+4. **Restatement.** A value byte-identical to the live row writes a new version that
+   carries the live row's `reinforcement_count + 1`. The bulk path (`memory.bulk_set`,
+   used by `set_from_messages`) treats any live row with the same hash in
    `(org, namespace, agent, user_id)` as the fact (`LOOM_MEMORY_BULK_DEDUP_SCOPE=identity`).
 5. **Peer search and verdict.** Active rows of the same `memory_type` whose embedding is
-   close to the new value are **peers**, compared closest first:
+   close to the new value are **peers**, compared closest first; a write that names its
+   `user_id` takes them from that user's rows only
+   ([how a write is judged](../features/memory/conflicts-and-refusal.md#how-a-write-is-judged)):
    - same canonical form (lowercased, punctuation stripped, whitespace collapsed) →
      `merge`: nothing written, the peer is reinforced, `merged_into_key` names it;
+   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT` (under a namespace-wide
+     token, a write that names its user and restates another user's or a shared pinned
+     value is written);
+   - under `newest_wins`, a peer that states the same subject and predicate with a
+     different object → `refines`: the peer is retired, unless its `valid_at` is later
+     than the new row's, which answers `conflict`;
    - cosine at or above the duplicate threshold with the same content words and no
      differing value (a number, time, amount or unit; "27:10" / "26:30") →
      `duplicate`;
    - cosine at or above the conflict threshold but different → `conflict`, both rows
      `conflicted`;
-   - a close pinned peer → `rejected`, 409 `PINNED_CONFLICT`;
-   - otherwise `clear`.
+   - no close peer → `clear`.
 6. **Insert** into `loom.memory` and `loom.memory_embeddings`, supersession, entity
    projection and one hash-only row in `loom.audit_log`.
 
@@ -322,6 +336,9 @@ Each line:
 
 ## Memories linked to code
 
+What this gives a coding agent, and where to start:
+[memory linked to code](../use-cases/memory-linked-to-code.md).
+
 A memory about code is linked to the definitions and files it names, and the links
 follow the code. The `memory_code_links` worker links each memory tagged `repo:<id>`
 (the coding plugins tag their sessions) or written in a repository's code namespace
@@ -355,14 +372,30 @@ git mirror. On every indexed commit the worker follows the commit's renames and 
 | `unresolved` | Its name is gone and a new definition in its place may be it, but none certainly is. Served, with a review signal. |
 | `missing`    | The code is gone: nothing new took its place. The link keeps its place, so a revert finds it again.                |
 
+![A memory's detail in the dashboard: its linked code, one definition current and one changed since a commit](../assets/screenshots/memory-linked-code.webp)
+
+A memory's detail in the dashboard lists these links with their state
+([clip](../assets/screenshots/clip-memory-linked-code.webm)).
+
 A link follows its definition through file moves, renames (with an edit, when the new
 name is related to the old), and its class's rename within the file. A namesake in
 another class or namespace never inherits a link, and a `missing` link comes back only
-when its own name does. A file the parser fails on keeps its links as they were until it
-parses. When the fingerprint rules change, every link is re-hashed from the commits its
-hashes were taken at. When its old text is gone from git, a link that matched it takes the
-text the next check finds and a changed one stays `changed`; one whose old text no longer
-parses keeps its last state, and the worker reports it.
+when its own name does. A name gone from its file is looked for in the files changed
+since its last check as the mirror holds them, beside the index, so a definition moved by
+a commit the index has not taken in whole (past `code_ingest_max_files_per_commit`) is
+followed when the link is rechecked. When `memory_code_links_mirror_naming_files` or more
+of those files name it, or more than `memory_code_links_mirror_changed_files` changed
+under the entry's prefixes, or the diff cannot be read, or the paths are more than git
+takes in one command or searches in its time, the mirror adds nothing and the index
+decides. When git cannot run the search, or a definition it finds cannot be
+fingerprinted, a live link the index's namesakes do not settle is `unresolved`. Files the
+ingest would not index (outside the entry's `path_prefixes`, refused by its denylist,
+over the byte cap, binary) add no definition; a generated file, which the ingest declares
+without searching its text, does. A file the parser fails on keeps its links as they were
+until it parses. When the fingerprint rules change, every link is re-hashed from the
+commits its hashes were taken at. When its old text is gone from git, a link that matched
+it takes the text the next check finds and a changed one stays `changed`; one whose old
+text no longer parses keeps its last state, and the worker reports it.
 
 Loom never writes the memory. The namespace's `code_change_policy`
 (`namespace.register`) decides what reads make of a change:
@@ -372,6 +405,35 @@ Loom never writes the memory. The namespace's `code_change_policy`
 | `retire_removed` (default) | When every link of a memory is `missing` (a pending or `unresolved` one counts as not), search (and `memory.ask`, `context.pack`) leaves it out before it picks its results; `memory.get` still shows it. It is back when the code is. | Flagged.                                                                                                                                                              |
 | `flag`                     | Flagged.                                                                                                                                                                                                                               | Flagged.                                                                                                                                                              |
 | `revise`                   | As `retire_removed`.                                                                                                                                                                                                                   | The claim is re-checked against the old and new code by the LLM: one that holds is re-anchored, a contradicted one gets a corrected claim as the link's `suggestion`. |
+
+Under every policy, a memory that a search still serves ranks lower when its worst link
+is `changed`, `unresolved` or `missing`: it moves below the next
+`memory_search_code_changed_places` (3) rows that rank by score (a row also moving down,
+or already moved, is not counted), never out of the results nor below a row served only
+as filler (under the similarity floor, or flagged below the abstain threshold), after the
+confidence and abstain checks have read them in relevance order;
+`score_components.code_changed_places` says how far among its own search's rows
+(`loom_search` places its merged repository decisions by similarity among the rows its
+search did not rank down). These are never moved down:
+
+- a memory a person holds;
+- a memory whose only such links are into code the caller may not read, or are links
+  nothing keeps current (`memory_code_links_enabled` off);
+- a row placed by an identifier match or by an `anchor_first` or `recent_first` tier,
+  which a move does not count as a place either;
+- every row a search serves for a query whose answer is a date order (`loom_search`'s
+  merged repository decisions, placed by similarity, still move);
+- the rows of a later page (`page=<handle>`), served in their parked order;
+- a chunk, record or summary hit, which carries no `code_state`.
+
+A reader block (`render="reader"`, `loom_search`'s block) whose question carries a time
+word (`when`, `after`, `since`, `latest`, …) lists its rows by date, so the move does
+not show in it; `results` keeps the move.
+
+`memory.ask` re-sorts the search's rows by similarity and recency while
+`memory_ask_recency_weight` is above 0 (0.2 by default), and its identifier
+lookups place their own rows; a `context.pack` startup read with no query does not
+search. A move does not show in any of these.
 
 `revise` judges a changed link once per edit, within a per-pass budget
 (`memory_code_links_revise_per_pass`). A memory labelled `high` sensitivity is never sent
@@ -393,8 +455,23 @@ The links are read where the code is:
   They come from the repository's team namespace and the `lesson_namespaces` the call
   names (over MCP the caller's memory home when it names none), never from every
   namespace the caller can read.
+- `code.search`, `code.callers`, `code.callees`, `code.impact`, `code.outline` and a task's
+  `code.context_pack` attach `lessons` for the answer's top files
+  (`code_result_lessons_paths`): from the same namespaces, less any other repository's code
+  namespace, the memories linked to code in each file or naming it by its path or a tail of it
+  (a bare filename, `search/handler.py`; an absolute path is trusted to name a file below the
+  root that it ends in), each with its `code_state`, within `code_result_lessons_tokens`. Each
+  row carries `path`, `memory_key`, `namespace`, `excerpt`, `code_state`, `changed_since` (the
+  commit that put its code in a changed, unresolved or missing state) when one is known, and
+  `supersedes_key` when it replaces an older row; a row another row read for the answer
+  supersedes is not served. `lessons_left_out` counts the rows the cap, a cut or that rule left
+  out. A decision or constraint is served whole or left out. The read runs after the answer,
+  never enters the search memo, and is skipped for `include_lessons: false`, with
+  `code_result_lessons` off, or for a token narrowed to its own user or session.
 - `memory.for_file` serves memories linked to code in the file beside those whose
-  `files` name it.
+  `files` name it. A line whose code changed, was not found again or went says so and
+  names the first indexed commit at which it read so; `context.pack` decision lines
+  carry the same note, and its memory lines a `code_state=<state>@<commit>` label.
 - `memory.get` returns the links as `code` (with any `suggestion`); `memory.search` hits
   read from a memory's own row carry its worst link as `code_state` (a chunk, record or
   summary hit carries none and is never left out); `memory.ask` notes the memories whose

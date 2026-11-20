@@ -150,7 +150,7 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
     async def in_order(repo: Any, org: str, ns: str, *a: Any) -> list[str]:
         return list(paths)
 
-    async def under_cap(org: str, ns: str) -> bool:
+    async def under_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     from server.code.store import index as code_index
@@ -460,8 +460,10 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
     class _Refusing:
         model_name, dim = "m", 2
         per_chunk = 0
+        document_calls = 0
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            self.document_calls += 1
             raise error
 
         async def embed(self, text: str) -> list[float]:
@@ -488,14 +490,22 @@ def test_a_held_projection_retry_is_no_error_and_leaves_the_row_open(monkeypatch
     assert out.reason == "model_calls_held"
     assert resolved == [] and ch.inserted == []  # the row stays open, no chunk written
     assert refusing.per_chunk == 0  # a held batch is not retried chunk by chunk
+    assert refusing.document_calls == 1
 
     class _BatchDown(_Refusing):  # the batch fails on its own; each chunk is then held
-        async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            raise RuntimeError("provider down")
+        batch_failed = False
 
-    monkeypatch.setattr("server.embedding.get_embedder", lambda: _BatchDown())
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            if not self.batch_failed:
+                self.batch_failed = True
+                raise RuntimeError("provider down")
+            return await super().embed_many(texts)
+
+    batch_down = _BatchDown()
+    monkeypatch.setattr("server.embedding.get_embedder", lambda: batch_down)
     (out,) = asyncio.run(pf.retry_failures([failure], ch=ch))
     assert out.reason == "model_calls_held" and resolved == []
+    assert batch_down.batch_failed and batch_down.document_calls == 1
 
 
 @held
@@ -503,13 +513,29 @@ def test_a_bulk_write_answers_a_held_conflict_check(monkeypatch, error) -> None:
     from server.memory.app import bulk_set
     from server.memory.app import conflicts as cf
 
+    async def policy(*_a, **_k) -> str:
+        return "auto_reinforce"
+
+    async def threshold(*_a, **_k) -> float:
+        return 0.85
+
     monkeypatch.setattr(cf, "check_on_commit", _raise(error))
+    # the call's one policy and threshold read, without a ClickHouse
+    monkeypatch.setattr(cf, "namespace_conflict_policy", policy)
+    monkeypatch.setattr(cf, "_resolve_threshold", threshold)
     entry = SimpleNamespace(memory_type="semantic", memory_key="k", valid_at=None)
-    put = SimpleNamespace(org="acme", namespace="n", agent="a", run_id="-", valid_at=None)
+    put = SimpleNamespace(
+        org="acme", namespace="n", agent="a", user_id="-", run_id="-", valid_at=None
+    )
     with pytest.raises(type(error)):  # not "unchecked": the org's write is held
         asyncio.run(
             bulk_set._bulk_conflict_verdicts(
-                put, [{}], [(entry, "v", None, None, None)], [(0, None, None, None)], [[0.1]], {}
+                put,
+                [{}],
+                [(entry, "v", None, None, None)],
+                [(0, None, None, None)],
+                [[0.1]],
+                floors={},
             )
         )
 

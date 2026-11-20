@@ -210,7 +210,8 @@ async def tombstone_decision_records(
     from server.memory.store import pg_memory
 
     if live is None:
-        live = await pg_memory.live_decision_writers(org, namespace, keys)
+        # Read durably: a writer's absence retires its record.
+        live = await pg_memory.live_decision_writers(org, namespace, keys, durable=True)
     params["live"] = live
     params["start_by"] = round(await rmt_carry.measured_send_deadline(ch) * 1000)
     try:

@@ -1,8 +1,7 @@
-import { act, render, screen } from "../test/rtl";
-import { useState } from "react";
+import { act, render, renderHook, screen } from "../test/rtl";
+import { StrictMode, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAbortableEffect, useKeyboard, useVisiblePoll } from "./hooks";
-import { setSingleKeyShortcuts } from "./shortcuts";
+import { useAbortableEffect, useKeyboard, useMounted, useVisiblePoll } from "./hooks";
 import { must } from "../test/must";
 
 // A read that lands after its view moved on is dropped, and the request itself is
@@ -146,21 +145,27 @@ describe("useVisiblePoll", () => {
   });
 });
 
-describe("useKeyboard with single-key shortcuts off", () => {
-  afterEach(() => setSingleKeyShortcuts(true));
-
-  it("skips a character key and keeps the others", () => {
-    const j = vi.fn();
+describe("useKeyboard", () => {
+  it("fires a bound key, and leaves it to a field that has the focus", () => {
     const escape = vi.fn();
     function Bound() {
-      useKeyboard({ j, Escape: escape });
-      return null;
+      useKeyboard({ Escape: escape });
+      return <input aria-label="field" />;
     }
     render(<Bound />);
-    setSingleKeyShortcuts(false);
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true }));
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    expect(j).not.toHaveBeenCalled();
     expect(escape).toHaveBeenCalledTimes(1);
+    screen.getByLabelText("field").focus();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(escape).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useMounted", () => {
+  it.each([false, true])("is true while mounted and false once unmounted (StrictMode: %s)", (strict) => {
+    const { result, unmount } = renderHook(() => useMounted(), strict ? { wrapper: StrictMode } : {});
+    expect(result.current.current).toBe(true);
+    unmount();
+    expect(result.current.current).toBe(false);
   });
 });

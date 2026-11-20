@@ -43,10 +43,11 @@ a removal follows the rule below.
 
 ## Coding-agent plugins
 
-The Claude Code and Codex plugins carry their own version, and their manifests name the oldest
-server their hooks support (`minServerVersion`). A session against an older server starts with one
-`loom:` line saying so, and the plugin goes on working where it can
-([Claude Code](../features/integrations/claude-code.md)).
+The Claude Code and Codex plugins carry their own version, and name the oldest server their
+hooks support (`MIN_SERVER_VERSION` in `lib/server-version.mjs`). A session against an older
+server starts with one `loom:` line saying so, and the plugin goes on working where it can
+([Claude Code](../features/integrations/claude-code.md)). The Claude Code plugin needs Claude Code
+2.1.139 or newer, the first that runs a hook's `args` with no shell.
 
 ## Removing something
 
@@ -61,4 +62,6 @@ answers `404` (`NotFound`), which `ops.capabilities` tells apart from a missing 
 Every release image is built on the architecture it runs on, scanned for critical vulnerabilities
 with a fix, and published with its provenance and an SBOM. Each image's multi-arch index carries a
 keyless signature from the release workflow; [container images](./deployment.md#container-images)
-gives the `cosign verify` command.
+gives the `cosign verify` command. Each file on the GitHub Release is signed the same way, in a
+`<file>.sigstore.json` beside it; [release files](./deployment.md#release-files) gives the
+`cosign verify-blob` command.

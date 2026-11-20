@@ -17,6 +17,9 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import health as erasure_health
 from server.erasure.store import ledger as erasure_ledger
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
+
 _OPERATOR_RESIDUE = {
     "loom.memory_belief_sources": 454610,
     "loom.memory_chunk_sources": 1812448,
@@ -261,7 +264,7 @@ async def test_the_cli_resume_reopens_from_the_fresh_census_and_reports_what_ran
     async def fake_list(*, org=None, ch=None):
         return [row]
 
-    async def fake_census(org, st, sv, *, ch=None):
+    async def fake_census(org, st, sv, *, ch=None, spellings=()):
         return dict(_OPERATOR_RESIDUE)
 
     async def fake_counts(*, ch=None):
@@ -379,3 +382,16 @@ async def test_a_ledger_row_that_no_longer_validates_is_counted_and_never_runs(m
     assert ran == [] and result.completed == 0
     assert [e["erasure_id"] for e in result.errors] == ["e10"]
     assert "namespace_list scope_value" in result.errors[0]["error"]
+
+
+async def test_a_resume_always_runs_the_census_again(monkeypatch) -> None:
+    """A run that stopped between its census and the terminal row left no census on the
+    ledger: a resume that skipped `verify.residue` would complete without one."""
+    done = {"memory.tombstone", "verify.residue"}
+    out, seen = await _drive(monkeypatch, previously_completed=done, residue=None)
+    assert seen["completed_at_entry"] == {"memory.tombstone"}
+    assert (
+        out.census == {"provider_rebuild_copies": 0}
+        and out.verified_at is not None
+        and out.purge is True
+    )

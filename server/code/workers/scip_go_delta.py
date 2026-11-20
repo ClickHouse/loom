@@ -19,7 +19,8 @@ module cache under `code_scip_go_modcache` makes the second build of a
 module cheap. A module whose `go mod download` fails (a `replace` onto a
 path the checkout lacks) is skipped by the runner and named in the pass
 outcome, never fatal to the pass; it fails the tier's health record (kind `module`)
-until a run builds again.
+until a run builds again. One that fails only for a dependency this host cannot
+fetch (a private repository) is noted instead (state `unavailable`), not failed.
 
 House rule: the SERVER never parses protobuf — scip-go and the
 conversion run in subprocesses; the worker consumes the JSON deltas.
@@ -50,6 +51,7 @@ from server.code.app.index.compiler_tier import (
     run_harness,
     run_tier,
 )
+from server.code.app.index.delta_file import open_delta
 from server.code.app.index.gitrepo import (
     UNQUOTED_PATHS,
     auth_env,
@@ -58,8 +60,12 @@ from server.code.app.index.gitrepo import (
     nul_fields,
 )
 from server.code.app.index.sandbox import tool_mounts
-from server.code.app.index.untrusted_files import read_delta
-from server.code.domain.index.tier_health import module_failures, without_module_failures
+from server.code.app.index.tier_health import note_unavailable
+from server.code.domain.index.tier_health import (
+    module_failures,
+    split_module_failures,
+    without_module_failures,
+)
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -202,26 +208,30 @@ async def _has_commit(checkout: Path, sha: str) -> bool:
     return proc.returncode == 0
 
 
-async def _modules_failing(repo: CodeRepo, cfg: RepoConfig) -> bool:
-    """The tier's record holds a module that would not build (kind `module`, classified
-    from the whole error): a pass that builds nothing leaves it as it is."""
+async def _kept_when_nothing_built(repo: CodeRepo, cfg: RepoConfig) -> bool:
+    """Whether a pass that builds nothing leaves the tier's record as it is: it holds a
+    module that would not build (kind `module`) or a module whose dependency cannot be
+    fetched (`unavailable`). Any other record such a pass clears."""
     from server.code.domain.index import tier_health
 
     raw = await repo.get_state(cfg.org, cfg.namespace, tier_health.state_key(PRODUCER))
     record = tier_health.parse(PRODUCER, raw or "")
-    return record is not None and record.failing and record.kind == "module"
+    if record is None:
+        return False
+    return record.state == "unavailable" or (record.failing and record.kind == "module")
 
 
 async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResult) -> bool:
-    """False when it built nothing while a module failure is recorded (`run_tier` then
-    keeps the record); True otherwise."""
+    """False when `run_tier` must keep the tier's record: the pass built nothing while a
+    module failure or an `unavailable` note stands, or it just noted one. True
+    otherwise."""
     target = await compiler_target(repo, cfg)
     if not target:
         result.skipped.append(f"{cfg.namespace}: git_head not seeded")
         return False
     scip_commit = await repo.get_state(cfg.org, cfg.namespace, WATERMARK) or ""
     if target == scip_commit:
-        return not await _modules_failing(repo, cfg)  # compiler tier is current
+        return not await _kept_when_nothing_built(repo, cfg)  # compiler tier is current
     checkout, bare, missing = await asyncio.to_thread(_resolve_paths, cfg)
     if missing:
         result.skipped.append(f"{cfg.namespace}: {missing}")
@@ -235,7 +245,7 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         if not modules:
             logger.info("code_scip_go_delta: %s no Go change in window", cfg.namespace)
             await repo.set_state(cfg.org, cfg.namespace, WATERMARK, target)
-            return not await _modules_failing(repo, cfg)
+            return not await _kept_when_nothing_built(repo, cfg)
     else:
         modules = []  # first run: the runner walks every go.mod
 
@@ -244,17 +254,15 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         log = await _run_harness(checkout, scip_commit or "--full", target, out_dir, modules, cfg)
         failed = module_failures(log)
         result.modules_skipped.extend(f"{cfg.namespace}: {line}" for line in failed)
-        from server.code.app.index.scip_delta import apply_delta, parse_delta
+        from server.code.app.index.scip_delta import apply_delta
 
         # One delta per module the harness ran over (a full run: every go.mod it lists)
         expected = modules or await _module_dirs(checkout)
         paths = await asyncio.to_thread(_deltas, out_dir, len(expected))
         for path in paths:
-            raw = await asyncio.to_thread(read_delta, path)
-            delta = parse_delta(raw)
-            del raw  # the bytes are not needed past the parse
+            delta = await asyncio.to_thread(open_delta, path)
             stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
-            del delta  # free this module's model before the next one is read
+            del delta  # free this module's paths before the next one is read
             result.modules_indexed += 1
             logger.info(
                 "code_scip_go_delta: %s module %s applied %s",
@@ -271,8 +279,16 @@ async def _run_repo(repo: CodeRepo, cfg: RepoConfig, result: CodeScipGoDeltaResu
         target[:8],
         len(paths),
     )
-    if failed:  # the rest is applied; the modules that would not build fail the tier
-        raise TierDegraded("; ".join(failed))
+    # The rest is applied. A module whose dependency cannot be fetched from this host is
+    # noted, not failed; one that would not build for another reason fails the tier
+    # (its record names both, the broken last, where the kept tail keeps them). A run
+    # that builds without either clears the record.
+    broken, unreachable = split_module_failures(failed)
+    if broken:
+        raise TierDegraded("; ".join(unreachable + broken))
+    if unreachable:
+        await note_unavailable(repo, cfg.org, cfg.namespace, PRODUCER, "; ".join(unreachable))
+        return False  # the note stands for this run: no success record clears it
     return True
 
 

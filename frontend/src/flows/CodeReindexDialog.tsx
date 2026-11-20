@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Select } from "@clickhouse/click-ui/Select";
 import { codeRecentCommits, codeReindex, type CodeRecentCommitRow, type CodeRepoSummary } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
@@ -34,7 +34,7 @@ export function CodeReindexDialog({
         // The watermark itself: moving it there changes nothing.
         if (live()) setCommits(r.rows.filter((c) => c.commit !== branch.git_head));
       } catch (e) {
-        if (live()) setError(humanizeError(e));
+        if (live()) setError(humanizeError(e, { read: true }));
       }
     },
     [branch.org, branch.namespace],

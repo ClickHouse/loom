@@ -1,8 +1,13 @@
-# Loom documentation
+# ClickHouse Loom documentation
 
-Loom is a memory, document and code-index server for AI agents, stored in
-one ClickHouse database. Agents and people reach it over MCP, HTTP, the Python and
+Loom is a memory, document and code-index server for AI agents, stored in ClickHouse,
+with [Postgres](architecture/storage-authority.md#why-two-stores) as an option for live
+memory and knowledge state. Agents and people reach it over MCP, HTTP, the Python and
 TypeScript SDKs, and the dashboard. This page lists every page in reading order.
+
+![The dashboard's Library: a search for a refund rule answered by cited passages](assets/screenshots/document-search.webp)
+
+<video src="assets/screenshots/clip-assistant-answer.webm" controls autoplay loop muted playsinline width="100%" aria-label="Ask AI answering a question about refunds, with its numbered sources checked against Loom"><a href="assets/screenshots/clip-assistant-answer.webm">Ask AI answering with checked sources (clip)</a></video>
 
 ## Start here
 
@@ -16,9 +21,25 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 | 6. Code index            | [Code index](features/code-index/overview.md) → [Repositories](features/code-index/repositories.md) → [Code-index operations](operations/code-index-operations.md)                        |
 | 7. Operate               | [Monitoring](operations/monitoring.md) · [Troubleshooting](operations/troubleshooting.md) · [Upgrades](operations/upgrades.md) · [Backup and recovery](operations/backup-and-recovery.md) |
 
+## Use cases
+
+One page per need, each saying what Loom does for it and where to start:
+[agent memory](use-cases/agent-memory.md) ·
+[document search and RAG](use-cases/document-search.md) ·
+[code index for coding agents](use-cases/code-intelligence.md) ·
+[code index by language](use-cases/code-intelligence-by-language.md) ·
+[memory linked to code](use-cases/memory-linked-to-code.md) ·
+[coding-agent model cost](use-cases/coding-agent-cost.md) ·
+[multi-agent shared context](use-cases/multi-agent.md) ·
+[autonomous agents: recall, audit, erasure](use-cases/autonomous-agents.md) ·
+[runs, traces and PR history](use-cases/runs-and-pr-history.md) ·
+[self-hosted on ClickHouse](use-cases/self-hosted-clickhouse.md) ·
+[all use cases](use-cases/index.md).
+
 ## 1. Getting started
 
 - [Overview](getting-started/overview.md): what Loom is, when it fits, prerequisites.
+- [What's included](getting-started/whats-included.md): Loom's main capabilities, each with its page.
 - [Quickstart](getting-started/quickstart.md): the local stack end to end.
 - [Configure models and API keys](getting-started/models-and-keys.md): agent subscriptions,
   server LLMs, embeddings and single-provider setups.
@@ -46,6 +67,8 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
   [Running N replicas](operations/replicas.md): identical Looms behind one URL ·
   [Postgres](operations/postgres.md): the Postgres memory authority ·
   [Kubernetes](operations/kubernetes.md): the Helm chart, with EKS and kind overlays ·
+  [ClickHouse Cloud and Managed Postgres](operations/clickhouse-cloud.md): the chart over
+  both managed services ·
   [Copying a namespace to another Loom](operations/okf-sync.md) ·
   [Exporting usage to a data warehouse](operations/analytics-export.md)
 
@@ -53,8 +76,10 @@ TypeScript SDKs, and the dashboard. This page lists every page in reading order.
 
 [Integrations](features/integrations/index.md) ·
 [MCP clients](features/integrations/mcp-clients.md) ·
+[Agent instructions](features/integrations/agent-instructions.md) ·
 [Claude Code](features/integrations/claude-code.md) ·
 [Codex](features/integrations/codex.md) · [Cursor](features/integrations/cursor.md) ·
+[VS Code](features/integrations/vscode.md) ·
 [Frameworks](features/integrations/frameworks.md) ·
 [Grep shim](features/integrations/grep-shim.md) ·
 [Langfuse](features/integrations/langfuse.md) ·
@@ -91,7 +116,9 @@ client sees one the server no longer reads.
 [Optimize a namespace](guides/optimize-namespace.md) ·
 [Investigation-agent memory](guides/investigation-agent-memory.md) ·
 [Extraction pipelines](guides/extraction-pipeline.md) ·
-[Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md)
+[Performance tuning](guides/performance-tuning.md) · [Debugging](guides/debugging.md) ·
+[Query Loom from Postgres](guides/query-from-postgres.md) ·
+[Teaching with Loom](guides/teaching.md)
 
 ## Features
 
@@ -131,8 +158,11 @@ client sees one the server no longer reads.
 [ClickHouse](architecture/clickhouse.md) ·
 [Memory architecture](architecture/memory-architecture.md) ·
 [Storage authority](architecture/storage-authority.md) ·
+[Cells](architecture/cells.md) ·
+[Storage layout](architecture/storage-layout.md) ·
 [Code-index architecture](architecture/code-index-architecture.md) ·
 [Document extraction](architecture/document-extraction.md) ·
+[Document sources](architecture/document-sources.md) ·
 [LLM and embeddings](architecture/llm-architecture.md) ·
 [Security](architecture/security.md) ·
 [Assistant design](architecture/assistant.md) ·
@@ -154,6 +184,7 @@ For contributors: [repository guide](development/repository-guide.md) ·
 [migrations](development/migrations.md) ·
 [release process](development/release-process.md) ·
 [documentation style](development/documentation-style.md) ·
+[curation loop design](development/curation-loop-design.md) ·
 [extending Loom](development/extending-loom.md) ·
 [add an operation](development/adding-an-operation.md) ·
 [add a worker](development/adding-a-worker.md) ·
@@ -164,6 +195,7 @@ For contributors: [repository guide](development/repository-guide.md) ·
 
 ## Also
 
-[Glossary](glossary.md): Loom's terms, defined once. [FAQ](faq.md): the first questions,
-one paragraph each. [`llms.txt`](../llms.txt): a generated index of every page for
-agents.
+[Glossary](glossary.md): Loom's terms, defined once. [FAQ](faq.md): the first questions, one
+paragraph each. [`llms.txt`](../llms.txt): a generated index of the docs for agents;
+[`llms-full.txt`](https://clickhouse.github.io/loom/llms-full.txt) holds, in one file, the
+pages that say what Loom is and how to start.

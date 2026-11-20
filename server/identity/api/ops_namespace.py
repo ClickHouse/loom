@@ -355,6 +355,7 @@ namespace_inventory = Operation(
 
 namespace_validate = Operation(
     name="namespace.validate",
+    session_content=True,
     input_model=NamespaceValidateInput,
     output_model=NamespaceValidateOutput,
     handler=handle_namespace_validate,

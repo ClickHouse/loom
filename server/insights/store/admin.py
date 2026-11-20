@@ -9,7 +9,10 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.ch_names import SCHEMA, database, logical, telemetry_database
+from server.core.event_source import ALL_EVENTS
+from server.core.naming import not_mirror_sql
 from server.core.repo_base import _CHClient, _default_client
+from server.observability.store.event_reads import MASKED_EVENTS
 
 # ----------------------------------------------------------------------
 # Schema.status — diff migrations against system.tables
@@ -48,6 +51,7 @@ async def audit_summary(
     ch = ch or _default_client()
     where = [
         "ts >= toDateTime64(now() - INTERVAL {since:UInt32} SECOND, 3, 'UTC')",
+        not_mirror_sql(),
     ]
     params: dict[str, Any] = {"since": int(since_seconds)}
     if org:
@@ -95,6 +99,7 @@ async def events_tail(
     limit: int,
     *,
     filters: dict[str, str | bool] | None = None,
+    operator: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Recent rows from loom.agent_events for live debugging.
@@ -105,6 +110,7 @@ async def events_tail(
     ch = ch or _default_client()
     where = [
         "ts >= toDateTime64(now() - INTERVAL {since:UInt32} SECOND, 3, 'UTC')",
+        not_mirror_sql(),
     ]
     params: dict[str, Any] = {"since": int(since_seconds), "lim": int(limit)}
     filters = filters or {}
@@ -120,7 +126,7 @@ async def events_tail(
         f"""
         SELECT ts, org, namespace, agent, operation, latency_ms,
                success, error_code, request_id, trace_id
-        FROM loom.agent_events
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE {" AND ".join(where)}
         ORDER BY ts DESC
         LIMIT {{lim:UInt32}}
@@ -167,6 +173,7 @@ def budget_violations_sql(extra_where: str = "") -> str:
         FROM loom.events
         WHERE kind = 'budget_violation'
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY namespace, operation
         ORDER BY violations DESC
@@ -184,6 +191,7 @@ async def consumers(
     limit: int,
     *,
     org: str | None = None,
+    operator: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Per-consumer calls, errors, latency and spend over a window.
@@ -218,9 +226,11 @@ async def consumers(
                round(sumIf(upstream_cost_usd, args['consumer_source'] = 'claimed'), 6)
                                                                 AS claimed_spend_usd,
                max(ts)                                          AS last_seen
-        FROM loom.agent_events
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE kind = 'request'
+          {"" if operator else "AND mirror_marked = 0"}
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY consumer_key
         ORDER BY calls DESC
@@ -240,6 +250,7 @@ async def consumer_tagging(
     limit: int,
     *,
     org: str | None = None,
+    operator: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Per (org, agent) — the identity a token's calls are
@@ -266,9 +277,11 @@ async def consumer_tagging(
                            {consumer_key} NOT IN {{untagged:Array(String)}}) AS tagged_ops,
                uniqExactIf(operation,
                            {consumer_key} IN {{untagged:Array(String)}})     AS untagged_ops
-        FROM loom.agent_events
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
         WHERE kind = 'request'
+          {"" if operator else "AND mirror_marked = 0"}
           AND ts >= toDateTime64(now() - INTERVAL {{since:UInt32}} SECOND, 3, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY org, agent
         ORDER BY calls DESC
@@ -304,6 +317,7 @@ async def consumer_outcomes(
                sum(tokens_saved)                                    AS tokens_saved
         FROM loom.code_search_outcome
         WHERE ts >= toDateTime(now() - INTERVAL {{since:UInt32}} SECOND, 'UTC')
+          AND {not_mirror_sql()}
           {extra_where}
         GROUP BY source
         ORDER BY outcome_rows DESC
@@ -323,6 +337,7 @@ async def fleet_cost(
     top_n: int,
     group_by: str,
     *,
+    operator: bool = False,
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """Top-N rollup over agent_events. group_by ∈ {namespace, agent, org}."""
@@ -338,8 +353,9 @@ async def fleet_cost(
             count()                AS total_calls,
             uniqExact(operation)   AS ops_distinct
             {namespaces_select}
-        FROM loom.agent_events
-        WHERE ts >= now() - INTERVAL {{since:UInt32}} SECOND
+        FROM {ALL_EVENTS if operator else MASKED_EVENTS}
+        WHERE ts >= now() - INTERVAL {{since:UInt32}} SECOND AND {not_mirror_sql()}
+          {"" if operator else "AND mirror_marked = 0"}
         GROUP BY {group_by}
         ORDER BY total_cost_usd DESC
         LIMIT {{top_n:UInt32}}

@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.memory.app.auto_resolution import (
     VALUE_UPDATE,
@@ -43,10 +42,13 @@ from server.memory.app.auto_resolution import (
     record_or_owe,
     retired_entry,
 )
+from server.memory.app.conflicts import _writer_scope
 from server.memory.domain.conflicts import values_differ
+from server.memory.domain.memory_types import is_definition
 from server.memory.store.conflict_candidates import vector_param, vector_params
 
 log = logging.getLogger(__name__)
+
 
 # Alphanumeric tokens that contain at least one letter ("5k" counts, "2023" does not).
 # a token is read from its first character only
@@ -170,7 +172,7 @@ def _supersession_update(
 
 
 def _peers_sql_many(n: int, in_scope: str = "") -> str:
-    """Batched form of `_peers`: one namespace read for `n`
+    """Batched form of `_peers_joined`: one namespace read for `n`
     freshly written rows, one `cosineDistance` term per row (an `arrayMap`
     over the vector column replicates it per row per fact), `LIMIT 8 BY qidx`
     for the per-row `LIMIT 8`."""
@@ -212,6 +214,7 @@ async def _peers_many(
     namespace: str,
     items: list[tuple[str, str, list[float]]],
     min_cosine: float,
+    user_id: str = "",
 ) -> dict[int, list[dict[str, Any]]]:
     """Peers for many rows in one statement; keyed by index into `items`
     (`(memory_type, memory_key, embedding)`); every item gets a key."""
@@ -227,8 +230,10 @@ async def _peers_many(
         "dim": dim,
         "min_cos": float(min_cosine),
     }
-    # A write retires only rows inside the writer's read scope.
-    in_scope = scope_and(request_scope(), params, "m")
+    scope = _writer_scope(user_id)
+    if scope is None:
+        return {i: [] for i in range(len(items))}
+    in_scope = scope_and(scope, params, "m")
     rows = await ch.query_all(_peers_sql_many(len(items), in_scope), params=params)
     out: dict[int, list[dict[str, Any]]] = {i: [] for i in range(len(items))}
     for r in rows:
@@ -238,7 +243,7 @@ async def _peers_many(
     return out
 
 
-async def _peers(
+async def _peers_joined(
     ch: Any,
     *,
     org: str,
@@ -247,6 +252,7 @@ async def _peers(
     memory_key: str,
     embedding: list[float],
     min_cosine: float,
+    user_id: str = "",
 ) -> list[dict[str, Any]]:
     params: dict[str, Any] = {
         "org": org,
@@ -257,7 +263,10 @@ async def _peers(
         "dim": len(embedding),
         "min_cos": float(min_cosine),
     }
-    in_scope = scope_and(request_scope(), params, "m")
+    scope = _writer_scope(user_id)
+    if scope is None:
+        return []
+    in_scope = scope_and(scope, params, "m")
     rows = await ch.query_all(
         f"""
         SELECT toString(m.memory_id) AS memory_id, m.memory_key AS memory_key,
@@ -285,6 +294,48 @@ async def _peers(
         params=params,
     )
     return [dict(r) for r in rows]
+
+
+async def _peers_codes_first(
+    ch: Any,
+    *,
+    org: str,
+    namespace: str,
+    memory_type: str,
+    memory_key: str,
+    embedding: list[float],
+    min_cosine: float,
+    user_id: str = "",
+) -> list[dict[str, Any]]:
+    """The row's nearest live peers of its type at cosine `min_cosine` or more, inside
+    the write's scope, nearest first, by the conflict check's two-stage read
+    (`conflicts.nearest_peer_rows`): codes-first, falling back to the full-width join
+    only past `_PEER_MAX_K` candidates."""
+    from server.memory.app.conflicts import nearest_peer_rows
+
+    params: dict[str, Any] = {
+        "org": org,
+        "ns": namespace,
+        "mt": memory_type,
+        "self_key": memory_key,
+        "emb": embedding,
+        "dim": len(embedding),
+        "max_dist": 1.0 - float(min_cosine),
+    }
+    scope = _writer_scope(user_id)
+    if scope is None:
+        return []
+    rows = await nearest_peer_rows(ch, params, scope, limit=8)  # as the join's LIMIT 8
+    return [
+        {
+            "memory_id": str(r["memory_id"]),
+            "memory_key": r["memory_key"],
+            "value": r["value"],
+            "valid_at": r["valid_at"],
+            "cos": 1.0 - float(r["dist"]),
+        }
+        for r in rows
+    ]
 
 
 async def link_value_updates(
@@ -319,24 +370,30 @@ async def link_value_updates(
         # canonical twin in the same batch; the twin does the linking.
         if str(row.get("status") or "") == "duplicate":
             return None
+        # A definition supersedes no row under another key.
+        if is_definition(row):
+            return None
         return emb
 
-    # Peers for a batch of rows come from one statement
-    # (`_peers_many`); the per-row statement remains for batch = 0 and for a
-    # batch that failed. Rows are grouped by embedding dimension so one
-    # statement's `dim` holds for all of them.
+    # Under LOOM_MEMORY_BULK_PEER_READ=batched, peers for a batch of rows come from one
+    # statement (`_peers_many`), rows grouped by embedding dimension so one statement's
+    # `dim` holds for all of them. A row the batch did not cover (batch = 0, a failed
+    # batch) reads its own peers: the joined statement under `batched`, codes-first under
+    # `per_fact`.
     from server.settings import settings as _s
 
     batch = int(_s.memory_write_candidate_batch)
+    per_fact = _s.memory_bulk_peer_read == "per_fact"
+    read_one = _peers_codes_first if per_fact else _peers_joined
     prefetched: dict[int, list[dict[str, Any]]] = {}
-    if batch > 0:
-        by_dim: dict[int, list[int]] = {}
+    if batch > 0 and not per_fact:
+        by_group: dict[tuple[int, str], list[int]] = {}
         for i, row in enumerate(rows):
             emb = _eligible(row)
             if emb:
-                by_dim.setdefault(len(emb), []).append(i)
+                by_group.setdefault((len(emb), str(row.get("user_id") or "")), []).append(i)
 
-        async def _batch(idxs: list[int]) -> None:
+        async def _batch(idxs: list[int], user_id: str) -> None:
             items = [
                 (
                     str(rows[i].get("memory_type") or "semantic"),
@@ -347,14 +404,19 @@ async def link_value_updates(
             ]
             async with sem:
                 got = await _peers_many(
-                    ch, org=org, namespace=namespace, items=items, min_cosine=min_cosine
+                    ch,
+                    org=org,
+                    namespace=namespace,
+                    items=items,
+                    min_cosine=min_cosine,
+                    user_id=user_id,
                 )
             for j, i in enumerate(idxs):
                 prefetched[i] = got.get(j, [])
 
         jobs = [
-            _batch(idxs[k : k + batch])
-            for idxs in by_dim.values()
+            _batch(idxs[k : k + batch], user_id)
+            for (_dim, user_id), idxs in by_group.items()
             for k in range(0, len(idxs), batch)
         ]
         for res in await asyncio.gather(*jobs, return_exceptions=True):
@@ -370,7 +432,7 @@ async def link_value_updates(
         if peers is None:
             async with sem:
                 try:
-                    peers = await _peers(
+                    peers = await read_one(
                         ch,
                         org=org,
                         namespace=namespace,
@@ -378,6 +440,7 @@ async def link_value_updates(
                         memory_key=key,
                         embedding=emb,
                         min_cosine=min_cosine,
+                        user_id=str(row.get("user_id") or ""),
                     )
                 except Exception as e:  # noqa: BLE001 — never block an ingest
                     log.warning("value_updates: peer lookup failed (open): %s", e)
@@ -403,11 +466,11 @@ async def link_value_updates(
         by_older[ln.older_id] = ln
     retired: list[dict[str, Any]] = []
     if by_older:
-        from server.memory.domain.lock import refuses_retirement
+        from server.memory.domain.lock import refuses_cross_key_retirement
 
-        # As the other automatic paths: a locked, pinned or no-longer-live older row is
-        # left as it is (the peer query reads neither the lock nor the pin).
-        tracker = RetirementTracker(refuses_retirement)
+        # As the other automatic paths: a locked, pinned or no-longer-live older row, or a
+        # definition, is left as it is (the peer query reads neither the lock nor the pin).
+        tracker = RetirementTracker(refuses_cross_key_retirement)
         try:
             for older_id, ln in by_older.items():
                 inv = _as_dt(newer_at.get(ln.newer_id))

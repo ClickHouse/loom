@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'code.search,code.symbol'` | `''` | Leave tool loading to the host so sessions do not need unused code schemas upfront. Set an explicit operation list to request eager loading. |
 | 1.2.0 | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `2` | `0` | The ingest worker takes the next job as soon as one ends instead of waiting 2 s after every job, so a queue of small documents drains at the speed of its jobs; a pass that finds no job still waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`. |
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
 | 1.0.0 | `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `3` | `8` | A failed replay now waits 15 s, 1, 5, then 30 minutes before the next attempt, and an unreachable provider spends none: eight attempts span about two hours instead of three back to back. |
@@ -54,13 +55,13 @@ The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in i
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot. |
+| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read. |
 | `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail. |
 | `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment). |
 | `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
 | `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |
 | `LOOM_ASSISTANT_CONCURRENT_ANSWERS` | `int` | `2` |  | Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it. |
-| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price, so no answer is free. |
+| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing. |
 
 ## Auth
 
@@ -70,7 +71,7 @@ Authentication, tokens and identity providers.
 | --- | --- | --- | --- | --- |
 | `LOOM_PLATFORM_ADMINS` | `str` | `''` |  | Comma-separated login handles and emails promoted to platform_admin (org-wide visibility). A handle matches a password account's subject; an email matches only an IdP-verified (OIDC) email, never the unverified self-signup address. Empty = no platform admins. |
 | `LOOM_AUTH_REQUIRED` | `bool` | `True` |  | True: every operation requires a valid bearer JWT. False (laptop demos only): missing tokens are not rejected and the SPA synthesizes a local identity. identity_provider=single-user forces auth off regardless. |
-| `LOOM_DEFAULT_NAMESPACE` | `str` | `'local'` |  | The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is reserved and rejected. |
+| `LOOM_DEFAULT_NAMESPACE` | `str` | `'local'` |  | The one namespace auth-off mode serves (SPA identity, dashboard bootstrap, MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a mirror's name (`acl-` and 24 hex digits) are reserved and rejected. |
 | `LOOM_OAUTH_ENABLED` | `bool` | `False` |  | MCP one-click connect: dynamic client registration and /oauth/authorize on top of the sign-in routes (device grant, token, revoke) every auth-on deployment serves. Opt-in: anyone can register a client. |
 | `LOOM_OAUTH_ISSUER` | `str` | `''` |  | Public base URL used in OAuth discovery and redirects; empty derives it from each request. Required when `oauth_login_provider` is "oidc" (the IdP callback URL is built from it). |
 | `LOOM_OAUTH_LOGIN_PROVIDER` | `'password' \| 'oidc'` | `'password'` |  | How people sign in (dashboard, `loom login`, MCP connect): "password" (Loom's own form) or "oidc" (the external IdP; loom maps the verified email to an account and still mints its own token). "oidc" closes password sign-in and self-signup, and requires `oauth_issuer` and the three oidc_* values. |
@@ -85,10 +86,25 @@ Authentication, tokens and identity providers.
 | `LOOM_OIDC_JIT_ORG` | `str` | `''` |  | Org that JIT-provisioned accounts are created in; required when `oidc_jit_provision` is on. |
 | `LOOM_OIDC_JIT_EMAIL_DOMAINS` | `str` | `''` |  | Comma-separated email domains JIT provisioning admits; empty admits any verified email. |
 | `LOOM_IDENTITY_PROVIDER_TIMEOUT_S` | `float` | `10.0` | live | Seconds one call to an identity provider may take: OIDC discovery, the token and revocation endpoints, its signing keys, a machine issuer's discovery, and an end-user issuer's JWKS fetch. |
-| `LOOM_SCIM_TOKEN` | `str` | *(unset)* |  | Bearer tokens (comma-separated, any one accepted) an identity provider presents to deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc. |
+| `LOOM_SCIM_TOKEN` | `str` | *(unset)* |  | Bearer tokens (comma-separated, any one accepted) an identity provider presents to deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc. With LOOM_CELL set, at most two entries, named for that cell; only the observed first cell also accepts unnamed tokens. Generate one with `loom cell scim-token new --cell NAME`. Enforced cells also require active provisioning for every nonexempt person. |
 | `LOOM_JWT_SECRET` | `str` | *(set)* |  | The root secret, and the one secret a deployment carries: it signs tokens as kid `default` and seals every stored credential and every signing key in loom.signing_keys (`loom signing-key rotate` adds those). Required when auth is on. The default is the checked-in DEV secret anyone can mint with: a deployment with auth on refuses to start with it, except the `make dev` stack (`loom doctor` warns everywhere else). A non-loopback bind refuses an HMAC secret under 32 bytes or an RSA key under 2048 bits. |
 | `LOOM_JWT_SECRET_PREVIOUS` | `str` | *(unset)* |  | The root secret LOOM_JWT_SECRET replaced, while a rotation is under way: credentials and signing keys sealed under it still open (tokens it signed as kid `default` do not verify: a leaked root mints nothing). `loom secrets reseal` rewrites the stored ones under the new root; then remove this. "" = none. |
 | `LOOM_JWT_KEYRING_REFRESH_SECONDS` | `float` | `30.0` |  | Seconds between re-reads of loom.signing_keys in every process (at least 1); `loom signing-key rotate` waits out two of the slowest process's. |
+| `LOOM_CELL` | `str` | `''` |  | This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set, the process serves only while its cell's rows accept it (docs/architecture/cells.md). |
+| `LOOM_CELL_PROBE_PORT` | `int` | `0` |  | The port of the probe listener, which answers the deployment id and the values under `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off. |
+| `LOOM_CELL_ROUTER_URL` | `str` | `''` |  | The router's base URL a cell calls to place a new org, and the `loom cell` commands' default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#' refuses the boot. |
+| `LOOM_CELL_ROUTER_TOKEN` | `str` | *(unset)* |  | The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64` (never the length of a SHA-256); any other form is refused at boot. "" = none. |
+| `LOOM_CELL_ROUTER_TIMEOUT_S` | `float` | `5.0` |  | Seconds a whole call to the router may take: a placement call, after which the request answers 503, and a cell's state read, which is also the margin past its read period before that read's answer counts as late. |
+| `LOOM_TENANCY_MODE_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) between reads of the cell state rows once the first read landed (every second until then), in every process that reads them under the Postgres authority, and before an org read as not held is read again; also the most a first cell's server process waits between reads of the router's state route (with LOOM_INSTANCE_HEARTBEAT_SECONDS) and the window of a process that reads it on demand. LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this. |
+| `LOOM_ROUTER_PG_DSN` | `str` | *(unset)* |  | The router's directory, its own Postgres database (`loom router serve` and `loom router migrate`); "" = none. Never a cell's memory authority database. |
+| `LOOM_ROUTER_PLACEMENTS_PER_MINUTE` | `int` | `60` |  | Placement calls one cell may make in a minute, counted by each router replica. |
+| `LOOM_ROUTER_DIRECTORY_CACHE_S` | `float` | `5.0` |  | Seconds (at least 1) a router replica keeps the cells' credential hashes, a placed org's lookup answer and the first cell's state-route answer before reading again; a new credential or host works within this. A cell's processes carry the router's value: 401s from the state route last this long before the heartbeat's `router` turns false. |
+| `LOOM_ROUTER_LOOKUPS_PER_MINUTE` | `int` | `60` |  | Org lookups one client address may make in a minute, counted by each router replica (`GET /cells/lookup`). |
+| `LOOM_ROUTER_SHARED_HOST` | `str` | `''` |  | The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4, beside the first cell's own host and aliases; "" = no cell registers (registration tells the first cell by this host), and once one has, only its own host and aliases. |
+| `LOOM_ROUTER_UPSTREAM_URL` | `str` | `''` |  | Where the router forwards the shared host until a first cell registers, which copies it into its row; "" = 503 there and no first cell registers. |
+| `LOOM_ROUTER_UPSTREAM_PROBE_URL` | `str` | `''` |  | The probe listener address of the deployment behind the shared host, at which the first cell's registration is checked; "" = no first cell can be registered. |
+| `LOOM_ROUTER_OPERATOR_SHA256` | `str` | `''` |  | SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell limit`, `loom cell credential` and `loom cell prepare` call its operator API with; "" = that API refuses. |
+| `LOOM_ROUTER_OPERATOR_TOKEN` | `str` | *(unset)* |  | The operator credential itself, for the CLI that calls the router's operator API: `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none. |
 | `LOOM_JWT_ISSUER` | `str` | `'loom'` |  | The `iss` Loom stamps on every token it mints; a verified token carries it or one of `jwt_trusted_issuers`. |
 | `LOOM_JWT_AUDIENCE` | `str` | `'loom-platform'` |  | The `aud` claim stamped on minted tokens and required on every verified token. |
 | `LOOM_JWT_TRUSTED_ISSUERS` | `str` | `''` |  | Extra accepted `iss` values, for a gateway minting Loom-shaped JWTs with a key in `jwt_public_keys_json`. Loom's own tokens (iss = jwt_issuer) pass. |
@@ -96,13 +112,13 @@ Authentication, tokens and identity providers.
 | `LOOM_JWT_LEEWAY_SECONDS` | `int` | `30` |  | Clock-skew tolerance on iat/exp, seconds; small enough to give replay no useful post-exp window. |
 | `LOOM_JWT_REVOCATION_CACHE_TTL_SECONDS` | `float` | `30.0` |  | Seconds the `loom.revoked_tokens` snapshot is cached; verify checks both jti and sub against it, so a revocation takes effect on other processes within this TTL (at once on the one that wrote it). |
 | `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` | `float` | `600.0` |  | Oldest revocation snapshot a process still trusts, seconds. Past it (refreshes keep failing) every bearer is refused with a retryable 503. A subject's cached grants are trusted as long when a re-read fails. |
-| `LOOM_GRANT_CACHE_TTL_SECONDS` | `float` | `10.0` |  | Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. It also bounds how long a SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller acting for it on another process. |
+| `LOOM_GRANT_CACHE_TTL_SECONDS` | `float` | `10.0` |  | Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. SCIM and bot final decisions use this TTL from read start. A complete enforced-cell SCIM check has a separate 30-second ceiling, so its cross-process observation bound is the larger of this TTL and that check's budget; a smaller positive read timeout reduces the latter. |
 | `LOOM_ACL_WATERMARK_POLL_SECONDS` | `float` | `1.0` |  | Seconds between each process's reads of the per-org grant watermark (loom.acl_versions): a revoke on one replica is enforced on every other within about this long. |
 | `LOOM_ACL_WATERMARK_MAX_STALE_SECONDS` | `float` | `10.0` |  | Oldest grant watermark a process still trusts, seconds. Past it (polls keep failing) cached grants are not served and every request reads its own. |
 | `LOOM_AUTH_ATTEMPTS_CONCURRENCY` | `int` | `8` |  | Sign-ins, sign-ups and workload-token exchanges one process counts at once (each costs ClickHouse statements, a sign-in a password hash); past it a caller waits up to a second, then gets 429 (an exchange 503), so a burst cannot take the shared connection pool. |
 | `LOOM_WORKLOAD_EXCHANGES_PER_TRUST` | `int` | `50000` |  | Workload-token exchanges (RFC 8693) one trust may make in 10 minutes, deployment-wide; past it /oauth/token answers 429 until older ones age out. |
 | `LOOM_WORKLOAD_EXCHANGES_PER_AGENT` | `int` | `300` |  | Workload-token exchanges one agent of a trust (a token with an agent claim) may make in 10 minutes, so one agent's loop cannot spend the trust's. A trust without agents has only `workload_exchanges_per_trust`. |
-| `LOOM_SELF_SIGNUP` | `'off' \| 'open'` | `'off'` |  | Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). |
+| `LOOM_SELF_SIGNUP` | `'off' \| 'open'` | `'off'` |  | Browser self-signup: "off" (endpoint 404s) or "open" (/v1/auth/self-signup mints JWTs scoped to the requested namespace). A non-loopback bind refuses "open" unless identity_provider is "trust-network", allow_insecure is set, or oauth_login_provider is "oidc" (which closes sign-up). |
 | `LOOM_SELF_SIGNUP_ORG` | `str` | `'dev'` |  | Default org for self-signed tokens. |
 | `LOOM_IDENTITY_PROVIDER` | `'' \| 'single-user' \| 'trust-network' \| 'gateway'` | `''` |  | How callers authenticate: "single-user" (no auth, one anonymous identity), "trust-network" (self-signup, first claim wins) or "gateway" (an upstream proxy mints short-lived Loom JWTs with the shared HS256 secret; Loom only validates). Empty = inferred from auth_required and self_signup at boot. |
 | `LOOM_DASHBOARD_REDIRECT_URL` | `str` | `''` |  | When set, a dashboard page load redirects (302) here instead of serving the SPA (Loom behind an aggregator). Deployment-specific; never hardcode. |
@@ -140,13 +156,14 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
+| `LOOM_CH_ANALYSIS_OBSERVER_URLS` | `list[str]` | `[]` |  | Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
 | `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
 | `LOOM_CH_KEEPALIVE_TIMEOUT` | `float` | `5.0` |  | Seconds an idle pooled connection is kept. Must stay BELOW the Cloud load balancer's idle cutoff (8 s) so loom closes first: a peer-closed pooled TLS connection is never reaped under uvloop (`LOOM_UVICORN_LOOP=uvloop`). |
 | `LOOM_CH_READ_YOUR_WRITES` | `bool` | `True` |  | A point lookup that MISSES right after a write (get after set, verify, update_by_id, delete) re-reads once with select_sequential_consistency=1. Costs only on a miss; a no-op on single-node MergeTree. |
 | `LOOM_CH_READ_YOUR_WRITES_WINDOW_S` | `float` | `20.0` |  | memory.search on a namespace this process wrote within this many seconds reads with select_sequential_consistency from the start. 0 = off (the empty-pool retry remains the backstop). |
-| `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads. |
+| `LOOM_CH_TIMEOUT_READ_S` | `float` | `30.0` |  | Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no general read bound. Enforced-cell SCIM decisions still have a complete 30-second ceiling, reduced by a smaller positive value. |
 | `LOOM_CH_TIMEOUT_WRITE_S` | `float` | `60.0` |  | Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound. |
 | `LOOM_CH_TIMEOUT_DDL_S` | `float` | `300.0` |  | Deadline, seconds, for DDL statements (CREATE, ALTER, DROP); 0 = no bound. |
 | `LOOM_CH_BATCHED_INSERTS` | `bool` | `True` | live | Batch the inserts written on every request into shared parts; false commits them, and the waited async inserts keep their bounds (docs/architecture/clickhouse.md#batched-inserts). |
@@ -224,7 +241,7 @@ The code plane: ingest, indexes, search, ask, review.
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes. |
 | `LOOM_CODE_TEST_GATE_RUN_TEMPLATES` | `str` | `''` |  | code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {"pattern": <regex over the repo-relative test path>, "run": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed. |
 | `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `4000` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget. |
-| `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers.py; a value in (0, 1] pins one threshold for every model. |
+| `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model. |
 | `LOOM_CODE_ASK_CACHE_MAX_AGE_DAYS` | `int` | `14` |  | A cached code.ask answer older than this many days is a miss (checked and tombstoned at read time; no table TTL). 0 = no bound. |
 | `LOOM_CODE_ASK_NEGATIVE_CACHE_TTL_S` | `int` | `3600` |  | Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off. |
 | `LOOM_CODE_ASK_LLM_CACHE` | `bool` | `True` |  | code.ask's pre-synthesis LLM calls (identifier proposal, HyDE, concept legs) read the per-namespace exact-prompt response cache; no_cache or a traffic class with llm_cache off bypasses it. |
@@ -245,6 +262,14 @@ One code namespace indexes one repository. No repository is configured by defaul
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_ASK_MEMORY_NAMESPACE` | `str` | `''` |  | The memory namespace code.ask fuses decision/rationale memories (the "why") from into its answer; empty = no enrichment, never guessed. |
 | `LOOM_CODE_ASK_MEMORY_ORG` | `str` | `''` |  | The org of `code_ask_memory_namespace`; empty = `code_org`. |
+
+### Memories on code results
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_RESULT_LESSONS` | `bool` | `True` | live | Whether the code ops that return files carry `lessons`, the readable memories about their top files. |
+| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `250` | live | Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token. |
+| `LOOM_CODE_RESULT_LESSONS_PATHS` | `int` | `3` | live | How many of an answer's files, in rank order, its `lessons` are read for. |
 
 ### Repository access
 
@@ -268,6 +293,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_REPOS_JSON` | `str` | *(unset)* |  | Multi-repo: JSON array of repo configs (code/domain/index/repos.py); empty = the scalar single-repo settings. Missing per-entry fields fall back to the scalars. |
 | `LOOM_CODE_SELF_SERVICE_ENABLED` | `bool` | `True` |  | Repositories added from the Repositories page (loom.code_repos) merge with the configured entries (`code_repos_json` and the scalar entry); a configured entry for a namespace a member added from the page is skipped. Off = the operator's JSON is the only source. |
+| `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` | `bool` | `False` |  | True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to platform admins: a token scoped to namespaces, or a trusted caller acting for another subject, is refused too. False: each op's own role decides. |
 | `LOOM_CODE_REPOS_ROOT` | `str` | `'var/code_repos/self'` |  | Where the code ingest worker clones a self-service entry's bare mirror (one per GitHub repository, shared by its branches). |
 | `LOOM_CODE_REPOS_SHARED_GID` | `int \| None` | `None` |  | Numeric gid of the prepared var/code_repos: mirror and checkout directories in it 2770, locks 0660, server and `loom code` umask 007. Unset: 0700, 0600, the caller's umask. |
 | `LOOM_CODE_SELF_SERVICE_MAX_REPOS` | `int` | `20` |  | Active self-service entries per org (branches count); past it the add refuses with a message. |
@@ -299,6 +325,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SANDBOX_MEMORY_MB` | `int` | `16384` |  | Data memory (heap and private mappings, RLIMIT_DATA) one process of a sandboxed repository job may use, in MiB. Not address space: node reserves far more of that than it uses. |
 | `LOOM_CODE_SANDBOX_MAX_PIDS` | `int` | `2048` |  | Processes and threads one job may run at once (RLIMIT_NPROC, set inside the job's user namespace, so other jobs and the server do not count; Linux 5.14+, older kernels count the uid's tasks host-wide). |
 | `LOOM_CODE_SANDBOX_REQUIRED` | `bool` | `False` |  | Set by deployments that ship the sandbox profiles: a repository job refuses to run rather than run unsandboxed, and /v1/health reports the missing sandbox as an error. False: without the sandbox, jobs fall back to plain processes as "Without the sandbox" in code-index-operations.md says. |
+| `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` | `bool` | `False` |  | True lets a host without the sandbox add and fetch a self-service entry with a network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and it gets no compiler tier. Refused at load without code_self_service_platform_admin_only, where a request can carry no principal (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an entry needs the sandbox. |
 | `LOOM_CODE_SANDBOX_MAX_FILE_MB` | `int` | `32768` |  | Largest file one process of a sandboxed repository job may write, in MiB (a pack or index.scip). |
 
 ### Mirror fetch
@@ -314,6 +341,18 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_GIT_LEDGER_MERGE_BATCH` | `int` | `40` |  | Missing ledger merge shas fetched per entry per pass (40 take about 8.5 s). |
 | `LOOM_CODE_GIT_FETCH_PR_HEADS` | `bool` | `True` |  | The mirror carries `refs/pull/N/head` for every PR the ledger holds OPEN (refetched when the tip moves, never pruned), so pre-merge reads diff the PR's own head. Only open heads: fetching every PR head is too costly. Per-entry `git_fetch_pr_heads` overrides. Off = the overlay reports `head_not_in_mirror`. |
 | `LOOM_CODE_GIT_PR_HEAD_BATCH` | `int` | `200` |  | Max PR heads fetched per shared mirror per ingest pass. |
+
+### Git through a forward proxy
+
+The code index's network git (clone, fetch, ls-remote, submodule update) through an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such a git job connects through it or is refused: never directly.
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_CODE_GIT_PROXY_URL` | `str` | `''` |  | The proxy: `http://host:port` or `https://host:port`, the port named, with no credentials, path or query. Empty = git connects directly. |
+| `LOOM_CODE_GIT_PROXY_TOKEN_FILE` | `str` | `''` |  | File holding the proxy password, read again for every git job. Empty = no password; a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url. |
+| `LOOM_CODE_GIT_PROXY_CA_FILE` | `str` | `''` |  | PEM bundle git verifies TLS with through the proxy, in place of its default roots (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url. |
+| `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` | `str` | `''` |  | PEM bundle git verifies the proxy's own certificate with, in place of its default roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one is for the remote, behind a proxy that terminates TLS under its own authority; this one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url. |
+| `LOOM_CODE_GIT_PROXY_IDENTITY` | `str` | `''` |  | The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url. |
 
 ### Open-PR fill
 
@@ -396,8 +435,9 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SCIP_WORK_DIR` | `str` | `''` |  | Where the C++ harness writes its index and delta (several GB for a full run of a large tree); "" = the system temp dir. |
 | `LOOM_CODE_SCIP_DELTA_MAX_TUS` | `int` | `200` |  | Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run. |
 | `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` | `int` | `3600` |  | Seconds the C++ delta harness may run before it is killed. |
-| `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` | `int` | `180` | live | Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass (sizing: code-index-operations.md). |
+| `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` | `int` | `180` | live | Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass. It bounds the work of an entry's pass and the path text kept (code-index-operations.md). |
 | `LOOM_CODE_SCIP_DELTA_MAX_NODES` | `int` | `6000000` | live | Most `{`, `[` and `,` bytes a compiler-tier delta may hold, counted before it is parsed; more fails the entry's pass (sizing: code-index-operations.md). |
+| `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES` | `int` | `3000000` | live | Most `{`, `[` and `,` bytes one apply round of a compiler-tier delta parses: its memory bound; one value over it fails the pass (code-index-operations.md). |
 | `LOOM_CODE_SCIP_FULL_ENABLED` | `bool` | `True` |  | C++ full re-index: seeds an entry the delta has no watermark for, and re-indexes each entry every `code_scip_full_every_hours` (heals deltas that hit the TU cap). One entry per pass, under its entry lock. |
 | `LOOM_CODE_SCIP_FULL_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between the C++ full re-index's checks for an entry that is due. |
 | `LOOM_CODE_SCIP_FULL_EVERY_HOURS` | `int` | `168` |  | Hours between full re-indexes of one entry. |
@@ -627,6 +667,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `300` |  | Characters of each candidate shown to the default rerank (path and signature first, then the body head). |
 | `LOOM_CODE_SEARCH_CATALOGUE_PENALTY` | `float` | `1.0` |  | Fusion multiplier for settings-catalogue units (Settings.cpp and kin) on the question kinds `code_search_catalogue_kinds` names; 1.0 = off. |
 | `LOOM_CODE_SEARCH_PROSE_PENALTY` | `float` | `0.25` |  | Fusion multiplier for prose files (documentation, release notes, changelogs) unless the query asks for documentation or the search is constrained to paths; 1.0 = off. |
+| `LOOM_CODE_SEARCH_KIND_PRIOR` | `'off' \| 'default' \| 'flat' \| 'structural'` | `'flat'` |  | Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it. |
 | `LOOM_CODE_SEARCH_CATALOGUE_KINDS` | `str` | `'responsibility'` |  | The question kinds `code_search_catalogue_penalty` applies to. |
 | `LOOM_CODE_FAN_IN_PRIOR_CAP` | `float` | `0.25` |  | Cap of code.search's fan-in rank prior: score *= 1 + cap * log1p(fan_in) / log1p(max fan_in in the pool); skipped under test intent and on noise paths; inert without the stats. 0 = off. |
 | `LOOM_CODE_SEARCH_RRF_LEXICAL_WEIGHT_RESPONSIBILITY` | `float` | `1.0` |  | Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights. |
@@ -719,6 +760,7 @@ Resource limits (rlimits) for each process of a sandboxed repository job (clone,
 | `LOOM_CODE_BOOTSTRAP_MIRROR_RETRY_S` | `float` | `60.0` | live | Seconds after a failed mirror clone or fetch before it is tried again; a commit no fetch has brought waits this, doubled per fetch. |
 | `LOOM_CODE_CITATIONS_GIT_CALL_CAP` | `int` | `20` | live | Most git subprocesses code.verify_citations may start per request. |
 | `LOOM_CODE_COVERAGE_CONTROL_TTL_S` | `float` | `300.0` | live | Seconds the coverage control's answer is kept per (org, namespace). The control is one read per namespace, not one per claim. The brief builder makes a claim per touched function, and each would re-run the same `arrayJoin` grep over the tests tree (176 MB a statement on the ClickHouse namespace). Its answer — is the tests corpus measurable from here — holds for a namespace across a brief, so it is kept, in this process only. |
+| `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` | `float` | `10.0` | live | Seconds a repository job's egress tunnel may move no byte after its client's EOF before it is closed; while bytes still wait for the client, the idle timeout applies. |
 | `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` | `float` | `300.0` | live | Seconds a repository job's egress tunnel may move no byte before it is closed. |
 | `LOOM_CODE_EGRESS_SLOT_WAIT_S` | `float` | `5.0` | live | Seconds a repository job's connection waits for a free egress tunnel slot. |
 | `LOOM_CODE_EMBED_RECOVERY_CHAIN_BUDGET_S` | `float` | `20.0` | live | Seconds one embed-recovery pass may spend chaining scans before it stops for the next pass. |
@@ -760,6 +802,7 @@ Erasure: saga recovery, reclaim, purge and the external backends it cascades to.
 | `LOOM_ERASURE_MUTATION_WAIT_S` | `int` | `3600` |  | Seconds one erasure step waits for its mutation (submitted with mutations_sync=0, polled in system.mutations); past it the saga fails naming the mutation. |
 | `LOOM_ERASURE_EVENT_DRAIN_TIMEOUT_S` | `float` | `5.0` |  | Seconds erasure waits for this replica's buffered events before deleting them; a timeout leaves the saga retryable. Must be positive and finite. |
 | `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` | `int` | `67108864` | live | Bytes of conversation text after which `erasure.export` stops its `conversations` section, marked `truncated`; a page holds up to this plus the turn that crosses it. |
+| `LOOM_ERASURE_LEDGER_DAYS` | `int` | `89` | live | Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the oldest backup's age plus the longest an erasure runs (at most 89, as ClickHouse's ledger reads). |
 
 ### External erasure backends
 
@@ -827,9 +870,10 @@ The coverage sweep gives the turns an extraction's first pass cited nowhere a se
 | `LOOM_EXTRACTION_QUEUE_ENABLED` | `bool` | `True` |  | Deferred set_from_messages replay. On by default: `defer` is opt-in per call, and an empty queue costs one SELECT per interval. |
 | `LOOM_EXTRACTION_DEFER_AGENTS` | `str` | `''` | live | Agents whose set_from_messages runs deferred without the flag: comma-separated agent names, "*" = every service-account caller, "" = nobody. A call that sets `record_schema` is never deferred by this list (it reads `written` back), and an explicit defer=false still wins. |
 | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | `int` | `15` |  | Seconds between deferred-extraction queue passes. |
+| `LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS` | `float` | `0.0` |  | Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass` replays) may run before the supervisor cancels it; 0 = four intervals, kept between 60 and 900 s. |
 | `LOOM_EXTRACTION_QUEUE_MAX_BATCHES_PER_PASS` | `int` | `8` | live | Most queued batches one pass claims. |
-| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. Set it above the longest pass (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping worker may claim a batch still waiting in the pass. |
-| `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `8` | live | Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none. |
+| `LOOM_EXTRACTION_QUEUE_LEASE_SECONDS` | `int` | `600` | live | Seconds a claimed batch stays leased to one worker before another may claim it; at least a minute. A lease shorter than the pass deadline plus a minute is raised to that, so an overlapping worker never claims a batch still waiting in the pass. |
+| `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` | `int` | `8` | live | Attempts before a failing batch stops returning to `pending` and is marked failed; each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or gateway that cannot be reached, or a held call, spends none; on a `local` provider a read timeout from that model server and a cancelled replay (pass deadline, shutdown) spend one. |
 | `LOOM_EXTRACTION_QUEUE_NAMESPACE_CONCURRENCY` | `int` | `4` | live | Namespaces replayed concurrently per pass; batches inside one namespace stay serial in session-date order. At least 1: none would hang the pass. |
 
 ### Operator extraction policy
@@ -849,7 +893,7 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | --- | --- | --- | --- | --- |
 | `LOOM_CONVERSATION_SEARCH_MIN_SIMILARITY` | `float` | `0.3` | live | conversation.search cosine floor; without it the top_k nearest threads return however far. Stricter than memory recall: chat excerpts are noisy. |
 | `LOOM_CONVERSATION_SEARCH_EXCERPT_CHARS` | `int` | `240` | live | Characters of a turn a conversation search hit or a saved-message listing shows; it changes no stored row. At most 2048, the most an embedding row stores (EMBEDDED_EXCERPT_CHARS), so the vector path can always fill it. A saved-message listing reads this many characters and a fixed margin past them, and checks them all for a high shape before it cuts the excerpt. |
-| `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Sessions "Recording" toggle is the off-switch). Skipped with the fake LLM. |
+| `LOOM_CONVERSATION_TITLER_ENABLED` | `bool` | `True` |  | LLM-title untitled threads in namespaces with conversation_logging_enabled (the Record conversations switch on the dashboard's Conversations page is the off-switch). Skipped with the fake LLM. |
 | `LOOM_CONVERSATION_TITLER_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between titler passes. |
 | `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` | `int` | `168` |  | Only threads with a turn in the last this-many hours are titled. |
 | `LOOM_CONVERSATION_TITLER_MAX_THREADS_PER_PASS` | `int` | `10` |  | Threads one pass titles at most. |
@@ -866,6 +910,35 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_TOP` | `int` | `30` | live | How many fused hits a rerank reads (the legs fetch at least this many). |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_EXCERPT_CHARS` | `int` | `800` | live | Characters of each hit a reranker reads: its context (title, description, breadcrumb; at most half), then the chunk text. builtin:cohere reads at most 1024. |
 | `LOOM_KNOWLEDGE_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds a knowledge.search waits on its reranker before it keeps the fused order. |
+
+### Knowledge gaps
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_GAPS_ENABLED` | `bool` | `False` |  | Record searches that found nothing and group them daily into knowledge.gaps.list (docs/architecture/knowledge-gaps.md). Off by default: a miss stores the query text, so it is an operator opt-in, and a miss is recorded only where the namespace's capture level is not `off`. |
+| `LOOM_KNOWLEDGE_GAPS_INTERVAL_SECONDS` | `int` | `86400` |  | Seconds between knowledge_gaps passes (each groups every namespace with misses). At most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can add an interval) fit in a build's 7-day life. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_PASS_SECONDS` | `int` | `3600` |  | One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces namespaces, each one embed. |
+| `LOOM_KNOWLEDGE_GAPS_MIN_ASKERS` | `int` | `3` | live | Distinct users a query needs, in that form, before a gap shows it: one person's question is never shown as a gap. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_GROUPS` | `int` | `200` | live | Most asked query groups a pass embeds and merges per namespace. |
+| `LOOM_KNOWLEDGE_GAPS_MERGE_SIMILARITY` | `float` | `0.85` | live | Cosine similarity at which two query groups are one gap. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_ASKERS_PER_GROUP` | `int` | `10000` | live | Distinct askers a pass holds per query group, at most, never below knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held in memory for the pass and never stored. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_IN_FLIGHT` | `int` | `256` | live | Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads. |
+| `LOOM_KNOWLEDGE_GAPS_MAX_NAMESPACES` | `int` | `500` | live | Namespaces one pass groups, at most; the ones with the most misses first. |
+
+### Query-history definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_ENABLED` | `bool` | `False` |  | Permit opt-in ClickHouse query-history sources to queue definition drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MIN_USERS` | `int` | `3` | live | Distinct initial ClickHouse accounts required before drafting a query group. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_DRAFTS` | `int` | `20` | live | Drafts one source may queue in a worker turn, at most. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_GROUPS` | `int` | `200` | live | Most-used query groups inspected per source turn before skipping existing drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_WINDOW_DAYS` | `int` | `7` | live | Days of finished SELECT query history a turn groups. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_READ_TIMEOUT_S` | `float` | `30` | live | Seconds allowed for one query-history source read. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_PASS_SECONDS` | `float` | `120.0` |  | Deadline of one query-history pass; it starts no new group after half this budget. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between query-history passes. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_SOURCES` | `int` | `100` | live | Sources one pass reads, at most; each turn is separately time bounded. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_BREAKERS` | `int` | `1000` |  | Query-history circuit states kept per process, at most; older sources are evicted first. |
 
 ### Chunking
 
@@ -911,13 +984,48 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one repository namespace may register; an add past it is refused with SOURCE_QUOTA. |
-| `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, check, rotate) may take in all; past it add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its repository's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_CONNECT_GDRIVE_CLIENT_ID` | `str` | `''` |  | OAuth client id for personal Drive connections; empty disables the provider. |
+| `LOOM_CONNECT_GDRIVE_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that Drive OAuth registration; kept outside source rows. |
+| `LOOM_CONNECT_NOTION_CLIENT_ID` | `str` | `''` |  | Public-integration client id for personal page-store connections; empty disables it. |
+| `LOOM_CONNECT_NOTION_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that page-store registration; kept outside source rows. |
+| `LOOM_CONNECT_LINEAR_CLIENT_ID` | `str` | `''` |  | OAuth client id for personal project-tracker connections; empty disables it. |
+| `LOOM_CONNECT_LINEAR_CLIENT_SECRET` | `str` | *(unset)* |  | Secret of that project-tracker registration; kept outside source rows. |
+| `LOOM_CONNECT_NOTION_READ_CONTENT_ONLY` | `bool` | `False` |  | The operator has restricted the public integration to read-content capability. Its token response cannot prove this registration setting; false disables it. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_TIMEOUT_S` | `float` | `5.0` |  | Seconds for the whole optional live-search leg, including final membership checks. At most five; provider credential deadlines may shorten it further. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_SOURCES` | `int` | `3` |  | Connected registrations searched per live-search request, from one to three. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_HITS` | `int` | `10` |  | Live hits across all registrations, and the per-provider page bound, from one to ten. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_RESPONSE_MAX_BYTES` | `int` | `262144` |  | Bytes read from one live-search provider response, at most 256 KiB. The document-source download limit may shorten this bound further. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_ITEMS` | `int` | `4` |  | Registered Drive items searched per source, from one to four; no pagination. |
+| `LOOM_KNOWLEDGE_LIVE_SEARCH_MAX_ANCESTORS` | `int` | `3` |  | Native parent lookups per Notion membership check, from zero to three. Zero accepts directly registered pages and database membership without parent fetches. |
+| `LOOM_KNOWLEDGE_CONNECTED_STOP_TIMEOUT_S` | `float` | `20.0` |  | Seconds for local connection stops, including their source retirement writes. |
+| `LOOM_KNOWLEDGE_CONNECTED_REVOKE_TIMEOUT_S` | `float` | `5.0` |  | Seconds for best-effort provider revocation after every local stop has committed. |
+| `LOOM_KNOWLEDGE_CONNECTED_LEASE_TTL_S` | `float` | `60.0` |  | Seconds the renewed account-generation lease lives. Source leases follow it; provider requests hold neither. |
+| `LOOM_KNOWLEDGE_CONNECTED_LEASE_WAIT_S` | `float` | `5.0` |  | Seconds a connection change waits for another holder's account-generation lease. |
+| `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT` | `int` | `4096` |  | Maximum complete owner scan; exceeding it refuses instead of stopping a subset. |
+| `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Registrations per page during root-secret resealing. |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
+| `LOOM_KNOWLEDGE_CONNECTED_OAUTH_RESPONSE_MAX_BYTES` | `int` | `65536` |  | Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing. |
+| `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_NAMESPACE` | `int` | `64` | live | Active connected sources per namespace, separate from the shared/crawl quota. |
+| `LOOM_KNOWLEDGE_CONNECTED_SOURCES_MAX_PER_PERSON` | `int` | `8` | live | Active connected sources one canonical person may register in one namespace. |
+| `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` | `bool` | `False` |  | Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set. |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_MAX_ENTRIES` | `int` | `10000` |  | Maximum team and member rows read for one project's complete permission list. A larger list refuses publication rather than granting from a partial page. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | `bool` | `False` |  | Enable optional source push setup, callbacks and Drive renewal; false keeps polling only. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between bounded channel-renewal pages; channels renew a day before expiry. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S` | `float` | `40.0` |  | Seconds one push setup or Drive renewal may spend on provider work, before cleanup. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S` | `float` | `2.0` |  | Seconds allowed to stop one superseded or unpublished Drive channel. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S` | `float` | `5.0` |  | Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share. |
+| `LOOM_KNOWLEDGE_SOURCE_RETIRE_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off. |
+| `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` | `int` | `50000` | live | Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE` | `float` | `0.25` | live | The share of a namespace's daily LLM cost cap the sync may spend mining changed documents for decisions, counted over its own calls; the rest stays for requests. |
@@ -937,17 +1045,25 @@ The MCP transport: tool listing, lean results, session runs.
 | `LOOM_MCP_LOOM_SEARCH_PRECISION_FLOOR` | `float` | `-1.0` |  | Precision floor for loom_search memory hits. Negative = auto (midpoint of the embedder's calibrated noise floor and question→fact p25); 0 disables. |
 | `LOOM_MCP_LOOM_SEARCH_FOREIGN_MARGIN` | `float` | `0.08` |  | Extra margin over the precision floor for hits from another namespace. |
 | `LOOM_MCP_AUTH_MODE` | `'required' \| 'discovery_only' \| 'open'` | `'required'` |  | MCP transport auth mode (the endpoint exposes one tool per wire op, so an anonymous prober could otherwise enumerate every tool): "required"        — every JSON-RPC method requires a bearer. "discovery_only"  — initialize/tools/list/ping open; tools/call needs auth. "open"            — no auth on any method; a non-loopback bind refuses it. Any other value fails at load: a mistyped mode must not boot as some mode. |
-| `LOOM_MCP_TOOLSET` | `str` | `'core'` |  | Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search and loom_activate; on every toolset but "assistant" this is visibility only and every op stays callable by name over MCP and /v1/*. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing without the tools whose readOnlyHint is false. "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. "all"       — every op except _MCP_HIDDEN_OPS and the experimental ones no curated tier lists (they stay callable by name). An unknown value is "core". |
+| `LOOM_MCP_TOOLSET` | `str` | `'core'` |  | Which tools `tools/list` shows when a connection names no `?toolset=` (a request that names one gets that one instead). Rosters are the frozensets in server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on "assistant"); on every toolset but "assistant" this is visibility only and every op stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes read ops only. "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when mcp_code_tools is on). "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it per request with `?toolset=coding`. "tracker", "tasks" — the tracker plane and the task inbox rosters. "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS), policy-shaped descriptions. "readonly"  — the "all" listing without the tools whose readOnlyHint is false; loom_op routes read ops only. "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection that resolves to it. Not a server-wide read-only switch: a request naming another toolset gets it, and the token is the boundary. "all"       — the stable ops plus the experimental ops the core or atomic roster lists; the other experimental ops stay callable by name, and _MCP_HIDDEN_OPS are never listed, the two upload ops under mcp_code_upload_tools aside. An unknown value is "core". |
 | `LOOM_MCP_SCHEMA_PROFILE` | `'standard' \| 'full' \| 'compact'` | `'standard'` |  | tools/list schema profile: "standard" (curated prose + inputSchema), "full" (+ outputSchema) or "compact" (first paragraph, argument tree). Per request: `?schema_profile=`. |
-| `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `'code.search,code.symbol'` |  | Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none. |
+| `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `str` | `''` |  | Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront. |
 | `LOOM_MCP_SESSION_RUN_IDLE_SECONDS` | `int` | `1800` |  | Seconds without a tool call after which the mcp_session_run_sweep worker closes an MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first run-scoped tool call); with no background workers anywhere, idle runs stay open. At least 60: each web process re-checks its cached run once a minute (mcp_runs.CHECK_INTERVAL_S), so a shorter window would close runs a process still treats as open. |
 | `LOOM_MCP_RATELIMIT_RETRY_MAX_WAIT_S` | `float` | `2.0` |  | A rate-limited tool call waits out its Retry-After once and re-checks before returning RATE_LIMITED (MCP clients don't retry). This is the longest Retry-After, seconds, that one retry waits out; a longer hint is refused at once, and 0 refuses every limited call at once. |
 | `LOOM_MCP_CODE_TOOLS` | `bool` | `False` |  | List code.* tools on the MCP surface (core toolset union). Off = code ops are HTTP/SDK-only. |
+| `LOOM_MCP_CODE_UPLOAD_TOOLS` | `bool` | `False` |  | Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which hides both when off. On, an upload is accepted, on every transport, only for a namespace that has a repository entry. |
 
 ## Memory
 
 The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers.
 
+
+### Governed definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
+| `LOOM_MEMORY_TERM_LEG_WAIT_MS` | `int` | `100` | live | How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 
@@ -1016,6 +1132,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_BULK_FOLLOW_MAX_PAIRS` | `int` | `1024` | live | Supersession pairs one bulk write follows on the triple plane in the request; the rest are recorded for the projection repair to follow. 0 = the repair follows all. |
 | `LOOM_BULK_CONFLICT_CHECK_CONCURRENCY` | `int` | `8` |  | Bulk-path conflict checks run at once (at least 1). |
 | `LOOM_MEMORY_WRITE_CANDIDATE_BATCH` | `int` | `6` |  | Facts per batched candidate lookup (conflict and value-update peers) on the write path; matches the per-fact concurrency so wall time stays flat. 0 = one statement per fact. |
+| `LOOM_MEMORY_BULK_PEER_READ` | `'batched' \| 'per_fact'` | `'batched'` |  | How a bulk write reads each fact's conflict and value-update peers: batched = one join per memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per fact, for large namespaces (it may pick another last peer where distances tie). |
 | `LOOM_DUPLICATE_THRESHOLD` | `float` | `0.97` |  | Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate' with a duplicate_of pointer instead of 'conflicted'. Per-namespace override: loom.namespaces.duplicate_threshold. |
 
 ### Blacklist cache
@@ -1187,6 +1304,8 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` | `int` | `60` |  | Seconds the memory code-link pass stays behind the newest queued memory write, so inserts running at the same moment are visible before the cursor passes them (at least 10). A write visible later than this is passed and stays unlinked until a backfill reads it; a longer wait makes that rarer and links every write that much later. |
 | `LOOM_MEMORY_CODE_LINKS_PENDING_DAYS` | `int` | `14` |  | Days a code-shaped name that names nothing on trunk yet (unmerged code) is retried before it is dropped. |
 | `LOOM_MEMORY_CODE_LINKS_REVISE_PER_PASS` | `int` | `20` |  | Changed claims one pass re-checks with the LLM under the `revise` policy. |
+| `LOOM_MEMORY_CODE_LINKS_MIRROR_NAMING_FILES` | `int` | `200` |  | Changed files that may hold a lost link's name (its callers count) for the mirror's answer to be used; from this many on, the code index alone decides. |
+| `LOOM_MEMORY_CODE_LINKS_MIRROR_CHANGED_FILES` | `int` | `5000` |  | Files under the entry's prefixes a lost link's commit range may change for the mirror to be searched (at most 20,000: each is an argument to git); past it, the code index alone decides. |
 
 ### Memory chunks
 
@@ -1333,6 +1452,7 @@ memory.search: legs, fusion, ranking and gates.
 | `LOOM_MEMORY_SEARCH_FANOUT_KINDS` | `str` | `'memory'` | live | Namespace kinds an all_mine fan-out spans (memory.search, conversation.search, MCP loom_search; knowledge.search reads knowledge_search_fanout_kinds): comma list over loom.namespaces.kind; a namespace with no kind row stays; "" = every kind. Code and QA indexes are reached by name or their own tools (measured sweep of 24 namespaces: 6.2 s). |
 | `LOOM_MEMORY_SEARCH_FANOUT_MAX_NAMESPACES` | `int` | `32` | live | Upper bound on how many of the caller's namespaces an all_mine fan-out reads besides the addressed one; a search names the rest in `namespaces_skipped`. Every memory leg issues at least one statement per namespace. A guard, not a tuning knob: set well above what one person holds, so it bounds a runaway sweep rather than trimming normal ones. |
 | `LOOM_MEMORY_SEARCH_RERANK_TIMEOUT_S` | `float` | `8.0` | live | Seconds memory.search's reranker endpoint (a named endpoint of rerank_endpoints_json, or builtin:cohere) may take to answer; past it the search keeps its input order and says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s. |
+| `LOOM_MEMORY_SEARCH_CODE_CHANGED_PLACES` | `int` | `3` | live | Places a search hit moves down within the served results when its linked code changed, was not found again or is gone (0 moves nothing). |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS` | `'auto' \| 'on' \| 'off'` | `'auto'` | live | Key-embedding axis on the fact leg: "on" scores least(value_dist, key_dist) and reads both vector columns (measured 399 vs 203 MB/query on a 30k-row namespace); "off" reads the value vector only; "auto" turns it on per namespace when its key-reuse share is at or above memory_search_key_axis_auto_reuse_share (cached for memory_search_key_axis_auto_ttl_seconds; a failed probe reads as off). A per-request `key_axis` wins. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE` | `float` | `0.05` | live | "auto" key-axis threshold: share of a namespace's keys written more than once. 0.05 sits between product namespaces and chat namespaces. |
 | `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_TTL_SECONDS` | `int` | `600` | live | Seconds a namespace's "auto" key-axis probe result is cached before it is re-read. |
@@ -1447,8 +1567,9 @@ Models: which model does each job.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1). |
-| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
+| `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). |
+| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
+| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'local'` | `''` |  | The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model). |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |
@@ -1555,13 +1676,14 @@ Telemetry, audit, tracing and the ops surface.
 | `LOOM_OTEL_RETENTION_CENSUS_S` | `int` | `3600` |  | Seconds between retention censuses (`loom.retention.*`: per-org counts over 7- and 45-day windows; one FINAL pass over loom.memory on the lease holder). 0 = every export. |
 | `LOOM_OTEL_CENSUS_SCOPE` | `'leader' \| 'process'` | `'leader'` |  | Who takes the whole-table censuses (invariants, code-plane counts, retention, agent labels, storage): "leader" = only the supervisor-lease holder, "process" = every process (costly). |
 | `LOOM_OTEL_METRICS_EXPORT_INTERVAL_S` | `int` | `60` |  | Metric export cadence, seconds. Spans keep their own 3 s batch delay, which bounds span loss at SIGTERM. |
+| `LOOM_OTEL_METRICS_CARDINALITY_LIMIT` | `int` | `20000` |  | Most series per metric; past it, new attribute sets join one `otel.metric.overflow` series. Request metrics need about operations x namespaces x transports x outcomes. |
 | `LOOM_OTEL_METRICS_DELTA_TEMPORALITY` | `bool` | `False` |  | Delta temporality for counters and histograms (an idle synchronous series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md) read cumulative rows — flip together with them. |
 | `LOOM_OTEL_GAUGE_HEARTBEAT_S` | `int` | `0` |  | Write a gauge point only when its value changed or this many seconds after the last write; 0 = every export. The ClickHouse exporter only (LOOM_OTEL_EXPORTER=ch); OTLP exports every point. Off because gauge tiles fill gaps with 0 and would draw a sawtooth. |
 | `LOOM_OTEL_EXPORTER_OTLP_ENDPOINT` | `str` | `''` |  | OTLP/HTTP collector base URL (`/v1/traces` and `/v1/metrics` are appended); set with `otel_exporter` = "", it selects the otlp exporter. |
 | `LOOM_OTEL_EXPORTER_OTLP_HEADERS` | `str` | *(unset)* |  | Comma-separated K=V headers sent to `otel_exporter_otlp_endpoint`, e.g. `Authorization=Bearer <token>`. |
 | `LOOM_OTEL_SERVICE_NAME` | `str` | `'loom'` |  | The OTel resource `service.name` stamped on every span, log and metric. |
 | `LOOM_OTEL_ENVIRONMENT` | `str` | `'dev'` |  | The OTel resource `deployment.environment.name` stamped on every span, log and metric. |
-| `LOOM_OTEL_EXCLUDED_URLS` | `str` | `'/v1/health'` |  | Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). "" = instrument every path but the sign-in routes (/oauth/), which are always left out: their URLs carry codes. |
+| `LOOM_OTEL_EXCLUDED_URLS` | `str` | `'/v1/health'` |  | Comma-separated path regexes the FastAPI instrumentation opens no span for (health polls). "" = instrument every path but the sign-in routes (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes. |
 | `LOOM_LATENCY_BUDGET_MULTIPLIER` | `float` | `1.0` |  | Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py, tuned for local CH) at the comparison site; set e.g. 20.0 on Cloud so SLO alerts don't fire on baseline RTT. |
 | `LOOM_LATENCY_BUDGET_OVERRIDES` | `str` | `''` |  | JSON map {op: ms \| "<n>x"} over the op budgets table (OP_BUDGETS_P99_MS in server/settings/catalog.py): an integer replaces that op's budget, "3x" multiplies it. Checked after the per-consumer overrides and `admin/budget.set`; a value that is neither ms nor "<n>x" stops startup, an op this build lacks is logged and ignored. '' = the table as declared. |
 | `LOOM_LATENCY_BUDGET_OVERRIDES_BY_CONSUMER` | `str` | `''` |  | JSON map {consumer: {op \| "*": ms \| "<n>x"}}: an integer is a budget in ms, "3x" multiplies the op's declared budget. Checked after runtime `admin/budget.set` overrides, before per-op ones; malformed = logged once and ignored. '' = none. |
@@ -1593,13 +1715,15 @@ Embedding and LLM providers.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_EMBEDDING_DIM` | `int` | `3072` |  | Vector width the embedder is asked for and the schema is sized from; the width probed from the embedder at boot wins when they differ. Change it together with `embedding_model`. Unset with a `local:*` model, it is that model's own width: leave it unset for a local model. |
-| `LOOM_EMBEDDING_PROVIDER` | `'' \| 'openai' \| 'gemini' \| 'compatible' \| 'local' \| 'fake'` | `''` |  | "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini", "local", "fake". Switching providers changes the embedding space: a full re-embed is required. |
+| `LOOM_EMBEDDING_PROVIDER` | `'' \| 'openai' \| 'gemini' \| 'compatible' \| 'bedrock' \| 'local' \| 'fake'` | `''` |  | "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin "openai", "gemini", "bedrock" (Cohere Embed v4), "local", "fake". Switching providers changes the embedding space: a full re-embed is required. |
 | `LOOM_EMBEDDING_BASE_URL` | `str` | `''` |  | API root for an explicitly selected OpenAI-compatible embedding service, e.g. https://provider.example/v1. Empty is invalid for compatible providers. |
 | `LOOM_EMBEDDING_SEND_DIMENSIONS` | `bool` | `False` |  | Send the optional dimensions request parameter to a compatible endpoint. False uses its native output width; responses must still match embedding_dim. |
 | `LOOM_EMBEDDING_RETRY_ATTEMPTS` | `int` | `3` | live | Attempts an embedding call makes on a retryable failure. |
 | `LOOM_EMBEDDING_RETRY_MAX_WAIT_S` | `float` | `10.0` | live | Longest backoff, in seconds, between two attempts of an embedding call. |
 | `LOOM_OPENAI_BASE_URL` | `str` | `'https://api.openai.com/v1'` |  | OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root). |
 | `LOOM_ANTHROPIC_BASE_URL` | `str` | `'https://api.anthropic.com'` |  | Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway in front of Anthropic. Off the default, the key also goes as a bearer, the scheme gateways take. |
+| `LOOM_BEDROCK_REGION` | `str` | `''` |  | Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain. |
+| `LOOM_LOCAL_LLM_BASE_URL` | `str` | `'http://localhost:11434/v1'` |  | LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's <host>:11434/v1, llama.cpp's server <host>:8080/v1). |
 | `LOOM_INFERENCE_TOKEN_URL` | `str` | `''` |  | Model calls with no provider key: exchange an identity token (RFC 8693) at this token endpoint of the gateway, and send the answer as the bearer (server/llm/gateway.py). The gateway must trust the token's issuer. "" = the provider keys. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_FILE` | `str` | `''` |  | The workload's OIDC token, as a file its platform rotates (a projected service-account token on Kubernetes). With inference_token_url, this or inference_token_audience. |
 | `LOOM_INFERENCE_WORKLOAD_TOKEN_MODE` | `'exchange' \| 'bearer'` | `'exchange'` |  | How inference_workload_token_file reaches the gateway: "exchange" (RFC 8693, at inference_token_url) or "bearer" (the file itself, read again at most every minute and after a 401; requires the gateway). |
@@ -1629,12 +1753,12 @@ Embedding and LLM providers.
 | `LOOM_EMBEDDING_CACHE_TTL_S` | `float` | `3600.0` |  | Seconds one per-process LRU entry lives. |
 | `LOOM_ADAPTIVE_THRESHOLDS` | `bool` | `True` |  | Derive the similarity gates from this embedder's cosine distribution at boot (server/memory/app/embedder_calibration.py). False pins the scalar defaults (tuned for text-embedding-3-small) — re-bench after an embedder change. Fake embedders and probe failures always use the scalars. |
 | `LOOM_CALIBRATION_REFRESH_SECONDS` | `float` | `60.0` |  | Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates. |
-| `LOOM_LLM_PROVIDER` | `str` | `''` |  | "openai" \| "anthropic" \| "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default. |
+| `LOOM_LLM_PROVIDER` | `str` | `''` |  | "openai" \| "anthropic" \| "bedrock" \| "local" (LOOM_LOCAL_LLM_BASE_URL, no key) \| "fake"; "" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default. |
 | `LOOM_REQUIRE_REAL_PROVIDERS` | `bool` | `False` |  | A fake or key-less provider is a `warn` in /v1/health `problems`; true (production) makes it an `error` and `status: degraded`, which preflight and monitors catch. Never changes the HTTP code (503 is ClickHouse-only). |
 | `LOOM_LLM_OPENAI_REASONING_EFFORT` | `str` | `''` |  | Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call. |
 | `LOOM_LLM_ANTHROPIC_EFFORT` | `str` | `''` |  | Thinking effort sent to Claude models as `output_config.effort`: "low" \| "medium" \| "high"; "" = send none (the model's own default). A model that does not take it refuses it once and is not sent it again. |
 | `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX` | `int` | `16384` |  | Most output tokens a call adds over the caller's cap for a model's hidden reasoning. The reserve per model is learned from the reasoning tokens its replies report (twice the most it has spent) and capped here. |
-| `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` |  | Seconds an LLM call waits for its reply before the client retries. Generous on purpose: it only catches a hung connection, so a slow model or a long output never hits it. Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |
+| `LOOM_LLM_REQUEST_TIMEOUT_S` | `float` | `300.0` |  | Seconds an LLM call waits for its reply before the client retries. Generous for hosted models, where only a hung connection reaches it; a model server on a CPU can need longer (the local preset sets 900). Calls that must be fast set their own, shorter deadline (HyDE, search budgets). |
 | `LOOM_LLM_RETRY_ATTEMPTS` | `int` | `4` | live | Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped connection) before the fallback model takes over. |
 | `LOOM_LLM_RETRY_MAX_WAIT_S` | `float` | `20.0` | live | Longest backoff, in seconds, between two attempts of an LLM call. |
 | `LOOM_LLM_MAX_TOKENS_OVERRIDES` | `str` | `''` | live | JSON {call: tokens} over LLM_MAX_TOKENS (in server/settings/catalog.py): the most tokens one kind of LLM call may write, keyed by its `llm_stage`. A count below 1 is refused; a call this build lacks is logged and ignored. '' = the table as declared. |
@@ -1672,17 +1796,21 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_EVENTS_STREAM_FLUSH_BATCH` | `int` | `500` |  | Queued telemetry rows that trigger a flush before the interval elapses. |
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` |  | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` |  | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
+| `LOOM_DEFAULT_DAILY_USER_COST_CAP_USD` | `float` | `0.0` | live | Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it. A namespace's daily_user_cost_cap_usd overrides this default when positive. |
+| `LOOM_COST_BUDGET_ALERT_SHARE` | `float` | `0.8` | live | Fraction of a cap that warns its namespace's configured inbox on the next check. |
 | `LOOM_READS_LLM_FREE` | `bool` | `False` |  | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` |  | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` |  | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
 | `LOOM_INSTANCE_HEARTBEAT_SECONDS` | `float` | `10.0` |  | Seconds between this process's loom.instances heartbeats, each of which also compares it with the deployment's published configuration. A row not renewed for three intervals is not live. |
 | `LOOM_WEB_WORKERS` | `int` | `1` |  | uvicorn processes per container (the image's default: server.core.web_workers); the rate limiter counts N workers as N replicas. |
 | `LOOM_RUNTIME_DIR` | `str` | `''` |  | Directory of the files one server's web processes share (the rate-limit table); "" = chosen per process by server/core/runtime_files.py. scripts/serve.sh sets it once, before the workers start, so all of them name the same files. |
-| `LOOM_BACKGROUND_WORKERS` | `'auto' \| 'on' \| 'off'` | `'auto'` |  | Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always; off = never (a pure web replica). |
+| `LOOM_BACKGROUND_WORKERS` | `'auto' \| 'on' \| 'off'` | `'auto'` |  | Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell gate lets the process serve); off = never (a pure web replica). |
 | `LOOM_SUPERVISOR_LEASE_TTL_S` | `int` | `30` |  | auto mode: seconds a lease holder that stops renewing keeps the workers before another process takes them over (failover time). At least 24: below that a renewal blocked for its 2 s timeout leaves no retry before the holder must give up (server/workers/leader.py has the timings). |
 | `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | `float` | `3600.0` |  | Seconds between passes of the always-on sweep that deletes the KeeperMap keys (leases, claims, graph slots) a stopped process left behind. |
 | `LOOM_WORKERS_PROCESS` | `'child' \| 'inline'` | `'child'` |  | auto mode: where the lease holder runs the workers. child = a separate process it starts and stops with the lease, so the passes do not share the event loop that serves requests; inline = in the serving process. |
+| `LOOM_WORKERS_CHILD_RETIREMENT_TIMEOUT_S` | `float` | `1.0` |  | At most this many seconds to certify a reaped worker child; also bounded by the remaining stop or restart delay. Expiry leaves its participant unretired. |
 | `LOOM_SHUTDOWN_READY_DELAY_S` | `float` | `15.0` |  | Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so the load balancer stops routing to it before its port closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once. |
+| `LOOM_NATIVE_COMMAND_DRAIN_TIMEOUT_S` | `float` | `15.0` |  | Seconds a native CLI command allows its producers, deferred writes and participant retirement to finish. Expiry leaves the participant unretired. |
 | `LOOM_BOOT_WARMUP_TIMEOUT_S` | `float` | `30.0` |  | Seconds boot waits for the first load of the tracker registry and the runtime overrides, and the first publish of the dashboard bundle, before it serves; readiness stays false until the first two load. |
 | `LOOM_READY_REQUIRES_MIRRORS` | `bool` | `False` |  | True: /v1/health/ready also waits until the mirror warm-up has queued its clones and while a clone of this host's git mirrors is running or queued (a failed clone does not hold it). Needs LOOM_CODE_MIRROR_WARMUP: without the warm-up nothing is cloned at boot and readiness does not wait for mirrors. Off by default: history ops answer `no_git_mirror` meanwhile. |
 | `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS` | `float` | `10.0` |  | Seconds between re-reads of loom.runtime_overrides (the admin rate-limit, latency-budget and live-setting overrides) in every process. |
@@ -1690,9 +1818,12 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_BUDGET_VIOLATION_AUDIT_INTERVAL_S` | `float` | `60.0` |  | At most one `budget.violated` audit row per op per this many seconds (the row carries `suppressed_since_last`). 0 = a row per violation. |
 | `LOOM_BUDGET_VIOLATION_AUDIT_BURST` | `int` | `5` |  | Violations per window that still write their own row before the rest are folded into the next: a short burst stays visible, a storm costs at most this many inserts a minute per (op, org, namespace). |
 | `LOOM_PUBLIC_BASE_URL` | `str` | `''` |  | The address the server hands to clients — the client setups a new token comes with, `claude mcp add`, a bot's claim_url, OAuth metadata. Empty = the request's own Host and scheme, which only a loopback bind may rely on: a non-loopback bind_host refuses to start without it. |
-| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks: public_base_url set, and no auth-off, MCP open mode, dev secret or weak root, gateway or end-user key. |
+| `LOOM_BIND_HOST` | `str` | `'127.0.0.1'` |  | The address Loom is reachable on: `loom serve` and `make server` bind it; in a container (which listens on all its interfaces) it is the address the port is published on. Anything but loopback turns on the startup checks in the deployment guide's "Proxy and TLS" section. |
 | `LOOM_TRUSTED_PROXIES` | `str` | `'127.0.0.1'` |  | Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto headers uvicorn applies; any other peer's are ignored. "*" trusts all. Required behind a load balancer: at the default every client counts as the balancer's address for the sign-in and sign-up limits. |
-| `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach. |
+| `LOOM_ALLOW_INSECURE` | `bool` | `False` |  | True lets a non-loopback bind start with auth off, MCP open mode, open self-signup outside trust-network, the dev signing secret or a weak root, gateway or end-user key. Only for a port others cannot reach. |
+| `LOOM_TLS_CERT_FILE` | `str` | `''` |  | PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP. |
+| `LOOM_TLS_KEY_FILE` | `str` | `''` |  | PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused. |
+| `LOOM_TLS_MIN_VERSION` | `'1.2' \| '1.3'` | `'1.2'` |  | Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3". |
 
 ### Outbound HTTP
 
@@ -1782,13 +1913,19 @@ Opt-in tiering, applied as idempotent ALTER TABLE MODIFY TTL by server/storage/r
 | `LOOM_PG_LEASE_MARGIN_SECONDS` | `float` | `1.0` |  | Seconds before its lease ends that a publisher stops sending, for clock drift and the time a send takes to leave the process; under Postgres, shorter than both leases (`LOOM_PG_REQUEST_LEASE_SECONDS`, `LOOM_PG_DELIVERY_LEASE_SECONDS`). |
 | `LOOM_PG_ADMISSION_HELP_ROWS` | `int` | `20` |  | Revisions a waiting admission publishes itself for a writer that stopped before publishing them; the delivery worker publishes the rest. |
 | `LOOM_PG_PROJECTION_WAIT_MS` | `int` | `2000` |  | Milliseconds an admission waits for earlier commits in its scope to reach search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long, then reads on and names `projection` in `skipped`. |
+| `LOOM_PG_BACKLOG_COUNT_CAP` | `int` | `10000` |  | The most deliveries one backlog reading counts per source (`loom.pg.backlog`, health's `postgres.backlog`); past it the reading stops counting and says so (`capped`). |
+| `LOOM_PG_BACKLOG_HEALTH_CACHE_SECONDS` | `float` | `10.0` |  | Seconds each process keeps its own backlog reading for `GET /v1/health?include=postgres`. |
 | `LOOM_PG_REQUEST_LEASE_SECONDS` | `int` | `5` |  | Seconds the writing request holds its revisions' delivery; past it, the delivery worker or a waiting admission in the namespace publishes them instead. |
 | `LOOM_PG_PUBLISH_INTERVAL_MS` | `int` | `250` | live | Average ms between a process's publication flushes (one insert per table each), capped at half `LOOM_PG_PROJECTION_WAIT_MS`; bursts up to a second's worth; 0: none. |
 | `LOOM_PG_DELIVERY_LEASE_SECONDS` | `int` | `30` |  | Seconds the delivery workers hold a memory revision's or a knowledge document's delivery before another may take it; also how long the conflict resolver sets aside a row whose flagged peer is not yet in ClickHouse. |
 | `LOOM_PG_DELIVERY_ENABLED` | `bool` | `True` |  | Background delivery of committed memory revisions and knowledge documents a request did not publish (the pg_delivery and knowledge_pg_delivery workers). |
 | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | `int` | `2` |  | Seconds between delivery passes while there is work. |
 | `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS` | `int` | `10` |  | Seconds between delivery passes that found nothing. |
-| `LOOM_PG_DELIVERY_BATCH_ROWS` | `int` | `500` |  | Deliveries one pass of each delivery worker publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps. |
+| `LOOM_PG_DELIVERY_BATCH_ROWS` | `int` | `500` |  | Deliveries one delivery pass publishes; also the expired deletion evidence and settled knowledge deliveries one pass sweeps, and the revisions one payload clearing batch checks. |
+| `LOOM_PG_PAYLOAD_CLEAR_ENABLED` | `bool` | `False` |  | The pg_payload_clear worker: clears a revision's payload once every usable ClickHouse backup holds it. Turn it off before a ClickHouse restore (backup-and-recovery.md). |
+| `LOOM_PG_PAYLOAD_CLEAR_INTERVAL_SECONDS` | `int` | `60` |  | Seconds between payload clearing passes. |
+| `LOOM_CH_BACKUP_INTERVAL_MINUTES` | `int` | `1440` | live | Minutes between the starts of scheduled ClickHouse backups. The clearing horizon is never under it plus 60. |
+| `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES` | `int` | `0` | live | Minutes a delivered revision keeps its payload: 0 is twice the backup interval plus 60; under the interval plus 60 or the insert bound plus 60, it is raised to the larger. |
 | `LOOM_PG_RESTORE_BATCH_ROWS` | `int` | `500` |  | Memories one Postgres commit of a `namespace.restore` writes; each batch commits within a request's lease (`pg_request_lease_seconds`). |
 | `LOOM_PG_DELIVERY_MAX_ATTEMPTS` | `int` | `10` |  | Times a delivery is tried before it is parked: a search document it cannot build is published as a stub for the embedding worker; a memory row ClickHouse keeps refusing is left out of claims and of its namespace's watermark, and counted in /v1/health?include=postgres (`postgres.parked_deliveries`). An audit row waiting in the outbox (a row an erasure moved there, or one a claim deferred because the holder it replaced may still insert it) is parked the same way (`postgres.parked_audits`), and so is a knowledge document's row (`postgres.parked_knowledge_deliveries`). An unavailable ClickHouse counts no attempt. |
 | `LOOM_PG_ERASURE_EVIDENCE_HOURS` | `int` | `24` |  | Hours an erased memory's id, or an erased knowledge document's `doc_id`, is kept as deletion evidence, refusing a write built from a head read before the erasure (longer than any request holds a head); a `namespace.restore` into its namespace leaves the memory out meanwhile. |

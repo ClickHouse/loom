@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from server.memory.api.models_search import _MemorySearchHit
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scope import _SearchRun
+from server.memory.domain.search_types import TIER_COMPONENTS
 
 if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
@@ -48,9 +49,6 @@ _FLAG_COSINE_PLANES: frozenset[str] = frozenset(
 )
 
 
-_TIER_COMPONENTS: tuple[str, ...] = ("anchor_first", "recent_first")
-
-
 def _flag_below_threshold(hits: list[Any], abstain_threshold: float) -> int:
     """Mark every served row whose un-boosted similarity is below the abstain threshold the
     response's gate used. The gate reads the first row of `gate_order`; a k=30 window carries
@@ -65,7 +63,7 @@ def _flag_below_threshold(hits: list[Any], abstain_threshold: float) -> int:
         if str(getattr(h, "source", "fact") or "fact") not in _FLAG_COSINE_PLANES:
             continue
         comps = getattr(h, "score_components", None) or {}
-        if any(c in comps for c in _TIER_COMPONENTS):
+        if any(c in comps for c in TIER_COMPONENTS):
             continue
         try:
             sim = 1.0 - float(getattr(h, "distance", 1.0))

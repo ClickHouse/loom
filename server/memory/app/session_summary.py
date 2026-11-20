@@ -10,6 +10,8 @@ from typing import Any
 from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, parse_iso_dt
 from server.embedding import get_embedder
+from server.embedding._provider import MalformedEmbedding
+from server.embedding.documents import document_vector
 from server.memory.domain.extraction_policy import with_policy
 from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.observability.genai import staged
@@ -137,7 +139,7 @@ async def _draft_session_summary(
 ) -> SessionSummaryDraft | None:
     """One LLM call + one embedding: everything about the digest that does not
     need the extraction result. None when the model returns nothing or the
-    embedder returns an empty vector (the read leg filters embedding_dim > 0);
+    embedder returns an invalid vector (the read leg needs a valid embedding);
     a digest that reads as high is drafted with no vector. The digest is
     written from the raw turns, so it follows the operator's extraction policy as
     the extractor does."""
@@ -161,10 +163,11 @@ async def _draft_session_summary(
     # reads only digests that have one, and the text never reaches the embedder.
     embedding: list[float] = []
     if not reads_high(summary_text):
-        embedding = list(await embedder.embed(summary_text))
-        if not embedding:
+        try:
+            embedding = await document_vector(embedder, summary_text)
+        except MalformedEmbedding:
             log.info(
-                "session_summaries: empty embedding for session=%r; skipping", input.session_id
+                "session_summaries: invalid embedding for session=%r; skipping", input.session_id
             )
             return None
     return SessionSummaryDraft(

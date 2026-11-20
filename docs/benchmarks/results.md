@@ -51,12 +51,13 @@ reproduction command.
 | [ClickHouse code intelligence](#code-intelligence-on-the-clickhouse-repository)       | Find definitions, callers and implementation files for authored questions; abstain on authored out-of-repository probes.                                                                                                   | 60 authored questions: 10 definitions, 4 caller sets, 36 conceptual searches and 10 out-of-repository probes.                                                                                                                                                      | Public ClickHouse repository index; `code.symbol`, `code.callers` and `code.search` with their normal result limits.                                                                                                                                                                                           | Exact first definition; F1 against expected callers; mean gold-file recall@5/@10, MRR and hit@5; abstention precision/recall.                                                                                                                                                                                                                             |
 | [SWE-bench Verified sample: file localization](#swe-bench-verified-file-localization) | Given a GitHub issue description, rank the pre-existing repository files that its accepted patch later modified. This is retrieval, not patch generation or issue resolution.                                              | Stratified seed-7 sample of 200 eligible instances from the 500-instance dataset, covering all 12 repositories; eligibility requires at least one patch-modified file present at `base_commit`.                                                                    | Each repository indexed at the issue's `base_commit`; issue text truncated at 2,000 characters; `code.search` first 10 results and a second page to 25 units.                                                                                                                                                  | File hit@1, hit@5 and hit@10 (at least one gold file); all-gold@10; MRR; paired against BM25 over the same live files and over Python files only.                                                                                                                                                                                                         |
 | [Memory versus full history](#with-and-without-loom)                                  | Answer the same long-conversation question from retrieved memories or from the complete conversation history.                                                                                                              | Paired seed-13 sample of 100 LongMemEval-S questions.                                                                                                                                                                                                              | Same `gpt-5` reader sees either `memory.search` top 200 or the full history.                                                                                                                                                                                                                                   | Official-judge accuracy and reader prompt tokens; memory construction is excluded from prompt-token totals and reported separately as break-even.                                                                                                                                                                                                         |
-| [Coding agents on ClickHouse: with Loom vs without Loom](#with-and-without-loom)      | Answer a ClickHouse developer's question: explain a mechanism, list the callers a change must update, find the change behind a behaviour, trace a bug to its fix, find the tests that cover a change.                      | 48 answer-graded questions × 3 paired runs and 36 conceptual questions × 10 paired runs; checkouts without git history at the verified commit.                                                                                                                     | Same headless `claude-sonnet-5` in a stock session; baseline has Bash, Read, Grep and Glob, the Loom arm adds the Loom plugin and its MCP `coding` toolset.                                                                                                                                                    | Judged key points of a verified reference answer, right file in the three named; model cost, turns and wall time per run.                                                                                                                                                                                                                                 |
+| [Coding agents on ClickHouse: with Loom vs without Loom](#with-and-without-loom)      | Answer a ClickHouse developer's question: explain a mechanism, list the callers a change must update, find the change behind a behaviour, trace a bug to its fix, find the tests that cover a change.                      | 48 answer-graded questions × 3 paired runs and 36 conceptual questions × 10 paired runs; checkouts without git history at the verified commit.                                                                                                                     | Same headless `claude-sonnet-5` in a stock session; baseline has Bash, Read, Grep and Glob, the Loom arm adds the Loom plugin and its MCP `coding` toolset.                                                                                                                                                    | Judged key points of a verified reference answer, right file among the up to three the agent is asked to name; model cost, turns and wall time per run.                                                                                                                                                                                                   |
 | [Definitions and callers versus grep](#with-and-without-loom)                         | Find a symbol's definition or all expected callers using Loom or repository text search.                                                                                                                                   | The same 10 definition and 4 caller questions from the ClickHouse code-intelligence set.                                                                                                                                                                           | Loom's code index versus `git grep` for the bare name and the qualified `Class::name`; grep output tokens estimated as characters divided by four.                                                                                                                                                             | Correct file ranked first, expected callers found and context tokens returned.                                                                                                                                                                                                                                                                            |
 | [`code.ask` production cache](#with-and-without-loom)                                 | Measure how often repeated real questions reuse a cached answer and what one hit saves.                                                                                                                                    | 673 non-benchmark calls from one deployment over 30 days; 20 cache hits.                                                                                                                                                                                           | Normal `code.ask` traffic using the shipped cache guard and threshold.                                                                                                                                                                                                                                         | Observed hit rate, answer tokens avoided and latency; this is an operational observation, not a controlled quality comparison.                                                                                                                                                                                                                            |
 | [`code.ask` cache threshold](#codeask-answer-cache-threshold)                         | Determine whether paraphrased questions can share an answer without sharing across materially different questions.                                                                                                         | 42 paraphrase pairs, 43 different-question pairs, 22 one-identifier near-misses and 2 unlabelled pairs.                                                                                                                                                            | About 130 embedding calls for each tested embedding model; cosine sweep with and without the identifier guard.                                                                                                                                                                                                 | Paraphrase hits versus false hits at each threshold; the shipped threshold requires zero false hits on the 65 labelled different pairs.                                                                                                                                                                                                                   |
 | [Design decisions from design documents](#design-decisions-from-design-documents)     | Answer why questions, make change requests whose obvious move a design document rejected, answer questions on reversed or unrecorded decisions, and explain how a feature works, given different design knowledge per arm. | Private set: 5 design documents (4 revised once), 10 why, 15 change, 10 supersession or abstention and 13 feature tasks, 3 samples each.                                                                                                                           | Nothing, `knowledge.get`, knowledge hits of `loom_search`, gold rows or extracted rows through `memory.for_file` and `loom_search`, or extracted rows with the knowledge hits.                                                                                                                                 | `gpt-6-luna`-judged argument and feature-fact precision/recall, rejected-option avoidance, constraint satisfaction, stale statements and failed abstentions; paired against arm 0, the gold rows, and, for arm 6, the knowledge hits and the extracted rows alone.                                                                                        |
 | [Document parsing](#document-parsing)                                                 | Read a PDF, DOCX or PPTX into text, headings, tables and page locators without losing content; then serve `knowledge.search` hits cited by page and quotes decision extraction can ground.                                 | Committed corpus of 54 files (6 public-domain PEPs, the rest synthetic), split dev and held-out by a fixed alternation within each category recorded in `gold.jsonl`; parse scores on the held-out 27; 212 search queries and 12 mined documents from both splits. | The reference extractor reading a PDF's text layer, and with its layout reader and OCR, and a layout-model baseline, through one normalizer; artifacts ingested through a stub extractor, fake n-gram embedder; `knowledge.search` top 5 within each document; decision extraction with `gpt-6-luna`, dry run. | Parse fidelity against gold labels from the specs the files were rendered from (text recall and precision, heading F1 and level, table cell F1, locators, silent loss) and efficiency (time and memory); retrieval (search found and cited at 1 and 5) and extraction quote match. Paired against the text layer with 95% bootstrap intervals over files. |
+| [Memory at scale](#memory-at-scale)                                                   | Load synthetic memories straight into the stores, then run the memory ops through one server under each authority.                                                                                                         | Synthetic, offline: one namespace of 250,000 and 500,000 keys, and 200,000 keys Zipf-sized over 10,000 namespaces in 1,000 orgs; 2.4 versions per key.                                                                                                             | `memory.get`, `memory.set` and `memory.search` (top 10), 400 calls each, and 40 `memory.bulk_set` calls of 20 entries, at concurrency 5; `erasure.request` by user and by an org's namespaces; `memory.set` at fixed rates over several processes; fake 3072-dimension embedder.                               | p50 and p99 latency and refusals, ClickHouse bytes, CPU and memory per call from `system.query_log`, parts and merges from `system.part_log` and `system.parts`, store bytes and list-price cost per million memories; not a capacity promise (one shared host).                                                                                          |
 
 These protocols cover the public measurements, not every runnable harness. The
 [coverage matrix](./coverage.md) marks surfaces that currently have only a harness or no
@@ -147,8 +148,18 @@ evidence sessions is represented among the first 30 returned memories. It is not
 fraction of all supporting sessions retrieved.
 
 The same answers graded by two more judges with the official prompt: `gpt-6.1-sol` 97.8%,
-`claude-opus-5-5` 97.6%; the three judges agree on 98.8–99.8% of the questions. The
-`memory.ask` answers written during ingest scored 97.2%. The external reader runs at
+`claude-opus-5-5` 97.6%. The re-grade's three judges, these two and `gpt-4o-2024-08-06`,
+agree with each other on 98.8–99.8% of the questions.
+
+The table's `memory.ask` figures are the `ask` labels in `longmemeval_s.csv`. The re-grade in
+`longmemeval_s_judges.json` called `gpt-4o-2024-08-06` again on the same answers, and at
+least two of its labels differ from the table's: on net, one multi-session answer it
+counts correct (91.7% → 92.5%) and one preference answer it counts wrong (100% → 96.7%),
+the total staying at 483 of 500 (96.6%). The three re-grading judges agree on every
+label that differs from the table. The judge runs at temperature 0, which does not make
+a hosted model's replies repeatable.
+
+The `memory.ask` answers written during ingest scored 97.2%. The external reader runs at
 reasoning effort `medium`; at `minimal` the same hits scored 86.0% (in
 `longmemeval_s_ingest.csv`, arm `reader_gpt5_k200`). `memory.ask` answers are not the
 pinned-reader figure LongMemEval publications report; the reader arm is.
@@ -160,7 +171,7 @@ Extraction used about 1.5 M tokens per question; each question has its own histo
 
 - **Models:** the server's above (`memory.ask` strong `claude-opus-5-5`, cheap
   `gpt-6-luna`); external reader `gpt-5`; judge `gpt-4o-2024-08-06` with the official
-  prompt, re-graded by `gpt-6.1-sol` and `claude-opus-5-5`.
+  prompt, re-graded by `gpt-4o-2024-08-06`, `gpt-6.1-sol` and `claude-opus-5-5`.
 - **Retrieval:** the `bench/longmemeval.py` searches (Recall@30 and the reader's hits)
   ran with `rerank` `builtin:openai` and `include_top_n_unmatched` 120, the harness
   defaults (the CSVs' `rerank` and `pool_unmatched` columns, which record the harness's own
@@ -462,8 +473,8 @@ verified at (history questions keep full history), so neither arm can read a fix
   (`claude-opus-5-5`) marks each key point of a reference answer verified in the code covered or
   not, and halves the score of a reply that contradicts it.
 - **Conceptual questions** (`bench/fixtures/code_intel_qa.jsonl`, 36 questions, 10 paired runs):
-  where a mechanism lives, scored by whether the right file is among the three files the agent
-  ends its reply with.
+  where a mechanism lives, scored by whether the right file is among the up to three files the
+  agent is asked to end its reply with.
 - **Multi-hop work** (`bench/fixtures/code_work_multihop.jsonl`, 24 questions, 3 paired runs): a
   bug report traced to its fix on a release branch whose fix was never backported (the branch
   checkout and the branch's own index), the tests that would catch a change, and setting- or
@@ -552,7 +563,7 @@ diff <(jq -S . /tmp/summary.json) <(jq -S . bench/code_ask_cache_threshold/summa
 ```
 
 Embedding APIs are not bit-stable across provider revisions: expect cosines to agree to a
-few thousandths. A threshold is robust only when its margin exceeds that drift.
+few thousandths. A threshold's margin must exceed that drift.
 
 **With the guard on** (`sweep_with_guard`: paraphrase hits of 42 and false hits of 65
 different pairs):
@@ -985,6 +996,280 @@ PYTHONPATH=$PWD .venv/bin/python -m bench.docparse run --extractor <text-layer t
 PYTHONPATH=$PWD .venv/bin/python -m bench.docparse artifacts bench/results/docparse_parses/baseline.jsonl --out art/baseline
 PYTHONPATH=$PWD .venv/bin/python -m bench.docparse downstream text_layer=art/text_layer layout_ocr=art/layout_ocr baseline=art/baseline --base-url <loom> --token <the stub's token> --out downstream.json
 ```
+
+### Memory at scale
+
+`bench/scale_load.py` loads synthetic memories straight into the stores and then runs the
+memory ops through one server built from source. Every key has 1 to 4 versions (2.4 on
+average), `created_at` spreads over 360 days, 13 monthly partitions, and each embedding
+row carries two 3072-dimension vectors (the fake embedder's width, which every `Quantized`
+column is declared for). Two shapes:
+
+- **single**: one org, one namespace, one agent and user `-`, so every search and every
+  conflict check reads the whole namespace;
+- **zipf**: 10,000 namespaces over 1,000 orgs, sized by a Zipf law of exponent 1, with 4
+  agents and 100 users per namespace; a search reads one agent's and one user's rows.
+
+The runs used local containers on a shared host: one machine with 32 cores and 61 GB,
+ClickHouse 26.10 capped at 12 GiB (`max_server_memory_usage`), Postgres 16 in Docker with
+`shared_buffers` 2 GB and no standby, other workloads beside them (1-minute load 13 to
+224, recorded with every op). The Postgres latencies are pessimistic: a managed Postgres
+on local NVMe commits faster, though a synchronous standby adds a round trip. The host's
+free disk bounded the sizes; 1M keys and up did not fit beside both stores. Compare rows
+of one setup, not absolute times. Every figure below is in
+[`bench/results/scale_memory.json`](../../bench/results/scale_memory.json), each run with
+its setup and, where the harness recorded it, its build.
+
+**Bytes per key**, with the row shape these runs wrote (a commit's full `loom.memory` row
+as JSON in Postgres), from the main runs (single 250k and 500k, zipf 200k), each
+the first size its run recorded; later snapshots in the artifact and the 20,000-key runs
+carry somewhat more per row, from parts with few rows. The "Per key" column is the single
+250k Postgres run's bytes of each table after its ops divided by its 252,103 keys:
+
+| Store      | Table               | Bytes                                           | Per key |
+| ---------- | ------------------- | ----------------------------------------------- | ------: |
+| ClickHouse | `memory_embeddings` | 13,170 to 13,212 per row                        |  13,212 |
+| ClickHouse | `memory`            | 90 (single) to 163 (zipf) per head after merges |      92 |
+| ClickHouse | `memory_versions`   | 107 to 110 per version                          |     264 |
+| Postgres   | `memory_current`    | 1,594 to 1,623 per head                         |   1,623 |
+| Postgres   | `memory_revisions`  | 2,149 to 2,150 per revision                     |   5,136 |
+
+**Cost per million memories**, at list prices ([ClickHouse Cloud
+pricing](https://clickhouse.com/pricing), AWS us-east-1). Storage: 13.6 GB in ClickHouse
+is $0.34 a month at $25.30 per TB-month; the 6.8 GB in Postgres is on the instance's own
+disk, which ClickHouse Managed Postgres prices per instance rather than per GB. Compute:
+ClickHouse CPU per call sent, refused calls' statements included, measured on 20,000 keys
+in one namespace with ClickHouse capped at 4 GiB and 256 MB of Postgres `shared_buffers`
+(`clickhouse_cpu_ms_per_call`, each statement's `OSCPUVirtualTimeMicroseconds`), priced at
+$0.29846 per unit-hour of 2 vCPU. It is a floor: it prices CPU as if the service ran fully
+used, and leaves out merges and the time a service sits idle:
+
+| Op                            | CPU per call (ms) | Per million calls |
+| ----------------------------- | ----------------: | ----------------: |
+| `memory.get`                  |           5 to 16 |    $0.22 to $0.68 |
+| `memory.set`                  |               215 |              $8.9 |
+| `memory.search`               |        108 to 182 |      $4.5 to $7.6 |
+| `memory.bulk_set`, 20 entries |             1,761 |               $73 |
+
+The read ranges span the two authorities' runs. The write rows are the ClickHouse
+authority's: under Postgres a write's ClickHouse inserts are sent by the publication
+batch, whose statements are not tagged with the op, so that run's write figures leave them
+out. A `set` and a `search` scan their scope, so their CPU grows with it, as their bytes
+do (below). Postgres's compute is the instance's and was not metered per call. In the
+Postgres run ClickHouse stalled, inserts past their deadline and reads timing out: of 200
+`set` calls, 10 were answered 504 `BACKEND_TIMEOUT`, 2 were 503 `POSTGRES_UNAVAILABLE` and
+6 passed the harness's 120 s client timeout; 32 of 200 `search` calls were 503
+`PROJECTION_BEHIND`; and all 20 `bulk_set` calls were refused (13 `PUBLICATION_PENDING`, 7
+`PROJECTION_BEHIND`).
+
+**Ops**, p50 / p99 in ms at concurrency 5, 400 calls each (40 for `memory.bulk_set`, 20
+entries a call), with the calls refused:
+
+| Setup        | Authority  | `memory.get` | `memory.set` | `memory.bulk_set` (batched read) | `memory.search` | Refused      |
+| ------------ | ---------- | -----------: | -----------: | -------------------------------: | --------------: | ------------ |
+| single, 250k | Postgres   |     29 / 140 |  406 / 7,282 |                  21,614 / 41,906 |     697 / 2,446 | 1 bulk (503) |
+| single, 250k | ClickHouse |     38 / 273 |  464 / 1,520 |                  22,104 / 57,220 |     739 / 2,703 | none         |
+| single, 500k | ClickHouse |  115 / 1,839 |  619 / 6,758 |                          not run |         not run | none         |
+| zipf, 200k   | Postgres   |     93 / 559 |  454 / 4,861 |                    2,284 / 6,126 |     347 / 1,849 | 8 bulk (503) |
+| zipf, 200k   | ClickHouse |    120 / 763 | 909 / 28,071 |                    2,016 / 4,022 |         not run | none         |
+
+The single 500k run stopped after `memory.set`, when the disk reached its floor; the zipf
+ClickHouse run stopped after `memory.bulk_set`, when ClickHouse stalled (a `SYSTEM FLUSH
+LOGS` ran past 180 s), and started on 186,494 heads, after the Postgres run's erasures.
+Each "Refused" figure counts calls answered 503; no call of these runs was answered 500.
+Neither authority was faster on every op: Postgres had the lower `get` and `set` p50,
+ClickHouse the lower `set` p99 at 250k, in single runs on this host. Under Postgres
+`memory.set` made 3.4 new parts a second per memory table at 250k, against 9.9 under
+ClickHouse.
+
+**The vector leg** (the statement of `memory.search` that ranks the scope's vectors,
+codes-first), searched one call at a time:
+
+| Scope                                           |  Namespace rows | Parts | Read (MiB) | p50 (ms) |
+| ----------------------------------------------- | --------------: | ----: | ---------: | -------: |
+| single, 250k                                    | 277,628 or more |    59 |        185 |      312 |
+| the same after `OPTIMIZE TABLE … FINAL`         |         277,628 |    14 |        165 |      160 |
+| single, 500k                                    | 527,628 or more |    69 |        283 |      301 |
+| zipf, the largest namespace, one agent and user |          15,166 |    54 |         52 |      117 |
+| zipf, the third namespace, one agent and user   |           6,285 |    53 |         43 |       69 |
+
+In the single shape the scope is the namespace, and the leg reads about 0.56 to 0.70 KB
+per row of it (the probes recorded no row count: the 250k rows are those after the
+`OPTIMIZE`, which only removes rows, and the 500k rows are the load's). After the
+`OPTIMIZE`, `memory.search` p50 fell from 671 to 392 ms at 250k. In the zipf shape the
+scope is one agent's and one user's rows, about 1/400 of the namespace's: a scope of a few
+dozen rows still reads tens of MiB, a granule of every part of its partitions.
+
+**The write path's conflict check** reads the writer's scope too. At 250k, each
+`memory.set` read 164 to 185 MiB. With the batched read, `memory.bulk_set` read 6.0 to 6.6
+GiB a call, held up to 4.7 GiB in one statement and failed 65 to 93 statements a round of
+20 calls on the memory cap, leaving 5 to 22 entries unchecked; with
+`LOOM_MEMORY_BULK_PEER_READ=per_fact` it read 3.0 to 4.1 GiB, held at most 154 MiB and
+failed none (three rounds each, alternated on the same rows).
+
+**Erasure** at zipf 200k (`erasure.request`, purge), of different orgs and users in each
+authority's run:
+
+| Authority  | Scope                  |   Keys | Seconds | Outcome                                       |
+| ---------- | ---------------------- | -----: | ------: | --------------------------------------------- |
+| Postgres   | one user               |    590 |     235 | completed                                     |
+| Postgres   | an org's 10 namespaces | 14,125 |     184 | completed                                     |
+| ClickHouse | one user               |    113 |     186 | 504 `BACKEND_TIMEOUT` (a write past 60 s)     |
+| ClickHouse | an org's 10 namespaces | 52,071 |     236 | failed: `memory.tombstone` read past its 30 s |
+
+The org erasures ran with `external: false`, which skips the external backends' steps; on
+these stores those are unconfigured stubs that erase nothing. During the ClickHouse runs
+the erasure's mutations of `memory_embeddings` held the server: a `count()` over 19,941
+rows took 153 s and a `system.mutations` lookup 184 s.
+
+**Postgres** at zipf 200k (200,000 heads, 480,000 revisions as loaded): `VACUUM (ANALYZE)`
+took 0.49 s for `memory_current` and 0.56 s for `memory_revisions`. After the Postgres
+run's erasures (186,491 live heads), with 52,122 dead heads and 120,482 dead revisions
+(the erasures' deleted rows plus a fifth of the rest rewritten in place), it took 0.57 s
+for `memory_current` (275 MB of heap as loaded, so at least 0.48 GB/s) and 0.89 s for
+`memory_revisions` (969 MB as loaded, at least 1.09 GB/s), both tables in the page cache;
+a `COPY` of the largest org's rows of every memory table took 8.9 s for 351 MB.
+
+**Several serving processes.** `memory.set` was sent open loop (each write at its time
+slot, whatever earlier writes were doing, up to 512 in flight) at 15 and 150 a second over
+two replicas of two web workers each (Postgres authority, small data, ClickHouse capped at
+4 GiB). At 15 a second the host completed 8.6 a second; at 150 the 512-write cap held what
+was sent to 57 a second, and the host completed 24 a second. ClickHouse got 4.3 to 5.7 new
+parts a second per memory table, no partition passed 55 active parts
+(`parts_to_delay_insert` is 1,000) and at most 11 merges ran at once, so merges kept up.
+The refusals were the host's limits, all 503s: `PROJECTION_BEHIND`, `ADMISSION_CONTENDED`
+and `OVERLOADED`. A rate of 1,500 a second would only raise the writes not sent at the
+cap, and was not run.
+
+**Extrapolated, and the ceiling hit first.** Each figure grows linearly with what it
+reads:
+
+1. **A read scope's vector scan (no vector index)**, at about one million memories in one scope
+   (org, namespace, agent, user). At 0.6 KB a row, a search and every write's conflict
+   check read 0.6 GB at 1M rows, 6 GB at 10M and 60 GB at 100M, each call: seconds per
+   call before 10M. The size of the largest scope sets it, not the total number of
+   memories.
+2. **Erasure under the ClickHouse authority** is an observation, not a measured
+   ceiling: at 200k keys, on a ClickHouse that had already stalled, its mutations of the
+   vector table held the server's reads past their deadlines.
+3. **One Postgres primary**, at 100M to 1B keys: 6.8 KB a key is 680 GB at 100M and
+   6.8 TB at 1B. At the rates above, from tables in the page cache, a vacuum pass over 1B
+   heads (1.6 TB) is near an hour and over their revisions (5.1 TB) over an hour, longer
+   from disk; a one-org copy at 39 MB/s is half an hour for an org of 10M keys.
+4. **ClickHouse storage**: 13.6 KB a key is 1.4 TB at 100M and 13.6 TB at 1B, nearly
+   all of it vectors.
+
+Reproduce, on a private ClickHouse and Postgres, with a server from source with background
+workers off, auth off and the fake embedder (`.env` for the ClickHouse authority,
+`.env.pg`, a copy of `.env` that adds `LOOM_STORAGE_AUTHORITY=postgres` and
+`LOOM_PG_DSN`). The artifact records each run's setup (shape, size, caps, setting values);
+the commands follow this pattern:
+
+```bash
+B="env PYTHONPATH=$PWD .venv/bin/python bench/scale_load.py"
+$B load-ch --shape single --rows 250000     # or --shape zipf --rows 200000 --tenants 10000 \
+                                            #   --orgs 1000 --agents 4 --users 100
+$B --env .env.pg load-pg                    # into empty Postgres tables
+$B --env .env.pg authority --to postgres    # start a server of that authority, then:
+$B --env .env.pg pg --dump-org <org> --out <run>-pg-loaded.json      # vacuum and dump the rows as loaded
+$B --env .env.pg measure --base-url <server> --shape single --out <run>-measure.json
+$B --env .env.pg erase --base-url <server> --user <org>/<user> --org <org> --out <run>-erase.json
+$B --env .env.pg pg --dead-fraction 0.2 --out <run>-pg-dead.json   # then vacuum with dead rows
+$B --env .env.pg optimize --base-url <server> --shape single --out <run>-optimize.json
+$B --env .env.pg fleet --base-url <server>,<server> --rate 15 --seconds 40 --out <run>-fleet.json
+$B authority --to clickhouse                # then measure and erase without --env .env.pg
+```
+
+`authority --to` switches the recorded authority between runs on these private stores,
+which a deployment never does. `measure --ops` and `--calls` narrow a run (the bulk peer
+read rounds ran `--ops memory.bulk_set,memory.set --calls 100`, alternating the server's
+`LOOM_MEMORY_BULK_PEER_READ`), `pg` without `--dead-fraction` times a vacuum of the rows
+as loaded, and `load-ch --offset` grows a load (the 500k run grew the 250k one).
+
+### A cell's org triggers
+
+`bench/cell_trigger_cost.py` measures what a [cell](../architecture/cells.md)'s org
+triggers add to writes of a guarded table (`loom.scope_generations`), in a database of
+its own on a local Postgres 16 in Docker on a shared host, with the cell in `enforced`
+and the written org held. It needs no provider and no server:
+
+```bash
+PYTHONPATH=$PWD LOOM_PG_DSN=postgresql://... .venv/bin/python bench/cell_trigger_cost.py
+```
+
+| Write                                 | Triggers off      | Triggers on       |
+| ------------------------------------- | ----------------- | ----------------- |
+| marked single-row insert, p50 / p99   | 3.08 ms / 21.0 ms | 2.38 ms / 14.1 ms |
+| unmarked single-row insert, p50 / p99 | 3.26 ms / 19.1 ms | 2.56 ms / 11.7 ms |
+
+| 500,000-row `COPY`, on minus off within a round | Median        | Over 6 rounds    |
+| ----------------------------------------------- | ------------- | ---------------- |
+| marked session                                  | 0.16 µs a row | −0.36 to 0.49 µs |
+| unmarked session                                | 13.4 µs a row | 12.1 to 13.9 µs  |
+
+Each single-row figure is the median of 5 runs of 2,000 inserts, the runs alternating
+triggers off and on; the harness checks both triggers are on, at origin, in every run
+that says so (after a bulk load an autovacuum can hold the table's lock past `ensure`'s
+100 ms, and the harness then tries again, as a later boot would). The commit and a busy
+host dominate the single-row figures, so they show no measurable cost, not a gain. Each
+`COPY` round times both sessions with the triggers off and on, in an order that rotates,
+and the cost is the difference within the round. A marked session, which every Loom
+process with `LOOM_CELL` set opens, shows no cost the rounds can tell from zero (the six
+rounds' differences range from −0.36 to 0.49 µs a row); an unmarked one pays 12 to 14 µs
+a row for the state read and the `loom.tenancy` lookup. Loom's own writes are marked, so
+this predicts the ship gate (a `memory.set` p99 rise of at most 10 ms, a delivery pass
+at most 10% slower) holds by a wide margin; the cost lands on scripts and older builds
+writing a cell without the check. This measures the triggers on the statements, not a
+whole `memory.set` through a server on a cell; the end-to-end gate follows.
+
+A small local diagnostic on an attached first cell records 400 sequential `memory.set`
+calls per run and 1,000-row statement inserts from marked and unmarked sessions, three
+rounds with org triggers on and off. Its fixture has two server processes, a router,
+Postgres 16 with a synchronous standby and ClickHouse in Docker on a shared host under
+other load. These are diagnostic figures, not the end-to-end acceptance workload:
+
+| Local, three rounds                 | Triggers on            | Triggers off           |
+| ----------------------------------- | ---------------------- | ---------------------- |
+| `memory.set` p50                    | 154.4, 99.3, 98.4 ms   | 91.9, 101.2, 101.6 ms  |
+| `memory.set` p99                    | 494.0, 291.7, 257.6 ms | 279.2, 244.7, 233.3 ms |
+| 1,000-row insert, marked (median)   | 11.0, 9.2, 8.5 ms      | 9.7, 11.1, 10.6 ms     |
+| 1,000-row insert, unmarked (median) | 22.1, 21.4, 21.0 ms    | 10.9, 9.6, 11.0 ms     |
+
+The marked statement medians average 9.6 ms on and 10.5 ms off. A statement insert omits
+the delivery worker's claim, embedding, publication and settlement work, so these figures
+establish no delivery-throughput gate. The API p99 differences within each round are
++214.8, +47.0 and +24.3 ms; another small diagnostic has differences of −71.7, −10.0 and
+−42.4 ms. Their opposing signs on the loaded host leave the API gate unresolved. Neither
+end-to-end gate is established by these measurements.
+
+`bench/cell_trigger_gate.py` measures the acceptance workload on an independently owned,
+attached scratch fixture with explicit fake providers, enforced mode and an already held
+org. Its namespace uses `append_only` for independent writes: sibling values do not
+rewrite one another's heads. The fixture verifies the stored policy before every arm,
+and the row proof requires each exact returned version and active status. This measures
+trigger cost for independent writes, not semantic conflict resolution. Each API run has
+50 unmeasured warmups and 2,000 sequential measured requests with
+4,096-byte values, with five runs per arm in counterbalanced order. Each delivery block
+times five complete `pg_delivery.run_pass` calls at the unchanged configured batch size,
+with five blocks per arm. The latency gate is `median(p99_on) - median(p99_off) <= 10 ms`;
+the throughput gate is `1 - median(rows_per_second_on) / median(rows_per_second_off) <= 0.10`.
+The driver retains every run and raw outcome; it does not substitute statement timings.
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python bench/cell_trigger_gate.py \
+  --base-url <loopback-server-url> --pg-dsn <cell-dsn> --token <writer-token> \
+  --org <held-org> --namespace <namespace> --fixture-manifest <fixture-manifest.json> \
+  --launch-manifest <launch-manifest.json> --output <result.jsonl>
+```
+
+The fixture owner supplies the exact source, launch, configuration and ownership receipts,
+excludes competing controllers and workers, and stops its processes before deleting its
+exact scratch databases. The output path must not exist. The driver verifies source,
+launch and configuration identities and the live fixture before native setup and every
+arm, restores the org triggers within its cleanup bound and emits a final verdict only
+after cleanup and artifact sync. It records the ownership-receipt digest supplied by
+the fixture owner.
+Source tests and the diagnostic figures above are not evidence that this workload passes.
 
 ## Reference computations
 

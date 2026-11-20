@@ -97,6 +97,7 @@ def current_generation_attrs() -> dict[str, str]:
 _KNOWN_STAGES: frozenset[str] = frozenset(
     {
         "provider_validation",
+        "definition_draft",
         "dupcheck_rerank",
         "hyde",
         "iterative_judge",
@@ -232,6 +233,10 @@ def request_org() -> str:
     it once the token was verified; "" outside a request. A worker's identity
     is not one: a pass stamps the org of the row it last worked on, which says
     nothing about whose the next text is."""
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        return ""
     ident = _identity.get() or {}
     op = str(ident.get("operation") or "")
     org = str(ident.get("org") or "")
@@ -699,6 +704,11 @@ def _provider_span(name: str, attrs: dict[str, Any]) -> Iterator[Any]:
     exception's type only, not its message, which can quote the provider's
     reply; a cancellation is not the provider's error and leaves status
     unset."""
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        yield None
+        return
     span_cm: Any = None
     span: Any = None
     started = time.perf_counter()
@@ -753,6 +763,33 @@ class _Embedding:
         except Exception:  # noqa: BLE001 — telemetry never fails an embed
             pass
 
+    def _record_billed(self, tokens: int, called: bool, known: bool) -> None:
+        from server.observability.cost_accumulator import embed_cost_usd, is_priced
+
+        if known or not called:
+            self._span.set_attribute("gen_ai.usage.input_tokens", int(tokens))
+        else:
+            self._span.set_attribute("loom.embed.usage_unknown", True)
+        if not called:
+            self._span.set_attribute("gen_ai.usage.cost", 0.0)
+        elif known and is_priced(self._model):
+            self._span.set_attribute("gen_ai.usage.cost", embed_cost_usd(self._model, tokens))
+        else:
+            self._span.set_attribute("loom.embed.cost_unknown", True)
+
+    def _record_cached(self, tokens: int) -> None:
+        from server.observability.cost_accumulator import embed_cost_usd, is_priced
+
+        # Cached tokens are a local estimate of avoided usage, not provider billing.
+        self._span.set_attribute("loom.embed.cached_tokens", int(tokens))
+        self._span.set_attribute("loom.embed.cached_tokens_estimated", True)
+        if is_priced(self._model):
+            self._span.set_attribute(
+                "loom.embed.cost_saved_usd", embed_cost_usd(self._model, tokens)
+            )
+        else:
+            self._span.set_attribute("loom.embed.cost_saved_unknown", True)
+
     def record_usage(
         self,
         *,
@@ -762,6 +799,7 @@ class _Embedding:
         cache_misses: int = 0,
         batch_size: int = 1,
         called_provider: bool = True,
+        usage_known: bool = True,
     ) -> None:
         """Record billed and cache-served usage as separate quantities.
 
@@ -782,8 +820,6 @@ class _Embedding:
         if self._span is None:
             return
         try:
-            from server.observability.cost_accumulator import embed_cost_usd
-
             # Only a call that actually reached the provider is an EMBEDDING
             # observation. Marking every embed one would put cache hits in Langfuse
             # as embeddings with 0 tokens and $0, inflating the count with empty
@@ -794,23 +830,9 @@ class _Embedding:
                 "langfuse.observation.type",
                 "embedding" if called_provider else "span",
             )
-            self._span.set_attribute("gen_ai.usage.input_tokens", int(billed_tokens))
-            self._span.set_attribute(
-                "gen_ai.usage.cost", embed_cost_usd(self._model, billed_tokens)
-            )
+            self._record_billed(billed_tokens, called_provider, usage_known)
             if cached_tokens:
-                # Served by Loom's own cache, so NOT part of `input_tokens` and not a
-                # provider cache read: under a `gen_ai.usage.*` cache key both tools
-                # would subtract it from the billed input.
-                self._span.set_attribute("loom.embed.cached_tokens", int(cached_tokens))
-                self._span.set_attribute(
-                    "loom.embed.cost_saved_usd",
-                    embed_cost_usd(self._model, cached_tokens),
-                )
-                # Cached counts are a LOCAL tiktoken estimate: a cache hit never
-                # sees a provider `usage` block. Flagged so nobody reconciles
-                # this against an invoice.
-                self._span.set_attribute("loom.embed.cached_tokens_estimated", True)
+                self._record_cached(cached_tokens)
             self._span.set_attribute("loom.embed.cache_hits", int(cache_hits))
             self._span.set_attribute("loom.embed.cache_misses", int(cache_misses))
             self._span.set_attribute("loom.embed.batch_size", int(batch_size))

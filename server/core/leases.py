@@ -10,9 +10,10 @@ first, for a name almost never held). Loom requires a Keeper
 arbitration without one.
 
 Expiry is judged on the ClickHouse server's clock. A holder renews every sixth of
-the TTL (a twelfth after a failed renewal) and counts the lease lost half the TTL
-after the last renewal it saw land, before another process can take it over. There
-are no fencing tokens: a statement already sent still lands.
+the TTL (a twelfth after a failed renewal), gives each attempt at most a twelfth of
+the TTL, and counts the lease lost half the TTL after the last renewal it saw land,
+before another process can take it over. There are no fencing tokens: a statement
+already sent still lands.
 
 `cluster_lease` holds a name for a block and cancels the block once the lease is
 lost; `take` returns a `Lease` to release yourself. `holding` is a claim: a
@@ -210,11 +211,13 @@ class Lease:
             if left <= 0:
                 break
             try:
-                if not await asyncio.wait_for(self.renew(), left):
+                # one attempt gets a twelfth of the TTL, so a call that hangs leaves room
+                # for retries before half the TTL has passed
+                if not await asyncio.wait_for(self.renew(), min(left, self.ttl_s / 12)):
                     break
                 pause = self.ttl_s / 6
             except Exception as e:  # noqa: BLE001 — retried until half the TTL has passed
-                log.warning("lease %s: renewal failed (%s)", self.name, e)
+                log.warning("lease %s: renewal failed: %s: %s", self.name, type(e).__name__, e)
                 pause = self.ttl_s / 12
         self.lost = True
         log.error("lease %s lost: another process may hold it now", self.name)
@@ -333,16 +336,28 @@ async def cluster_lease(name: str, *, ttl_s: float, **options: Any) -> AsyncIter
         yield lease
 
 
+async def _live_holder_name(name: str, ch: Any) -> str | None:
+    """Who holds `name` with a renewal that has not lapsed, on the store's clock."""
+    row = await _client(ch).query_one(LOCK_HOLDER, {"name": name})
+    return None if row is None or row["stale"] else str(row["holder"])
+
+
 async def held_by(name: str, holder: str, *, ch: Any = None) -> bool:
     """Whether `holder` holds `name` now, on the store's clock: a third party's
     fence for work a holder hands off. LeaseUnavailable when the store cannot answer."""
     try:
-        row = await _client(ch).query_one(LOCK_HOLDER, {"name": name})
+        live = await _live_holder_name(name, ch)
     except Exception as e:
         # The driver's text can carry a statement or the server's address: logged only.
         log.warning("lease %s: the holder read failed: %s: %s", name, type(e).__name__, e)
         raise LeaseUnavailable("the lease store did not answer", operation=name) from e
-    return row is not None and str(row["holder"]) == holder and not row["stale"]
+    return live == holder
+
+
+async def has_live_holder(name: str, *, ch: Any = None) -> bool:
+    """Whether some holder keeps `name` with a renewal that has not lapsed, on
+    the store's clock. The driver's error goes to the caller, which logs it."""
+    return await _live_holder_name(name, ch) is not None
 
 
 # Releases run under a shield, kept referenced until they finish.
@@ -442,6 +457,7 @@ __all__ = [
     "LeaseUnavailable",
     "cluster_lease",
     "default_holder",
+    "has_live_holder",
     "held_by",
     "holding",
     "key_exists",

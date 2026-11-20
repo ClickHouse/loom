@@ -1,7 +1,8 @@
 # Code index operations
 
-The code index runs only when an operator enables its workers and configures
-repositories. Every `code_*` worker except `code_coverage_notify` and
+This page covers how to enable the code index workers, configure repositories and keep
+the index current; the code index runs only when an operator enables its workers and
+configures repositories. Every `code_*` worker except `code_coverage_notify` and
 `code_backport_gaps` is off by default. What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
@@ -130,6 +131,7 @@ LOOM_CODE_REPOS_JSON='[
 | `scip_extra_producers`               | further compiler-tier producers over the same tree (a Python repository with a TypeScript frontend), each in its own checkout |
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
+| `git_proxy_identity`                 | the user name its git presents to an operator's [git proxy](#git-through-a-forward-proxy); unset, the deployment's default    |
 
 Name a `git_remote` host in ASCII, as punycode for an internationalised name: a page
 add refuses any other, so the two spell a host alike.
@@ -302,11 +304,23 @@ scip-python, scip-typescript, scip-go, and for C/C++ clang 21, lld, CMake, ninja
 scip-clang. Upstream builds scip-clang for x86_64 Linux only, so the arm64 image has
 the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_PATH` at
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
-creates a missing working tree as an empty repository and fetches each commit into it
-from the entry's mirror, so a new leader starts from nothing. A worker whose project
-prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+initializes a missing or empty working tree directory as a Git repository and fetches
+each commit into it from the entry's mirror, so a new leader starts from nothing.
+An existing checkout must be the root of a standalone Git working tree, with its
+`.git` directory inside the checkout. Compiler Git jobs need writable metadata
+there. Linked worktrees, external Git metadata, regular files, bare repositories and
+nonempty directories without their own working tree are refused without replacing
+their contents. Use a separate empty path for the compiler checkout, or point
+`scip_checkout_dir` at an existing standalone checkout root.
+A worker whose project prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
 remains available. TypeScript projects have their dependencies installed
 automatically in their checkout.
+
+Compiler reconciliation batches file paths and symbol keys by both item count and
+serialized UTF-8 size. Long qualified names and multibyte paths therefore split into
+smaller reads within the default ClickHouse HTTP form-field limit. A symbol key
+larger than one field is reconstructed from bounded parameters; names and identifiers
+remain exact.
 
 The C/C++ harness runs the repository's CMake configure (compile database only, no
 build) on the first run in a tree, or when its `CMakeCache.txt` is missing, was made in
@@ -332,27 +346,53 @@ memory the workers process has. The full index of such a tree takes about an hou
   a timed-out delta leaves `scip_commit` where it was, so the next pass retries a larger
   window.
 - **Delta caps.** The server reads a compiler tier's delta (every tier, delta or full
-  run) only when it is a regular file, not a link, within two caps, both checked before
-  it is parsed; a delta over either fails the entry's pass, and a raised value reaches
-  the next pass. `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` (180 MiB) bounds the bytes, and
-  `LOOM_CODE_SCIP_DELTA_MAX_NODES` (6,000,000) bounds the `{`, `[` and `,` bytes, which
-  bound the JSON values a parse builds. A parse holds up to about 600 B per counted byte
-  (minimal `{"path":""}` files or symbols, which repository code can write) plus about
-  6 times the delta's bytes (one long string holding a 4-byte character), on top of the
-  process's own 52 MiB. At the defaults that is 52 MiB + 600 B × 6,000,000 +
-  6 × 180 MiB, about 4.5 GiB for the worst delta. A synthetic C++-shaped delta has one
-  counted byte per about 32 bytes and parses at about 9 times its size, so it meets
-  both caps near 180 MiB, about 1.6 GiB parsed; a real delta with longer names meets
-  them later, one with shorter names sooner. Raise both together, to what the worker's
-  memory allows by that formula. To measure the per-value cost on a host (about 3.4 GiB
-  at the default count):
+  run) only when it is a regular file, not a link, and applies it a round of files at a
+  time (`server/code/app/index/delta_file.py`). It first counts the delta's `{`, `[`
+  and `,` bytes, then parses every value once and checks each file entry, and only
+  then reopens it and reads the files again a round at a time for the apply. So a
+  delta over a cap, or one that does not parse, fails the entry's pass before anything
+  is applied. The caps hold as read when the delta is opened; a changed value reaches
+  the next pass.
+  - `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` (180 MiB) bounds the file's bytes and
+    `LOOM_CODE_SCIP_DELTA_MAX_NODES` (6,000,000) its counted bytes, which bound the JSON
+    values the parses build. They bound the work of a pass. Its memory is the round
+    below plus a record of each file entry and deleted path: about 70 B each, as many
+    as the node cap allows (a minimal entry costs 2 counted bytes, a deleted path 1:
+    about 3 million entries, some 200 MiB, or 6 million deleted paths, some 400 MiB,
+    at the default), and their paths' text (at most 4,096 bytes each), which the byte
+    cap bounds. A large C++ tree's full run writes over 500 MiB in entries of tens of
+    KB, a few MiB of bookkeeping: raise both for it.
+  - `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES` (3,000,000) bounds one round's memory: the
+    counted bytes one apply round parses. A round holds at most 100 files, and is
+    released before the next is parsed; one file entry alone may fill it, and a file
+    entry over it fails the pass, naming the entry. Any other value that large (a
+    deleted path, a header value, an ignored key) reads `delta invalid`, since the
+    harness never writes one; the deleted paths are read one at a time. A fixed cap of
+    64 million characters, not a setting, bounds one value's and one round's text the
+    same way; a real entry has about 32 characters per counted byte, so for one it binds
+    near 2,000,000 counted bytes. The largest file entry of a large C++ tree's full run
+    holds about 600,000 counted bytes (some 100,000 edges), about a fifth of the round
+    budget and a third of the character cap. The densest round repository code can write
+    (minimal symbols) peaks at about 1.8 GiB resident while it is read at the default
+    budget (measured with `ru_maxrss`; about 330 B per counted byte of Python objects,
+    the rest the allocator's); a value's text near the character cap (up to 4 bytes a
+    character) may be held up to three times while the read buffer grows, so the worst
+    round's read is about 2.5 GiB, whatever the delta's size. Its apply holds that
+    round's rows on top (the live rows read for its paths and the new rows to insert),
+    about as much again for a round of new symbols, so size the worker for about twice
+    the read. A real file entry of a C++ delta has one counted byte per about 32 bytes:
+    a round is its 100 files long before it reaches the budget. To measure the read of
+    the densest default round from a source checkout:
 
-  ```bash
-  .venv/bin/python -c "import resource; from server.code.app.index.scip_delta import ScipDelta; n = 2_999_999; raw = b'{\"commit\":\"c\",\"files\":[' + b','.join([b'{\"path\":\"\"}'] * n) + b']}'; ScipDelta.model_validate_json(raw); print(raw.count(b'{') + raw.count(b'[') + raw.count(b','), 'counted,', len(raw) >> 20, 'MiB delta,', resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
-  ```
+    ```bash
+    .venv/bin/python -c "import resource, tempfile, pathlib; from server.settings import settings; from server.code.app.index.delta_file import open_delta; p = pathlib.Path(tempfile.mkdtemp()) / 'delta.json'; n = settings.code_scip_delta_round_max_nodes // 2 - 10; p.write_text('{\"commit\":\"c\",\"files\":[{\"path\":\"a\",\"symbols\":[' + ','.join(['{\"qualified_name\":\"\"}'] * n) + ']}]}'); list(open_delta(p).rounds(100, lambda x: True)); print(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss >> 10, 'MiB peak RSS')"
+    ```
 
-  An invalid delta fails the pass with `delta invalid: <n> errors`, not pydantic's list
-  of every bad item.
+  An invalid delta fails the pass with a short `delta invalid: <reason>` naming its
+  first problem (for an entry, `file entry <i>: …`), not pydantic's list of every bad
+  item. `--keep-delta` keeps the delta as the harness wrote it, before it is parsed
+  (the byte cap still applies), as a file only the user that ran the command can read
+  (mode 0600).
 
 - **C/C++ full index.** `code_scip_full` re-indexes one entry per pass: an entry whose
   `scip_commit` is not seeded yet (the delta skips it with "watermarks not seeded"), and
@@ -505,7 +545,22 @@ dependency installs and the compiler-tier harnesses) inside one boundary built o
   is public (loopback, private ranges, link-local and the cloud metadata address are
   refused, including when reached through a redirect or a `.gitmodules` URL) and
   connects to the address it vetted. Plain HTTP has no route. One job holds at most 32
-  tunnels at a time, and a tunnel idle for 5 minutes is closed.
+  tunnels at a time. A client inside the sandbox reaches the proxy through a local relay
+  (its HTTPS proxy), which bridges at most 32 connections; one more waits until a bridge
+  ends. Any other connection over the cap at the proxy is refused after
+  `LOOM_CODE_EGRESS_SLOT_WAIT_S` (5 s by default), and so is a relay connection while
+  ssh tunnels hold some of the slots. The proxy logs the first refusal, and the total
+  when the job ends if there was more than one.
+
+  A tunnel with no byte either way for `LOOM_CODE_EGRESS_IDLE_TIMEOUT_S` (5 minutes by
+  default) is closed. Once its client has sent EOF, it is closed after
+  `LOOM_CODE_EGRESS_HALF_CLOSE_TIMEOUT_S` (10 s by default) without a byte from the
+  server; while bytes still wait for a slow client, the idle timeout applies instead. A
+  tunnel whose client sent EOF before any byte moved (a connection it gave up on) is
+  closed at once. Once the proxy's side of a tunnel has ended (the server closed or
+  reset it, or the proxy closed it), the relay ends its connection after at least a
+  second without a byte from the client. A client that never reads what it was sent
+  keeps its relay connection, and so its relay slot, for up to the idle timeout.
 
 Every git a repository job runs reads no system or global git config and allows only
 the `https` and `ssh` transports (`protocol.allow=never`); `ext::` and `file://` are
@@ -514,6 +569,10 @@ fetches and the C/C++ tier's `git submodule update`, never a build or `go mod
 download`, and git sends it only to URLs under the remote's owner
 (`https://host/owner/`; the whole host for a remote with no owner path). Inside the
 sandbox an `ssh` remote has no host SSH key: use an HTTPS remote with an access token.
+
+The sandbox's egress proxy connects to the remote itself and is not chained through an
+operator's proxy: a host that runs the sandbox runs no network git while
+`LOOM_CODE_GIT_PROXY_URL` is set ([git through a forward proxy](#git-through-a-forward-proxy)).
 
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
@@ -550,7 +609,8 @@ these hosts without the sandbox.
 
 Unless `LOOM_CODE_SANDBOX_REQUIRED` is set, every host still indexes the repositories
 listed in `LOOM_CODE_REPOS_JSON`; only repositories added from the page need the
-sandbox. _Without the sandbox_ says what that runs, and the
+sandbox, or `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` for their parser tier alone.
+_Without the sandbox_ says what that runs, and the
 [quickstart](../getting-started/quickstart.md#optional-index-a-repository-on-the-released-stack)
 has the released stack's commands.
 
@@ -685,9 +745,162 @@ restrict user namespaces, but they drop the whole profile.
   compiler tiers but get no build-based tier (C/C++);
 - adding a repository or a branch from the page is refused with `SANDBOX_UNAVAILABLE`.
 
+**Self-registered repositories without the sandbox.**
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED=true` changes the second and the last item on a
+host that cannot run the sandbox. `code.repo.remote_branches`, `code.repo.add` and
+`code.repo.add_branch` are no longer refused for the missing sandbox, and the ingest pass
+and history reads clone and fetch a self-registered repository whose remote is a network
+URL, so it gets the parser tier. It still gets no compiler tier, build-based or static:
+their dependency installs, module downloads and submodule fetches would run without the
+egress proxy too. `workers.status` names the skip.
+
+The git jobs this allows (`ls-remote`, the bare clone, fetches) run as plain processes.
+They run no repository code: a clone or a fetch transfers objects and refs, never hooks
+or configuration, the mirror is bare, and git reads no system or global configuration.
+Nothing vets where they connect. Git reaches the host and port the remote names and a
+host that one redirects to, private and link-local addresses included, and an `ssh`
+remote runs `ssh` with the server's `HOME` and the keys in it. Whoever names a remote
+therefore chooses what the server connects to, so Loom refuses to load the setting unless
+`LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY=true` leaves those three ops to platform
+admins ([self-service repositories](../features/code-index/repositories.md#self-service-repositories)).
+With auth off that rule passes a call that carries no principal, so the setting is
+refused as well there (`LOOM_AUTH_REQUIRED=false` or
+`LOOM_IDENTITY_PROVIDER=single-user`). It is refused with `LOOM_MCP_AUTH_MODE=open` too,
+where such a call can arrive with auth on: the rule refuses it, and the setting still
+needs every caller authenticated. It is also refused together with
+`LOOM_CODE_SANDBOX_REQUIRED=true`, under which no repository job runs as a plain process.
+
+Where `LOOM_CODE_GIT_PROXY_URL` is set, those git jobs connect to the operator's proxy
+alone: it decides what they reach, and an `ssh` remote is refused
+([git through a forward proxy](#git-through-a-forward-proxy)). The rules for loading the
+setting stay as they are.
+
+The setting also resumes the git jobs of entries that members added before
+`LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
+named and are cloned and fetched the same way. Before turning it on, list the branches in
+the registry (the active rows of `loom.code_repos` whose `row_kind` is not `access`;
+`code.repos` lists only what its caller may read) and have those a platform admin would
+not add removed with `code.repo.remove`.
+
+`/v1/health` and `loom doctor` keep reporting `repo_jobs_unsandboxed` as a warning, with
+a message that names the setting. The dashboard reads that warning, not the setting, and
+offers no **Add repository** or **Add branch** while it stands: call `code.repo.add` and
+`code.repo.add_branch` directly.
+
 Each Go entry has its own module cache under `LOOM_CODE_SCIP_GO_MODCACHE`
 (`<root>/<org>/<namespace>`): `go` does not re-check the sums of modules already in its
 cache, so a cache one repository's job wrote is never another's.
+
+### Git through a forward proxy
+
+A deployment whose pods reach git remotes only through a forward proxy sets
+`LOOM_CODE_GIT_PROXY_URL`. Every network git of the code index then connects through
+that proxy: a mirror's clone, fetch and `ls-remote`, the `ls-remote` before an add, and
+a checkout's `git submodule update`, in the workers and in every serving process, which
+keep mirrors of their own. While the setting is set git never connects directly: a job
+that cannot go through the proxy is refused. This holds with git 2.31 or later: Loom
+hands git these settings through its environment (`GIT_CONFIG_COUNT`), and an older git
+reads none of them, the proxy included.
+
+| Setting                           | Meaning                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `LOOM_CODE_GIT_PROXY_URL`         | the proxy, `http://host:port` or `https://host:port`: the port named, no credentials, path or query |
+| `LOOM_CODE_GIT_PROXY_TOKEN_FILE`  | a file holding the proxy password, read again for every git job, so a rotated token is taken up     |
+| `LOOM_CODE_GIT_PROXY_CA_FILE`     | a PEM bundle git verifies the remotes with through the proxy                                        |
+| `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` | a PEM bundle git verifies an `https://` proxy's own certificate with                                |
+| `LOOM_CODE_GIT_PROXY_IDENTITY`    | the proxy user of an entry that names no `git_proxy_identity`                                       |
+
+The other four need the first, the proxy's own bundle an `https://` one, and a value
+that does not fit is refused when the settings load.
+
+**What the proxy receives.** Git opens `CONNECT <remote host>:443` with
+`Proxy-Authorization: Basic` on its first request: the user is the entry's identity, the
+password the file's content (empty without a file). No request comes without them. The
+entry's access token goes to the remote, inside the tunnel, never to the proxy. A proxy
+that terminates TLS for a remote can then decide, by the identity, which repository a
+job reaches and with which credential. An `http://` proxy URL sends the identity and the
+token to the proxy in clear on every job: use one only over a path you trust, or give
+the proxy an `https://` URL, which git verifies before it sends them (_The CA bundles_
+below).
+
+**The identity.** An entry presents its own `git_proxy_identity`, else
+`LOOM_CODE_GIT_PROXY_IDENTITY`: letters, digits and `. _ ~ @ -`, at most 128 characters.
+An operator entry names it in `LOOM_CODE_REPOS_JSON`; an entry with a malformed one is
+skipped. `code.repo.add` and `code.repo.remote_branches` take it from a platform admin
+only: the caller `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` asks for, with or without
+that setting. A branch added with `code.repo.add_branch` inherits it, and adding one to
+such an index takes a platform admin too. Branches of one repository share a mirror: the
+ingest pass fetches them in one negotiation only where remote, token and identity are
+the same, and each host's own fetch round fetches the mirror as its first entry.
+
+**Repositories added with `code.repo.add`.** The proxy is used where repository jobs
+run as plain processes, and there `code.repo.remote_branches`, `code.repo.add` and
+`code.repo.add_branch` answer `SANDBOX_UNAVAILABLE` unless
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` is set (_Self-registered repositories without
+the sandbox_). With it, the `ls-remote` of those ops and the entry's clone and fetches
+go through the proxy under the entry's identity, so the proxy decides which host they
+reach. An entry in `LOOM_CODE_REPOS_JSON` needs no such setting.
+
+**The password.** It is in the environment of the one git process that uses it, read
+from the file for that job: not in an argument, a remote URL, a stored git config, a
+build's environment or a sandboxed job. Loom masks it in what git prints (as the file
+holds it, percent-encoded and in the header's base64 form) before that output is logged
+or recorded. That keeps it out of a build's sight, not out of its reach: on a host that
+uses the proxy, repository jobs are plain processes, so a compiler tier's build runs as
+Loom's user and can read the token file. Run compiler tiers there only for repositories
+you trust.
+
+**The CA bundles.** There are two, one for each TLS connection, and neither stands in
+for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+since release 2.27, older than the git every repository job already needs): the bundle
+git verifies an `https://` proxy's own certificate with, before it sends the identity
+and the token. Without it git checks the proxy against its default roots, so a proxy
+whose certificate comes from an authority of your own needs it. The certificate must
+also name the host the URL spells, as a DNS name or, for an address, as an IP address:
+git checks the name as well as the authority.
+`LOOM_CODE_GIT_PROXY_CA_FILE` is git's `http.sslCAInfo`, which replaces git's default
+roots for the remotes of these jobs: it must hold every authority the remotes present
+through the proxy, the proxy's own for a remote whose TLS it terminates and the public
+roots for a remote it tunnels untouched. Loom reads neither file: git does, and a path
+that names no file fails the job there.
+
+A certificate git cannot verify fails the job in git's own words, the same for the
+proxy's certificate and a remote's (`SSL certificate problem: unable to get local issuer
+certificate` with one TLS library; the wording is the library's). A certificate that
+names another host fails the same way, in other words of the library. When it is the
+proxy's, git ends the connection before its first request, so neither the identity nor
+the token leaves. A fetch records git's words on the `fetch` tier, as an unclassified
+error. A clone shows `git clone failed (exit 128)` with git's words in the server log,
+and the `ls-remote` before an add shows `git ls-remote failed for <repository>`: check
+the two bundles and the name on the proxy's certificate when an entry's first contact
+fails that way.
+
+**Refused jobs.** Each of these stops the job before any process starts, with a fixed
+reason that the entry's `fetch` tier, its stage and the mirror counts in `/v1/health`
+show:
+
+- the password file cannot be read or holds no token;
+- neither the entry nor `LOOM_CODE_GIT_PROXY_IDENTITY` names an identity;
+- the remote is not an `https://` URL: the proxy setting carries no ssh, and a
+  submodule with an ssh URL fails as a transport git does not allow;
+- the host runs repository jobs in the sandbox, whose egress proxy is not chained
+  through this one. `/v1/health` and `loom doctor` report `repo_git_proxy_sandboxed`:
+  use the proxy where repository jobs run as plain processes (_Without the sandbox_).
+
+A refusal by the proxy itself reads as kind `egress` on the tier
+([when a tier fails](#when-a-tier-fails)), for an entry's clone as for its fetches. The
+clone and the `ls-remote` before an add, which show a fixed reason in place of git's
+words, name the proxy and the status it answered (`the operator's git proxy
+(LOOM_CODE_GIT_PROXY_URL) refused the connection (407)`). A `407` means the proxy did
+not take the identity or the token, any other answer is the proxy's own rule for them.
+
+**What does not use it.** A compiler tier's dependency download (the TypeScript package
+install, the Go tier's `go mod download`) runs repository code, so it gets neither the
+proxy nor its password and connects as before. Loom's HTTP clients (the GitHub API for
+PR history and fork lookups, issuer keys, document sources) do not read these settings.
+
+[Kubernetes](./kubernetes.md#git-through-a-forward-proxy) shows the mounts for the
+token and the CA bundles.
 
 ### Mirror housekeeping
 
@@ -720,9 +933,24 @@ It writes:
   `code.coverage_claim` can tell "executed by many tests" from "executed by none".
 
 Rows the newest run no longer has are tombstoned, and only after every slice was read.
-`code.coverage_claim` ranks a measured row as `executed`, above every other tier, when its
-ranges meet the subject's span; a subject whose file the run covered but whose lines no
-test executed is `uncovered`, with the measurement in `measured`.
+`code.coverage_claim` ranks a verified measured row as `executed`, above every other tier,
+when its ranges meet the subject's span. Verified measurements for every source file at
+the current repository watermark can establish that no test executed the subject, with
+the evidence in `measured`.
+
+Test names can be repository-relative file paths or pytest node IDs such as
+`tests/test_example.py::TestExample::test_value[param]|run`. The import removes the
+function, class, parameter and setup/run/teardown context suffixes and leading `./`, then
+requires the test file to exist in the namespace's live index. Paths relative to the
+integration or query test directory also resolve through those layouts. Contexts that
+map to one source/test-file pair contribute their union of executed lines; overlapping
+lines count once, and the pair keeps its strongest measured specificity score.
+
+The source must expose the per-test line records in `checks_coverage_lines` and each
+run's commit in `checks`; a coverage database or JSON report needs conversion to those
+tables. Re-run `loom code coverage-import --namespace <namespace> --dry-run` to check
+`unmapped_tests`, then import without `--dry-run` to rebuild stored pairs from the run.
+Updating the server alone does not rebuild imported coverage.
 
 ```bash
 LOOM_CODE_COVERAGE_SOURCE_URL=https://<coverage server>
@@ -732,6 +960,39 @@ loom code coverage-import --namespace <namespace> --dry-run   # counts only, wri
 loom code coverage-import --namespace <namespace>
 LOOM_CODE_COVERAGE_IMPORT_ENABLED=true                         # then daily, in the workers
 ```
+
+### Coverage freshness
+
+Line ranges describe the source measured by their run. A coverage row supports current
+execution claims only when its commit matches the source file's `indexed_commit` and the
+namespace has a `git_head` watermark. A symbol's selected spans must carry the same
+indexing commit; missing or inverted line extents and lagging compiler metadata remain
+unverified.
+A missing symbol extent never expands to whole-file execution. The measured
+test must also remain live at the matching indexing commit before its pair counts as
+`executed`. An unchanged file keeps its indexing commit when the repository advances,
+so advancing the head alone does not invalidate positive evidence.
+
+Other coverage rows remain file associations with method `coverage_history`, tier
+`file_reference`, and evidence marked `unverified`. Their old line numbers are never
+intersected with current symbol spans. These rows alone produce verdict `unknown`.
+Independent strong evidence can still establish `covered_by`.
+
+`measured.freshness` is `verified`, `partial`, or `unverified`. Its `files` dictionary
+reports each measurement commit, indexing commit, selected `symbol_commits`, and
+freshness. `commits` lists all measurement commits; `commit` is empty when they differ.
+`paths` and `hits` include only
+verified measurements. `unverified_paths` names measurements without matching identity;
+`unmeasured_paths` names source files absent from the import. A partial or unverified
+measurement cannot establish that the current subject was not executed. A negative also
+requires `run_current: true`: all measurement commits match `index_commit`, the current
+repository watermark. Tests added after an older run could execute an unchanged source.
+
+Different commits do not prove different file contents. The serving read compares commit
+identities without reading historical repository objects, so an unchanged file measured
+at another commit can remain unverified. Missing identity metadata also remains
+unverified. Matching measurement, source, symbol-span, and test indexing commits verify
+line evidence. The import retains historical evidence until a complete run replaces it.
 
 ## Another branch
 
@@ -837,16 +1098,38 @@ failed passes in a row. The next pass that succeeds clears it. A tier run from c
 records the same way when it runs under `loom code entry-lock --tier <tier>`;
 `loom code scip-delta` and `scip-full` record by themselves.
 
+A Go module whose dependencies this host cannot fetch (Go reports a private repository,
+often the repository's own modules through a vanity import path) is not a failure: the
+Go tier indexes the rest and records the tier `unavailable`, kind
+`dependency_unavailable`, with the fix (set `LOOM_CODE_SCIP_GO_PRIVATE` and give the
+tier's user a git credential for that host; Go says the same of a path or version that
+is wrong or gone). The note is written once, counts no passes, is never a
+`code_tier_failing` problem and is not in `as_of.failing_tiers`, so an agent's code
+answer does not flag those modules. It reflects the last run that built modules: a pass
+that builds nothing leaves it, and the next run that builds without such a failure
+clears it, so it comes back when a module that still cannot fetch its dependency next
+changes. Under `entry-lock --tier go`, which sees only its command's exit and output, a
+clean exit with no such failure clears it. A module that fails for any other reason
+still fails the tier, and its record names the unreachable ones too.
+
 The record is read where each reader already looks:
 
 - an agent's code answers carry it in `as_of.failing_tiers`
   ([freshness](../features/code-index/freshness.md#the-as_of-block));
 - `code.index_status` and `code.repos` return it in `tier_health`, and the dashboard's
-  repository card shows the failing tier, since when, how far behind and the fix;
+  repository card shows the failing tier, since when, how far behind and the fix, and
+  any `unavailable` tier with its fix;
 - once a tier has failed `LOOM_CODE_TIER_FAILING_WARN_PASSES` passes in a row or for
   `LOOM_CODE_TIER_FAILING_WARN_HOURS`, it is the `code_tier_failing` problem in
   `/v1/health`, the dashboard banner and `loom doctor`
-  ([monitoring](./monitoring.md#v1health));
+  ([monitoring](./monitoring.md#v1health)): a line per failing entry and tier, up to
+  five, with its reason, and each distinct fix once. `loom doctor`, which reads with the
+  deployment's own credentials, also names each entry it lists, up to five, as
+  repository@branch (org/namespace) with the error line that says why; `code.repos`
+  names the rest. A platform admin's token reads the same for every entry that is not
+  [restricted](../architecture/security.md#restricted-namespaces); a restricted one reads
+  as "a restricted entry", as does one whose classification cannot be read. Any other
+  caller reads no entry, since `/v1/health` answers without a token;
 - for push alerting, the `loom.code.tier_failing` and `loom.code.tier_lag_commits`
   gauges carry each tier the `code_tier_failing` problem reports
   ([telemetry](../features/observability/telemetry.md)), with an alert in
@@ -855,24 +1138,25 @@ The record is read where each reader already looks:
 
 The kinds (`_KINDS`) and their fixes (`fix_for`) are in
 [`server/code/domain/index/tier_health.py`](../../server/code/domain/index/tier_health.py).
-A failure with kind `unknown` carries the end of the output to read.
+A failure that matches no kind reads "unclassified error" and carries the end of
+the output to read.
 
 ## Failure model
 
-| Failure                                                                                                             | Behaviour                                                                                                                                                                                                                                                                                | Recovery                                                                                                                                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `git fetch` fails                                                                                                   | watermark unmoved; the entry's `fetch` tier records the error, its kind and fix (`tier_health`)                                                                                                                                                                                          | the next pass (supervisor backoff)                                                                                                                                                                                                |
-| crash mid-commit                                                                                                    | the commit is re-run                                                                                                                                                                                                                                                                     | idempotent upserts                                                                                                                                                                                                                |
-| a file fails to parse                                                                                               | chunks without symbols, `code_files.index_error` set (a parse past `code_parse_timeout_s` or `code_parse_memory_mb` included, and one that could not run in its process)                                                                                                                 | `code.index_errors` lists them; fixed by the next change or a repair (raising either limit re-reads none)                                                                                                                         |
-| every file fails to parse with `LookupError` "... is loaded from outside the interpreter's site-packages"           | chunks without symbols for every file: tree-sitter or a grammar is installed where the parse process does not see it                                                                                                                                                                     | install the tree-sitter packages into the server interpreter's own environment, not through `PYTHONPATH` or the user site                                                                                                         |
-| embedding provider down                                                                                             | chunks stored without vectors; lexical search still serves                                                                                                                                                                                                                               | `code_embed_recovery`                                                                                                                                                                                                             |
-| compiler-tier apply fails                                                                                           | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                                                                                                                                                                                 |
-| a compiler-tier pass fails or hangs                                                                                 | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                                                                                                                                                                                 |
-| compiler-tier window base unknown (history rewritten, pruned mirror)                                                | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++)                                                                                                                                                           |
-| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays                                                                                                                                             | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` together (sizing above); a link, a non-regular file or extra deltas recur every pass until the repository changes or the entry is removed |
-| GitHub rate limit                                                                                                   | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                                                                                                                                                                                     |
-| branch force-pushed (watermark no longer an ancestor)                                                               | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                                                                                                                                                                                 |
-| weekly graph stats fail                                                                                             | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                                                                                                                                                                              |
+| Failure                                                                                                             | Behaviour                                                                                                                                                                                                                                                                                | Recovery                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `git fetch` fails                                                                                                   | watermark unmoved; the entry's `fetch` tier records the error, its kind and fix (`tier_health`)                                                                                                                                                                                          | the next pass (supervisor backoff)                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| crash mid-commit                                                                                                    | the commit is re-run                                                                                                                                                                                                                                                                     | idempotent upserts                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| a file fails to parse                                                                                               | chunks without symbols, `code_files.index_error` set (a parse past `code_parse_timeout_s` or `code_parse_memory_mb` included, and one that could not run in its process)                                                                                                                 | `code.index_errors` lists them; fixed by the next change or a repair (raising either limit re-reads none)                                                                                                                                                                                                                                                                                                                                                                                      |
+| every file fails to parse with `LookupError` "... is loaded from outside the interpreter's site-packages"           | chunks without symbols for every file: tree-sitter or a grammar is installed where the parse process does not see it                                                                                                                                                                     | install the tree-sitter packages into the server interpreter's own environment, not through `PYTHONPATH` or the user site                                                                                                                                                                                                                                                                                                                                                                      |
+| embedding provider down                                                                                             | chunks stored without vectors; lexical search still serves                                                                                                                                                                                                                               | `code_embed_recovery`                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| compiler-tier apply fails                                                                                           | batch `failed` with the error                                                                                                                                                                                                                                                            | `loom code scip-retry <batch_id>`                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| a compiler-tier pass fails or hangs                                                                                 | the harness's timeout ends a hang, and the pass deadline (that timeout plus headroom for the git steps and the apply) cancels anything else; the entry lock is freed; a failure the pass reports (the harness's own timeout included) is recorded with its kind and fix in `tier_health` | the next pass; `workers.status` names the timeout                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| compiler-tier window base unknown (history rewritten, pruned mirror)                                                | every `scripts/scip_harness/` tier exits 3, never an empty delta; the Python, TypeScript and Go workers clear the tier's watermark                                                                                                                                                       | the next run is a full index for that tier (`code_scip_full` for C/C++)                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| a compiler-tier delta is a link, not a regular file, or oversize, or the Go harness writes more deltas than modules | the delta is refused (`FileRefused`, or `Go harness wrote more deltas than its N module(s)`) and the entry's pass fails; the watermark stays                                                                                                                                             | oversize: raise `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` and `LOOM_CODE_SCIP_DELTA_MAX_NODES` (they bound work and the path text kept); for a file entry over the round budget raise `LOOM_CODE_SCIP_DELTA_ROUND_MAX_NODES`, within the worker's memory; a file entry over the fixed character cap is named, and no setting changes that cap: the file it indexes is what to split; a link, a non-regular file or extra deltas recur every pass until the repository changes or the entry is removed |
+| GitHub rate limit                                                                                                   | the pass ends, cursor unmoved                                                                                                                                                                                                                                                            | the next pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| branch force-pushed (watermark no longer an ancestor)                                                               | watermark reset to the new head, logged                                                                                                                                                                                                                                                  | `loom code backfill` to re-derive                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| weekly graph stats fail                                                                                             | last week's ranks keep serving                                                                                                                                                                                                                                                           | the next weekly pass                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 The code index's gauges (`loom.code.index_lag_commits`, `loom.code.stale_files`,
 `loom.code.tier_lag_seconds`, `loom.code.embed_backlog`, `loom.code.files_errored`) are

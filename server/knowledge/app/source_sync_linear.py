@@ -31,10 +31,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 from server.clients import linear
+from server.clients._checked_access import Credential
+from server.core.ch import sequential_reads
 from server.core.errors import ValidationError
-from server.core.secrets_at_rest import unseal
 from server.knowledge.app import source_sync as sync
-from server.knowledge.domain.sources import KnowledgeSource, json_object
+from server.knowledge.app import sources as source_ops
+from server.knowledge.domain import access_list
+from server.knowledge.domain.sources import KnowledgeSource, home, item_ids, json_object
+from server.knowledge.store import documents
 from server.knowledge.store import sources as store
 from server.settings import settings
 
@@ -62,16 +66,29 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     # one) only grants the given-up documents their retry.
     result.full = bool(detail.get("full")) or not state.get("state_value") or sync.full_due(detail)
     sync.start_waits(result, detail)
-    key = unseal("knowledge_sources.credential", src.credential_enc)
+    try:
+        key = await source_ops.credential_for(
+            src,
+            deadline=run.budget.stop_after,
+        )
+    except (ValidationError, TimeoutError):
+        result.fail("credential_invalid", "the source connection is unavailable")
+        return result
     if not key:
         # Fail closed: a credential that no longer opens is never read as "no auth".
         result.fail("credential_invalid", "the stored credential no longer opens; rotate it")
         return result
-    projects = list(src.config.get("project_ids") or [])
+    projects = item_ids(src.items, "project")
     listed_at = datetime.now(UTC)
     files: dict[str, dict[str, Any]] = {}
     for project_id in projects:
         try:
+            permissions = access_list.UNREAD
+            if src.credential_mode == "connected":
+                permissions = access_list.AccessList(
+                    owner=src.owner_subject,
+                    emails=await linear.project_member_emails(key, project_id),
+                )
             nodes = await linear.project_documents(key, project_id)
         except linear.RateLimited:
             result.fail("rate_limited", "rate_limited")
@@ -86,6 +103,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
             continue
         for node in nodes:
             f = _as_file(node)
+            if src.credential_mode == "connected":
+                f["uri"] = sync.bound_source_uri(src, f["uri"])
+                f["access"] = permissions
             if linear.valid_id(f["id"]):
                 files.setdefault(f["id"], f)
     # Only a list read whole, every project on every page, says what is absent.
@@ -95,9 +115,9 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
     result.newest = sync.capped(newest, listed_at)
     if trusted:
         result.waits = {k: v for k, v in result.waits.items() if k in files}
-    stored = {
-        d["file_id"]: d for d in await store.source_revisions(src.org, src.namespace, src.name)
-    }
+    stored = await sync.stored_copies_with_room(src, result)
+    if src.credential_mode == "connected":
+        await _refresh_permissions(src, files, whole=trusted)
     for f in files.values():
         fetch_and_write = functools.partial(_fetch_and_write, src, key, f, result)
         prior = stored.get(f["id"])
@@ -113,7 +133,7 @@ async def turn(src: KnowledgeSource, state: dict[str, str], run: sync.Pass) -> s
 
 
 async def _fetch_and_write(
-    src: KnowledgeSource, key: str, f: dict[str, Any], result: sync.TurnResult
+    src: KnowledgeSource, key: Credential, f: dict[str, Any], result: sync.TurnResult
 ) -> str:
     """Fetch and write one document: `written`, `skipped` (another writer took the
     address during the fetch), `waiting`, `given_up` or `stop`, as `sync.sync_item`
@@ -138,7 +158,14 @@ async def _fetch_and_write(
     await sync.require_current(src)
     content = str(doc.get("content") or "")
     try:
-        written = await sync.write_document(src, f, f["uri"], content, ingested_format="markdown")
+        written = await sync.write_document(
+            src,
+            f,
+            f["uri"],
+            content,
+            ingested_format="markdown",
+            permissions=f.get("access", access_list.UNREAD),
+        )
     except ValidationError as e:
         # The write refuses this document whatever the pass: it will not go through.
         code = e.to_detail().get("code") or "invalid"
@@ -149,8 +176,35 @@ async def _fetch_and_write(
     return sync.counted(result, written)
 
 
+async def _refresh_permissions(
+    src: KnowledgeSource, files: dict[str, dict[str, Any]], *, whole: bool
+) -> None:
+    """Revocation reaches unchanged copies; changed text cannot inherit a wider ACL."""
+    from server.knowledge.app import source_sync_mirror
+
+    with sequential_reads():
+        copies = await store.every_copy(src.org, *home(src))
+        held = {copy["source_uri"]: copy["access_json"] for copy in copies}
+        held.update(await documents.committed_lists(src.org, src.mirror, list(held)))
+    listed = {f["uri"]: f for f in files.values()}
+    changed = {}
+    for copy in copies:
+        uri = copy["source_uri"]
+        f = listed.get(uri)
+        if f is None and not whole:
+            continue
+        previous = access_list.from_json(held[uri])
+        current = f["access"] if f is not None else access_list.UNREAD
+        if f is not None and copy["source_revision"] != f["modifiedTime"]:
+            current = access_list.common(previous, current)
+        if current != previous:
+            changed[uri] = current
+    if not await source_sync_mirror._write_lists(src, changed):
+        raise ValidationError("a source copy changed during its permission refresh")
+
+
 async def _document_gone(
-    key: str, document_id: str, projects: set[str], result: sync.TurnResult
+    key: Credential, document_id: str, projects: set[str], result: sync.TurnResult
 ) -> bool | None:
     """Whether the tracker says the document is gone: not found, trashed, archived,
     or in none of the source's projects. A lookup that fails retires nothing; a rate

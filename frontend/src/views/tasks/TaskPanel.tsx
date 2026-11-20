@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { forwardRef, useEffect, useId, useRef, useState, type ReactNode, type Ref } from "react";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import * as RadixDialog from "@radix-ui/react-dialog";
 import { Button } from "@clickhouse/click-ui/Button";
@@ -39,9 +39,10 @@ import {
   type PosterRecord,
   type TaskAction,
 } from "../../lib/tasks";
-import { humanizeError } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { IconButton } from "../../components/IconButton";
-import { Alert, ExternalLink, Loading, Stat, Tip } from "../../components/ui";
+import { Alert, ExternalLink, Loading, Stat, Unavailable } from "../../components/ui";
+import { GatedItem, menuReasons } from "../../components/ui/GatedItem";
 import { ListTime } from "../../components/ui/ListTime";
 import { KindTag, PriorityBadge, StatusPill, copyTaskId } from "./TaskBits";
 import { MenuTrigger } from "../../components/ui/Menu";
@@ -69,7 +70,8 @@ interface Props {
   identity: Caller;
   row: TaskListRow;
   inboxes: Inbox[];
-  canWrite: boolean;
+  /** Why the caller's role cannot move the task, or null: the moves stay in view with it. */
+  writeReason: string | null;
   now: number;
   /** Bumped by the page after an action; the panel re-reads. */
   reloadKey: number;
@@ -134,13 +136,12 @@ function InputValue({ v }: { v: unknown }) {
   }
 }
 
-// Each status allows at most one of these: the bar's primary, last on the right.
-// A button with a key names it in its tooltip ("Accept · A", after a `tip` that explains
-// more than the label); the help dialog lists them all.
+// Each status allows at most one of these: the bar's primary, last on the right. A `tip`
+// explains more than the label, in the button's tooltip.
 const PRIMARY_ACTIONS: ActionButton[] = [
-  { action: "accept", label: "Accept", key: "a" },
-  { action: "start", label: "Start", tip: "Claim it: to do → in progress", key: "s" },
-  { action: "complete", label: "Mark done…", key: "c" },
+  { action: "accept", label: "Accept" },
+  { action: "start", label: "Start", tip: "Claim it: to do → in progress" },
+  { action: "complete", label: "Mark done…" },
   { action: "unblock", label: "Unblock" },
   { action: "resume", label: "Resume now" },
 ];
@@ -148,16 +149,10 @@ const PRIMARY_ACTIONS: ActionButton[] = [
 // task usually goes (fail a run, park a queued task, decline the rest, reopen a closed one).
 const SECONDARY_ACTIONS: ActionButton[] = [
   { action: "fail", label: "Fail…" },
-  { action: "defer", label: "Defer…", key: "d" },
-  { action: "wont_do", label: "Won't do…", key: "x" },
+  { action: "defer", label: "Defer…" },
+  { action: "wont_do", label: "Won't do…" },
   { action: "reopen", label: "Reopen…" },
 ];
-// The page's keys do nothing while the panel is a sheet (a dialog holds them off), so a
-// sheet's tooltip names no key.
-export function actionTip(b: ActionButton, sheet: boolean): string {
-  const key = b.key && !sheet ? b.key.toUpperCase() : "";
-  return [b.tip ?? (key ? b.label.replace(/…$/, "") : ""), key].filter(Boolean).join(" · ");
-}
 // Everything else the status allows, under More, in this order.
 const MENU_ACTIONS: TaskAction[] = ["block", "defer", "wont_do", "edit", "reassign", "cancel"];
 
@@ -165,7 +160,6 @@ interface ActionButton {
   action: TaskAction;
   label: string;
   tip?: string;
-  key?: string;
 }
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -302,9 +296,15 @@ interface MenuItem {
   onClick: () => void;
   disabled?: boolean;
   danger?: boolean;
+  reason?: string | null;
 }
 
 function Menu({ items }: { items: MenuItem[] }) {
+  const prefix = useId();
+  const { idOf, lines } = menuReasons(
+    items.map((it) => it.reason),
+    prefix,
+  );
   return (
     <Dropdown modal={false}>
       <MenuTrigger>
@@ -312,15 +312,18 @@ function Menu({ items }: { items: MenuItem[] }) {
       </MenuTrigger>
       <Dropdown.Content align="end">
         {items.map((it) => (
-          <Dropdown.Item
+          <GatedItem
             key={it.label}
-            type={it.danger ? "danger" : "default"}
+            danger={it.danger}
             disabled={it.disabled}
+            reason={it.reason}
+            describedBy={it.reason ? idOf(it.reason) : undefined}
             onSelect={it.onClick}
           >
             {it.label}
-          </Dropdown.Item>
+          </GatedItem>
         ))}
+        {lines}
       </Dropdown.Content>
     </Dropdown>
   );
@@ -328,7 +331,7 @@ function Menu({ items }: { items: MenuItem[] }) {
 
 // A ref: under a Radix Dialog.Portal (the sheet), Radix tracks its child by one.
 export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
-  { identity, row, inboxes, canWrite, now, reloadKey, onClose, onAction, onOpenTask, onHistory, sheet = false },
+  { identity, row, inboxes, writeReason, now, reloadKey, onClose, onAction, onOpenTask, onHistory, sheet = false },
   ref,
 ) {
   const [task, setTask] = useState<TaskRow | null>(null);
@@ -358,7 +361,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
       })
       .catch((e) => {
         if (live) {
-          setError(humanizeError(e));
+          setError(humanizeError(e, { read: true }));
           setEvents([]);
         }
       });
@@ -404,7 +407,8 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
   const current: TaskRow | TaskListRow = task ?? row;
   const inbox = inboxes.find((i) => i.inbox === current.inbox);
   const handed = posterKind(current, inbox?.owner_agent) !== "me";
-  const allowed = canWrite ? new Set(actionsFor(current.status)) : new Set<TaskAction>();
+  // A role that cannot move the task sees the moves its status allows, unavailable.
+  const allowed = new Set(actionsFor(current.status));
   const brief = briefSections(task?.brief);
   const outcome = task?.outcome && Object.keys(task.outcome).length > 0 ? task.outcome : null;
   const act = (a: TaskAction) => onAction(a, a === "edit" && task ? task : current);
@@ -417,6 +421,7 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
     onClick: () => act(a),
     disabled: a === "edit" && !task,
     danger: a === "cancel",
+    reason: writeReason,
   }));
   menu.push({ label: "Copy id", onClick: copyId });
 
@@ -485,28 +490,18 @@ export const TaskPanel = forwardRef<HTMLElement, Props>(function TaskPanel(
           <div className="mt-3 flex gap-2 items-center justify-end flex-wrap" role="group" aria-label="Actions">
             <Menu items={menu} />
             {secondary && (
-              <Tip content={actionTip(secondary, sheet)} disabled={!actionTip(secondary, sheet)}>
-                <Button
-                  type="secondary"
-                  htmlType="button"
-                  aria-keyshortcuts={sheet ? undefined : secondary.key}
-                  onClick={() => act(secondary.action)}
-                >
+              <Unavailable reason={writeReason} tip={secondary.tip}>
+                <Button type="secondary" htmlType="button" onClick={() => act(secondary.action)}>
                   {secondary.label}
                 </Button>
-              </Tip>
+              </Unavailable>
             )}
             {primary && (
-              <Tip content={actionTip(primary, sheet)} disabled={!actionTip(primary, sheet)}>
-                <Button
-                  type="primary"
-                  htmlType="button"
-                  aria-keyshortcuts={sheet ? undefined : primary.key}
-                  onClick={() => act(primary.action)}
-                >
+              <Unavailable reason={writeReason} tip={primary.tip}>
+                <Button type="primary" htmlType="button" onClick={() => act(primary.action)}>
                   {primary.label}
                 </Button>
-              </Tip>
+              </Unavailable>
             )}
           </div>
         )}

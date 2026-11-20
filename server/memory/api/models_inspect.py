@@ -112,7 +112,7 @@ class InspectView(BaseModel):
 
 
 class InspectCall(BaseModel):
-    # The operation called, e.g. `memory.search`.
+    # The operation called, e.g. 'memory.search'.
     operation: str
     # Calls of the operation filed under the subject in the window.
     calls: int

@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from server.memory.domain.memory_types import DEFINITION
+
 
 @dataclass(frozen=True)
 class ConflictPeer:
@@ -279,8 +281,8 @@ def intra_batch_supersessions(
     n = len(values)
     for j in range(n):
         vj = values[j] or ""
-        if not vj:
-            continue
+        if not vj or (types and j < len(types) and types[j] == DEFINITION):
+            continue  # two definitions are two terms
         for i in range(j):
             if types and i < len(types) and j < len(types) and types[i] != types[j]:
                 continue

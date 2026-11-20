@@ -30,10 +30,13 @@ import { BusyButton } from "../../components/ui/BusyButton";
 import { ScopeBadge } from "../../components/ScopeBadge";
 import { PageContainer } from "../../layout/PageContainer";
 import { Alert, LoadingSkeleton, PageHeader, Stat, TabTrigger } from "../../components/ui";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { callReason } from "../../lib/callReason";
+import { isCollectionName } from "../../lib/namespace";
 import { NamespaceHealthPanel } from "./NamespaceHealth";
 import { ProjectionFailuresPanel } from "./ProjectionFailures";
 import { RepairsPanel } from "./Repairs";
+import { AssistantHealthRow } from "./AssistantHealthRow";
 
 // Friendly label + blurb per worker; unknown workers fall through to
 // a default rendering (raw name + "background worker").
@@ -168,9 +171,11 @@ export function Health() {
   const seesOpMix = hasOrgAdminClaim(whoami);
   // Namespace reads memory.health (VIEWER); every repair is ADMIN, as memory.sweep_expired
   // is, and none reads on open; Projection failures is ORG_ADMIN, like Operation mix.
-  const role = useNamespaceRole(identity.namespace);
-  const seesNamespace = canCall("memory.health", role, whoami);
-  const seesRepairs = canCall("memory.sweep_expired", role, whoami);
+  // Both are this namespace's, so they stay for every role: a role that cannot read or
+  // repair sees the tab with what it needs, and nothing is read for it.
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const namespaceReason = callReason("memory.health", roleRead, whoami, identity.namespace);
+  const repairsReason = callReason("memory.sweep_expired", roleRead, whoami, identity.namespace);
   const [tab, setTab] = useState<HealthTab>(seesWorkers ? "workers" : "extraction");
 
   // Drop the consolidations sub-tab entirely until a run has landed.
@@ -187,14 +192,14 @@ export function Health() {
     [identity.org, identity.namespace],
   );
 
-  // A tab gated by the namespace's role can vanish on a switch; Extraction quality is always there.
+  // A tab gated by the token's claim or by its data can vanish on a switch; Extraction quality is always there.
   const shown: Record<HealthTab, boolean> = {
     workers: seesWorkers,
     extraction: true,
     opmix: seesOpMix,
     consolidations: hasConsolidations,
-    namespace: seesNamespace,
-    repairs: seesRepairs,
+    namespace: true,
+    repairs: true,
     projections: seesOpMix,
   };
   const open = shown[tab] ? tab : "extraction";
@@ -207,6 +212,7 @@ export function Health() {
           How Loom's workers, extraction and this namespace's memories are doing, and the repairs your role allows.
         </p>
       </div>
+      <AssistantHealthRow />
       <Tabs value={open} onValueChange={(v) => setTab(v as HealthTab)}>
         <Tabs.TriggersList className="mb-5" aria-label="Health">
           {seesWorkers && (
@@ -227,16 +233,12 @@ export function Health() {
               {HEALTH_TABS.consolidations}
             </TabTrigger>
           )}
-          {seesNamespace && (
-            <TabTrigger value="namespace" icon="database">
-              {HEALTH_TABS.namespace}
-            </TabTrigger>
-          )}
-          {seesRepairs && (
-            <TabTrigger value="repairs" icon="refresh">
-              {HEALTH_TABS.repairs}
-            </TabTrigger>
-          )}
+          <TabTrigger value="namespace" icon="database">
+            {HEALTH_TABS.namespace}
+          </TabTrigger>
+          <TabTrigger value="repairs" icon="refresh">
+            {HEALTH_TABS.repairs}
+          </TabTrigger>
           {seesOpMix && (
             <TabTrigger value="projections" icon="warning">
               {HEALTH_TABS.projections}
@@ -261,16 +263,16 @@ export function Health() {
             <ConsolidationsPanel />
           </Tabs.Content>
         )}
-        {seesNamespace && (
-          <Tabs.Content value="namespace">
+        <Tabs.Content value="namespace">
+          {namespaceReason ? (
+            <p className="m-0 text-sm text-text-muted">{namespaceReason}</p>
+          ) : (
             <NamespaceHealthPanel />
-          </Tabs.Content>
-        )}
-        {seesRepairs && (
-          <Tabs.Content value="repairs">
-            <RepairsPanel />
-          </Tabs.Content>
-        )}
+          )}
+        </Tabs.Content>
+        <Tabs.Content value="repairs">
+          <RepairsPanel unavailable={repairsReason} />
+        </Tabs.Content>
         {seesOpMix && (
           <Tabs.Content value="projections">
             <ProjectionFailuresPanel />
@@ -351,8 +353,8 @@ export function WorkersPanel() {
   const [showAll, setShowAll] = useState(false);
   const [error, setError] = useState<unknown>(null);
   // workers.status is a /v1/admin/* handler: the JWT claim alone opens it. Without the
-  // claim there is no request — the panel reads "not reachable from here" (the dashboard
-  // never issues a request the token cannot make).
+  // claim there is no request — the panel's empty state says the page could not read the
+  // workers' status (the dashboard never issues a request the token cannot make).
   const whoami = useStore((s) => s.whoami);
   const canReadWorkers = canCall("admin/workers.status", null, whoami);
   // Refresh keeps the workers on screen, marked busy, until the read answers.
@@ -463,9 +465,7 @@ export function WorkersPanel() {
           icon="settings"
           title={rows.length === 0 ? "No workers reporting" : "Nothing to show"}
           description={
-            rows.length === 0
-              ? "Neither this process nor loom.worker_status has a worker pass on record. Either no workers colour is running, or /v1/admin/workers.status is not reachable from here."
-              : "All workers are disabled in config."
+            rows.length === 0 ? "No worker status came back for this page." : "All workers are disabled in config."
           }
           action={rows.length > 0 ? { label: "Show all", onClick: () => setShowAll(true) } : undefined}
         />
@@ -478,9 +478,8 @@ export function WorkersPanel() {
           size="small"
           text={
             <>
-              <strong>No worker has reported a pass yet.</strong> This process runs no workers
-              (LOOM_BACKGROUND_WORKERS=off under blue/green); the workers colour writes each finished pass to
-              loom.worker_status and nothing has landed there in the last 7 days.
+              <strong>No pass reported yet.</strong> This page found no finished pass in this process or in
+              loom.worker_status for the last 7 days.
             </>
           }
         />
@@ -571,10 +570,13 @@ export function WorkersPanel() {
                                   </span>
                                 </>
                               )}
+                              {/* A collection by its address, the name an operator looks for. */}
                               {w.namespace && (
                                 <>
                                   {" "}
-                                  · last namespace reached: <span className="font-mono">{w.namespace}</span>
+                                  ·{" "}
+                                  {isCollectionName(w.namespace) ? "last collection reached" : "last namespace reached"}
+                                  : <span className="font-mono">{w.namespace}</span>
                                 </>
                               )}
                               {w.trigger === "manual" && <> · manual run</>}
@@ -623,13 +625,13 @@ export function WorkersPanel() {
 // revises more; an append-only bank or a polling read load shows up here before it shows
 // up as stale answers.
 const CLASS_INFO: Record<string, { label: string; blurb: string }> = {
-  create: { label: "Create", blurb: "New rows: set, set_from_messages, bulk_set, record.write" },
-  read: { label: "Read", blurb: "get, search, ask, list, context.pack, facts.*" },
-  update: { label: "Update", blurb: "Revisions of an existing key: update, update_by_id, apply" },
-  annotate: { label: "Annotate", blurb: "Edges and marks on existing rows: link, evidence, verify, pin" },
-  delete: { label: "Delete", blurb: "delete, clear, demote, redact" },
-  scratchpad: { label: "Scratchpad", blurb: "working_memory.* — the run's own notes" },
-  maintain: { label: "Maintain", blurb: "consolidate, dedup, reindex, sweep" },
+  create: { label: "Create", blurb: "New memories, one at a time, from messages or in bulk, and new records" },
+  read: { label: "Read", blurb: "Gets, searches, questions, lists, session context and facts" },
+  update: { label: "Update", blurb: "Revisions of an existing memory" },
+  annotate: { label: "Annotate", blurb: "Links, evidence, verification and pins on existing memories" },
+  delete: { label: "Delete", blurb: "Deletes, clears, demotions and redactions" },
+  scratchpad: { label: "Scratchpad", blurb: "A run's working notes" },
+  maintain: { label: "Maintain", blurb: "Consolidation, deduplication, reindexing and sweeps" },
   other: { label: "Other", blurb: "Anything not classified above" },
 };
 
@@ -709,7 +711,7 @@ export function OpMixPanel() {
           const check = r.checks.find((c) => c.name === "op_mix");
           // Every answer carries the op_mix check: one without it is a failed read.
           if (check) setOp({ check, data: parseOpMix(check.data), scope: asked });
-          else setError(new Error("ops.health answered without its op_mix check"));
+          else setError(new Error("The health check answered without the operation mix"));
         })
         .catch((e) => {
           if (!live()) return;
@@ -769,7 +771,7 @@ export function OpMixPanel() {
       <EmptyState
         icon="pie-chart"
         title="Operation mix unavailable"
-        description="ops.health needs an org-admin token."
+        description="Only an org admin can see the operation mix."
       />,
     );
   }

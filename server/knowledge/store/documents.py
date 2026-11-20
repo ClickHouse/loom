@@ -11,7 +11,7 @@ import time
 import uuid
 from collections.abc import Mapping, Sequence, Set
 from datetime import UTC, datetime
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -22,6 +22,7 @@ from server.core.repo_base import _CHClient, _default_client
 from server.core.rmt_carry import register
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 class DocumentRow(BaseModel):
@@ -62,6 +63,9 @@ class DocumentRow(BaseModel):
     parser: str = ""
     coverage: str = ""
     ingestion_id: str = ""
+    # A mirrored document's permission list (`domain.access_list`); "" elsewhere. No read
+    # op returns it.
+    access_json: str = ""
 
 
 def _hydrate(row: dict[str, Any]) -> DocumentRow:
@@ -95,6 +99,7 @@ def _hydrate(row: dict[str, Any]) -> DocumentRow:
         parser=row.get("parser") or "",
         coverage=row.get("coverage") or "",
         ingestion_id=row.get("ingestion_id") or "",
+        access_json=row.get("access_json") or "",
     )
 
 
@@ -150,6 +155,9 @@ async def revision_by_ingestion(
 # such a row's original forward, and the sweep keeps every original one names.
 LIVE_ORIGINAL_SQL = "blob_path != '' AND superseded_at IS NULL AND blob_erased_at IS NULL"
 
+# The columns of a row whose original the sweep took: a restore or a move writes them.
+NO_ORIGINAL = {"blob_path": "", "blob_size": 0, "blob_content_type": "", "original_filename": ""}
+
 
 def serves_original(row: DocumentRow | None) -> bool:
     """`LIVE_ORIGINAL_SQL` for a row already read."""
@@ -174,6 +182,22 @@ async def current_document_tally(
         params={"org": org, "ns": namespace},
     )
     return (int(row["n"]), row["latest"]) if row else (0, None)
+
+
+async def current_document_counts(
+    org: str, namespaces: list[str], *, ch: _CHClient | None = None
+) -> dict[str, int]:
+    """Live documents directly in each requested namespace, including empty ones."""
+    if not namespaces:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        "SELECT namespace, count() AS n FROM loom.documents FINAL "
+        "WHERE org = {org:String} AND namespace IN {ns:Array(String)} "
+        "AND superseded_at IS NULL GROUP BY namespace LIMIT {lim:UInt32}",
+        params={"org": org, "ns": namespaces, "lim": len(namespaces)},
+    )
+    return dict.fromkeys(namespaces, 0) | {str(r["namespace"]): int(r["n"]) for r in rows}
 
 
 async def get_many_by_uris(
@@ -264,7 +288,7 @@ async def _read(
                original_filename, content_sha256, blob_erased_at,
                agent, user_id, session_id, actor, toString(source_class) AS source_class,
                revision, toString(format) AS format, artifact_sha256, parser, coverage,
-               ingestion_id
+               ingestion_id, access_json
         FROM loom.documents FINAL
         WHERE {" AND ".join(where)}
         """,
@@ -290,10 +314,40 @@ async def live_versions(
     return {str(r["source_uri"]): int(r["version"]) for r in rows}
 
 
+async def committed_lists(org: str, namespace: str, source_uris: list[str]) -> dict[str, str]:
+    """Each source's permission list as its committed head holds it under the Postgres
+    authority, a commit ClickHouse has not published yet included; empty under the
+    ClickHouse authority, where a sequential read of the rows is already current."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return {}
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.head_lists(org, namespace, source_uris)
+
+
+async def publications_owed(
+    org: str, namespace: str, uri_suffix: str
+) -> Literal["parked", "owed", ""]:
+    """Whether a commit of the namespace's documents whose address ends in `uri_suffix`
+    still waits on its publication to ClickHouse, under the Postgres authority:
+    `parked`, `owed` or "" (`pg_documents.owed_ending`); "" under the ClickHouse
+    authority."""
+    from server.core import pg
+
+    if not pg.enabled():
+        return ""
+    from server.knowledge.store import pg_documents
+
+    return await pg_documents.owed_ending(org, namespace, uri_suffix)
+
+
 class DocumentListRow(TypedDict):
     """One `knowledge.list` row: the document's listing columns and its live
     chunk count."""
 
+    namespace: str
     source_uri: str
     title: str
     description: str
@@ -310,29 +364,28 @@ class DocumentListRow(TypedDict):
 
 async def list_with_chunk_counts(
     org: str,
-    namespace: str,
+    namespaces: list[str],
     *,
     include_superseded: bool = False,
     tag_filter: TagFilter | None = None,
     uri_prefixes: list[str] | None = None,
-    cursor: tuple[datetime, str] | None = None,
+    cursor: tuple[datetime, str, str] | None = None,
     limit: int = 50,
     ch: _CHClient | None = None,
 ) -> list[DocumentListRow]:
-    """Paginated source_uri listing with per-doc live-chunk counts.
+    """Paginated listing of the documents of one or more namespaces, newest first,
+    with per-doc live-chunk counts.
 
-    Keyset cursor on (ingested_at DESC, source_uri DESC) — pass the last
-    row's (ingested_at, source_uri) to skip past it.
+    Keyset cursor on (ingested_at DESC, namespace DESC, source_uri DESC) — pass the
+    last row's (ingested_at, namespace, source_uri) to skip past it.
     """
     ch = ch or _default_client()
     extra_where = ""
     params: dict[str, Any] = {
         "org": org,
-        "ns": namespace,
+        "ns": namespaces,
         "lim": int(limit),
     }
-    # Predicates are bare (no `d.` prefix) because they filter the inner
-    # FINAL subquery below, not the post-join scope.
     if not include_superseded:
         extra_where += " AND superseded_at IS NULL"
     if tag_filter is not None:
@@ -347,67 +400,59 @@ async def list_with_chunk_counts(
             params[f"pfx{i}"] = p
         extra_where += " AND (" + " OR ".join(clauses) + ")"
     if cursor is not None:
-        cur_ts, cur_uri = cursor
+        cur_ts, cur_ns, cur_uri = cursor
         if cur_ts.tzinfo is not None:
-            from datetime import UTC
-
             cur_ts = cur_ts.astimezone(UTC).replace(tzinfo=None)
         extra_where += (
-            " AND (ingested_at, source_uri) < "
-            "(toDateTime({cur_ts:String}, 'UTC'), {cur_uri:String})"
+            " AND (ingested_at, namespace, source_uri) < "
+            "(toDateTime({cur_ts:String}, 'UTC'), {cur_ns:String}, {cur_uri:String})"
         )
         params["cur_ts"] = cur_ts.strftime("%Y-%m-%d %H:%M:%S")
+        params["cur_ns"] = cur_ns
         params["cur_uri"] = cur_uri
-    # The preview is the stored `content_preview`, never a
-    # substring of `content`: ClickHouse reads a column to take a substring
-    # of it, so one page would read every document's text (12 MB for 37 kB).
-    # Filter + FINAL + order + limit the documents in an isolated subquery,
-    # THEN LEFT JOIN the per-doc chunk counts. CH 26.5's analyzer mishandles a
-    # WHERE on a FINAL table that is also a JOIN side (it tries to evaluate the
-    # whole AND predicate as a column against an empty FINAL block →
-    # NOT_FOUND_COLUMN_IN_BLOCK). Pre-filtering in a derived table sidesteps
-    # that and is cheaper — only the limited rows reach the join.
-    rows = await ch.query_all(
+    # The preview is the stored `content_preview`, never a substring of `content`:
+    # ClickHouse reads a column to take a substring of it, so one page would read every
+    # document's text (12 MB for 37 kB).
+    page = await ch.query_all(
         f"""
-        SELECT d.source_uri        AS source_uri,
-               d.title             AS title,
-               d.description       AS description,
-               d.tags              AS tags,
-               d.ingested_at       AS ingested_at,
-               d.superseded_at     AS superseded_at,
-               d.blob_path         AS blob_path,
-               d.blob_size         AS blob_size,
-               toString(d.blob_content_type) AS blob_content_type,
-               d.original_filename AS original_filename,
-               d.content_preview   AS content_preview,
-               ifNull(c.chunk_count, 0) AS chunk_count
-        FROM (
-            SELECT org, namespace, source_uri, title, description, tags,
-                   ingested_at, superseded_at, blob_path, blob_size,
-                   blob_content_type, original_filename, content_preview
-            FROM loom.documents FINAL
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-                  {extra_where}
-            ORDER BY ingested_at DESC, source_uri DESC
-            LIMIT {{lim:UInt32}}
-        ) AS d
-        LEFT JOIN (
-            -- Scoped to the page's namespace: the join key alone does not
-            -- push into this side, which would count every tenant's chunks.
-            SELECT org, namespace, source_uri, count() AS chunk_count
-            FROM loom.chunks
-            WHERE org = {{org:String}} AND namespace = {{ns:String}}
-              AND {LIVE_CHUNK_SQL}
-            GROUP BY org, namespace, source_uri
-        ) AS c
-          ON d.org = c.org AND d.namespace = c.namespace
-         AND d.source_uri = c.source_uri
-        ORDER BY d.ingested_at DESC, d.source_uri DESC
+        SELECT namespace, source_uri, title, description, tags, ingested_at,
+               superseded_at, blob_path, blob_size,
+               toString(blob_content_type) AS blob_content_type,
+               original_filename, content_preview
+        FROM loom.documents FINAL
+        WHERE org = {{org:String}} AND namespace IN {{ns:Array(String)}}
+              {extra_where}
+        ORDER BY ingested_at DESC, namespace DESC, source_uri DESC
         LIMIT {{lim:UInt32}}
         """,
         params=params,
     )
-    return cast(list[DocumentListRow], rows)
+    counts = await _live_chunk_counts(org, [(r["namespace"], r["source_uri"]) for r in page], ch)
+    return cast(
+        list[DocumentListRow],
+        [{**r, "chunk_count": counts.get((r["namespace"], r["source_uri"]), 0)} for r in page],
+    )
+
+
+async def _live_chunk_counts(
+    org: str, keys: list[tuple[str, str]], ch: _CHClient
+) -> dict[tuple[str, str], int]:
+    """Live chunk count per (namespace, source_uri) of the page, reading only those sources."""
+    if not keys:
+        return {}
+    rows = await ch.query_all(
+        f"""
+        SELECT namespace, source_uri, count() AS chunk_count
+        FROM loom.chunks
+        WHERE org = {{org:String}}
+          AND (namespace, source_uri) IN {{keys:Array(Tuple(String, String))}}
+          AND {LIVE_CHUNK_SQL}
+        GROUP BY namespace, source_uri
+        LIMIT {{n:UInt32}}
+        """,
+        params={"org": org, "keys": keys, "n": len(keys)},
+    )
+    return {(r["namespace"], r["source_uri"]): int(r["chunk_count"]) for r in rows}
 
 
 # Every column a writer carries, in schema.sql order (`content_preview` is
@@ -442,9 +487,13 @@ DOCUMENT_COLUMNS: tuple[str, ...] = (
     "parser",
     "coverage",
     "ingestion_id",
+    "access_json",
 )
 
 _REQUIRED_DOCUMENT_COLUMNS = ("org", "namespace", "source_uri", "content", "version")
+# What a rewrite takes from the row it read: not the hash, which is recomputed, nor the
+# permission list, which only the owning source's turn writes.
+_CARRIED = tuple(c for c in DOCUMENT_COLUMNS if c not in ("content_sha256", "access_json"))
 
 # A version row carries any column of the live table this build does not write
 # (server/core/rmt_carry.py): a later build's columns survive this build's
@@ -484,6 +533,7 @@ class DocumentInsertRow(TypedDict):
     parser: str
     coverage: str
     ingestion_id: str
+    access_json: str
 
 
 def version_of(doc: DocumentRow | None) -> int:
@@ -503,9 +553,10 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
 
     loom.documents is ReplacingMergeTree(version): a version row that omits a
     column resets it for every FINAL reader. The row starts from the schema
-    defaults, then takes every column of `existing` (carry-forward), then
-    `fields`. `content_sha256` is not settable: it is recomputed from the
-    row's final title + content, the hash knowledge.add / upsert dedup on.
+    defaults, then takes the columns of `existing` in `_CARRIED` (carry-forward),
+    then `fields`. `content_sha256` is not settable: it is recomputed from the
+    row's final title + content, the hash knowledge.add / upsert dedup on. A tombstone
+    takes no permission list: one passed `access_json` is refused.
     """
     unknown = set(fields) - (set(DOCUMENT_COLUMNS) - {"content_sha256"})
     if unknown:
@@ -534,10 +585,13 @@ def build_document_row(existing: DocumentRow | None = None, /, **fields: Any) ->
         "parser": "",
         "coverage": "",
         "ingestion_id": "",
+        "access_json": "",
     }
     if existing is not None:
-        row.update({c: getattr(existing, c) for c in DOCUMENT_COLUMNS if c != "content_sha256"})
+        row.update({c: getattr(existing, c) for c in _CARRIED})
     row.update(fields)
+    if row["superseded_at"] is not None and row["access_json"]:
+        raise ValueError("build_document_row: a tombstone carries no permission list")
     missing = [c for c in _REQUIRED_DOCUMENT_COLUMNS if c not in row]
     if missing:
         raise ValueError(f"build_document_row: missing {missing}")
@@ -551,11 +605,14 @@ async def insert_one(
     over: int,
     retire_older: bool = False,
     built_from: str = "",
+    chunked: bool = False,
     ch: _CHClient | None = None,
 ) -> None:
     """Insert one document row, written over the source's version `over` (0: none),
     the one its writer read. `built_from`: the `doc_id` of the live document the row
     carries columns from (its original, its author), refused once an erasure removed it.
+    `chunked`: the write inserted the source's chunks at the row's version, which its
+    head serves from now on under the Postgres authority (`pg_serving`).
 
     async_insert=0 so the row is visible to the next FINAL read — callers
     depend on the search-visibility contract. Under the Postgres authority the row
@@ -569,6 +626,7 @@ async def insert_one(
         over={row["source_uri"]: over},
         retire_older={row["source_uri"]} if retire_older else frozenset(),
         built_from=[built_from] if built_from else [],
+        chunked=chunked,
         ch=ch,
     )
 
@@ -579,6 +637,7 @@ async def insert_many(
     over: Mapping[str, int],
     retire_older: Set[str] = frozenset(),
     built_from: Sequence[str] = (),
+    chunked: bool = False,
     ch: _CHClient | None = None,
 ) -> int:
     """Bulk insert of one namespace's rows, each written over the version
@@ -587,8 +646,8 @@ async def insert_many(
     row's are retired: after a new version's row, so the old text stops serving only
     when the new one is published, and before a tombstone's (`publish`). Under the
     Postgres authority the rows are committed as heads first, and a publication cut off
-    here (the row or the retirement) is finished by the delivery worker. `built_from`:
-    as `insert_one`'s, for every row."""
+    here (the row or the retirement) is finished by the delivery worker. `built_from` and
+    `chunked`: as `insert_one`'s, for every row."""
     from server.core import pg
 
     if not rows:
@@ -607,7 +666,13 @@ async def insert_many(
         | (pg_documents.RETIRE_OLDER if r["source_uri"] in retire_older else 0)
         for r in rows
     }
-    deadline = await pg_documents.commit(rows, over=over, targets=targets, built_from=built_from)
+    deadline = await pg_documents.commit(
+        rows,
+        over=over,
+        targets=targets,
+        built_from=built_from,
+        chunked={str(r["source_uri"]) for r in rows} if chunked else frozenset(),
+    )
     try:
         return await _publish_committed(rows, deadline, retire_older, ch)
     except asyncio.CancelledError as e:  # committed: the worker publishes it
@@ -771,7 +836,7 @@ async def agent_opens(
         """
         SELECT args['source_uri'] AS source_uri, count() AS reads,
                uniqExact(agent) AS agents, max(ts) AS last_read_at
-        FROM loom.agent_events
+        FROM {masked_events}
         WHERE org = {org:String} AND namespace = {ns:String}
           AND ts >= now64(3) - toIntervalDay({days:UInt8})
           AND operation = 'knowledge.get' AND success
@@ -781,7 +846,7 @@ async def agent_opens(
         GROUP BY source_uri
         ORDER BY reads DESC
         LIMIT 200
-        """,
+        """.replace("{masked_events}", MASKED_EVENTS),
         params={
             "org": org,
             "ns": namespace,

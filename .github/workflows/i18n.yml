@@ -1,0 +1,117 @@
+name: translations
+
+# Main supplies every executable byte. The pending branch contributes generated data
+# only. Hosted CI is dispatched explicitly because GITHUB_TOKEN PRs suppress events.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "docs/**"
+      - "scripts/i18n/**"
+      - "scripts/docs_site/messages.py"
+      - "scripts/docs_site/indexnow.py"
+      - "scripts/docs_site/paths.py"
+      - ".github/workflows/i18n.yml"
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [i18n/update]
+  schedule:
+    - cron: "37 */6 * * *"
+  workflow_dispatch:
+    inputs:
+      all:
+        description: Translate every page, stale or not
+        type: boolean
+        default: false
+      languages:
+        description: Language codes separated by spaces (empty for all five or configured subset)
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: update
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && vars.LOOM_I18N_RUNNER != ''
+    runs-on: ${{ fromJSON(vars.LOOM_I18N_RUNNER) }}
+    timeout-minutes: 45
+    # Environment and runner-group restrictions admit this main-only workflow.
+    environment: i18n
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    env:
+      LOOM_I18N_LANGUAGES: ${{ vars.LOOM_I18N_LANGUAGES }}
+      LOOM_I18N_BATCH_LANGUAGES: ${{ inputs.languages }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install translation runtime
+        # A virtualenv in the job's temp directory: a self-hosted runner keeps its Python.
+        run: |
+          python -m venv "$RUNNER_TEMP/i18n"
+          "$RUNNER_TEMP/i18n/bin/python" -m pip install --quiet --require-hashes --no-deps \
+            --only-binary=:all: -r scripts/i18n/requirements.txt
+          echo "$RUNNER_TEMP/i18n/bin" >> "$GITHUB_PATH"
+      - name: Preserve verified pending pages
+        id: prepare
+        run: python -m scripts.i18n.automation prepare
+      - name: Translate a bounded batch
+        id: translate
+        env:
+          LOOM_I18N_TOTAL_USD: ${{ vars.LOOM_I18N_TOTAL_USD || '0' }}
+          ALL: ${{ inputs.all }}
+        run: |
+          export AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+          args=()
+          if [ "$ALL" = "true" ]; then args+=(--all); fi
+          python -m scripts.i18n.automation update "${args[@]}" 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Validate and publish for hosted CI
+        if: ${{ !cancelled() && steps.prepare.outcome == 'success' && steps.translate.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOM_I18N_PENDING_SHA: ${{ steps.prepare.outputs.pending_sha }}
+        run: python -m scripts.i18n.automation publish
+
+  finalize:
+    name: merge validated translations
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'workflow_dispatch'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install the site builder
+        run: |
+          python -m pip install --require-hashes --no-deps --only-binary=:all: -r scripts/docs_site/requirements.txt
+      - name: Merge the successful exact head and publish the site
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LOOM_I18N_LANGUAGES: ${{ vars.LOOM_I18N_LANGUAGES }}
+        run: python -m scripts.i18n.automation finalize

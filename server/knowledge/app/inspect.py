@@ -1,5 +1,7 @@
-"""knowledge.inspect — what a namespace's documents are, which of their versions search
-serves, and what was extracted from them, read-only.
+"""knowledge.inspect — what a namespace's documents are, which of their versions
+ClickHouse reads as live (what search serves under the ClickHouse authority; the Postgres
+authority serves the current one alone, a document written before heads excepted,
+`pg_serving`), and what was extracted from them, read-only.
 
 Every number comes from what is stored: the document rows (one per document, its
 current version, with the coverage its extraction reported), the live chunks and the
@@ -15,24 +17,29 @@ namespace's viewers by id; the decision rows are memory rows and are read inside
 request's scope, and the audit, which reads every user's rows, is not run under a scope
 narrowed to one user or session. A section that cannot be read is named in `skipped`
 and its fields stay null or empty; a store that is down fails the call, as any read does,
-but a Postgres authority that does not answer is named in `skipped` once and not asked
-again in the call.
+but a Postgres authority that does not answer is named in `skipped` and not asked again
+in the call (when that is before or at the job comparison, the comparison names it under
+its own section too).
 
 Under the Postgres authority the document rows ClickHouse holds can trail the heads
 Postgres commits: `skipped` counts the namespace's commits ClickHouse does not have yet
 (owed and parked), and a listed document is kept only while `knowledge.get` serves it at
 the version read (that read drops a head an older build purged, as `knowledge.get`
-does). Either makes `listed_complete` false.
+does). Either makes `listed_complete` false. The job rows can trail Postgres's jobs too:
+`skipped` counts the compared jobs ClickHouse holds older or not at all
+(`ingestions.projection`).
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from typing import Any, cast
 
 from server.core import pg
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc_second
+from server.core.diagnostics import private_work
 from server.core.errors import BACKEND_NOT_NOW
 from server.embedding import get_embedder
 from server.identity.api.models_namespace_catalog import NamespaceAuditInput
@@ -61,6 +68,7 @@ from server.knowledge.api.models_inspect import (
     MemoryFindingRef,
     SourceJobs,
 )
+from server.knowledge.app import ingest_jobs, source_access, source_publication, source_titles
 from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import documents as documents_repo
@@ -72,11 +80,13 @@ from server.settings import settings
 
 log = logging.getLogger(__name__)
 
-# The `skipped` names, under the Postgres authority, of a document section that may miss
-# what the authority committed, and of the listed rows it dropped (`<n> document(s) …`):
-# the dashboard keys on these prefixes (DocumentInspection.tsx `documentsMayBeShort`).
+# `skipped` names the dashboard keys on (DocumentInspection.tsx `documentsMayBeShort`,
+# `jobsMayBeOlder`): what a section read under the Postgres authority may miss.
 DOCUMENTS_PROJECTION = "documents.projection"
 LISTED_HEADS = "listed.heads"
+INGESTIONS_PROJECTION = "ingestions.projection"
+# The one `ingestions.projection` line the dashboard does not note: the comparison's bound.
+JOBS_BOUNDED = f"{INGESTIONS_PROJECTION}: at most "
 
 SOURCE_OP = "knowledge.inspect"
 # namespace.audit's checks on memory rows that may belong in documents.
@@ -157,19 +167,27 @@ _CHECKS: dict[str, tuple[RuleContract, str, str, str, list[str]]] = {
         RuleContract(
             "usage_heuristic",
             1,
-            uncertainty="Two versions kept on purpose read the same. An ingestion passes "
-            "through this state when it publishes: it inserts the new version's chunks "
+            uncertainty="Two versions kept on purpose read the same: an add again under the "
+            "ClickHouse authority, or under an older build. Under the Postgres authority an "
+            "older version whose retirement is still owed passes through it. An ingestion "
+            "passes through this state when it publishes: it inserts the new version's chunks "
             "before it writes the document and retires the old ones, and an insert whose "
             "outcome it could not confirm leaves both live until the job's next run.",
         ),
         "mixed_versions",
         "Live documents with live chunks of more than one version under the server's "
-        "model: search serves both texts. Adding a document again at the same source keeps "
-        "the earlier version beside it; replacing the document at that source retires it.",
-        "Replace a changed text document, not add it again. For an ingested one, an "
-        "ingestion of the source still at its publish stage settles this state on its next "
-        "run (its status, by the id the ingestion returned, shows the stage); only when no "
-        "ingestion of the source is open, upload its original again and ingest it.",
+        "model: search serves both texts (under the Postgres authority it serves the "
+        "current one alone, a document written before heads excepted, and the older one's "
+        "chunks stay live until their retirement lands). Adding a document again at the "
+        "same source keeps the earlier version beside it under the ClickHouse authority; "
+        "replacing the document at that source retires it.",
+        "Under the ClickHouse authority, replace a changed text document, not add it again "
+        "(under the Postgres authority the next write that inserts the source's chunks "
+        "retires the older version, and the delivery worker retires one still owed). For "
+        "an ingested one, an ingestion of the source still at its publish stage settles "
+        "this state on its next run (its status, by the id the ingestion returned, shows "
+        "the stage); only when no ingestion of the source is open, upload its original "
+        "again and ingest it.",
         [
             "knowledge.search",
             "knowledge.add",
@@ -517,9 +535,52 @@ class _Inspect:
                 "them or still count older versions"
             )
 
+    async def unprojected_jobs(self) -> None:
+        """Under Postgres, the namespace's jobs whose latest version ClickHouse does not
+        hold: the ingestion sections and the listed jobs read ClickHouse, so they may show
+        an older state, and `skipped` says how many, or that nothing was compared."""
+        if not pg.enabled():
+            return
+        if self.authority_down:
+            self.jobs_not_compared("POSTGRES_UNAVAILABLE")
+            return
+        i = self.inp
+        # Not `guarded`: an outage is `down()`, said once and not asked again.
+        try:
+            behind, more = await ingest_jobs.unprojected(i.org, i.namespace)
+        except pg.PostgresUnavailableError:
+            self.down()
+            self.jobs_not_compared("POSTGRES_UNAVAILABLE")
+            return
+        except BACKEND_NOT_NOW:
+            raise
+        except Exception as exc:  # noqa: BLE001 — a read-only report; the job sections stand as read
+            log.warning("knowledge.inspect %s skipped: %s", INGESTIONS_PROJECTION, exc)
+            self.jobs_not_compared(type(exc).__name__)
+            return
+        if behind:
+            self.skipped.append(
+                f"{INGESTIONS_PROJECTION}: {behind} ingestion job(s) whose latest state "
+                "ClickHouse does not hold yet; the ingestion sections and the listed jobs "
+                "may miss them or show an older state"
+            )
+        if more:
+            self.skipped.append(
+                f"{JOBS_BOUNDED}{ingest_jobs.UNPROJECTED_PAGE} open jobs and at most "
+                f"{ingest_jobs.UNPROJECTED_PAGE} of the most recently saved non-pending ones "
+                "were compared with ClickHouse"
+            )
+
+    def jobs_not_compared(self, reason: str) -> None:
+        self.skipped.append(
+            f"{INGESTIONS_PROJECTION}: {reason}: the jobs were not compared with ClickHouse's "
+            "copy; the ingestion sections and the listed jobs may miss jobs or show an older "
+            "state"
+        )
+
     def down(self) -> None:
         """The Postgres authority did not answer: said, and not asked again in this call
-        (`served` and the memory sections' wait read `authority_down`)."""
+        (every later Postgres read of the report reads `authority_down`)."""
         self.documents_whole = False
         self.authority_down = True
         self.skipped.append(
@@ -738,7 +799,7 @@ class _Inspect:
         if not rows:
             return []
         uris = [str(r["source_uri"]) for r in rows]
-        # Without the server's model, nothing says which chunks search serves.
+        # Without the server's model, nothing says which chunks search reads.
         chunks = (
             await self.guarded(
                 "listed.chunks",
@@ -918,6 +979,48 @@ def _document_chunks(c: dict[str, Any] | None) -> DocumentChunks:
 
 
 async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeInspectOutput:
+    plan = await source_access.prepare(input.org, [input.namespace])
+    with private_work() if plan.marked else nullcontext():
+        output = await _ordinary_inspect(input)
+        if not plan.marked:
+            return output
+        titles = (
+            await source_titles.collect(plan, input.namespace, limit=input.sample_limit)
+            if input.sample_limit
+            else []
+        )
+        private = [
+            (
+                InspectDocument(
+                    source_uri=title.source_uri,
+                    title=title.title,
+                    format=title.format,
+                    source_scheme=title.source_scheme,
+                    version=title.version,
+                    revision=title.revision,
+                    ingested_at=title.ingested_at,
+                ),
+                title.proof,
+            )
+            for title in titles
+        ]
+        output.listed = sorted(
+            [
+                *output.listed,
+                *(doc for doc, _proof in private),
+            ],
+            key=lambda doc: (to_naive_utc_second(doc.ingested_at), doc.source_uri),
+            reverse=True,
+        )[: input.sample_limit]
+        selected = {id(doc) for doc in output.listed}
+        for doc, proof in private:
+            if id(doc) in selected:
+                source_publication.retain(proof)
+        output.listed_complete = False
+        return output
+
+
+async def _ordinary_inspect(input: KnowledgeInspectInput) -> KnowledgeInspectOutput:
     run = _Inspect(input)
     computed_at = naive_utc_now()
     model = await run.guarded("embedder", _embedder_model, "")
@@ -927,10 +1030,11 @@ async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeIns
         chunks = await run.chunks(model)
         findings = await run.findings(model)
     else:
-        # Without the server's model, nothing says which chunks search serves.
+        # Without the server's model, nothing says which chunks search reads.
         chunks, findings = ChunkTotals(), []
         for code in _CHECKS:
             run.rules.skip(code, "the embedder could not be built")
+    await run.unprojected_jobs()
     ingestions, ingest_findings = await run.ingestions()
     extraction, incomplete = await run.extraction()
     if incomplete is not None:

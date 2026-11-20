@@ -11,6 +11,7 @@ import time
 from collections.abc import Coroutine, Iterator
 from typing import Any
 
+from server.cli._ch import connect_declared, disconnect, reads
 from server.cli._proc import TERMINATED_EXIT, Terminated, cancel_on_sigterm
 from server.code.app.index.repo_modes import repo_umask
 
@@ -22,6 +23,7 @@ def _identity(args: argparse.Namespace) -> tuple[str, str]:
     Neither = exit with the missing name; a code namespace is never guessed. The
     default namespace is refused while the registry is unread or when a member added
     it from the page (`repos.default_code_namespace`)."""
+    from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE
     from server.code.domain.index.repos import RegistryUnread, default_code_namespace
     from server.core.errors import ValidationError
     from server.settings import settings
@@ -30,7 +32,7 @@ def _identity(args: argparse.Namespace) -> tuple[str, str]:
     try:
         ns = args.namespace or default_code_namespace(org)
     except RegistryUnread:
-        raise SystemExit("the self-service repository registry could not be read; retry") from None
+        raise SystemExit(REGISTRY_UNREAD_MESSAGE) from None
     except ValidationError:
         raise SystemExit(
             f"the default code namespace {org}/{settings.code_namespace} was added from the "
@@ -88,6 +90,18 @@ def _repo_cfg(args: argparse.Namespace) -> Any:
             f"namespace {org}/{ns} is not a configured code repo entry "
             f"(configured: {', '.join(r.namespace for r in repos)}). {why}"
         )
+    if repos[0].org != org:
+        # The fallback entry is another org's: its checkout is never indexed under this
+        # org, and on a cell an org named only on the command line is never recorded.
+        own = [r.namespace for r in repos if r.org == org]
+        remedy = (
+            f"pass --namespace {' or '.join(own)}"
+            if own
+            else f"pass --org {repos[0].org} for {repos[0].org}/{repos[0].namespace}"
+        )
+        raise SystemExit(
+            f"{org}/{ns} is not a configured code repo entry: {remedy}, or configure {org}/{ns}"
+        )
     return repos[0]
 
 
@@ -103,10 +117,11 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
     try:
         # A repository added from the Repositories page lives in the registry, not in
         # LOOM_CODE_REPOS_JSON: read it before the subcommand resolves its namespace.
-        from server.code.app.index.repo_registry import refresh_db_repos
+        from server.cli._ch import connect_verified
+        from server.code.app.index.repo_registry import REGISTRY_UNREAD_MESSAGE, refresh_db_repos
         from server.code.domain.index.repos import RegistryUnread
 
-        await get_client().connect()
+        await connect_verified(get_client())
         async with model_command():
             # Never raises; while it has never succeeded, `configured_repos` refuses.
             await refresh_db_repos(force=True)
@@ -114,17 +129,28 @@ async def _then_disconnect(coro: asyncio.Future[int] | Coroutine[Any, Any, int])
             try:
                 return int(await coro)
             except RegistryUnread:
-                raise SystemExit(
-                    "the self-service repository registry could not be read; retry"
-                ) from None
+                raise SystemExit(REGISTRY_UNREAD_MESSAGE) from None
             finally:
                 # Some native commands close their own client. Reopen it for
                 # buffered-write drain/retirement before leaving enrollment.
-                await get_client().connect()
+                # The subcommand's own connect gated its writes; a drain checks nothing new.
+                first = sys.exception()
+                try:
+                    await connect_declared(
+                        get_client(), org_free=reads("drains the writes its own connect gated")
+                    )
+                except BaseException:  # keep the subcommand failure if drain reconnect also fails
+                    if first is None:
+                        raise
     finally:
+        first = sys.exception()
         if not started and asyncio.iscoroutine(coro):
             coro.close()
-        await get_client().disconnect()
+        try:
+            await disconnect(get_client())
+        except BaseException:  # a disconnect failure must not replace the subcommand failure
+            if first is None:
+                raise
 
 
 def _run(name: str, coro: asyncio.Future[int] | Coroutine[Any, Any, int]) -> int:

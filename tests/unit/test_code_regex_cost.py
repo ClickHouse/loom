@@ -10,25 +10,35 @@ and under an absolute bound. Composite texts, a prefix the pattern spells, a run
 or of one keyword with an opener, and a closing character, catch the patterns whose
 optional parts split one run every way or that search on from each keyword. A pattern
 only ever used with `fullmatch` is anchored with `\\A`, so the searches here cost what
-its use does."""
+its use does. The lanes' own walks over a file (`lane_walks.py`) are judged by their growth
+from N to 4N alone, with the cyclic collector off, each in a child process with a deadline.
+A class guard runs every registered lane parser over generated shapes with the collector
+off, in a child process with a deadline and a memory limit; `KNOWN_SLOW` lists the shapes
+still to fix."""
 
 from __future__ import annotations
 
 import importlib
+import itertools
+import json
+import pathlib
 import pkgutil
 import re
+import subprocess
+import sys
 import time
+import types
 from collections.abc import Callable
 
 import pytest
+
+from tests.unit.lane_walks import BOUND_S, LANE_FLOOR_S, RATIO, WALKS
 
 _PACKAGES = ("server.code.domain.extract", "server.code.app.index")
 _N = 50_000
 # Below this the timer's noise decides the ratio; a quadratic search at 4N = 200,000
 # characters takes seconds, a linear one milliseconds.
 _FLOOR_S = 0.1
-_RATIO = 8.0
-_BOUND_S = 2.0
 
 _UNITS = (
     "\n",
@@ -129,7 +139,7 @@ def _units(p: re.Pattern) -> list[str]:
     words = _words(src)
     out = list(_UNITS)
     for w in words:
-        out += [w + " ", w + "\n", w + "(", w + " {", w]
+        out += [w + " ", w + "\n", w + "(", w + " {", w + "=[", w]
     for o in _openers(p):
         out += [o, o + "a", o + "a(", o + "a ", o + " ", "a" + o]
     return list(dict.fromkeys(out))
@@ -141,12 +151,12 @@ def _text(unit: str, n: int, as_bytes: bool) -> str | bytes:
 
 
 def _cost(p: re.Pattern, text: str | bytes) -> float:
-    t0 = time.perf_counter()
+    t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
     for _ in p.finditer(text):
         pass
     p.search(text)
     p.match(text)
-    return time.perf_counter() - t0
+    return time.process_time() - t0
 
 
 _ALL = _patterns()
@@ -165,16 +175,16 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
     slow = []
     for unit in _units(pattern):
         small = _cost(pattern, _text(unit, _N, as_bytes))
-        if small > _BOUND_S:
+        if small > BOUND_S:
             slow.append((unit, small, None))
             continue
         big = _cost(pattern, _text(unit, 4 * _N, as_bytes))
-        if big > _BOUND_S or (big > _FLOOR_S and big > _RATIO * small):
+        if big > BOUND_S or (big > _FLOOR_S and big > RATIO * small):
             # Timers jitter on a loaded host: the best of three runs of each counts.
             for _ in range(2):
                 small = min(small, _cost(pattern, _text(unit, _N, as_bytes)))
                 big = min(big, _cost(pattern, _text(unit, 4 * _N, as_bytes)))
-            if big > _BOUND_S or (big > _FLOOR_S and big > _RATIO * small):
+            if big > BOUND_S or (big > _FLOOR_S and big > RATIO * small):
                 slow.append((unit, round(small, 3), round(big, 3)))
     assert not slow, f"{name}: (unit, N s, 4N s) {slow}"
 
@@ -184,7 +194,7 @@ def test_a_pattern_costs_linear_time(name: str, pattern: re.Pattern) -> None:
 # comes costs N**2. The sizes grow 4 times a step and a run stops at the first step that
 # grows more than 8 times, so a cubic pattern stops at 8,000 characters, not hours later.
 _SIZES = (500, 2_000, 8_000, 32_000)
-_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a")
+_PREFIXES = ("a", "- a", "a:a", "a = a", "export default a", "'a", "# a")
 _SEPS = ("", " a", "a=", "a(", "a ", "#a ")  # after an opener: `*a=`, `@if(`, `{#if `
 
 
@@ -205,19 +215,53 @@ def _composites(p: re.Pattern) -> list[tuple[str, str, str]]:
     return shapes + keyed + [(" ".join(words) + " a ", unit, "b") for unit in units]
 
 
+def _over(small: float, big: float) -> bool:
+    """Whether `big`, the time at 4 times `small`'s size, grows over linear: over the
+    bound, or over 10 ms and over 8 times `small`."""
+    return big > BOUND_S or (big > _FLOOR_S / 10 and big > RATIO * small)
+
+
 def _slow(cost: Callable[[int], float]) -> tuple[int, float, float] | None:
-    """(n, the time at n / 4, the time at n) where the text first grows over linear."""
-    small = cost(_SIZES[0])
+    """(n, the time at n / 4, the time at n) where the text first grows over linear, from
+    the pair that grew least.
+
+    Each step times n / 4 and n back to back, so a load spike that lasts a few runs
+    slows both alike; a step that looks over linear is timed twice more that way and
+    fails only if all three pairs are over. A spike on the n / 4 of any one pair can hide
+    a step; nothing is carried, so the next step, or the next run, reports it."""
     for n in _SIZES[1:]:
-        big = cost(n)
-        if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
-            # Timers jitter on a loaded host: the best of three runs of each counts.
-            small = min(small, cost(n // 4), cost(n // 4))
-            big = min(big, cost(n), cost(n))
-            if big > _BOUND_S or (big > _FLOOR_S / 10 and big > _RATIO * small):
+        pairs = [(cost(n // 4), cost(n))]
+        if _over(*pairs[0]):
+            pairs += [(cost(n // 4), cost(n)) for _ in range(2)]
+            if all(_over(small, big) for small, big in pairs):
+                small, big = min(pairs, key=lambda p: p[1] / max(p[0], 1e-9))  # the mildest
                 return n, round(small, 4), round(big, 4)
-        small = big
     return None
+
+
+def test_slow_tells_a_load_spike_from_a_step_over_linear() -> None:
+    def linear(n: int) -> float:
+        return n * 1e-7
+
+    def spiked(base: Callable[[int], float], calls: range) -> Callable[[int], float]:
+        """`base`, with calls numbered `calls` (from 0) taking 10 times as long."""
+        count = itertools.count()
+        return lambda n: base(n) * (10 if next(count) in calls else 1)
+
+    assert _slow(linear) is None
+    # 500 is timed in the first pair: calls 0 and 1 are 500 and 2,000, and so on
+    assert _slow(spiked(linear, range(5, 8))) is None  # 32,000, 8,000, 32,000
+    assert _slow(spiked(linear, range(5, 6))) is None  # 32,000 alone, then two clean pairs
+
+    def quadratic(n: int) -> float:
+        return (n / 1000) ** 2 * 1e-3
+
+    assert _slow(quadratic) == (8_000, 0.004, 0.064)
+    # every call after the 8,000 step's first n / 4 slowed: still over linear
+    assert _slow(spiked(quadratic, range(3, 8))) == (8_000, 0.04, 0.64)
+    # a spike on the 8,000 step's n / 4 hides that step; the 32,000 one reports it
+    assert _slow(spiked(quadratic, range(2, 3))) == (32_000, 0.064, 1.024)
+    assert _slow(lambda n: (n / 2000) ** 3 * 2.5e-4) == (8_000, 0.0003, 0.016)  # cubic
 
 
 @pytest.mark.parametrize("name,pattern", _ALL, ids=[n for n, _ in _ALL])
@@ -233,3 +277,244 @@ def test_a_run_after_a_prefix_costs_linear_time(name: str, pattern: re.Pattern) 
         if (got := _slow(cost)) is not None:
             slow.append((pre, unit, end, *got))
     assert not slow, f"{name}: (prefix, unit, end, n, n/4 s, n s) {slow}"
+
+
+# The lanes' own walks over a file: a slice, a count from the top or a rescan per line,
+# heading or site is quadratic, and a backtracking match holds the GIL so a thread
+# timer cannot stop it. Each walk runs in a child process that dumps its stack and exits
+# when it overruns, so a regression fails here instead of hanging the suite. Only the
+# growth from N to 4N is judged, since a linear walk at 4N takes seconds on a slow
+# runner: a walk whose quadratic part at N is over half its linear part grows more
+# than 8 times, and a purely quadratic one grows 16 times or runs into the deadline.
+_WALK_DEADLINE_S = 60
+
+
+_WALK_CHILD = f"""
+import faulthandler, json, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
+from tests.unit.lane_walks import walk_cost
+print(json.dumps(walk_cost(sys.argv[1])))
+"""
+
+
+@pytest.mark.parametrize("name", [w[0] for w in WALKS])
+def test_a_lane_walk_costs_linear_time(name: str) -> None:
+    done = subprocess.run(
+        [sys.executable, "-c", _WALK_CHILD, name],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 2,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    small, big = json.loads(done.stdout)
+    assert big < _FLOOR_S or big < RATIO * small, (name, small, big)
+
+
+# The class guard: every lane parser in the ingest's registry, over generated shapes (runs
+# of one character, repeated names, unclosed openers, entries times uses), each lane in a
+# child process with a deadline and a memory limit, which also bound a listed shape. A new
+# lane, or a walk added to one without a cost walk of its own, is timed here; `judged_step`
+# says which step a shape is judged on. `KNOWN_SLOW` holds the shapes still over linear,
+# each a follow-up fix.
+_REGISTRY_CHILD = f"""
+import faulthandler, json, resource, sys
+faulthandler.dump_traceback_later({_WALK_DEADLINE_S * 3}, exit=True)
+resource.setrlimit(resource.RLIMIT_AS, (3 << 30, 3 << 30))
+from tests.unit.lane_walks import registry_cost
+diagnostics = {{}}
+timed = registry_cost(sys.argv[1], diagnostics=diagnostics)
+print(json.dumps({{"timed": timed, "diagnostics": diagnostics}}))
+"""
+
+
+def _lane_over(small: float, big: float) -> bool:
+    """Whether a shape grows over linear from `small` to `big`, at 4 times the size."""
+    return big > BOUND_S or (big > LANE_FLOOR_S and big > RATIO * small)
+
+
+def test_judged_step_tells_a_cache_step_from_growth_over_linear() -> None:
+    from tests.unit.lane_walks import judged_step
+
+    # a time, or a time and "other" (read as another lane) or "stopped"
+    Run = float | tuple[float, str]
+
+    def judged(times: dict[int, list[Run]], listed: bool = False) -> object:
+        """(the step, whether it is over linear) for a shape whose runs at each size are
+        the next of `times`, the last one repeated."""
+
+        def cost(n: int) -> tuple[float, int, bool, bool]:
+            run = times[n].pop(0) if len(times[n]) > 1 else times[n][0]
+            t, how = run if isinstance(run, tuple) else (run, "")
+            return t, n, how != "other", how != "stopped"
+
+        got = judged_step(cost, 1, listed)
+        return got and (got[0], _lane_over(got[1], got[2]))
+
+    def quadratic(*at_16n: Run) -> dict[int, list[Run]]:
+        return {1: [0.01], 4: [0.12], 16: list(at_16n) or [1.9]}  # 12 times, then 16
+
+    assert judged({1: [0.01], 4: [0.04]}) == ("N", False)  # not timed at 16N
+    # a run that stopped early at N or 4N is timed as it ran
+    assert judged({1: [(0.01, "stopped")], 4: [0.04]}) == ("N", False)
+    assert judged({1: [0.01], 4: [(0.1, "stopped")], 16: [0.4]}) == ("4N", False)
+    assert judged({1: [0.01], 4: [0.1], 16: [0.4]}) == ("4N", False)  # 10 times once, then 4
+    assert judged({1: [0.01], 4: [0.1], 16: [0.9, 0.4]}) == ("4N", False)  # 16N best of 3
+    assert judged(quadratic()) == ("4N", True)
+    # the bytes parsed come from the two sizes judged (the fake parses n bytes at n)
+    got = judged_step(lambda n: ({1: 0.01, 4: 0.12, 16: 1.9}[n], n, True, True), 1, False)
+    assert got is not None and got[3:] == (4, 16)
+    got = judged_step(lambda n: ({1: 0.01, 4: 0.04}[n], n, True, True), 1, False)
+    assert got is not None and got[3:] == (1, 4)
+    # a 16N run that stopped early or read as another lane leaves the N to 4N step
+    assert judged(quadratic((0.1, "stopped"))) == ("N, 16N unread", True)
+    assert judged(quadratic((0.1, "other"))) == ("N, 16N unread", True)
+    assert judged(quadratic(1.5, (0.1, "stopped"), 1.6)) == ("4N", True)  # a retry, too
+    assert judged(quadratic(2.5, 0.1)) == ("4N", True)  # over 2 s: not timed again
+    assert judged(quadratic(), listed=True) == ("N", True)
+    assert judged({1: [0.01], 4: [0.16]}) == ("N", True)  # 16 times from N: not timed at 16N
+    assert judged({1: [0.02], 4: [0.3], 16: [1.2]}) == ("N", True)  # over 0.25 s at 4N
+    assert judged({1: [0.004], 4: [0.045]}) == ("N", False)  # under 50 ms at 4N: not at 16N
+    assert judged({1: [1.5]}) == ("N", True)  # over 1 s at N: 4N is not timed
+    assert judged({1: [(0.01, "other")]}) is None
+    sizes: list[int] = []
+
+    def counted(n: int) -> tuple[float, int, bool, bool]:
+        sizes.append(n)
+        return {1: 0.01, 4: 0.1, 16: 0.4}[n], n, True, True
+
+    judged_step(counted, 1, False)
+    assert sizes.count(16) == 1  # a 16N run that looks linear is timed once
+
+
+def test_a_lane_parse_that_fails_is_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_parse
+    from tests.unit.lane_walks import _extract
+
+    def fails(path: str, source: bytes) -> object:
+        raise ValueError("no parse")
+
+    monkeypatch.setitem(ingest_parse._PARSERS, "hcl", fails)
+    diagnostics: dict[str, str] = {}
+    pf, finished = _extract("a.tf", b"a = 1\n", diagnostics=diagnostics)
+    # reads as the lane, but its parse failed
+    assert getattr(pf, "lang", "") == "hcl" and not finished
+    assert diagnostics == {"parse": "parse: ValueError"}
+
+
+def test_lane_walk_diagnostics_keep_samples_separate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.app.index import ingest_chunks, ingest_parse
+    from server.code.domain.extract import edges_treesitter
+    from tests.unit.lane_walks import _extract
+
+    def parse(path: str, source: bytes) -> tuple[object, str]:
+        return types.SimpleNamespace(lang="python", tree=object(), source=source), ""
+
+    def chunks(pf: object, path: str, source: bytes, limit: int) -> None:
+        if source == b"bad":
+            raise ValueError("walk failed")
+
+    edges = []
+    monkeypatch.setattr(ingest_parse, "parse_for_ingest", parse)
+    monkeypatch.setattr(ingest_chunks, "_chunks_for", chunks)
+    monkeypatch.setattr(
+        edges_treesitter, "extract_edges_and_misses", lambda pf, *_: edges.append(pf)
+    )
+    failed: dict[str, str] = {}
+    succeeded: dict[str, str] = {}
+    bad, finished_bad = _extract("a.py", b"bad", diagnostics=failed)
+    good, finished_good = _extract("a.py", b"good", diagnostics=succeeded)
+    assert not finished_bad and finished_good
+    assert failed == {"chunks": "ValueError"} and succeeded == {}
+    assert getattr(bad, "tree", None) is not None and getattr(good, "tree", None) is not None
+    assert edges == [bad, good]
+
+
+def test_a_parse_error_a_walk_swallows_is_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.code.domain.extract import bounded_parse
+    from tests.unit import lane_walks
+
+    def raises(parser: object, source: bytes) -> object:
+        raise bounded_parse.ParseTimeout("deadline")
+
+    def extract(
+        path: str, source: bytes, *, diagnostics: dict[str, str] | None = None
+    ) -> tuple[object, bool]:
+        try:
+            bounded_parse.parse(None, source)  # a walk that parses again and swallows it
+        except bounded_parse.ParseTimeout:
+            pass
+        return types.SimpleNamespace(lang="hcl"), True
+
+    runs: list[tuple[float, int, bool, bool]] = []
+
+    def judged(cost: Callable[[int], tuple[float, int, bool, bool]], n: int, listed: bool) -> None:
+        runs.append(cost(n))
+
+    monkeypatch.setattr(bounded_parse, "parse", raises)
+    monkeypatch.setattr(lane_walks, "_extract", extract)
+    monkeypatch.setattr(lane_walks, "judged_step", judged)
+    monkeypatch.setattr(lane_walks, "SHAPES", [("one", lambda n: "a\n" * n)])
+    diagnostics: dict[str, list[dict[str, object]]] = {}
+    lane_walks.registry_cost("hcl", diagnostics=diagnostics)
+    assert [(lane, finished) for _t, _b, lane, finished in runs] == [(True, False)]
+    assert len(diagnostics["one"]) == 1
+    sample = diagnostics["one"][0]
+    assert sample["n"] == lane_walks._REGISTRY_N
+    assert sample["lane"] is True and sample["finished"] is False
+    assert sample["errors"] == {"native_parse": "ParseTimeout"}
+
+
+def _registered_lanes() -> list[str]:
+    from server.code.app.index.ingest_parse import _PARSERS
+
+    return sorted(_PARSERS)
+
+
+def test_every_registered_lane_has_a_sample_that_reads_as_it() -> None:
+    from server.code.app.index.ingest_parse import parse_for_ingest
+    from tests.unit.lane_walks import KNOWN_SLOW, SAMPLES, SHAPES
+
+    assert set(SAMPLES) == set(_registered_lanes()), "a lane needs a SAMPLES entry in lane_walks.py"
+    assert set(KNOWN_SLOW) <= set(SAMPLES)
+    shapes = {name for name, _text in SHAPES}
+    assert all(set(listed) <= shapes for listed in KNOWN_SLOW.values())
+    for path, head, lang in SAMPLES.values():
+        pf, _err = parse_for_ingest(path, (head + "a\n").encode())
+        assert pf is not None and pf.lang == lang, path
+
+
+@pytest.mark.parametrize("lang", _registered_lanes())
+def test_a_registered_lane_costs_linear_time(lang: str) -> None:
+    from tests.unit.lane_walks import KNOWN_SLOW, SHAPES
+
+    done = subprocess.run(
+        [sys.executable, "-c", _REGISTRY_CHILD, lang],
+        capture_output=True,
+        text=True,
+        timeout=_WALK_DEADLINE_S * 6,
+        cwd=pathlib.Path(__file__).resolve().parents[2],
+    )
+    assert done.returncode == 0, done.stderr[-4000:]
+    known = KNOWN_SLOW.get(lang, ())
+    observed = json.loads(done.stdout)
+    timed = observed["timed"]
+    # a shape that reads as another lane is that lane's: at least half must read as this one
+    assert len(timed) >= len(SHAPES) // 2 and set(known) <= {t[0] for t in timed}, lang
+    slow, linear, reparsed = {}, set(), {}
+    for shape, step, small, big, parsed_small, parsed_big in timed:
+        if _lane_over(small, big):
+            slow[shape] = (step, round(small, 3), round(big, 3))
+        if big < LANE_FLOOR_S and big < 4 * small:
+            linear.add(shape)
+        if parsed_big > 6 * parsed_small + 1000:  # the larger file is 4 times the bytes
+            reparsed[shape] = (step, parsed_small, parsed_big)
+    new = {shape: t for shape, t in slow.items() if shape not in known}
+    failed_samples = {shape: observed["diagnostics"][shape] for shape in set(new) | set(reparsed)}
+    assert not new and not reparsed, (
+        f"{lang}, from the step's smaller size (N or 4N) to 4 times it: (step, s, s) {new}; "
+        f"(step, bytes, bytes) {reparsed}; samples: {failed_samples}; "
+        f"child diagnostics:\n{done.stderr[-4000:]}"
+    )
+    fixed = sorted(set(known) & linear)  # clearly linear now, not a timer's doubt
+    assert not fixed, f"{lang}: {fixed} run in linear time; drop them from KNOWN_SLOW"

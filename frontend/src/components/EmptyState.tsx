@@ -9,9 +9,11 @@ interface EmptyStateProps {
   description?: string;
   /** The one action; `secondary` where it is not the surface's primary (an error's Retry). */
   action?: { label: string; onClick: () => void; type?: "primary" | "secondary" };
-  /** Operator detail (op names, worker names, env flags) behind a closed
-   *  "How it works" disclosure, so the description itself stays in plain
-   * language. */
+  /** Controls that own their own state (a button with the dialog it opens), after `action`
+   *  in the same row: secondary where `action` is the primary. */
+  actions?: ReactNode;
+  /** More of how the list fills, in the same plain words, behind a closed "How it works"
+   *  disclosure, so the description stays short. */
   details?: ReactNode;
   /** A line under the description (an error's request id). */
   children?: ReactNode;
@@ -19,7 +21,7 @@ interface EmptyStateProps {
 
 /** Click UI has no empty state; this is Loom's, built from its parts: a muted icon tile,
  *  a product title (600 16 px), muted copy and one primary action. */
-export function EmptyState({ icon, title, description, action, details, children }: EmptyStateProps) {
+export function EmptyState({ icon, title, description, action, actions, details, children }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center text-center py-16 px-6">
       <div className="mb-6 grid place-items-center w-16 h-16 rounded-sm bg-surface-2 text-text-muted">
@@ -33,10 +35,15 @@ export function EmptyState({ icon, title, description, action, details, children
           <div className="mt-2 text-left text-sm text-text-muted">{details}</div>
         </Accordion>
       )}
-      {action && (
-        <Button type={action.type ?? "primary"} htmlType="button" onClick={action.onClick} className="mt-6">
-          {action.label}
-        </Button>
+      {(action || actions) && (
+        <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
+          {action && (
+            <Button type={action.type ?? "primary"} htmlType="button" onClick={action.onClick}>
+              {action.label}
+            </Button>
+          )}
+          {actions}
+        </div>
       )}
     </div>
   );

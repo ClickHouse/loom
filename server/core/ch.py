@@ -16,9 +16,10 @@ import re
 import sys
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Set
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import FrameType
 from typing import Any, cast
@@ -28,6 +29,7 @@ from clickhouse_connect.driver.asyncclient import AsyncClient
 from clickhouse_connect.driver.binding import quote_identifier
 from clickhouse_connect.driver.external import ExternalData
 
+from server.core import diagnostics
 from server.core.ch_class_settings import is_read_statement, traffic_class_settings
 from server.core.ch_errors import (
     QUANTIZED_SETTING,
@@ -35,16 +37,24 @@ from server.core.ch_errors import (
     error_code,
     error_line,
     is_replica_bound_error,
+    is_shared_memory_limit,
     is_transient_network_error,
     is_unknown_quantized_setting,
     strip_quantized_setting,
 )
 from server.core.ch_names import NamedClient, qualify, split_table
+from server.core.ch_observer import (
+    ObservationUnavailable,
+    PolicyObserver,
+    observer_origins,
+)
 from server.core.ch_request_cost import note_result_summary, request_query_id
 from server.core.ch_schema_guard import guard_pending_schema
 from server.core.ch_statement_text import capture_statement, statement_digest, statement_shape
 from server.core.ch_target import connection_kwargs
 from server.core.ch_writes import dedup_settings, insert_dedup_token
+from server.core.errors import OverloadedError
+from server.core.sql_comments import LEADING_COMMENTS
 from server.core.sql_literal import sql_string
 from server.core.traffic_context import traffic_class_var
 from server.settings import settings
@@ -59,8 +69,8 @@ log = logging.getLogger(__name__)
 # query text: plans and the normalised query hash are unaffected.
 query_tag_var: ContextVar[str] = ContextVar("ch_query_tag", default="")
 
-# Called with (table, rows) after every successful `CHClient.insert`: the
-# write marks and recent-write registries the domains keep. Registered by
+# Called with (table, rows) after every successful `CHClient.insert`, once the namespace
+# write marks are recorded: the domains' recent-write registries. Registered by
 # server/wiring.py; an observer that raises never fails the write.
 _INSERT_OBSERVERS: list[Callable[[str, list[dict[str, Any]]], None]] = []
 
@@ -163,6 +173,38 @@ _analyst_var: ContextVar[tuple[str, str, dict[str, Any]] | None] = ContextVar(
 )
 
 
+class CoordinationSessionLost(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("ClickHouse coordination session was not preserved")
+
+
+@dataclass
+class _CoordinationSession:
+    owner: CHClient
+    driver: AsyncClient
+    generation: int
+    identifier: str
+    channel: AsyncClient | None = None
+    checked: bool = False
+    closed: bool = False
+
+    def check(self, client: CHClient | None = None) -> None:
+        if (
+            self.closed
+            or (client is not None and client is not self.owner)
+            or self.owner.generation != self.generation
+            or self.owner.client is not self.driver
+            or _analyst_var.get() is not None
+        ):
+            self.closed = True
+            raise CoordinationSessionLost()
+
+
+_coordination_session: ContextVar[_CoordinationSession | None] = ContextVar(
+    "ch_coordination_session", default=None
+)
+
+
 @contextmanager
 def as_analyst(user: str, password: str, extra: dict[str, Any]) -> Iterator[None]:
     """Every statement in this block logs in as `user` and carries `extra`
@@ -197,6 +239,9 @@ def _reader_auth() -> dict[str, Any]:
     Only the query path sends it, where every statement is read-class and so
     carries the caller-shaped ceilings too. Inside `as_analyst` it sends the
     analyst user instead, always."""
+    if session := _coordination_session.get():
+        session.check()
+        return {}
     analyst = _analyst_var.get()
     if analyst is not None:
         user, password = analyst[0], analyst[1]
@@ -346,7 +391,7 @@ _DDL_LEADS = (
     "DELETE",  # DELETE FROM is a lightweight mutation
 )
 _WRITE_LEADS = ("INSERT", "UPDATE")
-_LEAD_RE = re.compile(r"^\s*(?:--[^\n]*\n\s*|/\*.*?\*/\s*)*([A-Za-z]+)", re.S)
+_LEAD_RE = re.compile(LEADING_COMMENTS + r"([A-Za-z]+)")
 
 # A block that knows it runs long (a CLI mutation that waits on
 # `mutations_sync = 2`, a backfill) raises the bound for every statement it
@@ -424,15 +469,53 @@ def _apply_class_timeout(out: dict[str, Any], cls: str) -> dict[str, Any]:
 # feed the `loom.ch.pool.*` gauges.
 _POOL_WAITERS = 0
 _POOL_IN_USE = 0
-_POOL_OVERLOADED_TOTAL = 0
 _POOL_TIMEOUTS_TOTAL = 0
 _OVERLOADED_LOG_EVERY_S = 5.0
-_overloaded_last_log = 0.0
-_overloaded_since_log = 0
+
+
+class _Refusals:
+    """A count of one kind of 503 this process answered, and whether a log line for it
+    is due: at most one per `_OVERLOADED_LOG_EVERY_S`, naming the refusals since the last."""
+
+    def __init__(self) -> None:
+        self.total = 0
+        self.since_log = 0
+        self.last_log = 0.0
+
+    def count(self) -> int | None:
+        """Count one; the refusals since the last line when a line is due, else None."""
+        self.total += 1
+        self.since_log += 1
+        now = time.monotonic()
+        if now - self.last_log < _OVERLOADED_LOG_EVERY_S:
+            return None
+        since, self.since_log, self.last_log = self.since_log, 0, now
+        return since
+
+
+# No pool slot within ch_pool_wait_ms; ClickHouse short of the server's or the user's memory.
+_POOL_REFUSALS = _Refusals()
+_SHORT_OF_MEMORY = _Refusals()
 # Reads whose body the client pulls at its own pace (`raw_stream`) wait on this
 # gate instead, so slow downloads cannot take the pool's slots. The connector
 # has room for them beside the pool.
 STREAM_SLOTS = 4
+
+
+def _short_of_memory(op_name: str, e: BaseException) -> OverloadedError:
+    """The 503 for a statement ClickHouse ran short of shared memory for, counted, with
+    ClickHouse's line logged when one is due: the answer carries none of it."""
+    since = _SHORT_OF_MEMORY.count()
+    if since is not None:
+        log.warning(
+            "ch %s: ClickHouse is short of memory (%d statements since last line, %d in "
+            "all): %s — 503 OVERLOADED",
+            op_name,
+            since,
+            _SHORT_OF_MEMORY.total,
+            error_line(e),
+        )
+    return OverloadedError("ClickHouse is short of memory; retry shortly", retry_after_s=5)
 
 
 def pool_reading() -> dict[str, int]:
@@ -442,7 +525,7 @@ def pool_reading() -> dict[str, int]:
         "limit": int(settings.ch_pool_maxsize),
         "in_use": _POOL_IN_USE,
         "waiters": _POOL_WAITERS,
-        "overloaded_total": _POOL_OVERLOADED_TOTAL,
+        "overloaded_total": _POOL_REFUSALS.total,
         "timeouts_total": _POOL_TIMEOUTS_TOTAL,
     }
 
@@ -470,13 +553,20 @@ def statement_settings(
     LOOM_CH_SETTINGS_BY_TRAFFIC_CLASS (`priority`, `max_threads`, …) — the
     caller's own `extra` wins on a name it already sets, and neither setting
     changes which rows the statement returns."""
+    session = _coordination_session.get()
+    if session is not None:
+        session.check()
     out = query_settings(extra)
     cls = cls or statement_class(sql)
     _apply_class_timeout(out, cls)
-    if settings.ch_capture_statements and not _uncaptured_var.get():
+    if (
+        settings.ch_capture_statements
+        and not _uncaptured_var.get()
+        and not diagnostics.codes_only()
+    ):
         capture_statement(sql, settings.ch_capture_statements)
     analyst = _analyst_var.get()
-    if settings.ch_log_comment_statement_digest:
+    if settings.ch_log_comment_statement_digest and not diagnostics.codes_only():
         tag = str(out.get("log_comment") or "")
         # The head would quote a secret, or a caller's SQL run as the analyst.
         shape_only = _uncaptured_var.get() or analyst is not None
@@ -494,6 +584,14 @@ def statement_settings(
         for name, value in traffic_class_settings(tclass).items():
             out.setdefault(name, value)
     _apply_caller_ceilings(out, cls)
+    if session is not None:
+        out.update(
+            session_id=session.identifier,
+            session_check=int(session.checked),
+            session_timeout=30,
+            use_query_cache=0,
+            use_query_condition_cache=0,
+        )
     return _with_request_query_id(out)
 
 
@@ -540,6 +638,8 @@ def query_settings(extra: dict[str, Any] | None = None) -> dict[str, Any]:
     key = quota_key_var.get()
     if key:
         out["quota_key"] = key
+    if diagnostics.codes_only():
+        out["log_comment"] = ""
     return out
 
 
@@ -729,6 +829,42 @@ async def acquire_slot(slots: asyncio.Semaphore, what: str) -> None:
         ) from None
 
 
+async def _make_driver(
+    configuration: dict[str, Any], *, connector_limit: int, coordination: bool = False
+) -> AsyncClient:
+    configuration = dict(configuration)
+    if coordination:
+        configuration["query_retries"] = 0
+    driver = await clickhouse_connect.get_async_client(
+        **configuration,
+        compress=True,
+        # Each statement retains its class deadline; this is the driver backstop.
+        send_receive_timeout=_driver_read_timeout_s(),
+        tz_source="server",
+        connector_limit=connector_limit,
+        connector_limit_per_host=connector_limit,
+        # Retire idle sockets before the load balancer closes them.
+        keepalive_timeout=float(settings.ch_keepalive_timeout),
+        settings={
+            "async_insert": 0,
+            "wait_for_async_insert": 1,
+            "insert_deduplicate": 0,
+            # Vector scans can otherwise bypass the filesystem cache in Cloud.
+            "enable_filesystem_cache": 1,
+            "session_timezone": "UTC",
+            **({"use_query_cache": 0, "use_query_condition_cache": 0} if coordination else {}),
+        },
+    )
+    try:
+        client = cast(AsyncClient, NamedClient(driver))
+        # The configured database aliases and bare DateTimes retain their normal meaning.
+        client.server_tz = UTC
+        return client
+    except BaseException:
+        driver._force_close()
+        raise
+
+
 class CHClient:
     """Singleton-ish wrapper. Use `get_client()` to fetch."""
 
@@ -764,52 +900,64 @@ class CHClient:
         if "_reconnect_lock" not in d:
             d["_reconnect_lock"] = asyncio.Lock()
 
+    @asynccontextmanager
+    async def coordination_session(self) -> AsyncIterator[None]:
+        """Own one transport while keeping the checked session and original client pin.
+
+        Every step still attests the backend; a checked session is never recreated.
+        """
+        if _coordination_session.get() is not None or _analyst_var.get() is not None:
+            raise CoordinationSessionLost()
+        session = _CoordinationSession(self, self.client, self.generation, uuid.uuid4().hex)
+        configuration = dict(self._connection_config)
+        # Lifetime capacity shares the caller's proof deadline, not a statement's wait.
+        await self._stream_slots.acquire()
+        token = _coordination_session.set(session)
+        failed = True
+        try:
+
+            async def open_channel() -> None:
+                # Own it before the guarded call's final generation/identity check.
+                session.channel = await _make_driver(
+                    configuration, connector_limit=1, coordination=True
+                )
+
+            await self._with_retry("coordination_session", open_channel, cls="read")
+            await self.query_one("SELECT 1 AS coordination_ready")
+            session.checked = True
+            yield
+            failed = False
+        finally:
+            session.closed = True
+            _coordination_session.reset(token)
+            try:
+                if session.channel is not None:
+                    if failed:
+                        # A delivered proof timeout cannot bound a fresh cleanup await.
+                        session.channel._force_close()
+                    else:
+                        try:
+                            await session.channel.close()
+                        except BaseException:
+                            session.channel._force_close()
+                            raise
+            finally:
+                self._stream_slots.release()
+
+    @property
+    def connected(self) -> bool:
+        return self._client is not None
+
     async def connect(self) -> None:
         limit = int(settings.ch_pool_maxsize)
         # Streaming reads have connections of their own beside the pool; 0 is unbounded.
         connector_limit = limit + STREAM_SLOTS if limit > 0 else 0
-        driver = await clickhouse_connect.get_async_client(
-            **connection_kwargs(),
-            compress=True,
-            # The driver's read timeout is the outer backstop
-            # at the largest class bound (the driver's own 300 s when that
-            # bound is disabled); each statement's own deadline is applied
-            # per call in `_with_retry`.
-            send_receive_timeout=_driver_read_timeout_s(),
-            tz_source="server",
-            connector_limit=connector_limit,
-            connector_limit_per_host=connector_limit,
-            # Close idle pooled connections before the Cloud load balancer
-            # does, so the pool never holds a peer-closed TLS transport.
-            keepalive_timeout=float(settings.ch_keepalive_timeout),
-            # Committed by default; a call site passes ch_writes' async settings to batch.
-            # insert_deduplicate is 0 here: each insert turns dedup on with its token.
-            settings={
-                "async_insert": 0,
-                "wait_for_async_insert": 1,
-                "insert_deduplicate": 0,
-                # Vector search scans the embedding column; on ClickHouse
-                # Cloud that reads object storage unless the local filesystem
-                # cache serves it, and a service profile can ship with the
-                # cache off. Session-level, so every query benefits; a no-op
-                # on a server without a cache.
-                "enable_filesystem_cache": 1,
-                # Loom's DateTime columns carry no zone of their own, so a
-                # server whose <timezone> is not UTC would shift naive params
-                # and reads by its offset; every session reads and writes UTC.
-                "session_timezone": "UTC",
-            },
-        )
-        # Statements name the `loom` alias; the wrapper names the configured database.
-        client = cast(AsyncClient, NamedClient(driver))
-        # The driver learns the zone it binds aware params in from the server
-        # default before the session setting applies; bind them in UTC too.
-        # tz_source="server" reads a bare DateTime in that zone, so reads come
-        # back naive UTC, never in the host's zone.
-        client.server_tz = UTC
+        configuration = connection_kwargs()
+        client = await _make_driver(configuration, connector_limit=connector_limit)
         # Settled before any task can use it: a reconnect publishes it only now.
         await _turn_off_unsafe_condition_cache(client)
         self._client = client
+        self._connection_config = configuration
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:
@@ -831,10 +979,93 @@ class CHClient:
             raise RuntimeError("ClickHouse client not connected; call connect() first")
         return self._client
 
+    def _statement_client(self) -> AsyncClient:
+        if session := _coordination_session.get():
+            session.check(self)
+            if session.channel is None:
+                session.closed = True
+                raise CoordinationSessionLost()
+            return session.channel
+        return self.client
+
     @property
     def generation(self) -> int:
         self._ensure_state()
         return int(self._generation)
+
+    @asynccontextmanager
+    async def policy_observers(self) -> AsyncIterator[tuple[PolicyObserver, ...]]:
+        """Read native access policy authority without replaying a session bootstrap."""
+        self._ensure_state()
+        owner, generation = self.client, self.generation
+        configuration = connection_kwargs()
+        origins = tuple(settings.ch_analysis_observer_urls)
+        if (
+            self.__dict__.get("_connection_config") != configuration
+            or _analyst_var.get() is not None
+            or str(configuration["username"]) == "loom_analyst"
+        ):
+            raise ObservationUnavailable()
+        normalized = observer_origins(configuration, origins)
+
+        async def guarded(
+            sql: str, send: Callable[[], Awaitable[list[dict[str, Any]]]]
+        ) -> list[dict[str, Any]]:
+            def unchanged() -> None:
+                if (
+                    self.client is not owner
+                    or self.generation != generation
+                    or connection_kwargs() != configuration
+                    or tuple(settings.ch_analysis_observer_urls) != origins
+                    or _analyst_var.get() is not None
+                ):
+                    raise ObservationUnavailable()
+
+            unchanged()
+            await guard_pending_schema("policy_observer", sql, "read")
+            took = await self._acquire_slot("policy_observer")
+            try:
+                unchanged()
+                result: list[dict[str, Any]] = await self._bounded("policy_observer", "read", send)
+                unchanged()
+                return result
+            finally:
+                if took:
+                    self._release_slot()
+
+        def options(sql: str) -> dict[str, Any]:
+            # Native policy bodies can contain access keys. Keep local capture and
+            # statement heads out of this channel.
+            with uncaptured():
+                return statement_settings(sql, cls="read")
+
+        observers: list[PolicyObserver] = []
+        failed = False
+        try:
+            for origin in normalized:
+                observer = PolicyObserver(
+                    origin,
+                    str(configuration["username"]),
+                    str(configuration["password"]),
+                    str(configuration["database"]),
+                    guarded,
+                    options,
+                )
+                # Register ownership before a bootstrap can fail or be cancelled.
+                observers.append(observer)
+                await observer.bootstrap()
+            yield tuple(observers)
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            # Concurrent bounded closes give one cleanup interval for all routes.
+            # A primary refusal/cancellation stands even if its session never formed.
+            results = await asyncio.gather(
+                *(observer.close() for observer in observers), return_exceptions=True
+            )
+            if not failed and any(isinstance(result, BaseException) for result in results):
+                raise ObservationUnavailable()
 
     async def _reconnect(self, seen: int | None = None) -> None:
         """Replace the shared client with a fresh one.
@@ -913,8 +1144,7 @@ class CHClient:
     async def _acquire_slot(self, op_name: str) -> bool:
         """Take one pool slot or raise 503 OVERLOADED after `ch_pool_wait_ms`.
         Returns whether a slot was taken (False when the gate is off)."""
-        global _POOL_WAITERS, _POOL_IN_USE, _POOL_OVERLOADED_TOTAL
-        global _overloaded_last_log, _overloaded_since_log
+        global _POOL_WAITERS, _POOL_IN_USE
         sem = self._slots
         wait_ms = int(settings.ch_pool_wait_ms)
         if sem is None or wait_ms <= 0:
@@ -924,24 +1154,18 @@ class CHClient:
             try:
                 await asyncio.wait_for(sem.acquire(), timeout=wait_ms / 1000.0)
             except TimeoutError:
-                _POOL_OVERLOADED_TOTAL += 1
-                _overloaded_since_log += 1
-                now = time.monotonic()
-                if now - _overloaded_last_log >= _OVERLOADED_LOG_EVERY_S:
+                since = _POOL_REFUSALS.count()
+                if since is not None:
                     log.warning(
                         "ch %s: no pool slot within %d ms (%d refused since last line; "
                         "limit %d, in use %d, waiting %d) — 503 OVERLOADED",
                         op_name,
                         wait_ms,
-                        _overloaded_since_log,
+                        since,
                         int(settings.ch_pool_maxsize),
                         _POOL_IN_USE,
                         _POOL_WAITERS - 1,
                     )
-                    _overloaded_last_log = now
-                    _overloaded_since_log = 0
-                from server.core.errors import OverloadedError
-
                 raise OverloadedError(
                     "every ClickHouse connection of this process is busy; retry shortly",
                     retry_after_s=1,
@@ -959,6 +1183,26 @@ class CHClient:
         if self._slots is not None:
             self._slots.release()
 
+    async def _guard_schema(
+        self, op_name: str, sql: str, cls: str, *, insert_table: str | None = None
+    ) -> None:
+        session = _coordination_session.get()
+        if session is None:
+            await guard_pending_schema(op_name, sql, cls, insert_table=insert_table)
+            return
+        try:
+            session.check(self)
+            # The advisory ledger refresh uses the global client, outside the proof.
+            token = _coordination_session.set(None)
+            try:
+                await guard_pending_schema(op_name, sql, cls, insert_table=insert_table)
+            finally:
+                _coordination_session.reset(token)
+            session.check(self)
+        except BaseException:
+            session.closed = True
+            raise
+
     async def _with_retry(  # type: ignore[no-untyped-def]
         self,
         op_name: str,
@@ -972,14 +1216,38 @@ class CHClient:
         retried batch lands once); a replica-bound server error gets up to two
         more connections; a class deadline and every other error raise at once."""
         self._ensure_state()
-        took = await self._acquire_slot(op_name)
+        session = _coordination_session.get()
+        took = False
         try:
+            if session is not None:
+                session.check(self)
+            took = await self._acquire_slot(op_name)
+            if session is not None:
+                session.check(self)
+                result = await self._bounded(op_name, cls, fn)
+                session.check(self)
+                return result
             return await self._retry_ladder(op_name, fn, cls=cls)
+        except BaseException:
+            if session is not None:
+                session.closed = True
+            raise
         finally:
             if took:
                 self._release_slot()
 
     async def _retry_ladder(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
+        """`_attempts`, with a 241 against the server's or the user's memory (shared by
+        every query) answered as a retryable 503, whichever attempt met it. A statement's
+        own cap is the caller's (`_raise_if_caller_cap`)."""
+        try:
+            return await self._attempts(op_name, fn, cls=cls)
+        except Exception as e:
+            if is_shared_memory_limit(e):
+                raise _short_of_memory(op_name, e) from e
+            raise
+
+    async def _attempts(self, op_name: str, fn, *, cls: str):  # type: ignore[no-untyped-def]
         seen = int(self._generation)
         try:
             return await self._bounded(op_name, cls, fn)
@@ -1045,7 +1313,7 @@ class CHClient:
         fails for want of it is the wrong trade."""
 
         async def _q(text: str) -> Any:
-            res = await self.client.query(
+            res = await self._statement_client().query(
                 text,
                 parameters=params or {},
                 settings=statement_settings(text, cls="read"),
@@ -1054,7 +1322,7 @@ class CHClient:
             note_result_summary(res)
             return res
 
-        await guard_pending_schema(op_name, sql, "read")
+        await self._guard_schema(op_name, sql, "read")
         try:
             return await self._with_retry(op_name, lambda: _q(sql), cls="read")
         except Exception as e:
@@ -1093,30 +1361,44 @@ class CHClient:
         types = [t.name for t in result.column_types]
         return list(result.column_names), types, [tuple(r) for r in result.result_rows]
 
-    async def raw_bytes(self, sql: str, params: dict[str, Any] | None = None) -> bytes:
-        """A SELECT's whole output as bytes (`FORMAT RawBLOB` for one String
-        value), read under one pool slot like any query."""
+    async def raw_bytes(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
+    ) -> bytes:
+        """A statement's whole output as bytes: a SELECT's (`FORMAT RawBLOB` for one String
+        value), or a `SYSTEM … ON CLUSTER` statement's status rows; read under one pool slot
+        like any query. `settings` are this statement's own ClickHouse settings."""
 
         async def _q() -> bytes:
-            return await self.client.raw_query(
+            return await self._statement_client().raw_query(
                 sql,
                 parameters=params or {},
-                settings=statement_settings(sql, cls="read"),
+                settings=statement_settings(sql, settings, cls="read"),
                 **_reader_auth(),
             )
 
-        await guard_pending_schema("raw_bytes", sql, "read")
+        await self._guard_schema("raw_bytes", sql, "read")
         return bytes(await self._with_retry("raw_bytes", _q, cls="read"))
 
     @asynccontextmanager
     async def raw_stream(
-        self, sql: str, params: dict[str, Any] | None = None
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> AsyncIterator[AsyncIterator[bytes]]:
-        """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String
-        value), for a body too large to buffer. Opening is retried like any
-        read; the stream holds one of the `STREAM_SLOTS` until the block exits,
-        not a pool slot, since the client sets how long that takes."""
+        """A SELECT's output as raw byte chunks (`FORMAT RawBLOB` for one String value), for
+        a body too large to buffer. Opening is retried like any read; the stream holds one
+        of the `STREAM_SLOTS` until the block exits, not a pool slot, since the client sets
+        how long that takes. `settings` are this statement's own ClickHouse settings."""
 
+        if session := _coordination_session.get():
+            session.closed = True
+            raise CoordinationSessionLost()
         held: list[int] = []  # the generation whose client opened the stream
 
         async def _open() -> Any:
@@ -1126,7 +1408,7 @@ class CHClient:
             stream = await client.raw_stream(
                 sql,
                 parameters=params or {},
-                settings=statement_settings(sql, cls="read"),
+                settings=statement_settings(sql, settings, cls="read"),
                 **_reader_auth(),
             )
             # Held before `_bounded` drops its count, so the client is never
@@ -1136,7 +1418,7 @@ class CHClient:
             return stream
 
         self._ensure_state()
-        await guard_pending_schema("raw_stream", sql, "read")
+        await self._guard_schema("raw_stream", sql, "read")
         await acquire_slot(self._stream_slots, "streaming read")
         try:
             stream = await self._retry_ladder("raw_stream", _open, cls="read")
@@ -1174,7 +1456,7 @@ class CHClient:
             payload: dict[str, Any] = (
                 {"external_data": external_data} if external_data is not None else {}
             )
-            res = await self.client.command(
+            res = await self._statement_client().command(
                 sql,
                 parameters=params or {},
                 settings=statement_settings(sql, extra, cls=cls),
@@ -1182,7 +1464,7 @@ class CHClient:
             )
             note_result_summary(res)
 
-        await guard_pending_schema("execute", sql, cls)
+        await self._guard_schema("execute", sql, cls)
         await self._with_retry("execute", _q, cls=cls)
 
     async def insert(
@@ -1190,6 +1472,8 @@ class CHClient:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None = None,
+        *,
+        required_columns: Set[str] = frozenset(),
     ) -> None:
         """Batch insert via the native typed insert path. `settings` forwards
         CH query settings. An `insert_deduplication_token` in `settings`
@@ -1200,27 +1484,36 @@ class CHClient:
         (table, column) per process — instead of failing the batch. A process
         running code newer than the service's schema (an isolated server, or
         the deployment between an image build and its boot migration) then
-        loses a column's values, not its rows."""
+        loses a column's values, not its rows.
+
+        `required_columns` must occur in every row and every INSERT attempt;
+        they are never projected away when cached or live schema is behind."""
         if not rows:
             return
+        required = frozenset(required_columns)
+        _validate_required_insert_columns(table, rows, required)
         # Before the DESCRIBE — that read is the first statement
         # to raise code 60 against a table the service does not have yet.
-        await guard_pending_schema("insert", "", "write", insert_table=table)
+        if session := _coordination_session.get():
+            session.closed = True
+            raise CoordinationSessionLost()
+        await self._guard_schema("insert", "", "write", insert_table=table)
         from server.core import rmt_carry
 
         if not rmt_carry.carries(table):
-            await self._insert_batch(table, rows, settings)
+            await self._insert_batch(table, rows, settings, required)
             return
         async with rmt_carry.writing():
             # A version row keeps the columns a newer build's migration added.
             for batch in await rmt_carry.carry_unknown_columns(self, table, rows):
-                await self._insert_batch(table, batch, settings)
+                await self._insert_batch(table, batch, settings, required)
 
     async def _insert_batch(
         self,
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None,
+        required_columns: frozenset[str] = frozenset(),
     ) -> None:
         # A coded vector column needs every row at full length.
         from server.core.vectors import codes_state, placeholders
@@ -1228,7 +1521,7 @@ class CHClient:
         await codes_state.refuse_other_widths(table, rows)  # skips the empty vectors
         padded = placeholders.pad_rows(table, rows)
         try:
-            await self._insert_rows(table, rows, settings)
+            await self._insert_rows(table, rows, settings, required_columns)
             return
         except Exception as e:
             if error_code(e) != WIDTH_MISMATCH_CODE:
@@ -1245,7 +1538,7 @@ class CHClient:
         # before it: a background probe may have published the new width mid-insert.
         if all(codes_state.stored_width(table, c) == n for c, n in sized.items()):
             raise refused  # the fresh reading does not explain it
-        await self._insert_rows(table, rows, settings)
+        await self._insert_rows(table, rows, settings, required_columns)
 
     async def _fenced_insert(
         self,
@@ -1281,11 +1574,13 @@ class CHClient:
         table: str,
         rows: list[dict[str, Any]],
         settings: dict[str, Any] | None,
+        required_columns: frozenset[str] = frozenset(),
     ) -> None:
+        _validate_required_insert_columns(table, rows, required_columns)
         columns = list(rows[0].keys())
         project_onto_table = table in PROJECTED_TABLES
         if project_onto_table:
-            columns = await self._project_columns(table, columns)
+            columns = await self._project_columns(table, columns, required_columns)
         # Rows must agree on their key set: the column list comes from row 0,
         # so a row missing a key would raise a bare KeyError deep in the
         # driver (and a row with an extra key would silently drop it). Name
@@ -1322,10 +1617,11 @@ class CHClient:
         settings = dedup_settings(token, settings)
         from server.core import rmt_carry
 
+        send_clock = None
         if rmt_carry.sent_under_lease() and not rmt_carry.carries(table):
-            # Its start deadline is on the server's clock, which a carried insert's
-            # admission measures: measured here, before the send holds a slot.
-            await rmt_carry.measure_server_clock(self)
+            # An external record can have a different server clock from the
+            # deployment. Measure its receiver before the send holds a slot.
+            send_clock = await rmt_carry.measure_send_clock(self)
 
         async def _q() -> None:
             attempt = query_settings(settings)
@@ -1354,7 +1650,11 @@ class CHClient:
                 fenced["query_id"] = rmt_carry.carry_query_id(
                     str(fenced.get("query_id") or uuid.uuid4().hex)
                 )
-                deadline = rmt_carry.send_deadline()
+                deadline = (
+                    rmt_carry.clock_send_deadline(send_clock)
+                    if send_clock is not None
+                    else rmt_carry.send_deadline()
+                )
                 rmt_carry.note_send(
                     str(fenced["query_id"]), deadline, float(fenced["max_execution_time"])
                 )
@@ -1395,24 +1695,27 @@ class CHClient:
             # refused slot or a cut deadline.
             if isinstance(e, LoomServerError) or error_code(e) == WIDTH_MISMATCH_CODE:
                 raise
+            _validate_required_insert_columns(table, rows, required_columns)
             had_cache = type_names is not None or table in _COLUMN_TYPES
             _COLUMN_TYPES.pop(table, None)
+            reprojected = columns
             if project_onto_table:
                 # The cached column set may be stale (a migration ran, or the
                 # first describe failed): re-describe, re-project, and retry
                 # once with what the table has NOW.
-                reprojected = await self._project_columns(table, list(rows[0].keys()))
-                if reprojected != columns:
-                    columns = reprojected
-                    type_names = await self._column_type_names(table, columns)
-                    data = _insert_data(rows, columns, type_names)
-                    await _run()
-                    return
-            if not had_cache:
+                reprojected = await self._project_columns(
+                    table, list(rows[0].keys()), required_columns
+                )
+            if reprojected != columns:
+                columns = reprojected
+                type_names = await self._column_type_names(table, columns)
+                data = _insert_data(rows, columns, type_names)
+            elif not had_cache:
                 raise
-            type_names = None
+            else:
+                type_names = None
             await _run()
-        # The write marks of the five plane tables are kept in-process and
+        # The write marks of the plane tables are kept in-process and
         # flushed every few seconds; then the domains' observers.
         try:
             from server.core import namespace_write_marks as _marks
@@ -1462,17 +1765,19 @@ class CHClient:
         except KeyError:
             return None
 
-    async def _project_columns(self, table: str, columns: list[str]) -> list[str]:
-        """`columns` minus those the live `table` lacks. One
+    async def _project_columns(
+        self, table: str, columns: list[str], required_columns: frozenset[str] = frozenset()
+    ) -> list[str]:
+        """Keep required columns and optional columns present on the live table. One
         WARNING per (table, column) per process — the same column is missing
         on every flush until the migration runs. Unchanged when the describe
         fails: the driver then reports the real error."""
         types = await self._live_column_types(table)
         if types is None:
             return columns
-        kept = [c for c in columns if c in types]
+        kept = [c for c in columns if c in types or c in required_columns]
         for c in columns:
-            if c in types or (table, c) in _PROJECTION_WARNED:
+            if c in types or c in required_columns or (table, c) in _PROJECTION_WARNED:
                 continue
             _PROJECTION_WARNED.add((table, c))
             log.warning(
@@ -1483,6 +1788,19 @@ class CHClient:
                 table,
             )
         return kept
+
+
+def _validate_required_insert_columns(
+    table: str, rows: list[dict[str, Any]], required_columns: frozenset[str]
+) -> None:
+    if not required_columns:
+        return
+    for index, row in enumerate(rows):
+        missing = required_columns - row.keys()
+        if missing:
+            raise ValueError(
+                f"insert {table}: row {index} lacks required columns {sorted(missing)}"
+            )
 
 
 # Per-process column types by table, for inserts. Bounded by
@@ -1507,6 +1825,47 @@ PROJECTED_TABLES: frozenset[str] = frozenset(
 )
 # (table, column) pairs already warned about — one line per process.
 _PROJECTION_WARNED: set[tuple[str, str]] = set()
+
+
+class ExternalCHClient(CHClient):
+    """The statement wrapper for an operator's separately owned record database."""
+
+    def __init__(
+        self,
+        *,
+        host: str,
+        port: int,
+        secure: bool,
+        database: str,
+        username: str,
+        password: str,
+        address: str = "",
+    ) -> None:
+        super().__init__()
+        self._connection: dict[str, Any] = dict(
+            host=address or host,
+            server_host_name=host if address else None,
+            port=port,
+            secure=secure,
+            database=database,
+            username=username,
+            password=password,
+        )
+        self._slots = asyncio.Semaphore(2)
+
+    async def connect(self) -> None:
+        # A record database has no Loom schema or vector-capability probes.
+        client = await clickhouse_connect.get_async_client(
+            **self._connection,
+            compress=True,
+            tz_source="server",
+            send_receive_timeout=_driver_read_timeout_s(),
+            connector_limit=2,
+            connector_limit_per_host=2,
+            settings={"session_timezone": "UTC", "async_insert": 0, "wait_for_async_insert": 1},
+        )
+        client.server_tz = UTC
+        self._client = client
 
 
 def describe_cache_clear() -> None:

@@ -58,8 +58,10 @@ def is_principal(subject: str) -> bool:
     return subject == EVERYONE or any(principal_id(subject, p) for p in PRINCIPAL_PREFIXES)
 
 
+# A collection's name starts with this (server/auth/sharing.py).
+COLLECTION_PREFIX = "col-"
 # A user's personal collection: named from the org and the user, so its name
-# says whose it is (server/auth/sharing.py).
+# says whose it is.
 PERSONAL_PREFIX = "col-me-"
 
 

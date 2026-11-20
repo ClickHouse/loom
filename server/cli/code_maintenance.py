@@ -13,6 +13,7 @@ import sys
 import time
 from typing import Any
 
+from server.cli._ch import OrgFree, connect_code_plane, connect_declared, reads, writes
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 log = logging.getLogger("loom.cli.code")
@@ -67,7 +68,7 @@ async def _init(args: argparse.Namespace) -> int:
     else:
         print(f"bare clone already at {git_dir}")
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
     await repo.set_state(org, ns, "repo_remote", cfg.git_remote)
@@ -83,7 +84,7 @@ async def _export_pairs(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     res = await export_pairs(CodeRepo(get_client()), org, ns, days=args.days, out_path=args.out)
     print(
@@ -100,11 +101,21 @@ async def _reconcile(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
     cfg = _repo_cfg(args)
+    # Without --heal it only reads; with it, it writes the entry `_repo_cfg` resolved.
+    if args.heal:
+        await connect_declared(get_client(), orgs=(cfg.org,))
+    else:
+        await connect_declared(get_client(), org_free=reads("reads"))
     repo = CodeRepo()
     if not args.no_fetch:
-        await gitrepo.fetch(cfg.git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+        await gitrepo.fetch(
+            cfg.git_dir,
+            cfg.git_remote,
+            cfg.git_branch,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
     head = await gitrepo.head_sha(cfg.git_dir, cfg.git_branch)
     found = await find_stale_paths(
         repo,
@@ -149,10 +160,11 @@ async def _reembed(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.embedding.embedder import get_embedder, get_secondary_embedder
 
-    await get_client().connect()
+    # Before declaring the org: an unknown --embedding-model records nothing.
+    embedder = get_secondary_embedder(args.embedding_model)
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     source = args.source_model or get_embedder().model_name
-    embedder = get_secondary_embedder(args.embedding_model)
     print(
         f"re-embedding {org}/{ns} {source!r} -> {embedder.model_name!r} ({embedder.dim}-d)"
         + (f" under {args.prefix!r}" if args.prefix else "")
@@ -188,13 +200,10 @@ async def _reembed(args: argparse.Namespace) -> int:
 async def _vector_twin(args: argparse.Namespace) -> int:
     from server.code.domain.index.prefix_twin import prefix_twins_for
     from server.code.domain.index.repos import configured_repos
-    from server.code.store.index.prefix_twin import fill_twin
+    from server.code.store.index.prefix_twin import fill_twin, is_prefix_twin
     from server.core.ch import get_client
     from server.embedding.embedder import get_embedder
 
-    await get_client().connect()
-    ch = get_client()
-    org, ns = _identity(args)
     label = args.embedding_model
     if not label:
         twins = prefix_twins_for(get_embedder().model_name)
@@ -202,6 +211,13 @@ async def _vector_twin(args: argparse.Namespace) -> int:
             print("no prefix twin of the served model in LOOM_CODE_VECTOR_TABLES")
             return 2
         label = twins[0][0]
+    # Before declaring the org: an unknown twin records nothing.
+    if not is_prefix_twin(label):
+        print(f"{label!r} is not a configured prefix twin (LOOM_CODE_VECTOR_TABLES)")
+        return 2
+    await connect_code_plane(get_client(), args)
+    ch = get_client()
+    org, ns = _identity(args)
     targets = [(org, ns)]
     if args.all_namespaces:
         targets = [(c.org, c.namespace) for c in configured_repos() if c.org == org] or targets
@@ -238,7 +254,7 @@ async def _compact(args: argparse.Namespace) -> int:
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    await get_client().connect()
+    await connect_declared(get_client(), org_free=_compact_org_free(args))
     ch = get_client()
     min_ratio = args.min_ratio if args.min_ratio is not None else settings.code_compact_min_ratio
     rc = 0
@@ -276,7 +292,7 @@ async def _crossref(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     res = await run_crossref_pass(CodeRepo(), org, ns)
     print(
@@ -291,7 +307,7 @@ async def _coverage_import(args: argparse.Namespace) -> int:
     from server.code.app.index.coverage_import import import_from_settings
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     res = await import_from_settings(org, ns, dry_run=bool(args.dry_run))
     print(
@@ -338,7 +354,7 @@ async def _warm(args: argparse.Namespace) -> int:
         print("no questions in file", file=sys.stderr)
         return 2
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
     embedder = get_embedder()
@@ -387,7 +403,7 @@ async def _answers_purge(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
     where = "" if getattr(args, "all", False) else "AND llm_model = {m:String}"
@@ -431,7 +447,7 @@ async def _describe(args: argparse.Namespace) -> int:
     from server.embedding.embedder import get_embedder
     from server.llm.client import get_llm_client
 
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
     embedder = get_embedder()
@@ -540,7 +556,7 @@ async def _export_matrix(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     repo = CodeRepo()
     state = await repo.all_state(org, ns)
@@ -582,7 +598,7 @@ async def _lint_instructions(args: argparse.Namespace) -> int:
         from server.code.store.index import CodeRepo
         from server.core.ch import get_client
 
-        await get_client().connect()
+        await connect_declared(get_client(), org_free=reads("reads"))
         repo = CodeRepo()
     report = await lint_repo(
         cfg,
@@ -602,7 +618,7 @@ async def _stats(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
+    await connect_declared(get_client(), org_free=reads("reads"))
     org, ns = _identity(args)
     repo = CodeRepo()
     state = await repo.all_state(org, ns)
@@ -646,7 +662,7 @@ async def _repack(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
 
     cfg = _repo_cfg(args)
-    await get_client().connect()
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     repo = CodeRepo()
     prs = await repo.recent_prs(org, ns, days=args.days, limit=args.limit)
@@ -720,3 +736,10 @@ async def _repack(args: argparse.Namespace) -> int:
     print(f"repack: {done} packs {verb}, {skipped} PRs had no indexed files")
     _note(packs=done, skipped=skipped, prs=len(prs), dry_run=bool(args.dry_run))
     return 0
+
+
+def _compact_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run:
+        return reads("lists what a compaction would optimize")
+    return writes("optimizes whole code tables, no org's rows")

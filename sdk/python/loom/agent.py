@@ -54,6 +54,7 @@ from loom.profile import ProfileClient
 from loom.retry import RetryPolicy
 from loom.run import AmbientRun, RunClient, current_run_id, stamp_write
 from loom.session import Session
+from loom.session_protection import SessionProtection
 from loom.tasks import TasksClient
 from loom.tools import AgentTools
 from loom.tracker import TrackerClient
@@ -120,9 +121,9 @@ class Agent:
 
     def __init__(
         self,
-        org: str,
-        namespace: str,
-        agent: str,
+        org: str = "",
+        namespace: str = "",
+        agent: str | None = None,
         *,
         base_url: str | None = None,
         api_key: str | None = None,
@@ -135,18 +136,21 @@ class Agent:
         consumer: str = "",
         mentor_brief: bool | None = None,
         profile: str | None = None,
+        session_protection: SessionProtection | None = None,
     ) -> None:
         """The options are described in docs/reference/python-sdk.md ("Construction").
         `auto_run` (None reads `LOOM_AUTO_RUN`) is off by default because a
         write under a run is scoped to it: a restatement of another scope's
         row is inserted as a `duplicate`, not merged. `consumer` is stamped
         on every op body that names none; '' stamps nothing."""
+        # "" leaves org and namespace to the server (python-sdk.md#identity-defaults).
         self.org = org
         self.namespace = namespace
         # An agent that names itself "", "-" or "*" is every
-        # other unnamed caller to the ledger, the mentor and the cost views.
+        # other unnamed caller to the ledger, the mentor and the cost views;
+        # one not given at all is named after the script without a warning.
         self.agent = default_agent_name(agent)
-        if self.agent != agent:
+        if agent is not None and self.agent != agent:
             logger.warning(
                 "loom: agent name %r is anonymous; using %r — pass a real agent name so the "
                 "mentor, cost and provenance can tell this bot apart",
@@ -186,6 +190,7 @@ class Agent:
             retry=retry,
             consumer=consumer,
             auth=auth,
+            session_protection=session_protection,
         )
         #: The consumer label as the transport stamps it ('' = none).
         self.consumer: str = self.transport.consumer
@@ -485,6 +490,7 @@ class Agent:
         run_id: str | None = None,
         only: list[str] | None = None,
         max_result_chars: int = 8_000,
+        code_namespace: str | None = None,
     ) -> AgentTools:
         """Loom's verbs as the model's tools, bound to a scope: see `AgentTools`."""
         return AgentTools(
@@ -494,6 +500,7 @@ class Agent:
             run_id=run_id,
             only=only,
             max_result_chars=max_result_chars,
+            code_namespace=code_namespace,
         )
 
     async def probe(

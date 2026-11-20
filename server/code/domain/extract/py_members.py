@@ -208,9 +208,9 @@ def class_members(
     methods, `self.x = …` / `self.x: T = …` (the instance attributes an
     `__init__` sets — the compiler tier names them as members, and the
     receiver typer reads the same statements for their types), at the first
-    assignment's line. Names the class's defs take (`taken`) are skipped."""
+    assignment's line. Names the class's defs take (`taken`) are skipped, and the names
+    added join `taken`."""
     out: list[Symbol] = []
-    seen: set[str] = set(taken)
     if body is None:
         return out
     for stmt in body.named_children:
@@ -230,11 +230,11 @@ def class_members(
             else:
                 sig = node_text(annotation, source)[:_MAX_SIG] if annotation is not None else ""
             rt = type_name_of(annotation, source) if annotation is not None else ""
-            _add(out, seen, nm, KIND_FIELD, stmt, class_qname, path, sig, rt)
+            _add(out, taken, nm, KIND_FIELD, stmt, class_qname, path, sig, rt)
     for stmt in body.named_children:
         fn = stmt.child_by_field_name("definition") if stmt.type == "decorated_definition" else stmt
         if fn is not None and fn.type == "function_definition":
-            _self_attributes(fn.child_by_field_name("body"), source, class_qname, path, out, seen)
+            _self_attributes(fn.child_by_field_name("body"), source, class_qname, path, out, taken)
     return out
 
 

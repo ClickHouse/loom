@@ -103,7 +103,11 @@ wins.
 ## Erasure
 
 `erasure.request` erases one scope everywhere Loom keeps it, and returns once it can show
-nothing in scope is left.
+nothing in scope is left. To erase everything one user id holds across the org, an org
+admin requests the `user_id` scope, which erases the user's rows in every namespace of the
+org (`purge=true` deletes them rather than tombstoning them; what it leaves is listed
+below). `memory.clear` tombstones one agent's or user's memories in one namespace only
+([delete is not erase](#delete-is-not-erase)).
 
 | `scope_type`     | `scope_value`                                                               | Who may request it                           |
 | ---------------- | --------------------------------------------------------------------------- | -------------------------------------------- |
@@ -128,7 +132,7 @@ A `user_id` erasure also retires the consolidated summaries built from the user'
 memories, under whatever identity wrote them
 ([which ones](../../architecture/memory-architecture.md#background-passes)), with what
 was derived from them: their version history, their verbatim chunks and entity vectors,
-the graph rows extracted from them and the org-wide copies promoted from them. It
+the graph rows extracted from them and the namespace-wide copies promoted from them. It
 deletes the cached `memory.ask` answers and precedents that quoted them too.
 
 ### The saga
@@ -152,17 +156,26 @@ flowchart TD
   `steps_completed`. The `erasure_recovery` worker resumes a saga stranded
   `in_progress` or `failed` from its checkpoint. A step waits up to
   `LOOM_ERASURE_MUTATION_WAIT_S` for its mutation, then fails naming it.
+- **Document sources stop before the documents go.** A namespace erasure retires the
+  namespace's [document sources](../knowledge.md#document-sources) in
+  `knowledge_sources.retire`, its first step, clearing their credentials, then waits for
+  each source's sync turn still running (up to 30 seconds in all; a turn still running
+  fails the step with `OVERLOADED`, and `erasure_recovery` retries the saga), so no sync
+  writes back a document or a mined decision after the later steps erase them.
 - **Code links wait for the link worker.** `code_links.delete` takes the code-link
   worker's queue lease, so no pass publishes a cursor it read before the erasure: across
   hosts with Keeper, within one process without it. It waits up to 15 minutes for a pass
   to finish; past that the step fails with `LeaseBusy` and `erasure_recovery` retries it.
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
-  summaries, links) are tombstoned, and `memory.restore` can still revive them inside the
-  window; `erasure.list` reports such revivals as `reversals_count`. `purge=true` deletes
-  the rows instead (a lightweight `DELETE FROM` on the wide tables). A user erasure
-  finds what the user's memories fed through their keys, so in a purge its `loom.memory`
-  rows, and the consolidated summaries built from them, are tombstoned first and deleted
-  in `memory.retire`, after every step that reads those keys; until then `memory.restore`
+  summaries, links) are tombstoned, and `memory.restore` can still revive them inside
+  the window; `erasure.list` reports such revivals as `reversals_count`. `purge=true`
+  deletes the rows instead (a lightweight `DELETE FROM` on the wide tables). A scope
+  that holds a namespace that has ever had a mirror is purged whole, every namespace in
+  it, so none of them has such a window ([document
+  sources](../../architecture/document-sources.md#the-mirror)). A user erasure finds
+  what the user's memories fed through their keys, so in a purge its `loom.memory` rows,
+  and the consolidated summaries built from them, are tombstoned first and deleted in
+  `memory.retire`, after every step that reads those keys; until then `memory.restore`
   can revive them (the user's own rows count as a reversal, the summaries do not), and
   `memory.retire` deletes what `memory.restore` revived.
 - **Uploaded originals** of knowledge documents: the namespace's rows of
@@ -234,8 +247,105 @@ backends. `LOOM_EXTERNAL_ERASURE_TIMEOUT_S` bounds each call. Setup:
 
 The last step, `verify.residue`, counts live rows in scope in every table the read paths
 touch. Any row left fails the saga; the terminal row carries `residue_count`, `residue`
-(per table) and `verified_at`. A resumed saga re-runs the step that owns any table the
-last census found rows in, even if its checkpoint says it finished.
+(per table), `verified_at` and `census` (every count, below). A resumed saga re-runs the
+step that owns any table the last census found rows in, even if its checkpoint says it
+finished, and always counts again.
+
+### The receipt
+
+`erasure.status` (and `erasure.request`'s answer) carries the receipt of the latest run's
+census. `census` is null when the latest ledger row holds no census that counted every
+store: a run in progress, a census that could not run or left a store uncounted, or a row
+written by a build that keeps no census. The receipt's fields:
+
+- `census`: every substrate the census counted and its count, zeros included. Keys are table
+  names, `pg:<table>` for the Postgres authority, `objects.document_originals` for the
+  document bucket in a namespace scope, and `provider_rebuild_copies` summed over a provider
+  rebuild's copies, 0 when none exists (counted deployment-wide when a copy has no org
+  column). A count is the rows the census counts as residue in this scope: live rows, or
+  every row when the saga purges or the table keeps no tombstone ([the census
+  rules](../../architecture/memory-architecture.md#erasure-saga)).
+  `objects.document_originals` counts a first listing page, so it reads as "at least".
+- `purge`: the scope's delete-or-tombstone mode (a single namespace's is tombstone
+  whatever was asked); a scope that holds a mirror ([document
+  sources](../../architecture/document-sources.md#the-mirror)) is deleted whatever this
+  says. Without purge a tombstoned row keeps its bytes in its part until the table
+  merges; with purge the rows are deleted, and their bytes stay on disk until a merge or
+  the reclaim worker removes them.
+- The subject and the time are the status's `org`, `scope_type`, `scope_value` and
+  `verified_at`.
+
+The receipt is Loom's count. Keep the answer: `erasure.status` serves the ledger row for 89
+days after the request, and the `erasure.completed` audit row, which carries the census too,
+is written after the completed row on a best-effort basis and kept for
+`LOOM_RETENTION_AUDIT_LOG_DAYS`. When the requester got no answer (a saga the recovery
+worker finished, one run detached, a call that timed out), read `erasure.status` within 89
+days.
+
+#### Checking an erasure yourself
+
+An operator who holds the org's SQL surface grant with `--namespaces '*'`, or `--all` ([SQL
+surface](../../reference/sql-surface.md#access)), can re-count three of the census's keys,
+`loom.memory`, `loom.memory_versions` and `loom.conversations`, and check the request ledger
+(the fourth statement, below). Bind the erased id and the census time as parameters.
+ClickHouse still writes the bound values into `system.query_log`, as it does for the
+erasure's own statements (below), so run the check from `clickhouse-client` rather than
+through `pg_clickhouse`, whose pushed-down text a Postgres statement log would keep as one
+more copy:
+
+```bash
+read -r uid  # the erased id, typed at the prompt so it stays out of the shell history
+clickhouse-client --param_org='<org>' --param_uid="$uid" --param_at='<verified_at>' \
+  --multiquery --query "
+SELECT count() FROM loom.sql_v1_memories WHERE org = {org:String}
+  AND user_id = {uid:String} AND created_at <= {at:DateTime64(6, 'UTC')};
+SELECT count() FROM loom.sql_v1_memory_history WHERE org = {org:String}
+  AND user_id = {uid:String} AND created_at <= {at:DateTime64(6, 'UTC')};
+SELECT count() FROM loom.sql_v1_conversations WHERE org = {org:String}
+  AND user_id = {uid:String} AND ts <= {at:DateTime64(6, 'UTC')};
+SELECT count() FROM loom.sql_v1_agent_events WHERE org = {org:String}
+  AND user_id = {uid:String} AND ts <= {at:DateTime64(6, 'UTC')};"
+```
+
+The `org` filter keeps a grant that covers more than one org (`--all`) to the erasure's org.
+Each statement still reads the grant's whole scope before it filters ([what a read
+costs](../../reference/sql-surface.md#what-a-read-costs)), so on a large org or an `--all`
+grant a statement can stop at the SQL user's caps (`LOOM_CH_ANALYSIS_MAX_ROWS_TO_READ`,
+`_MAX_EXECUTION_S`) with an error instead of a count; raise them for the check. For a
+namespace scope, pass `--param_ns='<namespace>'` and filter the first three on `namespace =
+{ns:String}` instead of `user_id`; for a `namespace_list`, run that once per name in its
+`scope_value`'s `namespaces`; the `sql_v1_agent_events` statement is for a user scope only,
+since a namespace erasure keeps the namespace's request ledger rows. Each count is 0 after a
+completed erasure, with these differences from the census: the views leave out restricted
+namespaces, `sql_v1_memories` leaves out rejected and tombstoned rows and
+`sql_v1_memory_history` rejected versions (it keeps tombstoned ones), and a summary
+consolidated from the user's memories carries another `user_id`, which the census counts and
+these queries do not. The request ledger count is a separate check outside the receipt: an
+erasure scrubs a user's request ledger rows to `<erased>` rather than deleting them, and the
+request ledger's view holds only its window
+([`sql_v1_agent_events`](../../reference/sql-surface.md#sql_v1_agent_events)), so it
+confirms the scrub only for rows inside it. Every other census key is Loom's count alone.
+
+What the receipt does not cover:
+
+- backups, point-in-time recovery, WAL and standbys of either service;
+- copies made outside Loom, such as a table built in an org's own Postgres from the
+  [SQL surface](../../reference/sql-surface.md);
+- rows a worker writes after the census from a read it made before it
+  ([storage authority](../../architecture/storage-authority.md#erasure));
+- a `namespace.restore` from a snapshot taken before the erasure, which brings rows back:
+  run the erasure again, and its census is the new receipt;
+- for a user scope, document originals in the bucket, which the census counts for a
+  namespace scope only.
+
+The erased id stays where the proof of erasure needs it: in the ledger row (until the
+table's TTL drops it, 90 days after the request), in audit, in `loom.erasure_reversals`, and
+in the deployment's own logs of the statements that named it (the ClickHouse mutation log,
+`system.query_log` and `system.text_log` for a statement that wrote it, and Postgres
+statement logs with `log_statement` or `log_min_duration_statement` on). The bundled
+ClickHouse and the Helm chart's dev ClickHouse keep `system.query_log` and
+`system.text_log` for 30 days
+([log retention](../../operations/deployment.md#log-retention)).
 
 ### Abandoned sagas
 
@@ -258,7 +368,8 @@ ran during an upgrade; with `--resume` it deletes only their orphan row links
 | `erasure.list`    | viewer                       | Recent requests (filter by `status`), with `steps_completed_count`, `reversals_count`, `residue_count`.                                                                                                                                                                                                                                                     |
 | `erasure.export`  | admin                        | A subject's data as JSON: `memory`, `knowledge`, `conversations` (transcript turns and saved messages), `conversation_threads`, `agent_events`, `audit_log`, each capped by `section_limit` (default 10,000; `truncated` when over), and `conversations` also by `LOOM_ERASURE_EXPORT_CONVERSATION_MAX_BYTES` of text. Includes tombstoned rows by default. |
 
-Ledger rows are kept 90 days. Field lists:
+`erasure.status` and `erasure.list` read a ledger row for 89 days; the table's TTL drops
+it at 90. Field lists:
 [operations reference](../../reference/operations.md#erasure).
 
 ### Example

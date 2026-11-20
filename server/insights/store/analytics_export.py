@@ -14,6 +14,8 @@ from __future__ import annotations
 from datetime import date
 
 from server.core.ch import CHClient
+from server.core.event_source import ALL_EVENTS
+from server.core.naming import not_mirror_sql
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
 # class) of UTC day {day:Date}. `kind` is 'request', 'worker' (a worker pass),
@@ -31,21 +33,23 @@ from server.core.ch import CHClient
 # MergeTree: no FINAL).
 USAGE_KEY = "org, namespace, agent, operation, kind, transport, traffic_class"
 # The SLI rollup's rows (its WHERE) that succeeded.
-SLI_OK = "kind = 'request' AND slo_class != '' AND status_class = 'ok'"
+SLI_OK = "mirror_marked = 0 AND kind = 'request' AND slo_class != '' AND status_class = 'ok'"
+# Marked dimensions collapse before aggregation and hashing. An ordinary row
+# with the same placeholder dimensions joins that group without losing its measures.
 USAGE_SQL = f"""
 SELECT
     {USAGE_KEY},
     {{day:Date}} AS day,
     count() AS ops,
-    countIf(NOT success) AS errors,
-    countIf(status_class = 'server') AS server_errors,
+    countIf(mirror_marked = 0 AND NOT success) AS errors,
+    countIf(mirror_marked = 0 AND status_class = 'server') AS server_errors,
     countIf({SLI_OK} AND latency_ms > budget_ms) AS slow,
     sum(input_tokens) AS input_tokens,
     sum(output_tokens) AS output_tokens,
     sum(embedding_tokens) AS embedding_tokens,
-    sum(llm_calls) AS llm_calls,
+    sumIf(llm_calls, mirror_marked = 0) AS llm_calls,
     sum(upstream_cost_usd) AS cost_usd,
-    sum(bytes_written) AS bytes_written,
+    sumIf(bytes_written, mirror_marked = 0) AS bytes_written,
     toUInt32(ifNotFinite(
         quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[1], 0
     )) AS latency_p50_ms,
@@ -55,25 +59,42 @@ SELECT
     toUInt32(ifNotFinite(
         quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[3], 0
     )) AS latency_p99_ms,
-    uniqExactIf(user_id, user_id != '-') AS users,
-    uniqExactIf(session_id, session_id != '-') AS sessions,
+    uniqExactIf(user_id, mirror_marked = 0 AND user_id != '-') AS users,
+    uniqExactIf(session_id, mirror_marked = 0 AND session_id != '-') AS sessions,
     now64(3, 'UTC') AS snapshot_at
-FROM (SELECT * REPLACE (if(startsWith(operation, 'me.'), 'me', operation) AS operation)
-      FROM loom.agent_events
-      WHERE ts >= toDateTime64({{day:Date}}, 3, 'UTC')
-        AND ts < toDateTime64({{day:Date}} + 1, 3, 'UTC'))
+FROM (
+    SELECT
+        raw.org AS org, raw.namespace AS namespace,
+        if(raw.mirror_marked = 0, raw.agent, '-') AS agent,
+        if(raw.mirror_marked != 0, '-',
+           if(startsWith(raw.operation, 'me.'), 'me', raw.operation)) AS operation,
+        if(raw.mirror_marked = 0, raw.kind, '-') AS kind,
+        if(raw.mirror_marked = 0, raw.transport, '-') AS transport,
+        if(raw.mirror_marked = 0, raw.traffic_class, '-') AS traffic_class,
+        raw.mirror_marked AS mirror_marked,
+        raw.success AS success, raw.status_class AS status_class,
+        raw.slo_class AS slo_class, raw.latency_ms AS latency_ms, raw.budget_ms AS budget_ms,
+        raw.input_tokens AS input_tokens, raw.output_tokens AS output_tokens,
+        raw.embedding_tokens AS embedding_tokens, raw.upstream_cost_usd AS upstream_cost_usd,
+        raw.llm_calls AS llm_calls, raw.bytes_written AS bytes_written,
+        raw.user_id AS user_id, raw.session_id AS session_id
+    FROM {ALL_EVENTS} AS raw
+    WHERE raw.ts >= toDateTime64({{day:Date}}, 3, 'UTC')
+      AND raw.ts < toDateTime64({{day:Date}} + 1, 3, 'UTC')
+      AND {not_mirror_sql("raw.namespace")}
+)
 GROUP BY {USAGE_KEY}
 """
 
-# One row per (org, namespace) that is registered or holds a live memory row:
-# the registry's description of it and its live memory count, as of
+# One row per (org, namespace) other than a mirror that is registered or holds a live
+# memory row: the registry's description of it and its live memory count, as of
 # `snapshot_at` whatever {day:Date} is. An unregistered namespace has
 # `registered = false` and NULL registry columns. Times leave as days: a
 # millisecond beside a hashed personal namespace could be matched to the
 # person who signed up or wrote then. The `ifNull`s give the same
 # answer whether the FULL JOIN fills a missing side with defaults or with NULLs
 # (`join_use_nulls`).
-NAMESPACES_SQL = """
+NAMESPACES_SQL = f"""
 SELECT
     org, namespace,
     ifNull(n.registered, false) AS registered,
@@ -83,14 +104,15 @@ SELECT
     if(registered, toDate(n.created_at, 'UTC'), NULL) AS created_on,
     ifNull(m.live_memories, 0) AS live_memories,
     if(live_memories > 0, toDate(m.last_memory_at, 'UTC'), NULL) AS last_memory_on,
-    {day:Date} AS day,
+    {{day:Date}} AS day,
     now64(3, 'UTC') AS snapshot_at
 FROM (SELECT org, namespace, true AS registered, kind, visibility, active, created_at
-      FROM loom.namespaces FINAL) AS n
+      FROM loom.namespaces FINAL
+      WHERE {not_mirror_sql()}) AS n
 FULL OUTER JOIN (SELECT org, namespace, count() AS live_memories,
                         max(created_at) AS last_memory_at
                  FROM loom.memory FINAL
-                 WHERE tombstoned_at IS NULL
+                 WHERE tombstoned_at IS NULL AND {not_mirror_sql()}
                  GROUP BY org, namespace) AS m
   USING (org, namespace)
 """

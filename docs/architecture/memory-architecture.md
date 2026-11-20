@@ -83,7 +83,12 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
    (423, `refused_action` `expire`), as in `memory.bulk_set`.
 6. **Proposals and preconditions.** `proposed=true` may not overwrite an established
    fact (`_refuse_proposal_over_fact`). `if_match_sha256` must match the live hash (409
-   `PRECONDITION_FAILED`).
+   `PRECONDITION_FAILED`). `if_match_sha256='absent'` instead requires no unexpired
+   row at the exact identity and key; a concrete agent is required. It uses the strong
+   head already checked by the guards under the key's write lock. An expired physical
+   row stays attached to the write, so its locks and pin still hold and Postgres
+   admission checks that row's exact version before replacing it. Lifecycle status and
+   `valid_to` do not make an exact-key-readable row absent.
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
@@ -95,7 +100,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
-   it.
+   it. A confirmed ClickHouse insert attempts the same hash-only audit receipt as an
+   embedded write; audit failures do not fail the write. Under Postgres, the commit
+   already includes the audit row.
 9. **Embed** (`_set_embed`) the value and, when the key carries words, the key, in one
    batched call where the embedder supports it.
 10. **Conflict verdict** (`_set_conflict_verdict`, `memory/app/conflicts.py`
@@ -106,21 +113,33 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     check. In order:
     - canonical-form match: `merge`, no insert (`_set_merge`);
     - pinned peer: `rejected` (409);
+    - under `newest_wins`, a templated substitution of a peer (same subject and
+      predicate, different object): `refines`, which retires the peer, or `conflict`
+      when the peer's `valid_at` is later than the new row's;
     - peer at or above `LOOM_DUPLICATE_THRESHOLD` with the same content words, unless
       each side states a value the other lacks (`values_differ`): `duplicate`;
     - any other close peer: `conflict`.
 
     A `decision` row (`KEY_IDENTIFIED_TYPES`) is identified by its key: a close peer in
-    the writer's read scope answers `conflict`, pinned or not, and no pinned peer refuses
-    it.
+    the writer's scope (`_writer_scope`, below) answers `conflict`, pinned or not, and no
+    pinned peer refuses it. A `definition` row, also key-identified, answers `clear` with
+    no peer read ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
 
-    Under a token bounded to one user (`read_user_id`), peers outside that user's rows are
-    treated as absent, with two exceptions that hold across the whole namespace by design: a
-    close pinned peer still rejects the write (409 `PINNED_CONFLICT`; a decision excepted),
-    and `proposed=true` still may not land on a key that holds any user's established fact
-    (409 `KEY_HOLDS_FACT`). A pin protects the namespace's fact from every writer, and a
-    proposal must not retire anyone's fact. The refusal names no row, id or value, so the
-    narrowed token learns only that its write was refused.
+    Under a token bounded to one user (`read_user_id`), or for a write that names its
+    `user_id` under any token, the peer read is that user's rows (`_writer_scope`): a
+    service writing for many users through one namespace-wide token must not fold a
+    user's fact into another user's row, which the writer's `user_id`-scoped reads cannot
+    see, and other users' rows must not take the read's places. Such a write also runs
+    the separate pinned read a narrowed token runs, about one more namespace-wide read
+    (`tests/integration/test_conflict_read_cost.py` bounds the pair at two). A write
+    without a user is judged against every user's rows. Two exceptions hold across the
+    whole namespace by design: a close pinned peer still rejects the write (409
+    `PINNED_CONFLICT`; a decision excepted, and a restatement of the pinned value under
+    a namespace-wide token), and `proposed=true` still may not land on a key that holds
+    any user's established fact (409 `KEY_HOLDS_FACT`). A pin protects the namespace's
+    fact from every writer, and a proposal must not retire anyone's fact. The refusal
+    names no row, id or value, so the narrowed token learns only that its write was
+    refused.
 
     No verdict on the write calls an LLM. With the conflict resolver on, the peer read
     reaches down to `LOOM_MEMORY_CONFLICT_RESOLVER_MIN_SIMILARITY` (0.60), and a write
@@ -136,20 +155,30 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
     Conflict marks then go on the peers, or `refines` supersedes them.
 13. **After the write** (`_set_after_write`, `_set_post_insert`). Same-key supersession
-    under `newest_wins` (`memory/app/key_supersession.py`; under `auto_reinforce` and
-    `manual_review` the conflict resolver judges same-key rows, see below, and under
-    `append_only` nothing is marked) and the hash-only audit row are
-    awaited in one round trip. The entity-graph projection is scheduled beside the
-    response (`memory/app/after_write.py`) and repaired by `entity_extractor` if lost. A
-    long value is also split into `memory_chunks`, fail-open.
+    under `newest_wins` (`memory/app/key_supersession.py`, which never retires a
+    definition's namespace-wide row; under `auto_reinforce` and `manual_review` the
+    conflict resolver judges same-key rows, see below, and under `append_only` nothing is
+    marked) and the hash-only audit row are awaited in one round trip. The entity-graph
+    projection is scheduled beside the response (`memory/app/after_write.py`) and repaired
+    by `entity_extractor` if lost. A long value is also split into `memory_chunks`,
+    fail-open.
+
+**Embedding purpose.** Stored values, key axes, conversation excerpts, summaries and
+chunks use document embeddings, including single-item writes and serial recovery after
+a batch failure. Queries use query embeddings. Write retries cache each purpose
+separately: one text can have different query and document vectors. The shared document
+helper checks batch cardinality, width and finite values before a write consumes them.
+An embedding provider implements both methods in the `Embedder` protocol; writes never
+substitute a query vector when a document batch is malformed or unavailable.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
-the call and writes nothing. Other writers (`memory.promote` on an embed failure,
-`namespace.rollback`) write a stub: `embedding_dim = 0` and a zero vector. Imports and
-observation writers may write no embedding row at all. `embedding_worker` fills both at
-the stub's version plus one, so a later real write still wins. A row that keeps failing
-accrues `embed_attempts` and is marked `embed_failed_at` so it cannot stall the batch.
-Every vector leg filters `embedding_dim > 0`.
+the call and writes nothing. Writers that can wait for a vector (such as
+`memory.promote` on an embed failure and `namespace.rollback`) write a stub:
+`embedding_dim = 0` and a zero vector. Imports and observation writers may write no
+embedding row at all. `embedding_worker` fills both at the stub's version plus one, so a
+later real write still wins. A row that keeps failing accrues `embed_attempts` and is
+marked `embed_failed_at` so it cannot stall the batch. Every vector leg filters
+`embedding_dim > 0`.
 
 ## The conflict resolver
 
@@ -309,7 +338,7 @@ actions, verdicts and confidences, never the text.
   a write that started after the read, locked or not, stays newest, and a retirement it
   overtook records nothing.
 - Only `auto_reinforce` and `newest_wins` retire; `manual_review` only flags, and
-  `append_only` is never judged.
+  `append_only` is never judged, nor is a `definition`, whose key is its identity.
 - A pinned row is never retired, flagged or cleared, and is no peer (no call is paid for a
   pair no verdict may change); a lock that refuses retirement holds.
 - The resolver dates an undone row from its first assertion: the version an Undo
@@ -477,18 +506,20 @@ matching rows (`_retire_forgotten`).
 
 The storage identity includes the session, so a key that a later session states again is
 a second live row, and the conflict check skips same-key peers. Under `newest_wins` the
-newer write retires the older row. Under `auto_reinforce` a shared key alone is not
-evidence of one attribute: extraction reuses generic keys (`assistant_recommended_3`,
-`user_attended`) for different items, and in a labelled sample of 60 same-key pairs from
-chat-history namespaces 52 were different facts, 7 were restatements and 1 was an update.
+newer write retires the older row, except a definition's namespace-wide row. Under
+`auto_reinforce` a shared key alone is not evidence of one attribute: extraction reuses
+generic keys (`assistant_recommended_3`, `user_attended`) for different items, and in a
+labelled sample of 60 same-key pairs from chat-history namespaces 52 were different
+facts, 7 were restatements and 1 was an update.
 
 Those rows are judged by the conflict resolver like any other peers: under `auto_reinforce`
 and `manual_review`, a point write (`conflicts.same_key_mark`) and a bulk write mark each
 row whose key a live row of the same `user_id` from another session holds
 (`key_supersession.keys_held_elsewhere`). The anonymous user (`-`, or a `user_id` sent
 empty) is never marked so: its sessions are separate tasks, where a verdict could only
-clear a flag. Under `append_only` nothing is marked. The writer's own identity is never
-a peer: its stored row is the one the write revises.
+clear a flag. Under `append_only` nothing is marked, and the resolver never judges a
+definition: its key is its identity ([conflicts and refusal](../features/memory/conflicts-and-refusal.md)).
+The writer's own identity is never a peer: its stored row is the one the write revises.
 
 **Which row is older.** Only the older statement of a pair ever retires, so two rows
 judged from either side never retire both (`conflict_resolver._assertion_order`, read
@@ -935,10 +966,10 @@ replayed by `projection_repair`; it never reaches the caller.
 
 ### Deferred and ambient extraction
 
-| Path                                                                           | Writes first                                                            | Finished by                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_from_messages(defer=true)`, or an agent in `LOOM_EXTRACTION_DEFER_AGENTS` | A `loom.memory_extraction_queue` row; returns `queue_id`                | `extraction_queue` claims the oldest `pending` rows and runs the inline handler: `pending → running → done`, or back to `pending` with `attempts + 1` and a backoff until `failed`; an unreachable provider spends no attempt, and a held model call makes the row `held` until the hold ends. A `running` row past `lease_until` is reclaimable. |
-| `observe.record` / `observe.crystallize`                                       | Tool-trace observations as episodic rows, marked ready by `crystallize` | `observe_extract` (off by default, needs an LLM) replays each ready session through `set_from_messages`.                                                                                                                                                                                                                                          |
+| Path                                                                           | Writes first                                                            | Finished by                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `set_from_messages(defer=true)`, or an agent in `LOOM_EXTRACTION_DEFER_AGENTS` | A `loom.memory_extraction_queue` row; returns `queue_id`                | `extraction_queue` claims the oldest `pending` rows and runs the inline handler: `pending → running → done`, or back to `pending` with `attempts + 1` and a backoff until `failed`; an unreachable provider spends no attempt (on a `local` provider a read timeout and a replay cut short by the pass deadline or a shutdown spend one), and a held model call makes the row `held` until the hold ends. A `running` row past `lease_until` is reclaimable. |
+| `observe.record` / `observe.crystallize`                                       | Tool-trace observations as episodic rows, marked ready by `crystallize` | `observe_extract` (off by default, needs an LLM) replays each ready session through `set_from_messages`.                                                                                                                                                                                                                                                                                                                                                     |
 
 Until a queued request is done, `memory.search` and `memory.ask` report
 `pending_extraction` for the scope. `memory.extraction_status` reads the namespace's
@@ -954,9 +985,32 @@ double claim harmless. With `extraction_queue` off, deferred saves stay `pending
 
 ## `memory.search`
 
+Search hits expose the stored writer as `agent` when the retrieval leg read the
+row identity. It remains empty when unknown. This identity survives parked pages
+and lets a client conditionally delete the exact writer/version without resolving
+a key across authors. Namespace and end-user admission still select readable rows
+before serialization; the field grants no additional read or write access.
+
 `handle_memory_search` (`server/memory/app/search/handler.py`) runs phases, one
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.
+
+Entity-summary seeds keep the filter's order, followed by query handles and known
+vocabulary tokens, deduplicated case-insensitively. Their union accepts at most 256
+names; the 257th refuses with `VECTOR_INPUT_TOO_LARGE` rather than truncating the
+ranking input. This typed input refusal propagates through optional re-reads, ask
+widening and composed search sections. Other failures retain their documented
+fallbacks. A search joins its cancelled local children before returning a refusal;
+the repository decision pass also joins its sibling when either search fails.
+Local coroutine completion does not prove remote query retirement.
+
+Main namespace reads, entity-boost inputs, summary and observation namespace reads,
+anchor and key-match namespace reads, and digest-descent targets run in ordered
+windows of at most four child jobs per producer. A producer creates only the
+current window's awaitables and joins its children before returning a failure or
+cancellation. This bounds local fanout per producer, not the request's aggregate
+work. Supplemental query and set-expansion phrases retain their namespace fanout
+and shared duplicate selection by phrase completion.
 
 1. **Settle the request** (`request.py`): recipe and namespace `retrieval_defaults`, read
    scope, the `top_k` ceiling. A parked `page` handle is served directly.
@@ -973,12 +1027,20 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    concurrently. Across several unordered namespaces, private ones are searched first
    and public ones only when no private hit clears the relevance floor.
 
-   | Leg              | Module                       | Reads                                                                                                                                                                                                     |
-   | ---------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-   | fact             | `fact_sql.py`                | One statement per namespace over `memory_embeddings FINAL`: identity columns in `PREWHERE`, row state in `WHERE`, an exact `cosineDistance` order (no table has a vector index), rank computed beside it. |
-   | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                 |
-   | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                 |
-   | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                         |
+   | Leg              | Module                       | Reads                                                                                                                                                                                                                                                                                                          |
+   | ---------------- | ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+   | fact             | `fact_sql.py`                | One statement per namespace over `memory_embeddings FINAL`: identity columns in `PREWHERE`, row state in `WHERE`, a `cosineDistance` order with no vector index (exact, or [codes first, then a full-precision rescore](clickhouse.md#vector-storage) where codes-first reads apply), rank computed beside it. |
+   | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                                                                                                                      |
+   | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                                                                                                                      |
+   | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                                                                                                                              |
+
+   Every chunk statement excludes a known parent that the read would not serve, using
+   the canonical memory row's status and time predicates. The parent match includes
+   agent, user, session and key within the org and namespace, so another writer's row
+   cannot hide a passage. Anonymous user and session spellings compare as the same
+   sentinel. Blank-session ingests retain independent generated session ids. A chunk
+   with no matching canonical parent, including such a generated session, stays
+   eligible. Hard tags also require a matching searchable parent.
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
    it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
@@ -997,6 +1059,14 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    side legs and digest descent (`digest_descent.py`), which adds the best facts of the
    top digests' sessions.
 
+   After the key-match arm, a shared definition hit whose namespace-wide source is gone or
+   labelled `medium` or `high` leaves the pool before fusion and the external reranker read
+   it (`shared_definitions.py`): `loom.shared` has no label of its own. Digest descent and
+   the side legs, which the assembler folds in later, find no shared row. A pool with no
+   shared definition reads nothing more; one whose source cannot be read loses every shared
+   definition, noted on `memory.search`'s `degraded`. A parked next page applies the same
+   check, and so does `memory.search_trace`, whose response has no `degraded`.
+
 6. **Fuse and rank** (`fusion.py`, `ranking.py`). The per-mode rank expression
    (`fact_rank.py`, `_fact_mode_rank_score`) adds the capped prior group (confidence,
    soft tags, categories) and the correctness tail (demotions, reinforcement,
@@ -1012,7 +1082,17 @@ module each. The SQL is in `server/memory/app/retrieval/` and
    (`LOOM_MEMORY_SEARCH_IDENTIFIER_GROUNDING`).
 8. **Assemble and record** (`assemble.py`, `output.py`, `telemetry.py`). The window is
    cut to budget; with `paging=true` a larger pool is parked in `loom.context_blobs`.
-   Trace, exposure and query-node rows go to the events stream, fire-and-forget.
+   When the served rows are shaped, after the tiers and the body floor, a row whose
+   linked code changed, was not found again or is gone moves down within them (`output.move_stale`,
+   `code_change.rank_down`); the verdict has already been read, so a move never decides
+   whether the search abstains.
+   Trace, exposure and query-node rows are inserted directly, fire-and-forget (an exposure a
+   breadth rule counts is a waited insert before the answer).
+
+Search pages use a versioned payload. A build accepts only its own page version, so a
+build that cannot enforce governed-hit freshness cannot read a page that carries one.
+Page handles may therefore answer `page_expired` across an upgrade or rollback; the
+caller repeats the original search. The payload version changes for all pages together.
 
 With `LOOM_ADAPTIVE_THRESHOLDS` on, the similarity gates come from the embedder's own
 cosine distribution (`memory/app/embedder_calibration.py`); the scalar settings are the
@@ -1089,7 +1169,7 @@ merged source after the merge does not reach the summary: redact it too. The sum
 tags are the union of its sources'. A summary its writer tags `consolidated` and
 `src:<key>` for each source is downgraded or retired as its sources are deleted: a `src:`
 tag names a key of the row's own namespace, and a user erasure retires the row only
-through a key the user wrote there.
+through a key the user wrote there. A `definition` never joins a cluster.
 
 A worker leg that catches its own failure calls `pass_context.note_failure`, so the
 supervisor counts it. A worker that declares `owned_tables` runs its first pass at boot
@@ -1229,13 +1309,21 @@ Table-level retention and tiering are operator TTLs, off by default
 
 ## History, snapshot, restore and rollback
 
-| Operation            | Reads                                                                                                                                 | Writes                                                                                                                                                                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `memory.history`     | `memory_versions` for one key                                                                                                         | Nothing.                                                                                                                                                                                                                                                |
-| `memory.redact`      | The row of org-wide `(memory_id, version)` (`loom.memory_revisions` under the Postgres authority), then the later versions of its key | Scrubs one historical version in place, the later versions of its key that copy its text (the live head left alone), and every profile version whose trace names the memory, live heads included. Refuses the memory's own live head (delete it first). |
-| `namespace.snapshot` | Live `memory` rows, type configs, curated rows                                                                                        | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                                                                                                           |
-| `namespace.restore`  | A snapshot payload                                                                                                                    | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                                                                                                  |
-| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of`                                                                                       | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                                                                                                  |
+| Operation            | Reads                                                                                                                                                                                 | Writes                                                                                                                                                                                                                                                                                                                                      |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory.history`     | `memory_versions` for one key                                                                                                                                                         | Nothing.                                                                                                                                                                                                                                                                                                                                    |
+| `memory.redact`      | The row of org-wide `(memory_id, version)` (`loom.memory_revisions` under the Postgres authority), then the later versions of its key and the `loom.shared` versions promoted from it | Scrubs one historical version in place, the later versions of its key that copy its text (the live head left alone), every profile version whose trace names the memory, live heads included, and the shared copies promoted from the key that hold the text, with their search rows. Refuses the memory's own live head (delete it first). |
+| `namespace.snapshot` | Live `memory` rows, type configs, curated rows                                                                                                                                        | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                                                                                                                                                                                               |
+| `namespace.restore`  | A snapshot payload                                                                                                                                                                    | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                                                                                                                                                                                      |
+| `namespace.rollback` | `memory` heads and `memory_versions` at `as_of`                                                                                                                                       | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                                                                                                                                                                                      |
+
+Restores, rollback reinstatements and consolidated summaries run the current target
+blacklist before writing. A namespace restore checks its payload before creating the
+target or its grants, then rechecks the values after its own grant writes. A rollback
+checks all planned live reinstatements in bounded slices before its first batch, then
+reads each batch's heads afresh. Under Postgres each commit holds the
+policy generations captured before the guard; a changed policy refuses the commit.
+An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
 at T is the largest version at or before T. Triples, records, summaries and aggregates
@@ -1255,7 +1343,12 @@ names the resuming process); the body's `requester` goes in their subject.
 `erasure_recovery` replays sagas stuck `in_progress` and names itself on the
 `erasure.recovered` row; after `max_attempts` it marks the request `failed` and emits
 `erasure.abandoned`. Configured external backends (Langfuse traces and ClickStack rows)
-are steps too and fail the saga closed.
+are steps too and fail the saga closed. A namespace erasure tombstones the namespace's
+promoted rows in `loom.shared` (`shared.tombstone`); a user erasure matches them by
+provenance. A namespace scope that holds a document mirror is erased as a purge, in one
+pass over the named namespaces and their mirrors, whatever the request asked, and its
+last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted` ([document
+sources](document-sources.md#the-mirror)).
 
 The last step is a residue census over every table the read paths touch and, with a
 document bucket configured, the bucket objects left under the erased namespaces
@@ -1263,11 +1356,12 @@ document bucket configured, the bucket objects left under the erased namespaces
 namespace); a non-zero count re-opens `documents.tombstone`. The registry is in
 `server/erasure/store/census.py`:
 
-| List                | Holds                                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `_CENSUS`           | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.    |
-| `STEP_ONLY_TABLES`  | Tables a step clears that the census does not count (shared and consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
-| `NO_MEMORY_CONTENT` | Every other table, each with the reason it holds no content in scope.                                                                                 |
+| List                     | Holds                                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `_CENSUS`                | One `Substrate(table, live, user_pred, ns_step, user_step, final)` per table that can hold content in scope. Any live row in scope fails the saga.                                          |
+| `STEP_ONLY_TABLES`       | Tables a step clears that the census does not count (the shared embeddings a user erasure tombstones, consolidated tombstones, term aggregates, session outcomes, the code index purge, …). |
+| `CANONICAL_OWNER_TABLES` | Authentication registries keyed by canonical sign-in subject, erased by their owning lifecycle rather than a memory `user_id` or namespace saga.                                            |
+| `NO_MEMORY_CONTENT`      | Every other table, each with the reason it holds no content in scope.                                                                                                                       |
 
 The row links (`entity_triple_rows`, `entity_edge_rows`) carry the row's writer as
 `user_id`, so a user's erasure finds them after the row itself is gone.
@@ -1279,12 +1373,13 @@ writer's pending or processing job is copied with no identity (`agent`, `user_id
 `source_class` column) and no content, under sequential reads, so the job a writer still
 owns stays cancelled.
 
-The terminal row carries `residue_count`, `residue` (per table, and the object count) and
-`verified_at`. A resumed saga re-runs the owning step of any table the last census found
-rows in. `purge=true` hard-deletes: lightweight `DELETE FROM` on the tables in
-`LIGHTWEIGHT_PURGE_TABLES`, `ALTER TABLE … DELETE` on the rest, each mutation tagged and
-polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a table in
-none of the three lists.
+The terminal row carries `residue_count`, `residue` (per table, and the object count),
+`verified_at` and `census` (every count, zeros included, when the census counted every
+store). A resumed saga re-runs the owning step of any table the last census found rows in,
+and always re-runs `verify.residue`. `purge=true` hard-deletes: lightweight `DELETE FROM` on
+the tables in `LIGHTWEIGHT_PURGE_TABLES`, `ALTER TABLE … DELETE` on the rest, each mutation
+tagged and polled to completion. `tests/unit/test_every_table_is_classified.py` fails on a
+table in none of the four lists.
 
 A user-scope step reaches a table with no `user_id` column through a predicate that holds
 a subquery: the user's memory keys, record ids or shared keys, or the graph keys and
@@ -1324,7 +1419,7 @@ treat those summaries as the user's rows, and the census counts them the same wa
 A `src:` tag names a key, not its writer: where two users of a namespace hold the same
 key, erasing one also takes a summary built from the other's row, with its history,
 chunks, entity vectors and graph links, the graph rows only those links held, and the
-org-wide copies promoted from it, which nothing promotes again. A copy of a summary
+namespace-wide copies promoted from it, which nothing promotes again. A copy of a summary
 rebuilt without the user goes too, as its history still names the user: a copy does not
 record which version it took. The erasure takes every summary that may quote the user;
 the summary's current row is only tombstoned outside a purge, and consolidation rebuilds
@@ -1339,8 +1434,9 @@ revisions there. The user-scope census counts a summary's row, not its
 `loom.memory_embeddings` or `loom.memory_code_links` rows or its `loom.shared` copies,
 which `consolidated.tombstone`, `shared_embeddings.tombstone`, `shared.tombstone` and
 `memory.retire` retire with it. A copy an older build promoted with `agent="*"` names
-`*` for its source agent and the request's user: no erasure finds one of a summary,
-and one of a user's own row is found only by the user the request named.
+`*` for its source agent and the request's user: no user erasure finds one of a
+summary, and one of a user's own row is found only by the user the request named; a
+namespace erasure takes either with the namespace's other promoted rows.
 
 An erasure in an org, at any scope, deletes the whole org's cached query vectors in
 `loom.embedding_cache`, not only the erased scope's: the rows carry the org but no
@@ -1401,6 +1497,25 @@ supporter that lands between that read and the delete can lose its candidate. A 
 carries no `user_id`, and once a user's supporter rows are gone nothing ties an
 unsupported candidate to that user, so the census counts every unsupported candidate that
 still holds its rule in the org, whichever erasure left it.
+
+Private definition candidates retain their original proposal time in every version.
+Claim, model-completion and review writes share an org lease with the namespace queue
+erasure step and historical candidate redaction. A private review holds this lease from
+its evidence check through source creation, shared promotion and the status insert.
+Before any publication, the writer reads the erasure ledger under that lease;
+an erasure that may cover the evidence and was unfinished at the proposal time refuses
+the write, including one completed since then. User erasures count conservatively because
+the candidate holds no user identities. An unreadable ledger refuses the write. A send
+whose completion is unknown retains the lease until its server deadline has passed, so
+erasure and historical redaction cannot finish while the insert may still land. Draft
+model generation runs outside the lease. Private writes in one org serialize with its
+queue erasure, including erasure of a namespace list.
+
+Query-history registration and removal share a separate org writer lease with registry
+erasure. The ledger check uses the operation's start before its first await. Remote
+credential probes run outside this lease. Successful inserts finish before erasure can
+delete their rows; an insert with an unknown outcome retains its lease until its server
+deadline has passed.
 
 ## Audit rows
 
@@ -1473,14 +1588,19 @@ writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 - Every vector leg filters `embedding_dim > 0`.
 - Merge, duplicate and pinned rejection are decided before the insert; only the LLM
   judge may run after it.
-- Ops addressed by an org-wide id (`memory.get_by_id`, `memory.update_by_id`,
-  `memory.redact`) check `authz.row_in_scope` after the fetch and answer `found=false`
-  on refusal, never a 403.
+- The memory ops addressed by an org-wide id answer a row the caller cannot reach as a
+  missing row, never a 403: `memory.get_by_id`, `memory.update_by_id` and
+  `memory.verify` (by id) resolve the id's namespace through `authz.row_reach` before the
+  read; `memory.redact` checks `authz.row_in_scope` after it
+  ([row-scoped operations](security.md#row-scoped-operations)).
 - A projection failure never fails the primary write.
 - Writes are not transactional across tables; bulk writes and cross-namespace promotion
   are not atomic.
 - A table that can hold memory content is in `_CENSUS`, or in `STEP_ONLY_TABLES` with its
   reason.
+- Canonical authentication registries are in `CANONICAL_OWNER_TABLES`; their owner
+  lifecycle erases them by canonical sign-in subject, independently of memory `user_id`
+  and namespace erasure.
 
 ## Source entry points
 

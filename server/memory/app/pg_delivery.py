@@ -20,10 +20,14 @@ from typing import Any
 
 from server.core import ch_errors, pg, pg_lease
 from server.core.error_summary import error_summary
-from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.store import pg_memory, pg_publish
 from server.memory.store.pg_memory import Claimed
-from server.memory.store.rows import identity_key, parse_memory_value, search_document_row
+from server.memory.store.rows import (
+    IdentityKey,
+    identity_key,
+    parse_memory_value,
+    search_document_row,
+)
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -161,7 +165,9 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
     held = await pg_publish.held_documents(
         claims[0].org, claims[0].namespace, [pg_publish.document_id(c.row) for c in owed], ch=ch
     )
-    build = await _still_heads([c for c in owed if pg_publish.document_id(c.row) not in held])
+    build = await _still_heads(
+        [c for c in owed if pg_publish.document_id(c.row) not in held], deadline
+    )
     docs = await _search_documents(build, stub=stub)
     if docs:
         with pg_lease.leased(deadline):
@@ -189,34 +195,39 @@ async def _publish(claims: list[Claimed], *, stub: bool = False) -> None:
         raise failed  # an attempt that failed, once the rest is in
 
 
-async def _still_heads(claims: list[Claimed]) -> list[Claimed]:
+async def _still_heads(claims: list[Claimed], deadline: float) -> list[Claimed]:
     """The claims whose document the key's head still serves, each with the row to build
     it from: its own revision while that is the head, else a newer copy of it (a pin, a
     touch, a status) that owes no document of its own, whose row the document carries.
     A redacted head serves none. A newer head that is deleted, not embedded or of other
     content has its own document, or its retirement of the vectors below it, which one
-    built for the older revision now would land live above."""
+    built for the older revision now would land live above.
+
+    Unless the read shows each claim's own revision as its key's head, what it shows (a
+    copy, a delete, other content, a redaction, an erasure) is another commit than the
+    claim's, perhaps one on the primary alone: the heads are read again durably
+    (`pg_memory.heads_by_keys`) and every document is built, or settled unsent, from that
+    read; a standby wait that ended the lease is an outage
+    (`pg_lease.check_lease_after_durable_read`)."""
     if not claims:
         return claims
-    heads = await pg_memory.heads_by_keys(
-        [identity_key(c.row) for c in claims], include_tombstoned=True
-    )
+    keys = [identity_key(c.row) for c in claims]
+    heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True)
+    if any(_served(c, heads) is not c.row for c in claims):
+        pg_lease.check_lease(deadline)  # spent before the durable read: the send's attempt
+        heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
+        pg_lease.check_lease_after_durable_read(deadline)
+    return [replace(c, row=row) for c in claims if (row := _served(c, heads)) is not None]
 
-    def served(c: Claimed) -> dict[str, Any] | None:
-        head = heads.get(identity_key(c.row))
-        if head is None or head.get("redacted_at") is not None:
-            return None
-        if int(head["version"]) <= int(c.row["version"]):
-            return c.row
-        copy = (
-            head.get("tombstoned_at") is None
-            and pg_memory.embedded(head)
-            and is_content_hash(str(head.get("content_sha256") or ""))
-            and head.get("content_sha256") == c.row.get("content_sha256")
-        )
-        return head if copy else None
 
-    return [replace(c, row=row) for c in claims if (row := served(c)) is not None]
+def _served(c: Claimed, heads: dict[IdentityKey, dict[str, Any]]) -> dict[str, Any] | None:
+    """The row `c`'s document is built from (`_still_heads`), None for none."""
+    head = heads.get(identity_key(c.row))
+    if head is None or head.get("redacted_at") is not None:
+        return None
+    if int(head["version"]) <= int(c.row["version"]):
+        return c.row
+    return head if pg_memory.newer_copy(head, c.row) else None
 
 
 async def _retire_old_vectors(

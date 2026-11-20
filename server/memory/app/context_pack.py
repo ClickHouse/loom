@@ -1,18 +1,23 @@
-"""Handler for context.pack (see memory/api/context.py).
+"""Handler for context.pack (models: server/memory/api/models_context.py).
 
-`context.pack` builds the bounded startup context an agent wants at the
-beginning of a session: editable working memory, always-loaded profile,
+`context.pack` builds the bounded context an agent loads at the start of
+a session or a task: editable working memory, always-loaded profile,
 relevant durable memories, matching procedures, and optional knowledge /
 conversation snippets.
 """
 
 from __future__ import annotations
 
+import asyncio
+import copy
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
+from server.core.background import gather_or_cancel
+from server.core.diagnostics import private_work
 from server.core.naming import SENTINEL as _WM_SENTINEL
 from server.core.naming import named
 from server.identity.app.request_scope import request_scope
@@ -22,7 +27,7 @@ from server.memory.api.models_procedure import ProcedureMatchInput
 from server.memory.api.models_profile import ProfileRenderInput
 from server.memory.api.models_search import MemorySearchInput
 from server.memory.api.models_working_memory import WorkingMemoryRenderInput
-from server.memory.app.agent_rules import request_rule_agent, served_hits
+from server.memory.domain import code_change
 from server.memory.domain.context_layout import (
     _BLOCK_LABELS,
     _DEFAULT_SECTION_ORDER,
@@ -46,8 +51,16 @@ from server.memory.domain.context_layout import (
 from server.memory.domain.decision_statement import states_reason
 from server.memory.domain.evidence_pack import EvidenceItem, pack_evidence
 from server.memory.domain.memory_types import excluded_from_unfiltered_search
-from server.memory.domain.search_types import hit_row, hit_row_key, names_row
-from server.memory.store.shared import SHARED_AGENT
+from server.memory.domain.search_types import SHARED_AGENT, hit_row, hit_row_key, names_row
+
+if TYPE_CHECKING:
+    from server.knowledge.api.models_knowledge import _SearchHit
+    from server.knowledge.app.knowledge_search import SearchRequest
+    from server.knowledge.app.source_access import ReadPlan
+    from server.knowledge.app.source_passages import CheckedPassages
+    from server.knowledge.app.source_search_proofs import SearchProofs
+    from server.memory.api.models_lifecycle import MemoryStackOutput
+    from server.memory.app.stack import CheckedStack
 
 log = logging.getLogger(__name__)
 
@@ -247,19 +260,18 @@ async def _pack_working_memory(st: _PackState) -> None:
         )
 
 
-async def _pack_memory_stack(st: _PackState) -> None:
-    input = st.input
-    default_section_tokens = st.default_section_tokens
+async def _pack_memory_stack(st: _PackState, plan: ReadPlan) -> CheckedStack | None:
     if not st.wanted("memory_stack"):
-        return
-    from server.memory.app.stack import handle_memory_stack
+        return None
+    from server.memory.app.stack import run_checked_stack
 
+    input, default_section_tokens = st.input, st.default_section_tokens
     stack_budget_chars = _section_budget(
         input,
         "memory_stack",
         default_section_tokens.get("memory_stack", 700),
     )
-    out = await handle_memory_stack(
+    return await run_checked_stack(
         MemoryStackInput(
             org=input.org,
             namespace=input.namespace,
@@ -272,8 +284,13 @@ async def _pack_memory_stack(st: _PackState) -> None:
             knowledge_top_k=min(input.top_k, 5),
             seed_query=input.situation or input.query,
             procedure_limit=min(input.top_k, 5),
-        )
+        ),
+        plan,
     )
+
+
+def _put_memory_stack(st: _PackState, out: MemoryStackOutput) -> None:
+    input = st.input
     if not out.entries:
         return
     lines: list[str] = []
@@ -448,6 +465,9 @@ def _hit_author(actors: _KeyWriters, input: ContextPackInput, h: Any) -> str:
     identity the hit carries (user, session, agent, where the leg read them); when the rows
     left were written by more than one actor the label says `unknown`, never a writer whose
     row this may not be."""
+    # Governed text is the approved shared copy, not a same-key private row.
+    if getattr(h, "governed", False):
+        return author_label([])
     rows = actors.get(hit_row(h, input.namespace)) or []
     is_fact_row = names_row(h) and getattr(h, "source", "fact") != "chunk"
     row = hit_row_key(h, input.namespace) if is_fact_row else None
@@ -484,6 +504,13 @@ async def _hit_actors(input: ContextPackInput, hits: list[Any]) -> _KeyWriters:
     except Exception as e:  # noqa: BLE001 — authorship labels are best-effort; lines say by=unknown
         log.warning("context.pack: memory authors unavailable: %s", e)
         return {}
+
+
+def _code_state_and_commit(hit: Any) -> tuple[str, str]:
+    """The hit's code state and the commit of its worst link (`worst_commit`: '' for a
+    state no note names)."""
+    state = str(getattr(hit, "code_state", "") or "")
+    return state, code_change.worst_commit(getattr(hit, "_code_links", None) or [])
 
 
 async def _pack_decisions_from_hits(
@@ -526,7 +553,8 @@ async def _pack_decisions_from_hits(
         made = str(rec.get("made_at") or "")[:10]
         author = _hit_author(actors, input, h)
         line = f"- [{label_part(f'{ns}/{h.memory_key}')}{author}]"
-        line += (f" {made}" if made else "") + f" {scenario}"
+        line += (f" {made}" if made else "") + code_change.note(*_code_state_and_commit(h))
+        line += f" {scenario}"
         if outcome:
             line += f" → {rec['stage']}: {outcome}"
         if states_reason(rec):
@@ -617,7 +645,13 @@ async def _pack_memories(st: _PackState) -> None:
             if resource:
                 cite = f"{cite}#{resource}"
             row_of[cite] = hit_row(h, input.namespace)  # a chunk's parent
-            group = resource or f"{source}:{ns}"
+            # A governed definition is its own group, so the per-group cap never moves one
+            # below another row.
+            group = (
+                f"governed:{h.memory_key}"
+                if getattr(h, "governed", None)
+                else resource or f"{source}:{ns}"
+            )
             evidence.append(
                 EvidenceItem(
                     citation=cite,
@@ -636,6 +670,7 @@ async def _pack_memories(st: _PackState) -> None:
                     conflict=getattr(h, "status", "") == "conflicted",
                     author=_hit_author(actors, input, h),
                     derived_from=tuple(getattr(h, "derived_from", None) or ()),
+                    code_state=code_change.label(*_code_state_and_commit(h)),
                 )
             )
         packed = pack_evidence(
@@ -730,43 +765,19 @@ async def _pack_procedures(st: _PackState) -> None:
         )
 
 
-async def _pack_knowledge(st: _PackState) -> None:
-    input = st.input
-    default_section_tokens = st.default_section_tokens
-    if not st.wanted("knowledge"):
-        return
-    if not input.include_knowledge or not input.query:
-        return
-    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-    from server.knowledge.app.knowledge_search import handle_knowledge_search, not_noise
+async def _pack_knowledge(
+    st: _PackState, request: SearchRequest | None, plan: ReadPlan
+) -> CheckedPassages | None:
+    if request is None:
+        return None
+    from server.knowledge.app.knowledge_search import not_noise
+    from server.knowledge.app.source_passages import collect
 
-    agent = request_rule_agent(input.agent)
+    return await collect(request, plan, st.input.agent, keep=not_noise())
 
-    async def search(top_k: int) -> list[Any]:
-        out = await handle_knowledge_search(
-            KnowledgeSearchInput(
-                org=input.org,
-                namespace=input.namespace,
-                query=input.query,
-                top_k=top_k,
-                namespace_scope="all_mine",
-                # A pack runs on every chat turn: its knowledge read makes no rerank call.
-                rerank="none",
-            )
-        )
-        return list(out.results)
 
-    # Another bot's promoted rule is not a rule about this agent, and a pack is handed to
-    # the agent unasked: a noise section stays out of it (knowledge.search still finds
-    # it), and a wider read fills the places either took.
-    results = await served_hits(
-        await search(input.top_k),
-        search,
-        lambda h: h.tags,
-        agent,
-        input.top_k,
-        keep=not_noise(),
-    )
+def _put_knowledge(st: _PackState, results: list[_SearchHit]) -> None:
+    input, default_section_tokens = st.input, st.default_section_tokens
     if results:
         evidence = [
             EvidenceItem(
@@ -878,36 +889,36 @@ async def _pack_runs(st: _PackState) -> None:
         st.put("runs", body, source_count=count, extra_meta={"sessions": count})
 
 
-async def _gather_sections(st: _PackState) -> None:
-    """Run every section producer concurrently; each writes its own block
-    into `st`. A producer that raises is logged and leaves its block empty."""
-    import asyncio
+async def _optional_section(name: str, work: Awaitable[Any]) -> Any:
+    try:
+        return await work
+    except Exception as error:  # noqa: BLE001 — a failed optional section leaves other sections available
+        log.warning("context.pack: section %s failed: %s", name, error)
+        return None
 
+
+async def _gather_sections(
+    st: _PackState, request: SearchRequest | None, plan: ReadPlan
+) -> tuple[CheckedStack | None, CheckedPassages | None]:
     input = st.input
-    # Best-effort assembly: one section failing (a table a pending migration has
-    # not created yet, a slow upstream) degrades that block to empty rather than
-    # 500-ing the whole pack. return_exceptions keeps the others' results.
-    # gather() runs in _DEFAULT_SECTION_ORDER; zip the results back to it.
-    _results = await asyncio.gather(
+    work = (
         _pack_working_memory(st),
         _pack_profile(st),
         _advisory_health(input, st.wanted, st.put),
         _pack_namespace_guide(st),
         _advisory_mentor(input, st.wanted, st.put),
-        _pack_memory_stack(st),
+        _pack_memory_stack(st, plan),
         _pack_memories(st),
         _pack_procedures(st),
-        _pack_knowledge(st),
+        _pack_knowledge(st, request, plan),
         _pack_conversations(st),
         _pack_runs(st),
-        return_exceptions=True,
     )
-    # `decisions` is rendered by the memories coroutine (same search), so it
-    # has no coroutine of its own in the gather.
-    _gathered = [n for n in _DEFAULT_SECTION_ORDER if n != "decisions"]
-    for _name, _res in zip(_gathered, _results, strict=True):
-        if isinstance(_res, Exception):
-            log.warning("context.pack: section %s failed: %s", _name, _res)
+    names = [name for name in _DEFAULT_SECTION_ORDER if name != "decisions"]
+    results = await gather_or_cancel(
+        *(_optional_section(name, task) for name, task in zip(names, work, strict=True))
+    )
+    return cast("CheckedStack | None", results[5]), cast("CheckedPassages | None", results[8])
 
 
 def _in_block_order(
@@ -954,12 +965,54 @@ def _context_blocks(
     return blocks
 
 
-async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
-    st = _PackState(input=input, default_section_tokens=_DEFAULT_SECTION_TOKENS[input.mode])
+def _clone_pack(prefix: _PackState) -> _PackState:
+    return _PackState(
+        input=prefix.input,
+        default_section_tokens=dict(prefix.default_section_tokens),
+        sections=dict(prefix.sections),
+        section_meta=copy.deepcopy(prefix.section_meta),
+        truncated=prefix.truncated,
+        shown_procedures=list(prefix.shown_procedures),
+        withheld_procedures=list(prefix.withheld_procedures),
+        item_rows={name: list(rows) for name, rows in prefix.item_rows.items()},
+    )
+
+
+def _put_optional(
+    st: _PackState,
+    name: str,
+    put: Callable[[_PackState], None],
+    contributions: set[str] | None = None,
+) -> _PackState:
+    staged = _clone_pack(st)
+    try:
+        put(staged)
+    except Exception as error:  # noqa: BLE001 — a failed optional renderer leaves its prefix intact
+        log.warning("context.pack: section %s failed: %s", name, error)
+        return st
+    if contributions is not None and staged != st:
+        contributions.add(name)
+    return staged
+
+
+def _render_checked_pack(
+    prefix: _PackState,
+    stack: MemoryStackOutput | None,
+    hits: list[_SearchHit] | None,
+    *,
+    contributions: set[str] | None = None,
+) -> ContextPackOutput:
+    st = _clone_pack(prefix)
+    if stack is not None:
+        st = _put_optional(
+            st, "memory_stack", lambda target: _put_memory_stack(target, stack), contributions
+        )
+    if hits is not None:
+        st = _put_optional(
+            st, "knowledge", lambda target: _put_knowledge(target, hits), contributions
+        )
+    input = st.input
     char_budget = int(input.token_budget) * 4
-
-    await _gather_sections(st)
-
     sections, section_meta, ordered = _in_block_order(st)
     blocks = _context_blocks(ordered, section_meta)
     present, rendered_parts, rendered, was_truncated = _render_pack(ordered, char_budget)
@@ -989,6 +1042,153 @@ async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
     )
     out._served_rows = served_rows(rendered, [name for name, _ in present], st.item_rows)
     return out
+
+
+@dataclass
+class CheckedPack:
+    _prefix: _PackState
+    _stack: CheckedStack | None
+    _direct: CheckedPassages | None
+    marked: bool
+    lost: bool = False
+    _contributions: set[str] = field(default_factory=set, init=False)
+    _ordinary_mode: bool = field(default=False, init=False)
+    _failed: bool = field(default=False, init=False)
+    _ordinary_ready: bool = field(default=False, init=False)
+    _output: ContextPackOutput | None = field(default=None, init=False)
+    _checking: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
+
+    def publication_proofs(self) -> tuple[SearchProofs, ...]:
+        if self._ordinary_mode or self.lost or self._failed:
+            return ()
+        proofs: list[SearchProofs] = []
+        if "knowledge" in self._contributions and self._direct is not None:
+            proofs.extend(self._direct.publication_proofs())
+        if "memory_stack" in self._contributions and self._stack is not None:
+            proofs.extend(self._stack.publication_proofs())
+        return tuple(proofs)
+
+    def fresh(self) -> bool:
+        if self._failed:
+            return False
+        if self._ordinary_mode:
+            return self._ordinary_ready
+        return all(
+            child is None or (not child.lost and child.fresh())
+            for child in (self._direct, self._stack)
+        )
+
+    async def _fallback(self) -> ContextPackOutput:
+        from server.knowledge.app.source_corpus import LostCorpus
+
+        if self._failed:
+            raise LostCorpus()
+        if self._ordinary_mode and self._output is not None:
+            return self._output.model_copy(deep=True)
+        self._ordinary_mode, self.lost = True, True
+        try:
+            direct, stack = None, None
+            if self._direct is not None:
+                try:
+                    direct = await self._direct.ordinary()
+                except Exception:  # noqa: BLE001 — a failed ordinary section is omitted without retry
+                    self._direct = None
+            if self._stack is not None:
+                try:
+                    stack = await self._stack.ordinary()
+                except Exception:  # noqa: BLE001 — a failed ordinary section is omitted without retry
+                    self._stack = None
+            self._output = _render_checked_pack(self._prefix, stack, direct)
+            self._ordinary_ready = True
+            return self._output.model_copy(deep=True)
+        except BaseException:
+            self._failed = True
+            raise
+
+    async def ordinary(self) -> ContextPackOutput:
+        async with self._checking:
+            with private_work() if self.marked else nullcontext():
+                return await self._fallback()
+
+    async def current(self) -> ContextPackOutput:
+        from server.knowledge.app.source_corpus import LostCorpus
+
+        async with self._checking:
+            with private_work() if self.marked else nullcontext():
+                if self._failed:
+                    raise LostCorpus()
+                if self._ordinary_mode:
+                    return await self._fallback()
+                try:
+                    direct, stack, failed = None, None, False
+                    if self._direct is not None:
+                        try:
+                            direct = await self._direct.current()
+                        except Exception:  # noqa: BLE001 — a failed optional section cannot expose a partial mixed pack
+                            self._direct, failed = None, True
+                    if self._stack is not None:
+                        try:
+                            stack = await self._stack.current()
+                        except Exception:  # noqa: BLE001 — a failed optional section cannot expose a partial mixed pack
+                            self._stack, failed = None, True
+                    if failed or not self.fresh():
+                        return await self._fallback()
+                    contributions: set[str] = set()
+                    output = _render_checked_pack(
+                        self._prefix, stack, direct, contributions=contributions
+                    )
+                    if not self.fresh():
+                        return await self._fallback()
+                    self._contributions = contributions
+                    return output
+                except BaseException:
+                    self._failed = True
+                    raise
+
+
+async def run_checked_pack(input: ContextPackInput) -> CheckedPack:
+    input = input.model_copy(deep=True)
+    from server.knowledge.api.models_knowledge import KnowledgeSearchInput
+    from server.knowledge.app import knowledge_search, source_access
+
+    st = _PackState(input, dict(_DEFAULT_SECTION_TOKENS[input.mode]))
+    request = None
+    scopes: set[str] = set()
+    if input.include_knowledge and st.wanted("knowledge") and input.query:
+        try:
+            request = await knowledge_search.resolve_search(
+                KnowledgeSearchInput(
+                    org=input.org,
+                    namespace=input.namespace,
+                    query=input.query,
+                    top_k=input.top_k,
+                    namespace_scope="all_mine",
+                    rerank="none",
+                )
+            )
+            scopes.update(request.namespaces)
+        except Exception:  # noqa: BLE001 — scope failure omits only the optional direct knowledge section
+            log.warning("context.pack: knowledge scope unavailable")
+    if input.include_knowledge and st.wanted("memory_stack"):
+        scopes.add(input.namespace)
+    plan = (
+        await source_access.prepare(input.org, sorted(scopes))
+        if scopes
+        else source_access.ReadPlan(input.org)
+    )
+    with private_work() if plan.marked else nullcontext():
+        stack, direct = await _gather_sections(st, request, plan)
+        return CheckedPack(st, stack, direct, plan.marked)
+
+
+async def handle_context_pack(input: ContextPackInput) -> ContextPackOutput:
+    from server.knowledge.app import source_publication
+
+    checked = await run_checked_pack(input)
+    output = await checked.current()
+    for proof in checked.publication_proofs():
+        source_publication.retain(proof)
+    return output
 
 
 async def _working_memory_layers(input: Any) -> tuple[list[Any], str]:

@@ -1,13 +1,12 @@
 {
   "name": "loom",
-  "displayName": "Loom",
-  "version": "1.2.17",
-  "minServerVersion": "1.0.0",
+  "displayName": "ClickHouse Loom",
+  "version": "1.2.41",
   "description": "Shared long-term memory and code intelligence for Claude Code, self-hosted on ClickHouse. MCP tools to save and recall decisions, preferences and corrections across sessions and teammates; lifecycle hooks that capture each session with no model call; a code index that answers where-is, who-calls and blast-radius questions with line-accurate units instead of whole-file reads.",
   "author": {
-    "name": "Loom"
+    "name": "ClickHouse"
   },
-  "homepage": "https://github.com/ClickHouse/loom",
+  "homepage": "https://clickhouse.github.io/loom/",
   "repository": "https://github.com/ClickHouse/loom",
   "license": "Apache-2.0",
   "keywords": [
@@ -23,9 +22,9 @@
     "self-hosted"
   ],
   "icon": "./assets/icon.png",
-  "documentationUrl": "https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/claude-code.md",
+  "documentationUrl": "https://clickhouse.github.io/loom/features/integrations/claude-code/",
   "supportUrl": "https://github.com/ClickHouse/loom/issues",
-  "privacyPolicyUrl": "https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/claude-code.md#data-handling",
+  "privacyPolicyUrl": "https://clickhouse.github.io/loom/features/integrations/claude-code/#data-handling",
   "userConfig": {
     "server_url": {
       "type": "string",

@@ -1,29 +1,33 @@
 # @clickhouse/loom — TypeScript SDK
 
-Typed client for [Loom](https://github.com/ClickHouse/loom), the shared-production agent memory, knowledge, conflict and observability plane on ClickHouse. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
-
-Not on npm yet (`release.yml` is manual and has never published), so build it
-from a clone of the repo and install the built package — `dist/` is not
-committed and `npm install github:…#path:` is not supported by current npm:
+Typed client for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index. Every wire operation the server declares is a typed method here; the types are generated from the server's operation registry, so what the deployment serves is what the SDK types.
 
 ```bash
-git clone https://github.com/ClickHouse/loom
-npm --prefix loom/sdk/typescript ci && npm --prefix loom/sdk/typescript run build
-npm install ./loom/sdk/typescript          # or: npm pack in that dir, then install the .tgz
+npm install @clickhouse/loom
 ```
-
-<!-- restore `npm install @clickhouse/loom` when release.yml publishes -->
 
 Node ≥ 20 (uses the platform `fetch`). Zero runtime dependencies.
 
+The SDK's version is the server release's; which servers it works with is in
+[supported versions](https://github.com/ClickHouse/loom/blob/main/docs/operations/supported-versions.md).
+A release not yet on npm installs from its assets
+([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
+For a clone at `<clone>`, build it with
+`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+then run `npm install <clone>/sdk/typescript` in your project.
+
 ## Quick start — an agent that remembers
+
+Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+on this machine (`http://localhost:7777`, `dev/local`, no token); for a team server, pass
+`baseUrl`, a credential and your org and namespace ([The credential](#the-credential)).
+Save it as an ES module (`quickstart.mjs`, or `.js` in a package with `"type": "module"`):
+it uses top-level `await`.
 
 ```ts
 import { Datapack } from "@clickhouse/loom";
 
-const pack = new Datapack("acme", "support", {
-  baseUrl: process.env.LOOM_BASE_URL!,
-  apiKey: process.env.LOOM_API_KEY!,
+const pack = new Datapack("dev", "local", {
   consumer: "support-bot", // the label every ledger row carries
 });
 const bot = pack.agent("assistant");
@@ -85,21 +89,78 @@ const status = await loom.knowledge.ingestFile({
 
 `OpMap` binds every operation name (`GENERATED_OP_COUNT` of them) to its input and output interface; `OPS` is the table of specs (group, method, required role, idempotency, maturity, latency budget). An op the SDK does not know yet (a newer server) is reachable through `loom.callRaw(name, body)`.
 
+## Application-owned session protection
+
+`LoomClient` and `Transport` accept a `sessionProtection` handle backed by an
+application-owned `SessionProtectionStore`. Every client and concurrent callback
+participating in one logical conversation in the same process must reuse the same
+handle, including its pending-mark latch. Across restarts, restore the same durable
+authority. The application provisions
+the record and restores the same authority after restart; the SDK never creates,
+resets or repairs a missing record. `read()` must reject missing, damaged or
+inaccessible state. `mark()` resolves only after committing a monotonic protected
+state. An in-memory store does not meet this contract.
+
+For an automatic invocation, pass `capture: new SessionCapture(roots)` in its call
+options, outside the operation's wire arguments. Include every contributing
+conversation handle; `capture.with(root)` retains existing handles. The transport
+checks them after credential waits and immediately before sending each attempt.
+Protection suppresses automatic invocations with `AutomaticCaptureSuppressed`;
+explicit calls remain available and still observe their responses.
+
+Bound JSON responses are observed before status handling, retry, hints or typed
+return. A mirrored response waits for every contributing record's durable mark
+and readback before returning content. Invalid envelopes or an unconfirmed store
+produce `SessionProtectionUnavailable` and protect all known handles. A local
+monotonic latch suppresses concurrent automatic calls while persistence is pending;
+it never substitutes for durable acknowledgement before content returns.
+
+Bound event streams observe complete SSE frames before exposing their original
+bytes. Readers, body methods and clones share that guarded body; a marked frame
+waits for every contributing record's durable acknowledgement. CR, LF, CRLF,
+multiline data and split UTF-8 are supported. An unfinished frame is limited to
+4 MiB. Invalid frames, incomplete EOF, unsupported media types and compressed
+responses protect the retained handles and refuse. Early cancellation and read
+failures also protect them and join bounded owned cleanup. Verified ordinary EOF
+leaves clean handles unchanged. BYOB readers are unsupported and refuse; use the
+default reader or a standard body method. Native clone queues follow the platform's
+tee behavior and are separate from the observer's unfinished-frame limit.
+
+`loom.assistant.stream` accepts `capture` alongside its question for an automatic
+invocation. It retains all contributing handles, preserves protection failures and
+requires the completion marker before returning an answer. It keeps draining after
+that marker so later response metadata is observed.
+
+`Session` retains its constructor's optional `capture` and every transport handle
+that later contributes to it. Automatic resume, transcript and extraction calls
+check their retained authority before dispatch. A first marked recall can return;
+optional history is then omitted. Protection discards pending and carry-over turns
+instead of retrying them. The synchronous `buffered` getter discards known local
+taint; asynchronous owner boundaries also perform bounded durable checks.
+Explicit offload, fetch and note remain available and observe all retained handles.
+For an explicit call outside Session, `observe: new SessionCapture(roots)` retains
+response observers without making the call automatic.
+
+This control covers JSON/SSE transport observation and Session buffer ownership.
+It does not qualify framework callbacks, restored host lineage or a concrete storage
+backend. Binding a handle does not send a session protection capability declaration
+or enable mirrored-source creation.
+
 ## Errors
 
-Every failure is a `LoomError` with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
+Server and network failures use `LoomError`, with `status`, `code` (the server's `detail.code`), `message`, `requestId` (echoed by the server, findable in its ledger), the raw `detail`, and the server's `category` and `retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)). Subclasses mirror the Python SDK:
 
-| class                                      | when                                                                                                                                                                                                                                                 |
-| ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ValidationError`                          | 400 / 422                                                                                                                                                                                                                                            |
-| `AuthError`                                | 401 / 403 — no or insufficient authorization for the op or namespace                                                                                                                                                                                 |
-| `NotFound`                                 | 404                                                                                                                                                                                                                                                  |
-| `PreconditionFailed`, `IdempotentConflict` | 409 / 412 — a version, lifecycle or idempotency precondition                                                                                                                                                                                         |
-| `RateLimited`                              | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                                                       |
-| `BackendUnavailable`                       | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
-| `TimeoutError`                             | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                                                                                              |
+| class                                                   | when                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ValidationError`                                       | 400 / 422                                                                                                                                                                                                                                            |
+| `AuthError`                                             | 401 / 403 — no or insufficient authorization for the op or namespace                                                                                                                                                                                 |
+| `NotFound`                                              | 404                                                                                                                                                                                                                                                  |
+| `PreconditionFailed`, `IdempotentConflict`, `WrongCell` | 409 / 412 — a version, lifecycle or idempotency precondition; `WrongCell` (code `WRONG_CELL`): the org lives in another cell, named in `cell` when known                                                                                             |
+| `RateLimited`                                           | 429 past the pacing budget; `retryAfterS` is the server's hint                                                                                                                                                                                       |
+| `BackendUnavailable`                                    | 5xx after the retries, or a connection that never got a response — then the message reads `cannot reach <baseUrl>: …` (or `no response from <baseUrl>: …`, or `response from <baseUrl> cut off: …`) and `code` is `NETWORK_ERROR_CODE` (`"NETWORK"`) |
+| `TimeoutError`                                          | the per-call timeout elapsed; retried only for idempotent non-read-only ops (`retryTimeouts`), since the server may still be processing                                                                                                              |
 
-A 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body.
+For an unbound client, a 2xx whose body is not JSON (a proxy or gateway page) is a `LoomError` with `code` `INVALID_RESPONSE_CODE` (`"INVALID_RESPONSE"`); it is not retried, and `detail.message` holds the start of the body. Bound clients withhold the body and raise `SessionProtectionUnavailable`.
 
 ```ts
 import { NotFound, RateLimited } from "@clickhouse/loom";
@@ -337,7 +398,49 @@ for (const call of completion.choices[0].message.tool_calls ?? []) {
 // Anthropic: tools.definitions("anthropic"); anything that takes JSON schema: tools.definitions()
 ```
 
-`execute()` returns the string the model reads (compact JSON, or a line it can act on: "no parked text under blob_key=…"), validates required arguments with messages a model can correct, and truncates past `maxResultChars`. [`examples/session-resume`](./examples/session-resume/) is the two-process run with a real `gpt-4o-mini` tool-use turn.
+`execute()` returns the string the model reads (compact JSON, or a line it can act on:
+"no parked text under blob_key=…") and validates required arguments with messages a model
+can correct. `loom_remember` preserves the server receipt, including no-op merges,
+canonical keys and conflict peers; `stored` confirms a persisted row. `loom_recall`
+preserves abstention, code freshness, row status, provenance and verification metadata
+when supplied. `retrieval_risk` and `retrieval_confidence` score non-governed hits;
+`governed` identifies authoritative definitions and `term_leg` reports the definition
+lookup status. Memory results remain valid JSON under `maxResultChars`: whole omitted
+memories are counted in `omitted`, and metadata that cannot fit returns `insufficient`
+and `metadata_omitted`. A budget too small for that marker is rejected before the call.
+Other tools truncate oversized text.
+[`examples/session-resume`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/)
+is the two-process run with a real `gpt-4o-mini` tool-use turn.
+
+The compact `loom_remember` schema does not expose file or repository association. The
+application can pass `files` and `tags` through `bot.remember(key, value, options)` or
+`bot.call("memory.set", body)`. Use the matching `repo:<id>` tag established by the
+integration, or a configured code namespace. `code.repos` reports `primary_namespace`
+for shared file rules. Do not infer a repository from the enabled lookup tools. Linking runs
+asynchronously, and provenance does not attest that code is unchanged. See
+[memories linked to code](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code).
+
+An explicit code namespace offers a read-only lookup before the memory tools. Use
+`only` for a code-only loop; memory tools keep the Agent's memory namespace:
+
+```ts
+const tools = bot.tools(
+  { userId: "u1", sessionId: "thread-42" },
+  { codeNamespace: "code-repo", only: ["loom_code_lookup"], maxResultChars: 12000 },
+);
+const definitions = tools.definitions("openai");
+const result = await tools.execute("loom_code_lookup", {
+  kind: "callers",
+  target: "pkg.Reader.read",
+  depth: 2,
+});
+```
+
+The model selects `symbol`, `search`, `callers` or `impact`; the application fixes scope
+and request budgets. Code results fit the configured cap as valid JSON with explicit
+whole-body or row omissions. Honor abstention, ambiguity, citations and graph lower
+bounds. See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/)
+and [`examples/code-lookup`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/code-lookup/).
 
 ## Probe before you rely
 
@@ -376,6 +479,95 @@ const recentAudit = await collect(
 );
 ```
 
+## AI SDK
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/ai-sdk";
+const tools = loomTools(bot, { userId: "u-42" }); // generateText({ model, tools, prompt }) from ai
+```
+
+Loom's agent verbs (`AgentTools`) as an AI SDK `ToolSet` built with `tool()` and `jsonSchema()` from `ai`, an optional peer dependency (7.x, which needs Node 22.12 or later).
+
+## Claude API memory tool
+
+```ts
+import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
+const memory = loomMemoryTool(bot, { store: "u-42" }); // client.beta.messages.toolRunner({ tools: [memory], ... })
+```
+
+The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x or 1.11.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
+
+## LangChain.js
+
+```ts
+import {
+  LoomKnowledgeRetriever,
+  LoomMemoryRetriever,
+} from "@clickhouse/loom/integrations/langchain";
+const docs = await new LoomKnowledgeRetriever(bot, { k: 3 }).invoke("refund policy");
+const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } }).invoke(
+  "which seat?",
+);
+```
+
+Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
+
+## Mastra
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/mastra";
+const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
+```
+
+Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83.x, which needs Node 22.13 or later).
+
+`LoomMemoryStorage` implements Mastra's native memory storage domain for one resource:
+
+```ts
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { Memory } from "@mastra/memory";
+import { LoomMemoryStorage } from "@clickhouse/loom/integrations/mastra";
+
+const memory = new Memory({
+  storage: new MastraCompositeStore({
+    id: "loom",
+    domains: { memory: new LoomMemoryStorage(bot, { resourceId: "u-42" }) },
+  }),
+  options: {
+    semanticRecall: false,
+    observationalMemory: false,
+    workingMemory: { enabled: true, scope: "resource" },
+  },
+});
+```
+
+Install `@mastra/memory` next to the SDK. Construct a separate storage and `Memory`
+instance for each end-user: `resourceId` is the actual Loom `user_id`, so user erasure
+includes all threads, messages and working memory. Keep the same Loom agent and optional
+`storeId` when resuming in another process. Resource reassignment, observational memory,
+run fencing, atomic working-memory merges and cloning are unsupported. Data stays in
+your Loom deployment; the adapter adds no database, vector store or cache. First
+resource patches require server support for `memory.set.if_match_sha256="absent"`;
+older servers refuse creation without an unconditional fallback. Deletion targets the
+exact observed version and rejects concurrent rewrites. See
+[the memory contract and limits](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#mastra).
+
+## OpenAI Agents SDK
+
+```ts
+import { loomTools } from "@clickhouse/loom/integrations/openai-agents";
+const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ name: "assistant", tools }) from @openai/agents
+```
+
+Loom's agent verbs (`AgentTools`: `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note`) as function tools built with `tool()` from `@openai/agents`, an optional peer dependency, bound to one user, session or run.
+
+```ts
+import { LoomSession } from "@clickhouse/loom/integrations/openai-agents";
+const session = new LoomSession(bot, "trip-42", { userId: "u-42" }); // run(assistant, input, { session })
+```
+
+`LoomSession` is the SDK's `Session` over loom: the conversation history of one session, as episodic memories of the user's loom session, separate rows from Python because the SDKs use different native item formats.
+
 ## Strands Agents
 
 ```ts
@@ -386,7 +578,7 @@ await store.add("Prefers an aisle seat", { source: "chat" });
 const entries = await store.search("which seat?", { maxSearchResults: 3 });
 ```
 
-No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable`, `add(content, metadata)`, `search(query, { maxSearchResults })`) is structural, and the store behaves like the Python adapter. A write is one `memory.set` keyed `strands/<sha256 prefix>` of the content, so re-adding a fact is idempotent and both SDKs write the same key. The metadata's short `kind`, `source`, `topic` and `category` strings become `key:value` tags. A search is limited to the store's tags and `memoryType` (default `semantic`) and returns nothing when loom abstains (`honourAbstain: false` keeps the hits); each entry carries `memory_key`, `memory_type`, `similarity` and, when known, `source` and `valid_at`.
+No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable`, `add(content, metadata)`, `search(query, { maxSearchResults })`) is structural, and the store behaves like the Python adapter. A write is one `memory.set` keyed `strands/<sha256 prefix>` of the content, so re-adding a fact is idempotent and both SDKs write the same key. The metadata's short `kind`, `source`, `topic` and `category` strings become `key:value` tags. A search is limited to the store's tags and `memoryType` (default `semantic`); it returns nothing when loom abstains and leaves out hits below the floor, unless `honourAbstain: false`; each entry carries `memory_key`, `memory_type`, `similarity` and, when known, `source` and `valid_at`.
 
 ## How the types stay true
 
@@ -394,7 +586,7 @@ No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable
 
 ## Examples
 
-[`examples/`](./examples/) holds runnable, self-contained scripts whose READMEs show the actual run: start with [agent-memory](./examples/agent-memory/) (probe → remember → recall → ask with citations → outcome; typed errors), then [session-resume](./examples/session-resume/) (a session resumed in a new process, a parked tool result, a real model calling loom's tools).
+[`examples/`](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/) holds runnable, self-contained scripts whose READMEs show the actual run: start with [agent-memory](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/agent-memory/) (probe → remember → recall → ask with citations → outcome; typed errors), then [session-resume](https://github.com/ClickHouse/loom/tree/main/sdk/typescript/examples/session-resume/) (a session resumed in a new process, a parked tool result, a real model calling loom's tools).
 
 ## Development
 

@@ -6,6 +6,14 @@ a time. For the length of a rollout, and again during a rollback, the previous b
 schema. These rules keep that safe. The operator procedure is in
 [upgrades](../operations/upgrades.md).
 
+Retirement of an N-1 participant also requires its authority-store work to settle.
+Under Postgres, a client without participant session tags is recertified only
+after all generic `loom` authority backends are absent, including idle pools.
+Stop and drain those legacy clients before the final retirement census; tagged
+participants can remain live. ClickHouse-authority recovery uses the verified
+deployment's ClickHouse checks. Neither path treats an unknown authority as empty.
+See the [participant lifecycle baseline](cells.md#participant-lifecycle-baseline).
+
 ## The rules
 
 1. **Migrations are additive** and run at boot under the migration lock. N-1 keeps
@@ -21,6 +29,12 @@ schema. These rules keep that safe. The operator procedure is in
    tombstone keeps the values N wrote to N's new columns. This costs a cached lookup
    while every build agrees with the schema, and one extra keyed read per insert while a
    newer column exists.
+   A moved document's row is a new key (its new namespace). A move N-1 makes after N's
+   migration added a `loom.documents` column fills that column from the new key's newest row
+   (a document deleted there, or the column's default), not from the source's: the copy
+   lacks that value for good, and a restore of the source, whose deleted row keeps it,
+   brings it back there. A move N makes builds the row with every column; its chunks and
+   table rows are copied with `SELECT *` and keep every column.
    - Each process checks `loom._migrations` and the carried tables' metadata time
      every 2 s in the background and then re-reads the column lists.
    - A write that took the lists before the `ALTER` would still drop the column. So
@@ -88,7 +102,9 @@ schema. These rules keep that safe. The operator procedure is in
    (`LOOM_PROJECTION_REPAIR_MAX_FAILURES_PER_PASS`); past that many, N-1 replays
    nothing else until an N replica leads.
 4. **Wire formats** (cursors, session and run ids, worker resume cursors, JSON stored in
-   rows): N reads the old and the new format, and only N+1 writes the new one.
+   rows): N reads the old and the new format, and only N+1 writes the new one. Exception:
+   a cursor for a request N-1 answers for `namespace` alone (a `knowledge.list` naming
+   `namespaces`) is new in N, and each build refuses the one the other wrote (rule 12).
 5. **Signing keys:** rotate with `--activate-in` of at least twice the slowest keyring
    refresh interval (the command refuses less), so no process signs with a kid an N-1
    replica cannot verify yet.
@@ -161,6 +177,14 @@ schema. These rules keep that safe. The operator procedure is in
     nor the restore version. The restored row then reads as a statement made at the Undo,
     newer than the memory it was retired behind, so a confident update verdict can retire
     that memory although the person kept both. Pinning it prevents that.
+    N-1's `knowledge.list` rows carry no `namespace`, on any list; one naming `namespaces`
+    lists `namespace` alone there, and each build refuses the cursor the other wrote for
+    such a list, so a client paging it starts again.
+    `memory.set`'s `if_match_sha256='absent'` uses an existing, nonempty precondition
+    field. A build without this meaning refuses it as a hash mismatch, including on a
+    missing key, instead of storing an unconditional write. First creation may therefore
+    answer 409 while such a build serves; clients must not retry without the condition.
+    Ordinary content hashes still work across builds, and rollback needs no data change.
 13. **A name N spells differently is a different node.** N keeps combining marks and
     NFKC-normalises an entity's name (`दिल्ली`, `İstanbul` as `istanbul`); N-1 split them
     into fragments (`द ल ल`, `i stanbul`). ASCII names spell the same in both, and so do
@@ -385,7 +409,8 @@ schema. These rules keep that safe. The operator procedure is in
     step on N, so a step resumed across builds submits its mutation again; the
     statements are idempotent. No gate holds the rollout, and the mixed-version gate
     does not check this rule.
-35. **One token mint** (`service_accounts.create`, `caller_home._minted_home`).
+35. **One token mint** (`service_accounts.create`, `caller_home.minted_home`,
+    `token_saves_to`, `me_service_accounts.dev_caller`, `admin_routes.admin_token_mint`).
     - _Where a token saves._ N sends a delegated token's unaddressed calls to the
       namespace its claim names before `*` when it may write there; N-1 sends them to the
       owner's saved pick, as for a bare `*` token. A token of that shape (one from
@@ -394,20 +419,45 @@ schema. These rules keep that safe. The operator procedure is in
       builds serve, depending on the replica; both are namespaces it may write, and the
       split ends with the rollout. After a rollback such a token follows the pick for
       the rest of its life.
+    - _Where a list token saves_ (`saves_to` claim and `loom.service_accounts.saves_to`,
+      migration `093_service_account_saves_to.sql`). N records the list token's target in
+      the token and its row, and sends its unaddressed calls there, then down its own list,
+      never to the owner's saved pick. N-1 ignores the claim: on an N-1 replica the token
+      follows the saved pick, as every list token did before, until the rollout ends. A
+      list mint N-1 serves drops `saves_to` (both mint routes ignore an unknown field) and
+      mints a token without the claim, which follows the saved pick for its life;
+      `service_accounts.create` answers where it saves under that rule, and
+      `admin/token.mint` answers no `saves_to`. A `*` token's home stays the name before
+      `*`, and one that may no longer write there still falls back through the saved
+      pick. On N a delegated token, with the claim or without, never saves to a collection
+      unasked (one it may only read can still be its default for reads,
+      `caller_home._pick_default`): a list token whose only writable entry is a collection
+      saves there by default on N-1 and nowhere by default on N, so its calls name where
+      they save. N-1 revoking a row writes `saves_to` empty: a revoked token saves nowhere.
     - _Mints refused by the other build, before anything is saved._ N-1 refuses `*` in a
       list, `namespaces: "*"` or none at all (`create_token()`, `loom token create`
       without `--namespace`) and a mint without a name (the dashboard's form with its
       Name left empty, `loom token create` without `--name`). N has no
-      `/v1/me/setup/mcp_config`, which N-1's dashboard calls. A retry once the rollout
-      ends works.
+      `/v1/me/setup/mcp_config`, which N-1's dashboard calls. N refuses `saves_to` beside
+      `*` and a collection before `*`, which N-1 mints (dropping `saves_to`). A retry once
+      the rollout ends works.
     - _A mint N-1 accepts._ A named list mint is saved by N-1, which answers without
       `saves_to`, `mcp_url`, `reads_everything`, `roles` and `clients`; N's dashboard
       fills those from the page (its own `/mcp`, the claim) and shows the token. A list
-      token N-1 mints gets no bound tracker record.
+      token N-1 mints gets no bound tracker record. N-1's dashboard posting a list mint to
+      N sends no `saves_to`, so N records the first writable memory entry, kept for the
+      token's life; N's answer names it, and the created dialog shows it.
     - _The list._ N-1 matches a token's maker by the exact subject, so a person signed in
       under another spelling of theirs neither sees nor revokes there a token made under
       the first, and N-1's dashboard lists a `*` token N minted by the names in its claim
       (it reads every namespace all the same).
+    - _Who owns an auth-off token._ With auth off and no bearer, N saves a token with
+      the single user `you` as its owner and N-1 with `dev`. Each build's Tokens page shows
+      the tokens of its own owner (and, as for any owner, those on a namespace it
+      administers); every token stays valid. On N, a token N-1 saved is listed and revoked
+      by naming its owner: `subject=dev` and the token's `org` (`default` for one made on
+      the Tokens page) on `GET /v1/me/service_accounts` and
+      `POST /v1/me/service_accounts.revoke`.
 36. **The memory a cached `code.ask` answer quoted** (`loom.code_answers.memory_namespace`
     and `memory_keys`, migration `086_code_answer_memory_scope.sql`): N-1 writes an
     answer without them, and a tombstone N-1 writes of an entry N stamped (a stale entry,
@@ -431,8 +481,8 @@ schema. These rules keep that safe. The operator procedure is in
     N-1's user saga and census reach only the user's own, so a user erasure N-1 runs
     leaves the summary's rows and records `completed`. Outside a purge, a saga N-1 left
     in progress that N resumes fails N's census when N-1 ran those rows' steps, and the
-    recovery worker's next resume runs them again; the shared copies, which the census
-    does not count, stay when N-1 passed `memory.retire`. In a purge, N's
+    recovery worker's next resume runs them again; the shared copies, which the
+    user-scope census does not count, stay when N-1 passed `memory.retire`. In a purge, N's
     `memory.retire` runs them again, except for the search rows of shared copies of the
     user's own memories when N-1 ran its `shared.tombstone`, which deleted the rows they
     are found by.
@@ -477,14 +527,411 @@ schema. These rules keep that safe. The operator procedure is in
     request's retirement lands, and the document serves no search hits until it is
     written again. No gate holds the rollout, and the mixed-version gate does not check
     this rule.
+39. **The chunks a knowledge head serves** (`chunks_revision`, `chunks_version` on
+    `loom.knowledge_heads`, Postgres migration `004_knowledge_chunk_heads.sql`): under
+    the Postgres authority N's search, outline, synthesis and `memory.stack` knowledge
+    reads serve only a head's chunks (a source with no head serves what ClickHouse
+    holds) ([knowledge search](storage-authority.md#knowledge-search)); N-1 serves every
+    chunk ClickHouse reads as live, as before, so while it serves, a search it answers
+    can show an older version still being retired or a write not committed. N-1's
+    commits leave both columns as they were, so after one that numbers a new revision
+    `chunks_revision` is no longer the head's and N judges that source's chunks by
+    revision alone, which also serves a refused writer's chunks of that revision until
+    the source's next N write that inserts chunks (a delete, a metadata edit or a
+    restore keeps the columns as they are). A head N-1 created holds none. N-1's
+    `knowledge.add` and `bulk_add` again keep the earlier version's chunks, which N does
+    not serve and retires at the source's next N write that inserts chunks. No gate
+    holds the rollout, and the mixed-version gate does not check this rule.
+40. **Knowledge ingestion jobs** (`loom.knowledge_jobs`, Postgres migration
+    `005_knowledge_jobs.sql`): under the Postgres authority N keeps each job in Postgres
+    and projects each committed version into `loom.knowledge_ingestions`, best effort,
+    so N-1 may read a job a version behind until N's next save, or until N's worker next
+    takes it, and may run again a job N ended whose last projection did not land (a
+    published one N-1 finds published); N-1's originals sweep and user erasure read open
+    jobs from ClickHouse alone, so while N-1 runs them they may delete the original of
+    an N job whose projection has not landed and whose upload has expired, and that job
+    then fails `original_gone`; N-1 keeps its jobs in ClickHouse alone. N's status and
+    cancel read the newer version of the two stores, and its worker's queue interleaves
+    its own due jobs with ClickHouse's, the two leading in turn from one pass to the
+    next. A job N-1 queued runs in ClickHouse alone, as N-1 runs it; a run of one
+    Postgres holds first takes the version N-1 saved when it is the newer, and waits
+    while an earlier open job of its source is held in Postgres or only in ClickHouse,
+    so a source's jobs still run one at a time, oldest first. N thus runs, reports and
+    cancels the jobs N-1 queued or ran. A cancel N accepts is also written to
+    `loom.knowledge_ingest_cancels`, which N-1 reads, and N reads the cancels N-1 writes
+    there. The deployment-wide job lease alone keeps a run of each build from
+    overlapping the other's: N-1 does not raise a job's `lease_token`, so the token does
+    not fence an N run whose lease lapsed against an N-1 taker. N-1's erasure has no
+    step for `loom.knowledge_jobs` and leaves the scope's jobs there, and N's worker
+    projects an open one back into `loom.knowledge_ingestions` and runs it; once N-1
+    stops serving, run such an erasure again with N, as for rule 38 ([upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 12). N breaks a tie
+    between two jobs of a source created in one millisecond by the id's text, N-1 by its
+    UUID, so the two builds may each run one of such a pair at once. No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
+41. **The erasure receipt** (`loom.erasure_requests.census`, migration
+    `091_erasure_census.sql`): N writes every count of a complete census with the verify
+    columns of a saga's terminal and failed rows, and the recovery worker's abandonment
+    checkpoint carries it forward; a resume writes in-progress rows without it until its
+    own census lands. N-1 neither writes nor reads it, so a row N-1 checkpointed reads `''`,
+    which N's `erasure.status` answers as no receipt (`census: null`). N also writes the
+    purge a saga applies to the `purge` column (false for a single namespace), which N-1
+    reads as before, since N-1 never purged a single namespace either. No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
+42. **The knowledge dataset catalog** (`loom.knowledge_datasets`, Postgres migration
+    `007_knowledge_datasets.sql`): under the Postgres authority N commits each catalog
+    row there and projects it into `loom.datasets`, best effort, so N-1 may read a
+    catalog row a version behind until N's next write of it; N-1 writes `loom.datasets`
+    alone. Every read of the catalog by N (`datasets_repo.at_version`:
+    `knowledge.dataset_get`, `knowledge.query`, an approval's reads, a publish's and a
+    metadata edit's carry, and a publish's check that no approval landed) takes
+    Postgres's rows and those only ClickHouse holds, the newer version of a dataset
+    winning, so N serves and queries what N-1 published or approved. N's approval
+    commits in the transaction that holds the source's head, over the version of the
+    catalog row it read: Postgres's, or a newer one N-1 wrote to ClickHouse, which the
+    approval then commits to Postgres. N-1's approval writes ClickHouse alone, and N
+    reads it as the newer version once the replica it reads has caught up: until then N
+    serves Postgres's older row, whose replaced snapshot N-1 may already have deleted,
+    so the dataset reads empty, and an approval by N in that window outranks N-1's. Both
+    builds take the source's claim for an approval and a publish, so an approval and a
+    publish of one source never overlap, whichever builds run them. N-1's deletes
+    (`knowledge.delete`, a later publish's retirement) and its erasure remove
+    `loom.datasets` rows alone and leave N's catalog rows in Postgres until that source
+    is next published or deleted by N: ask such a delete again with N, which removes
+    them; once N-1 stops serving, run such an erasure again with N ([upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 12). No gate holds the
+    rollout, and the mixed-version gate does not check this rule.
+43. **A revision's delivery time** (`delivered_at` on `loom.memory_revisions`, Postgres
+    migration `010_revision_delivered_at.sql`): under the Postgres authority N stamps a
+    revision it delivers more than 15 minutes after its commit, and the payload clearing
+    pass takes an unstamped one as delivered within 15 minutes of `committed_at`
+    ([payload clearing](storage-authority.md#payload-clearing)). N-1 completes a late
+    delivery without the stamp, so a revision it delivered late counts as delivered
+    earlier than it was, by up to that delivery's lateness, and stays so. Turn
+    `LOOM_PG_PAYLOAD_CLEAR_ENABLED` on no sooner than one clearing horizon after N
+    serves alone: every revision N-1 delivered is then past the horizon from its real
+    delivery. A rollback to N-1 starts that wait again: turn the switch off before it,
+    and on again no sooner than one clearing horizon after N serves alone after the roll
+    forward. The switch is off by default, and N-1 runs no clearing pass. N-1's delivery
+    cannot send a revision whose payload was cleared. Once a clearing pass has run,
+    `loom reconcile` runs only with a build that carries 010, and that build is the one
+    the deployment starts on after it; a rollback waits until N owes no claimable
+    delivery for a cleared revision, and while N-1 serves a retry of parked deliveries
+    leaves the cleared revisions out ([rollback](../operations/upgrades.md#rollback)).
+    No gate holds the rollout, and the mixed-version gate does not check this rule.
+
+44. **Document sources on any namespace** (`knowledge.source.*` without the trunk
+    check): N-1 still refuses `add`, `check`, `rotate` and `sync_now` on a namespace
+    that is not a repository's trunk (`NOT_A_CODE_NAMESPACE`), so while it serves, the
+    dashboard's Add (the list the Library's Sources button opens offers it on every
+    shared namespace), Check, Sync now and Rotate of such a source fail on the replicas
+    it answers from, and its sync worker skips such a source until N leads the workers.
+    N-1's `namespace.delete`, `collection.delete` and erasure do not retire a
+    namespace's sources. A source whose namespace N-1 deleted stays active with its
+    credential, and the sync skips it (its namespace is inactive); one whose namespace
+    N-1 erased keeps syncing, and its next full listing writes the namespace's documents
+    back. An erasure N-1 started and N finished runs `knowledge_sources.retire` late,
+    and its final census reopens the steps for what the source wrote back meanwhile;
+    `loom erasure-re-verify` (rule 14) runs no step. N-1's `add` does not read the
+    ledger, so a source it adds during an erasure N runs, after N's
+    `knowledge_sources.retire`, stays active and syncs after the erasure completes. Once
+    N serves alone, the [upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 13, lists what N-1
+    left, with its queries and cleanup. No gate holds the rollout: the cost is those
+    refusals and that cleanup, and it ends once no N-1 replica serves. The mixed-version
+    gate does not check this rule.
+
+45. **A namespace's promoted rows** (`shared.tombstone` in the namespace saga): N-1's
+    namespace erasure has no step for `loom.shared` and its census does not count the
+    table, so a `namespace` or `namespace_list` erasure N-1 runs completes with the
+    namespace's promoted rows live, and so did every one an older build completed. Their
+    search rows are gone (`memory_embeddings.tombstone`), but `memory.lineage` and the
+    shared reads still return them. Once N serves alone, the [upgrade
+    procedure](../operations/upgrades.md#upgrade-procedure), step 14, lists each
+    namespace an erasure in the ledger (kept 90 days) reached and runs over it what N's
+    step runs: rows promoted before the erasure are tombstoned, or deleted after a
+    purge. An older erasure's rows cannot be found and stay. No gate holds the rollout,
+    and the mixed-version gate does not check this rule.
+46. **An `/assistant` history entry** (the dashboard's expanded assistant window has no
+    address): an N-1 tab pushed `/assistant` entries, and after the ReloadBar's reload
+    on N, Back or Forward onto one reaches N in the same document. N answers it: the
+    address becomes the landing page's (`landingTarget` for the tab's namespace; the
+    view the tab shows when that is Setup), the page arrives there, and the assistant
+    opens over it (expanded from 1024 px; nothing opens on Setup, on a namespace the tab
+    cannot read, or at phone widths). The server keeps serving the `assistant` page
+    segment for bookmarks, which N answers the same way at boot (except that on a phone
+    the sheet opens over the landing page), so this answer stays as long as the segment
+    is served. The mixed-version gate does not check this rule;
+    `frontend/e2e/assistant-launch.spec.ts` ("an entry an earlier build pushed opens the
+    assistant on Back after a reload") does.
+
+47. **A cell's org triggers and `loom.tenancy` guard keep their names and shape**
+    ([cells](cells.md)). The session marker `loom.tenancy_checked`, the functions
+    `loom.tenancy_refuse_unheld()` and `loom.tenancy_refuse_unmarked()`, the trigger names
+    `tenancy_insert`, `tenancy_update` and `tenancy_record`, and their shape (AFTER, row
+    level, on their events) do not change, since builds N-1 and N create and read them on
+    one cell. Each function's body changes only through a numbered migration
+    (`CREATE OR REPLACE FUNCTION`), and `missing` accepts the body and settings any shipped
+    file writes. A changed body ships in two releases: release K adds the new body to
+    `missing` as an accepted value beside the shipped files', and the migration that writes
+    it ships no earlier than K+1, so an N-1 `loom doctor` or attach on a migrated cell names
+    no defect. The `WHEN` text lives in the code that creates the triggers
+    (`server/core/cell_triggers.py`), so a changed `WHEN` ships in three releases, in the
+    body's order: release K adds the new `WHEN` to `missing` (which `loom doctor` and attach
+    read) as an accepted value beside the one it creates; K+1 creates the new `WHEN` and
+    keeps the old one accepted, so a K pod that creates a trigger on a skipped table, and a
+    K `missing` reading one K+1 created, both name no defect; and the migration that drops
+    the triggers, which the same boot then creates with the new `WHEN`, ships no earlier
+    than K+2, so the N-1 that could create a skipped table's trigger already carries the new
+    text. The gate on processes with `LOOM_CELL` unset, the marker and the triggers ship in
+    one release: a release that carried the triggers without the marker would refuse Loom's
+    own writes on a cell, and one with the gate alone would leave its unchecked writers
+    unguarded. It breaks side-by-side serving in one place: on a later cell already
+    prepared, the release's first migrating boot creates the triggers, and an older pod
+    still serving there has its inserts of a tenant org's rows refused, so such a cell is
+    rolled out in one step ([upgrades](../operations/upgrades.md), step 2). The
+    mixed-version gate does not check this rule.
+48. **Knowledge gaps** (`loom.search_misses` and `loom.knowledge_gaps`, migration 95):
+    N-1's erasure saga has no step for either table. So while any live replica's schema
+    version is below 95, or no heartbeat has been read, no miss is recorded, the
+    `knowledge_gaps` worker writes nothing and `knowledge.gaps.list` answers 503, as
+    `namespace.guide_set` does under rule 24. The operator turns
+    `LOOM_KNOWLEDGE_GAPS_ENABLED` on only once every replica runs N. Before a rollback,
+    turn it off and delete both tables' rows, then delete again after the first N-1
+    replica serves ([knowledge gaps](knowledge-gaps.md#rolling-upgrades)).
+    `tests/unit/test_knowledge_gaps.py` checks the refusals; the mixed-version gate does
+    not.
+49. **A document source's items** (`loom.knowledge_sources.source_kind`, `items_json`,
+    `secret_enc`, migration `096_knowledge_source_items.sql`): N writes a source whose
+    items the id-list `config` can hold (only non-recursive folders, at most 20 of
+    anything) as N-1 writes it, `kind`, `config_json` and the credential in
+    `credential_enc`, with `items_json` beside them, so N-1 lists, checks, rotates and
+    syncs it as before. Any other source is stored with `kind` empty, its kind in
+    `source_kind`, its credential in `secret_enc` (purpose `knowledge_sources.secret`),
+    `credential_enc` empty and `config_json` holding no item. N-1 lists such a source
+    with kind `''`; its `check` answers `credential_invalid` (its `credential_enc` is
+    empty) and asks for a rotate, and its `rotate` fails with a server error before
+    writing, since it has no probe for kind `''`; and its sync turn reads it as a shared
+    folder with no credential, so the turn ends `credential_invalid` before any request
+    and retires nothing. N-1's `remove` of it, and its retirement when its namespace
+    goes, write an inactive row whose new columns read empty. So `knowledge.source.add`
+    and `knowledge.source.update` answer 503 `OVERLOADED` (`retry_after_s` 30) for a
+    source they would store with `kind` empty while any live process of any deployment
+    on the ClickHouse service (`loom.instances`, `read_live(all_deployments=True)`)
+    reports a schema version below 96, or none has been read. N reads `source_kind`
+    first and `kind` when it is empty, and `items_json` first and `config_json` when it
+    holds no item, so a row N-1 rewrote reads as it wrote it. N-1's `sync_now` without
+    `full` writes `full: false` over an update's waiting full request, so while it
+    serves, an added item's files older than the stamp wait for the periodic full
+    listing. N-1's `loom secrets reseal` does not reseal `secret_enc`, and its `--check`
+    reports clean, so run the reseal from build N before dropping
+    `LOOM_JWT_SECRET_PREVIOUS`: a `secret_enc` left under the old key reads as no
+    credential and its source's turns end `credential_invalid` until rotated. A later
+    release, once no build below 96 runs, writes `kind` for every source and keeps one
+    credential column. `tests/unit/test_knowledge_sources.py` checks the refusal, and
+    `tests/unit/test_knowledge_source_sync.py` that a folder turn over such a row ends
+    before any request; N-1's `check` and `rotate` failing is read from its code, and
+    the mixed-version gate does not check this rule.
+50. **A source's document bound** (`LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS`): N reads a
+    source's stored copies in pages and holds back new files past the setting, for
+    every kind. N-1 reads at most 50,001 of them: its `gdrive` turn holds back new files
+    past 50,000 and ends `failed` with `too_many_documents` over it, retiring nothing;
+    its `linear`, `notion` and `recording` turns check no bound, so past the cut a
+    stored copy reads as new and is fetched again each turn, and the cut read retires
+    less. Both rewrite and retire under the same source lease. While N-1 serves, a
+    setting at or below 50,000 is safe; raise it only once every replica runs N. The
+    bound tests in `tests/unit/test_knowledge_source_sync.py`,
+    `test_knowledge_source_sync_linear.py`, `test_notion_source_sync.py` and
+    `test_knowledge_source_recordings.py` check N's side; N-1's is read from its code,
+    and the mixed-version gate does not check this rule.
+
+51. **Mirror names are reserved** (migration `097_mirror_names_reserved.sql`): N's gate
+    refuses every request that names a namespace of the form `acl-` and 24 hex digits
+    (only a platform admin's `erasure.request` may name one), with auth on or off.
+    `namespace.register` and `namespace.restore` refuse the form, and N's org-wide
+    scopes, the `sql_v1_` views and the analytics export leave it out. N-1 admits the
+    form as any other name. The migration refuses to run while any namespace of the form
+    is registered or holds live rows in ClickHouse (the registry, memory, documents,
+    conversations, threads, sources and code repositories), naming up to ten as
+    `org/namespace` with their tables and counting the rest. Since N refuses every
+    request naming such a namespace, the operator clears it with N-1: an erasure of what
+    it holds, `code.repo.remove` for a repository and `namespace.delete`. The build that
+    writes mirrors comes after this one, so the build beside it already refuses the
+    form; the one gap is a name an N-1 process registers or writes after the migration
+    ran. The mirror writer draws a new name again while the one it drew is in use
+    (`server/knowledge/app/mirrors.py`, rule 54), so no such namespace is ever taken
+    for a mirror. `tests/unit/test_mirror_names_refused.py` checks N's side, and the
+    mixed-version gate does not check this rule.
+52. **The mirror registry** (migration `098_knowledge_mirrors.sql`): N adds
+    `loom.knowledge_mirrors` and the `access` column of `loom.knowledge_sources`, whose
+    default (`namespace`) is what every row N-1 writes means. N stores a source whose
+    `access` is `mirrored` with `kind` empty, so a build without items finds no probe or
+    credential for it. N serves none either: its sync pass skips one (rule 54's build
+    syncs a mirrored `gdrive` one into the mirror), its retire pass leaves its delete
+    request alone, and `check`, `rotate`, `update`, `sync_now` and an `add` of a removed
+    one's name refuse with `SOURCE_NOT_SERVED`. So beside the build that writes mirrors,
+    N never syncs a mirrored source into the named namespace or orphans its documents.
+
+    On N, each namespace erasure step reads the registry, which keeps every mirror the
+    named namespaces have had, so every run of the step, a resume's or a replay's
+    included, covers them: a scope that holds a mirror is erased as a purge, in one pass
+    over the named namespaces and their mirrors, and the census counts it the same way.
+    The last Loom step, `knowledge_mirrors.forget`, writes the mirrors `deleted`, and a
+    live one keeps the name in use. N-1 runs no mirror pass and counts no registry row;
+    N writes no mirror, so N-1 meets an empty registry, and the build that writes
+    mirrors (rule 54) runs beside N, which reads them.
+    `tests/unit/test_knowledge_mirrors.py` and the mirrored cases in
+    `tests/unit/test_knowledge_sources.py` and
+    `tests/unit/test_knowledge_source_sync.py` check N's side.
+
+53. **A document's permission list** (migration `099_document_access_lists.sql`): N adds
+    `loom.documents.access_json`, the permission list of a mirrored document ([document
+    sources](document-sources.md#the-permission-list)); under the Postgres authority it
+    rides in the head's `row`, with no Postgres migration. No writer in N passes a list,
+    and the row builder carries none forward: every row N builds, a tombstone included,
+    has the column empty, so it reads `unread` and admits nobody; an erasure purges a
+    mirror's rows outright (rule 52). N-1 never meets a list: N writes none, and the
+    first build that writes one runs beside N, never beside N-1, which matters because
+    N-1 would carry a list through its rewrites (rule 2). No op's input or output has
+    the field. `tests/unit/test_access_list.py` and
+    `tests/unit/test_document_row_builder.py` check N's side.
+54. **Mirrored folder sources sync** (migration `100_knowledge_source_listings.sql`):
+    N's sync worker runs a mirrored `gdrive` source, while its ops still refuse one
+    (`SOURCE_NOT_SERVED`, rule 52). Each turn lists every file with its permissions,
+    reading `permissions.list` for a file the listing leaves them out of, and writes
+    into the namespace's mirror (made under the namespace's sources lease when it has
+    none) at `<address>#<source id>`, tagged `source-id:<id>`. Once the turn starts, it
+    brings every stored copy's list to the store's (only narrowing a copy behind its
+    file's revision), or to `unread` for a copy a whole listing does not have at its
+    address (bounded as rule 55 says); then it fetches and writes each new or changed
+    file with its list, and at the full interval retires a copy whose file is gone, with
+    no audit row, since the audit log outlives an erasure. The listing's start goes to
+    `loom.knowledge_source_listings` once every stored copy's list is written. No
+    request can add a mirrored source yet, so N meets none it did not write, and N runs
+    every mirrored `gdrive` source as one shared service account: the build that adds
+    sources of another credential mode stores them in a form `mirror_synced` rejects
+    while N may run. By rule 52, N-1 serves no mirrored source, and it reads no listing
+    row; an N-1 namespace erasure has no listings step, so it leaves the mirror's
+    listing rows (source names and times, no memory content), which the next erasure of
+    the namespace on N removes, since its scope holds every mirror the namespace has
+    had. N counts a document as searchable when its chunks are those of its version or
+    of its revision, which a row-only rewrite (a new list, a metadata edit) keeps, so
+    such a rewrite stays until the file changes; N-1 checks the version alone, so after
+    a metadata edit it fetches and writes the file again, as it does today.
+    `tests/unit/test_knowledge_source_sync_mirror.py` and
+    `tests/unit/test_knowledge_source_revisions_sql.py` check N's side.
+55. **The mirrored sources' share of a pass**: N runs the mirrored sources first, until
+    a third of the time the pass starts work in has passed (a quarter of
+    `knowledge_source_sync_max_pass_seconds`) and under their own document bound
+    (`LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS`), the one synced longest ago
+    first, a sync request included; the namespace sources then have the rest of the pass
+    under their own bound. A mirrored source's turn keeps its own state under its mirror
+    and source id, leaving only its request, status and time in the namespace row. Its
+    model calls are attributed to the mirror. It reads the lists on from a cursor in
+    that state, in at most half of what is left of the mirrors' share when its turn
+    reaches them, so its new and
+    changed files still get time, and a turn whose list reads stop there is still
+    complete, so it retires gone files and keeps the full interval; a cycle's listing
+    row carries the start of the turn that began it. N-1 runs a mirrored source under
+    the whole pass's bounds and keeps its whole state in the namespace row; N reads
+    neither N-1's fields there nor N-1 the mirror row, so a mixed fleet reads some lists
+    again and retries some waits, and the next N turn drops N-1's fields from the
+    namespace row. No request can add a mirrored source yet.
+    `tests/unit/test_knowledge_source_mirror_pass.py` checks N's side.
+
+56. **Mirror erasure receipts** (migrations `101_erasure_mirror_mark.sql` and
+    Postgres `013_erasure_mirror_mark.sql`): N adds a Boolean `mirror_marked`, false
+    for ordinary receipts, to both erasure ledgers. Before a namespace step or its
+    failure census reaches mirrors, N persists true. Request replies and namespace
+    audit rows then carry codes only; status and list expose counts only to a freshly
+    authorized flat platform admin. Recovery, reverify resume and restore replay
+    preserve the mark; cross-store copies promote it without replacing terminal
+    state. A replay promotion changes no receipt or pending fence. Marked versions
+    reserve bit 63 of the UInt64 version, so even a later unmarked checkpoint cannot
+    replace one; timestamps order marked writes. N-1 ignores the column and cannot
+    advance a marked saga. Mirrored sources remain refused
+    until every process implements this protection and the later read and session
+    protections. Before N-1 may serve after enablement, the enablement and rollback
+    procedure must settle outstanding marked sagas, remove mirrored content and scrub
+    marked receipts and audit counts while preserving their mark and version priority;
+    a schema downgrade alone provides no privacy protection.
+
+57. **Stopped mirrored sources retain their retirement requests**: N writes a
+    `knowledge_source_retire:<source id>` key under the mirror in `code_index_state`
+    before inactivating the registration. Its always-on `knowledge_source_retire`
+    worker deletes that source id's owned copies under its own cursor, deadline and
+    document bound, even after the name is reused. N-1 ignores those queue keys and
+    cannot serve the mirrored registration; its ordinary cleanup skips it. Queue rows
+    remain until N finishes, and namespace erasure removes them with the mirror.
+    Mirrored registration remains unavailable. `tests/unit/test_knowledge_source_retirements.py`
+    checks name replacement, bounded progress and cursor persistence.
+
+58. **Mirrored work keeps diagnostics inside its namespace**: N suppresses shared
+    logs, spans, metrics and work figures while syncing or retiring mirrored content.
+    Its worker summaries carry fixed codes and no elapsed time or document figures;
+    billing rows stay in the mirror namespace. N-1 has no equivalent boundary, so
+    mirrored source creation remains refused until every process implements the read,
+    session and enablement protections. Before N-1 can serve after enablement, stop
+    writers, settle outstanding inserts and sagas, scrub marked receipts and audit
+    figures, and erase every mirror store, including `agent_events`,
+    `agent_events_private` and `agent_cost_rollup_daily`, before clearing the enablement latch. Stopping a client
+    after its timeout does not prove a sent insert has completed.
+
+59. **Personal-agent reader claims and verified directory evidence** (migration
+    `103_sso_domain_evidence.sql`): N adds empty-default `hosted_domain` and `issuer`
+    String columns to `sso_links`. Direct verified sign-in writes them only for a fresh
+    active passwordless account under its ownership lock, after the SCIM check. N-1
+    ignores them and its ordinary link writes clear them to defaults; missing evidence
+    denies domain access. No backfill infers a domain from an email. N accepts the
+    optional Boolean
+    `reads_as_creator` claim, absent meaning false. Only the primary first-party
+    sign-in route `POST /v1/me/personal_tokens.create` and the assistant's one-answer
+    bridge set it; ordinary delegation omits it. Saved personal tokens use the existing
+    String `kind` column with value `personal_agent`, which N-1 lists and preserves
+    during revocation. N-1 ignores the claim and has no mirrored document leg, so it
+    grants no mirrored access. Mirrored sources remain unavailable until every process
+    implements the document and session protections. `tests/unit/test_mirror_reader_identity.py`
+    checks the claim and delegation boundaries.
+
+60. **Checked mirror reads use source-scoped group evidence** (migration
+    `104_knowledge_group_members.sql`): N reads each membership snapshot by org,
+    mirror, source id and group, and admits only a nondeleted snapshot within
+    `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS`. An empty table admits no group. N-1
+    ignores the table; namespace erasure removes its rows with the mirror. Mirrored
+    source creation remains refused until every process implements the read, marked
+    request, session and enablement protections.
+
+61. **Coarse permission keys and private lexical statistics** (migration
+    `105_mirror_access_candidates.sql`): `documents.access_keys` is materialized from
+    the existing permission JSON; N-1 writers need no new field. N still checks the
+    strict current list, and Postgres heads do not depend on published keys. Each
+    chunk-frequency view changes its query in place, retaining the input, target and
+    output columns. Both views exclude mirror namespaces for either build. Mirror creation remains
+    refused until the read, request, session and deployment protections are complete.
+
+62. **User cost caps and private budget warnings** (migration
+    `107_user_cost_budgets.sql`): activate the global and namespace user caps and alert
+    inboxes only after every serving build supports the migration; keep them disabled
+    and do not rely on user caps while any build is older or unknown. N-1 cannot enforce
+    user caps, filters no private warning events, and has no user-erasure step for those
+    events. Before the first N-1 process starts, the operator stops all warning producers
+    for maintenance, settles scheduled and uncertain writes and their writer leases,
+    deletes only `budget.warning` task events, and verifies completed deletion and zero
+    warning rows on every storage replica. There is no interval in which N-1 serves
+    with private warnings stored. Save policy before rollback: N-1 namespace writes omit
+    the user-cap and alert-inbox columns, so their defaults replace the saved values.
+    Restore and verify the global default and namespace policies only after every
+    serving build supports the migration again. The [activation and rollback
+    procedure](cost-budgets.md#activation-and-rollback) defines the maintenance boundary;
+    the warning fleet check alone does not make a downgrade safe.
 
 ## What checks them
 
 `scripts/gates/mixed_version.py` (`make test-mixed-version`, the `mixed-version` CI job,
 once with a Keeper and once without) boots the base build on an empty ClickHouse, then
-this build, which applies its migrations, then the base again on the newer schema, and
-a third process of this build with a changed dashboard bundle and one no-op migration
-more (N+1). It checks:
+this build, which applies its migrations, then the base again on the newer schema, and a
+third process of this build with a changed dashboard bundle and one no-op migration more
+(N+1). It checks:
 
 - each build answers ready after the cross-boot;
 - memories, a run begun on one build and completed on the other, and a conflict verdict
@@ -499,6 +946,101 @@ more (N+1). It checks:
   higher schema version (rule 6).
 
 It does not check new enum values (rule 3), wire formats (rule 4), signing keys other
-than `default` (rule 5), new revocation keys (rule 18), or a process killed
-mid-migration. It skips with exit 0 where docker is unreachable; CI passes `--require`,
-which fails there instead.
+than `default` (rule 5), new revocation keys (rule 18), an `/assistant` history entry
+(rule 46), or a process killed mid-migration. It skips with exit 0 where docker is
+unreachable; CI passes `--require`, which fails there instead.
+
+### Analyst event storage cutover
+
+The CHECK proof requires ClickHouse with `system.constraints`, as supplied by the
+pinned deployment release. Upgrade the database before provisioning the event catalog;
+a server without that metadata refuses the cutover.
+
+`agent_events` retains ordinary event rows, its columns and the analyst's signed,
+namespace-scoped grant. Both builds can insert and query ordinary events while the
+entity catalog advances to version 5. The `ordinary_events_only` CHECK rejects marked
+rows and reserved mirror namespaces. Ordinary namespaces matching the reserved
+mirror spelling are refused too; they cannot be used as an alternate private sink.
+
+Marked requests and mirror workers write `agent_events_private`, which has no analyst
+grant. The typed, signed `analysis_agent_events` view unions both stores and masks
+private fields before predicates run. Trusted cost, budget and history-policy reads
+also cover both stores. A row policy on a shared physical table cannot replace this
+split: table metadata could disclose private rows even when a SELECT returns none.
+
+Before granting access, provisioning verifies the exact CHECK and both table UUIDs
+on every configured writer, freezes the identities of all running INSERTs, waits
+for that finite set to finish, and counts forbidden ordinary rows. Internal async
+flushes participate even after their submitting client disconnects. Queued requests
+that have not prepared a pipeline encounter the installed CHECK when they execute.
+An ALTER alone does not settle old pipelines. Missing writers, changed topology,
+unknown metadata, a deadline or any surviving forbidden row refuses provisioning;
+existing rows remain untouched. Writers continue accepting valid ordinary inserts.
+
+Negative observations use a checked administrative HTTP session on each writer.
+The configured service origin is included; `LOOM_CH_ANALYSIS_OBSERVER_URLS` adds
+explicit trusted HTTP origins using the same existing service credentials. Every
+writer UUID needs exactly one route. Missing routes, aliases to the same backend,
+redirects, backend changes and incomplete replies refuse. Routes must preserve
+non-replaying POST semantics, including any intermediary. HTTPS cannot downgrade.
+The proof never discovers another credential or derives HTTP ports from native
+cluster addresses.
+
+Each writer supplies its complete native `SHOW CREATE ROW POLICIES` catalog. A
+SELECT from `system.row_policies` cannot establish visibility because policies can
+filter that catalog too. Policies on process, topology or CHECK metadata sources,
+database-wide policies and unknown event policies refuse. Generated analyst event
+policies require their matching unrestricted policy for other users: an analyst-only
+policy can implicitly hide every row from another user. The observer cannot be the
+analyst user or hold its enabled role. Catalog, backend, principal and table identities
+remain fixed through the drain and census. The complete proof has a ten-second
+deadline; exact owned sessions close concurrently with one bounded cleanup interval.
+
+Run `loom ch-setup --apply-analyst-sql` with explicitly configured existing
+access-management credentials to apply only the analyst boundary. It uses the same
+live proof and lease without rebuilding the reader user. `--print-analyst-sql` refuses
+with a nonzero result and prints no grants or secrets: an unchecked SQL file cannot
+enforce the native policy-catalog observation. General `--print-sql` still prints
+database and reader preparation with a password placeholder.
+
+Mirrored creation remains disabled until the fleet, read and session protections
+and enablement procedure are complete. Before an older build serves after enablement,
+the rollback procedure must settle writes and erase every mirror store, including
+`agent_events_private`; restoring a grant or downgrading the schema is insufficient.
+
+### Analyst probes across catalog versions
+
+The analyst probe checks its signed key canary before reading the stored entity version.
+When a newer build owns the entities, the older probe leaves that build's catalog and
+grant checks to it. It does not query retired tables or overwrite the newer entities.
+A failed key canary still refuses analysis, regardless of the version stamp.
+
+Deploy this probe ordering across the fleet before a later catalog change revokes a raw
+relation. Builds with the earlier probe order can refuse `insights.query` after that
+cutover because they probe the retired relation before checking the entity version.
+Statements naming a removed relation still fail its grant check; trusting the newer
+catalog does not restore a retired grant.
+
+### Connected-account registrations
+
+The account registry is additive and is read only by builds that understand connected
+sources. Such a source stores an empty legacy `kind` and credential, with its provider
+kind in `source_kind`; an older worker cannot interpret it as a shared credential. Its
+`owner_subject` and `connection_id` bind every credential checkout and publication to
+the canonical person's current account generation. The source id also distinguishes
+its mirror copies from another registration using the same item address.
+
+Keep connected and mirrored creation disabled until the fleet's mirror read and session
+protections are complete. A rollback or restore must settle source writers and perform
+the mirror cleanup described in [document sources](document-sources.md#rolling-upgrades)
+before an older build serves. Account rows restored without their matching Keeper
+fence refuse credential checkout. That refusal does not prove physical erasure: restored
+provider identities, sealed credentials and source history still need canonical-owner
+cleanup and its census. Namespace or end-user erasure cannot substitute for that exact
+owner key. `loom reconcile --apply` ends connection authority before publication for
+either restored store. On a ClickHouse-only deployment, stop all serving processes,
+restore the configured stores, then run `python dev/restore_connected_accounts.py` first
+without flags and then with `--apply`. It refuses recent worker activity and never
+remaps a scratch restore target into the deployment client. Both paths fence all
+historical connection keys and verify physical owner-history deletion. Complete the
+separate mirror-content cleanup before serving; this account procedure does not replace it.

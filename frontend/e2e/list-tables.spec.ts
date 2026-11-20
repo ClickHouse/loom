@@ -1,9 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 import { violations } from "./axe";
-import { codeReposFixture, installApi } from "./fixtures";
+import { codeReposFixture, dockAssistant, installApi } from "./fixtures";
 
 // The pages whose rows are columns of comparable fields are Click UI Tables (Runs, Users,
-// Agents, Activity, Usage, the review queue, Health's workers); the long ones page with
+// Agents, Audit log, Usage, the review queue, Health's workers); the long ones page with
 // Click UI's Pagination bar or load more at the bottom. At desktop and phone width each
 // has rows, stays clean under axe, and never scrolls the page sideways (under 769 px Click
 // UI lays a table out as a list of cards).
@@ -158,6 +158,23 @@ for (const width of [1400, 375]) {
     });
   });
 }
+
+// Beside the assistant docked at the push minimum (1280 px, the page keeping 640 px), every
+// table still fits.
+test.describe("1280 px with the assistant docked", () => {
+  test.use({ viewport: { width: 1280, height: 900 } });
+  for (const [path, name] of TABLES) {
+    test(`${path} is a table with rows and no sideways scroll`, async ({ page }) => {
+      await withRows(page);
+      await dockAssistant(page);
+      await open(page, path);
+      await expect(page.locator("[data-assistant-panel]")).toHaveAttribute("data-mode", "push");
+      const table = page.getByRole("table", { name, exact: true });
+      await expect(table.locator("tbody tr").first()).toBeVisible();
+      expect(await sideways(page)).toBeLessThanOrEqual(0);
+    });
+  }
+});
 
 test("runs page on the server and count its total", async ({ page }) => {
   await withRows(page);

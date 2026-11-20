@@ -15,6 +15,7 @@ import json
 import math
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -698,6 +699,8 @@ def test_answers_purge_tombstones_keep_the_memory(monkeypatch: pytest.MonkeyPatc
     written: list[dict[str, Any]] = []
 
     class _CH:
+        connected = False
+
         async def connect(self) -> None: ...
 
         async def query_all(self, sql: str, params: object = None) -> list[dict[str, Any]]:
@@ -712,6 +715,8 @@ def test_answers_purge_tombstones_keep_the_memory(monkeypatch: pytest.MonkeyPatc
             written.extend(rows)
 
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    # An org-declaring run checks its deployment first; this fake ClickHouse records none.
+    monkeypatch.setattr("server.core.pg_profile.check_configured", AsyncMock(return_value=None))
     monkeypatch.setattr("server.code.store.index.CodeRepo", _Repo)
     args = argparse.Namespace(org="o", namespace="n", all=True, llm_model=None, dry_run=False)
     assert asyncio.run(code_maintenance._answers_purge(args)) == 0

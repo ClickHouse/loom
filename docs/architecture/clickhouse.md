@@ -1,16 +1,22 @@
 # ClickHouse
 
-All durable Loom state lives in one ClickHouse database, `loom`. The canonical schema is
-[`schemas/schema.sql`](../../schemas/schema.sql), dumped from a server with every
-migration applied. The generated [schema reference](../reference/schema.md) lists every
-table with its engine, keys, TTL and indexes. This page covers the table families, how
-Loom uses engines, indexes and views, and how migrations run.
+Durable Loom state lives in ClickHouse, except document bytes in an optional
+S3-compatible bucket and, under the Postgres memory authority, the Postgres tables: live
+memory, knowledge state and the records beside them. The bucket is used with
+`LOOM_DOCUMENT_OBJECT_STORE=s3`. ClickHouse holds projections of the live memory and
+knowledge state Postgres holds; [storage authority](storage-authority.md#the-tables)
+lists every Postgres table. Loom's ClickHouse databases are `loom` and `loom_telemetry`.
+The canonical ClickHouse schema is [`schemas/schema.sql`](../../schemas/schema.sql),
+dumped from a server with every migration applied; the Postgres schema is the journal in
+`schemas/pg_migrations/`. The generated [schema reference](../reference/schema.md) lists
+every ClickHouse table with its engine, keys, TTL and indexes. This page covers the
+table families, how Loom uses engines, indexes and views, and how migrations run.
 
 ## Goals and non-goals
 
 | Goals                                                                                     | Non-goals                                                                                   |
 | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| One engine and one database for every plane, so a read never joins across stores.         | Cross-table transactions. A primary row lands first; derived rows follow.                   |
+| One engine for every plane (ClickHouse authority), so a read never joins across stores.   | Cross-table transactions. A primary row lands first; derived rows follow.                   |
 | Every row names its tenant, writer (`actor`) and content (`content_sha256`).              | Transaction-time history on every table. The version mirror covers `loom.memory`.           |
 | Mutable state as append-only versions: a write is an INSERT, a read is deterministic.     | In-place updates on the request path. Updates are new versions or batched background folds. |
 | Nothing that holds memory content expires unless its writer or the operator asked for it. | Default retention on facts, documents, conversations or the graph.                          |
@@ -55,20 +61,22 @@ applied, so nothing recreates it. The cost is one more database: the setup SQL g
 migrating user `CURRENT GRANTS ON loom_telemetry.*`, and preflight names that grant when
 it is missing.
 
-**State outside ClickHouse.** Uploaded document originals are rows of `document_blobs`,
-addressed per namespace by SHA-256 (`server/knowledge/store/blobs.py`); with
-`LOOM_DOCUMENT_OBJECT_STORE=s3` each row is the catalog entry of an object in an
-S3-compatible bucket, which holds the bytes
-([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing keys
-(`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
-settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk marks
-(`graph_projections`: the projections in flight and each namespace's last graph write),
-each namespace's last write (`namespace_write_keys`) and the supervisor lease are in
-ClickHouse too, so a new Loom pointed at this database, and the document bucket while rows
-name objects in it, gets every feature back. On the filesystem: the code plane's git
-mirrors under `var/code_repos`, a cache of the remotes ClickHouse records that a host
-without them re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys
-and stored credentials, is in the env. Process caches and file locks are listed in
+**State outside ClickHouse.** Under the Postgres memory authority, Postgres holds the
+tables [storage authority](storage-authority.md#the-tables) lists. Uploaded document
+originals are rows of `document_blobs`, addressed per namespace by SHA-256
+(`server/knowledge/store/blobs.py`); with `LOOM_DOCUMENT_OBJECT_STORE=s3` each row is
+the catalog entry of an object in an S3-compatible bucket, which holds the bytes
+([knowledge](../features/knowledge.md#where-originals-are-stored)). The token signing
+keys (`signing_keys`), admin runtime overrides of rate limits, latency budgets and live
+settings (`runtime_overrides`), sign-in attempt counts (`auth_attempts`), graph-walk
+marks (`graph_projections`: the projections in flight and each namespace's last graph
+write), each namespace's last write (`namespace_write_keys`) and the supervisor lease
+are in ClickHouse too, so a new Loom pointed at this ClickHouse (and its Postgres, under
+the Postgres memory authority), and the document bucket while rows name objects in it,
+gets every feature back. On the filesystem: the code plane's git mirrors under
+`var/code_repos`, a cache of the remotes ClickHouse records that a host without them
+re-clones. The root secret `LOOM_JWT_SECRET`, which seals the signing keys and stored
+credentials, is in the env. Process caches and file locks are listed in
 [system overview](system-overview.md#deployment-topology).
 
 ## Conventions every table follows
@@ -492,9 +500,10 @@ flush never fails a request; a crash loses the queue.
   [recommended settings](../operations/deployment.md#recommended-clickhouse-settings).
   Query vectors bind as `Array(Float32)`. A memory carries up to two vectors (value and
   key), so at 3072 dimensions up to 12 KiB of vectors.
-- **No table has a vector-similarity (HNSW) index.** Search is an exact `cosineDistance`
-  scan over the rows the identity predicates leave. The bytes a read scans therefore
-  grow with namespace size, not corpus size.
+- **No table has a vector-similarity (HNSW) index.** Search is a `cosineDistance` scan
+  over the rows the identity predicates leave: exact, or codes first and rescored where
+  codes-first reads (below) apply. The bytes a read scans therefore grow with namespace
+  size, not corpus size.
   [Why there is no vector index](#why-there-is-no-vector-index) has the measurements.
 - **Quantized codes.** On ClickHouse 26.8+, a fresh install creates the vector columns of
   `CODED_TABLES` (`server/core/schema/vector_codec_ddl.py`) with `CODEC(Quantized('rabitq', <dim>, 0))`
@@ -510,7 +519,12 @@ flush never fails a request; a crash loses the queue.
   pass over the codes keeps `LIMIT × LOOM_VECTOR_SEARCH_QUANTIZED_FETCH_MULTIPLIER`
   candidates and rescores them at full precision. Coding and patch parts are re-probed
   every `LOOM_VECTOR_CODES_STATE_PROBE_SECONDS`; a failed probe reads as "not patch-free".
-  A replica that rejects the setting has it dropped and the read retried.
+  A replica that rejects the setting has it dropped and the read retried. The memory fact
+  leg has its own switch, `LOOM_MEMORY_SEARCH_FACT_CODES_FIRST`. Its `auto` follows its
+  own patch-parts probe (every `LOOM_MEMORY_EMBEDDINGS_PATCH_PARTS_PROBE_SECONDS`). Both
+  `on` and `auto` read as off while `LOOM_VECTOR_SEARCH_QUANTIZED_CODES` is false or the
+  replica does not know the setting. Its over-fetch is
+  `LOOM_MEMORY_SEARCH_FACT_CODES_FETCH_MULTIPLIER`.
 - **Fixed-length placeholders.** Rows awaiting an embedding store zero vectors with
   `embedding_dim = 0` (`server/core/vectors/placeholders.py`). Every vector leg filters
   `embedding_dim > 0`.
@@ -667,6 +681,12 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.
+- **Private definition redaction** scrubs all versions of a matching learnings candidate
+  in place, including status copies. A replacement version would leave the redacted text
+  stored in older versions. This runs with the source's historical redaction, under the
+  candidate review lease. An invalidated model attempt instead removes only its own
+  candidate versions through a lightweight `DELETE FROM`, bounded by the claim version,
+  so it cannot remove a later review decision.
 - **Extraction retries** (`memory.extraction_retry_mine`) update failed queue rows in
   place, asynchronously. The update targets the exact identity and version observed, with
   the caller's namespace, principal and read scope. Copying the transcript into a new
@@ -717,19 +737,28 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   `loom.graph_projections` slot keys a day old: keys whose holder died before its own
   delete. One strict-mode Keeper delete per table; a key written meanwhile fails it and
   the next sweep retries.
+- **Cell probe nonce.** `loom cell prepare` writes a nonce under the `cell-probe` key
+  of `loom._migration_lock` for the router to read back through the cell's probe
+  listener, then drops that key while it still holds that nonce, as a lease is released:
+  one strict-mode Keeper delete.
 - **Namespace write keys** (`loom.namespace_write_keys`, KeeperMap, only where the server
   has a Keeper): a write to a memory plane overwrites its namespace's key in the request
   tail. One Keeper write, no part, no mutation.
 
 **Classification for erasure.** `server/erasure/store/census.py` puts every table in
-`schemas/schema.sql` in exactly one list, and `tests/unit/test_every_table_is_classified.py`
+`schemas/schema.sql` in the lists below, and `tests/unit/test_every_table_is_classified.py`
 fails on a table in none:
 
-| List                | Holds                                                                                                      |
-| ------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `_CENSUS`           | One `Substrate(...)` per table that can hold content in scope: live predicate, user predicate, owner step. |
-| `STEP_ONLY_TABLES`  | Tables a saga step clears but the census does not count, with the reason.                                  |
-| `NO_MEMORY_CONTENT` | Every other table, with the reason it holds no memory content.                                             |
+| List                     | Holds                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `_CENSUS`                | One `Substrate(...)` per table that can hold content in scope: live predicate, user predicate, owner step. |
+| `STEP_ONLY_TABLES`       | Tables a saga step clears but the census does not count, with the reason.                                  |
+| `CANONICAL_OWNER_TABLES` | Authentication registries with an explicit canonical sign-in owner erasure lifecycle.                      |
+| `NO_MEMORY_CONTENT`      | Tables with no memory content, each with its documented reason.                                            |
+
+The owner lifecycle for `loom.connected_accounts` physically erases provider identity
+and credential history, including sealed personal data. Its canonical sign-in subject
+is independent of namespace and memory `user_id` erasure scopes.
 
 The saga is described in [memory architecture](memory-architecture.md#erasure-saga).
 
@@ -958,7 +987,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - Every statement carries a `log_comment`, a class deadline and a pool slot.
 - `memory_versions` receives every `memory` row, and the column lists match.
 - No table that holds memory content has a schema TTL.
-- Every `loom.*` table is in `_CENSUS`, `STEP_ONLY_TABLES` or `NO_MEMORY_CONTENT`.
+- Every `loom.*` table is in `_CENSUS`, `STEP_ONLY_TABLES`, `CANONICAL_OWNER_TABLES` or
+  `NO_MEMORY_CONTENT`.
 - A derived row is never the only copy of a write: the source row lands first and the
   derivation can be replayed.
 - A merged migration file is never edited.
@@ -978,7 +1008,8 @@ rows. When any replica is older, every Loom session turns the cache off when it 
 - `server/core/vectors/codes_state.py`, `patch_parts.py`:
   vector read policy.
 - `server/memory/store/rows.py`, `inserts.py`: the version-row builders.
-- `server/erasure/store/census.py`: `_CENSUS`, `STEP_ONLY_TABLES`, `NO_MEMORY_CONTENT`;
+- `server/erasure/store/census.py`: `_CENSUS`, `STEP_ONLY_TABLES`, `CANONICAL_OWNER_TABLES`,
+  `NO_MEMORY_CONTENT`;
   `server/erasure/store/mutations.py`: `LIGHTWEIGHT_PURGE_TABLES`.
 - `server/memory/app/after_write.py`: fail-open projections.
 - `server/observability/events_stream.py`, `server/observability/audit.py`: telemetry and

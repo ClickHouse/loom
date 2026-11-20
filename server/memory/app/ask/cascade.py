@@ -10,11 +10,14 @@ from dataclasses import field as dc_field
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.core.diagnostics import codes_only
+from server.knowledge.app.source_corpus import LostCorpus
 from server.memory.app.ask.identifiers import _technical_identifiers
 from server.memory.app.ask.pool import _AskRun
 from server.memory.app.ask.reader import _AskReader
 from server.memory.app.ask.result import _by_keys, _keys_cited, _keys_of
 from server.memory.app.ask.retrieval_legs import _order_window_turns
+from server.memory.app.ask.source_context import cancel_and_drain
 from server.memory.app.ask.state import _LAST_SYNTH_MODEL, _retain_task_result
 from server.memory.app.ask.synthesis import _not_recorded_second, _synthesize
 
@@ -211,6 +214,8 @@ async def _first_answer(run: _AskRun, reader: _AskReader, ans: _AskAnswer, *, ll
     if ans.deep_first_on and ans.deep_task is not None:
         try:
             _deep_early = await ans.deep_task
+        except LostCorpus:
+            raise
         except Exception:  # noqa: BLE001 — the pass is fail-open; so is the order
             _deep_early = None
         if _deep_early is not None and getattr(_deep_early, "block", None):
@@ -342,7 +347,7 @@ async def _deep_answer(
             deep = await ans.deep_task
         else:
             if ans.deep_task is not None:
-                ans.deep_task.cancel()
+                await cancel_and_drain(ans.deep_task)
             deep = await _run_deep_pass(
                 ans.select_client,
                 search_input,
@@ -486,7 +491,7 @@ async def _answer_with_deep_pass(
         )
     finally:
         if ans.deep_task is not None and not ans.deep_task.done():
-            ans.deep_task.cancel()
+            await cancel_and_drain(ans.deep_task)
 
 
 async def _mid_verify(run: _AskRun, reader: _AskReader, ans: _AskAnswer, *, llm: Any) -> None:
@@ -550,7 +555,11 @@ async def _audit_answer(
     verdict = _ac.Verdict()
     _deferred_judge: Any = None
     _cons_mode = str(consistency_mode or _settings.memory_ask_consistency_mode)
-    if bool(_settings.memory_ask_consistency_check) and _cons_mode == "deferred":
+    if (
+        bool(_settings.memory_ask_consistency_check)
+        and _cons_mode == "deferred"
+        and not codes_only()
+    ):
         # The judge is the last serial step before the response
         # (691 ms p50, on every synthesized ask) and changes
         # nothing the caller receives but the label.
@@ -566,7 +575,7 @@ async def _audit_answer(
         async def _deferred_judge() -> Any:
             return await _ac.check(_judge, _q, _a, _rows)
 
-    elif bool(_settings.memory_ask_consistency_check):
+    elif bool(_settings.memory_ask_consistency_check) and _cons_mode != "deferred":
         judge = llm_cheap if llm_cheap is not None else llm
         verdict = await _ac.check(judge, question, ans.answer, _by_keys(run.memories, ans.cited))
 
@@ -597,6 +606,8 @@ async def _audit_answer(
     # passed the citation contract on the excerpt window: cited, not hedged,
     # not contradicted by its own evidence, no raw-turn evidence outside the
     # window. The write hashes the window off the request path.
+    if codes_only():
+        return verdict, note, premise_text, None
     _precedent_eligible = bool(
         precedent_key
         and marked_cited

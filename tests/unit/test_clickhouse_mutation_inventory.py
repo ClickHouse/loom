@@ -56,6 +56,10 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/graph_projections.py", "graph_projections", "UPDATE"): 1,
         # The leader's hourly sweep of the slot keys of projections that died.
         ("server/core/leases.py", "graph_projections", "DELETE"): 1,
+        # The leader's sweep, every ten minutes, of the heartbeat keys of processes gone an hour:
+        # KeeperMap keys, not a MergeTree part.
+        ("server/core/instances.py", "instances", "DELETE"): 1,
+        ("server/core/instances.py", "cell_heartbeats", "DELETE"): 1,
         # Sign-in state, a KeeperMap key per pending login: a compare-and-swap
         # on the key's value under strict mode, its drop when the login ends,
         # and the sweep of expired keys.
@@ -72,6 +76,11 @@ _EXPECTED_MUTATIONS = Counter(
         ("server/memory/store/redaction.py", "memory_versions", "UPDATE"): 1,
         # a deleted code link's suggestion, a rewrite of the redacted text
         ("server/memory/store/redaction.py", "memory_code_links", "UPDATE"): 1,
+        # a shared copy promoted from the key that holds the redacted text
+        ("server/memory/store/redaction.py", "shared", "UPDATE"): 1,
+        # Historical definition redaction scrubs every private candidate version,
+        # including status copies; a replacement row leaves the copied text in history.
+        ("server/memory/store/learnings.py", "learnings_queue", "UPDATE"): 1,
         # Expiry sweep `demote`: clears expires_at and lowers
         # confidence on the key's embedding rows in place — the same mirror
         # memory.touch performs; the memory-table side is a version row.

@@ -216,6 +216,14 @@ async def test_loom_search_uses_grant_namespace_and_fans_profile_across_membersh
     monkeypatch.setattr("server.auth.context.resolve_my_namespaces", _resolve_my_namespaces)
     monkeypatch.setattr("server.auth.authz.check_authorized", _check_authorized)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _CH())
+    from unittest.mock import AsyncMock
+
+    from server.knowledge.app import source_access as access_app
+    from server.knowledge.store import source_access
+
+    mirror_auth = AsyncMock(return_value=None)
+    monkeypatch.setattr(access_app, "check_authorized", mirror_auth)
+    monkeypatch.setattr(source_access, "active_sources", AsyncMock(return_value=[]))
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _memory_search)
     monkeypatch.setattr(
         "server.knowledge.app.knowledge_search.handle_knowledge_search", _knowledge_search
@@ -244,6 +252,10 @@ async def test_loom_search_uses_grant_namespace_and_fans_profile_across_membersh
 
     assert resp["result"]["isError"] is False
     assert captured["authz"] == (Role.VIEWER, "test", "team-grant")
+    assert {call.args[3] for call in mirror_auth.await_args_list} == {
+        "team-grant",
+        "personal-token",
+    }
     assert captured["memory_input"].namespace == "team-grant"
     assert captured["memory_input"].namespace_scope == "all_mine"
     assert captured["profile_params"]["ns"] == ["team-grant", "personal-token"]

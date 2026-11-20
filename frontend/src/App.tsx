@@ -40,7 +40,7 @@ import {
 } from "./lib/boot";
 import { pendingKey } from "./lib/pendingKey";
 import { preloadView } from "./views/registry";
-import { useStore, pathnameView, linkedNamespace, addressPageNamespace } from "./lib/state";
+import { useStore, pathnameView, linkedNamespace, addressPageNamespace, collectionLinkView } from "./lib/state";
 import { arriveAt, readPlace, restorePlace } from "./lib/place";
 import { useKeyboard } from "./lib/hooks";
 import { NetworkProgress } from "./components/NetworkProgress";
@@ -50,7 +50,14 @@ import { MobileNav } from "./layout/MobileNav";
 import { ToastViewport, toast, toastError } from "./components/Toast";
 import { ConfirmViewport } from "./components/ConfirmDialog";
 import { PendingRequestBanner } from "./components/PendingRequestBanner";
-import { shortcutOff } from "./lib/shortcuts";
+import {
+  assistantAddress,
+  assistantPopstate,
+  bootDock,
+  loadDockRuntime,
+  openAssistantSoon,
+  useDock,
+} from "./lib/assistantDock";
 
 import { reloadPage } from "./lib/navigation";
 import { endSession, lostReason, sessionEndedNote, whoamiWhenReady } from "./lib/session";
@@ -78,11 +85,14 @@ const Documents = lazy(() => import("./views/Documents").then((m) => ({ default:
 const Conversations = lazy(() => import("./views/Conversations").then((m) => ({ default: m.Conversations })));
 const Runs = lazy(() => import("./views/Runs").then((m) => ({ default: m.Runs })));
 const GraphExplorer = lazy(() => import("./views/Graph").then((m) => ({ default: m.GraphExplorer })));
-const Assistant = lazy(() => import("./views/Assistant").then((m) => ({ default: m.Assistant })));
+const Help = lazy(() => import("./views/Help").then((m) => ({ default: m.Help })));
 const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.Sharing })));
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
 const CodeView = lazy(() => import("./views/Code").then((m) => ({ default: m.CodeView })));
 const Setup = lazy(() => import("./views/Setup").then((m) => ({ default: m.Setup })));
+const ConnectedAccounts = lazy(() =>
+  import("./views/ConnectedAccounts").then((m) => ({ default: m.ConnectedAccounts })),
+);
 const Tasks = lazy(() => import("./views/Tasks").then((m) => ({ default: m.Tasks })));
 const ReviewQueue = lazy(() => import("./views/admin/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
 const Health = lazy(() => import("./views/admin/Health").then((m) => ({ default: m.Health })));
@@ -97,14 +107,13 @@ const DeploymentSettings = lazy(() =>
 );
 // The shell's own optional surfaces load when first needed, not with every page. The
 // memory inspector (47 kB of source) opens on a card click; the token gate shows only
-// when signed out; the two dialogs open on a key or a click.
+// when signed out; the profile dialog opens on a click.
 const MemoryInspector = lazy(() =>
   import("./components/MemoryInspector").then((m) => ({ default: m.MemoryInspector })),
 );
 const ProfileSectionDialog = lazy(() =>
   import("./flows/ProfileSectionDialog").then((m) => ({ default: m.ProfileSectionDialog })),
 );
-const HelpDialog = lazy(() => import("./components/HelpDialog").then((m) => ({ default: m.HelpDialog })));
 const TokenGate = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.TokenGate })));
 const LinkTokenConfirm = lazy(() => import("./flows/TokenGate").then((m) => ({ default: m.LinkTokenConfirm })));
 // The expired-session card's chunk is fetched as the app loads, from the build that served
@@ -128,6 +137,13 @@ const ProblemsBanner = lazy<() => ReactElement | null>(() =>
     () => ({ default: () => null }),
   ),
 );
+
+// The skip controls, shown on focus.
+const SKIP =
+  "sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium";
+
+// The assistant panel and its behaviour load the first time it opens (lib/assistantDock.ts).
+const AssistantPanel = lazy(() => import("./layout/AssistantPanel").then((m) => ({ default: m.AssistantPanel })));
 
 const NamespaceNoAccess = lazy(() =>
   import("./components/NamespaceNoAccess").then((m) => ({ default: m.NamespaceNoAccess })),
@@ -156,7 +172,8 @@ export default function App() {
   useEffect(() => {
     if (navSeq === 0) return;
     mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
-    arriveAt(useStore.getState().navNote);
+    const s = useStore.getState();
+    arriveAt(s.navNote, s.arriveFocus);
   }, [navSeq]);
   // The dashboard reports its own paint — one ui.vitals row per view, posted when the
   // view ends (a navigation, the page hiding), never inside the view's own measured
@@ -214,12 +231,9 @@ export default function App() {
   // Boot settles the identity (a provisional namespace, then the answer): not a switch, so
   // the deep link's memory or thread stays open.
   const bootIdentity = useStore((s) => s.bootIdentity);
-  const setView = useStore((s) => s.setView);
   const arriveFromHistory = useStore((s) => s.arriveFromHistory);
   const bootView = useStore((s) => s.bootView);
-  const helpOpen = useStore((s) => s.helpOpen);
   const inspectedProfileLabel = useStore((s) => s.inspectedProfileLabel);
-  const setHelpOpen = useStore((s) => s.openHelp);
   // A Loom page's ask to start SSO (`?sign_in=sso`), taken from the address at boot.
   const [ssoAsked, setSsoAsked] = useState(false);
   // A link token boot holds, unstored, until the person says whose account to sign in as.
@@ -231,23 +245,10 @@ export default function App() {
     answer: (ok: boolean) => void;
   } | null>(null);
 
-  // Global keyboard bindings — disabled while focus is in an input.
-  useKeyboard(
-    {
-      "?": () => setHelpOpen(true),
-      // Bound only while it has something to close, so it does not take the key (and
-      // preventDefault it) from a view or a component that handles Escape itself.
-      ...(helpOpen || inspectedKey
-        ? {
-            Escape: () => {
-              if (helpOpen) setHelpOpen(false);
-              else inspect(null);
-            },
-          }
-        : {}),
-    },
-    authed,
-  );
+  // Escape closes the memory inspector from anywhere on the page. Bound only while it is
+  // open, so it does not take the key (and preventDefault it) from a view or a component
+  // that handles Escape itself.
+  useKeyboard({ Escape: () => inspect(null) }, authed && !!inspectedKey);
 
   // Browser back/forward: the view from the URL, then the place the entry remembers — the
   // scroll of <main>, the memory in the drawer, the focused element. A move inside one
@@ -256,8 +257,15 @@ export default function App() {
   useEffect(() => {
     if (!authed) return;
     const sync = (e: PopStateEvent) => {
+      // The assistant's phone sheet has an entry of its own: leaving it restores nothing
+      // (the sheet put the focus back on its launcher), and an overlay closes on Back.
+      if (assistantPopstate(e.state)) return;
       const v = pathnameView();
-      if (!v) return;
+      if (!v) {
+        // An /assistant entry (an earlier build pushed it): the landing page, the assistant over it.
+        if (assistantAddress()) void loadDockRuntime().then((m) => m.openFromAssistantAddress(true));
+        return;
+      }
       const changed = v !== useStore.getState().view;
       const place = readPlace(e.state);
       if (!changed && !place) return addressPageNamespace();
@@ -268,58 +276,15 @@ export default function App() {
     return () => window.removeEventListener("popstate", sync);
   }, [authed, arriveFromHistory]);
 
-  // Goto-prefix: `g` then a letter within 1.2s jumps view (vim/Gmail convention).
+  // The assistant panel: its mode follows the window and a navigation closes it at overlay
+  // and phone widths. Wired once the shell has drawn (the elements a modal panel makes
+  // inert exist from then on).
+  const shellDrawn = !!identity && !!whoami_;
   useEffect(() => {
-    if (!authed) return;
-    let armed = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const disarm = () => {
-      armed = false;
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      const t = e.target;
-      if (t instanceof HTMLElement && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable))
-        return;
-      if (e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e)) return;
-      if (!armed) {
-        if (e.key === "g") {
-          armed = true;
-          timer = setTimeout(disarm, 1200);
-        }
-        return;
-      }
-      // Armed — second key picks destination. `k`/`l` both map to "knowledge"
-      // (rail label is "Library", internal id is still "knowledge").
-      const dest: Record<
-        string,
-        "memories" | "knowledge" | "sessions" | "setup" | "browse" | "admin:review_queue" | "admin:activity"
-      > = {
-        m: "memories",
-        k: "knowledge",
-        l: "knowledge",
-        n: "sessions",
-        s: "setup",
-        d: "browse",
-        r: "admin:review_queue",
-        a: "admin:activity",
-      };
-      const v = dest[e.key];
-      if (v) {
-        e.preventDefault();
-        setView(v);
-      }
-      disarm();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      disarm();
-    };
-  }, [authed, setView]);
+    if (!shellDrawn) return;
+    bootDock();
+  }, [shellDrawn]);
+  const dockMounted = useDock((s) => s.mounted);
 
   // Auth bootstrap on mount
   useEffect(() => {
@@ -378,6 +343,9 @@ export default function App() {
           }
         }
 
+        // A link that names a collection as its namespace opens it in the Library instead.
+        const initial = collectionLinkView(pathnameView());
+
         // Auth-disabled mode (LOOM_AUTH_REQUIRED=false): skip TokenGate, synthesise
         // a local identity. The server accepts every /v1/* call without a bearer.
         // The namespace is the one the server serves (LOOM_DEFAULT_NAMESPACE,
@@ -404,7 +372,7 @@ export default function App() {
           bootIdentity({ org: "dev", namespace: authOffNs, agent: "loom-ui" });
           // Local mode uses one namespace, but explicit links still choose the
           // view: model onboarding and refreshes must not land on Memories.
-          bootView(pathnameView() ?? "memories");
+          bootView(initial ?? "memories");
           return;
         }
 
@@ -412,8 +380,7 @@ export default function App() {
         // keyed by the token's own org claim, and the chunk for the view the URL names.
         // whoami still decides the gate below; on a token the server rejects the early
         // read fails quietly and one chunk was fetched for nothing.
-        const initial = pathnameView();
-        preloadView(initial ?? "setup");
+        preloadView(initial ?? "memories");
         const early = claimsFromToken(storedToken());
         const earlyMine: Promise<MyNamespaceEntry[] | null> | null = early?.org
           ? sharedMine(early.org).catch(() => null)
@@ -449,7 +416,7 @@ export default function App() {
         setAuthed(true);
         setWhoami(w);
         // Saved pick → the user's own namespace → first real claim → none. Access comes
-        // from the JWT `namespaces` claim AND namespaces JOINed via Discover
+        // from the JWT `namespaces` claim AND namespaces joined from Namespaces in your org
         // (loom.namespace_grants, not in the JWT), so list_mine is consulted too — else a
         // refresh flips joined-namespace users back. The claim's ORDER is never a
         // preference, and `*` is never a namespace name. A link's `?namespace=` comes
@@ -500,9 +467,9 @@ export default function App() {
         // URL routing: an explicit path (e.g. /memories) always wins — the landing rule decides a
         // view only for the bare root. A deep link keeps its view; its namespace is the
         // default-namespace chain's answer, else the first reachable namespace of the
-        // kind the view needs (a code or QA one for Repositories, Graph, Settings, Spaces
-        // and the admin views; nothing for a memory view, which renders its own empty
-        // state — see `ViewSwitch`). No deep link is redirected to Setup.
+        // kind the view needs (a code or QA one for Repositories, Graph, Settings,
+        // Namespaces in your org and the admin views; nothing for a memory view, which renders
+        // its own empty state — see `ViewSwitch`). No deep link is redirected to Setup.
         if (initial) {
           const ns = deepLinkNamespace(initial, pick, reach, mine);
           // An empty namespace is the honest "nothing selected" state; every
@@ -512,27 +479,33 @@ export default function App() {
           bootView(initial);
         } else {
           // The bare root: the default-namespace chain (saved pick → own memory namespace →
-          // first memory claim) keeps its default view, Setup — that's where first-run
-          // onboarding and the actions live. A saved pick of a code or tracker namespace,
-          // or a token that reaches only code/tracker namespaces, lands on Repositories
-          // with the picker on that namespace; only a token that reaches nothing lands on
-          // Setup, whose notice says how to get in.
-          const target = landingTarget(pick, reach, mine);
+          // first memory claim) lands on Memories, where the first-run checklist sits. A saved
+          // pick of a code or tracker namespace, or a token that reaches only code/tracker
+          // namespaces, lands on Repositories with the picker on that namespace; one that
+          // reaches only shared collections lands on the Library, and one that reaches nothing
+          // else lands on Setup, whose notice says how to get in.
+          let target = landingTarget(pick, reach, mine);
+          if (target.view === "setup") {
+            // Nothing but shared collections, maybe: `collection.list` decides, with the gate's
+            // rules (`landingWithCollections`). Loaded on demand: in the shell it takes the index
+            // chunk over its budget; a failed load lands on Setup.
+            const setup = target;
+            target = await import("./lib/collectionPlaces").then(
+              (m) => m.landingWithCollections(effectiveOrg, mine),
+              () => setup,
+            );
+          }
           bootIdentity(
             { org: effectiveOrg, namespace: target.namespace ?? "", agent: "loom-ui" },
             denied,
             readable ? linked : null,
           );
-          if (target.namespace === null) {
+          if (target.view === "setup") {
             // Setup's notice says how to get in and opens the picker on request; opened here
             // it would cover that notice's actions.
             bootView("setup");
-            toast(
-              "Your token can reach no namespace yet — join one from Repositories or Spaces (namespace picker → Browse and join)",
-              "error",
-            );
           } else {
-            bootView(target.view ?? "setup");
+            bootView(target.view ?? "memories");
           }
         }
 
@@ -578,7 +551,7 @@ export default function App() {
         const note = sessionEndedNote();
         if (!storedToken() && (link?.token || linkRefused || (note && !signedOut() && sent)))
           useStore.getState().setGateReason(link?.token || linkRefused ? "refused" : note);
-        toastError("Auth bootstrap failed", e);
+        toastError("Auth bootstrap failed", e, { read: true });
         setAuthed(false);
       }
     })();
@@ -630,48 +603,73 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-bg text-text">
-      <a
-        href="#main"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:px-3 focus:py-1.5 focus:bg-accent focus:text-on-accent focus:rounded-sm focus:shadow-lg text-xs font-medium"
-      >
+      <a href="#main" data-dock-inert="" className={SKIP}>
         Skip to main content
       </a>
+      <button type="button" data-dock-inert="" className={SKIP} onClick={openAssistantSoon}>
+        Go to Ask AI
+      </button>
+      {/* `data-dock-inert`: what a modal assistant panel makes inert (lib/assistantDock.ts);
+          the wrappers are `display: contents`, so the layout is the children's. */}
       <div className="flex flex-1 min-h-0">
-        <Sidebar />
+        <div className="contents" data-dock-inert="">
+          <Sidebar />
+        </div>
         <div className="flex-1 flex flex-col min-w-0">
-          <ReloadBar />
-          <Header />
-          {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
-              against main, so it can never stretch the page past the viewport. */}
-          <main id="main" tabIndex={-1} className="relative flex-1 overflow-y-auto" ref={mainRef}>
-            <Suspense fallback={null}>
-              <ProblemsBanner />
-            </Suspense>
-            <PendingRequestBanner />
-            {/* Keyed by view so each navigation replays the fade-in, and the no-access
+          <div className="contents" data-dock-inert="">
+            <ReloadBar />
+            <Header />
+          </div>
+          <div className="flex flex-1 min-h-0">
+            {/* `relative`: a visually hidden (absolute) label inside a scrolled row is placed
+              against main, so it can never stretch the page past the viewport. `isolate`
+              keeps the page's own z-indexes under the assistant panel's layer. */}
+            <main
+              id="main"
+              tabIndex={-1}
+              data-dock-inert=""
+              className="relative isolate flex-1 min-w-0 overflow-y-auto"
+              ref={mainRef}
+            >
+              <Suspense fallback={null}>
+                <ProblemsBanner />
+              </Suspense>
+              <PendingRequestBanner />
+              {/* Keyed by view so each navigation replays the fade-in, and the no-access
                 page is a page of its own: leaving it mounts the view afresh, never under
                 the hidden old page. `h-full`
                 gives a view that wants the page's height (the Explorer's
                 three panes) something to resolve against;
                 taller views overflow it and scroll <main> as before. */}
-            <div key={denied ? "no-access" : view} className="animate-view-in h-full">
-              {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
-              <Suspense
-                fallback={
-                  <LoadingSkeleton label="Loading page" className="p-6">
-                    <SkeletonCard />
-                  </LoadingSkeleton>
-                }
-              >
-                <ViewSwitch view={view} />
+              <div key={denied ? "no-access" : view} className="animate-view-in h-full">
+                {/* Delayed, so a chunk that arrives quickly never flashes a loader. */}
+                <Suspense
+                  fallback={
+                    <LoadingSkeleton label="Loading page" className="p-6">
+                      <SkeletonCard />
+                    </LoadingSkeleton>
+                  }
+                >
+                  <ViewSwitch view={view} />
+                </Suspense>
+              </div>
+            </main>
+            {dockMounted && (
+              <Suspense fallback={null}>
+                <AssistantPanel />
               </Suspense>
-            </div>
-          </main>
-          <MobileNav />
+            )}
+          </div>
+          <div className="contents" data-dock-inert="">
+            <MobileNav />
+          </div>
         </div>
       </div>
       {/* Where a navigation went, said once (lib/place.ts `announce`). */}
       <p id="loom-nav-status" role="status" className="sr-only" />
+      {/* The assistant's own announcements: an answer started, ended, is ready. Outside the
+          panel and its chunk, so it is live from the first paint and never inert. */}
+      <p id="loom-assistant-status" role="status" aria-live="polite" aria-atomic="true" className="sr-only" />
 
       {inspectedKey && inspectorIdentity && !denied && (
         <Suspense fallback={null}>
@@ -684,16 +682,11 @@ export default function App() {
         </Suspense>
       )}
 
-      {/* Mounted only while open, so their chunks
-          load on the first open, not with the shell. */}
+      {/* Mounted only while open, so its chunk
+          loads on the first open, not with the shell. */}
       {inspectedProfileLabel && (
         <Suspense fallback={null}>
           <ProfileSectionDialog />
-        </Suspense>
-      )}
-      {helpOpen && (
-        <Suspense fallback={null}>
-          <HelpDialog open={helpOpen} onOpenChange={setHelpOpen} />
         </Suspense>
       )}
       <NetworkProgress />
@@ -717,7 +710,7 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
   const denied = useStore((s) => s.deniedNamespace);
   // A link to a namespace the account cannot read shows that, never the view: on the
   // namespace under it the view would read data the link did not ask for.
-  if (denied) return <NamespaceNoAccess namespace={denied} />;
+  if (denied && view !== "connected-accounts") return <NamespaceNoAccess namespace={denied} />;
   // A view that reads the memory plane never mounts on a code or tracker namespace, or on
   // no namespace — it would fire memory.* reads the token cannot make against a namespace
   // that holds no memories. One empty state, one place, says what the namespace is and
@@ -749,6 +742,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <CodeView />;
     case "setup":
       return <Setup />;
+    case "connected-accounts":
+      return <ConnectedAccounts />;
     case "tasks":
       return <Tasks />; // task inbox board
     case "admin:review_queue":
@@ -765,8 +760,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <Spending />; // file unchanged, just relabelled
     case "admin:agents":
       return <Agents />;
-    case "assistant":
-      return <Assistant />;
+    case "help":
+      return <Help />;
     case "admin:users":
       return <AdminUsersView />;
     case "admin:settings":

@@ -11,7 +11,8 @@ step, so a boot that stopped halfway leaves the row at a step the next one finis
    exist), delete any key a cut-short boot left, create the key;
 3. no agent id: keep the oldest agent of the definition's name and delete the rest, or
    create one;
-4. a stored definition older than this build's, or of its version with another model:
+4. a stored definition older than this build's, or of its version with another model or
+   provider:
    write it.
 """
 
@@ -30,7 +31,7 @@ import yaml
 
 from server.assistant.domain import definition as agent_definition
 from server.assistant.store import service as store
-from server.core import leases, paths
+from server.core import leases, paths, readiness
 from server.core.ch import set_query_tag, statement_timeout
 from server.core.ch_errors import error_line
 from server.core.errors import error_kind
@@ -51,7 +52,8 @@ _BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/130.0 S
 # The service user's LibreChat name: LibreChat wants at least three characters.
 _USER_NAME = "loom-assistant"
 
-# Whether this process has the service set up: None = not yet tried, False = a problem.
+# Whether this process has the service set up: None = not yet tried or being set up
+# again, False = the last try failed (`_problem` says why).
 _ready: bool | None = None
 _problem = ""
 # The agent id and agents API key answers run with, once a setup succeeded.
@@ -69,30 +71,51 @@ def assistant_state() -> tuple[bool | None, str]:
     return _ready, _problem
 
 
+def unready_reason() -> str:
+    """Why this process cannot answer yet, in one word a client can branch on:
+    "starting" before the first try or while the service is set up again, "failing"
+    after a try that failed (the setup loop keeps retrying)."""
+    if _ready is None:
+        return "starting"
+    return "failing"
+
+
+def readiness_check() -> readiness.CheckResult:
+    """The `assistant` check of `/v1/health/ready`: ready once this process set the
+    service up and auth is on (with auth off every question is refused)."""
+    if not settings.auth_actually_required():
+        return readiness.result(False, "auth_off")
+    return readiness.result(_ready is True, unready_reason())
+
+
 def answering() -> tuple[str, str] | None:
     """(agent id, agents API key) once this process set the service up, else None."""
     return _answering
 
 
-def forget_answering(why: str) -> None:
+def forget_answering() -> None:
     """LibreChat no longer takes the stored key or agent (another replica replaced it,
     or LibreChat's database was): drop them and set the service up again, which reads
     the row another replica may have written or repairs it."""
     global _answering, _ready, _problem
     _answering = None
-    _ready, _problem = False, f"setting up the assistant again: {why}"
+    # Not a failed try: the process is starting over, and `/v1/health` warns only if
+    # that try fails.
+    _ready, _problem = None, ""
     if _loop is None or _loop.done():
         start_setup_loop()
 
 
 def current_definition() -> agent_definition.Definition:
     """This build's definition: agent.yaml, the tools the assistant connection lists,
-    and LOOM_ASSISTANT_MODEL in place of the file's model when set."""
+    and LOOM_ASSISTANT_MODEL and LOOM_ASSISTANT_PROVIDER in place of the file's when set."""
     from server.operations.toolsets import assistant_ops
 
     raw = yaml.safe_load(paths.ASSISTANT_AGENT.read_text())
     tools = [op.mcp_tool_name for op in assistant_ops()]
-    return agent_definition.parse(raw, tools, str(settings.assistant_model))
+    return agent_definition.parse(
+        raw, tools, str(settings.assistant_model), str(settings.assistant_provider)
+    )
 
 
 @contextlib.asynccontextmanager
@@ -269,7 +292,7 @@ async def ensure_service() -> None:
                 await store.write(row)
             if agent_definition.needs_write(row.definition_version, row.definition_model, defn):
                 await lc.write_agent(row.agent_id, defn)
-                row = row.advanced(definition_version=defn.version, definition_model=defn.model)
+                row = row.advanced(definition_version=defn.version, definition_model=defn.model_ref)
                 await store.write(row)
     _answering = (row.agent_id, key)
 
@@ -338,5 +361,7 @@ __all__ = [
     "current_definition",
     "ensure_service",
     "opened",
+    "readiness_check",
     "start_setup_loop",
+    "unready_reason",
 ]

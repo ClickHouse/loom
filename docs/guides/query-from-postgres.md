@@ -1,0 +1,161 @@
+# Query Loom from Postgres
+
+This guide reads a tenant's memories, conversations and usage from the org's own
+Postgres, where they can be joined with the application's tables. It uses the
+open-source [`pg_clickhouse`](https://github.com/ClickHouse/pg_clickhouse) extension,
+which imports ClickHouse tables and views as Postgres foreign tables and pushes queries
+down to ClickHouse. What the views hold and what they leave out is in the
+[SQL surface reference](../reference/sql-surface.md).
+
+The data stays in ClickHouse: a query from Postgres reads the views at query time,
+under the same scope, withholding and freshness rules as any other SQL client. This
+Postgres is the application's, not Loom's [memory authority](../operations/postgres.md):
+the extension reads, Loom never writes through it, and Loom's own database needs no
+extension. Use a separate database, or a separate service, from the one Loom's
+`LOOM_PG_DSN` names.
+
+CI tests the release `LOOM_PGCH_VERSION` names in `.github/workflows/ci.yml` on Postgres 16
+and 18 (`tests/integration/test_pg_clickhouse_live_ch.py`).
+
+## 1. Make a SQL user for the tenant
+
+On the Loom side, as an operator ([access](../reference/sql-surface.md#access)):
+
+```bash
+loom sql-access grant --user acme_bi --org acme --namespaces support,research
+```
+
+It prints the user's password once.
+
+## 2. Install the extension
+
+The extension is in the `ghcr.io/clickhouse/pg_clickhouse:<postgres major>-<version>`
+images and on [PGXN](https://pgxn.org/dist/pg_clickhouse/), to build into a self-managed
+Postgres (`pgxn install pg_clickhouse`). A managed Postgres service must ship and allow it.
+Three roles take part:
+
+- a superuser for this step, since the extension is not marked trusted (on a managed service,
+  the role the provider lets create its allowed extensions);
+- an owner for steps 3 and 4: a role with `CREATEROLE`, `CREATE` on the database and `USAGE`
+  on the foreign data wrapper, which creates the reader role and so may set its defaults;
+- the application's reader role (`app_reader` here) for step 5, which needs its user mapping
+  from step 3 and the grants at the end of step 4.
+
+As the superuser:
+
+```sql
+CREATE EXTENSION pg_clickhouse;
+CREATE ROLE app_owner LOGIN CREATEROLE PASSWORD '<password>';
+GRANT CREATE ON DATABASE app TO app_owner;
+GRANT USAGE ON FOREIGN DATA WRAPPER clickhouse_fdw TO app_owner;
+```
+
+As the owner:
+
+```sql
+CREATE ROLE app_reader LOGIN PASSWORD '<password>';
+```
+
+## 3. Point it at the ClickHouse service
+
+```sql
+CREATE SERVER loom_ch FOREIGN DATA WRAPPER clickhouse_fdw
+  OPTIONS (driver 'http', host 'abc123.us-east-1.aws.clickhouse.cloud', dbname 'loom');
+
+-- The import in step 4 connects as the role that runs it; the queries in step 5 as theirs.
+CREATE USER MAPPING FOR CURRENT_USER SERVER loom_ch
+  OPTIONS (user 'acme_bi', password '<password from step 1>');
+CREATE USER MAPPING FOR app_reader SERVER loom_ch
+  OPTIONS (user 'acme_bi', password '<password from step 1>');
+```
+
+- `dbname` is Loom's database (`LOOM_CH_DATABASE`, `loom` by default).
+- On a ClickHouse Cloud host the extension's `secure 'auto'` default turns TLS on and the
+  `http` driver's port defaults to 8443, as its documentation says; the test here runs plain
+  HTTP against a local server. On a self-managed server, set `port` and `secure 'on'` to
+  match the server's TLS port.
+- Map only the Postgres roles that may read the tenant's data: the user mapping holds the
+  ClickHouse password, and every query through the server runs as that SQL user.
+
+Set the extension's session settings on the role, so every session sends the four a SQL
+user of the surface may change and nothing else:
+
+```sql
+ALTER ROLE app_reader SET pg_clickhouse.session_settings =
+  'join_use_nulls 1, group_by_use_nulls 1, final 1, transform_null_in 0';
+```
+
+These are the extension's defaults, written down so a later release's defaults cannot add
+one. A session that sets another setting fails in ClickHouse with `READONLY`: the SQL user's
+profile refuses it ([access](../reference/sql-surface.md#access)), whatever the role says.
+
+## 4. Import the views
+
+```sql
+CREATE SCHEMA loom;
+IMPORT FOREIGN SCHEMA loom
+  LIMIT TO (sql_v1_memories, sql_v1_memory_history, sql_v1_conversations,
+            sql_v1_agent_events, sql_v1_usage_daily)
+  FROM SERVER loom_ch INTO loom;
+```
+
+The first `loom` is the ClickHouse database and the second the Postgres schema. Name the
+views with `LIMIT TO`, so the import pins the `v1` set and a later `sql_v2_*` view does not
+arrive unasked. Then let the reader role read them:
+
+```sql
+GRANT USAGE ON SCHEMA loom TO app_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA loom TO app_reader;
+```
+
+A `v1` view may gain columns in a Loom upgrade. A foreign table keeps the columns it was
+imported with, so to pick up new ones drop the schema (and any Postgres view built on its
+tables) and run the import and the grants again:
+`DROP SCHEMA loom CASCADE; CREATE SCHEMA loom;`.
+
+## 5. Query and join
+
+```sql
+-- The facts Loom holds about each account on the support team
+SELECT a.email, m.memory_key, m.value, m.updated_at
+FROM accounts AS a
+JOIN loom.sql_v1_memories AS m ON m.user_id = a.loom_user_id
+WHERE a.team = 'support' AND m.status = 'active'
+ORDER BY m.updated_at DESC;
+
+-- Model spend per day for the last month
+SELECT day, sum(upstream_cost_usd) AS spend
+FROM loom.sql_v1_usage_daily
+WHERE day >= (now() AT TIME ZONE 'UTC')::date - 30
+GROUP BY day ORDER BY day;
+```
+
+`value` is NULL where Loom withholds it; `value_withheld` says why.
+
+## Cost and scale
+
+- `EXPLAIN (VERBOSE)` shows which part of a query runs in ClickHouse. A join between a
+  foreign table and a local one runs in Postgres, which fetches every view row the
+  pushed-down filters leave, so filter each view as narrowly as the query allows: by
+  namespace, by time, by a literal list of ids.
+- A pushed-down filter narrows what ClickHouse sends to Postgres, not what it reads: each
+  view reads the grant's whole scope, and the ledger views about their 31-day window
+  ([what a read costs](../reference/sql-surface.md#what-a-read-costs)).
+- A statement past the SQL user's ceilings (`LOOM_CH_ANALYSIS_MAX_EXECUTION_S`,
+  `_MAX_ROWS_TO_READ`, `_MAX_MEMORY_BYTES`) fails in ClickHouse rather than slowing down, and
+  Postgres returns its error.
+- Every Postgres session that queries through the mappings logs in as the same SQL user, and
+  that user runs at most `LOOM_CH_ANALYSIS_MAX_CONCURRENT` statements at a time: size the
+  application's pool of reader sessions under it, or statements past it fail.
+
+## Copies and erasure
+
+The foreign tables hold nothing: every query reads ClickHouse, so an erasure in Loom reaches
+them at once. A copy taken in this Postgres (`CREATE TABLE … AS SELECT` from a foreign table,
+a materialized view, a dump) is the org's own data and outside Loom's erasure.
+
+## Revoking
+
+`loom sql-access revoke --user acme_bi` stops every query through the user mappings at
+once: the next one fails to log in. Then, as the owner, `DROP SERVER loom_ch CASCADE` drops
+both user mappings and the imported foreign tables.

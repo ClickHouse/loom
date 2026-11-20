@@ -17,7 +17,7 @@ from server.transport import post_rows
 
 
 def _op(**kw: Any) -> SimpleNamespace:
-    fields = {"audit_subject": None, **kw}
+    fields = {"audit_subject": None, "audit_namespace": None, **kw}
     return SimpleNamespace(
         name="memory.set", budget_p99_ms=10, audit=True, idempotent=True, **fields
     )

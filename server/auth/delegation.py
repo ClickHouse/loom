@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -54,6 +54,10 @@ class Delegated:
     parent_iats: list[int]
     creator: str
     is_service_account: bool
+    # Where a list token's unaddressed calls save (the `saves_to` claim); '' = none
+    # recorded. `delegate` carries the parent's; the mint routes settle it
+    # (`token_saves_to.saves_to_target`).
+    saves_to: str = ""
 
     @property
     def ttl_days(self) -> int:
@@ -64,7 +68,16 @@ class Delegated:
         """When a token minted at `now` expires; None if never."""
         return None if self.ttl_seconds is None else now + timedelta(seconds=self.ttl_seconds)
 
-    def mint(self, subject: str, *, jti: str | None = None, consumer: str | None = None) -> str:
+    def mint(
+        self,
+        subject: str,
+        *,
+        jti: str | None = None,
+        consumer: str | None = None,
+        reads_as_creator: bool = False,
+        session_protection: bool = False,
+        answer_mirrors: bool = False,
+    ) -> str:
         return jwt_mod.mint_token(
             subject=subject,
             org=self.org,
@@ -82,6 +95,10 @@ class Delegated:
             parent_subjects=self.parent_subjects,
             parent_iats=self.parent_iats,
             creator=self.creator,
+            reads_as_creator=reads_as_creator,
+            session_protection=session_protection,
+            answer_mirrors=answer_mirrors,
+            saves_to=self.saves_to or None,
         )
 
     def as_auth(self, subject: str) -> AuthInfo:
@@ -101,7 +118,13 @@ class Delegated:
             parent_subjects=tuple(self.parent_subjects),
             parent_iats=tuple(self.parent_iats),
             creator=self.creator,
+            saves_to=self.saves_to,
         )
+
+    def writes(self, namespace: str) -> bool:
+        """Whether a token minted from this may write new rows in `namespace`."""
+        role = ceiling_role(self.as_auth(""), self.org, namespace, write=True)
+        return namespace in self.namespaces and role is not None and role >= Role.WRITER
 
 
 def _refuse(message: str) -> HTTPException:
@@ -158,7 +181,8 @@ async def delegate(
     ceiling (`_flat_role`). The caller lists the child where its owner can revoke
     it (`loom.service_accounts`). `ends_with_session` also names a first-party
     sign-in session among the child's `parents`, so the child ends at sign-out as
-    a third-party client's always does (the assistant's per-answer token). Raises
+    a third-party client's always does (the assistant's per-answer token). A list
+    child that may write its parent's `saves_to` namespace saves there too. Raises
     403 AUTH_INSUFFICIENT naming what was refused."""
     child_org = _child_org(parent, org)
     if parent.is_service_account and not is_service_account:
@@ -185,7 +209,7 @@ async def delegate(
     else:
         ns_roles = None
         flat = [_flat_role(parent, child_org, requested, roles).name.lower()]
-    return Delegated(
+    child = Delegated(
         org=child_org,
         namespaces=list(roles),
         roles=flat,
@@ -200,6 +224,11 @@ async def delegate(
         creator=creator,
         is_service_account=is_service_account,
     )
+    # A `*` token records no target (`token_saves_to`); a child that keeps `*` (a parent
+    # `_expand_wildcard` does not narrow) takes none from its parent either.
+    if parent.saves_to and "*" not in child.namespaces and child.writes(parent.saves_to):
+        return replace(child, saves_to=parent.saves_to)
+    return child
 
 
 def _flat_role(

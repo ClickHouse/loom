@@ -48,8 +48,10 @@ def stub_writes(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     from server.knowledge.store import chunks as knowledge_repo
     from server.knowledge.store import documents as documents_repo
 
-    async def fake_doc_insert(row, *, over=0, retire_older=False, built_from="", ch=None):
-        captured["doc"] = row
+    async def fake_doc_insert(
+        row, *, over=0, retire_older=False, built_from="", chunked=False, ch=None
+    ):
+        captured["doc"], captured["chunked"] = row, chunked
 
     async def fake_count(*a, **kw):
         return 0
@@ -1064,8 +1066,8 @@ async def test_an_upsert_retires_older_chunks_even_when_its_count_saw_none(
 
     seen: dict[str, Any] = {}
 
-    async def insert_one(row, *, over=0, retire_older=False, built_from="", ch=None):
-        seen["retire_older"] = retire_older
+    async def insert_one(row, *, over=0, retire_older=False, built_from="", chunked=False, ch=None):
+        seen["retire_older"], seen["chunked"] = retire_older, chunked
 
     monkeypatch.setattr(knowledge_repo, "find_doc_by_content_sha256", none)
     monkeypatch.setattr(knowledge_repo, "count_matching_chunk_hashes", zero)
@@ -1074,4 +1076,62 @@ async def test_an_upsert_retires_older_chunks_even_when_its_count_saw_none(
     await h.handle_knowledge_upsert(
         KnowledgeUpsertInput(org="o", namespace="ns", source_uri="kb://a", content="new text")
     )
-    assert seen == {"retire_older": True}
+    # It inserted chunks: its head serves them.
+    assert seen == {"retire_older": True, "chunked": True}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("postgres", [True, False])
+@pytest.mark.parametrize("again", [True, False])
+async def test_an_add_and_a_bulk_add_commit_the_chunks_their_head_serves(
+    monkeypatch: pytest.MonkeyPatch, stub_writes: dict[str, Any], postgres: bool, again: bool
+) -> None:
+    """Both insert chunks at their row's version, which the head serves from then on.
+    Under the Postgres authority they retire the older versions, which search no longer
+    serves (a first write's too: a failed write may have left chunks); under the
+    ClickHouse one an add again keeps them, both served."""
+    from server.core import pg
+    from server.knowledge.api.models_knowledge import KnowledgeAddInput, KnowledgeBulkAddInput
+    from server.knowledge.app import writes
+    from server.knowledge.store import documents as documents_repo
+
+    prior = documents_repo.DocumentRow(
+        org="o",
+        namespace="n",
+        source_uri="a.md",
+        doc_id="p",
+        content="x",
+        version=5,
+        revision=1,
+        ingested_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    seen: list[dict[str, Any]] = []
+
+    async def read_prior(*a: Any, **kw: Any) -> Any:
+        return prior if again else None
+
+    async def read_priors(*a: Any, **kw: Any) -> list[Any]:
+        return [prior] if again else []
+
+    async def one(row: Any, **kw: Any) -> None:
+        seen.append({**kw, "retire_older": {row["source_uri"]} if kw["retire_older"] else set()})
+
+    async def many(rows: Any, **kw: Any) -> int:
+        seen.append({**kw, "retire_older": set(kw["retire_older"])})
+        return len(rows)
+
+    monkeypatch.setattr(pg, "enabled", lambda: postgres)
+    monkeypatch.setattr(documents_repo, "get_one", read_prior)
+    monkeypatch.setattr(documents_repo, "get_many_by_uris", read_priors)
+    monkeypatch.setattr(documents_repo, "insert_one", one)
+    monkeypatch.setattr(documents_repo, "insert_many", many)
+    await writes.handle_knowledge_add(
+        KnowledgeAddInput(org="o", namespace="n", source_uri="a.md", content="New.")
+    )
+    await writes.handle_knowledge_bulk_add(
+        KnowledgeBulkAddInput(
+            org="o", namespace="n", entries=[{"source_uri": "a.md", "content": "New."}]
+        )
+    )
+    retired = {"a.md"} if postgres else set()
+    assert [(s["chunked"], s["retire_older"]) for s in seen] == [(True, retired)] * 2

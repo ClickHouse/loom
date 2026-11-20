@@ -12,7 +12,17 @@ import { AuthError, BackendUnavailable, LoomError, RateLimited, TimeoutError } f
 import type { TokenProvider } from "./machine.js";
 import { Transport } from "./transport.js";
 
-const CITED = [{ kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c" }];
+const CITED = [
+  { kind: "memory", text: "[memory:a/b/c@v3]", verified: true, reason: "", ref: "a/b/c", anchor: "" },
+  {
+    kind: "help",
+    text: "[help:guides/tokens-and-grants.md § Tokens and grants > Mint a token]",
+    verified: true,
+    reason: "",
+    ref: "guides/tokens-and-grants.md",
+    anchor: "mint-a-token",
+  },
+];
 
 function sse(...events: unknown[]): string {
   return `${events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("")}data: [DONE]\n\n`;
@@ -24,7 +34,13 @@ const ANSWER = sse(
   chunk("Deploys freeze "),
   chunk("on Fridays."),
   { id: "chatcmpl-1", choices: [], usage: { prompt_tokens: 9, completion_tokens: 4 } },
-  { object: "loom.citations", id: "chatcmpl-1", citations: CITED },
+  {
+    object: "loom.citations",
+    id: "chatcmpl-1",
+    citations: CITED,
+    support: "supported",
+    unknown_names: ["memory.frobnicate"],
+  },
 );
 
 /** A body delivered in pieces cut at `cuts`, so an event can span reads. */
@@ -82,8 +98,12 @@ describe("loom.assistant.stream", () => {
         runId: "chatcmpl-1",
         model: "m",
         citations: CITED,
+        support: "supported",
         promptTokens: 9,
         completionTokens: 4,
+        unknownNames: ["memory.frobnicate"],
+        steps: [],
+        stepsCut: false,
       },
     });
     expect(out).toHaveLength(3);
@@ -96,6 +116,40 @@ describe("loom.assistant.stream", () => {
       stream: true,
       messages: [...history, { role: "user", content: "q" }],
     });
+  });
+
+  it("carries the steps on the answer and yields nothing for a step or end-of-text event", async () => {
+    const step = { op: "namespace.audit", text: "Read the audit", ok: true };
+    const failed = { op: "memory.search", text: "Couldn't search memories", ok: false };
+    const stream = sse(
+      { object: "loom.step", id: "", choices: [], steps: [step] },
+      chunk("Seven."),
+      // The end of the text, before the checks: no choices, so no text.
+      { object: "loom.text_done", id: "chatcmpl-1", choices: [] },
+      {
+        object: "loom.citations",
+        id: "chatcmpl-1",
+        citations: [],
+        steps: [step, failed],
+        steps_cut: true,
+      },
+    );
+    const { loom } = client(() => new Response(body(stream, [])));
+    const out = await collect(loom);
+    expect(out).toHaveLength(2);
+    const last = out.at(-1);
+    expect(last?.type === "answer" && last.answer.steps).toEqual([step, failed]);
+    expect(last?.type === "answer" && last.answer.stepsCut).toBe(true);
+    expect(last?.type === "answer" && last.answer.runId).toBe("chatcmpl-1");
+  });
+
+  it("reads an unknown or missing support, as an older or newer server sends, as unchecked", async () => {
+    for (const support of ["a-later-state", undefined]) {
+      const stream = sse(chunk("Seven."), { object: "loom.citations", id: "chatcmpl-1", citations: [], support });
+      const { loom } = client(() => new Response(body(stream, [])));
+      const last = (await collect(loom)).at(-1);
+      expect(last?.type === "answer" && last.answer.support).toBe("unchecked");
+    }
   });
 
   it("throws a refusal's typed error and never resends it", async () => {
@@ -282,6 +336,31 @@ describe("loom.assistant.stream", () => {
   it("throws when the stream ends before the answer began", async () => {
     const { loom } = client(() => new Response("data: [DONE]\n\n"));
     await expect(collect(loom)).rejects.toThrow(/before the answer began/);
+  });
+
+  it("keeps partial text incomplete when EOF arrives without DONE", async () => {
+    const { loom, sent } = client(() => new Response(ANSWER.replace(/data: \[DONE\]\n\n$/, "")));
+    const seen: AssistantEvent[] = [];
+    const read = async () => {
+      for await (const event of loom.assistant.stream({ question: "q" })) seen.push(event);
+    };
+    await expect(read()).rejects.toThrow(/before completion/);
+    expect(seen).toEqual([
+      { type: "text", text: "Deploys freeze " },
+      { type: "text", text: "on Fridays." },
+    ]);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("ignores text received after DONE", async () => {
+    const { loom } = client(() => new Response(ANSWER + sse(chunk("discarded"))));
+    const out = await collect(loom);
+    expect(out.slice(0, 2)).toEqual([
+      { type: "text", text: "Deploys freeze " },
+      { type: "text", text: "on Fridays." },
+    ]);
+    expect(out).toHaveLength(3);
+    expect(out[2]?.type === "answer" && out[2].answer.text).toBe("Deploys freeze on Fridays.");
   });
 
   it("throws a connection cut mid-stream as NETWORK", async () => {

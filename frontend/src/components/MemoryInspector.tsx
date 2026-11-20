@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type React from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
@@ -52,25 +52,31 @@ import {
 } from "../api";
 import { LockMemoryDialog, RedactVersionDialog, RejectMemoryDialog } from "../flows/MemoryReasonDialogs";
 import { navigationHref, useStore } from "../lib/state";
+import { openerUsable } from "../lib/place";
 import { graphSeedHref, isModifiedClick, openGraphAt } from "../lib/graphLink";
+import { isPublicationPending } from "../lib/errors";
 import { AgentBadge } from "./AgentBadge";
 import { DiffView } from "./DiffView";
-import { keepOpenOnToasts, toast } from "./Toast";
+import { keepOpenOnToasts, toast, toastError } from "./Toast";
+import { committedAnyway, errorLine, toastCommitted } from "../lib/errorWords";
 import { IconButton } from "./IconButton";
 import { SkeletonText } from "./Skeleton";
-import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip } from "./ui";
+import { Chip, ExternalLink, Loading, LoadingSkeleton, Tip, Unavailable } from "./ui";
 import { AnchoredPopover } from "./ui/AnchoredPopover";
 import { CHIP_OUTLINE_CLASS } from "./ui/Chip";
 import { confirmAction } from "./ConfirmDialog";
 import { CopyToNamespaceDialog } from "../flows/CopyToNamespaceDialog";
+import { AskAboutThis, exact, quoted } from "./AskAboutThis";
 import { ThreadReplayDialog, type ReplayThread } from "./ThreadReplayDialog";
-import { absoluteTime, relativeTime, formatValue, humanizeError, parseChTime, SENTINEL_AGENTS } from "../lib/format";
+import { absoluteTime, relativeTime, formatValue, parseChTime, SENTINEL_AGENTS } from "../lib/format";
 import { detectEncodedValue } from "../lib/encoded";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { useNamespaceRoleRead } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
+import { ACCESS_LOADING, callReason, codeMember } from "../lib/callReason";
+import { hasWriterClaim } from "../lib/role";
 import { historyChange, previousVersion } from "../lib/historyChange";
 import { MenuTrigger } from "./ui/Menu";
-import { shortcutOff } from "../lib/shortcuts";
+import { GatedItem, menuReasons } from "./ui/GatedItem";
 
 type SectionId = "history" | "related" | "provenance" | "lineage" | "evidence" | "links";
 const SECTIONS_KEY = "loom_inspector_sections_v1";
@@ -119,6 +125,19 @@ function Disclosure({
   );
 }
 
+/** "Ask about this"'s words for a memory: its key, and the writer agent, user and session
+ *  it was read under, so the assistant's memory.get (which takes user_id and session_id,
+ *  '-' when absent) reads the same row. */
+function memoryLine(key: string, agent: string | undefined, identity: Identity): string {
+  const named = (v: string | undefined) => !!v && !SENTINEL_AGENTS.has(v);
+  const under = [
+    named(agent) ? `agent ${quoted(agent ?? "")}` : "",
+    named(identity.user_id) ? `user ${exact(identity.user_id ?? "")}` : "",
+    named(identity.session_id) ? `session ${exact(identity.session_id ?? "")}` : "",
+  ].filter(Boolean);
+  return `memory ${exact(key)}${under.length ? ` (${under.join(", ")})` : ""}`;
+}
+
 function SectionEmpty({ children }: { children: React.ReactNode }) {
   return <div className="text-xs text-text-muted">{children}</div>;
 }
@@ -138,15 +157,13 @@ interface InspectorProps {
 
 /**
  * Right-edge drawer showing one memory: value, metadata, tags, provenance,
- * related rows, history and lineage. The footer is one row: Edit and Delete, and a More
- * menu with the rest of the row's actions.
+ * related rows, history and lineage. The footer holds Edit, Ask about this, a More menu with
+ * the rest of the row's actions, and Delete at the end: one row, two on a narrow drawer.
  *
  * The shell is a Radix `Dialog`: portal, overlay, focus trap, Escape, body scroll lock;
  * focus returns to the card that opened it on close (captured here — a triggerless Radix
  * dialog restores nothing on its own). Focus lands on the drawer itself so the key is
- * announced and the `e` / `d` / `p` shortcuts work straight away; they are bound to the
- * dialog content — not `document` — so they only fire while the drawer holds focus and
- * never while a field is being typed in. The slide-in animates `transform`/`opacity` only
+ * announced. The slide-in animates `transform`/`opacity` only
  * and is disabled under `prefers-reduced-motion`; the expand toggle swaps width
  * instantly.
  */
@@ -225,6 +242,9 @@ export function MemoryInspector({
     const el = document.activeElement;
     return el instanceof HTMLElement ? el : null;
   });
+  const [openedAt] = useState(() => useStore.getState().navSeq);
+  // Set by "Ask about this", which closes the drawer for the assistant panel's field.
+  const leaving = useRef(false);
   const inspect = useStore((s) => s.inspect);
   const openMemory = onInspectMemory ?? inspect;
   // A rename's destination is this row moved: it opens under the writer identity this one
@@ -297,33 +317,6 @@ export function MemoryInspector({
     if (editing || renaming || dialogOver) e.preventDefault();
   };
 
-  // e/d/p drive edit/delete/pin, ⌘/Ctrl+Enter saves an edit. Bound to the
-  // dialog content, so they fire only while the drawer holds focus. Radix
-  // portals bubble React events through the tree, so keystrokes from a dialog
-  // over the drawer are skipped explicitly. A key that is not found has nothing to act on.
-  const onContentKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    if (dialogOver || !detail?.found) return;
-    const t = e.target;
-    const typing =
-      t instanceof HTMLElement && (t.tagName === "TEXTAREA" || t.tagName === "INPUT" || t.isContentEditable);
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && editing) {
-      e.preventDefault();
-      onSaveEdit();
-      return;
-    }
-    if (typing || e.metaKey || e.ctrlKey || e.altKey || shortcutOff(e.nativeEvent)) return;
-    if (e.key === "e" && !editing && !renaming && !valueLocked) {
-      e.preventDefault();
-      onStartEdit();
-    } else if (e.key === "d" && !deleteLocked) {
-      e.preventDefault();
-      onDelete();
-    } else if (e.key === "p") {
-      e.preventDefault();
-      onPin();
-    }
-  };
-
   useEffect(() => {
     setLoading(true);
     // Another key: an edit, a rename or a dialog of the one left does not carry over.
@@ -356,7 +349,7 @@ export function MemoryInspector({
       })
       .catch((e) => {
         if (!live) return;
-        toast(`Load failed: ${humanizeError(e)}`, "error");
+        toastError("Load failed", e, { read: true });
         setLoading(false);
       });
     // Nothing else is read on open. The secondary sections read when opened (below);
@@ -454,22 +447,50 @@ export function MemoryInspector({
   // known to allow conflicts.list: an unknown role sends nothing and the badge is simply
   // absent.
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const { role } = roleRead;
   const conflictsReadable = canCall("conflicts.list", role, whoami);
-  // The rename action is offered only to a role that reaches memory.move (WRITER); a
-  // viewer never sees a button the server would refuse.
-  const canMove = canCall("memory.move", role, whoami);
-  const canTogglePin = canCall(detail?.pinned ? "memory.unpin" : "memory.pin", role, whoami);
-  const canRestore = canCall("memory.restore", role, whoami);
-  const canLock = canCall("memory.lock", role, whoami);
-  const canUnlock = canCall("memory.unlock", role, whoami);
-  const canReject = canCall("memory.reject", role, whoami);
-  const canShare = canCall("memory.promote", role, whoami);
-  const canUnshare = canCall("memory.demote", role, whoami);
-  // memory.promote refuses a profile row and a high one.
-  const shareable = detail?.memory_type !== "profile" && detail?.sensitivity !== "high";
-  const canRedact = canCall("memory.redact", role, whoami);
-  const canJudge = canCall("memory.outcome", role, whoami);
+  // Each role-gated action stays in view for a role that cannot call it, unavailable with
+  // the role it needs (`callReason`), so nobody is sent a request the server would refuse.
+  const why = (op: Parameters<typeof callReason>[0]) => callReason(op, roleRead, whoami, identity.namespace);
+  const moveReason = why("memory.move");
+  const pinReason = why(detail?.pinned ? "memory.unpin" : "memory.pin");
+  const restoreReason = why("memory.restore");
+  const lockReason = why(detail?.lock_mode ? "memory.unlock" : "memory.lock");
+  const rejectReason = why("memory.reject");
+  const shareReason = why("memory.promote");
+  const unshareReason = why("memory.demote");
+  // The server also refuses a definition past its expiry or one whose value reads medium.
+  const namespaceWide = [detail?.agent, detail?.user_id, detail?.session_id].every((v) => !v || v === "-");
+  const isDefinition = detail?.memory_type === "definition";
+  const underDefinitionKey = memoryKey.startsWith("definition/");
+  const definitionShareable =
+    isDefinition &&
+    underDefinitionKey &&
+    namespaceWide &&
+    (detail?.status ?? "active") === "active" &&
+    detail?.sensitivity !== "medium";
+  const governed = isDefinition || underDefinitionKey;
+  const shareable =
+    detail?.memory_type !== "profile" && detail?.sensitivity !== "high" && (!governed || definitionShareable);
+  const redactReason = why("memory.redact");
+  const judgeReason = why("memory.outcome");
+  // The value, its tags and its expiry are memory.set; Delete and Verify their own ops. Copy to
+  // is checked without the namespace (memory.copy_to skips namespace authz): the transport wants
+  // the token's flat writer claim, which a token scoped per namespace never passes, and the
+  // handler the source readable and the target writable, which the dialog's targets are.
+  const copyReason = !whoami
+    ? ACCESS_LOADING
+    : hasWriterClaim(whoami)
+      ? null
+      : "Copying needs a token with a writer claim or above.";
+  // A repository's member may write and delete its own rows there: the server decides.
+  const member = codeMember(roleRead, identity.namespace);
+  const setReason = member ? null : why("memory.set");
+  const deleteReason = member ? null : why("memory.delete");
+  const verifyReason = why("memory.verify");
+  const tagsWhyId = useId();
+  const menuId = useId();
   // Both lock modes refuse a delete; read_only also refuses a value or expiry change. No
   // lock gates tags (server/memory/domain/lock.py).
   const valueLocked = detail?.lock_mode === "read_only";
@@ -482,6 +503,22 @@ export function MemoryInspector({
     setEditing(false);
     setRenaming(false);
   }, [valueLocked, formOpen]);
+  // A reason that appears while a form or dialog is open closes it, as a lock does.
+  useEffect(() => {
+    if (setReason) setEditing(false);
+  }, [setReason]);
+  useEffect(() => {
+    if (moveReason) setRenaming(false);
+  }, [moveReason]);
+  useEffect(() => {
+    if (copyReason) setCopyOpen(false);
+  }, [copyReason]);
+  useEffect(() => {
+    if (redactReason) setRedacting(null);
+  }, [redactReason]);
+  useEffect(() => {
+    setReasonDialog((d) => ((d === "lock" && lockReason) || (d === "reject" && rejectReason) ? null : d));
+  }, [lockReason, rejectReason]);
   const deleteLocked = !!detail?.lock_mode;
   const linkCount = links ? links.in.length + links.out.length : 0;
   const verified = detail?.verification === "human" || detail?.verification === "process";
@@ -504,7 +541,7 @@ export function MemoryInspector({
   }, [identity, memoryKey, conflictsReadable]);
 
   const onPin = async () => {
-    if (!detail || !canTogglePin) return;
+    if (!detail || pinReason) return;
     const wasPinned = detail.pinned;
     setDetail({ ...detail, pinned: !wasPinned });
     try {
@@ -518,18 +555,20 @@ export function MemoryInspector({
         await pinMemory(identity, memoryKey, detail);
       }
       toast(wasPinned ? "Unpinned" : "Pinned", "ok");
-      onChanged();
     } catch (e) {
-      setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
-      toast(`Pin failed: ${humanizeError(e)}`, "error");
+      if (!committedAnyway("Pin failed", e)) {
+        setDetail((d) => (d ? { ...d, pinned: wasPinned } : d));
+        return;
+      }
     }
+    onChanged();
   };
 
   // Attest (or revoke). The server picks the actor from the token and binds
   // the attestation to the current content hash; an edit afterwards flips
   // the state to "stale" on its own, so there is nothing to un-set here.
   const onVerify = async () => {
-    if (!detail) return;
+    if (!detail || verifyReason) return;
     const live = detail.verification === "human" || detail.verification === "process";
     try {
       const r = await verifyMemory(identity, memoryKey, {
@@ -541,7 +580,7 @@ export function MemoryInspector({
       toast(live ? "Verification removed" : `Verified as ${r.verified_by}`, "ok");
       onChanged();
     } catch (e) {
-      toast(`Verify failed: ${humanizeError(e)}`, "error");
+      toastError("Verify failed", e);
     }
   };
 
@@ -563,7 +602,7 @@ export function MemoryInspector({
       }
       toast(outcome === "positive" ? "Recorded as helpful" : "Recorded as unhelpful", "ok");
     } catch (e) {
-      toast(`Couldn't record that: ${humanizeError(e)}`, "error");
+      toastError("Couldn't record that", e);
     }
   };
 
@@ -599,7 +638,7 @@ export function MemoryInspector({
         setRenaming(false);
       }
     } catch (e) {
-      if (showing()) toast(`Couldn't read the memory again: ${humanizeError(e)}`, "error");
+      if (showing()) toastError("Couldn't read the memory again", e, { read: true });
     }
   };
 
@@ -613,7 +652,7 @@ export function MemoryInspector({
       }
       toast("Unlocked", "ok");
     } catch (e) {
-      toast(`Unlock failed: ${humanizeError(e)}`, "error");
+      toastError("Unlock failed", e);
       return;
     }
     await reread();
@@ -630,11 +669,13 @@ export function MemoryInspector({
     });
     if (!ok) return;
     try {
-      const r = await shareMemory(rowIdentity(identity, detail), memoryKey);
+      // A definition's promotion names the text it approves: the one shown.
+      const approved = detail.memory_type === "definition" ? detail.content_sha256 : undefined;
+      const r = await shareMemory(rowIdentity(identity, detail), memoryKey, approved);
       toast(`Shared as ${r.shared_memory_key}`, "ok");
       onChanged();
     } catch (e) {
-      toast(`Share failed: ${humanizeError(e)}`, "error");
+      toastError("Share failed", e);
     }
   };
 
@@ -651,7 +692,7 @@ export function MemoryInspector({
       toast(r.demoted ? "No longer shared" : "This memory was not shared", "ok");
       onChanged();
     } catch (e) {
-      toast(`Stop sharing failed: ${humanizeError(e)}`, "error");
+      toastError("Stop sharing failed", e);
     }
   };
 
@@ -682,7 +723,7 @@ export function MemoryInspector({
   };
 
   const onStartEdit = () => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     formSession.current += 1;
     setDraft(formatValue(detail.value));
     setEditing(true);
@@ -699,21 +740,23 @@ export function MemoryInspector({
         tags: nextTags,
         charLimit: detail.char_limit ?? undefined,
       });
-      onChanged();
     } catch (e) {
-      setDetail((d) => (d ? { ...d, tags: prev } : d));
-      toast(`Tag update failed: ${humanizeError(e)}`, "error");
+      if (!committedAnyway("Tag update failed", e)) {
+        setDetail((d) => (d ? { ...d, tags: prev } : d));
+        return;
+      }
     }
+    onChanged();
   };
 
   const onRemoveTag = (t: string) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const next = (detail.tags || []).filter((x) => x !== t);
     void persistTags(next);
   };
 
   const onAddTag = (raw: string) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const t = raw.trim().toLowerCase();
     if (!t) return;
     if ((detail.tags || []).includes(t)) return;
@@ -721,7 +764,7 @@ export function MemoryInspector({
   };
 
   const onChangeExpiry = async (ttlSeconds: number | null) => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     try {
       await setMemory(rowIdentity(identity, detail), memoryKey, detail.value, {
         memoryType: detail.memory_type || "semantic",
@@ -734,14 +777,13 @@ export function MemoryInspector({
       });
       toast(ttlSeconds === null ? "Expiry cleared — never expires" : "Expiry updated", "ok");
     } catch (e) {
-      toast(`Expiry update failed: ${humanizeError(e)}`, "error");
-      return;
+      if (!committedAnyway("Expiry update failed", e)) return;
     }
     await reread();
   };
 
   const onSaveEdit = async () => {
-    if (!detail) return;
+    if (!detail || setReason) return;
     const session = formSession.current;
     try {
       // Parse JSON if it looks like an object/array; else keep the string.
@@ -760,12 +802,11 @@ export function MemoryInspector({
         charLimit: detail.char_limit ?? undefined,
       });
       toast("Saved", "ok");
-      // A save that answers after another Edit leaves that editor open.
-      if (formSession.current === session) setEditing(false);
     } catch (e) {
-      toast(`Save failed: ${humanizeError(e)}`, "error");
-      return;
+      if (!committedAnyway("Save failed", e)) return;
     }
+    // A save that answers after another Edit leaves that editor open.
+    if (formSession.current === session) setEditing(false);
     await reread();
   };
 
@@ -832,18 +873,18 @@ export function MemoryInspector({
         const fresh = await getMemory(identity, memoryKey, { include_recall_breakdown: true });
         if (!stale()) setDetail(fresh);
       } catch (e) {
-        if (!stale()) toast(`Reload failed: ${humanizeError(e)}`, "error");
+        if (!stale()) toastError("Reload failed", e, { read: true });
       }
     } catch (e) {
-      if (stale()) toast(`Restore of ${memoryKey} failed: ${humanizeError(e)}`, "error");
-      else toast(`Restore failed: ${humanizeError(e)}`, "error");
+      if (stale()) toastError(`Restore of ${memoryKey} failed`, e);
+      else toastError("Restore failed", e);
     } finally {
       if (!stale()) setRestoring(false);
     }
   };
 
   const onDelete = async () => {
-    if (!detail) return;
+    if (!detail || deleteReason) return;
     if (
       !(await confirmAction({
         title: `Delete ${memoryKey}?`,
@@ -863,9 +904,69 @@ export function MemoryInspector({
       onChanged();
       onClose();
     } catch (e) {
-      toast(`Delete failed: ${humanizeError(e)}`, "error");
+      toastError("Delete failed", e);
     }
   };
+
+  // The More menu in one list: each item in order, with its reason when the role cannot use it.
+  // The menu says each distinct reason once, below the items, and an item refers to it.
+  const handOff = (open: () => void) => () => {
+    menuHandsOff.current = true;
+    open();
+  };
+  const moreEntries: (MoreItem | false)[] = detail
+    ? [
+        {
+          label: detail.pinned ? "Unpin" : "Pin",
+          icon: detail.pinned ? "unpin" : "pin",
+          reason: pinReason,
+          onSelect: onPin,
+        },
+        {
+          label: detail.verification === "stale" ? "Re-verify" : verified ? "Remove verification" : "Verify",
+          icon: detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure",
+          reason: verifyReason,
+          onSelect: onVerify,
+        },
+        { label: "Copy to…", icon: "folder-open", reason: copyReason, onSelect: handOff(() => setCopyOpen(true)) },
+        detail.lock_mode
+          ? { label: "Unlock", icon: "lock", reason: lockReason, onSelect: onUnlock }
+          : { label: "Lock…", icon: "lock", reason: lockReason, onSelect: handOff(() => setReasonDialog("lock")) },
+        shareable && {
+          label: "Share with every agent",
+          icon: "users",
+          reason: shareReason,
+          onSelect: () => void onShare(),
+        },
+        { label: "Stop sharing", icon: "user", reason: unshareReason, onSelect: () => void onUnshare() },
+        !editing &&
+          !valueLocked && {
+            label: "Rename",
+            icon: "arrow-right",
+            reason: moveReason,
+            onSelect: handOff(() => {
+              formSession.current += 1;
+              setRenameSession(formSession.current);
+              setRenaming(true);
+            }),
+          },
+        { label: "Copy", icon: "copy", onSelect: onCopyAll },
+        { label: "This helped", icon: "check", reason: judgeReason, onSelect: () => void onOutcome("positive") },
+        { label: "This misled", icon: "warning", reason: judgeReason, onSelect: () => void onOutcome("negative") },
+        !detail.lock_mode && {
+          label: "Mark as wrong…",
+          icon: "cross",
+          reason: rejectReason,
+          danger: true,
+          onSelect: handOff(() => setReasonDialog("reject")),
+        },
+      ]
+    : [];
+  const moreItems = moreEntries.filter((i): i is MoreItem => !!i);
+  const moreReasons = menuReasons(
+    moreItems.map((i) => i.reason),
+    menuId,
+  );
 
   return (
     <Dialog.Root
@@ -892,11 +993,12 @@ export function MemoryInspector({
           }}
           onCloseAutoFocus={(e) => {
             e.preventDefault();
-            opener?.focus();
+            // A navigation since the drawer opened (a tag, a graph link) moved the focus to
+            // its page; an opener in an assistant panel that closed is hidden.
+            if (!leaving.current && useStore.getState().navSeq === openedAt && openerUsable(opener)) opener?.focus();
           }}
           onEscapeKeyDown={onEscapeKeyDown}
           onPointerDownOutside={onPointerDownOutside}
-          onKeyDown={onContentKeyDown}
           className={`fixed top-0 bottom-0 right-0 z-30 bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col ${
             expanded ? "w-[90vw] md:w-[85vw] max-w-none" : "w-full md:w-[640px] md:max-w-[90vw]"
           }`}
@@ -962,6 +1064,7 @@ export function MemoryInspector({
                         <Button type="secondary" htmlType="button" onClick={() => setEditing(false)}>
                           Cancel
                         </Button>
+                        {/* The edit closes when its reason appears; onSaveEdit guards the render before. */}
                         <Button type="primary" htmlType="button" iconLeft="disk" onClick={onSaveEdit}>
                           Save new version
                         </Button>
@@ -989,20 +1092,22 @@ export function MemoryInspector({
                         </dd>
                       </>
                     )}
-                    {detail.status === "superseded" && canRestore ? (
+                    {detail.status === "superseded" ? (
                       <>
                         <dt className="text-text-muted">Status</dt>
                         <dd className="text-text flex items-center gap-2 flex-wrap">
                           {statusLabel(detail.status)}
-                          <Button
-                            type="secondary"
-                            htmlType="button"
-                            iconLeft="refresh"
-                            onClick={onRestore}
-                            disabled={restoring}
-                          >
-                            Restore
-                          </Button>
+                          <Unavailable reason={restoreReason}>
+                            <Button
+                              type="secondary"
+                              htmlType="button"
+                              iconLeft="refresh"
+                              onClick={onRestore}
+                              disabled={restoring}
+                            >
+                              Restore
+                            </Button>
+                          </Unavailable>
                         </dd>
                       </>
                     ) : (
@@ -1021,7 +1126,11 @@ export function MemoryInspector({
                           "Never expires"
                         )
                       ) : (
-                        <ExpiryEditor expiresAt={detail.expires_at ?? null} onChange={onChangeExpiry} />
+                        <ExpiryEditor
+                          expiresAt={detail.expires_at ?? null}
+                          onChange={onChangeExpiry}
+                          unavailable={setReason}
+                        />
                       )}
                     </dd>
                     <TipRow label="Last recalled" tip={RECALLED_TIP} value={recalledLabel(detail)} />
@@ -1065,12 +1174,14 @@ export function MemoryInspector({
                         label={t}
                         tip={`Show all memories tagged ${t}`}
                         onClick={() => searchByTag(t)}
-                        onRemove={() => onRemoveTag(t)}
+                        onRemove={setReason ? undefined : () => onRemoveTag(t)}
                       />
                     ))}
                     <span className="w-36">
                       <TextField
                         aria-label="Add a tag"
+                        disabled={!!setReason}
+                        aria-describedby={setReason ? tagsWhyId : undefined}
                         placeholder={(detail.tags || []).length > 0 ? "Add tag" : "Add tags…"}
                         list="loom-inspector-tags"
                         value={tagDraft}
@@ -1098,6 +1209,13 @@ export function MemoryInspector({
                         }}
                       />
                     </span>
+                    {/* A chip has no unavailable state and a disabled field shows no tooltip, so a
+                        role that cannot set tags reads why below them. */}
+                    {setReason && (
+                      <p id={tagsWhyId} className="m-0 basis-full text-xs text-text-muted">
+                        {setReason}
+                      </p>
+                    )}
                     {namespaceTags.length > 0 && (
                       <datalist id="loom-inspector-tags">
                         {namespaceTags
@@ -1319,15 +1437,17 @@ export function MemoryInspector({
                                   prevLabel={`${label} (${writtenAt})`}
                                   nextLabel={`v${history.length} (current)`}
                                 />
-                                {canRedact && !detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
-                                  <Button
-                                    type="danger"
-                                    htmlType="button"
-                                    className="mt-2"
-                                    onClick={() => setRedacting({ entry: h, label })}
-                                  >
-                                    Redact {label}
-                                  </Button>
+                                {!detail?.lock_mode && !h.redacted_at && h.memory_id && h.version_text && (
+                                  <Unavailable reason={redactReason}>
+                                    <Button
+                                      type="danger"
+                                      htmlType="button"
+                                      className="mt-2"
+                                      onClick={() => setRedacting({ entry: h, label })}
+                                    >
+                                      Redact {label}
+                                    </Button>
+                                  </Unavailable>
                                 )}
                               </div>
                             )}
@@ -1374,12 +1494,28 @@ export function MemoryInspector({
           {/* The actions are the drawer's last row, below the scrolling body, never over it:
               they wrap to two rows on a narrow drawer. */}
           {detail && detail.found && (
-            <footer className="px-5 py-3 border-t border-border bg-surface flex items-center gap-2 shrink-0">
+            <footer className="px-5 py-3 border-t border-border bg-surface flex flex-wrap items-center gap-2 shrink-0">
               {!editing && !renaming && !valueLocked && (
-                <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
-                  Edit
-                </Button>
+                <Unavailable reason={setReason}>
+                  <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={onStartEdit}>
+                    Edit
+                  </Button>
+                </Unavailable>
               )}
+              {/* Asking about a memory does not depend on editing it: it stays in view while
+                  a form is open, unavailable until the form is saved or cancelled. */}
+              <AskAboutThis
+                what="memory"
+                item={{
+                  chip: `key ${memoryKey}`,
+                  line: memoryLine(memoryKey, detail.agent, identity),
+                }}
+                reason={formOpen ? "Save or cancel the edit first." : null}
+                leave={() => {
+                  leaving.current = true;
+                  onClose();
+                }}
+              />
               <Dropdown modal={false}>
                 <MenuTrigger>
                   <IconButton icon="dots-horizontal" label="More actions" tooltip="More" />
@@ -1397,88 +1533,18 @@ export function MemoryInspector({
                     menuHandsOff.current = false;
                   }}
                 >
-                  {canTogglePin && (
-                    <Dropdown.Item onSelect={onPin}>
-                      <MenuLabel icon={detail.pinned ? "unpin" : "pin"}>{detail.pinned ? "Unpin" : "Pin"}</MenuLabel>
-                    </Dropdown.Item>
-                  )}
-                  <Dropdown.Item onSelect={onVerify}>
-                    <MenuLabel
-                      icon={detail.verification === "stale" ? "warning" : verified ? "check-in-circle" : "secure"}
+                  {moreItems.map((item) => (
+                    <GatedItem
+                      key={item.label}
+                      danger={item.danger}
+                      reason={item.reason ?? null}
+                      describedBy={item.reason ? moreReasons.idOf(item.reason) : undefined}
+                      onSelect={item.onSelect}
                     >
-                      {detail.verification === "stale" ? "Re-verify" : verified ? "Remove verification" : "Verify"}
-                    </MenuLabel>
-                  </Dropdown.Item>
-                  <Dropdown.Item
-                    onSelect={() => {
-                      menuHandsOff.current = true;
-                      setCopyOpen(true);
-                    }}
-                  >
-                    <MenuLabel icon="folder-open">Copy to…</MenuLabel>
-                  </Dropdown.Item>
-                  {detail.lock_mode
-                    ? canUnlock && (
-                        <Dropdown.Item onSelect={onUnlock}>
-                          <MenuLabel icon="lock">Unlock</MenuLabel>
-                        </Dropdown.Item>
-                      )
-                    : canLock && (
-                        <Dropdown.Item
-                          onSelect={() => {
-                            menuHandsOff.current = true;
-                            setReasonDialog("lock");
-                          }}
-                        >
-                          <MenuLabel icon="lock">Lock…</MenuLabel>
-                        </Dropdown.Item>
-                      )}
-                  {canShare && shareable && (
-                    <Dropdown.Item onSelect={() => void onShare()}>
-                      <MenuLabel icon="users">Share with every agent</MenuLabel>
-                    </Dropdown.Item>
-                  )}
-                  {canUnshare && (
-                    <Dropdown.Item onSelect={() => void onUnshare()}>
-                      <MenuLabel icon="user">Stop sharing</MenuLabel>
-                    </Dropdown.Item>
-                  )}
-                  {canMove && !editing && !valueLocked && (
-                    <Dropdown.Item
-                      onSelect={() => {
-                        menuHandsOff.current = true;
-                        formSession.current += 1;
-                        setRenameSession(formSession.current);
-                        setRenaming(true);
-                      }}
-                    >
-                      <MenuLabel icon="arrow-right">Rename</MenuLabel>
-                    </Dropdown.Item>
-                  )}
-                  <Dropdown.Item onSelect={onCopyAll}>
-                    <MenuLabel icon="copy">Copy</MenuLabel>
-                  </Dropdown.Item>
-                  {canJudge && (
-                    <>
-                      <Dropdown.Item onSelect={() => void onOutcome("positive")}>
-                        <MenuLabel icon="check">This helped</MenuLabel>
-                      </Dropdown.Item>
-                      <Dropdown.Item onSelect={() => void onOutcome("negative")}>
-                        <MenuLabel icon="warning">This misled</MenuLabel>
-                      </Dropdown.Item>
-                    </>
-                  )}
-                  {canReject && !detail.lock_mode && (
-                    <Dropdown.Item
-                      type="danger"
-                      onSelect={() => {
-                        menuHandsOff.current = true;
-                        setReasonDialog("reject");
-                      }}
-                    >
-                      <MenuLabel icon="cross">Mark as wrong…</MenuLabel>
-                    </Dropdown.Item>
-                  )}
+                      <MenuLabel icon={item.icon}>{item.label}</MenuLabel>
+                    </GatedItem>
+                  ))}
+                  {moreReasons.lines}
                 </Dropdown.Content>
               </Dropdown>
               {/* Verify sits in More; who attested stays in view. */}
@@ -1500,9 +1566,11 @@ export function MemoryInspector({
               )}
               <div className="flex-1" />
               {!deleteLocked && (
-                <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
-                  Delete
-                </Button>
+                <Unavailable reason={deleteReason}>
+                  <Button type="danger" htmlType="button" iconLeft="trash" onClick={onDelete}>
+                    Delete
+                  </Button>
+                </Unavailable>
               )}
             </footer>
           )}
@@ -1983,23 +2051,41 @@ const EXPIRY_PRESETS: Array<{ label: string; ttl: number | null }> = [
 function ExpiryEditor({
   expiresAt,
   onChange,
+  unavailable,
 }: {
   expiresAt: string | null;
   onChange: (ttlSeconds: number | null) => void;
+  /** Why the caller cannot change it: Change stays in view, unavailable, with no menu. */
+  unavailable: string | null;
 }) {
   const current = expiresAt ? `Expires ${relativeTime(expiresAt)}` : "Never expires";
   const expiry = parseChTime(expiresAt);
   const isExpired = !!expiry && expiry.getTime() < Date.now();
+  const [open, setOpen] = useState(false);
+  // A reason that appears while the menu is open closes it, and it stays shut when one clears.
+  useEffect(() => {
+    if (unavailable) setOpen(false);
+  }, [unavailable]);
 
   return (
     <div className="inline-flex items-center gap-2">
       <span className={isExpired ? "text-danger" : "text-text"}>{isExpired ? "Expired" : current}</span>
-      <Dropdown modal={false}>
-        <MenuTrigger>
-          <Button type="empty" htmlType="button" iconRight="chevron-down">
-            Change
-          </Button>
-        </MenuTrigger>
+      {/* One tree whether or not a reason applies, so Change keeps its focus as one comes
+          and goes; while unavailable the menu does not open. */}
+      <Dropdown modal={false} open={open} onOpenChange={(o) => setOpen(o && !unavailable)}>
+        <Unavailable reason={unavailable}>
+          <MenuTrigger>
+            {/* Its own variant's disabled look: the trigger it sits in carries none. */}
+            <Button
+              type="empty"
+              htmlType="button"
+              iconRight="chevron-down"
+              {...(unavailable ? { "data-unavailable": "empty" } : {})}
+            >
+              Change
+            </Button>
+          </MenuTrigger>
+        </Unavailable>
         <Dropdown.Content align="end">
           {EXPIRY_PRESETS.map((opt) => (
             <Dropdown.Item key={opt.label} onSelect={() => onChange(opt.ttl)}>
@@ -2056,6 +2142,9 @@ function RenameForm({
   const redirect = keepRedirect || mustRedirect;
   const [preview, setPreview] = useState<MemoryMoveResult | null>(null);
   const [busy, setBusy] = useState<"preview" | "rename" | null>(null);
+  // A move half done (the new key written, the old one not moved yet): only the same move
+  // finishes it, so the key and the redirect hold until it does.
+  const [halfDone, setHalfDone] = useState(false);
   const target = toKey.trim();
   const valid = target.length > 0 && target !== fromKey;
 
@@ -2066,7 +2155,13 @@ function RenameForm({
       if (dryRun) setPreview(r);
       else onRenamed(r);
     } catch (e) {
-      toast(`${dryRun ? "Preview" : "Rename"} failed: ${humanizeError(e)}`, "error");
+      if (dryRun) toastError("Preview failed", e, { read: true });
+      // The new key is written, but the server answers before it moves the old one: a second
+      // Rename finishes the move, so the form stays open and says so.
+      else if (isPublicationPending(e)) {
+        setHalfDone(true);
+        toastCommitted(e, `${target} is written, but ${fromKey} is not moved yet. Rename again to finish the move.`);
+      } else toastError("Rename failed", e);
     } finally {
       setBusy(null);
     }
@@ -2084,6 +2179,7 @@ function RenameForm({
       <TextField
         label="New key"
         value={toKey}
+        readOnly={halfDone}
         onChange={(v) => {
           setToKey(v);
           setPreview(null);
@@ -2100,7 +2196,7 @@ function RenameForm({
       <Checkbox
         label="Keep old key readable (redirect)"
         checked={redirect}
-        disabled={mustRedirect}
+        disabled={mustRedirect || halfDone}
         onCheckedChange={(c) => {
           setKeepRedirect(c === true);
           setPreview(null);
@@ -2230,6 +2326,15 @@ function LifecycleBadge({ status, pinned }: { status?: string; pinned: boolean }
   );
 }
 
+/** One More-menu item: `reason` is why the caller's role cannot use it, if it cannot. */
+interface MoreItem {
+  label: string;
+  icon: IconName;
+  onSelect: () => void;
+  reason?: string | null;
+  danger?: boolean;
+}
+
 /** A menu item's icon and label. Not Dropdown.Item's `icon`: Click UI names that svg
  *  after the icon, so the item's spoken name would carry it (as in layout/Header.tsx). */
 function MenuLabel({ icon, children }: { icon: IconName; children: React.ReactNode }) {
@@ -2345,8 +2450,8 @@ function EntitySummary({
   onInspect: (key: string) => void;
   onWalk: () => void;
 }) {
-  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | "failed">(null);
-  const [neighbours, setNeighbours] = useState<string[] | null | "failed">(null);
+  const [mentions, setMentions] = useState<{ keys: string[]; capped: boolean } | null | { failed: string }>(null);
+  const [neighbours, setNeighbours] = useState<string[] | null | { failed: string }>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   // The focus moves to the first link once the mentions are in, unless the person has
   // already moved it.
@@ -2365,16 +2470,16 @@ function EntitySummary({
           .map((row) => row.memory_key);
         setMentions({ keys, capped: rows.length >= MENTION_READ });
       })
-      .catch(() => {
+      .catch((e: unknown) => {
         // A failed read says so: "mentioned only in this memory" would be a claim.
-        if (live) setMentions("failed");
+        if (live) setMentions({ failed: errorLine(e, { read: true }) });
       });
     relatedFacts({ org: identity.org, namespace: identity.namespace }, want, { top_k: POPOVER_LIST })
       .then((r) => {
         if (live) setNeighbours((r.related || []).map((n) => n.entity).slice(0, POPOVER_LIST));
       })
-      .catch(() => {
-        if (live) setNeighbours("failed");
+      .catch((e: unknown) => {
+        if (live) setNeighbours({ failed: errorLine(e, { read: true }) });
       });
     return () => {
       live = false;
@@ -2382,7 +2487,7 @@ function EntitySummary({
   }, [entity, identity, readMentions]);
 
   // This memory mentions it too.
-  const total = mentions && mentions !== "failed" ? mentions.keys.length + 1 : 0;
+  const total = mentions && "keys" in mentions ? mentions.keys.length + 1 : 0;
   return (
     <div ref={rootRef} tabIndex={-1} className="space-y-3 text-sm" data-entity-summary="" data-testid="entity-popover">
       <div>
@@ -2392,8 +2497,10 @@ function EntitySummary({
       <section aria-label="Memories that mention it">
         {mentions === null ? (
           <Loading layout="inline" label="Loading memories" />
-        ) : mentions === "failed" ? (
-          <div className="text-xs text-text-muted">Couldn't load the memories that mention it.</div>
+        ) : "failed" in mentions ? (
+          <div role="alert" className="text-xs text-text-muted">
+            Couldn't load the memories that mention it: {mentions.failed}
+          </div>
         ) : (
           <>
             <div className="text-xs text-text-muted mb-1">
@@ -2429,8 +2536,10 @@ function EntitySummary({
         <div className="text-xs text-text-muted mb-1">Neighbours</div>
         {neighbours === null ? (
           <Loading layout="inline" label="Loading neighbours" />
-        ) : neighbours === "failed" ? (
-          <div className="text-xs text-text-muted">Couldn't load neighbours.</div>
+        ) : "failed" in neighbours ? (
+          <div role="alert" className="text-xs text-text-muted">
+            Couldn't load neighbours: {neighbours.failed}
+          </div>
         ) : neighbours.length === 0 ? (
           <div className="text-xs text-text-muted">None recorded</div>
         ) : (

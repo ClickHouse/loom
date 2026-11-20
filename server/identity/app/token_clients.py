@@ -8,11 +8,12 @@ import re
 # stdio-only clients need the `mcp-remote` npx shim to reach a remote HTTP MCP server;
 # the rest speak remote MCP natively (URL + headers, with `type: "http"` for
 # claude-code / vscode). When a client gains native HTTP support, drop it from here.
-_STDIO_VIA_NPX = {"claude-desktop", "zed", "cline"}
+_STDIO_VIA_NPX = {"claude-desktop", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
-# (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS).
-_CODING_CLIENTS = {"claude-code", "codex", "cursor"}
+# (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
+CODING_CLIENTS = frozenset({"claude-code", "codex", "cursor", "gemini"})
+CODING_TOOLSET = "coding"
 
 
 # Where each client keeps its MCP config, per platform. `loom install` writes the same
@@ -54,9 +55,14 @@ CONFIG_PATHS = {
         "win32": "%USERPROFILE%\\.codeium\\windsurf\\mcp_config.json",
     },
     "zed": {
-        "darwin": "~/.config/zed/mcp.json",
-        "linux": "~/.config/zed/mcp.json",
-        "win32": "%APPDATA%\\Zed\\mcp.json",
+        "darwin": "~/.config/zed/settings.json",
+        "linux": "~/.config/zed/settings.json",
+        "win32": "%APPDATA%\\Zed\\settings.json",
+    },
+    "gemini": {
+        "darwin": "~/.gemini/settings.json",
+        "linux": "~/.gemini/settings.json",
+        "win32": "%USERPROFILE%\\.gemini\\settings.json",
     },
 }
 
@@ -78,12 +84,15 @@ def _coding_url(mcp_url: str) -> str:
     # toolset keeps it; otherwise toolset=coding is appended.
     if re.search(r"[?&]toolset=", mcp_url):
         return mcp_url
-    return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset=coding"
+    return f"{mcp_url}{'&' if '?' in mcp_url else '?'}toolset={CODING_TOOLSET}"
 
 
 def mcp_entry(client: str, url: str, minted: str) -> dict[str, object]:
     """The `loom` entry a client's MCP config holds for `url`: the `mcp-remote` bridge
-    for a stdio client, the bearer's env var for Codex, else the URL and its header."""
+    for a stdio client, the bearer's env var for Codex, `httpUrl` for Gemini CLI (its
+    streamable-HTTP key; `url` means SSE there), else the URL and its header."""
+    if client == "gemini":
+        return {"httpUrl": url, "headers": {"Authorization": f"Bearer {minted}"}}
     if client == "codex":
         # Codex reads the bearer from an env var; the token never sits in config.toml.
         return {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}
@@ -104,7 +113,7 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
     on the `coding` toolset), the file's own text when it is not JSON, the one-line
     registration command, the variables to export before the client starts, and the
     file's path per platform."""
-    url = _coding_url(mcp_url) if client in _CODING_CLIENTS else mcp_url
+    url = _coding_url(mcp_url) if client in CODING_CLIENTS else mcp_url
     toml, command, env = "", "", {}
     if client == "codex":
         toml = f'[mcp_servers.loom]\nurl = "{url}"\nbearer_token_env_var = "LOOM_API_KEY"\n'

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MemoryDetail, MyNamespaceEntry, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { axeViolations } from "../test/axe";
 import { MemoryInspector } from "./MemoryInspector";
 
 // The drawer's lifecycle actions write through the row's own identity, and each is
@@ -36,6 +37,7 @@ vi.mock("../api", async (importOriginal) => {
     getMemory: vi.fn(async () => LIVE),
     setMemory: vi.fn(),
     deleteMemory: vi.fn(async () => ({ tombstoned: true, version: 4 })),
+    verifyMemory: vi.fn(),
     memoryHistory: vi.fn(async () => ({ rows: [] })),
     memoryRelated: vi.fn(async () => ({ results: [] })),
     memoryLineage: vi.fn(async () => ({ steps: [] })),
@@ -76,7 +78,7 @@ vi.mock("../api/memoryLifecycle", () => ({
 import * as api from "../api";
 import * as lc from "../api/memoryLifecycle";
 import { confirmAction } from "./ConfirmDialog";
-import { toast } from "./Toast";
+import { toast, toastError } from "./Toast";
 
 const grant = (role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
   namespace: "team",
@@ -97,12 +99,15 @@ const person: WhoAmI = {
 const identity = { org: "dev", namespace: "team", agent: "loom-ui" };
 const row = { ...identity, agent: "claude-desktop", user_id: "alice", session_id: "sess-7" };
 
-async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE) {
+async function open(role: MyNamespaceEntry["role"], detail: MemoryDetail = LIVE, memoryKey = "coffee_pref") {
   vi.mocked(api.getMemory).mockResolvedValue(detail);
   useStore.setState({ authed: true, whoami: person, myNamespaces: [grant(role)], identity });
-  render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+  render(<MemoryInspector identity={identity} memoryKey={memoryKey} onClose={() => {}} onChanged={() => {}} />);
   await screen.findByText("oat milk, no sugar");
 }
+
+const W = "Needs writer on team. An admin of it can grant that.";
+const A = "Needs admin on team. An admin of it can grant that.";
 
 async function menu() {
   await userEvent.click(screen.getByRole("button", { name: "More actions" }));
@@ -120,27 +125,122 @@ afterEach(() => {
 });
 
 describe("MemoryInspector lifecycle actions", () => {
-  it("offers a viewer no lifecycle action", async () => {
+  it("shows a viewer each lifecycle action unavailable, with the role it needs, and sends nothing", async () => {
     await open("viewer");
-    const items = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    for (const label of [
-      "Lock…",
-      "Mark as wrong…",
-      "Share with every agent",
-      "Stop sharing",
-      "This helped",
-      "This misled",
-    ])
-      expect(items).not.toContain(label);
+    const list = await menu();
+    for (const [name, reason] of [
+      ["Pin", W],
+      ["Lock…", W],
+      ["Mark as wrong…", W],
+      ["Share with every agent", A],
+      ["Stop sharing", A],
+      ["This helped", W],
+      ["This misled", W],
+      ["Rename", W],
+    ]) {
+      const item = within(list).getByRole("menuitem", { name });
+      expect(item).toHaveAttribute("aria-disabled", "true");
+      expect(item).toHaveAccessibleDescription(reason);
+    }
+    // Each reason is said once, below the items.
+    expect(within(list).getAllByText(W)).toHaveLength(1);
+    await userEvent.click(within(list).getByRole("menuitem", { name: "Share with every agent" }));
+    await userEvent.click(within(list).getByRole("menuitem", { name: "This helped" }));
+    expect(confirmAction).not.toHaveBeenCalled();
+    expect(lc.shareMemory).not.toHaveBeenCalled();
+    expect(lc.recordMemoryOutcome).not.toHaveBeenCalled();
+    expect(await axeViolations(list)).toEqual([]);
     cleanup();
 
     await open("viewer", { ...LIVE, lock_mode: "read_only" });
-    const locked = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    expect(locked).not.toContain("Unlock");
+    const unlock = within(await menu()).getByRole("menuitem", { name: "Unlock" });
+    expect(unlock).toHaveAccessibleDescription(A);
+  });
+
+  it("shows a viewer Edit, Delete, its expiry and tags, Verify and Copy to unavailable, and sends nothing", async () => {
+    await open("viewer");
+    for (const name of ["Edit", "Delete", "Change"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toHaveAttribute("aria-disabled", "true");
+      expect(button).toHaveAccessibleDescription(W);
+      await userEvent.click(button);
+    }
+    // Change opens no menu; Edit opens no editor.
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
+    // A tag stays, with no remove; the field to add one is disabled and says why.
+    expect(screen.queryByRole("button", { name: "Remove coffee" })).toBeNull();
+    const add = screen.getByLabelText("Add a tag");
+    expect(add).toBeDisabled();
+    expect(add).toHaveAccessibleDescription(W);
+    const list = await menu();
+    const verify = within(list).getByRole("menuitem", { name: "Verify" });
+    expect(verify).toHaveAttribute("aria-disabled", "true");
+    expect(verify).toHaveAccessibleDescription(W);
+    await userEvent.click(verify);
+    expect(api.verifyMemory).not.toHaveBeenCalled();
+    // Copy to is checked against the token's flat claim: this one claims no writer.
+    const copy = within(list).getByRole("menuitem", { name: "Copy to…" });
+    expect(copy).toHaveAttribute("aria-disabled", "true");
+    expect(copy).toHaveAccessibleDescription("Copying needs a token with a writer claim or above.");
+    await userEvent.click(copy);
+    expect(screen.queryByRole("dialog", { name: /Copy/ })).toBeNull();
+    expect(api.setMemory).not.toHaveBeenCalled();
+    expect(api.deleteMemory).not.toHaveBeenCalled();
+    expect(confirmAction).not.toHaveBeenCalled();
+  });
+
+  it("leaves Copy to open to a viewer here whose token claims writer: it writes another namespace", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({
+      authed: true,
+      whoami: { ...person, roles: ["WRITER"] },
+      myNamespaces: [grant("viewer")],
+      identity,
+    });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    expect(within(await menu()).getByRole("menuitem", { name: "Copy to…" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("closes an open expiry menu when the role falls short, and keeps it shut when it is back", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Change" }));
+    expect(await screen.findByRole("menuitem", { name: "1 hour" })).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("viewer")] }));
+    await waitFor(() => expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull());
+    act(() => useStore.setState({ myNamespaces: [grant("writer")] }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Change" })).not.toHaveAttribute("aria-disabled"));
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
+  });
+
+  it("closes an open edit when the role falls short, and sends nothing", async () => {
+    await open("writer");
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    expect(await screen.findByRole("button", { name: "Save new version" })).toBeInTheDocument();
+    act(() => useStore.setState({ myNamespaces: [grant("viewer")] }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(api.setMemory).not.toHaveBeenCalled();
+  });
+
+  it("leaves a repository member's edit and delete to the server, whatever the role", async () => {
+    vi.mocked(api.getMemory).mockResolvedValue(LIVE);
+    useStore.setState({ authed: true, whoami: person, myNamespaces: [{ ...grant("viewer"), kind: "code" }], identity });
+    render(<MemoryInspector identity={identity} memoryKey="coffee_pref" onClose={() => {}} onChanged={() => {}} />);
+    await screen.findByText("oat milk, no sugar");
+    for (const name of ["Edit", "Delete"])
+      expect(screen.getByRole("button", { name })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("forgets a click on an unavailable Change: the menu stays shut once the role can change it", async () => {
+    await open("viewer");
+    const change = screen.getByRole("button", { name: "Change" });
+    expect(change).toHaveAttribute("data-unavailable", "empty");
+    await userEvent.click(change);
+    act(() => useStore.setState({ myNamespaces: [grant("writer")] }));
+    await waitFor(() => expect(change).not.toHaveAttribute("aria-disabled"));
+    expect(screen.getByRole("button", { name: "Change" })).toBe(change);
+    expect(screen.queryByRole("menuitem", { name: "1 hour" })).toBeNull();
   });
 
   it("writes an expiry and an edit to the row it shows, not under the drawer's identity", async () => {
@@ -201,17 +301,16 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("button", { name: "Delete" })).toBeNull();
   });
 
-  it("offers sharing to an admin only, and no share of a profile or a high memory", async () => {
+  it("lets an admin alone share, and offers no share of a profile or a high memory", async () => {
     await open("writer");
-    let items = within(await menu())
-      .getAllByRole("menuitem")
-      .map((i) => i.textContent);
-    expect(items).not.toContain("Share with every agent");
-    expect(items).not.toContain("Stop sharing");
+    const list = await menu();
+    for (const name of ["Share with every agent", "Stop sharing"])
+      expect(within(list).getByRole("menuitem", { name })).toHaveAccessibleDescription(A);
+    expect(within(list).getByRole("menuitem", { name: "Lock…" })).not.toHaveAttribute("aria-disabled");
     cleanup();
 
     await open("admin", { ...LIVE, sensitivity: "high" });
-    items = within(await menu())
+    const items = within(await menu())
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
     expect(items).not.toContain("Share with every agent");
@@ -225,13 +324,24 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(toast).toHaveBeenCalledWith("Couldn't record that", "error"));
   });
 
-  it("leaves the drawer's shortcuts alone while a reason dialog is open", async () => {
+  // The dashboard has no keyboard shortcuts: Edit, Delete, Pin and Save are buttons, and
+  // Escape cancels an edit.
+  it("takes no e, d, p or Ctrl/⌘ Enter; Escape cancels the edit", async () => {
     await open("writer");
-    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Lock…" }));
-    const dialog = await screen.findByRole("dialog", { name: "Lock memory" });
-    within(dialog).getByRole("button", { name: "Cancel" }).focus();
-    await userEvent.keyboard("d");
+    screen.getByRole("dialog").focus();
+    await userEvent.keyboard("edp");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
     expect(confirmAction).not.toHaveBeenCalled();
+    expect(api.deleteMemory).not.toHaveBeenCalled();
+    expect(api.setMemory).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Edit" }));
+    await screen.findByRole("button", { name: "Save new version" });
+    await userEvent.keyboard("{Control>}{Enter}{/Control}{Meta>}{Enter}{/Meta}");
+    expect(api.setMemory).not.toHaveBeenCalled();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("says a lock is gone when the unlock finds none", async () => {
@@ -245,7 +355,12 @@ describe("MemoryInspector lifecycle actions", () => {
     vi.mocked(lc.shareMemory).mockRejectedValueOnce(new Error("a shared memory already holds this key"));
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(toast).toHaveBeenCalledWith(expect.stringMatching(/^Share failed: /), "error"));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        "Share failed",
+        expect.objectContaining({ message: "a shared memory already holds this key" }),
+      ),
+    );
   });
 
   it("names the lock holder and when it lapses in the lock's tip", async () => {
@@ -373,14 +488,11 @@ describe("MemoryInspector lifecycle actions", () => {
     expect(screen.queryByRole("dialog", { name: "Lock memory" })).toBeNull();
   });
 
-  it("offers no Edit while a rename is open, by button or by key", async () => {
+  it("offers no Edit while a rename is open", async () => {
     await open("writer");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Rename" }));
     await screen.findByTestId("rename-form");
     expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
-    screen.getByRole("dialog").focus();
-    await userEvent.keyboard("e");
-    expect(screen.queryByRole("button", { name: "Save new version" })).toBeNull();
   });
 
   it("drops an open edit when the drawer moves to another key, without a lock toast", async () => {
@@ -426,10 +538,13 @@ describe("MemoryInspector lifecycle actions", () => {
     const locked = { ...LIVE, lock_mode: "read_only", lock_reason: "legal hold" };
     await open("writer", locked);
     expect(screen.getByRole("contentinfo")).toHaveTextContent("Read only");
-    const items = within(await menu())
+    const list = await menu();
+    const items = within(list)
       .getAllByRole("menuitem")
       .map((i) => i.textContent);
-    expect(items).not.toContain("Unlock");
+    expect(within(list).getByRole("menuitem", { name: "Unlock" })).toHaveAccessibleDescription(A);
+    await userEvent.click(within(list).getByRole("menuitem", { name: "Unlock" }));
+    expect(lc.unlockMemory).not.toHaveBeenCalled();
     expect(items).not.toContain("Lock…");
     // A locked memory is not retired from the drawer.
     expect(items).not.toContain("Mark as wrong…");
@@ -449,10 +564,45 @@ describe("MemoryInspector lifecycle actions", () => {
     await waitFor(() => expect(lc.rejectMemory).toHaveBeenCalledWith(row, "coffee_pref", "she switched to soy"));
   });
 
+  it.each([
+    ["is not the namespace-wide row", { agent: "bot", session_id: "s1" }],
+    ["is labelled medium", { agent: "-", user_id: "-", session_id: "-", sensitivity: "medium" }],
+    ["is not active", { agent: "-", user_id: "-", session_id: "-", status: "rejected" }],
+  ])("offers no share for a definition that %s", async (_why, over) => {
+    await open("admin", { ...LIVE, ...over, memory_type: "definition" }, "definition/arr");
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
+  it("offers no share for a definition outside a definition/ key", async () => {
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "definition" }, "arr_note");
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
+  it("offers no share for another type under a definition/ key", async () => {
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "semantic" }, "definition/arr");
+    expect(within(await menu()).queryByRole("menuitem", { name: "Share with every agent" })).toBeNull();
+  });
+
+  it("shares a definition with the hash of the text it shows", async () => {
+    const shared = { agent: "-", user_id: "-", session_id: "-" };
+    await open("admin", { ...LIVE, ...shared, memory_type: "definition", content_sha256: "abc123" }, "definition/arr");
+    await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
+    await waitFor(() =>
+      expect(lc.shareMemory).toHaveBeenCalledWith(
+        expect.objectContaining({ agent: "-", user_id: "-", session_id: "-" }),
+        "definition/arr",
+        "abc123",
+      ),
+    );
+  });
+
   it("shares with every agent and stops sharing, for an admin, each after a confirmation", async () => {
     await open("admin");
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Share with every agent" }));
-    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref"));
+    // Only a definition names the text it approves.
+    await waitFor(() => expect(lc.shareMemory).toHaveBeenCalledWith(row, "coffee_pref", undefined));
     await userEvent.click(within(await menu()).getByRole("menuitem", { name: "Stop sharing" }));
     await waitFor(() => expect(lc.unshareMemory).toHaveBeenCalledWith(identity, "coffee_pref"));
     expect(confirmAction).toHaveBeenCalledTimes(2);

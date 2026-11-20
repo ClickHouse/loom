@@ -1,13 +1,15 @@
 """The scope values of erasure requests as `loom.erasure_requests` holds them.
 
 Pure and I/O-free: the erasure plane validates and runs its sagas by them, and the
-knowledge plane's move of originals to the bucket and its document restore read the
-ledger by them.
+knowledge plane's move of originals to the bucket, its document restore and move, and a
+source's add read the ledger by them.
 """
 
 from __future__ import annotations
 
 import json
+
+from server.core.naming import is_mirror_name
 
 
 def parse_namespace_list(scope_value: str) -> list[str]:
@@ -24,6 +26,44 @@ def parse_namespace_list(scope_value: str) -> list[str]:
     for x in raw:
         seen.setdefault(x.strip(), None)
     return list(seen)
+
+
+def _scope_namespaces(scope_type: str, scope_value: str) -> list[str]:
+    """The namespaces a namespace scope names; none for any other scope, or a list it
+    cannot read (which the saga refuses as unreadable)."""
+    if scope_type == "namespace":
+        return [scope_value]
+    if scope_type == "namespace_list":
+        try:
+            return parse_namespace_list(scope_value)
+        except ValueError:
+            return []
+    return []
+
+
+def names_mirror(scope_type: str, scope_value: str) -> bool:
+    """Whether a namespace scope names a mirror."""
+    return any(is_mirror_name(ns) for ns in _scope_namespaces(scope_type, scope_value))
+
+
+def only_mirrors(scope_type: str, scope_value: str) -> bool:
+    """Whether a namespace scope names mirrors and nothing else: such a saga is a platform
+    admin's to see."""
+    names = _scope_namespaces(scope_type, scope_value)
+    return bool(names) and all(is_mirror_name(ns) for ns in names)
+
+
+def shown_scope(scope_type: str, scope_value: str) -> str:
+    """A saga's scope as it is answered or audited: a mirror's name as `-`, a namespace
+    list without its mirrors, every other scope as it is."""
+    if scope_type == "namespace":
+        return "-" if is_mirror_name(scope_value) else scope_value
+    names = _scope_namespaces(scope_type, scope_value)
+    kept = [ns for ns in names if not is_mirror_name(ns)]
+    if kept == names:
+        return scope_value
+    parsed = json.loads(scope_value)
+    return json.dumps({**parsed, "namespaces": kept} if isinstance(parsed, dict) else kept)
 
 
 def names_namespace(scope_type: str, scope_value: str, namespace: str) -> bool | None:
@@ -43,3 +83,36 @@ def may_cover(scope_type: str, scope_value: str, namespace: str) -> bool:
     """Whether an erasure of this scope may reach rows of `namespace`. A user scope always
     may (a caller narrows those by writer); an unreadable list or unknown scope does too."""
     return names_namespace(scope_type, scope_value, namespace) is not False
+
+
+def _scope_flag(scope_value: str, key: str, default: bool) -> bool:
+    """A flag as stored in a `namespace_list` scope_value object, so a resumed
+    saga (the recovery worker re-reads the ledger row) keeps the requester's
+    choice; `default` for a bare array or a missing key."""
+    try:
+        parsed = json.loads(scope_value or "")
+    except json.JSONDecodeError:
+        return default
+    if isinstance(parsed, dict) and key in parsed:
+        return bool(parsed[key])
+    return default
+
+
+def parse_external_flag(scope_value: str, default: bool = True) -> bool:
+    return _scope_flag(scope_value, "external", default)
+
+
+def parse_purge_flag(scope_value: str, default: bool = False) -> bool:
+    return _scope_flag(scope_value, "purge", default)
+
+
+def applied_purge(scope_type: str, scope_value: str, requested: bool) -> bool:
+    """Whether a saga of this scope deletes rather than tombstones: a user's as requested,
+    a namespace list's from its scope (`requested` when the scope does not say), a
+    single namespace's never. A scope that holds a mirror is purged whatever this says
+    (`saga_steps.erased_scope`)."""
+    if scope_type == "user_id":
+        return requested
+    if scope_type == "namespace_list":
+        return parse_purge_flag(scope_value, default=requested)
+    return False

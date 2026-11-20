@@ -19,10 +19,13 @@ reads the file and honours the update switch.
 | `live_settings.json`       | `test_live_settings.py`             | The settings that take a runtime override (marked `LIVE`)                                                                    | Sorted names                                                                                                 | `LOOM_UPDATE_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_live_settings.py`                   |
 | `settings_defaults.json`   | `test_settings_defaults.py`         | Each non-secret setting's default as first pinned; `server/settings/_history.py` replays the changes since                   | JSON values; update adds and drops names, never rewrites a pinned default                                    | `LOOM_UPDATE_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_settings_defaults.py`               |
 | `sdk_search_payloads.json` | `test_sdk_search_payload_golden.py` | The `memory.search` request body for each kwarg of `search()` on its own, plus the paired knobs                              | Fixed datetimes; compared as parsed JSON                                                                     | `LOOM_UPDATE_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_sdk_search_payload_golden.py`       |
+| `mentor_planes.json`       | `test_mentor_planes.py`             | The plane names `mentor.brief` reports, each of which the dashboard maps to a page or to none                                | Sorted names                                                                                                 | `LOOM_UPDATE_MENTOR_SNAPSHOT=1 .venv/bin/python -m pytest tests/unit/test_mentor_planes.py`            |
 
 Readers other than the owner: `test_code_compiler_tiers.py` reads the
 `all_on` profile of `worker_registry.json` to check that each compiler-tier
-card names workers the registry builds.
+card names workers the registry builds, and the dashboard's
+`frontend/src/views/assistant/cards/planes.test.ts` reads `mentor_planes.json`
+to check that each plane maps to a page or to none.
 
 Run each update command on its own file. `LOOM_UPDATE_SNAPSHOT=1` is shared
 by the two SDK snapshots, `live_settings.json` and `settings_defaults.json`, so

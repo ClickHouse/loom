@@ -890,17 +890,19 @@ async def test_a_merged_write_links_the_facts_it_names_to_the_row_it_merged_into
         params={"org": org},
     )
     assert links == [{"id": first.memory_id, "sha": first.content_sha256}]
-    # Merged into another user's row, the facts link to nothing.
+    # Another user's identical text gets its own row and facts.
     theirs = await handle_memory_set(write("place", [("user", "live_in", "rome")], user="u2"))
-    assert theirs.conflict_verdict == "merge" and "relations not linked" in theirs.next
+    assert theirs.conflict_verdict == "clear"
+    assert theirs.memory_id != first.memory_id
     dry = await handle_memory_set(write("place", [("user", "live_in", "rome")], "u2", dry_run=True))
-    assert dry.next == theirs.next
+    assert dry.conflict_verdict == "clear"
     links = await ch.query_all(
-        "SELECT count() AS n FROM loom.entity_triple_rows WHERE org = {org:String}"
+        "SELECT toString(memory_id) AS id, toString(content_sha256) AS sha"
+        " FROM loom.entity_triple_rows WHERE org = {org:String}"
         " AND object = 'rome' SETTINGS select_sequential_consistency = 1",
         params={"org": org},
     )
-    assert links == [{"n": 0}]
+    assert links == [{"id": theirs.memory_id, "sha": theirs.content_sha256}]
 
 
 async def test_a_row_restating_a_triple_while_the_follow_closes_it_keeps_it(
@@ -2444,9 +2446,13 @@ async def test_a_users_row_links_are_erased_after_their_memory_row_is_gone(ch, o
     theirs = {**link, "memory_id": str(uuid.uuid4()), "user_id": "u2"}
     await ch.insert("loom.entity_triple_rows", [link, theirs])
     # The census counts by the same predicate the step deletes by.
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_triple_rows"] == 1
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_triple_rows"
+    ] == 1
     await delete_graph_links_by_user(org, USER, ch=ch)
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_triple_rows"] == 0
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_triple_rows"
+    ] == 0
     rows = await ch.query_all(
         "SELECT user_id FROM loom.entity_triple_rows WHERE org = {org:String}"
         " SETTINGS select_sequential_consistency = 1",
@@ -2473,9 +2479,13 @@ async def test_a_users_edge_row_links_are_erased(ch, org) -> None:
     }
     theirs = {**link, "memory_id": str(uuid.uuid4()), "user_id": "u2"}
     await ch.insert("loom.entity_edge_rows", [link, theirs])
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 1
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_edge_rows"
+    ] == 1
     await delete_graph_links_by_user(org, USER, ch=ch)
-    assert (await residue_census(org, "user_id", USER, ch=ch))["loom.entity_edge_rows"] == 0
+    assert (await residue_census(org, "user_id", USER, ch=ch, spellings=[USER.lower()]))[
+        "loom.entity_edge_rows"
+    ] == 0
     rows = await ch.query_all(
         "SELECT user_id FROM loom.entity_edge_rows WHERE org = {org:String}"
         " SETTINGS select_sequential_consistency = 1",

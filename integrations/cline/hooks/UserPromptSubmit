@@ -1,0 +1,13 @@
+#!/bin/sh
+# Loom for Cline: copy this file into .clinerules/hooks/ and set LOOM_CLINE_DIR to a Loom
+# checkout's integrations/cline (README.md). It only keeps the task's first prompt for
+# PreToolUse, and never fails the task: every path answers {"cancel": false}.
+dir="${LOOM_CLINE_DIR:-}"
+if [ -n "$dir" ] && [ -f "$dir/loom-cline.mjs" ]; then
+  out=$(sh "$dir/../claude-code-plugin/bin/loom-node" "$dir/loom-cline.mjs" UserPromptSubmit 2>/dev/null) && [ -n "$out" ] && {
+    printf '%s\n' "$out"
+    exit 0
+  }
+fi
+echo '{"cancel": false}'
+exit 0

@@ -5,6 +5,7 @@
  */
 import { describe, expectTypeOf, it } from "vitest";
 import type { Agent, Body } from "./agent.js";
+import type { AssistantEvent, AssistantSupport } from "./assistant.js";
 import type { GroupClient, LoomClient, LoomClientOptions, OpInput, OpOutput } from "./client.js";
 import type { MemoryGetOutput, MemorySearchInput, MemorySearchOutput, OpName, OpSpec } from "./generated/ops.js";
 import type { CallResult, RetryOverride } from "./index.js";
@@ -82,10 +83,36 @@ describe("Agent", () => {
     expectTypeOf(toolDefinitions("anthropic")).toEqualTypeOf<AnthropicToolDefinition[]>();
     expectTypeOf(toolDefinitions("openai")).toEqualTypeOf<OpenAIToolDefinition[]>();
     expectTypeOf(toolDefinitions()).toEqualTypeOf<
-      ToolSpec<"loom_remember" | "loom_recall" | "loom_ask" | "loom_offload" | "loom_fetch" | "loom_note">[]
+      ToolSpec<
+        | "loom_remember"
+        | "loom_recall"
+        | "loom_ask"
+        | "loom_offload"
+        | "loom_fetch"
+        | "loom_note"
+        | "loom_code_lookup"
+        | "loom_update"
+      >[]
     >();
     expectTypeOf(agent.tools().definitions("openai")).toEqualTypeOf<OpenAIToolDefinition[]>();
-    // @ts-expect-error not one of the six tools
+    expectTypeOf(
+      agent
+        .tools({}, { codeNamespace: "code-repo", only: ["loom_code_lookup"] })
+        .execute("loom_code_lookup", { kind: "symbol", target: "pkg.fn" }),
+    ).resolves.toEqualTypeOf<string>();
+    expectTypeOf(
+      agent.tools({ userId: "user" }, { only: ["loom_update"] }).execute("loom_update", {
+        memory_key: "project/convention",
+        value: "Corrected fact",
+      }),
+    ).resolves.toEqualTypeOf<string>();
+    // @ts-expect-error not a declared tool
     agent.tools({}, { only: ["loom_forget"] });
+  });
+});
+
+describe("assistant", () => {
+  it("an answer's support is AssistantSupport", () => {
+    expectTypeOf<Extract<AssistantEvent, { type: "answer" }>["answer"]["support"]>().toEqualTypeOf<AssistantSupport>();
   });
 });

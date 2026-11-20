@@ -109,9 +109,23 @@ remote, and any host can rebuild the mirror from it.
   `LOOM_CODE_REPOS_ROOT`: mirrors, `checkout-*` trees and mirror lock files no active
   entry names (restricted entries included) and half-done clones. It sweeps nothing
   when the registry cannot be read.
-- **Sandbox.** A host without the repository-job sandbox never clones or fetches a
-  viewer-added entry with a network remote, on the read path as in the worker
-  (`compiler_tier.unsandboxed_skip`).
+- **Sandbox.** A host without the repository-job sandbox clones or fetches a
+  self-registered entry with a network remote only where
+  `LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` is set, on the read path as in the worker
+  (`compiler_tier.unsandboxed_skip`). The entry's compiler tiers are skipped there
+  either way.
+- **A forward proxy.** With `LOOM_CODE_GIT_PROXY_URL`, every clone and fetch above
+  (the pass's, the host loop's, a read's), the `ls-remote` before an add and a
+  checkout's submodule update connect through the operator's proxy as the entry's
+  `git_proxy_identity`, else the deployment's default (`code/app/index/git_proxy.py`).
+  The proxy and its password are added where a repository job starts as a plain
+  process (`sandbox.run_job`), to the environment of that one git process: not to
+  `auth_env`, whose git settings a build harness copies, and not to a sandboxed job,
+  where repository code runs. A job that cannot go through the proxy is refused with a
+  fixed reason, so git never connects directly; a host that runs the sandbox, whose
+  egress proxy is not chained through this one, refuses network git while the setting
+  is set. A host round fetches a shared mirror as its first entry
+  ([git through a forward proxy](../operations/code-index-operations.md#git-through-a-forward-proxy)).
 - **Merges the remote lost.** A ledger merge the remote no longer serves ("not our
   ref" in two calls, so one transient refusal does not count) is recorded in the
   mirror (`loom-unpinned-merges`), never asked for again, and
@@ -250,6 +264,12 @@ count leaves out. Constructor calls (`T x(...)`, `new T`, `make_unique<T>`) are 
 `go_receivers.py`) bind member calls. Edge kinds are `calls`, `includes`, `inherits`,
 `overrides`, `uses_type`, `fixture_use`, `reads` and `writes`.
 
+`code.callers` and `code.impact` expand a method to its base declarations through
+indexed `overrides` edges or a bounded `inherits` walk from its class. A matching
+method name or signature on an unrelated class does not establish virtual dispatch.
+Missing relationships leave the graph answer a lower bound, with the missing-dispatch
+cause disclosed when the compiler tier cannot rule it out.
+
 **Dependents.** Edges resolve against a repository-wide name table, so a commit that
 adds, removes or re-signs a symbol changes the edges of untouched files that name it.
 `code/app/index/dependents.py` re-extracts only those files' edges at the same
@@ -271,6 +291,14 @@ chunks have vectors, `code.search` answers from its lexical legs and says so.
 | `code_summaries`                          | `code_summary` (weekly, off by default)            | File and module cards for `code.map`, gated by an inputs hash, with PageRank from `code_graph_stats`. |
 | second-model tables, `code_chunks_prefix` | `LOOM_CODE_VECTOR_TABLES`; `loom code vector-twin` | The vector leg shortlists on the smaller twin and rescores on served vectors (`prefix_twin.py`).      |
 | `code_answers`                            | `code.ask`                                         | Answer cache keyed by question embedding; served only if every cited file's hash is current.          |
+
+The answer-cache policy also keys synthesis prompts, output budget and the prose and
+chunk-kind ranking settings. Failed retrieval legs, interrupted or refused synthesis,
+and unavailable synthesis never produce positive or negative cache entries. A returned
+answer discloses these limits with `partial`, `partial_reason` and `note`; `coverage`
+is a model self-assessment rather than verified correctness. See
+[repository questions](../guides/repository-questions.md) for calibration and mixed
+source/documentation retrieval.
 
 Bulk passes leave extra copies per key until a merge. `code/app/index/compaction.py`
 runs `OPTIMIZE … FINAL` on the twin tables after a bulk pass. `code_chunks` is compacted
@@ -443,13 +471,36 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Query patterns
 
-| Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                              |
-| -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (exact scan or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
-| `code.grep`                      | `code/store/index/grep.py`    | The 3-gram index narrows granules; `position()` or `match()` decides; each hit joins its enclosing unit. `mode=presence` spans up to eight branch namespaces.                                                                                                                                                                                                                    |
-| `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                         |
-| `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                 |
-| `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                        |
+| Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
+| `code.grep`                      | `code/store/index/grep.py`    | The 3-gram index narrows granules; `position()` or `match()` decides; each hit joins its enclosing unit. `mode=presence` spans up to eight branch namespaces.                                                                                                                                                                                                                                      |
+| `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                                           |
+| `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
+| `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
+
+### Symbol bodies
+
+A definition body covers every declared source line without conflicting overlaps,
+missing lines or skeleton substitutions. Doc-comment copies and continuation headers
+are removed from chunk prefixes when placing the retained lines. The read uses live
+rows under one served embedding label, scoped to one organization, namespace, path and
+line span, with a bounded row count. An unchanged chunk's introduction commit may
+differ from its neighbors; it does not establish the current file revision. This read
+follows live-row publication and does not provide a snapshot across an indexing pass.
+A compiler declaration alone does not establish a larger function body.
+Parser coordinates, source chunking and oversized-piece boundaries count LF lines;
+other Unicode separators inside a string remain source text. A retained prefix ending
+in an ambiguous non-LF separator cannot establish a complete physical line.
+Hydration and indexing share provider-free label canonicalization, including explicit
+local and fake provider overrides. Hydration constructs no embedder, and missing
+provider credentials do not select a fake label's source chunks.
+
+If the retained span cannot be established, exceeds 12,000 characters or needs more
+than 400 chunk rows, the definition carries `elided: true`, `granularity: card` and a
+ranged `next` read. HTTP and MCP preserve that omission. Enclosing-body lookups omit
+unavailable text, and verification cannot use an unread body as negative evidence.
+No source text is fetched from a network or fabricated to fill a gap.
 
 ## Invariants
 
@@ -464,6 +515,8 @@ Every column is in the generated [schema reference](../reference/schema.md).
 - The server never parses SCIP protobuf.
 - Per-commit coverage is an ancestry check on the mirror, never a watermark.
 - Retrieval filters `embedding_dim > 0`; a stub chunk is searchable lexically only.
+- With `LOOM_CODE_GIT_PROXY_URL` set, git reaches a network remote through that proxy
+  or not at all, and the proxy's password is in the environment of that git process only.
 
 ## Source entry points
 
@@ -479,6 +532,7 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `server/code/workers/scip_*.py`, `scripts/scip_harness/`                                                                           | Compiler tier.                                                                                |
 | `server/code/workers/embed_recovery.py`, `summary.py`, `graph_stats.py`, `pr_history.py`, `backport_gaps.py`, `coverage_notify.py` | Background workers.                                                                           |
 | `server/code/domain/index/repos.py`; `server/code/app/index/repo_registry.py`, `registry.py`, `retire.py`, `gitrepo.py`            | Entries, mirrors, namespaces.                                                                 |
+| `server/code/app/index/sandbox.py`, `egress.py`, `git_proxy.py`                                                                    | Repository jobs and how they reach the network.                                               |
 | `server/code/app/search/`, `server/code/store/index/`                                                                              | Reads and writes.                                                                             |
 
 ## Related

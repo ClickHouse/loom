@@ -48,7 +48,9 @@ def ch(monkeypatch: pytest.MonkeyPatch) -> _CH:
 
     monkeypatch.setattr(settings, "jwt_secret", "r" * 40)
     fake = _CH()
-    monkeypatch.setattr(signing_keys, "run_connected", lambda run: asyncio.run(run(fake)))
+    monkeypatch.setattr(
+        signing_keys, "run_connected", lambda run, **_declared: asyncio.run(run(fake))
+    )
 
     class _Held:
         held = True

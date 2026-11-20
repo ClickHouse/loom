@@ -24,6 +24,7 @@ package.json and tsconfig for TypeScript; the lane corpus and
 from __future__ import annotations
 
 import configparser
+import functools
 import posixpath
 import re
 from collections.abc import Iterable
@@ -44,6 +45,10 @@ VENDOR_SEGMENTS: frozenset[str] = frozenset({
     "_vendor", "vendor", "_vendored", "vendored", "third_party", "third-party",
 })
 MAX_MANIFESTS = 200
+# a file can serve every entry point: each is a facet on it, so a manifest of 1 MiB of them
+# must not give every module hundreds of thousands
+# not a setting: it bounds what a crafted file costs, and changing it changes the stored rows
+MAX_ENTRY_POINTS = 10_000
 MAX_ROOTS = 64  # a tree of fixture packages (pip's tests/data) must not make every probe a scan
 
 _TABLE_RE = re.compile(r"^\s*+\[\s*+([^\]]*[^\]\s])\s*+\]\s*+(?:#.*)?$")
@@ -98,6 +103,17 @@ class Layout:
                 continue
             out.append(r)
         return tuple(out)
+
+    @functools.cached_property
+    def entry_points_by_stem(self) -> dict[str, list[tuple[int, EntryPoint]]]:
+        """(index, entry point) by its module's path stem (`a.b` -> `a/b`): a file finds
+        the entry points it serves by its own stems, not by every entry point's candidates."""
+        out: dict[str, list[tuple[int, EntryPoint]]] = {}
+        for i, ep in enumerate(self.entry_points):
+            module = ep.module.strip()
+            if module and not module.startswith("."):  # `_TARGET_RE` gives neither
+                out.setdefault(module.replace(".", "/"), []).append((i, ep))
+        return out
 
 
 def is_vendored(path: str) -> bool:
@@ -178,10 +194,23 @@ def _pyproject_roots(base: str, data: dict[str, Any]) -> list[str]:
     return out
 
 
+def _squeezed_names(text: str) -> str:
+    """Each line's text before its first `=` / `:` with its whitespace runs squeezed, indent
+    kept: configparser's option pattern rescans such a run from every character before it,
+    in one regex call that holds the GIL. No name or value read here holds a whitespace run."""
+    out: list[str] = []
+    for line in text.split("\n"):
+        cut = min((i for i in (line.find("="), line.find(":")) if i >= 0), default=len(line))
+        name = line[:cut].lstrip()
+        indent = line[: cut - len(name)]
+        out.append(indent + " ".join(name.split()) + line[cut:])
+    return "\n".join(out)
+
+
 def _ini(text: str) -> configparser.RawConfigParser | None:
     cp = configparser.RawConfigParser(strict=False, allow_no_value=True)
     try:
-        cp.read_string(text)
+        cp.read_string(_squeezed_names(text))
     except (configparser.Error, ValueError):
         return None
     return cp
@@ -239,11 +268,8 @@ def roots_from_manifest(path: str, text: str) -> list[str]:
         cp = _ini(text)
         if cp is not None and cp.has_option("pytest", "pythonpath"):
             out.extend(_join(base, p) for p in _as_list(cp.get("pytest", "pythonpath")))
-    seen: list[str] = []
-    for r in out:
-        if r not in seen and ".." not in r.split("/"):
-            seen.append(r)
-    return seen
+    # ordered and deduplicated by a dict: a list's `in` per root is quadratic
+    return list(dict.fromkeys(r for r in out if ".." not in r.split("/")))
 
 
 def conftest_roots(present: Iterable[str]) -> list[str]:
@@ -258,8 +284,7 @@ def conftest_roots(present: Iterable[str]) -> list[str]:
         d = _dir(p)
         if (f"{d}/__init__.py" if d else "__init__.py") in paths:
             continue
-        if d not in out:
-            out.append(d)
+        out.append(d)  # one conftest.py per directory: no duplicates
     return out
 
 
@@ -344,11 +369,17 @@ def _ini_entry_points(path: str, text: str, section: str) -> list[EntryPoint]:
 
 def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
     out: list[EntryPoint] = []
-    for m in _SETUP_EP_RE.finditer(text):
+    # Each search and line count goes on from the last list's end: from the top, or into a
+    # list already scanned, an unclosed list costs the rest of the file per match.
+    j, counted, line = 0, 0, 1
+    while (m := _SETUP_EP_RE.search(text, j)) is not None:
         group = m.group(1)
         depth, j = 1, m.end()
         while j < len(text) and depth:
-            depth += {"[": 1, "]": -1}.get(text[j], 0)
+            if text[j] == "[":
+                depth += 1
+            elif text[j] == "]":
+                depth -= 1
             j += 1
         for sm in _SETUP_STR_RE.finditer(text, m.end(), j):
             item = sm.group(1)
@@ -357,8 +388,9 @@ def _setup_py_entry_points(path: str, text: str) -> list[EntryPoint]:
             name, value = (s.strip() for s in item.split("=", 1))
             tgt = _target(value)
             if name and tgt:
-                out.append(EntryPoint(name, group, tgt[0], tgt[1], path,
-                                      text.count("\n", 0, sm.start()) + 1))
+                line += text.count("\n", counted, sm.start())
+                counted = sm.start()
+                out.append(EntryPoint(name, group, tgt[0], tgt[1], path, line))
     if not out and "[console_scripts]" in text:
         out = _ini_entry_points(path, text, "")
     return out
@@ -389,7 +421,7 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
     """The roots and entry points of a checkout from its manifests' texts
     ({path: text}) and its path set. A manifest under a vendored tree is a
     root for that tree's own files only (`Layout.roots_for`)."""
-    roots: list[str] = []
+    roots: dict[str, None] = {}  # ordered and deduplicated: a list's `in` per root is quadratic
     eps: list[EntryPoint] = []
     notes: dict[str, str] = {}
     # shallow manifests first: the repository's own before a fixture package's
@@ -400,14 +432,10 @@ def layout_from_texts(texts: dict[str, str], present: Iterable[str]) -> Layout:
         if not text.strip():
             notes[p] = "empty"
             continue
-        for r in roots_from_manifest(p, text):
-            if r not in roots:
-                roots.append(r)
-        eps.extend(entry_points_from_manifest(p, text))
-    for r in conftest_roots(present):
-        if r not in roots:
-            roots.append(r)
-    return Layout(tuple(roots[:MAX_ROOTS]), tuple(eps), tuple(manifests), notes)
+        roots.update(dict.fromkeys(roots_from_manifest(p, text)))
+        eps.extend(entry_points_from_manifest(p, text)[: MAX_ENTRY_POINTS - len(eps)])
+    roots.update(dict.fromkeys(conftest_roots(present)))
+    return Layout(tuple(roots)[:MAX_ROOTS], tuple(eps), tuple(manifests), notes)
 
 
 # ---------------------------------------------------------------------------
@@ -429,14 +457,25 @@ def module_entry_facets(pf: ParsedFile, layout: Layout | None, *, ordinal: int =
     attribute is not a module-level definition (0.8)."""
     if layout is None or not layout.entry_points or not pf.path.endswith(".py"):
         return []
-    from server.code.domain.extract.lang_python import import_candidates, module_scope
+    from server.code.domain.extract.lang_python import module_files, module_scope, roots_for
 
     scope = module_scope(pf.path)
     by_name = {s.qualified_name: s for s in pf.symbols}
+    # the entry points whose `import_candidates("", module, layout.roots)` hold this path:
+    # under each root it tries, the path is one of `module_files` of a stem
+    hits: dict[int, EntryPoint] = {}
+    for root in roots_for("", layout.roots):
+        prefix = f"{root}/" if root else ""
+        if not pf.path.startswith(prefix):
+            continue
+        rest = pf.path[len(prefix):]
+        for suffix in module_files(""):
+            if rest.endswith(suffix):
+                hits.update(layout.entry_points_by_stem.get(rest[: -len(suffix)], ()))
     out: list[Facet] = []
     seen: set[str] = set()
-    for ep in layout.entry_points:
-        if ep.name in seen or pf.path not in import_candidates("", ep.module, roots=layout.roots):
+    for _i, ep in sorted(hits.items()):
+        if ep.name in seen:
             continue
         seen.add(ep.name)
         sym = by_name.get(f"{scope}::{ep.attr}") if ep.attr else None

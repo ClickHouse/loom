@@ -11,7 +11,6 @@ not kept.
 
 from __future__ import annotations
 
-import hmac
 import json
 import logging
 import re
@@ -27,7 +26,7 @@ from fastapi.routing import APIRoute
 
 from server.auth import scim
 from server.auth.bearer import bearer_token
-from server.auth.jwt import TokenError
+from server.auth.jwt import AuthUnavailable, TokenError
 from server.auth.public_url import public_base_url
 from server.core.ch import set_query_tag
 from server.core.datetimes import as_aware_utc
@@ -42,7 +41,7 @@ _ERROR_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:Error"
 _CONFIG_SCHEMA = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
 MAX_RESULTS = 200
 LAST_INDEX = 2**32 - 1
-# A shorter bearer token is guessable: SCIM refuses to start with one.
+# Minimum configured token length; secure generation is still required.
 MIN_TOKEN_LENGTH = 32
 
 log = logging.getLogger(__name__)
@@ -72,10 +71,14 @@ async def _authorized(request: Request) -> None:
     if token is None:
         record_auth_refusal(None, transport="scim")
         raise ScimError(401, message)
-    # Every token is compared, so the time taken doesn't say which one matched.
-    presented = token.encode()
-    matches = [hmac.compare_digest(presented, t.encode()) for t in scim.tokens(settings.scim_token)]
-    if not any(matches):
+    try:
+        matched = scim.authorized(token)
+    except AuthUnavailable as e:
+        raise ScimError(503, "SCIM tokens cannot be checked yet; retry") from e
+    except TokenError as e:
+        record_auth_refusal(e, transport="scim")
+        raise ScimError(401, message) from None
+    if not matched:
         record_auth_refusal(TokenError(reason="invalid"), transport="scim")
         raise ScimError(401, message)
 
@@ -93,6 +96,12 @@ def _error_response(e: ScimError) -> JSONResponse:
     if e.status == 503:
         headers["Retry-After"] = "5"
     return _answer(body, e.status, **headers)
+
+
+def scim_error(status: int, detail: str) -> JSONResponse:
+    """An RFC 7644 error for a refusal made outside these routes (the cell's tenancy
+    middleware), in the shape an identity provider parses."""
+    return _error_response(ScimError(status, detail))
 
 
 class ScimRoute(APIRoute):
@@ -755,9 +764,16 @@ async def unknown(rest: str, request: Request) -> Response:
     raise ScimError(404, "this server serves only Users, Groups and ServiceProviderConfig")
 
 
-def scim_settings_problem(raw: str, login_provider: str, auth_required: bool) -> str:
+def scim_settings_problem(
+    raw: str,
+    login_provider: str,
+    auth_required: bool,
+    *,
+    cell_name: str = "",
+    first: tuple[bool, str] | None = None,
+) -> str:
     """Why SCIM, with the `LOOM_SCIM_TOKEN` value `raw`, cannot start, or ''
-    (SCIM off is fine): a guessable token, or sign-in that is not SSO or not
+    (SCIM off is fine): a short token, or sign-in that is not SSO or not
     required, where a deactivation would answer 200 and refuse nobody."""
     tokens = scim.tokens(raw)
     for token in tokens:
@@ -773,12 +789,24 @@ def scim_settings_problem(raw: str, login_provider: str, auth_required: bool) ->
         )
     if tokens and not auth_required:
         return "LOOM_SCIM_TOKEN is set but auth is off: no sign-in is checked, so none is refused"
-    return ""
+    from server.core.scim_tokens import cell_policy_problem
+
+    # Unknown first identity keeps boot probe-capable; the existing cell gate holds it.
+    return cell_policy_problem(raw, cell_name, first) or ""
 
 
-def require_scim_settings(raw: str, login_provider: str, auth_required: bool) -> None:
+def require_scim_settings(
+    raw: str,
+    login_provider: str,
+    auth_required: bool,
+    *,
+    cell_name: str = "",
+    first: tuple[bool, str] | None = None,
+) -> None:
     """Refuse to start with SCIM that could not deactivate anyone (run in the lifespan)."""
-    if problem := scim_settings_problem(raw, login_provider, auth_required):
+    if problem := scim_settings_problem(
+        raw, login_provider, auth_required, cell_name=cell_name, first=first
+    ):
         raise RuntimeError(f"refusing to start: {problem}")
 
 

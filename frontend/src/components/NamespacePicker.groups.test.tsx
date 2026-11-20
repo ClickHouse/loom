@@ -87,7 +87,7 @@ describe("NamespacePicker groups", () => {
     const dialog = await openPicker();
     expect(within(dialog).getByRole("button", { name: /\bteam\b/ })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /code-notes/ })).toBeInTheDocument();
-    const code = group(dialog, /^Code indexes/);
+    const code = group(dialog, /^Repositories/);
     const tracker = group(dialog, /^Tracker records/);
     expect(code).toHaveAttribute("aria-expanded", "false");
     expect(code).toHaveTextContent("2");
@@ -104,14 +104,14 @@ describe("NamespacePicker groups", () => {
     expect(within(ch).getByText("idx-ch").tagName).toBe("CODE");
     expect(within(ch).queryByText("code")).toBeNull();
     // The section is a labelled group.
-    expect(ch.closest("section")).toHaveAccessibleName(/Code indexes/);
+    expect(ch.closest("section")).toHaveAccessibleName(/Repositories/);
   });
 
   it("puts a code index with no description on one line, its name as code", async () => {
     seed("team", [row("team", { role: "admin" }), row("idx-bare", { kind: "code", role: "jwt" })]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    fireEvent.click(group(dialog, /^Code indexes/));
+    fireEvent.click(group(dialog, /^Repositories/));
     const name = within(within(dialog).getByRole("button", { name: /idx-bare/ })).getByText("idx-bare");
     expect(name.tagName).toBe("CODE");
     // The first line, and no empty second line under it.
@@ -125,7 +125,7 @@ describe("NamespacePicker groups", () => {
     render(<NamespacePicker />);
     const dialog = await openPicker();
     await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "loom");
-    const code = group(dialog, /^Code indexes/);
+    const code = group(dialog, /^Repositories/);
     expect(code).toHaveAttribute("aria-expanded", "true");
     expect(code).toHaveTextContent("1 of 2");
     expect(within(dialog).getByRole("button", { name: /acme\/loom @ main/ })).toBeInTheDocument();
@@ -140,14 +140,14 @@ describe("NamespacePicker groups", () => {
   it("names a current code index on the trigger and opens its group", async () => {
     seed("idx-ch");
     render(<NamespacePicker />);
-    const trigger = screen.getByRole("button", { name: "Namespace: idx-ch, code index" });
+    const trigger = screen.getByRole("button", { name: "Namespace: idx-ch, repository" });
     expect(within(trigger).getByText("code")).toBeInTheDocument();
     const dialog = await openPicker();
-    expect(group(dialog, /^Code indexes/)).toHaveAttribute("aria-expanded", "true");
+    expect(group(dialog, /^Repositories/)).toHaveAttribute("aria-expanded", "true");
     const current = within(dialog).getByRole("button", { name: /idx-ch/ });
     expect(current).toHaveAttribute("aria-current", "true");
     // Current first, then by name.
-    const names = within(document.getElementById(group(dialog, /^Code indexes/).getAttribute("aria-controls") ?? "")!)
+    const names = within(document.getElementById(group(dialog, /^Repositories/).getAttribute("aria-controls") ?? "")!)
       .getAllByRole("button")
       .map((b) => b.textContent);
     expect(names[0]).toContain("idx-ch");
@@ -167,7 +167,7 @@ describe("NamespacePicker groups", () => {
     await user.keyboard("{End}");
     expect(group(dialog, /^Tracker records/)).toHaveFocus();
     await user.keyboard("{ArrowUp}");
-    const code = group(dialog, /^Code indexes/);
+    const code = group(dialog, /^Repositories/);
     expect(code).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(code).toHaveAttribute("aria-expanded", "true");
@@ -187,7 +187,7 @@ describe("NamespacePicker groups", () => {
     seed("team", [row("team", { role: "admin" }), ...many]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    fireEvent.click(group(dialog, /^Code indexes/));
+    fireEvent.click(group(dialog, /^Repositories/));
     expect(within(dialog).getAllByRole("button", { name: /acme\/repo/ })).toHaveLength(8);
     fireEvent.click(within(dialog).getByRole("button", { name: "Show all 11" }));
     expect(within(dialog).getAllByRole("button", { name: /acme\/repo/ })).toHaveLength(11);
@@ -204,8 +204,8 @@ describe("NamespacePicker groups", () => {
       row("agent-1-a", { description: "Support agent" }),
       row("agent-1-b", { description: "Sales agent" }),
       row("agent-2-c"),
-      row("col-one"),
-      row("col-two"),
+      row("ops-one"),
+      row("ops-two"),
       row("idx-ch", { kind: "code", role: "jwt" }),
     ]);
     render(<NamespacePicker />);
@@ -218,8 +218,8 @@ describe("NamespacePicker groups", () => {
     expect(agents).toHaveTextContent("3");
     expect(within(dialog).queryByRole("button", { name: /group-a-shared/ })).toBeNull();
     // Two of a prefix stay with the rest, by role.
-    expect(within(dialog).getByRole("button", { name: /col-one/ })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: /^col-…/ })).toBeNull();
+    expect(within(dialog).getByRole("button", { name: /ops-one/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /^ops-…/ })).toBeNull();
     // The name families come first, by prefix, then the code indexes.
     const order = [...dialog.querySelectorAll("[data-nav^='group:']")].map((b) => b.getAttribute("data-nav"));
     expect(order).toEqual(["group:agent-", "group:group-", "group:code"]);
@@ -271,12 +271,20 @@ describe("NamespacePicker groups", () => {
     expect(within(dialog).getByRole("button", { name: /Support agent/ })).toBeInTheDocument();
   });
 
-  it("keeps the footer's Spaces link for someone whose joined namespaces all sit in a family", async () => {
+  it("names the picker's trigger Namespace", () => {
+    seed("team");
+    render(<NamespacePicker />);
+    expect(screen.getByRole("button", { name: /^Namespace: team/ })).toHaveTextContent(/^Namespace/);
+  });
+
+  it("keeps the link to public namespaces in the footer for someone whose joined namespaces all sit in a family", async () => {
     seed("team", [row("team", { role: "admin" }), row("agent-1-a"), row("agent-1-b"), row("agent-2-c")]);
     render(<NamespacePicker />);
     const dialog = await openPicker();
-    expect(within(dialog).getByRole("button", { name: "Browse and join spaces" })).toBeInTheDocument();
-    expect(within(dialog).queryByRole("button", { name: "Find public namespaces to join in Spaces" })).toBeNull();
+    const links = within(dialog).getAllByRole("button", { name: "Find public namespaces to join" });
+    expect(links).toHaveLength(1);
+    // The footer's: beside Create namespace, not at the end of the list.
+    expect(links[0].parentElement).toBe(within(dialog).getByRole("button", { name: "Create namespace" }).parentElement);
   });
 
   it("groups the names once per list, not again for each keystroke of a search", async () => {
@@ -357,7 +365,7 @@ describe("NamespacePicker groups", () => {
     render(<NamespacePicker />);
     const dialog = await openPicker();
     await user.type(within(dialog).getByRole("textbox", { name: "Search namespaces" }), "loom");
-    const code = group(dialog, /^Code indexes/);
+    const code = group(dialog, /^Repositories/);
     expect(code).toHaveAttribute("aria-expanded", "true");
     await user.click(code);
     expect(code).toHaveAttribute("aria-expanded", "false");
@@ -365,5 +373,37 @@ describe("NamespacePicker groups", () => {
     await user.click(code);
     expect(code).toHaveAttribute("aria-expanded", "true");
     expect(within(dialog).getByRole("button", { name: /acme\/loom @ main/ })).toBeInTheDocument();
+  });
+
+  it("lists no collection, whatever its role or kind, and links to the Library instead", async () => {
+    seed("team", [
+      row("team", { role: "admin" }),
+      row("ops"),
+      row("col-research", { role: "admin", kind: "collection", title: "Research" }),
+      row("col-handbook", { role: "viewer", kind: "collection" }),
+      // A server a release behind, or a create cut short: the reserved name still decides.
+      row("col-unfinished", { role: "writer", kind: "memory" }),
+      row("col-claimed", { role: "jwt", kind: "collection" }),
+    ]);
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(within(dialog).getByRole("button", { name: /\bteam\b/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: /col-|Research/ })).toBeNull();
+    expect(within(dialog).queryByText(/col-/)).toBeNull();
+    expect(within(dialog).getByText("Your namespaces")).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Open collections in the Library" }));
+    expect(useStore.getState().view).toBe("knowledge");
+  });
+
+  it("says once what a namespace and a repository are", async () => {
+    seed("team");
+    render(<NamespacePicker />);
+    const dialog = await openPicker();
+    expect(within(dialog).getByText("A namespace holds memories, code or tracker data.")).toHaveClass(
+      "text-xs",
+      "text-text-muted",
+    );
+    fireEvent.click(group(dialog, /^Repositories/));
+    expect(within(dialog).getByText("Code that Loom indexes, read-only.")).toBeInTheDocument();
   });
 });

@@ -39,6 +39,9 @@ class MentorHint(BaseModel):
     ops: list[str] = Field(default_factory=list)
     # The counts the rule fired on — checkable, never a value.
     evidence: dict[str, Any] = Field(default_factory=dict)
+    # The plane of the first of the hint's ops that has one (a `planes` name), null when none
+    # does.
+    plane: str | None = None
 
 
 class MentorPlane(BaseModel):

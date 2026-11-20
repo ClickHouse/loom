@@ -213,7 +213,9 @@ def test_reconcile_status_reports_the_held_back_keys_apart_from_the_statuses(
         return {"held_back": 2, "superseded": 1, "divergent_rows": 1, "mirrored": 1}
 
     monkeypatch.setattr(store, "reconcile_embedding_status", _reconcile)
-    monkeypatch.setattr(maintenance, "run_connected", lambda go: asyncio.run(go(object())))
+    monkeypatch.setattr(
+        maintenance, "run_connected", lambda go, **_declared: asyncio.run(go(object()))
+    )
     args = argparse.Namespace(
         org="o", namespace="n", all_namespaces=False, dry_run=False, limit=5000, exclude=None
     )

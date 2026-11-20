@@ -57,7 +57,9 @@ def quiet_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     """A real secret and an empty keyring, so stderr carries neither the
     dev-secret warning nor a keyring read from a live ClickHouse."""
     monkeypatch.setattr(settings, "jwt_secret", "a-real-secret-that-is-not-the-default")
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(_NoKeys())))
+    monkeypatch.setattr(
+        access, "run_connected", lambda run, **_declared: asyncio.run(run(_NoKeys()))
+    )
 
 
 def _utcnow() -> datetime:
@@ -160,12 +162,14 @@ class _FakeCH:
     def __init__(self) -> None:
         self.rows: list[dict[str, Any]] = []
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
-        self.connected = 0
+        self.connects = 0
         self.disconnected = 0
         self.queries: list[str] = []
 
+    connected = False
+
     async def connect(self) -> None:
-        self.connected += 1
+        self.connects += 1
 
     async def disconnect(self) -> None:
         self.disconnected += 1
@@ -216,7 +220,7 @@ def test_revoke_by_jti_goes_through_the_module_and_flips_is_revoked(
     assert timedelta(days=3000) < row["expires_at"] - row["revoked_at"]
     assert row["expires_at"] < datetime(2106, 1, 28)  # inside the TTL's DateTime range
     assert revocation.is_revoked("abc-123")
-    assert fake_ch.connected == 1 and fake_ch.disconnected == 1
+    assert fake_ch.connects == 1 and fake_ch.disconnected == 1
     out, err = capsys.readouterr()
     assert "revoked jti 'abc-123'" in out and "replicas pick it up within" in out
     assert err == ""
@@ -279,7 +283,7 @@ def test_revoke_rejects_a_bad_expires_at_before_touching_ch(
 ) -> None:
     assert cli.main(["revoke-token", "--jti", "x", "--expires-at", "next tuesday"]) == 2
     assert "ISO-8601" in capsys.readouterr().err
-    assert fake_ch.connected == 0
+    assert fake_ch.connects == 0
 
 
 def test_module_revoke_requires_a_token_id() -> None:

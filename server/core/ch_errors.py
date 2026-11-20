@@ -78,18 +78,27 @@ _SERVER_STATE_CODES: tuple[int, ...] = (202, 225, 242, 252, 319, 999)
 # own refusal, which a smaller batch avoids.
 _ROWS_SPAN_PARTITIONS = "Too many partitions for single INSERT block"
 # 241 MEMORY_LIMIT_EXCEEDED against the server's whole memory or the user's, which other
-# queries share, not the query's own limit: "(total)" or "(for user)" in the message.
-_SHARED_MEMORY = ("(total)", "(for user)")
+# queries share, not the query's own limit: "(total)", or the user's as "(for user)" in
+# older servers' text and "User memory limit exceeded" in current ones (26.5 and later).
+_SHARED_MEMORY = ("(total)", "(for user)", "user memory limit exceeded")
+
+
+def is_shared_memory_limit(e: BaseException) -> bool:
+    """ClickHouse ran short of the server's or the user's memory, which other queries
+    share: a state that passes, not a refusal of this statement."""
+    return (
+        isinstance(e, DatabaseError)
+        and error_code(e) == 241
+        and any(scope in str(e).lower() for scope in _SHARED_MEMORY)
+    )
 
 
 def is_passing_state(e: BaseException) -> bool:
     """ClickHouse answered with a state of its own that clears by itself (a merge
     backlog, Keeper lost, too many queries), or every pooled connection was busy: the
     rows were not refused, and the same insert lands later."""
-    if isinstance(e, OverloadedError):
+    if isinstance(e, OverloadedError) or is_shared_memory_limit(e):
         return True
-    if isinstance(e, DatabaseError) and error_code(e) == 241:
-        return any(scope in str(e).lower() for scope in _SHARED_MEMORY)
     return (
         isinstance(e, DatabaseError)
         and error_code(e) in _SERVER_STATE_CODES
@@ -141,6 +150,7 @@ def strip_quantized_setting(sql: str) -> str:
 
 
 _SERVER_CODE = re.compile(r"Code: (\d+)\.")
+_ERROR_NAME = re.compile(r"\(([A-Z][A-Z0-9_]*)\) \(version ")
 
 
 _DRIVER_PREFIX = re.compile(r"^Received ClickHouse exception, code: \d+, server response: ")
@@ -162,6 +172,14 @@ def error_code(e: BaseException | str) -> int | None:
     return int(m.group(1)) if m else None
 
 
+def error_name(e: BaseException | str) -> str | None:
+    """The error name a ClickHouse server error carries before its version, as
+    `(BAD_ARGUMENTS) (version …)`, or None. A nested message ends with the outer
+    exception's name, the one `error_code` reads the code of."""
+    names = _ERROR_NAME.findall(str(e))
+    return names[-1] if names else None
+
+
 def is_replica_bound_error(e: BaseException) -> bool:
     if not isinstance(e, DatabaseError):
         return False
@@ -174,8 +192,10 @@ def is_replica_bound_error(e: BaseException) -> bool:
 __all__ = [
     "QUANTIZED_SETTING",
     "error_code",
+    "error_name",
     "is_connection_failure",
     "is_passing_state",
+    "is_shared_memory_limit",
     "is_replica_bound_error",
     "is_transient_network_error",
     "is_unknown_quantized_setting",

@@ -47,8 +47,25 @@ describe("syncBadge", () => {
     expect(syncBadge(sync({ status: "failed", error: "http_403" })).tip).toContain("http_403");
   });
 
-  it("reads an ok turn with an error as incomplete, and an unknown status as itself", () => {
-    expect(syncBadge(sync({ status: "ok", error: "pass bound" }))).toMatchObject({ text: "Incomplete", tone: "warn" });
+  it("directs retired Meet sources to Shared folder without suggesting credential rotation", () => {
+    expect(syncBadge(sync({ status: "provider_removed" }))).toEqual({
+      text: "Meet sync retired",
+      tone: "warn",
+      tip: "Add a Shared folder source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
+    });
+  });
+
+  it("reads an ok turn cut short as incomplete, one with another note as synced with a note", () => {
+    const cut = "pass bound reached";
+    expect(syncBadge(sync({ status: "ok", error: cut }))).toMatchObject({ text: "Incomplete", tone: "warn" });
+    expect(syncBadge(sync({ status: "ok", error: "listing: incomplete search" })).text).toBe("Incomplete");
+    expect(syncBadge(sync({ status: "ok", error: "listing: an item listed nothing; item 1: http_404" })).text).toBe(
+      "Incomplete",
+    );
+    expect(syncBadge(sync({ status: "ok", error: "item 2: http_404" }))).toMatchObject({
+      text: "Synced with a note",
+      tone: "warn",
+    });
     expect(syncBadge(sync({ status: "no_transcript" }))).toMatchObject({ text: "no_transcript", tone: "warn" });
   });
 });
@@ -64,7 +81,7 @@ describe("syncCounts", () => {
 
   it("explains the unconverted reasons, most first, keeping unknown ones as written", () => {
     expect(unconvertedDetail({ too_large: 1, no_extractor: 2, http_404: 1 })).toBe(
-      "no extractor for the format: 2; http_404: 1; over the size limit: 1",
+      "file type not readable: 2; http_404: 1; over the size limit: 1",
     );
   });
 });
@@ -192,33 +209,25 @@ describe("the add form's other kinds", () => {
     ).toEqual(["At most 20 pages and databases in all."]);
   });
 
-  it("sends a meeting store's provider and ids, each provider with its own id rule", () => {
-    const meet = {
-      ...named,
-      kind: "recording" as const,
-      provider: "meet" as const,
-      meetings: "spaces/abc-DEF_1\nabc-DEF_1",
-    };
-    expect(sourceFormProblems(meet)).toEqual([]);
-    expect(sourceAddBody("o", "code-x", meet, true).config).toEqual({ provider: "meet", ids: ["abc-DEF_1"] });
-    const zoom = { ...meet, provider: "zoom" as const, meetings: "81234567890" };
+  it("sends Zoom meeting ids and rejects space ids and meeting links", () => {
+    const zoom = { ...named, kind: "recording" as const, meetings: "81234567890" };
     expect(sourceFormProblems(zoom)).toEqual([]);
     expect(sourceAddBody("o", "code-x", zoom, true).config).toEqual({ provider: "zoom", ids: ["81234567890"] });
     expect(sourceFormProblems({ ...zoom, meetings: "abc-DEF_1" })).toEqual([
       "Not a meeting id (9-12 digits): abc-DEF_1.",
     ]);
-    expect(meetingIds("spaces/x", "zoom")).toEqual(["spaces/x"]);
-    // A meeting id as it is shown, with spaces; one per line or comma-separated.
-    expect(meetingIds("812 3456 7890\n 912 3456 7890 , 81234567890\n\n", "zoom")).toEqual([
-      "81234567890",
-      "91234567890",
+    expect(meetingIds("spaces/x")).toEqual(["spaces/x"]);
+    expect(sourceFormProblems({ ...zoom, meetings: "spaces/81234567890" })).toEqual([
+      "Not a meeting id (9-12 digits): spaces/81234567890.",
     ]);
+    // A meeting id as it is shown, with spaces; one per line or comma-separated.
+    expect(meetingIds("812 3456 7890\n 912 3456 7890 , 81234567890\n\n")).toEqual(["81234567890", "91234567890"]);
     expect(sourceFormProblems({ ...zoom, meetings: "812 3456 7890" })).toEqual([]);
     // A link is no id: it is named, not parsed.
     expect(sourceFormProblems({ ...zoom, meetings: "https://meet.example/j/81234567890" })).toEqual([
       "Not a meeting id (9-12 digits): https://meet.example/j/81234567890.",
     ]);
-    expect(meetingIds("a b", "meet")).toEqual(["a", "b"]);
+    expect(meetingIds("a b")).toEqual(["a b"]);
     // Two ids on one line are named as typed, not joined into one long number.
     expect(sourceFormProblems({ ...zoom, meetings: "812 3456 7890 912 3456 7890" })).toEqual([
       "Put one meeting id per line, or comma-separated: 812 3456 7890 912 3456 7890.",
@@ -234,7 +243,7 @@ describe("the add form's other kinds", () => {
     expect(sourceFormProblems({ ...zoom, meetings: "8123 4567" })).toEqual([
       "Not a meeting id (9-12 digits): 81234567.",
     ]);
-    expect(sourceFormProblems({ ...meet, meetings: "" })).toEqual(["Add at least one space id."]);
+    expect(sourceFormProblems({ ...zoom, meetings: "" })).toEqual(["Add at least one meeting id."]);
   });
 
   it("sends only the chosen kind's config, so switching kinds keeps the other kinds' ids out of the body", () => {

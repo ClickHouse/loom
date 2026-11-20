@@ -169,6 +169,20 @@
    }
   },
   {
+   "deadline_seconds()": 240.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 60,
+   "max_pass_seconds": null,
+   "name": "pg_payload_clear",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.memory.workers.pg_payload_clear:run_pass"
+   }
+  },
+  {
    "deadline_seconds()": 900.0,
    "due_scope": null,
    "first_pass_due": null,
@@ -250,6 +264,36 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.knowledge.workers.conversation_titler:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 3600,
+   "max_pass_seconds": 120.0,
+   "name": "query_history",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.query_history:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 3600.0,
+   "due_scope": null,
+   "first_pass_due": {
+    "id": "server.knowledge.workers.knowledge_gaps:first_pass_due"
+   },
+   "has_first_pass_hook": true,
+   "idle_interval_seconds": null,
+   "interval_seconds": 86400,
+   "max_pass_seconds": 3600.0,
+   "name": "knowledge_gaps",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.knowledge_gaps:run_pass"
    }
   },
   {
@@ -371,7 +415,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 0.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {
@@ -516,6 +560,34 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.knowledge.workers.source_sync:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 1800,
+   "interval_seconds": 900,
+   "max_pass_seconds": 60.0,
+   "name": "knowledge_source_retire",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.source_retirements:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 120.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": null,
+   "interval_seconds": 300,
+   "max_pass_seconds": 120.0,
+   "name": "knowledge_source_push",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.source_push:run_pass"
    }
   },
   {
@@ -1060,7 +1132,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 0.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {
@@ -1149,6 +1221,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.code.workers.crossref:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 1800,
+   "interval_seconds": 900,
+   "max_pass_seconds": 60.0,
+   "name": "knowledge_source_retire",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.source_retirements:run_pass"
    }
   },
   {
@@ -1649,7 +1735,7 @@
    "has_first_pass_hook": false,
    "idle_interval_seconds": null,
    "interval_seconds": 15,
-   "max_pass_seconds": null,
+   "max_pass_seconds": 0.0,
    "name": "extraction_queue",
    "owned_tables": [],
    "pass_callable": {
@@ -1780,6 +1866,20 @@
    "owned_tables": [],
    "pass_callable": {
     "id": "server.code.workers.pr_history:run_pass"
+   }
+  },
+  {
+   "deadline_seconds()": 60.0,
+   "due_scope": null,
+   "first_pass_due": null,
+   "has_first_pass_hook": false,
+   "idle_interval_seconds": 1800,
+   "interval_seconds": 900,
+   "max_pass_seconds": 60.0,
+   "name": "knowledge_source_retire",
+   "owned_tables": [],
+   "pass_callable": {
+    "id": "server.knowledge.workers.source_retirements:run_pass"
    }
   },
   {

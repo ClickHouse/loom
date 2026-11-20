@@ -21,7 +21,6 @@ from server.code.app.common import (
 )
 from server.code.app.search.shared import (
     _not_covered_output,
-    _partial_fields,
     _read_pool_settling,
     _scope_of,
     page_plan,
@@ -40,6 +39,7 @@ from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
 from server.core.llm_free import reads_llm_free
 from server.identity.domain.read_scope import ReadFilters
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         from server.code.app.answers import _propose_identifiers
         from server.observability.budget import namespace_over_cap
 
-        if not await namespace_over_cap(org, ns):
+        if not await namespace_over_cap(org, ns, user_id=input.user_id or ""):
             from server.llm.client import get_llm_client
 
             with code_span("search.query_expand"):
@@ -186,7 +186,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         abstain_threshold=abstain_threshold,
         kind_prior=input.kind_prior,
         pr_leg_before=input.pr_leg_before,
-        embedding_model=input.embedding_model,
+        embedding_model=embedding_model,
         noise_floor=noise_floor,
         bodies=bodies,
         min_fan_in=input.min_fan_in,
@@ -226,11 +226,19 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         ns,
         repo,
         res,
-        budget=budget,
         started=started,
         embedding_model=embedding_model,
         memo_key=memo_key if memo_on else None,
     )
+
+
+def _served_model_name(embedder: Any) -> str:
+    name: str = getattr(embedder, "model_name", "") or ""
+    if name:
+        return name
+    from server.embedding.embedder import served_model_label
+
+    return served_model_label(settings.embedding_model)
 
 
 def _search_embedder(input: CodeSearchInput) -> tuple[Any, str]:
@@ -242,10 +250,12 @@ def _search_embedder(input: CodeSearchInput) -> tuple[Any, str]:
         from server.embedding.embedder import get_embedder
 
         embedder = get_embedder()
+    except customer.HOLDS:
+        raise
     except Exception as e:  # noqa: BLE001 — lexical-only degrade
         logger.warning("code.search: embedder unavailable (%s)", e)
 
-    embedding_model = input.embedding_model or (getattr(embedder, "model_name", "") or "")
+    embedding_model = input.embedding_model or _served_model_name(embedder)
     if input.vector_model:
         # A second vector model is a deployment allow-list entry, refused as bad input otherwise
         # (never a silent fallback).
@@ -266,7 +276,6 @@ async def _finish_search(
     repo: CodeRepo,
     res: CodeSearchResult,
     *,
-    budget: Any,
     started: float,
     embedding_model: str,
     memo_key: str | None,
@@ -343,10 +352,13 @@ async def _finish_search(
         constrained=res.constrained,
         matched_files=res.matched_files,
         tracked=res.tracked,
-        note=await embedding_coverage_note(repo, org, ns),
+        note="; ".join(
+            note for note in (res.note, await embedding_coverage_note(repo, org, ns)) if note
+        ),
         legs_timed_out=res.legs_timed_out,
         epistemic=res.epistemic,  # type: ignore[arg-type]
-        **_partial_fields(budget),
+        partial=res.partial,
+        partial_reason=res.partial_reason,
     )
     # a failed history read, a failed leg and a deadline-cut answer are transient: never replay
     if (
@@ -461,12 +473,16 @@ def _units_tier(units: list[Any]) -> str:
 
 
 def _embedding_model_name() -> str:
+    embedder = None
     try:
         from server.embedding.embedder import get_embedder
 
-        return getattr(get_embedder(), "model_name", "") or ""
-    except Exception:  # noqa: BLE001 — lexical-only deployments have none
-        return ""
+        embedder = get_embedder()
+    except customer.HOLDS:
+        raise
+    except Exception:  # noqa: BLE001 — stored partitions remain readable without the client
+        pass
+    return _served_model_name(embedder)
 
 
 def _search_params_hash(input: CodeSearchInput, embedding_model: str) -> str:
@@ -493,7 +509,7 @@ def _issue_search_cursor(
 
     pool = list(getattr(res, "pool", []) or [])
     served = len(res.units)
-    if not paging.enabled() or res.abstain or len(pool) <= served:
+    if not paging.enabled() or res.abstain or res.failure_reason or len(pool) <= served:
         return ""
     ph = _search_params_hash(input, embedding_model)
     payload = paging.search_pool_payload(

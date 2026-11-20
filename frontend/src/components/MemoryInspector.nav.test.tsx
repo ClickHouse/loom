@@ -11,8 +11,8 @@ import { MemoryInspector } from "./MemoryInspector";
 // Reading something keeps you where you are. An entity opens a popover in the
 // drawer — the memories that also mention it swap the drawer in place, its neighbours are
 // listed, and "Open in Graph" is a new history entry with a way back. The source
-// conversation replays in a dialog over the drawer. The footer keeps Edit and Delete and
-// folds the rest into one More menu.
+// conversation replays in a dialog over the drawer. The footer keeps Edit, Ask about this
+// and Delete and folds the rest into one More menu; it wraps on a narrow drawer.
 
 const DETAIL: MemoryDetail = {
   found: true,
@@ -153,6 +153,38 @@ describe("an entity on a memory opens in place", () => {
     expect(link).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("after a navigation from the drawer, closing it leaves the focus on the new page's h1, not the opener", async () => {
+    vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
+    const inspector = (
+      <MemoryInspector identity={identity} memoryKey="api/rate-limit" onClose={() => {}} onChanged={() => {}} />
+    );
+    const page = (drawer: boolean) => (
+      <>
+        <main id="main">
+          <h1 tabIndex={-1}>Memories</h1>
+          <button type="button">Opener</button>
+        </main>
+        {drawer && inspector}
+      </>
+    );
+    const { rerender } = render(page(false));
+    screen.getByRole("button", { name: "Opener" }).focus();
+    rerender(page(true));
+    await screen.findByText("the public API allows 100 requests a minute");
+    const seq = useStore.getState().navSeq;
+    // A tag searches Memories by it: a navigation, whose arrival focuses the page's h1.
+    await userEvent.setup().click(screen.getByRole("button", { name: "ops" }));
+    expect(useStore.getState().navSeq).toBeGreaterThan(seq);
+    // The navigation closes the drawer, and its arrival focuses the new page's h1 at once;
+    // the drawer's own focus return comes after, and must leave it there.
+    rerender(page(false));
+    const h1 = screen.getByRole("heading", { level: 1, name: "Memories" });
+    h1.focus();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(h1).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Opener" })).not.toHaveFocus();
+  });
+
   it("shows a tag by its name, with no '#' glyph", async () => {
     vi.mocked(getMemory).mockResolvedValue({ ...DETAIL, tags: ["ops"] });
     await open();
@@ -219,8 +251,9 @@ describe("an entity on a memory opens in place", () => {
     await open();
     await userEvent.click(chip("rate limiting"));
     const pop = await screen.findByRole("dialog", { name: "Entity rate limiting" });
-    expect(await within(pop).findByText("Couldn't load the memories that mention it.")).toBeInTheDocument();
-    expect(await within(pop).findByText("Couldn't load neighbours.")).toBeInTheDocument();
+    // Each line says why, not only that it failed.
+    expect(await within(pop).findByText("Couldn't load the memories that mention it: down")).toBeInTheDocument();
+    expect(await within(pop).findByText("Couldn't load neighbours: down")).toBeInTheDocument();
     expect(within(pop).queryByText("Mentioned only in this memory")).toBeNull();
     expect(within(pop).queryByText("None recorded")).toBeNull();
   });
@@ -351,7 +384,7 @@ describe("the drawer's provenance and source conversation", () => {
   });
 });
 
-describe("the drawer footer is one row", () => {
+describe("the drawer footer: one row, two on a narrow drawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetNamespaceRoleCache();
@@ -361,14 +394,14 @@ describe("the drawer footer is one row", () => {
   });
   afterEach(() => cleanup());
 
-  it("keeps Edit and Delete, and folds a writer's other actions into More", async () => {
+  it("keeps Edit and Delete, and folds a writer's other actions into More, an admin's among them unavailable", async () => {
     await open();
     const footer = screen.getByRole("contentinfo");
     expect(
       within(footer)
         .getAllByRole("button")
         .map((b) => b.getAttribute("aria-label") || b.textContent),
-    ).toEqual(["Edit", "More actions", "Delete"]);
+    ).toEqual(["Edit", "Ask AI about this memory", "More actions", "Delete"]);
     expect(footer).toHaveTextContent("Verified by alice");
     await userEvent.click(within(footer).getByRole("button", { name: "More actions" }));
     const menu = await screen.findByRole("menu", { name: "More actions" });
@@ -381,6 +414,8 @@ describe("the drawer footer is one row", () => {
       "Remove verification",
       "Copy to…",
       "Lock…",
+      "Share with every agent",
+      "Stop sharing",
       "Rename",
       "Copy",
       "This helped",

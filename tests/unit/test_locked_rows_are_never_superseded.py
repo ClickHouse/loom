@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 import server.memory.store.lifecycle as lc
-from server.memory.domain.lock import refuses_retirement
+from server.memory.domain.lock import refuses_cross_key_retirement, refuses_retirement
 from server.memory.store.rows import MemoryRow
 
 
@@ -99,3 +99,13 @@ def test_refuses_retirement_follows_the_lock_in_force() -> None:
     assert refuses_retirement(_row("b", lock_mode="no_delete", lock_until=later))
     assert not refuses_retirement(_row("c"))
     assert not refuses_retirement(_row("d", lock_mode="no_delete", lock_until=datetime(2000, 1, 1)))
+
+
+def test_a_definition_is_refused_by_the_retirements_its_rule_covers() -> None:
+    shared = _row("e").model_copy(update={"agent": "-", "memory_type": "definition"})
+    private = _row("f").model_copy(update={"memory_type": "definition", "session_id": "s1"})
+    # Every automatic retirement leaves the namespace-wide row; one judged against another
+    # key leaves any definition, its private copies included.
+    assert refuses_retirement(shared) and not refuses_retirement(private)
+    assert refuses_cross_key_retirement(shared) and refuses_cross_key_retirement(private)
+    assert not refuses_cross_key_retirement(_row("g"))

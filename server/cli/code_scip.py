@@ -13,21 +13,12 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from server.cli._ch import connect_code_plane, connect_declared, writes
 from server.cli.code_backfill import _record_manual_pass
 from server.cli.code_run import _identity, _note, _repo_cfg
 
 if TYPE_CHECKING:
-    from server.code.app.index.scip_delta import ScipDelta
-
-
-async def _read_delta(path: str) -> ScipDelta:
-    """The kept delta `--apply-delta` names, read and parsed as a worker reads one, under
-    the same caps. A missing, refused or unreadable file is the caller's input, not a
-    failure of the tier: it is read before anything is recorded."""
-    from server.code.app.index.scip_delta import parse_delta
-    from server.code.app.index.untrusted_files import read_delta
-
-    return parse_delta(await asyncio.to_thread(read_delta, Path(path)))
+    from server.code.app.index.delta_file import DeltaFile
 
 
 async def _scip_apply_only(
@@ -36,7 +27,7 @@ async def _scip_apply_only(
     org: str,
     ns: str,
     git_head: str,
-    delta: ScipDelta,
+    delta: DeltaFile,
 ) -> int:
     """`scip-full --apply-delta`: apply a delta the harness already produced
     (`--keep-delta`). The apply is idempotent — a re-run key-diffs against
@@ -52,7 +43,7 @@ async def _scip_apply_only(
             "applying the delta's commit",
             file=sys.stderr,
         )
-    print(f"applying {args.apply_delta} ({len(delta.files)} files)…")
+    print(f"applying {args.apply_delta} ({len(delta.paths)} files)…")
     stats = await apply_delta(repo, org, ns, delta)
     # scip-full runs scip-clang only, so its delta moves the C++ watermark, also
     # where clang is an extra tier beside the entry's own.
@@ -76,9 +67,9 @@ async def _scip_full(args: argparse.Namespace) -> int:
     )
     from server.core.ch import get_client
 
-    await get_client().connect()
+    cfg = _repo_cfg(args)  # before declaring the org: an unconfigured entry records nothing
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
-    cfg = _repo_cfg(args)
     # scip-full runs scip-clang; an entry another compiler tier owns (Go,
     # Python, TypeScript) is that worker's to re-index, and its checkout is
     # the worker's to fetch. Same ownership test the delta pass applies.
@@ -120,9 +111,13 @@ async def _scip_apply_recorded(
 ) -> int:
     """`--apply-delta`, recording the apply's outcome as the full run's tier."""
     from server.code.app.index import tier_health
+    from server.code.app.index.delta_file import open_delta
     from server.code.app.index.entry_lock import EntryLockLost
 
-    delta = await _read_delta(args.apply_delta)
+    # The kept delta, read as a worker reads one, under the same caps. A missing, refused
+    # or unreadable file is the caller's input, not a failure of the tier: it is read
+    # before anything is recorded.
+    delta = await asyncio.to_thread(open_delta, Path(args.apply_delta))
     try:
         rc = await _scip_apply_only(args, repo, org, ns, git_head, delta)
     except EntryLockLost:
@@ -236,11 +231,14 @@ async def _entry_locked(args: argparse.Namespace) -> int:
         current_holder,
         entry_lock,
     )
+    from server.core.ch import get_client
 
     command = args.command[1:] if args.command[:1] == ["--"] else list(args.command)
     if not command:
         print("entry-lock: no command after --", file=sys.stderr)
         return 2
+    # The lease and a recorded tier are rows of the entry's org.
+    await connect_code_plane(get_client(), args)
     org, ns = _identity(args)
     tier = args.tier
     tail = bytearray() if tier else None
@@ -274,10 +272,16 @@ async def _record_tier(
 ) -> None:
     """`entry-lock --tier`: the command's exit as the tier's health record, its error
     the end of the command's output. The Go harness exits 0 when a module would not
-    build: the module lines in the kept tail fail the record as the worker's do."""
+    build: the module lines in the kept tail fail the record as the worker's do, and
+    those whose dependency cannot be fetched from here are noted, as the worker notes
+    them. A clean exit with neither clears the record, as a run that builds does."""
     from server.code.app.index import tier_health
     from server.code.app.index.compiler_tier import BASE_UNKNOWN_EXIT
-    from server.code.domain.index.tier_health import module_failures, without_module_failures
+    from server.code.domain.index.tier_health import (
+        module_failures,
+        split_module_failures,
+        without_module_failures,
+    )
     from server.code.store.index import CodeRepo
 
     if rc == BASE_UNKNOWN_EXIT:
@@ -290,8 +294,15 @@ async def _record_tier(
         if rc != 0:
             text = without_module_failures(text)
             error = f"harness exit {rc}: {text}" if text else f"harness exit {rc}"
-        elif modules := module_failures(text):
-            error = "; ".join(modules)
+        else:
+            broken, unreachable = split_module_failures(module_failures(text))
+            if broken:
+                error = "; ".join(unreachable + broken)
+            elif unreachable:
+                await tier_health.note_unavailable(
+                    CodeRepo(), org, ns, tier, "; ".join(unreachable)
+                )
+                return
     await tier_health.record(CodeRepo(), org, ns, tier, error)
 
 
@@ -383,7 +394,7 @@ async def _scip_delta(args: argparse.Namespace) -> int:
     from server.core.ch import get_client
     from server.workers import pass_context
 
-    await get_client().connect()
+    await connect_declared(get_client(), org_free=writes("the cell's configured repositories"))
     started = time.monotonic()
     # Bound so the pass's set_namespace() lands on the row.
     ctx = pass_context.begin("code_scip_delta")
@@ -422,13 +433,15 @@ async def _scip_retry(args: argparse.Namespace) -> int:
     from server.code.store.index import CodeRepo
     from server.core.ch import get_client
 
-    await get_client().connect()
     org, ns = _identity(args)
+    # The batch is read before the org is declared (on the client `code_run` connected):
+    # a mistyped --org has none, and a `recording` cell records nothing for it.
     repo = CodeRepo()
     batch = await repo.get_scip_batch(org, ns, args.batch_id)
     if batch is None:
         print(f"batch not found: {args.batch_id}", file=sys.stderr)
         return 2
+    await connect_code_plane(get_client(), args)  # declares the org it now writes
     await repo.upsert_scip_batch(
         org,
         ns,

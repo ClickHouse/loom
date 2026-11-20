@@ -10,7 +10,8 @@ import { type Identity, type KnowledgeHit, searchKnowledge } from "../api";
 import { Alert } from "../components/ui/Alert";
 import { BusyButton } from "../components/ui/BusyButton";
 import { ListRow } from "../components/ui/ListRow";
-import { humanizeError, truncate } from "../lib/format";
+import { truncate } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { citation } from "../lib/locator";
 import { useLastPageFocus } from "../lib/useLastPageFocus";
 import { useRowNav } from "../lib/useRowNav";
@@ -38,7 +39,8 @@ function countText(hits: KnowledgeHit[] | null, done: boolean): string {
 
 /** A hit's name among the others: its document and its chunk. */
 function hitKey(h: KnowledgeHit): string {
-  return `${h.source_uri}#${h.chunk_idx}`;
+  // Two places can hold the same address.
+  return `${h.namespace ?? ""}/${h.source_uri}#${h.chunk_idx}`;
 }
 
 /** The last path segment of a source URI, its document's short name. */
@@ -52,23 +54,50 @@ function shortName(uri: string): string {
   );
 }
 
+/** What a search reads: this library, or every place (how many once the places are known,
+ *  and how many it leaves out). */
+function hint(everywhere: boolean, waiting: boolean, places: number, notSearched: number): string {
+  if (!everywhere) return "Searches every document in this library, whatever the tag filter.";
+  if (waiting) return "Searches every document in every place you read, whatever the tag filter.";
+  const left = notSearched > 0 ? `; ${notSearched} other place${notSearched === 1 ? " is" : "s are"} not searched` : "";
+  return `Searches every document in ${places} place${places === 1 ? "" : "s"}, whatever the tag filter${left}.`;
+}
+
 /** The panel's id, for the toggle in the Library's toolbar that opens it (`aria-controls`). */
 export const PASSAGES_PANEL_ID = "library-passages";
 
 /** The open panel below the Library's toolbar; its toggle is the toolbar's. */
 export function LibraryPassages({
   identity,
+  namespaces = [],
+  waiting = false,
+  everywhere = false,
+  unavailable = null,
+  notSearched = 0,
+  placeLabel,
   navEnabled,
   onHitsShown,
   onOpen,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
-  /** The arrows and j/k move through the hits (off while a dialog is open). */
+  /** The other places searched beside `identity`'s, in a search everywhere. */
+  namespaces?: string[];
+  /** The places to search are still being read: a search waits for them. */
+  waiting?: boolean;
+  /** A search of every place the person reads, whatever is known of them yet. */
+  everywhere?: boolean;
+  /** Why the places to search are not known (the list's read failed): a search says it. */
+  unavailable?: string | null;
+  /** Places a search everywhere leaves out (refused, past the most one read takes). */
+  notSearched?: number;
+  /** A place's name, for the hits of a search of several: each says where it is. */
+  placeLabel?: (namespace: string) => string;
+  /** The arrows move through the hits (off while a dialog is open). */
   navEnabled: boolean;
   /** Told whether hits show, so the list below hands its row keys over to them. */
   onHitsShown: (shown: boolean) => void;
-  /** Open the document a hit is from. */
-  onOpen: (sourceUri: string) => void;
+  /** Open the document a hit is from, in the place it is in. */
+  onOpen: (sourceUri: string, namespace?: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<KnowledgeHit[] | null>(null);
@@ -79,6 +108,8 @@ export function LibraryPassages({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const searching = useRef<AbortController | null>(null);
+  // The places the hits on screen were searched in.
+  const searchedFor = useRef("");
   // A search still running when the panel goes (another place) is dropped.
   useEffect(() => () => searching.current?.abort(), []);
   const shown = !!hits?.length;
@@ -102,15 +133,32 @@ export function LibraryPassages({
     return () => onHitsShown(false);
   }, [shown, onHitsShown]);
 
+  // The search last asked for: run again on the new places when they change, or once they
+  // are known, so the hits always answer the places named.
+  const want = useRef<string | null>(null);
+  // A search asked for while the places were still being read.
+  const parked = useRef(false);
+  const placesKey = [identity.org, everywhere ? "everywhere" : "here", identity.namespace, ...namespaces].join("\n");
   const search = async (q: string, topK: number) => {
     if (!q) return;
+    want.current = q;
     searching.current?.abort();
+    // Parked until the places are known; said, not spun, when they could not be read. Hits of
+    // other places would read as these places' answer, so they go.
+    parked.current = waiting || !!unavailable;
+    setBusy(!unavailable);
+    setError(unavailable ?? null);
+    if (parked.current) {
+      setHits(null);
+      return;
+    }
+    // Hits of other places do not stand for these: a failure here keeps only these places'.
+    if (searchedFor.current !== placesKey) setHits(null);
+    searchedFor.current = placesKey;
     const ctrl = new AbortController();
     searching.current = ctrl;
-    setBusy(true);
-    setError(null);
     try {
-      const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal });
+      const found = await searchKnowledge(identity, q, topK, { signal: ctrl.signal, namespaces });
       if (!ctrl.signal.aborted) {
         const before = new Set(q === asked.query ? (hits ?? []).map(hitKey) : []);
         const added = found.some((h) => !before.has(hitKey(h)));
@@ -119,11 +167,18 @@ export function LibraryPassages({
       }
     } catch (e) {
       // The hits it would have replaced stay (a failed Show more, say).
-      if (!ctrl.signal.aborted) setError(humanizeError(e));
+      if (!ctrl.signal.aborted) setError(humanizeError(e, { read: true }));
     } finally {
       if (!ctrl.signal.aborted) setBusy(false);
     }
   };
+
+  // Runs when the places change or arrive (the search reads the latest render's).
+  useEffect(() => {
+    if (!want.current) return;
+    if (searchedFor.current === placesKey && !parked.current && !waiting && !unavailable) return;
+    void search(want.current, TOP_K);
+  }, [placesKey, waiting, unavailable]);
 
   // More may be behind any answer until asking for more adds none, up to the most the op
   // lists.
@@ -170,7 +225,7 @@ export function LibraryPassages({
                       .filter(Boolean)
                       .join(", ")}
                     aria-describedby={excerptId}
-                    onClick={() => onOpen(h.source_uri)}
+                    onClick={() => onOpen(h.source_uri, h.namespace || undefined)}
                     className="list-row-open block w-full"
                   >
                     <span className="flex flex-wrap items-center gap-2 text-sm">
@@ -180,6 +235,9 @@ export function LibraryPassages({
                         <span className="min-w-0 truncate font-mono text-xs text-text-muted">{h.source_uri}</span>
                       )}
                       {h.section && <span className="text-text-muted">{h.section}</span>}
+                      {placeLabel && h.namespace && (
+                        <span className="text-text-muted">in {placeLabel(h.namespace)}</span>
+                      )}
                       {cited && <Badge size="sm" state="neutral" text={cited} />}
                       {matched.map((k) => (
                         <Badge key={k} size="sm" state="neutral" text={k} />
@@ -195,15 +253,16 @@ export function LibraryPassages({
           })}
         </ol>
       ),
-    [hits, busy, nav, onOpen],
+    [hits, busy, nav, onOpen, placeLabel],
   );
 
   return (
     <section id={PASSAGES_PANEL_ID} aria-label="Find a passage" className="mb-4 rounded-sm border border-border p-3">
       <div className="space-y-3">
         <p id={`${PASSAGES_PANEL_ID}-hint`} className="text-xs text-text-muted">
-          Searches every document in this library, whatever the tag filter. Each passage is cited by the revision it was
-          read from and its place.
+          {/* No claim of what it searches while the places could not be read. */}
+          {!unavailable && `${hint(everywhere, waiting, namespaces.length + 1, notSearched)} `}
+          Each passage is cited by the revision it was read from and its place.
         </p>
         <form
           className="flex gap-2"

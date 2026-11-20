@@ -4,6 +4,7 @@ serving a parked page."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from server.core.ch import get_client, sequential_reads
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput, _MemorySearchHit
-from server.memory.app.search import pg_validation
+from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.evidence import _decorate_hits
 from server.memory.app.search.knobs import _ground_relative_excerpts_enabled
@@ -26,6 +27,7 @@ from server.memory.app.search.payload import (
 from server.memory.app.search.request import apply_explain_default
 from server.memory.app.search.scope import _SearchRun
 from server.memory.app.search.scoring import _score_explanation
+from server.memory.app.search.shared_definitions import withheld_definition_flags
 from server.memory.app.search.telemetry import (
     _actual_work_payload,
     _disclose_and_expose,
@@ -36,7 +38,9 @@ from server.memory.app.search.tiers import (
     _prepend_anchor,
     _prepend_recent,
 )
+from server.memory.domain import code_change
 from server.observability import degradations as _degradations
+from server.settings import settings
 
 if TYPE_CHECKING:
     from server.memory.domain.retrieval_calibration import RetrievalCalibration
@@ -89,11 +93,15 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
     # count is over the whole parked list, the same on every page while the
     # caller's readable namespaces do not change.
     withheld = sum(1 for h in payload.get("hits") or [] if h.get("namespace", "") not in readable)
-    # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`.
+    # Rows the authority no longer serves stay in it, counted per page in `stale_dropped`;
+    # a shared definition withheld since the first page stays in it too, counted nowhere.
     total = max(0, int(payload.get("candidates_total") or 0) - withheld)
     # A parked page was serialised without tags unless the first call asked; fill on this
     # call's own switch.
     await _fill_hit_tags(hits, input)
+    governed = [h for h in hits if h.governed]
+    unit_counts = await _expand_unit_bodies(governed, input)
+    _apply_bodies(governed, input)
     apply_explain_default(hits, input)
     verdict = _page_verdict(hits, nxt, offset)
     out = MemorySearchOutput(
@@ -101,12 +109,16 @@ async def _serve_parked_page(input: MemorySearchInput) -> MemorySearchOutput:
         embedding_model=embedder_name,
         candidates_total=total,
         stale_dropped=stale_dropped,
+        degraded=_degradations.current(),
         namespaces_searched=[
             ns for ns in payload.get("namespaces_searched") or [input.namespace] if ns in readable
         ],
         namespaces_skipped=[ns for ns in payload.get("namespaces_skipped") or [] if ns in readable],
         page_offset=int(offset),
         next_page=_pages.make_handle(blob_key, nxt) if nxt >= 0 else "",
+        bodies_returned=unit_counts[0],
+        bodies_elided=unit_counts[1],
+        tokens_returned=unit_counts[2],
         abstain=verdict.abstain,
         abstain_code=verdict.abstain_code,
         abstain_reason=verdict.abstain_reason,
@@ -148,13 +160,32 @@ def _page_verdict(hits: list[_MemorySearchHit], nxt: int, offset: int) -> _PageV
 _REFILL_PER_MISSING_HIT = 4
 
 
+async def _stale_flags(
+    input: MemorySearchInput, payload: dict[str, Any], hits: list[_MemorySearchHit]
+) -> list[bool]:
+    if payload.get("replay"):
+        return [False] * len(hits)
+    return await pg_validation.stale_flags(input.org, input.namespace, hits)
+
+
+async def _parked_shared_flags(
+    org: str, namespace: str, hits: list[_MemorySearchHit]
+) -> list[bool]:
+    # Governed hits require the stronger bounded refresh, including source labels.
+    ordinary = [(i, hit) for i, hit in enumerate(hits) if not hit.governed]
+    checked = await withheld_definition_flags(org, namespace, [hit for _, hit in ordinary])
+    flags = {i: flag for (i, _), flag in zip(ordinary, checked, strict=True)}
+    return [flags.get(i, False) for i in range(len(hits))]
+
+
 async def _parked_slice(
     input: MemorySearchInput, payload: dict[str, Any], offset: int, readable: set[str]
 ) -> tuple[list[_MemorySearchHit], int, int]:
     """Up to `top_k` readable, still-served hits from `offset`; the next offset (-1 at the
     end) and how many were stale. Checked in two windows at most: `top_k` readable rows,
     then, when the page is still short, `_REFILL_PER_MISSING_HIT` for each hit missing.
-    A replay page is not checked."""
+    A replay page skips the authority's check; the shared-definition check runs on every
+    page."""
     from server.memory.app import search_pages as _pages
 
     rows = list(payload.get("hits") or [])
@@ -172,18 +203,28 @@ async def _parked_slice(
             if hit is not None:
                 window.append((j, hit))
             j += 1
-        stale = [False] * len(window)
-        if not payload.get("replay"):
-            stale = await pg_validation.stale_flags(
-                input.org, input.namespace, [h for _, h in window]
-            )
-        for (at, hit), is_stale in zip(window, stale, strict=True):
+        window_hits = [h for _, h in window]
+        # A source relabelled or gone since page one withholds its definition here too.
+        stale, definitions_withheld, refreshed = await asyncio.gather(
+            _stale_flags(input, payload, window_hits),
+            _parked_shared_flags(input.org, input.namespace, window_hits),
+            term_leg.refresh_parked(
+                input.org,
+                input.namespace,
+                str(payload.get("query") or ""),
+                window_hits,
+                whole=input.bodies in ("unit", "source"),
+            ),
+        )
+        for (at, _), is_stale, is_withheld, hit in zip(
+            window, stale, definitions_withheld, refreshed, strict=True
+        ):
             if len(hits) == top_k:
                 j = at  # the first row of the next page
                 break
             if is_stale:
                 dropped += 1
-            else:
+            elif not is_withheld and hit is not None:
                 hits.append(hit)
     return hits, (j if j < len(rows) else -1), dropped
 
@@ -212,13 +253,26 @@ async def _readable_namespaces(org: str, namespace: str, payload: dict[str, Any]
     return (named & set(mine)) | authorized
 
 
+def move_stale(hits: list[Any], input: Any) -> list[Any]:
+    """`hits` with each one whose linked code changed moved down (`code_change.rank_down`),
+    its explanation rewritten with the score it is served with."""
+    out = code_change.rank_down(hits, settings.memory_search_code_changed_places)
+    moved = [h for h in out if h.score_components.get("code_changed_places")]
+    for h in moved:
+        # only fact rows are marked, and their explanation is `_decorate_hits`' own:
+        # cleared here, it is written again with the score the row is served with
+        h.explanation = ""
+    _decorate_hits(moved, input=input)
+    return out
+
+
 async def _shape_final_hits(
     ctx: SearchContext, final_hits: list[_MemorySearchHit]
 ) -> tuple[list[_MemorySearchHit], tuple[int, int, int], list[str]]:
-    """Phase 22: shape the served hits — decorate, prepend recent/anchor
-    rows, body floor, unit and source bodies, relative-date wording, foreign
-    namespace marks, grounded excerpts, optional fields. Returns the hits,
-    the unit-body counts and the namespaces searched."""
+    """Phase 22: shape the served hits — decorate, prepend recent/anchor rows, body
+    floor, move down those whose code changed, unit and source bodies, relative-date
+    wording, foreign namespace marks, grounded excerpts, optional fields. Returns the
+    hits, the unit-body counts and the namespaces searched."""
     input = ctx.input
     namespaces = ctx.namespaces
     actual_work = ctx.actual_work
@@ -228,6 +282,16 @@ async def _shape_final_hits(
     anchored, stale_anchor = await _prepend_anchor(recent, input, ctx.stale_versions)
     ctx.stale_dropped += stale_recent + stale_anchor
     final_hits = _apply_min_body_chars(anchored, input)
+    # After the verdict, which read relevance, and the tiers and body floor, which cut
+    # rows: a memory whose code changed is served lower, never left out. A pass another
+    # search merges leaves the move, marks and all, to that search, whatever it reads the
+    # query as. A date order is the answer and stays as it is, its marks spent so no
+    # merge moves its rows (rows merged in from another search are its own to move).
+    if not getattr(input, "_merged_into_parent", False):
+        if ctx.chronological_intent:
+            code_change.spend_marks(final_hits)
+        else:
+            final_hits = move_stale(final_hits, input)
     _unit_bodies = await _expand_unit_bodies(
         final_hits, input, prefer_entities=list(ctx.effective_entity_filter)
     )
@@ -332,6 +396,7 @@ def _build_search_output(
         retrieval_plan=search_plan.explain(),
         retrieval_cost_estimate=run.retrieval_cost_estimate,
         retrieval_work=_actual_work_payload(actual_work, search_budget, clock=_clock),
+        term_leg=ctx.term_leg_status,
     )
     if getattr(input, "render", "") == "reader":
         from server.memory.app.ask.reader_render import reader_instructions, render_reader_block
@@ -403,12 +468,73 @@ async def _finish_search_output(
     _schedule_trace_log(
         input, _output, embedder, search_budget.elapsed_ms(), query_vec=ctx.query_vec
     )
+    _record_gap_miss(input, _output)
     _disclose_and_expose(ctx, _output)
     if _output.results:
         from server.memory.api.models_common import run_next_hint
 
         _output.next = run_next_hint(input.run_id)
     await _attach_scratchpad(input, _output)
+
+
+# The fields that narrow a memory.search to part of the namespace.
+_HARD_FILTERS = (
+    "user_id",
+    "exclude_keys",
+    "min_similarity",
+    "min_body_chars",
+    "category",
+    "session_id",
+    "session_ids",
+    "run_id",
+    "agent",
+    "memory_type",
+    "tags",
+    "scope",
+    "as_of",
+    "legs",
+)
+
+
+def _record_gap_miss(input: MemorySearchInput, output: MemorySearchOutput) -> None:
+    """A search that abstained or answered at high retrieval risk is a knowledge-gap
+    miss, when the caller invoked memory.search itself and it read the namespace-wide rows
+    with no hard filter, under a whole-namespace token. A degraded answer, or one with
+    writes still waiting for extraction, is not one."""
+    from server.knowledge.app.gaps import filtered, reads_whole_namespace, record_miss
+    from server.knowledge.domain.gaps import memory_missed, unsettled
+    from server.settings import settings
+
+    if not settings.knowledge_gaps_enabled:
+        return
+    if not memory_missed(output.abstain, output.retrieval_risk) or output.namespaces_skipped:
+        return
+    # A governed definition answers the query, and a leg that did not report complete or
+    # empty (off included) may have held one.
+    if output.term_leg not in ("complete", "empty") or any(h.governed for h in output.results):
+        return
+    if unsettled(
+        degraded=output.degraded,
+        pending_extraction=output.pending_extraction,
+        stale_dropped=output.stale_dropped,
+    ):
+        return
+
+    # A namespace's retrieval defaults are not the caller narrowing the search, and soft
+    # tags or a soft category (a `role` becomes a soft tag) only boost rows.
+    skip = set(input._namespace_defaults_applied)
+    if input.tags_soft:
+        skip.add("tags")
+    if input.category_soft:
+        skip.add("category")
+    if filtered(input, [f for f in _HARD_FILTERS if f not in skip]) or not reads_whole_namespace():
+        return
+    record_miss(
+        op="memory.search",
+        org=input.org,
+        namespace=input.namespace,
+        query=input.query,
+    )
 
 
 async def _attach_scratchpad(input: Any, output: Any) -> None:

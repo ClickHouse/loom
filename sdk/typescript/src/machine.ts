@@ -20,6 +20,7 @@
 
 import { AuthError, BackendUnavailable, busy, classed, LoomError, NETWORK_ERROR_CODE } from "./errors.js";
 import { envVar } from "./runtime.js";
+import { trimTrailingSlashes } from "./slashes.js";
 
 /** A credential fetched per request, e.g. a bot's renewing token. */
 export interface TokenProvider {
@@ -97,7 +98,7 @@ export class MachineLogin implements TokenProvider {
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(opts: MachineLoginOptions) {
-    this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
+    this.baseUrl = trimTrailingSlashes(opts.baseUrl);
     this.clientId = opts.clientId;
     this.label = `bot:${opts.clientId}`;
     this.origin = new URL(this.baseUrl).origin;

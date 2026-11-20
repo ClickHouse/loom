@@ -69,6 +69,7 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_COLOUR",
         "LOOM_COLOUR_PORT",
         "LOOM_CONFIG_FILE",
+        "LOOM_CONNECT",
         "LOOM_EMBEDDING_API_KEY",
         "LOOM_ENV_FILE",
         "LOOM_GRACEFUL_SHUTDOWN_S",
@@ -80,8 +81,10 @@ NON_SETTINGS_ENV = frozenset(
         "LOOM_INSTANCE_LABEL",
         "LOOM_KEEP_ALIVE_S",
         "LOOM_LISTEN_HOST",
+        "LOOM_LOCAL_MODELS",
         "LOOM_MENTOR_BRIEF",
         "LOOM_NAMESPACE",
+        "LOOM_NO_OPEN",
         "LOOM_ORG",
         "LOOM_OUTPUT_DIR",
         "LOOM_PORT",
@@ -133,7 +136,7 @@ _SECRET_FIELD = re.compile(
         (
             r"(?:^|_)secret(?:_previous)?$",
             r"(?:^|_)password$",
-            r"(?:^|_)(?:admin|extractor|github|scim)_token$",
+            r"(?:^|_)(?:admin|extractor|github|scim|router|operator)_token$",
             r"(?:^|_)key$",
             r"(?:^|_)public_keys_json$",
             r"(?:^|_)credentials_json$",
@@ -144,8 +147,8 @@ _SECRET_FIELD = re.compile(
             r"^document_extractors_json$",
             r"^document_extractor_tokens_json$",
             r"(?:^|_)otlp_headers$",
-            # A Postgres DSN carries the password.
-            r"^pg_dsn$",
+            # A Postgres DSN carries the password: the memory authority's and the router's.
+            r"(?:^|_)pg_dsn$",
         )
     )
 )

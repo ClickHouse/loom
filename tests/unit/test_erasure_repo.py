@@ -103,13 +103,19 @@ async def test_scrub_events_by_user_no_final_clause() -> None:
     """agent_events is MergeTree (append-only) — must NOT use FINAL on
     the count, that would be a syntax error."""
     ch = StubCH()
-    ch.query_one_returns.append({"n": 7})
-    await memory_steps.scrub_events_by_user("clickhouse", "alice", ch=ch)
-    sel_sql, _ = ch.query_one_calls[0]
-    assert "FROM loom.agent_events" in sel_sql
-    assert "FINAL" not in sel_sql
-    mut_sql, _ = ch.execute_calls[0]
-    assert "UPDATE user_id = '<erased>'" in mut_sql
+    ch.query_one_returns.extend([{"n": 7}, {"n": 3}])
+    assert await memory_steps.scrub_events_by_user("clickhouse", "alice", ch=ch) == 10
+    assert len(ch.query_one_calls) == len(ch.execute_calls) == 2
+    for table, (sel_sql, _), (mut_sql, _) in zip(
+        ("loom.agent_events", "loom.agent_events_private"),
+        ch.query_one_calls,
+        ch.execute_calls,
+        strict=True,
+    ):
+        assert f"FROM {table}" in sel_sql and "FINAL" not in sel_sql
+        assert " ".join(mut_sql.split()).startswith(
+            f"ALTER TABLE {table} UPDATE user_id = '<erased>'"
+        )
 
 
 @pytest.mark.asyncio
@@ -245,7 +251,7 @@ async def test_insert_request_checkpoint_writes_to_erasure_requests() -> None:
 
 
 # ----------------------------------------------------------------------
-# GDPR cascade — shared rows promoted from an erased user
+# Erasure cascade — shared rows promoted from an erased user
 # ----------------------------------------------------------------------
 
 

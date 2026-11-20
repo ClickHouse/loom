@@ -1,7 +1,7 @@
 {
   "name": "loom",
   "interface": {
-    "displayName": "Loom"
+    "displayName": "ClickHouse Loom"
   },
   "plugins": [
     {

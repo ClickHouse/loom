@@ -1,60 +1,60 @@
 # clickhouse-loom
 
-Python SDK for [Loom](https://github.com/ClickHouse/loom) — the shared-production memory, knowledge, conflict, and observability data plane for AI agents, built on ClickHouse.
+Python SDK for [ClickHouse Loom](https://clickhouse.github.io/loom/), a self-hosted server that gives AI agents shared long-term memory, document search and a code index.
 
-This package contains the **client SDK only**. Loom is designed for shared production deployment: an operator runs the server (Docker image at `ghcr.io/clickhouse/loom`) against a real ClickHouse instance (Cloud or self-hosted OSS), then application developers like you use this SDK to talk to it.
+This package contains the **client SDK only**. The server runs as the Docker image `ghcr.io/clickhouse/loom` against ClickHouse: on your own machine as a single-user install, or as a team deployment an operator runs.
 
 ## Install
 
-Not on PyPI yet, so install from source — pure Python, no build step — or from
-the wheel attached to a GitHub Release
-([docs/development/release-process.md](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)):
-
 ```bash
-pip install ./sdk/python                     # from a clone of ClickHouse/loom
-# without a clone (needs the same GitHub access as `git clone`):
-pip install "clickhouse-loom @ git+https://github.com/ClickHouse/loom#subdirectory=sdk/python"
+pip install clickhouse-loom
 ```
-
-<!-- restore `pip install clickhouse-loom` when release.yml publishes -->
 
 Python 3.11+. Runtime deps: `httpx[http2]` (HTTP/2 via `h2`).
 
+The SDK's version is the server release's; which servers it works with is in
+[supported versions](https://github.com/ClickHouse/loom/blob/main/docs/operations/supported-versions.md).
+A release not yet on PyPI installs from its assets
+([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
+From the root of a clone, `pip install ./sdk/python`.
+
 ## Use
 
-You'll need:
-
-- A `base_url` pointing at your team's Loom deployment.
-- A credential. Either sign in once with `python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on any browser with your password or SSO; every `Agent` you point at that server (`base_url=` or `LOOM_BASE_URL`) then uses that session and refreshes it. Or use a JWT your operator mints (`POST /v1/admin/token.mint`, `loom mint-token`), passed as `api_key=` or `LOOM_API_KEY` — the right choice for CI and services.
+Against a [single-user install](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md)
+on this machine (`http://localhost:7777`, the `dev/local` namespace, no token):
 
 ```python
-from loom import Datapack
-import os
+import asyncio
 
-dp = Datapack(
-    org="clickhouse",
-    namespace="eng-tooling",
-    base_url=os.environ["LOOM_BASE_URL"],  # e.g. https://loom.example.com
-    api_key=os.environ["LOOM_API_KEY"],  # JWT from your operator
-)
+from loom import Agent
 
-agent = dp.agent("claude-desktop")
 
-# Save a memory
-await agent.memory.set(
-    memory_key="deploy_window",
-    value="Deploy Tue/Thu, never Friday",
-    memory_type="preference",
-)
+async def main() -> None:
+    async with Agent(org="dev", namespace="local", agent="my-agent") as agent:
+        await agent.memory.set("deploy_window", "Deploy Tue/Thu, never Friday")
+        got = await agent.memory.get("deploy_window")  # by key
+        hits = await agent.memory.search("when do we deploy")  # by meaning
+        print(got["value"] if got else "not found")
+        print([hit.memory_key for hit in hits])
 
-# Recall by key
-got = await agent.memory.get(memory_key="deploy_window")
 
-# Or semantic search
-hits = await agent.memory.search("when do we deploy")
+asyncio.run(main())
 ```
 
+For a team server, pass `base_url=` (or set `LOOM_BASE_URL`) and a credential, with
+your account's org and namespace. Either sign in once with
+`python -m loom login --server <url>` (or `loom.login(url)` in a notebook), approving on
+any browser with your password or SSO, and every `Agent` pointed at that server uses that
+session and refreshes it; or pass a token from **Settings → Tokens**, or one your
+operator mints, as `api_key=` or `LOOM_API_KEY`. A token is the right choice for CI and
+services.
+
 The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
+
+Framework adapters live under `loom.integrations`: LangChain retrievers (`pip install 'clickhouse-loom[langchain]'`), a LlamaIndex retriever and memory block (`[llamaindex]`), a Haystack document store and retriever (`[haystack]`), OpenAI Agents SDK tools and sessions (`[openai-agents]`), CrewAI crew memory (`[crewai]`), an AutoGen memory (`[autogen]`), an AG2 recall policy and tools (`[ag2]`), a Microsoft Agent Framework context provider (`[agent-framework]`), a Claude API memory tool backend (`[claude-memory]`), a Google ADK memory service (`[google-adk]`), an Agno user-memory database (`[agno]`), a Pydantic AI toolset (`[pydantic-ai]`), a Pipecat memory service (`[pipecat]`), DSPy retrievers (`[dspy]`), a LangGraph store and a Strands Agents memory store ([frameworks](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)).
+
+For Pipecat installation, pipeline placement, the single-file text example and its
+checked scope, see the [Pipecat integration README](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/pipecat/README.md).
 
 Full guide: [docs/reference/python-sdk.md](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md). Deployment paths (how an operator stands up the server): [docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 
@@ -78,7 +78,7 @@ assert p["ok"], (p["missing_ops"], p["missing_fields"])
 print(OPS["memory.search"].idempotent, OPS["memory.search"].role)
 ```
 
-`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](../../docs/reference/errors.md#the-error-envelope-over-http)).
+`agent.memory.search(...)` and `agent.knowledge.search(...)` also accept `**extra`, so a field the server shipped this week rides the body without an SDK release. Errors are typed by the server's `detail.code`, and by HTTP status when a body carries none: `NotFound`, `ValidationError`, `AuthInvalid`, `AuthInsufficient`, `PreconditionFailed`, `RateLimited`, `BackendUnavailable` — every one carries `.request_id` (the `X-Request-Id` the server echoed), `.status`, and the server's `.category` and `.retryable`, the SDK's own when the body names none ([the error envelope](https://github.com/ClickHouse/loom/blob/main/docs/reference/errors.md#the-error-envelope-over-http)).
 
 `await agent.capabilities()` pairs `ops.capabilities` with what the bearer token itself says (`roles` / `ns_roles`, decoded, not verified) so an integration does not poll ops its token cannot call: `caps.can_call("conflicts.list")` is `True` / `False` when known and `None` when the SDK cannot tell — then make the call; `await agent.can_call(op)` answers for the Agent's namespace; `caps.callable()` lists every served op the token may call. Cached 60 s.
 
@@ -155,6 +155,42 @@ async with agent.session("thread-42", user_id="u1") as s:
 
 `agent.tools(user_id=..., session_id=...)` gives a model six loom verbs — `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note` — as `definitions("openai" | "anthropic" | "generic")` and one `await execute(name, arguments)` that returns the string the model reads. The schemas are the same as the TypeScript SDK's.
 
+An explicit code namespace offers a read-only code lookup before the memory tools.
+The model chooses `symbol`, `search`, `callers` or `impact`; tenant scope and request
+budgets stay in the application. Use `only` for a code-only tool loop:
+
+```python
+tools = agent.tools(code_namespace="code-repo", only=["loom_code_lookup"], max_result_chars=12_000)
+definitions = tools.definitions("anthropic")
+result = await tools.execute("loom_code_lookup", {"kind": "symbol", "target": "pkg.Reader.read"})
+```
+
+Code results preserve valid JSON within the character cap and disclose whole-body or
+row omissions. Honor abstention, ambiguity, source citations and graph lower bounds.
+See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) and
+[`examples/code_lookup.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/code_lookup.py).
+
+`loom_remember` returns the server's receipt: `stored` confirms a persisted row, while
+`noop` and `merged_into_key` distinguish reuse of an existing fact. Conflicts retain their
+peers and next action. `loom_recall` preserves abstention, code freshness, row status,
+provenance and verification fields when the server supplies them. `retrieval_risk` and
+`retrieval_confidence` score non-governed hits; `governed` identifies authoritative
+definitions and `term_leg` reports the definition lookup status. A missing attestation
+is not verification. Memory results remain valid JSON: whole memories that do not fit are
+counted in `omitted`; metadata that cannot fit returns `insufficient` and
+`metadata_omitted`. A budget too small for that marker is rejected before the call.
+
+For a durable fact about code, the application can use `agent.memory.set(...,
+files=["src/reader.py"], tags=[repo_tag])`, where `repo_tag` is the matching `repo:<id>`
+tag established by the integration. It is not an arbitrary repository name. A configured
+code namespace also identifies the repository; `code.repos` reports its
+`primary_namespace` for shared file rules.
+`files=None` detects references from the value; `files=[]` clears prior references.
+The compact `loom_remember` schema does not expose these fields: use the direct SDK call
+when file or repository association matters. Linking is asynchronous, so a saved receipt
+does not confirm a resolved link. Read the link state before relying on the claim; see
+[memories linked to code](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code).
+
 ## Retries and logging
 
 The retry policy is one frozen dataclass, set on the Agent and overridable per call with a `RetryPolicy` or a dict of its fields; every field is validated and named when wrong. Defaults: 3 attempts; 0.1 s backoff doubling to 5 s with ±25 % jitter; 408 and 5xx retried for registry-idempotent ops (any other op only on a 408 or a 503 `AUTH_UNAVAILABLE`, which the server answers before running it), except an answer the server classes `configuration`; connection errors retried; a read timeout, a cut-off response or a write that broke off retried only for an op the registry marks idempotent and not read-only (the server dedups its `Idempotency-Key`); a `Retry-After` on a retried status honoured up to 60 s. A 429 is paced, not retried.
@@ -177,7 +213,7 @@ The SDK logs through the stdlib logger `loom` (a `NullHandler` by default; your 
 
 ## Examples
 
-[`examples/agent_memory.py`](./examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](./examples/README.md). The TypeScript SDK ships the same example.
+[`examples/agent_memory.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/agent_memory.py) — probe → remember ×3 → recall → ask with citations → outcome → typed errors, with its actual run in [`examples/README.md`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md). The TypeScript SDK ships the same example.
 
 ## License
 

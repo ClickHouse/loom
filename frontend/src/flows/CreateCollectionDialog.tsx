@@ -1,19 +1,34 @@
 import { useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
+import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
 import { TextField } from "@clickhouse/click-ui/TextField";
-import { createCollection, type CollectionEntry } from "../api";
+import { type CollectionCreated, createCollection, type CollectionEntry } from "../api";
 import { toast } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { Alert, fieldError } from "../components/ui";
-import { humanizeError } from "../lib/format";
-import { isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
+import { distinctTitle, MAX_TITLE, placeholderName, plainName, repeatedTitles, titleTooLong } from "../lib/collections";
+import { ApiError } from "../lib/errors";
+import { humanizeError } from "../lib/errorWords";
+import { COLLECTION_PREFIX, isPersonalCollection, NAMESPACE_NAME, PERSONAL_COLLECTION_PREFIX } from "../lib/namespace";
+import { invalidateSharedCollections } from "../lib/collectionPlaces";
+import { useMounted } from "../lib/hooks";
 
-// server/auth/sharing.py: a collection's name starts with `col-`, and `col-me-` is kept
-// for the personal collections the server names.
-const COLLECTION_PREFIX = "col-";
 // The Select's value for "no parent": a Select item cannot carry "".
 const TOP_LEVEL = "__top__";
+
+/** Advances the place version for a create about to be sent and returns it: only the latest
+ *  create opens what it made. */
+export type ClaimCreateVersion = () => number;
+
+/** After collection.create in `org`: the shared reads start again, and every Library list
+ *  open when the answer lands waits for the new collection. The person is told whether it was
+ *  made or one of that title already sits there; `typed` is shown when the answer names none. */
+export function announceCreated(r: CollectionCreated, typed: string, org: string): void {
+  invalidateSharedCollections({ name: r.namespace, org });
+  const shown = r.title || typed || r.namespace;
+  toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
+}
 
 /** Why `name` cannot be a collection's name, or null when it can. */
 export function collectionNameError(name: string): string | null {
@@ -25,10 +40,14 @@ export function collectionNameError(name: string): string | null {
   return null;
 }
 
-/** The collections a new one may sit in: those the caller writes, never a personal one,
- *  which holds no other collection. */
-export function parentChoices(collections: CollectionEntry[]): CollectionEntry[] {
-  return collections.filter((c) => !c.personal && c.role !== "viewer");
+/** A refused name: what to say, and a free name to offer. */
+function nameTaken(e: unknown): { text: string; suggestion: string } | null {
+  if (!(e instanceof ApiError)) return null;
+  if (e.code === "COLLECTION_NAME_TAKEN") {
+    const s = e.detail["suggestion"];
+    return { text: humanizeError(e), suggestion: typeof s === "string" ? s : "" };
+  }
+  return null;
 }
 
 interface Props {
@@ -39,23 +58,47 @@ interface Props {
   parents: CollectionEntry[];
   /** The parent the form starts on; "" for top level. */
   initialParent?: string;
-  /** Fires with the new collection's name. */
-  onCreated: (namespace: string) => void;
+  /** The header's namespace when it holds documents, named so a top-level collection is not
+   *  taken to sit in it. */
+  headerNamespace?: string | null;
+  claimCreateVersion: ClaimCreateVersion;
+  /** Fires with the collection's name (the new one, or the one the title already names there)
+   *  and the version its Create claimed, only while this dialog is still open. */
+  onCreated: (namespace: string, version: number) => void;
 }
 
 /**
- * Create a collection (`collection.create`): a namespace only grants open. The creator
- * becomes its admin; under a parent it also inherits the parent's grants, which needs
- * writer on the parent.
+ * Create a collection (`collection.create`): a namespace only grants open. A person types
+ * its title; the server derives its name (its address), adding a short suffix when the
+ * plain one is taken, and a title already used inside the same parent (at the top level,
+ * one of the person's own) opens that collection instead. "Choose the address myself"
+ * names it explicitly. The creator becomes its admin; under a parent it also inherits the
+ * parent's grants, which needs writer on the parent.
  */
-export function CreateCollectionDialog({ open, onOpenChange, org, parents, initialParent = "", onCreated }: Props) {
+export function CreateCollectionDialog({
+  open,
+  onOpenChange,
+  org,
+  parents,
+  initialParent = "",
+  headerNamespace = null,
+  claimCreateVersion,
+  onCreated,
+}: Props) {
+  const [title, setTitle] = useState("");
+  const [ownAddress, setOwnAddress] = useState(false);
   const [name, setName] = useState(COLLECTION_PREFIX);
   const [parent, setParent] = useState(initialParent || TOP_LEVEL);
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ text: string; suggestion: string } | null>(null);
+  // False once this open's dialog is gone: a late answer then leaves the page, and any dialog
+  // opened since, alone.
+  const mounted = useMounted();
 
   const reset = () => {
+    setTitle("");
+    setOwnAddress(false);
     setName(COLLECTION_PREFIX);
     setParent(initialParent || TOP_LEVEL);
     setDescription("");
@@ -67,30 +110,48 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
     onOpenChange(v);
   };
 
+  const trimmedTitle = title.trim();
   const trimmed = name.trim();
-  // Said once something past the prefix is typed, not on the prefilled prefix.
-  const nameError = trimmed === COLLECTION_PREFIX ? null : collectionNameError(trimmed);
-  // Counted by character, as the server counts it (an emoji is one).
+  const tooLong = titleTooLong(trimmedTitle);
   const descriptionTooLong = Array.from(description.trim()).length > 2000;
-  const canSubmit = collectionNameError(trimmed) === null && !descriptionTooLong && !busy;
+  // Said once something past the prefix is typed, not on the prefilled prefix.
+  const nameError = !ownAddress || trimmed === COLLECTION_PREFIX ? null : collectionNameError(trimmed);
+  const named = ownAddress ? collectionNameError(trimmed) === null : trimmedTitle !== "";
+  const canSubmit = named && !tooLong && !descriptionTooLong && !busy;
+  const derived = plainName(trimmedTitle);
+  const repeated = repeatedTitles(parents);
 
   const onSubmit = async () => {
     if (!canSubmit) return;
     setBusy(true);
     setError(null);
+    const version = claimCreateVersion();
+    const into = parent === TOP_LEVEL ? "" : parent;
     try {
-      const r = await createCollection(org, trimmed, {
-        parent: parent === TOP_LEVEL ? "" : parent,
-        description: description.trim(),
-      });
-      toast(r.created ? `Created ${r.namespace}` : `${r.namespace} already exists`, "ok");
-      onCreated(r.namespace);
+      const r = ownAddress
+        ? await createCollection(org, trimmed, { parent: into, description: description.trim(), title: trimmedTitle })
+        : // The plain name rides along for a server a release behind, which creates it.
+          await createCollection(org, derived || placeholderName(trimmedTitle), {
+            parent: into,
+            description: description.trim(),
+            title: trimmedTitle,
+            deriveName: true,
+          });
+      announceCreated(r, trimmedTitle, org);
+      if (!mounted.current) return;
+      onCreated(r.namespace, version);
       reset();
       onOpenChange(false);
     } catch (e) {
-      setError(humanizeError(e));
+      setError(nameTaken(e) ?? { text: humanizeError(e), suggestion: "" });
       setBusy(false);
     }
+  };
+
+  const useSuggestion = (s: string) => {
+    setOwnAddress(true);
+    setName(s);
+    setError(null);
   };
 
   return (
@@ -108,15 +169,39 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
           void onSubmit();
         }}
       >
-        <TextField
-          id="create-collection-name"
-          label="Name"
-          value={name}
-          onChange={setName}
-          placeholder="col-handbook"
-          autoFocus
-          {...fieldError("create-collection-name-error", nameError)}
+        <div>
+          <TextField
+            id="create-collection-title"
+            label="Title"
+            value={title}
+            onChange={setTitle}
+            placeholder="Q3 plans"
+            autoFocus
+            {...fieldError("create-collection-title-error", tooLong ? `At most ${MAX_TITLE} characters.` : null)}
+          />
+          {!ownAddress && (
+            <p className="mt-1 text-xs text-text-muted">
+              {derived
+                ? `Its address is ${derived}, with a short suffix if that is taken. Agents and grants use the address; people see the title.`
+                : "Its address is derived from the title. Agents and grants use the address; people see the title."}
+            </p>
+          )}
+        </div>
+        <Checkbox
+          label="Choose the address myself"
+          checked={ownAddress}
+          onCheckedChange={(c) => setOwnAddress(c === true)}
         />
+        {ownAddress && (
+          <TextField
+            id="create-collection-name"
+            label="Address"
+            value={name}
+            onChange={setName}
+            placeholder="col-handbook"
+            {...fieldError("create-collection-name-error", nameError)}
+          />
+        )}
         <div>
           <Select
             id="create-collection-parent"
@@ -125,15 +210,18 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
             onSelect={setParent}
             triggerProps={{ "aria-describedby": "create-collection-parent-hint" }}
           >
-            <Select.Item value={TOP_LEVEL}>None (top level)</Select.Item>
+            <Select.Item value={TOP_LEVEL}>Top level, in the org</Select.Item>
             {parents.map((p) => (
               <Select.Item key={p.namespace} value={p.namespace}>
-                {p.namespace}
+                {distinctTitle(p, repeated)}
               </Select.Item>
             ))}
           </Select>
           <p id="create-collection-parent-hint" className="mt-1 text-xs text-text-muted">
-            A collection inside another inherits its grants. Only collections you can write are listed.
+            {parent === TOP_LEVEL
+              ? `A top-level collection belongs to the org${headerNamespace ? `, not to ${headerNamespace}` : ""}: only the members you add read it.`
+              : "A collection inside another inherits its grants."}{" "}
+            Only collections you can write are listed.
           </p>
         </div>
         <TextField
@@ -144,7 +232,16 @@ export function CreateCollectionDialog({ open, onOpenChange, org, parents, initi
           placeholder="What the collection holds"
           {...fieldError("create-collection-description-error", descriptionTooLong ? "At most 2000 characters." : null)}
         />
-        {error && <Alert role="alert" state="danger" text={error} />}
+        {error && (
+          <div className="space-y-2">
+            <Alert role="alert" state="danger" text={error.text} />
+            {error.suggestion && (
+              <Button type="secondary" htmlType="button" onClick={() => useSuggestion(error.suggestion)}>
+                {`Use ${error.suggestion}`}
+              </Button>
+            )}
+          </div>
+        )}
         <ModalFooter>
           <Button type="secondary" htmlType="button" onClick={() => close(false)}>
             Cancel

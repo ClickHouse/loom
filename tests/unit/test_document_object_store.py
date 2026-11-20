@@ -23,10 +23,13 @@ import pytest
 from server.core import object_store, pg
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_memory
-from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OWED_SHAS
+from server.knowledge.domain.owed_originals import NEEDS_ORIGINAL, OPEN_JOB, OWED_SHAS
 from server.knowledge.store import blobs, pg_documents
 from server.knowledge.workers import blob_gc
 from server.settings import settings
+
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
 
 BUCKET = "originals"
 
@@ -1572,7 +1575,7 @@ def test_the_erasure_cli_refuses_a_bucket_without_boto3(
     assert hygiene._cmd_namespaces_gc(argparse.Namespace(erase=True)) == 2
     assert "needs boto3" in capsys.readouterr().err
     # A read-only re-verify still runs: its census lists the bucket apart.
-    monkeypatch.setattr(hygiene, "run_connected", lambda run: 0)
+    monkeypatch.setattr(hygiene, "run_connected", lambda run, **_declared: 0)
     assert hygiene._cmd_erasure_re_verify(argparse.Namespace(resume=False, erase=False)) == 0
 
 
@@ -1590,7 +1593,9 @@ def test_a_failed_saga_keeps_its_table_counts_when_the_bucket_cannot_be_listed(
     monkeypatch.setattr(saga.erasure_census, "table_residue", tables)
     monkeypatch.setattr(saga.erasure_census, "object_residue", bucket_down)
     verify: dict[str, Any] = {}
-    asyncio.run(saga._census_tail("o", "namespace", "a", verify, purge=False))
+    asyncio.run(
+        saga._census_tail("o", "namespace", "a", verify, purge=False, row={}, completed=set())
+    )
     assert verify["per_table"] == {"loom.chunks": 2} and verify["count"] == 2
     assert "verified_at" not in verify  # the bucket went uncounted
     # The failed checkpoint keeps those counts.
@@ -1621,7 +1626,7 @@ def test_an_evidence_census_keeps_the_table_counts_when_postgres_or_the_bucket_i
         {"loom.chunks": 2},
         {"postgres": pg_error, "bucket": down},
     )
-    assert asyncio.run(erasure_census.evidence_census("o", "user_id", "u")) == (
+    assert asyncio.run(erasure_census.evidence_census("o", "user_id", "u", spellings=["u"])) == (
         {"loom.chunks": 2},
         {"postgres": pg_error},
     ), "a user scope lists no bucket"
@@ -1638,8 +1643,12 @@ def test_a_namespace_verify_counts_the_bucket_objects_left(
     async def left(*args: Any, **kw: Any) -> int:
         return 3
 
+    async def spellings(org: str, subject: str) -> list[str]:
+        return [subject]
+
     monkeypatch.setattr(saga_steps.erasure_census, "residue_census", tables)
     monkeypatch.setattr(saga_steps.erasure_census, "object_residue", left)
+    monkeypatch.setattr("server.auth.aliases.spellings", spellings)
     holder: dict[str, Any] = {}
     with pytest.raises(saga_steps.ErasureResidueError):
         asyncio.run(saga_steps._step_verify_residue("o", "namespace", "a", holder))
@@ -1769,7 +1778,7 @@ def test_under_postgres_an_original_another_writers_unpublished_commit_names_sta
     # rows the fragment selects are pinned against Postgres in test_knowledge_pg_heads).
     [(sql, args)] = sent
     assert args == ("o", ["ns", "ns"], [shared, mine], "alice") and "user_id <> $4" in sql
-    assert NEEDS_ORIGINAL in sql and OWED_SHAS in sql
+    assert NEEDS_ORIGINAL in sql and OWED_SHAS in sql and OPEN_JOB in sql
 
 
 def test_an_erased_user_id_postgres_cannot_store_still_keeps_others_owed_originals(
@@ -1822,3 +1831,4 @@ def test_owed_originals_reads_the_shared_fragment_for_the_namespace(
     assert asyncio.run(pg_documents.owed_originals("o", "ns")) == {"a" * 64}
     [(sql, args)] = sent
     assert args == ("o", "ns") and NEEDS_ORIGINAL in sql and OWED_SHAS in sql
+    assert OPEN_JOB in sql  # an open ingestion job's original too

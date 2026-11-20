@@ -110,7 +110,8 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
         else ("n" if c["scope"] == "namespace" else "alice")
     )
     scope_type = "user_id" if c["scope"] == "user_id" else "namespace"
-    await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch)
+    spellings = ["alice"] if scope_type == "user_id" else None
+    await erasure_census.residue_census(ORG, scope_type, scope_value, ch=ch, spellings=spellings)
     from server.erasure.store import steps_pg
 
     names = scope_value if isinstance(scope_value, list) else [scope_value]
@@ -136,6 +137,8 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await erasure_health.orphan_graph_namespaces(ch=ch)
     await erasure_health.integrity_counts(ch=ch)
     await erasure_ledger.fetch_request_status("erasure-1", ch=ch)
+    await erasure_ledger.mirror_mark(ORG, _ID, ch=ch)
+    await erasure_ledger.promote_mirror_mark(ORG, _ID, ch=ch)
     await erasure_mutations.find_pending_mutation("loom.memory", "tag", ch=ch)
 
 

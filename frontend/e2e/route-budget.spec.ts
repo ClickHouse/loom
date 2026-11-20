@@ -20,13 +20,13 @@ const ROUTES: Array<[string, string]> = [
   ["Memories", "/memories"],
   ["Recall", "/recall"],
   ["Settings", "/settings"],
+  ["Connected accounts", "/settings/connected-accounts"],
   ["Repositories", "/repositories"],
   ["Flow", "/flow"],
   ["Library", "/library"],
   ["Conversations", "/conversations"],
   ["Graph", "/graph"],
-  ["Assistant", "/assistant"],
-  ["Spaces", "/spaces"],
+  ["Namespaces in your org", "/spaces"],
   ["Profile", "/profile"],
   ["Runs", "/runs"],
   ["Tasks", "/tasks"],
@@ -34,7 +34,7 @@ const ROUTES: Array<[string, string]> = [
   ["Health", "/admin/health"],
   ["Guardrails", "/admin/guardrails"],
   ["Policies", "/admin/policies"],
-  ["Activity", "/admin/activity"],
+  ["Audit log", "/admin/activity"],
   ["Usage", "/admin/usage"],
   ["Agents", "/admin/agents"],
   ["Users", "/admin/users"],
@@ -73,7 +73,7 @@ for (const [name, path] of ROUTES) {
     await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
     await page.goto(path, { waitUntil: "domcontentloaded" });
     // The shell's own <main id="main">: the boot screens' sr-only <h1> sits in a bare <main>.
-    await expect(page.locator("#main").locator("h1, h2").first()).toBeVisible();
+    await expect(page.locator("#main :is(h1, h2)").first()).toBeVisible();
     await page.waitForTimeout(1500);
     const { lcp, lt } = await page.evaluate(() => ({
       lcp: window.__lcp,

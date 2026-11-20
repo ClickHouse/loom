@@ -14,20 +14,66 @@ export interface ChatMessage {
 }
 
 /** One citation of a finished answer, as the server checked it against Loom: `ref` is the
- *  memory key, document source or code path it names. */
+ *  memory key, document source, documentation page or code path it names. */
 export interface Citation {
   kind: string;
   text: string;
   verified: boolean;
   reason: string;
   ref: string;
+  /** A verified help citation's section anchor on its page; "" otherwise. */
+  anchor?: string;
+}
+
+/** One tool call the answer made, as its ledger row shows it (server/assistant/domain/steps.py):
+ *  its op, the words for it ("Read the audit", "Couldn't search memories") and whether it
+ *  succeeded. */
+export interface Step {
+  op: string;
+  text: string;
+  ok: boolean;
+}
+
+/** The steps of an event, whether the run held more than it lists, and whether the event
+ *  carries a list at all (`listed`: an answer's last event leaves it out when its run could
+ *  not be read, and a server that sends no steps never sends one). */
+export function stepsOf(chunk: Record<string, unknown>): { steps: Step[]; cut: boolean; listed: boolean } {
+  const raw = Array.isArray(chunk.steps) ? chunk.steps : [];
+  const steps = raw.flatMap((s) =>
+    isRecord(s) && typeof s.text === "string"
+      ? [{ op: typeof s.op === "string" ? s.op : "", text: s.text, ok: s.ok === true }]
+      : [],
+  );
+  return { steps, cut: chunk.steps_cut === true, listed: Array.isArray(chunk.steps) };
+}
+
+/** How far an answer rests on what Loom holds (server/assistant/domain/support.py). */
+export type Support = "supported" | "unsupported" | "unchecked" | "none";
+
+const SUPPORTS: readonly string[] = ["supported", "unsupported", "unchecked", "none"];
+
+/** The support the server sent; a value this dashboard does not know, or none at all,
+ *  reads as unchecked. */
+export function supportOf(raw: unknown): Support {
+  return typeof raw === "string" && SUPPORTS.includes(raw) ? (raw as Support) : "unchecked";
 }
 
 export interface ChatHandlers {
   /** Each piece of the answer's text, in order. */
   onText: (text: string) => void;
-  /** The answer's citations, checked, once its text is complete. */
-  onCitations?: (citations: Citation[]) => void;
+  /** The answer's citations, checked, its support, the op and setting names it wrote that
+   *  the server neither serves nor documents, and what it read, once its text is complete. */
+  onCitations?: (
+    citations: Citation[],
+    support: Support,
+    unknownNames: string[],
+    read: { steps: Step[]; cut: boolean; listed: boolean },
+  ) => void;
+  /** What the answer has read so far, while it streams: the whole list each time. */
+  onSteps?: (read: { steps: Step[]; cut: boolean; listed: boolean }) => void;
+  /** The answer's text is complete and its citations are being checked (`loom.text_done`;
+   *  a server that sends none goes straight to `onCitations`). */
+  onTextDone?: () => void;
 }
 
 function citationOf(raw: unknown): Citation | null {
@@ -39,6 +85,7 @@ function citationOf(raw: unknown): Citation | null {
     verified: raw.verified === true,
     reason: str(raw.reason),
     ref: str(raw.ref),
+    anchor: str(raw.anchor),
   };
 }
 
@@ -67,7 +114,20 @@ function readEvent(data: string, on: ChatHandlers, requestId: string): boolean {
   if (chunk.error) throw streamError(chunk.error, requestId);
   if (chunk.object === "loom.citations") {
     const all = Array.isArray(chunk.citations) ? chunk.citations : [];
-    on.onCitations?.(all.map(citationOf).filter((c): c is Citation => c !== null));
+    on.onCitations?.(
+      all.map(citationOf).filter((c): c is Citation => c !== null),
+      supportOf(chunk.support),
+      Array.isArray(chunk.unknown_names) ? chunk.unknown_names.filter((n) => typeof n === "string") : [],
+      stepsOf(chunk),
+    );
+    return false;
+  }
+  if (chunk.object === "loom.step") {
+    on.onSteps?.(stepsOf(chunk));
+    return false;
+  }
+  if (chunk.object === "loom.text_done") {
+    on.onTextDone?.();
     return false;
   }
   const choices = Array.isArray(chunk.choices) ? chunk.choices : [];

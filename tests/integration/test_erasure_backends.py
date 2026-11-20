@@ -225,7 +225,7 @@ async def test_langfuse_404_on_delete_fails_closed(mock_server) -> None:
 
     On a deployment where `DELETE /api/public/traces` is absent — an older
     self-hosted build, a proxy forwarding only GET/POST — the lookup still returns
-    real ids and every delete 404s. Counting those as deleted would report a GDPR
+    real ids and every delete 404s. Counting those as deleted would report the
     erasure as satisfied while every trace, its generations and its quality scores
     stayed in Langfuse.
     """
@@ -242,7 +242,7 @@ async def test_langfuse_user_erasure_is_scoped_to_the_org(mock_server) -> None:
 
     `user_id` is a caller-supplied opaque string — an email, a JWT subject — and
     loom writes every org into ONE Langfuse project. Filtering on `userId` alone
-    means a GDPR request from org A deletes org B's traces for anyone sharing an
+    means an erasure request from org A deletes org B's traces for anyone sharing an
     identifier: irrecoverable, with no error and nothing in the audit trail.
     `delete_namespace` ANDs the org tag for the same reason.
     """

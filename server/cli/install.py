@@ -6,13 +6,21 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
-from server.identity.app.token_clients import CONFIG_PATHS, config_key, mcp_entry
+from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
+from server.identity.app.token_clients import (
+    CODING_CLIENTS,
+    CODING_TOOLSET,
+    CONFIG_PATHS,
+    config_key,
+    mcp_entry,
+)
 
 # ============================================================
 # `loom install` — wire Loom into a local AI client's config
@@ -52,7 +60,12 @@ def _detect_installed_clients() -> list[str]:
     found: list[str] = []
     for client in _INSTALL_CLIENTS:
         try:
-            if _resolve_install_path(client).parent.exists():
+            if client == "gemini":
+                # Google Antigravity also creates ~/.gemini/, so the directory alone does
+                # not mean Gemini CLI is installed: ask for its settings file or its binary.
+                if _resolve_install_path(client).exists() or shutil.which("gemini"):
+                    found.append(client)
+            elif _resolve_install_path(client).parent.exists():
                 found.append(client)
         except Exception:  # noqa: BLE001 — detection must never crash install
             continue
@@ -81,12 +94,6 @@ def _install_mcp_url(server_url: str, toolset: str) -> str:
     if toolset:
         mcp_url += f"?toolset={toolset}"
     return mcp_url
-
-
-# Claude Code is a coding agent: its listing defaults to the `coding` tier
-# (19 tools) rather than the deployment default `core` (41 with the code tools
-# on) — the same choice the coding-agent plugin's .mcp.json makes.
-_CLAUDE_CODE_DEFAULT_TOOLSET = "coding"
 
 
 def _shell_words(argv: list[str]) -> str:
@@ -181,7 +188,7 @@ def _install_claude_code_mcp(
 
     if _plugin_mounts_the_server(force):
         return True
-    mcp_url = _install_mcp_url(server_url, toolset or _CLAUDE_CODE_DEFAULT_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset)
     argv = _claude_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     claude_bin = shutil.which("claude")
@@ -249,7 +256,7 @@ def _install_codex_mcp(
     import shutil
     import subprocess
 
-    mcp_url = _install_mcp_url(server_url, toolset or _CLAUDE_CODE_DEFAULT_TOOLSET)
+    mcp_url = _install_mcp_url(server_url, toolset)
     argv = _codex_mcp_add_argv(name=name, mcp_url=mcp_url)
     line = _shell_words(argv)
     codex_bin = shutil.which("codex")
@@ -338,6 +345,94 @@ def _print_dry_run(path: Path, changes: dict[str, Any], token: str) -> None:
     print("  (every other key in the file is kept as it is)")
 
 
+def _print_zed_manual(
+    path: Path,
+    section: str,
+    name: str,
+    entry: dict[str, Any],
+    token: str,
+    reason: str,
+    *,
+    dry_run: bool,
+) -> None:
+    """The file stays as it was. The entry is what the user pastes by hand."""
+    import json as _json
+
+    rendered = _json.dumps({name: entry}, indent=2)
+    if dry_run and token:
+        rendered = rendered.replace(token, "<token>")
+    print(
+        f"ERROR (zed): {path} could not be merged ({reason}). The file was not changed.\n"
+        f'Add this under "{section}" in that file:\n{rendered}',
+        file=sys.stderr,
+    )
+
+
+def _install_zed(
+    cfg_path: Path,
+    section: str,
+    name: str,
+    entry: dict[str, Any],
+    token: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Merge `context_servers` into Zed's settings.json without a full rewrite."""
+    import json as _json
+
+    if not cfg_path.exists():
+        rendered = _json.dumps({section: {name: entry}}, indent=2) + "\n"
+        if dry_run:
+            _print_dry_run(cfg_path, {section: {name: entry}}, token)
+            return True
+        write_private(cfg_path, rendered, newline="")
+        print(f"✓ zed: wrote {name} → {cfg_path}")
+        return True
+    try:
+        original = cfg_path.read_bytes().decode("utf-8")
+    except (UnicodeDecodeError, OSError) as exc:
+        _print_zed_manual(
+            cfg_path, section, name, entry, token, f"could not read it ({exc})", dry_run=dry_run
+        )
+        return False
+    try:
+        rendered, changed = upsert_object_key(original, section, name, entry)
+    except JsoncEditError as exc:
+        _print_zed_manual(cfg_path, section, name, entry, token, exc.reason, dry_run=dry_run)
+        return False
+    if dry_run:
+        if changed:
+            _print_dry_run(cfg_path, {section: {name: entry}}, token)
+        else:
+            print(f"unchanged: {cfg_path}")
+        return True
+    if not changed:
+        print(f"✓ zed: {name} already set → {cfg_path}")
+        return True
+    write_private(cfg_path, rendered, newline="")
+    print(f"✓ zed: wrote {name} → {cfg_path}")
+    return True
+
+
+def _has_json_comments(text: str) -> bool:
+    """True when `text` holds a `//` or `/* */` comment outside a string: JSON with
+    comments, which some clients (Gemini CLI) read and `json` refuses."""
+    in_string = escaped = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch == "/" and text[i + 1 : i + 2] in ("/", "*"):
+            return True
+    return False
+
+
 def _install_one(
     client: str,
     *,
@@ -355,6 +450,8 @@ def _install_one(
     goes through `claude mcp add`."""
     import json as _json
 
+    # Coding agents default to the coding toolset, as the dashboard and the token setup give it.
+    toolset = toolset or (CODING_TOOLSET if client in CODING_CLIENTS else "")
     if client == "claude-code":
         return _install_claude_code_mcp(
             server_url=server_url,
@@ -371,12 +468,14 @@ def _install_one(
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
     entry = mcp_entry(client, mcp_url, token)
+    if client == "zed":
+        return _install_zed(cfg_path, section, name, entry, token, dry_run=dry_run)
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():
+        text = cfg_path.read_text(encoding="utf-8")
         try:
-            with cfg_path.open("r", encoding="utf-8") as f:
-                existing = _json.load(f)
+            existing = _json.loads(text)
             if not isinstance(existing, dict):
                 print(
                     f"ERROR ({client}): {cfg_path} top level is not a JSON "
@@ -385,6 +484,17 @@ def _install_one(
                 )
                 return False
         except _json.JSONDecodeError as e:
+            if _has_json_comments(text):
+                # Rewriting would drop the comments, so write nothing and hand the entry over.
+                print(
+                    f"ERROR ({client}): {cfg_path} holds comments, which `loom install` "
+                    f"cannot keep when it rewrites the file; nothing was written. Add this "
+                    f"under {section!r} yourself (replace <token> with your Loom token):",
+                    file=sys.stderr,
+                )
+                snippet = _json.dumps({name: entry}, indent=2)
+                print(snippet.replace(token, "<token>") if token else snippet, file=sys.stderr)
+                return False
             print(
                 f"ERROR ({client}): {cfg_path} is not valid JSON ({e}); "
                 f"fix or delete it and re-run.",
@@ -500,9 +610,9 @@ def _add_install_flags(p_install: argparse.ArgumentParser) -> None:
         default="",
         type=_toolset_arg,
         help=(
-            "MCP toolset the client lists, as `?toolset=` on the URL: "
-            "`coding` for a coding agent, empty for the server default (core; "
-            "claude-code and codex default to `coding`)."
+            "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, "
+            f"`{CODING_TOOLSET}` for {', '.join(sorted(CODING_CLIENTS))}, else the "
+            "server default (LOOM_MCP_TOOLSET)."
         ),
     )
     p_install.add_argument(

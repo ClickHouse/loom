@@ -74,9 +74,9 @@ async def unregistered_live(
 
 _AT = "org = {org:String} AND namespace = {ns:String}"
 # Tables outside the erasure census whose live rows a later owner of the name would
-# inherit (a grant, an outside target, a source, a tree node, an identity link, an open
-# erasure), each with the condition that makes its row live. Every other table keyed by
-# namespace is counted by the census or exempt with a reason
+# inherit (a grant, an outside target, a source, a mirror, a tree node, an identity
+# link, an open erasure), each with the condition that makes its row live. Every other
+# table keyed by namespace is counted by the census or exempt with a reason
 # (tests/unit/test_in_use_coverage.py).
 STATE_TABLES: dict[str, str] = {
     "loom.namespace_grants": f"FINAL WHERE {_AT} AND {LIVE_GRANT}",
@@ -84,12 +84,17 @@ STATE_TABLES: dict[str, str] = {
     "loom.task_inboxes": "FINAL WHERE org = {org:String} AND owner_namespace = {ns:String}"
     " AND is_deleted = 0",
     "loom.knowledge_sources": f"FINAL WHERE {_AT} AND active",
+    "loom.query_history_sources": f"FINAL WHERE {_AT} AND tombstoned_at IS NULL",
+    # A mirror outlives a deleted name until a namespace erasure: a new owner of the name
+    # would inherit its mirrored documents.
+    "loom.knowledge_mirrors": f"FINAL WHERE {_AT} AND NOT deleted",
     "loom.code_repos": f"FINAL WHERE {_AT} AND active",
     "loom.qa_sources": "FINAL WHERE org = {org:String} AND active"
     " AND JSONHas(namespaces_json, {ns:String})",
     "loom.collections": f"FINAL WHERE {_AT} AND NOT deleted",
-    "loom.shared": f"WHERE {_AT}",
     "loom.sso_links": f"FINAL WHERE {_AT} AND linked = 1",
+    # A SQL user granted the name would read a new owner's rows through the SQL surface.
+    "loom.sql_access": f"FINAL WHERE {_AT} AND granted",
     # An open erasure of the name, alone or in a list (an array or {"namespaces": [...]}),
     # would sweep a new owner's rows as its own.
     "loom.erasure_requests": "FINAL WHERE org = {org:String} AND status != 'completed'"
@@ -98,6 +103,20 @@ STATE_TABLES: dict[str, str] = {
     " JSONExtract(scope_value, 'Array(String)'),"
     " JSONExtract(scope_value, 'namespaces', 'Array(String)')), {ns:String})))",
 }
+
+# The census tables a request writes a row about itself in, under the name it names,
+# registered or not: a latency reading, an exposure, a search's trace. They record that
+# a request ran, not what the namespace holds, so a workload trust makes an agent's
+# namespace over them.
+REQUEST_TRACES: frozenset[str] = frozenset(
+    {
+        "loom.events",
+        "loom.memory_exposures",
+        "loom.search_trace_log",
+        "loom.code_search_trace",
+        "loom.code_search_outcome",
+    }
+)
 
 
 async def in_use(

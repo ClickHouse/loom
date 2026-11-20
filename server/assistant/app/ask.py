@@ -12,12 +12,17 @@ async def handle_assistant_ask(inp: AssistantAskInput) -> AssistantAskOutput:
     auth = current_auth()
     if auth is None:
         # Each answer reads under a token delegated from the caller's.
-        raise AssistantUnavailableError("the assistant answers as its caller: it needs auth on")
+        raise AssistantUnavailableError(
+            "the assistant answers as its caller: it needs auth on", reason="auth_off"
+        )
     messages = [m.model_dump() for m in inp.history] + [{"role": "user", "content": inp.question}]
     answer = await bridge.ask(auth, inp.org, inp.namespace, messages)
     return AssistantAskOutput(
+        mirrored=answer.mirrored,
         answer="".join(answer.text),
         run_id=answer.run_id,
         citations=answer.citations,
+        support=answer.support,
+        unknown_names=answer.unknown_names,
         model=service.current_definition().model,
     )

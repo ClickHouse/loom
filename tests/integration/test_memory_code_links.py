@@ -3900,3 +3900,87 @@ async def test_a_user_erasure_waits_out_a_pass_about_to_publish_its_cursor(
     ).result_rows
     assert out.status == "completed"
     assert not [v for (v,) in cursors if user in v]
+
+
+@pytest.mark.parametrize(
+    ("scoped", "tag_kind"),
+    [
+        pytest.param(True, "none", id="readable-scope"),
+        pytest.param(True, "matching", id="explicit-matching-tag"),
+        pytest.param(False, "none", id="no-scope"),
+        pytest.param(False, "matching", id="explicit-tag-no-scope"),
+        pytest.param(True, "other", id="explicit-tag-precedence"),
+    ],
+)
+async def test_a_manual_mcp_lesson_links_with_a_repo_tag(env, scoped, tag_kind) -> None:
+    from server.auth.context import set_current_auth
+    from server.auth.jwt import AuthInfo
+    from server.code.domain.index.remote import repo_tag
+    from server.code.domain.scope import reset_code_scope, set_code_scope
+    from server.memory.store import code_links as store
+    from server.operations.base import Role
+    from server.transport.mcp_call import _call_tool
+
+    sha = env.commit({"src/widgets/reader.py": _READER})
+    await _index(TRUNK, env, sha, ["src/widgets/reader.py"])
+    tags = ["lesson"]
+    if tag_kind == "matching":
+        tags.append(repo_tag(REMOTE))
+    elif tag_kind == "other":
+        tags.append("repo:other")
+    expected_tags = [*tags, repo_tag(REMOTE)] if scoped and tag_kind == "none" else tags
+    auth = AuthInfo(
+        subject="manual-lesson-agent",
+        org=ORG,
+        namespaces=(MEM, TRUNK),
+        roles=(Role.WRITER,),
+        is_service_account=True,
+    )
+    scope = set_code_scope(f"{ORG}/{TRUNK}" if scoped else None)
+    try:
+        response = await _call_tool(
+            1,
+            {
+                "name": "loom_memory_set",
+                "arguments": {
+                    "org": ORG,
+                    "namespace": MEM,
+                    "agent": "manual-agent",
+                    "session_id": "coding-session",
+                    "memory_key": "reader-lesson",
+                    "value": "`Reader.read_rows` returns the requested limit",
+                    "tags": tags,
+                },
+            },
+            auth=auth,
+            client_name="Claude Code",
+            toolset="coding",
+        )
+    finally:
+        reset_code_scope(scope)
+        set_current_auth(None)
+    assert "error" not in response, response
+    assert not response["result"].get("isError"), response
+    mid = response["result"]["structuredContent"]["memory_id"]
+    row = await _row(mid)
+    assert (row.org, row.namespace, row.agent, row.user_id, row.session_id) == (
+        ORG,
+        MEM,
+        "manual-agent",
+        "-",
+        "coding-session",
+    )
+    assert row.tags == expected_tags
+    assert (row.actor, row.source_class) == ("process:manual-lesson-agent", "asserted")
+    await _pass()
+    links = await store.for_memories(ORG, [mid])
+    if repo_tag(REMOTE) in expected_tags:
+        assert len(links) == 1
+        assert (links[0]["code_namespace"], links[0]["path"], links[0]["state"]) == (
+            TRUNK,
+            "src/widgets/reader.py",
+            "fresh",
+        )
+        assert links[0]["qualified_name"].replace("::", ".").endswith("Reader.read_rows")
+    else:
+        assert links == []

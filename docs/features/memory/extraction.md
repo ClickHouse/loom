@@ -5,8 +5,9 @@ durable. Use it when the caller cannot decide inline what to save: raw API consu
 batch importers, and coding-agent hooks that capture a session at its end. A caller that
 already knows the fact should call `memory.set` ([writing](./writing.md)). Extraction
 writes through `memory.bulk_set`, so every extracted fact meets the same blacklist, lock,
-pin and conflict checks. It needs a real LLM provider; the stock fake provider extracts
-nothing.
+pin and conflict checks. Configure a real LLM provider for meaningful extraction. The
+stock fake provider is a deterministic development/test client that can synthesize
+facts.
 
 ## What a call does
 
@@ -199,20 +200,23 @@ last `--days` are left alone. It never deletes.
 
 ## Inline or deferred
 
-| Mode                 | Call                           | Returns                                      | Use when                                                                   |
-| -------------------- | ------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------- |
-| Inline (default)     | `defer=false`                  | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills. |
-| Deferred             | `defer=true`                   | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.            |
-| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS` | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) onto the queue.        |
+| Mode                 | Call                                         | Returns                                      | Use when                                                                                                                                      |
+| -------------------- | -------------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inline               | `defer` unset (the default) or `defer=false` | `written[]` with each row's key and verdict  | You need the keys back: typed-record extraction, tests, polling backfills.                                                                    |
+| Deferred             | `defer=true`                                 | `deferred=true`, `queue_id`, empty `written` | The agent's hot path. Stored in `loom.memory_extraction_queue`.                                                                               |
+| Deferred by operator | `LOOM_EXTRACTION_DEFER_AGENTS`               | as deferred, `deferred_by="allowlist"`       | Force named agents (or `*` = every service account) that do not send `defer` onto the queue; an explicit `defer=false` still extracts inline. |
 
 The `extraction_queue` worker replays a deferred request through the same handler. A
 failed replay waits 15 seconds, then 1, 5 and 30 minutes between attempts, and after
 `LOOM_EXTRACTION_QUEUE_MAX_ATTEMPTS` (8) becomes `failed` with `last_error`. A model
 provider or gateway that cannot be reached (no connection, a timeout, 502, 503 or 504)
-spends no attempt. A replay whose model call is held (the org's model calls switched off,
-or the enqueuer's identity refused or asked to wait by the gateway) becomes `held` with the
-reason until the hold ends, also with no attempt spent; meanwhile the worker claims other
-work, none of that enqueuer's requests in the namespace. A request still waiting a day
+spends no attempt, except a read timeout from a `local` model server, which answered too
+slowly for that request; on a `local` provider a replay cut short, at the pass deadline
+(`LOOM_EXTRACTION_QUEUE_MAX_PASS_SECONDS`) or by a shutdown, spends one too. A replay
+whose model call is held (the org's model calls switched off, or the enqueuer's identity
+refused or asked to wait by the gateway) becomes `held` with the reason until the hold
+ends, also with no attempt spent; meanwhile the worker claims other work, none of that
+enqueuer's requests in the namespace. A request still waiting a day
 before the queue's 30-day TTL is dropped with a `loom.memory_drops` record.
 `memory.extraction_status` reports batches by `queue_id` or `status` (`pending`,
 `running`, `held`, `done`, `failed`); a token bounded to one user sees only that user's
@@ -378,7 +382,7 @@ Field lists: [operations reference](../../reference/operations.md#memory),
 | `record_schema` + `memory_key` | Extract one typed record ([typed records](./writing.md#typed-records)). Never deferred by the allowlist.                                    |
 | `valid_at`                     | Fallback validity time for facts the extractor did not anchor.                                                                              |
 | `recalled_keys`                | Keys the session was served ([echoes](#echoes-recalled_keys-and-session_values)).                                                           |
-| `defer`                        | Queue instead of extracting inline.                                                                                                         |
+| `defer`                        | `true` queues instead of extracting inline; `false` extracts inline even for an agent on `LOOM_EXTRACTION_DEFER_AGENTS`.                    |
 | `agent_learnings`              | `false` stops filing the assistant's rules for this call ([above](#rules-the-assistant-states-about-itself)); only the setting turns it on. |
 
 ### Response fields
@@ -443,18 +447,18 @@ See the [Extraction section](../../reference/configuration.md#extraction) unless
 | `LOOM_MEMORY_EXTRACT_COVERAGE_SWEEP_*`                    | A second reading of turns the first pass cited nowhere (one more call).                        |
 | `LOOM_MEMORY_EXTRACT_VALUE_UPDATES`                       | Off by default: supersede an older memory when a fresh one restates it with a different value. |
 | `LOOM_MEMORY_EXTRACT_AGENT_LEARNINGS`                     | Off by default: file the assistant's rules about itself for review.                            |
-| `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, lease, attempts, concurrency, forced deferral.                    |
+| `LOOM_EXTRACTION_QUEUE_*`, `LOOM_EXTRACTION_DEFER_AGENTS` | The deferred queue: cadence, pass deadline, lease, attempts, concurrency, forced deferral.     |
 | `LOOM_OBSERVE_EXTRACT_*`                                  | The observe plane's distillation worker (off by default; makes model calls).                   |
 | `LOOM_MEMORY_CHUNKS_MAX_PER_CALL`                         | Verbatim chunks one call writes ([Chunking](../../reference/configuration.md#chunking)).       |
 
 ## Workers
 
-| Worker             | Role                                                             | Default |
-| ------------------ | ---------------------------------------------------------------- | ------- |
-| `extraction_queue` | Replays deferred requests.                                       | on      |
-| `observe_extract`  | Distils `observe.record` observations through the same pipeline. | off     |
-| `entity_extractor` | Fills `entities` on rows written without them.                   | on      |
-| `embedding_worker` | Embeds rows whose inline embedding failed.                       | on      |
+| Worker             | Role                                                                 | Default |
+| ------------------ | -------------------------------------------------------------------- | ------- |
+| `extraction_queue` | Replays deferred requests.                                           | on      |
+| `observe_extract`  | Distils `observe.record` observations through the same pipeline.     | off     |
+| `entity_extractor` | Fills `entities` on rows written without them.                       | on      |
+| `embedding_worker` | Embeds `embedding_dim = 0` stubs and memories with no embedding row. | on      |
 
 Cadences and switches: [workers reference](../../reference/workers.md).
 

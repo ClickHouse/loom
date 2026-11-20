@@ -20,7 +20,7 @@ test("every script hooks.json wires is in the events table", () => {
   for (const groups of Object.values(manifest.hooks)) {
     for (const g of groups) {
       for (const h of g.hooks) {
-        const script = h.command.match(/hooks\/(loom-[a-z-]+)\.mjs/)[1];
+        const script = h.args[0].match(/hooks\/(loom-[a-z-]+)\.mjs/)[1];
         assert.match(doc, new RegExp(`\\|\\s*${script}\\s*\\|`), `${script} is missing from the events table`);
       }
     }

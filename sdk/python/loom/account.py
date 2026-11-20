@@ -39,6 +39,7 @@ class AccountClient:
         name: str | None = None,
         role: str | None = None,
         ttl_days: int | None = 90,
+        saves_to: str | None = None,
     ) -> dict[str, Any]:
         """A token for your tools, agents, scripts or CI, never wider than your
         own grants. `namespaces`: "*" reads every namespace you belong to, now
@@ -46,7 +47,10 @@ class AccountClient:
         `["notes", "*"]`, to save there when it may, and restricted ones beside
         it to read them too). A list without "*" reads exactly those, in read
         order; an entry `{"namespace", "role"}` sets its own role and `role` the
-        role of bare entries (a 422 with "*"). `name`: None names it
+        role of bare entries (a 422 with "*"). `saves_to`: for a list, where calls
+        that name no namespace save, a memory namespace of the list it may write
+        (None: the parent token's when it may write there, else the first such one;
+        a 422 with "*"). `name`: None names it
         `token-<day>-<hex>`. `ttl_days`: None for 90 days, 0 for never. The token
         is in the answer once and never again, with `saves_to` (where calls that
         name no namespace save) and `clients` (each MCP client's setup)."""
@@ -55,6 +59,8 @@ class AccountClient:
             body["name"] = name
         if role is not None:
             body["role"] = role
+        if saves_to is not None:
+            body["saves_to"] = saves_to
         return await self._post("/v1/me/service_accounts.create", body)
 
     async def revoke_token(self, name: str) -> dict[str, Any]:

@@ -1,0 +1,63 @@
+name: codeql
+
+# Static analysis of the server, SDKs, dashboard, plugins and workflows; results
+# go to the repository's code scanning alerts and block no merge. Left out:
+# tests, fixtures and benchmark harnesses (code that never ships), the Codex
+# plugin's copies of the Claude Code plugin's files (agent_plugin_sync keeps
+# them identical, so each finding would show twice) and the generated example
+# settings file (loom.example.yaml), whose thousands of comment lines overflow
+# the YAML indexer.
+# release/** too: a supported line's patches get the same checks.
+on:
+  push:
+    branches: [main, "release/**"]
+  pull_request:
+    branches: [main, "release/**"]
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: codeql (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [python, javascript-typescript, actions]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config: |
+            paths-ignore:
+              - "**/tests/**"
+              - "**/*.test.ts"
+              - "**/*.test.tsx"
+              - "**/*.test-d.ts"
+              - sdk/typescript/test/**
+              - frontend/e2e/**
+              - frontend/src/test/**
+              - bench/**
+              - integrations/codex-plugin/bin/**
+              - integrations/codex-plugin/hooks/**
+              - integrations/codex-plugin/lib/**
+              - loom.example.yaml
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}

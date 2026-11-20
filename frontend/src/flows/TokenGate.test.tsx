@@ -86,6 +86,24 @@ describe("TokenGate", () => {
     expect(alert.textContent).not.toContain("401");
   });
 
+  it("says an internal error's request id once", async () => {
+    vi.mocked(loginWithPassword).mockRejectedValueOnce(
+      new ApiError({
+        status: 500,
+        code: "INTERNAL_ERROR",
+        message: "internal error; request_id=req-77",
+        requestId: "req-77",
+        detail: { category: "internal", retryable: false },
+      }),
+    );
+    render(<TokenGate onLogin={() => undefined} />);
+    await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
+    await userEvent.type(screen.getByLabelText("Password"), "pw");
+    await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent?.match(/req-77/g)).toHaveLength(1);
+  });
+
   it("sends one login when Enter is pressed again while the first is in flight", async () => {
     vi.mocked(loginWithPassword).mockReturnValue(new Promise(() => undefined));
     render(<TokenGate onLogin={() => undefined} />);
@@ -130,7 +148,7 @@ describe("TokenGate", () => {
       await userEvent.type(screen.getByLabelText("Email or namespace"), "alice@example.com");
       await userEvent.type(screen.getByLabelText("Password"), "a-password");
       await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
-      expect(await screen.findByRole("alert")).toHaveTextContent("signal timed out");
+      expect(await screen.findByRole("alert")).toHaveTextContent(/^Loom didn't answer in time\.$/);
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/login");
     });
@@ -143,7 +161,7 @@ describe("TokenGate", () => {
       await userEvent.type(screen.getByLabelText("Email"), "alice@example.com");
       await userEvent.type(screen.getByLabelText("Password"), "a-long-password");
       await userEvent.type(screen.getByLabelText("Password"), "{Enter}");
-      expect(await screen.findByRole("alert")).toHaveTextContent("signal timed out");
+      expect(await screen.findByRole("alert")).toHaveTextContent("Loom didn't answer in time.");
       expect(fetchMock).toHaveBeenCalledTimes(1);
       expect(fetchMock.mock.calls[0][0]).toBe("/v1/auth/self-signup");
     });

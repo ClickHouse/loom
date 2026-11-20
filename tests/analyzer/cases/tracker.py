@@ -95,10 +95,24 @@ async def _embed(ch: RecordingCH, c: dict[str, Any]) -> None:
     await repo.namespace_stats(ORG, NS)
 
 
+async def _feed_clock(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.core.rmt_carry import measure_send_clock
+    from server.tracker.store.github_feed import clock
+
+    await clock(ch)  # type: ignore[arg-type]
+    await measure_send_clock(ch)
+
+
 def cases() -> list[Case]:
     return [
         Case("tracker_links", LINKS_MODULE, _links, {"limit": [10]}),
         Case("tracker_embed", EMBED_MODULE, _embed, {"walled": (False, True)}),
         Case("code_backport_gaps", GAPS_MODULE, _gaps, {"wanted": (False, True)}),
         Case("tracker_daily_repo.readers", DAILY_MODULE, _readers, {"hours": (False,)}),
+        Case(
+            "tracker_feed.receiving_clock",
+            "server.tracker.store.github_feed",
+            _feed_clock,
+            rows=lambda sql, params: [{"ms": 1000}],
+        ),
     ]

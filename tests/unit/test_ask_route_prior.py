@@ -59,7 +59,7 @@ def env(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     async def fake_search(search_input: Any) -> MemorySearchOutput:
         return e.search_output
 
-    async def ratio(org: str, ns: str) -> float:
+    async def ratio(org: str, ns: str, *, user_id: str = "") -> float:
         return 0.0
 
     monkeypatch.setattr(hsearch, "handle_memory_search", fake_search)

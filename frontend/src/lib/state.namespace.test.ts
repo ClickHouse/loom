@@ -109,10 +109,10 @@ describe("writing the address", () => {
   });
 
   it("a switch names the new namespace in place and drops what belonged to the old one", () => {
-    at("/memories?namespace=team&memory=k&section=insights");
+    at("/memories?namespace=team&memory=k");
     const before = history.length;
     useStore.getState().setIdentity({ ...team, namespace: "other" });
-    expect(address()).toBe("/memories?namespace=other&section=insights");
+    expect(address()).toBe("/memories?namespace=other");
     expect(history.length).toBe(before);
   });
 
@@ -216,6 +216,27 @@ describe("an entry Back reaches from another namespace", () => {
     useStore.getState().bootIdentity(joined, "team");
     useStore.getState().bootView("memories");
     expect(useStore.getState()).toMatchObject({ deniedNamespace: "team", inspectedMemoryKey: null });
+  });
+});
+
+describe("an entry Back reaches whose address names a collection", () => {
+  beforeEach(() => {
+    useStore.setState({ identity: team, deniedNamespace: null, view: "memories" });
+    at("/memories?namespace=team");
+  });
+
+  it("never makes the collection the header's namespace: the address names the page's", async () => {
+    // An entry whose namespace is a collection.
+    history.pushState({ loomNamespace: "col-research" }, "", "/memories?namespace=col-research&memory=k");
+    useStore.getState().navigate("recall");
+    await back("memories");
+    expect(useStore.getState().identity).toEqual(team);
+    expect(address()).toBe("/memories?namespace=team");
+    // The same when only the address moves, as a move inside one view does.
+    at("/memories?namespace=col-research");
+    addressPageNamespace();
+    expect(useStore.getState().identity).toEqual(team);
+    expect(address()).toBe("/memories?namespace=team");
   });
 });
 

@@ -19,12 +19,12 @@ import math
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from server.core import pg
-from server.core.datetimes import to_naive_utc_second
+from server.core import pg, pg_lease
+from server.core.datetimes import to_naive_utc, to_naive_utc_second
 from server.core.error_summary import error_summary
 from server.core.errors import (
     LoomServerError,
@@ -35,7 +35,12 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
-from server.memory.domain.redaction_lineage import REDACTED_VALUE, Version, later_copies
+from server.memory.domain.redaction_lineage import (
+    REDACTED_VALUE,
+    Version,
+    is_content_hash,
+    later_copies,
+)
 from server.memory.store.rows import (
     FIRST_VERSION_DEFAULTS,
     IdentityKey,
@@ -44,6 +49,7 @@ from server.memory.store.rows import (
     identity_key,
     parse_memory_value,
 )
+from server.observability import pg_pipeline
 from server.settings import settings
 
 log = logging.getLogger(__name__)
@@ -489,11 +495,26 @@ LEFT JOIN loom.memory_deliveries d
   ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
 """
 
+# Lock each exact head only after its six-column key has been sorted.
+# FOR UPDATE keeps the lateral probe separate from the batch's join planning.
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
-{_EXACT_KEYS}
+FROM (
+    SELECT *
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+      AS k(org, namespace, agent, user_id, session_id, memory_key)
+    ORDER BY k.org COLLATE "C", k.namespace COLLATE "C", k.agent COLLATE "C",
+             k.user_id COLLATE "C", k.session_id COLLATE "C", k.memory_key COLLATE "C"
+) k
+CROSS JOIN LATERAL (
+    SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
+    FROM loom.memory_current c
+    WHERE c.org = k.org AND c.namespace = k.namespace AND c.agent = k.agent
+      AND c.user_id = k.user_id AND c.session_id = k.session_id
+      AND c.memory_key = k.memory_key
+    FOR UPDATE OF c
+) c
 {_KEY_ORDER}
-FOR UPDATE OF c
 """
 
 _UPSERT_HEADS = """
@@ -798,6 +819,20 @@ def embedded(row: Mapping[str, Any]) -> bool:
     return is_embedded(str(row.get("memory_type")), str(row.get("sensitivity") or ""))
 
 
+def newer_copy(head: Mapping[str, Any], row: Mapping[str, Any]) -> bool:
+    """Whether `head` is a newer copy of `row` (a pin, a touch, a status): live, embedded
+    (`embedded`, which a redacted row is not: a redaction keeps the hash) and of the same
+    content by hash, so `row`'s search document serves it. It is another commit than `row`'s: a
+    publisher reads it again durably before sending it."""
+    return (
+        int(head["version"]) > int(row["version"])
+        and head.get("tombstoned_at") is None
+        and embedded(head)
+        and is_content_hash(str(head.get("content_sha256") or ""))
+        and head.get("content_sha256") == row.get("content_sha256")
+    )
+
+
 async def complete(
     seqs: Sequence[tuple[str, str, int]], done: int, *, tokens: Sequence[int] | int = COMMIT_TOKEN
 ) -> None:
@@ -812,7 +847,8 @@ async def complete(
     if not seqs:
         return
     async with pg.transaction() as conn:
-        await _complete_in(conn, seqs, done, tokens)
+        searchable = await _complete_in(conn, seqs, done, tokens)
+    _record_lags(searchable)
 
 
 async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> None:
@@ -824,10 +860,12 @@ async def complete_each(landed: Sequence[tuple[tuple[str, str, int], int]]) -> N
         by_done.setdefault(done, []).append(seq)
     if not by_done:
         return
+    searchable: list[tuple[float, bool]] = []
     async with pg.transaction() as conn:
         await _lock_held(conn, _held_keys([seq for seq, _ in landed], COMMIT_TOKEN))
         for done, seqs in by_done.items():
-            await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+            searchable += await _complete_in(conn, seqs, done, COMMIT_TOKEN)
+    _record_lags(searchable)
 
 
 async def hand_over(seqs: Sequence[tuple[str, str, int]]) -> None:
@@ -849,6 +887,31 @@ _HELD_LIST = (
     "unnest($1::text[], $2::text[], $3::bigint[], $4::bigint[]) AS k(org, namespace, seq, token)"
 )
 _HELD_MATCH = "(d.org, d.namespace, d.seq, d.lease_token) = (k.org, k.namespace, k.seq, k.token)"
+
+
+# A completion that delivers a revision more than this long after its commit stamps its
+# `delivered_at`; one within it leaves the journal untouched, and the payload clearing
+# pass counts such a revision delivered this long after `committed_at`
+# (`010_revision_delivered_at.sql`).
+# not a setting: unstamped revisions are judged by it, so a change breaks the stored bound
+LATE_DELIVERY_S = 15 * 60.0
+# The `last_error` of a delivery parked because its revision's payload was cleared and
+# the revision is no longer its key's head.
+PAYLOAD_CLEARED = "payload cleared, nothing to send"
+# The row a delivery of revision `r` sends: its own payload, or for a cleared revision
+# that is still its key's head, the head's row of the same version (read only then,
+# through the `memory_current_by_id` index).
+_SENT_ROW = (
+    "coalesce(r.row, (SELECT c.row FROM loom.memory_current c WHERE c.org = r.org "
+    "AND c.memory_id = r.memory_id AND c.namespace = r.namespace AND c.seq = r.seq))"
+)
+# The revisions `emptied` (org, namespace, seq) delivered late ($6: LATE_DELIVERY_S),
+# stamped at this statement's time.
+_STAMP_LATE = (
+    "UPDATE loom.memory_revisions r SET delivered_at = statement_timestamp() FROM emptied e "
+    "WHERE (r.org, r.namespace, r.seq) = (e.org, e.namespace, e.seq) "
+    "AND r.committed_at < statement_timestamp() - make_interval(secs => $6)"
+)
 
 
 async def _lock_held(conn: Any, keys: tuple[list[Any], ...]) -> None:
@@ -873,27 +936,57 @@ async def _complete_in(
     seqs: Sequence[tuple[str, str, int]],
     done: int,
     tokens: Sequence[int] | int,
-) -> None:
+) -> list[tuple[float, bool]]:
     """`complete` in the caller's transaction, the deliveries locked first (a lock the
-    transaction already holds is taken again at no cost)."""
+    transaction already holds is taken again at no cost). Returns, for each revision
+    whose last search target this cleared, its projection lag and whether it was
+    redelivered: the caller records them once the transaction commits."""
     keys = _held_keys(seqs, tokens)
-    await _lock_held(conn, keys)
-    # Deleted when nothing is left, else updated: one dead row per delivery, not two.
+    # `_lock_held`'s lock, with what is left of each delivery and the milliseconds since
+    # its revision's commit on Postgres's clock.
+    locked = await conn.fetch(
+        "SELECT d.targets, d.lease_token, "
+        "extract(epoch FROM clock_timestamp() - r.committed_at) * 1000 AS lag_ms "
+        "FROM loom.memory_deliveries d JOIN loom.memory_revisions r "
+        f"ON (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq), {_HELD_LIST} "
+        f"WHERE {_HELD_MATCH} ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
+        *keys,
+    )
+    # Deleted when nothing is left, else updated: one dead row per delivery, not two. The
+    # revision a completion delivers late gets its `delivered_at` (`_STAMP_LATE`).
     await conn.execute(
+        "WITH emptied AS ("
         f"DELETE FROM loom.memory_deliveries d USING {_HELD_LIST} WHERE {_HELD_MATCH} "
-        f"AND d.targets & ~$5::smallint = 0 AND d.lease_token = {COMMIT_TOKEN}",
+        f"AND d.targets & ~$5::smallint = 0 AND d.lease_token = {COMMIT_TOKEN} "
+        f"RETURNING d.org, d.namespace, d.seq) {_STAMP_LATE}",
         *keys,
         done,
+        LATE_DELIVERY_S,
     )
     await conn.execute(
+        "WITH settled AS ("
         "UPDATE loom.memory_deliveries d SET targets = d.targets & ~$5::smallint, "
         "lease_until = CASE WHEN d.targets & ~$5::smallint = 0 THEN now() "
         f"ELSE d.lease_until END FROM {_HELD_LIST} WHERE {_HELD_MATCH} "
         # No dead row for a delivery that owed none of them.
-        "AND d.targets & $5::smallint <> 0",
+        "AND d.targets & $5::smallint <> 0 "
+        "RETURNING d.org, d.namespace, d.seq, d.targets), "
+        f"emptied AS (SELECT org, namespace, seq FROM settled WHERE targets = 0) {_STAMP_LATE}",
         *keys,
         done,
+        LATE_DELIVERY_S,
     )
+    searchable = []
+    for r in locked:  # a revision whose last search target this cleared
+        owed = int(r["targets"])
+        if owed & SEARCHED and not owed & ~done & SEARCHED:
+            searchable.append((float(r["lag_ms"]), int(r["lease_token"]) != COMMIT_TOKEN))
+    return searchable
+
+
+def _record_lags(searchable: Sequence[tuple[float, bool]]) -> None:
+    for lag_ms, redelivered in searchable:
+        pg_pipeline.record_projection_lag(lag_ms, redelivered=redelivered)
 
 
 @dataclass(frozen=True)
@@ -917,8 +1010,10 @@ class Claimed:
 async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list[Claimed]:
     """Take up to `limit` deliveries whose lease ran out, oldest first, under a new
     lease token each, skipping locked and parked ones; one out of attempts is parked
-    here or comes back for its stub (storage-authority.md, "Delivery"). `scope`: only
-    those of one (org, namespace), in journal order."""
+    here or comes back for its stub, and one whose revision's payload was cleared sends
+    its head's row, or is parked here when the revision is no longer the head
+    (storage-authority.md, "Delivery"). `scope`: only those of one (org, namespace), in
+    journal order."""
     started = time.monotonic()
     # Any delivery still owing a target; one out of attempts is parked here or comes back
     # for its stub (`pg_delivery._last_attempt`).
@@ -951,17 +1046,23 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         SET lease_token = d.lease_token + 1,
             attempts = d.attempts + d.held::int,
             held = false,
-            -- Parked: the last holder's send may still land within its lease.
-            fenced_until = CASE WHEN due.parks THEN GREATEST(d.fenced_until, d.lease_until)
+            -- Parked: the last holder's send may still land within its lease. A revision
+            -- whose payload was cleared sends its head's row when it is still the head;
+            -- one superseded has nothing to send: parked, with that reason.
+            fenced_until = CASE WHEN due.parks OR s.sent IS NULL
+                                THEN GREATEST(d.fenced_until, d.lease_until)
                                 ELSE d.fenced_until END,
-            lease_until = CASE WHEN due.parks THEN 'infinity'::timestamptz
+            lease_until = CASE WHEN due.parks OR s.sent IS NULL
+                               THEN 'infinity'::timestamptz
                                ELSE now() + make_interval(secs => $2) END,
-            last_error = CASE WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
-        FROM due, loom.memory_revisions r
+            last_error = CASE WHEN s.sent IS NULL THEN '{PAYLOAD_CLEARED}'
+                              WHEN d.held THEN 'stopped mid-publish' ELSE d.last_error END
+        FROM due, loom.memory_revisions r CROSS JOIN LATERAL (SELECT {_SENT_ROW} AS sent) s
         WHERE (d.org, d.namespace, d.seq) = (due.org, due.namespace, due.seq)
           AND (r.org, r.namespace, r.seq) = (d.org, d.namespace, d.seq)
         RETURNING d.org, d.namespace, d.seq, d.targets, d.lease_token, d.attempts,
-                  due.parks AS parked, due.held AS taken_over, r.row, r.audit,
+                  due.parks OR s.sent IS NULL AS parked, due.held AS taken_over,
+                  s.sent AS row, r.audit,
                   due.claim_order, due.replaced_lease_s
         )
         -- An UPDATE returns its rows in no order: the claims come back in the order taken.
@@ -970,7 +1071,15 @@ async def claim_due(limit: int, *, scope: tuple[str, str] | None = None) -> list
         *args,
     )
     for r in rows:
-        if r["parked"]:
+        if r["parked"] and r["row"] is None:
+            log.error(
+                "pg_delivery: %s/%s seq %s parked: %s",
+                r["org"],
+                r["namespace"],
+                r["seq"],
+                PAYLOAD_CLEARED,
+            )
+        elif r["parked"]:
             log.error(
                 "pg_delivery: %s/%s seq %s parked after %s attempts%s",
                 r["org"],
@@ -1082,10 +1191,48 @@ async def renew(claims: Sequence[Claimed]) -> list[Claimed]:
     ]
 
 
+async def backlog(cap: int) -> pg_pipeline.Backlog:
+    """The memory deliveries owed, for the pipeline gauges: those a search waits for (a
+    memory row or a search document owed, not parked), counted up to `cap`; the parked
+    ones; and the age of the oldest of the first."""
+    row = await pg.fetchrow(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
+        f"  WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
+        "  LIMIT $1) p) AS pending, "
+        "(SELECT count(*) FROM (SELECT 1 FROM loom.memory_deliveries "
+        "  WHERE lease_until = 'infinity' AND NOT settled LIMIT $1) k) AS parked, "
+        "(SELECT extract(epoch FROM clock_timestamp() - min(r.committed_at)) "
+        "  FROM (SELECT org, namespace, seq FROM loom.memory_deliveries "
+        f"    WHERE NOT settled AND lease_until < 'infinity' AND targets & {SEARCHED} <> 0 "
+        "    ORDER BY lease_until LIMIT $1) d "
+        "  JOIN loom.memory_revisions r USING (org, namespace, seq)) AS oldest",
+        cap + 1,  # one past the cap says the count stopped
+    )
+    return pg_pipeline.backlog_from(row, cap)
+
+
+async def outbox_backlog(cap: int) -> pg_pipeline.Backlog:
+    """The audit outbox's rows, for the pipeline gauges: due or waiting (up to `cap`),
+    parked, and how long the oldest one past due has been."""
+    row = await pg.fetchrow(
+        "SELECT (SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
+        "  WHERE due_at < 'infinity' LIMIT $1) p) AS pending, "
+        "(SELECT count(*) FROM (SELECT 1 FROM loom.audit_outbox "
+        "  WHERE due_at = 'infinity' LIMIT $1) k) AS parked, "
+        "(SELECT extract(epoch FROM clock_timestamp() - min(due_at)) FROM loom.audit_outbox "
+        "  WHERE due_at <= now()) AS oldest",
+        cap + 1,  # one past the cap says the count stopped
+    )
+    return pg_pipeline.backlog_from(row, cap)
+
+
 async def parked_count() -> int:
-    """Deliveries past LOOM_PG_DELIVERY_MAX_ATTEMPTS: revisions ClickHouse keeps refusing
-    (or, owing only DECISION_RECORD or OLD_VECTORS, a retirement), left out of claims and
-    watermarks; an operator reads `last_error`."""
+    """Parked deliveries, every one with an endless lease: those past
+    LOOM_PG_DELIVERY_MAX_ATTEMPTS (revisions ClickHouse keeps refusing, or, owing only
+    DECISION_RECORD or OLD_VECTORS, a retirement), those parked at their claim with
+    PAYLOAD_CLEARED, and those `loom reconcile` holds until it releases them
+    (HELD_BY_RECONCILE); left out of claims and watermarks; an operator reads
+    `last_error`."""
     return int(
         await pg.fetchval(
             # Parked is an endless lease (`claim_due`, `record_failure`) on a delivery still
@@ -1109,6 +1256,89 @@ async def sweep_settled(limit: int) -> int:
         "SELECT count(*) FROM gone",
         pg.insert_bound_s(),
         limit,
+    )
+    return int(n)
+
+
+# A revision whose payload (`row`) the clearing pass may clear: one it has not cleared,
+# other than a profile revision, which keeps its payload (the redaction's reach into the
+# profiles matches on it). The predicate of `memory_revisions_payload`, word for word, so
+# the reads below use that index (`010_revision_delivered_at.sql`).
+CLEARABLE = "row IS NOT NULL AND NOT (row->>'agent' = '-' AND row->>'memory_type' = 'profile')"
+# When ClickHouse held the revision at the latest: its stamp, or for an unstamped one its
+# commit (delivered within LATE_DELIVERY_S of it, which the cut below adds).
+_DELIVERED = "coalesce(delivered_at, committed_at)"
+# Delivered more than $1 seconds ago (the cut adds LATE_DELIVERY_S, which an unstamped
+# revision's commit may precede its delivery by), and with no delivery row: a parked,
+# repaired or settled one keeps its payload until the delivery is gone.
+_PAST_HORIZON = (
+    f"{_DELIVERED} < statement_timestamp() - make_interval(secs => $1 + {LATE_DELIVERY_S}) "
+    "AND NOT EXISTS (SELECT 1 FROM loom.memory_deliveries d "
+    "WHERE (d.org, d.namespace, d.seq) = (r.org, r.namespace, r.seq))"
+)
+
+
+@dataclass(frozen=True)
+class Clearable:
+    """A revision the clearing pass may clear once ClickHouse's history shows it holds
+    it: the key `memory_versions` sorts by, and what the version must match."""
+
+    delivered: datetime
+    org: str
+    namespace: str
+    seq: int
+    agent: str
+    user_id: str
+    session_id: str
+    memory_key: str
+    version: int
+    memory_id: str
+    content_sha256: str
+
+    @property
+    def cursor(self) -> tuple[datetime, str, str, int]:
+        return (self.delivered, self.org, self.namespace, self.seq)
+
+
+async def clearable_revisions(
+    horizon_s: float, after: tuple[datetime, str, str, int] | None, limit: int
+) -> list[Clearable]:
+    """Up to `limit` revisions whose payload may be cleared, delivered more than
+    `horizon_s` ago, in the order of `memory_revisions_payload` from past `after`."""
+    rows = await pg.fetch(
+        f"SELECT {_DELIVERED} AS delivered, r.org, r.namespace, r.seq, r.user_id, "
+        f"{_meta('agent', 'r')} AS agent, {_meta('session_id', 'r')} AS session_id, "
+        f"{_meta('memory_key', 'r')} AS memory_key, r.version, r.memory_id::text AS memory_id, "
+        f"r.content_sha256 FROM loom.memory_revisions r WHERE {CLEARABLE} AND {_PAST_HORIZON} "
+        f"AND ({_DELIVERED}, r.org, r.namespace, r.seq) > ($2, $3, $4, $5) "
+        f"ORDER BY {_DELIVERED}, r.org, r.namespace, r.seq LIMIT $6",
+        float(horizon_s),
+        *(after or (datetime.min.replace(tzinfo=UTC), "", "", -1)),
+        limit,
+    )
+    return [Clearable(**dict(r)) for r in rows]
+
+
+async def clear_payloads(horizon_s: float, held: Sequence[Clearable]) -> int:
+    """Clear the payloads of `held`, revisions ClickHouse's history holds, that are still
+    clearable; one a writer holds locked (a redaction, an erasure) is left for a later
+    pass. Returns how many were cleared. The metadata stays in the typed columns
+    (`003_revision_metadata.sql`)."""
+    if not held:
+        return 0
+    n = await pg.fetchval(
+        "WITH c AS (SELECT r.org, r.namespace, r.seq FROM loom.memory_revisions r, "
+        "unnest($2::text[], $3::text[], $4::bigint[]) AS k(org, namespace, seq) "
+        f"WHERE (r.org, r.namespace, r.seq) = (k.org, k.namespace, k.seq) AND {CLEARABLE} "
+        f"AND {_PAST_HORIZON} ORDER BY r.org, r.namespace, r.seq "
+        "FOR NO KEY UPDATE OF r SKIP LOCKED), "
+        "gone AS (UPDATE loom.memory_revisions r SET row = NULL FROM c "
+        "WHERE (r.org, r.namespace, r.seq) = (c.org, c.namespace, c.seq) RETURNING 1) "
+        "SELECT count(*) FROM gone",
+        float(horizon_s),
+        [h.org for h in held],
+        [h.namespace for h in held],
+        [h.seq for h in held],
     )
     return int(n)
 
@@ -1221,6 +1451,16 @@ async def record_failure(
 
 
 # ---- reads -------------------------------------------------------------------
+
+
+async def _read(sql: str, *args: Any, durable: bool) -> list[Any]:
+    """`pg.fetch`, or with `durable` inside `pg.durable_transaction`, for rows that go
+    to ClickHouse when another session may have committed them: returned once the
+    synchronous standbys hold every row read."""
+    if not durable:
+        return await pg.fetch(sql, *args)
+    async with pg.durable_transaction() as conn:
+        return list(await conn.fetch(sql, *args))
 
 
 def _scope_sql(scope: Any, args: list[Any]) -> str:
@@ -1364,27 +1604,31 @@ async def settled_head_versions(keys: Sequence[IdentityKey]) -> dict[IdentityKey
 
 
 async def heads_by_keys(
-    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False
+    keys: Sequence[IdentityKey], *, include_tombstoned: bool = False, durable: bool = False
 ) -> dict[IdentityKey, dict[str, Any]]:
     """The heads, expired ones included, of exact keys (a deleted one too with
-    `include_tombstoned`); a key with none is absent."""
+    `include_tombstoned`); a key with none is absent. `durable`: read for ClickHouse
+    (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
     sql = _HEADS_BY_KEYS
     if not include_tombstoned:
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
-    rows = await pg.fetch(sql, *_key_arrays(keys))
+    rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
 
 
-async def heads_owing(keys: Sequence[IdentityKey]) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
+async def heads_owing(
+    keys: Sequence[IdentityKey], *, durable: bool = False
+) -> dict[IdentityKey, tuple[dict[str, Any], int]]:
     """The heads of exact keys, deleted ones included, each with the targets its own
-    delivery still owes (0 once settled); a key with none is absent."""
+    delivery still owes (0 once settled); a key with none is absent. `durable`: read for
+    ClickHouse (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]
     if not keys:
         return {}
-    rows = await pg.fetch(_HEADS_OWING, *_key_arrays(keys))
+    rows = await _read(_HEADS_OWING, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): (decode_row(r["row"]), int(r["owed"])) for r in rows}
 
 
@@ -1431,19 +1675,21 @@ async def erased_ids(org: str, namespace: str, memory_ids: Sequence[str]) -> set
 
 
 async def live_decision_writers(
-    org: str, namespace: str, keys: Sequence[str]
+    org: str, namespace: str, keys: Sequence[str], *, durable: bool = False
 ) -> list[tuple[str, str, str, str]]:
-    """(memory_key, agent, user_id, session_id) of each live decision head of these keys."""
+    """(memory_key, agent, user_id, session_id) of each live decision head of these keys.
+    `durable` for a record retirement, which acts on a writer's absence (`_read`)."""
     keys = [k for k in keys if not pg.unstorable(k)]  # Postgres holds no such key
     if not keys or pg.unstorable(org) or pg.unstorable(namespace):
         return []
-    rows = await pg.fetch(
+    rows = await _read(
         "SELECT memory_key, agent, user_id, session_id FROM loom.memory_current "
         "WHERE org = $1 AND namespace = $2 AND memory_key = ANY($3::text[]) "
         "AND row->>'memory_type' = 'decision' AND row->>'tombstoned_at' IS NULL",
         org,
         namespace,
         keys,
+        durable=durable,
     )
     return [(r["memory_key"], r["agent"], r["user_id"], r["session_id"]) for r in rows]
 
@@ -1506,13 +1752,15 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     r = await pg.fetchrow(
         f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
         f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
-        "version, content_sha256 "
+        "version, content_sha256, row->'tags' AS tags "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,
         version,
     )
-    return None if r is None else dict(r)
+    if r is None:
+        return None
+    return dict(r)
 
 
 async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
@@ -1864,6 +2112,41 @@ async def live_key_heads(
     return [decode_row(r["row"]) for r in rows]
 
 
+async def update_key_candidates(
+    org: str,
+    namespace: str,
+    memory_key: str,
+    *,
+    scope: Any,
+    agent: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """At most ten live revision candidates, including expired heads, without values."""
+    if pg.unstorable((org, namespace, memory_key, agent or "", user_id or "", session_id or "")):
+        return []  # no head holds what Postgres cannot store
+    args: list[Any] = [org, namespace, memory_key]
+    where = (
+        "org = $1 AND namespace = $2 AND memory_key = $3 "
+        "AND row->>'tombstoned_at' IS NULL "
+        "AND coalesce(row->>'status', 'active') IN ('active', 'duplicate', 'conflicted')"
+    )
+    for column, value in (("agent", agent), ("user_id", user_id), ("session_id", session_id)):
+        if value is not None:
+            args.append(value)
+            where += f" AND {column} = ${len(args)}"
+    where += _scope_sql(scope, args)
+    rows = await pg.fetch(
+        "SELECT memory_id, agent, user_id, session_id, version, "
+        "coalesce(row->>'status', 'active') AS status FROM loom.memory_current "
+        f"WHERE {where} ORDER BY version DESC LIMIT 10",
+        *args,
+    )
+    return [
+        {**dict(r), "memory_id": str(r["memory_id"]), "version": int(r["version"])} for r in rows
+    ]
+
+
 async def live_heads_of(
     org: str, namespace: str, agent: str, user_id: str, memory_key: str
 ) -> list[dict[str, Any]]:
@@ -2077,3 +2360,124 @@ async def revisions_since(
     if any(r["row"] is None for r in rows):
         return None
     return [{"seq": int(r["seq"]), **decode_row(r["row"])} for r in rows]
+
+
+# ---- reconcile after a restore ----------------------------------------------------
+
+
+def republish_targets(row: Mapping[str, Any], *, is_head: bool) -> int:
+    """What a revision ClickHouse may have lost owes again (`loom reconcile`): its memory
+    row and audit row; and for the key's head, its search document when it is embedded,
+    else the retirement of whatever vectors ClickHouse holds below it (a delete, a
+    redaction, a sensitivity change), and a deleted decision's record."""
+    targets = MEMORY_ROW | AUDIT_ROW
+    if is_head:
+        live = row.get("tombstoned_at") is None and embedded(row)
+        targets |= SEARCH_DOC if live else OLD_VECTORS
+        if deleted_decision(row):
+            targets |= DECISION_RECORD
+    return targets
+
+
+async def hold_for_republish(after: datetime, *, batch: int = 1000) -> int:
+    """Owe again every revision committed after `after`, as deliveries held parked
+    (`lease_until` infinity, `fenced_until` now, so an erasure waits nothing for them) and
+    marked `HELD_BY_RECONCILE`; merged into a delivery the revision still owes. A revision
+    whose payload was cleared is left out (one committed after a backup the restore
+    runbook allows is not cleared yet; a head left out here `hold_heads_behind` holds).
+    Returns how many it held."""
+    marked = 0
+    last: tuple[str, str, int] = ("", "", -1)
+    while True:
+        rows = await pg.fetch(
+            "SELECT org, namespace, seq, row FROM loom.memory_revisions "
+            "WHERE committed_at > $1 AND row IS NOT NULL AND (org, namespace, seq) > ($2, $3, $4) "
+            "ORDER BY org, namespace, seq LIMIT $5",
+            after,
+            *last,
+            batch,
+        )
+        if not rows:
+            return marked
+        decoded = [decode_row(r["row"]) for r in rows]
+        heads = await heads_by_keys([identity_key(d) for d in decoded], include_tombstoned=True)
+        targets = []
+        for d in decoded:
+            head = heads.get(identity_key(d))
+            is_head = head is not None and int(head["version"]) == int(d["version"])
+            targets.append(republish_targets(d, is_head=is_head))
+        marked += await hold([(r["org"], r["namespace"], int(r["seq"])) for r in rows], targets)
+        tail = rows[-1]
+        last = (tail["org"], tail["namespace"], int(tail["seq"]))
+
+
+async def hold(seqs: Sequence[tuple[str, str, int]], targets: Sequence[int]) -> int:
+    """Owe these revisions `targets` again, as deliveries held parked (`lease_until`
+    infinity, `fenced_until` now, so an erasure waits nothing for them) and marked
+    `HELD_BY_RECONCILE`, merged into a delivery a revision still owes, its attempts
+    counted from none again: one parked out of attempts before the restore is sent in
+    full, not as the last attempt's stub. A revision whose payload was cleared and that
+    is no longer its key's head has nothing to send and is left out, as is one whose
+    revision is gone (erased); returns how many were held."""
+    return int(
+        await pg.fetchval(
+            "WITH h AS (INSERT INTO loom.memory_deliveries AS d (org, namespace, seq, targets, "
+            "lease_token, lease_until, fenced_until, last_error) "
+            "SELECT t.org, t.namespace, t.seq, t.targets, 1, 'infinity', now(), $5 "
+            "FROM unnest($1::text[], $2::text[], $3::bigint[], $4::smallint[]) "
+            "AS t(org, namespace, seq, targets) JOIN loom.memory_revisions r "
+            "ON (r.org, r.namespace, r.seq) = (t.org, t.namespace, t.seq) "
+            f"WHERE {_SENT_ROW} IS NOT NULL "
+            "ON CONFLICT (org, namespace, seq) DO UPDATE SET "
+            "targets = d.targets | EXCLUDED.targets, lease_until = 'infinity', "
+            "fenced_until = GREATEST(d.fenced_until, now()), last_error = EXCLUDED.last_error, "
+            "attempts = 0, held = false RETURNING 1) SELECT count(*) FROM h",
+            [s[0] for s in seqs],
+            [s[1] for s in seqs],
+            [s[2] for s in seqs],
+            list(targets),
+            pg_lease.HELD_BY_RECONCILE,
+        )
+    )
+
+
+async def head_page(after: tuple[str, ...] | None, limit: int) -> list[dict[str, Any]]:
+    """Up to `limit` heads, tombstoned ones included, in key order after `after` (an
+    identity key): each decoded row with its `seq`."""
+    args: list[Any] = [limit]
+    where = ""
+    if after is not None:
+        args += list(after)
+        where = (
+            "WHERE (org, namespace, agent, user_id, session_id, memory_key) "
+            "> ($2, $3, $4, $5, $6, $7)"
+        )
+    rows = await pg.fetch(
+        f"SELECT seq, row FROM loom.memory_current {where} "
+        "ORDER BY org, namespace, agent, user_id, session_id, memory_key LIMIT $1",
+        *args,
+    )
+    return [{**decode_row(r["row"]), "seq": int(r["seq"])} for r in rows]
+
+
+async def release_held() -> int:
+    """Make every delivery marked `HELD_BY_RECONCILE` due now (`hold_for_republish`'s and
+    the heads-behind hold's); returns how many."""
+    done = await pg.execute(
+        "UPDATE loom.memory_deliveries SET lease_until = now(), last_error = '' "
+        "WHERE lease_until = 'infinity' AND last_error = $1",
+        pg_lease.HELD_BY_RECONCILE,
+    )
+    return int(done.split()[-1])
+
+
+async def redacted_since(after: datetime) -> list[dict[str, Any]]:
+    """The revisions a redaction scrubbed after `after`: (org, memory_id, version,
+    redaction_reason), oldest redaction first."""
+    rows = await pg.fetch(
+        "SELECT org, memory_id, version, redaction_reason FROM loom.memory_revisions "
+        "WHERE redacted_at IS NOT NULL AND redacted_at::timestamp > $1 "
+        "ORDER BY redacted_at::timestamp, org, memory_id, version",
+        to_naive_utc(after),
+    )
+    return [dict(r) for r in rows]

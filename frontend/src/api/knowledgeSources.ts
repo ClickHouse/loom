@@ -15,8 +15,8 @@ import type {
 } from "../lib/knowledgeSources";
 import { sourceAddBody } from "../lib/knowledgeSources";
 
-// A repository's document sources, addressed by its trunk code namespace. Reading them
-// needs the namespace's viewer role; every other call its admin.
+// A namespace's document sources, addressed by that namespace. Reading them needs the
+// namespace's viewer role; every other call its admin.
 
 type Ns = Pick<Identity, "org" | "namespace">;
 

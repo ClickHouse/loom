@@ -4,10 +4,10 @@ import { Button } from "@clickhouse/click-ui/Button";
 import { cancelNamespaceRequest, type MyNamespaceEntry } from "../api";
 import { sharedMine } from "../lib/sharedReads";
 import { useStore } from "../lib/state";
-import { toast } from "./Toast";
+import { toast, toastError } from "./Toast";
 import { confirmAction } from "./ConfirmDialog";
 import { IconButton } from "./IconButton";
-import { relativeTime, humanizeError } from "../lib/format";
+import { relativeTime } from "../lib/format";
 
 /**
  * Banner shown when the active namespace has a pending elevation
@@ -65,7 +65,7 @@ export function PendingRequestBanner() {
       toast(`Withdrew ${requested} request on ${entry.namespace}`, "ok");
       setEntry(null);
     } catch (e) {
-      toast(`Cancel failed: ${humanizeError(e)}`, "error");
+      toastError("Cancel failed", e);
     } finally {
       setCancelling(false);
     }

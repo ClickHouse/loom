@@ -42,7 +42,7 @@ for (const width of [1400, 375]) {
   test(`the open picker with code and tracker groups is axe-clean at ${width} px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const dialog = await openPicker(page);
-    const code = dialog.getByRole("button", { name: /^Code indexes/ });
+    const code = dialog.getByRole("button", { name: /^Repositories/ });
     await expect(code).toHaveAttribute("aria-expanded", "false");
     await code.click();
     await expect(dialog.getByRole("button", { name: /ClickHouse\/ClickHouse @ master/ })).toBeVisible();
@@ -82,10 +82,26 @@ test("an open name family is axe-clean, each member led by its description", asy
   expect(await violations(page)).toEqual([]);
 });
 
+test("a collection is not in the open picker, which links to the Library instead", async ({ page }) => {
+  const collections = [
+    { ...row("col-research", "collection", "admin"), title: "Research" },
+    row("col-handbook", "collection", "viewer"),
+  ];
+  await installApi(page, { mine: [...MINE, ...collections], claims: MINE.map((r) => r.namespace) });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  await page.getByRole("button", { name: /^Namespace: / }).click();
+  const dialog = page.getByRole("dialog", { name: "Namespaces" });
+  await expect(dialog.getByRole("button", { name: new RegExp(`\\b${NAMESPACE}\\b`) })).toBeVisible();
+  await expect(dialog.getByText(/col-research|col-handbook|Research/)).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Open collections in the Library" }).click();
+  await expect(page).toHaveURL(/\/library/);
+});
+
 test("a search opens the group it matches", async ({ page }) => {
   const dialog = await openPicker(page);
   await dialog.getByRole("textbox", { name: "Search namespaces" }).fill("loom");
-  await expect(dialog.getByRole("button", { name: /^Code indexes/ })).toHaveAttribute("aria-expanded", "true");
+  await expect(dialog.getByRole("button", { name: /^Repositories/ })).toHaveAttribute("aria-expanded", "true");
   await expect(dialog.getByRole("button", { name: /acme\/loom @ main/ })).toBeVisible();
   await expect(dialog.getByRole("button", { name: /^Tracker records/ })).toHaveCount(0);
 });
@@ -176,6 +192,21 @@ for (const [width, searchFloor, kind] of [
   });
 }
 
+// The Ask AI button follows the search field: with the longest namespace the header still
+// leaves the search its floor, so a later header item that crowds it fails here.
+test("at 1280 px the header search keeps its floor beside the longest namespace", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  const long = `team-${"0123abcd-".repeat(8)}end`;
+  await installApi(page, { mine: [row(long, "memory", "admin")], claims: [long], savedNamespace: long });
+  await page.goto("/memories");
+  await expect(page.locator("main h1").first()).toBeVisible();
+  const launcher = page.locator('[data-focus-key="assistant-launcher"]');
+  await expect(launcher).toHaveAccessibleName("Ask AI");
+  await expect(page.locator("header").locator('[data-focus-key="assistant-launcher"]')).toHaveCount(1);
+  expect((await boxOf(page.locator("#header-search"))).width).toBeGreaterThanOrEqual(160);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
 test("a namespace that fits has no tooltip on focus", async ({ page }) => {
   await installApi(page);
   await page.goto("/memories");
@@ -184,3 +215,21 @@ test("a namespace that fits has no tooltip on focus", async ({ page }) => {
   await page.getByRole("button", { name: `Namespace: ${NAMESPACE}` }).focus();
   await expect(page.getByRole("tooltip")).toHaveCount(0);
 });
+
+// The footer's line says what a namespace holds in one line: a second would shrink the list.
+for (const width of [1280, 375]) {
+  test(`the picker footer's namespace line is one line high at ${width} px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const dialog = await openPicker(page);
+    const hint = dialog.getByText("A namespace holds memories, code or tracker data.");
+    await expect(hint).toBeVisible();
+    const { content, line } = await hint.evaluate((el) => {
+      const s = getComputedStyle(el);
+      return {
+        content: el.clientHeight - parseFloat(s.paddingTop) - parseFloat(s.paddingBottom),
+        line: parseFloat(s.lineHeight),
+      };
+    });
+    expect(content).toBeCloseTo(line, 0);
+  });
+}

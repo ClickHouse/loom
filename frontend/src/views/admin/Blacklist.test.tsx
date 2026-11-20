@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "../../test/rtl
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BlacklistRow } from "../../api";
 import { useStore } from "../../lib/state";
-import { Blacklist, PrivacyFilterHits, PrivacyFilters } from "./Blacklist";
+import { Blacklist, PrivacyFilterHits, PrivacyFilters, addScopes } from "./Blacklist";
 
 const listBlacklist = vi.fn();
 vi.mock("../../api", async (importOriginal) => {
@@ -107,5 +107,13 @@ describe("privacy filters under the store's identity", () => {
         expect.anything(),
       ),
     );
+  });
+});
+
+describe("addScopes", () => {
+  it("offers an org pattern to an org admin and a global one to a platform admin only", () => {
+    expect(addScopes(false, false)).toEqual(["namespace"]);
+    expect(addScopes(true, false)).toEqual(["namespace", "org"]);
+    expect(addScopes(true, true)).toEqual(["namespace", "org", "global"]);
   });
 });

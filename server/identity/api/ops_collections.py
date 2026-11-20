@@ -13,6 +13,8 @@ from server.identity.api.models_collections import (
     CollectionMoveOutput,
 )
 from server.identity.app.collections import (
+    create_audit_namespace,
+    create_audit_subject,
     handle_collection_create,
     handle_collection_delete,
     handle_collection_list,
@@ -31,6 +33,8 @@ collection_create = Operation(
     # parent, and the creator becomes its admin.
     required_role=Role.VIEWER,
     audit=True,
+    audit_subject=create_audit_subject,
+    audit_namespace=create_audit_namespace,
     skip_namespace_authz=True,
     # A scoped token is gated on its best namespace role, not refused for
     # naming no namespace; the handler checks the parent through its claim.

@@ -9,6 +9,9 @@ import type { Locator } from "../lib/locator";
 // ===== Knowledge =====
 
 export interface KnowledgeEntry {
+  /** Where the document is: the namespace read, or one of the other namespaces a read named.
+   *  A server that predates reading several places may leave it out. */
+  namespace?: string;
   source_uri: string;
   title: string;
   /** User-supplied summary. Rendered as a 2-line excerpt in the Library
@@ -31,6 +34,8 @@ export interface KnowledgeEntry {
 export interface KnowledgeListResponse {
   rows: KnowledgeEntry[];
   next_cursor: string | null;
+  /** The request fields the server did not know (a build a release behind names `namespaces`). */
+  ignored_args?: string[];
 }
 
 export async function listKnowledge(
@@ -43,11 +48,14 @@ export async function listKnowledge(
     fields?: string[];
     /** Only documents whose source_uri starts with one of these. */
     uriPrefix?: string[];
+    /** Also the documents of these namespaces, each read-checked. */
+    namespaces?: string[];
   } & RequestOpts = {},
 ): Promise<KnowledgeListResponse> {
   const body: Record<string, unknown> = {
     org: id.org,
     namespace: id.namespace,
+    ...(opts.namespaces?.length ? { namespaces: opts.namespaces } : {}),
     tags: opts.tags || [],
     // Two or more must all match (a build that predates `tags_every` matches any one).
     ...((opts.tags?.length ?? 0) > 1 ? { tags_every: true } : {}),
@@ -113,6 +121,60 @@ export async function restoreKnowledge(
   sourceUri: string,
 ): Promise<KnowledgeRestoreResult> {
   return post("/v1/knowledge.restore", { org: id.org, namespace: id.namespace, source_uri: sourceUri });
+}
+
+/** Why a document did not move (`knowledge.move`'s `reason`). */
+export type MoveRefusal = "not_found" | "exists" | "synced" | "busy" | "erased";
+
+export interface KnowledgeMoveResult {
+  source_uri: string;
+  moved: boolean;
+  reason: "" | MoveRefusal;
+}
+
+export interface KnowledgeMoved {
+  /** False when the caller cannot add to the place: nothing moved. */
+  found: boolean;
+  results: KnowledgeMoveResult[];
+  /** The failure of a call, after the answers of the calls before it. */
+  error?: unknown;
+}
+
+// The sources one knowledge.move call takes (its `source_uris` max_length).
+export const MOVE_MAX = 50;
+
+/** POST /v1/knowledge.move: the documents go to `to` whole, and are deleted where they were;
+ *  sent in calls of at most `MOVE_MAX`, their answers merged. A call that finds the place no
+ *  longer writable, or that fails, stops the rest: `found` is false, or `error` is set, with
+ *  the answers before it. An aborted `signal` sends no further call. `onCall` runs after
+ *  each call with its answers (none for one that failed, which may still have moved some).
+ *  It never throws. */
+export async function moveKnowledge(
+  id: Pick<Identity, "org" | "namespace">,
+  to: string,
+  sourceUris: string[],
+  signal?: AbortSignal,
+  onCall?: (results: KnowledgeMoveResult[]) => void,
+): Promise<KnowledgeMoved> {
+  const results: KnowledgeMoveResult[] = [];
+  for (let i = 0; i < sourceUris.length && !signal?.aborted; i += MOVE_MAX) {
+    let r: KnowledgeMoved;
+    try {
+      r = await post<KnowledgeMoved>("/v1/knowledge.move", {
+        org: id.org,
+        namespace: id.namespace,
+        to_namespace: to,
+        source_uris: sourceUris.slice(i, i + MOVE_MAX),
+      });
+    } catch (error) {
+      onCall?.([]);
+      return { found: true, results, error };
+    }
+    onCall?.(r.results ?? []);
+    if (!r.found) return { found: false, results };
+    results.push(...(r.results ?? []));
+  }
+  return { found: true, results };
 }
 
 export interface KnowledgeBulkDeleteResult {
@@ -231,6 +293,8 @@ export interface KnowledgeHit {
   block_type?: string;
   locator?: Locator | null;
   keys_matched?: string[];
+  /** The namespace the passage is in, on a search of several. */
+  namespace?: string;
 }
 
 /** The namespace's best `topK` passages that answer `query`, best first (`knowledge.search`). */
@@ -238,11 +302,19 @@ export async function searchKnowledge(
   id: Pick<Identity, "org" | "namespace">,
   query: string,
   topK: number,
-  opts: RequestOpts = {},
+  opts: RequestOpts & { namespaces?: string[] } = {},
 ): Promise<KnowledgeHit[]> {
   const r = await post<{ results: KnowledgeHit[] }>(
     "/v1/knowledge.search",
-    { org: id.org, namespace: id.namespace, query, top_k: topK, namespace_scope: "this" },
+    {
+      org: id.org,
+      namespace: id.namespace,
+      query,
+      top_k: topK,
+      namespace_scope: "this",
+      // Exactly these besides `namespace`, in place of the scope.
+      ...(opts.namespaces?.length ? { namespaces: opts.namespaces } : {}),
+    },
     opts.signal,
   );
   return r.results;

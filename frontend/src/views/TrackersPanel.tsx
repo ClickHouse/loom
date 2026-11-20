@@ -1,7 +1,8 @@
 /**
  * The org's trackers in one place on the Repositories page — every tracker with its state
- * in plain words, the repositories it lists, its scopes and counts, and, for its admin,
- * Check / Rotate / Retire. Adding one starts here too, for anyone signed in (not only a
+ * in plain words, the repositories it lists, its scopes and counts; when the deployment
+ * serves self-service, Check for any caller of a registry tracker and, for its admin, Edit
+ * mapping / Rotate / Retire. Adding one starts here too, for anyone signed in (not only a
  * repository's maintainer), when the deployment serves self-service. Reads nothing of its
  * own: the page's one `tracker.source.list`.
  */
@@ -9,7 +10,8 @@ import { lazy, Suspense, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { checkTrackerSource } from "../api";
-import { fmtInt, humanizeError, relativeTime } from "../lib/format";
+import { fmtInt, relativeTime } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import {
   canAdminister,
   freshnessOf,
@@ -63,8 +65,9 @@ export function TrackersPanel({
   return (
     <section aria-labelledby="trackers-heading" className="mt-8">
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <SectionHeading level={2} id="trackers-heading" label="Trackers" />
+        {/* A mentor hint about trackers lands here (data-focus-key, views/assistant/cards/planes.ts). */}
+        <div className="min-w-0" data-focus-key="trackers-heading">
+          <SectionHeading level={2} id="trackers-heading" label="Trackers" focusable />
           <p className="text-xs text-text-muted max-w-2xl">
             ClickHouse databases of issues, PRs and incidents that Loom reads live. A repository links to one, and
             agents in its checkout see its issues.
@@ -90,7 +93,14 @@ export function TrackersPanel({
       {sources.length > 0 && (
         <ul className="space-y-2" aria-label="Trackers">
           {sources.map((s) => (
-            <TrackerRow key={s.name} org={org} s={s} admin={canAdminister(s, selfService)} onChanged={onChanged} />
+            <TrackerRow
+              key={s.name}
+              org={org}
+              s={s}
+              checkable={selfService && s.origin === "registry"}
+              admin={canAdminister(s, selfService)}
+              onChanged={onChanged}
+            />
           ))}
         </ul>
       )}
@@ -101,11 +111,14 @@ export function TrackersPanel({
 function TrackerRow({
   org,
   s,
+  checkable,
   admin,
   onChanged,
 }: {
   org: string;
   s: TrackerSource;
+  /** The dashboard can manage it at all: the server has the ops, and the registry holds it. */
+  checkable: boolean;
   admin: boolean;
   onChanged: () => void;
 }) {
@@ -186,21 +199,26 @@ function TrackerRow({
             </span>
           </div>
         </div>
-        {admin && (
+        {checkable && (
           <div className="flex flex-wrap items-center gap-2">
+            {/* tracker.source.check is a viewer read: anyone may run it. */}
             <Button type="empty" htmlType="button" loading={check.busy} onClick={() => void runCheck()}>
               Check now
             </Button>
-            <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("mapping")}>
-              Edit mapping
-            </Button>
-            <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("rotate")}>
-              Rotate credential
-            </Button>
-            <Button type="danger" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("retire")}>
-              Retire
-            </Button>
-            {verbs.reason && <span className="text-xs text-text-muted basis-full">{verbs.reason}</span>}
+            {admin && (
+              <>
+                <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("mapping")}>
+                  Edit mapping
+                </Button>
+                <Button type="empty" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("rotate")}>
+                  Rotate credential
+                </Button>
+                <Button type="danger" htmlType="button" disabled={!verbs.manage} onClick={() => setDialog("retire")}>
+                  Retire
+                </Button>
+                {verbs.reason && <span className="text-xs text-text-muted basis-full">{verbs.reason}</span>}
+              </>
+            )}
           </div>
         )}
       </div>

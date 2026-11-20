@@ -37,6 +37,7 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
 
+from server.core import request_tail, request_work
 from server.core.errors import classified
 from server.identity.app.caller_home import caller_org
 from server.observability.consumer import ASSISTANT_CONSUMER
@@ -315,15 +316,26 @@ async def _dispatch_batch(
     responses: list[dict[str, Any]] = []
     with one_refusal_row_each():
         for i, req in enumerate(payload):
+            request_work.begin()
             method = str(req.get("method", "") or "") if isinstance(req, dict) else ""
             # The entries share one task, and the Langfuse span processor stamps
             # the published identity on every span: drop the previous entry's
             # before this entry's span opens. Each entry publishes its own.
             genai.set_identity()
-            with traced("mcp.batch.entry", rpc_method=method, batch_index=i):
-                resp = await dispatch(req)
-            if resp is not None:
-                responses.append(resp)
+            with request_tail.publication_group() as publication:
+                with traced("mcp.batch.entry", rpc_method=method, batch_index=i):
+                    resp = await dispatch(req)
+                marked = request_work.mirror_marked()
+                if marked:
+                    if resp is not None and len(payload) > 1:
+                        resp = _err(
+                            resp.get("id"), INVALID_REQUEST, "Send this request individually"
+                        )
+                    await request_tail.drain_required()
+                if resp is not None:
+                    if not marked or len(payload) == 1:
+                        publication.commit()
+                    responses.append(resp)
     return responses
 
 
@@ -372,11 +384,11 @@ def attach(app: FastAPI) -> None:
         # schema parse and surfaces as an opaque zod error.
         mode = _effective_auth_mode()
         try:
-            auth = _verify_bearer(request)
+            auth = await _verify_bearer(request)
         except PermissionError as e:
             return _not_on_mcp(response, payload, e)
         except TokenError as e:
-            if mode != "open":
+            if mode != "open" or e.reason == "provisioning":
                 return _token_refused(request, response, payload, e)
             # Open mode falls back to no-auth rather than 401 (so bridges
             # with mis-templated headers still work). Warn-log it — silent
@@ -445,8 +457,11 @@ def attach(app: FastAPI) -> None:
             responses = await _dispatch_batch(payload, _dispatch)
             return responses if responses else _accepted(response)
 
-        resp = await _dispatch(payload)
-        return resp if resp is not None else _accepted(response)
+        with request_tail.publication_group() as publication:
+            resp = await _dispatch(payload)
+            if resp is not None:
+                publication.commit()
+            return resp if resp is not None else _accepted(response)
 
     @router.delete("/mcp", summary="MCP session end: close the session's run")
     async def mcp_session_end(request: Request, response: Response) -> Any:
@@ -461,11 +476,11 @@ def attach(app: FastAPI) -> None:
 
         mode = _effective_auth_mode()
         try:
-            auth = _verify_bearer(request)
+            auth = await _verify_bearer(request)
         except PermissionError as e:
             return _not_on_mcp(response, None, e)
         except TokenError as e:
-            if mode != "open":
+            if mode != "open" or e.reason == "provisioning":
                 return _token_refused(request, response, None, e)
             auth = None
         if mode != "open" and auth is None:

@@ -1,4 +1,4 @@
-import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
+import type { MyNamespaceEntry, WhoAmI } from "../api";
 
 /**
  * Who may see admin surfaces.
@@ -21,17 +21,7 @@ import type { MyNamespaceEntry, NamespaceInfo, WhoAmI } from "../api";
  *   carries WRITER but who owns the namespace is still its admin.
  *   `holdsAdminGrant` is the same rule for a screen that read the namespace's
  *   own grant list (`grants.list`) rather than `namespace.list_mine`.
- * - `canUpdateNamespace`: `namespace.register`'s update path. Namespace admin,
- *   or the owner named on a row the first-write hook auto-registered
- *   (`_is_auto_registered_owner`: the row carries the `auto-registered` tag
- *   and its `owner_email` is the caller). That owner holds no grant, so
- *   `namespace.delete` and `grants.*` stay on `isNamespaceAdmin`. A row
- *   `namespace.get` calls restricted takes none of that: the server's two-factor
- *   gate (`_require_admin_of_existing` → `restricted_allows`) wants a token of the
- *   namespace's org that names it (no `*`), a role claim reaching ADMIN and a
- *   direct, active admin grant (not one inherited through a creator). Unknown grants
- *   do not count there. This is a mirror to hide controls the server would refuse,
- *   not the authority.
+ * - `canUpdateNamespace` and the restricted gate's misses live in `lib/namespaceUpdate.ts`.
  *
  * `LOOM_AUTH_REQUIRED=false` (whoami says `authenticated: false` for the
  * synthesised local identity) means the operator is the user: admin.
@@ -85,29 +75,4 @@ export function isNamespaceAdmin(whoami: WhoAmI | null, mine: MyNamespaceEntry[]
     whoami,
     mine.find((m) => m.namespace === namespace),
   );
-}
-
-function restrictedAdmin(whoami: WhoAmI | null, mine: MyNamespaceEntry[] | null, namespace: string): boolean {
-  if (!whoami) return false;
-  if (!whoami.authenticated) return true;
-  if (!whoami.org || whoami.org === "*") return false;
-  if (!(whoami.namespaces || []).includes(namespace)) return false;
-  if (!claimIn(whoami, ADMIN_CLAIMS)) return false;
-  const grant = mine?.find((m) => m.namespace === namespace);
-  return grant?.role === "admin" && grant.status !== "pending" && !grant.inherited;
-}
-
-// Matches server.identity.app.namespace_autoregister.AUTO_REGISTER_TAG.
-const AUTO_REGISTER_TAG = "auto-registered";
-
-export function canUpdateNamespace(
-  whoami: WhoAmI | null,
-  mine: MyNamespaceEntry[] | null,
-  namespace: string,
-  row: Pick<NamespaceInfo, "owner_email" | "tags" | "classification"> | null,
-): boolean {
-  if (row?.classification === "restricted") return restrictedAdmin(whoami, mine, namespace);
-  if (isNamespaceAdmin(whoami, mine, namespace)) return true;
-  const subject = whoami?.subject;
-  return !!subject && !!row && row.owner_email === subject && row.tags.includes(AUTO_REGISTER_TAG);
 }

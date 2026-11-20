@@ -45,6 +45,7 @@ OBJECTS = {
     ),
     "loom.a": ("ReplacingMergeTree", "CREATE TABLE loom.a\n(\n    `k` String\n)\nENGINE = RMT"),
     "loom.a_mv": ("MaterializedView", "CREATE MATERIALIZED VIEW loom.a_mv TO loom.b AS SELECT 1"),
+    "loom.a_v": ("View", "CREATE VIEW loom.a_v\n(\n    `x` UInt8\n)\nAS SELECT x FROM loom.b"),
     "loom_telemetry.t": (
         "MergeTree",
         "CREATE TABLE loom_telemetry.t\n(\n    `x` UInt8\n)\nENGINE = MergeTree\nORDER BY x",
@@ -55,11 +56,13 @@ OBJECTS = {
 def test_dump_is_sorted_idempotent_and_version_free() -> None:
     text = ds.dump(_Client(OBJECTS))
     assert text == ds.dump(_Client(OBJECTS, version="26.8.8.8"))
-    assert "Counts: 3 tables + 1 materialized views." in text
+    assert "Counts: 3 tables + 1 views + 1 materialized views." in text
     assert (
         text.index("-- loom.a\n") < text.index("-- loom.b\n") < text.index("-- loom_telemetry.t\n")
     )
-    assert text.index("-- loom_telemetry.t\n") < text.index("-- loom.a_mv\n")
+    assert text.index("-- loom_telemetry.t\n") < text.index("-- loom.a_v\n")
+    assert text.index("-- loom.a_v\n") < text.index("-- loom.a_mv\n")
+    assert "CREATE VIEW IF NOT EXISTS loom.a_v\n" in text
     assert "CREATE TABLE IF NOT EXISTS loom.a\n" in text
     assert "CREATE MATERIALIZED VIEW IF NOT EXISTS loom.a_mv " in text
     assert ds.dump(_Client(OBJECTS)) == text

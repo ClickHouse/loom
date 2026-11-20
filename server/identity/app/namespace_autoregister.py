@@ -39,6 +39,7 @@ from typing import Any, Final
 from server.core.naming import reserved_for_sso
 from server.identity.api.models import NamespaceRegisterInput
 from server.identity.app.directory import IdentityDirectory
+from server.identity.store.namespace_census import REQUEST_TRACES
 from server.operations.base import Operation, Role
 from server.settings import settings
 
@@ -58,16 +59,7 @@ _MISSING = ("", "-", "*")
 # The census tables a read or a run writes under a name (telemetry, a query, a run's
 # ledger row with its request and response), so a writer who searched first still owns
 # the name; a name holding only these rows goes to its first writer.
-READ_TRACES: Final = frozenset(
-    {
-        "loom.agent_runs",
-        "loom.events",
-        "loom.memory_exposures",
-        "loom.search_trace_log",
-        "loom.code_search_trace",
-        "loom.code_search_outcome",
-    }
-)
+READ_TRACES: Final = REQUEST_TRACES | {"loom.agent_runs"}
 
 
 def _csv(value: str) -> tuple[str, ...]:
@@ -81,12 +73,11 @@ def bench_prefixes() -> tuple[str, ...]:
 def classify_kind(namespace: str) -> str:
     """`personal` / `collection` by their reserved prefixes (server/auth/sharing.py),
     `bench` under a bench prefix, else `memory`."""
-    from server.auth.sharing import is_collection, is_personal
+    from server.auth.sharing import collection_kind
 
-    if is_personal(namespace):
-        return "personal"
-    if is_collection(namespace):
-        return "collection"
+    kind = collection_kind(namespace)
+    if kind:
+        return kind
     return "bench" if any(namespace.startswith(p) for p in bench_prefixes()) else "memory"
 
 
@@ -127,6 +118,8 @@ async def ensure_registered(
 ) -> bool:
     """Insert the registry row for (org, namespace) if none exists. Returns
     True when a row was inserted. Never raises."""
+    from server.auth.authz import identity_write
+
     if (org, namespace) in _known or reserved_for_sso(namespace):
         return False  # an SSO account's row is single sign-on's to create
     try:
@@ -174,7 +167,8 @@ async def ensure_registered(
         # Both versions sit below any explicit row's (a register, a restriction), so an
         # explicit row wins under FINAL, even one another replica wrote a moment ago.
         row["updated_at"] = OWNERLESS_ROW_VERSION if in_use else AUTO_ROW_VERSION
-        await ch.insert("loom.namespaces", [row])
+        with identity_write():
+            await ch.insert("loom.namespaces", [row])
         _remember(org, namespace)
         from server.identity.app.traffic_class_registry import note_registered
 

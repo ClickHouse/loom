@@ -71,7 +71,7 @@ class BackendUnavailable(LoomError):
 
 
 #: 5xx codes never resent, with their category: a deployment's configuration (the
-#: operator's fix is named in the error and in /v1/health), a model call that names
+#: operator's fix is named in the error, /v1/health or loom doctor), a model call that names
 #: no customer (a server path to fix, not a passing fault), and a write already
 #: committed whose rows are still on their way.
 _NEVER_RETRIED: Mapping[str, ErrorCategory] = {
@@ -81,6 +81,7 @@ _NEVER_RETRIED: Mapping[str, ErrorCategory] = {
     "GATEWAY_REQUIRED": "configuration",
     "MODEL_CALL_UNATTRIBUTED": "internal",
     "PUBLICATION_PENDING": "dependency",
+    "TENANCY_REFUSED": "configuration",
 }
 
 #: The wait assumed when the server names none (or one past the cap).
@@ -104,10 +105,11 @@ class RateLimited(BackendUnavailable):
 
 
 class Overloaded(BackendUnavailable):
-    """503 OVERLOADED — every pooled ClickHouse connection of the serving
-    process was busy for longer than its slot wait. Retry
-    after `retry_after_s`; a client that spreads its calls or lowers its
-    concurrency stops seeing it."""
+    """503 OVERLOADED — the server was too busy: every pooled ClickHouse connection of
+    the serving process was busy for longer than its slot wait, or a lock or claim
+    (such as a namespace's definition promotion) stayed held past its wait. Retry after
+    `retry_after_s`; a client that spreads its calls or lowers its concurrency stops
+    seeing it."""
 
     code = "OVERLOADED"
     retry_after_s: float = DEFAULT_RETRY_AFTER_S
@@ -215,11 +217,15 @@ class IdempotentConflict(LoomError):
 
 
 class PreconditionFailed(LoomError):
-    """An if_match_sha256 precondition didn't match the live row's hash, or an
-    erasure landed while a namespace.restore ran (retry the restore; no hash).
+    """An if_match_sha256 (or a definition's approved_sha256) precondition didn't
+    match the live row's hash, or an erasure landed while a namespace.restore ran
+    (retry the restore; no hash).
 
     A mismatch carries the server's current hash in `.current_sha256` so a caller
-    can re-read and retry without an extra get round-trip.
+    can re-read and retry without an extra get round-trip. For a definition's
+    `approved_sha256`, show the current text again and approve that: never resend
+    `.current_sha256` unseen. Any 409 the SDK has no class for (such as
+    `DEFINITION_NAME_TAKEN`) arrives as this class, with no hash: check `.code`.
     """
 
     code = "PRECONDITION_FAILED"
@@ -228,6 +234,16 @@ class PreconditionFailed(LoomError):
     def __init__(self, message: str = "", current_sha256: str = "") -> None:
         super().__init__(message)
         self.current_sha256 = current_sha256
+
+
+class WrongCell(PreconditionFailed):
+    """The org the call acts in lives in another cell of this deployment: nothing was
+    written. `.cell` names that cell when the server knows it ('' otherwise), `.org` the
+    org; `GET /cells/lookup?org=` on the router gives the cell's host to call instead."""
+
+    code = "WRONG_CELL"
+    org: str = ""
+    cell: str = ""
 
 
 ERROR_CODES: dict[str, type[LoomError]] = {
@@ -244,6 +260,7 @@ ERROR_CODES: dict[str, type[LoomError]] = {
     "IDEMPOTENT_CONFLICT": IdempotentConflict,
     "IDEMPOTENT_IN_PROGRESS": IdempotentInProgress,
     "PRECONDITION_FAILED": PreconditionFailed,
+    "WRONG_CELL": WrongCell,
     # ClickHouse refused to store an override: no precondition, and not retried.
     "OVERRIDE_NOT_STORED": LoomError,
 }
@@ -305,4 +322,7 @@ def from_response(
         err.retry_after_s = float(retry_after_s)
     if "current_sha256" in err.detail and hasattr(err, "current_sha256"):
         err.current_sha256 = str(err.detail["current_sha256"])
+    if isinstance(err, WrongCell):
+        err.org = str(err.detail.get("org") or "")
+        err.cell = str(err.detail.get("cell") or "")
     return err

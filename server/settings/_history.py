@@ -59,4 +59,14 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "`LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="code.search,code.symbol",
+        new="",
+        why=(
+            "Leave tool loading to the host so sessions do not need unused code schemas "
+            "upfront. Set an explicit operation list to request eager loading."
+        ),
+    ),
 )

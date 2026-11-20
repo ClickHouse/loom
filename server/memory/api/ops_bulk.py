@@ -35,6 +35,7 @@ from server.operations.base import Operation, Role
 
 memory_bulk_set = Operation(
     name="memory.bulk_set",
+    session_content=True,
     input_model=MemoryBulkSetInput,
     output_model=MemoryBulkSetOutput,
     handler=handle_memory_bulk_set,
@@ -45,6 +46,7 @@ memory_bulk_set = Operation(
 
 memory_set_from_messages = Operation(
     name="memory.set_from_messages",
+    session_content=True,
     input_model=MemorySetFromMessagesInput,
     output_model=MemorySetFromMessagesOutput,
     handler=handle_memory_set_from_messages,

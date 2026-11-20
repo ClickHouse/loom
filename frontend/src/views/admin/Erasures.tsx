@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
@@ -17,10 +17,12 @@ import {
 } from "../../api";
 import { useIdentity, useStore } from "../../lib/state";
 import { hasAdminClaim, hasOrgAdminClaim, hasWriterClaim } from "../../lib/role";
-import { useNamespaceRole } from "../../lib/namespaceRole";
+import { needsRole, useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { ACCESS_LOADING, roleGap, rolesUnseen } from "../../lib/callReason";
 import { useAbortableEffect } from "../../lib/hooks";
 import { ApiError } from "../../lib/errors";
-import { humanizeError, listTime } from "../../lib/format";
+import { listTime } from "../../lib/format";
+import { humanizeError } from "../../lib/errorWords";
 import { NameBadge } from "../../components/AgentBadge";
 import { ListState } from "../../components/ui/ListState";
 import { ListTime } from "../../components/ui/ListTime";
@@ -28,7 +30,16 @@ import { Modal, ModalFooter } from "../../components/ui/Modal";
 import { TableSkeleton } from "../../components/Skeleton";
 import { confirmAction } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toast";
-import { Alert, ChoiceGroup, Loading, MetaList, MetaRow, TipTarget, fieldError } from "../../components/ui";
+import {
+  Alert,
+  ChoiceGroup,
+  Loading,
+  MetaList,
+  MetaRow,
+  TipTarget,
+  Unavailable,
+  fieldError,
+} from "../../components/ui";
 import { saveJson } from "../../lib/download";
 
 const ERASURE_STATE: Record<string, BadgeState> = { completed: "success", failed: "danger" };
@@ -47,7 +58,8 @@ type ScopeKind = ErasureScope["scope_type"];
 export function ErasuresPanel() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const role = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const { role } = roleRead;
   const [rows, setRows] = useState<ErasureListRow[] | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [reload, setReload] = useState(0);
@@ -60,6 +72,31 @@ export function ErasuresPanel() {
     ...orgWide,
   ];
   const exportScopes: ScopeKind[] = [...(hasAdminClaim(whoami) ? ["namespace" as const] : []), ...orgWide];
+  // Both stay in view for whoever reaches no scope, with what the token or the role lacks:
+  // export gates on the token's flat claim alone, erasure on admin here and a writer claim.
+  // Before whoami is read neither is known, and export never turns on a namespace role.
+  const exportReason =
+    exportScopes.length > 0 ? null : !whoami ? ACCESS_LOADING : "Exporting data needs a token with an admin claim.";
+  // erasure.request names no namespace to the transport, which refuses a token scoped per
+  // namespace outright (`_check_scoped_without_target`): its line is the flat claim's, never
+  // the server-decides one roleGap gives such a token.
+  const eraseNeeds = (): string | null => {
+    const ns = identity.namespace;
+    const writerClaim = "Erasing data needs a token with a writer claim or above.";
+    if (eraseScopes.length > 0) return null;
+    if (!whoami) return ACCESS_LOADING;
+    if (rolesUnseen(whoami)) return writerClaim;
+    const gap = roleGap(roleRead, whoami, ns);
+    if (gap) return gap;
+    if (role === "admin") return writerClaim;
+    if (hasWriterClaim(whoami)) return needsRole("admin", ns);
+    return `Erasing data needs admin on ${ns} and a token with a writer claim or above.`;
+  };
+  const eraseReason = eraseNeeds();
+  // A reason that appears while its dialog is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if ((dialog === "request" && eraseReason) || (dialog === "export" && exportReason)) setDialog(null);
+  }, [dialog, eraseReason, exportReason]);
 
   useAbortableEffect(
     (signal, live) => {
@@ -76,18 +113,18 @@ export function ErasuresPanel() {
     [identity.org, reload],
   );
 
-  const actions = (eraseScopes.length > 0 || exportScopes.length > 0) && (
+  const actions = (
     <div className="mb-4 flex flex-wrap justify-end gap-2">
-      {exportScopes.length > 0 && (
+      <Unavailable reason={exportReason}>
         <Button type="secondary" htmlType="button" onClick={() => setDialog("export")}>
           Export data
         </Button>
-      )}
-      {eraseScopes.length > 0 && (
+      </Unavailable>
+      <Unavailable reason={eraseReason}>
         <Button type="danger" htmlType="button" onClick={() => setDialog("request")}>
           Erase data
         </Button>
-      )}
+      </Unavailable>
     </div>
   );
 
@@ -160,7 +197,7 @@ function ErasuresTable({ rows, onDetails }: { rows: ErasureListRow[] | null; onD
                 <Badge text={r.status} state={ERASURE_STATE[r.status] ?? "neutral"} size="sm" />
                 {r.reversals_count > 0 && (
                   <TipTarget
-                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored via memory.restore — the "completed" status overstates what's actually erased.`}
+                    tip={`${r.reversals_count} memor${r.reversals_count === 1 ? "y" : "ies"} restored after the erasure — the "completed" status overstates what's actually erased.`}
                   >
                     <Badge text={`${r.reversals_count} reversed`} state="warning" size="sm" />
                   </TipTarget>
@@ -357,7 +394,7 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
   const residue = Object.entries(status?.residue ?? {}).filter(([, n]) => n > 0);
   return (
     <Modal open onOpenChange={(v) => !v && onClose()} title="Erasure details" className="w-full max-w-[560px]">
-      {!!error && <Alert role="alert" state="danger" text={humanizeError(error)} />}
+      {!!error && <Alert role="alert" state="danger" text={humanizeError(error, { read: true })} />}
       {!error && status === null && <Loading label="Loading erasure" />}
       {status && !status.found && <Alert state="warning" text="This erasure is no longer recorded." />}
       {status?.found && (
@@ -393,7 +430,9 @@ function ErasureDetails({ erasureId, onClose }: { erasureId: string; onClose: ()
           {status.failure_reason && <MetaRow label="Failure">{status.failure_reason}</MetaRow>}
           <MetaRow label="Left behind">
             {!status.verified_at
-              ? "Not checked yet"
+              ? status.status === "in_progress"
+                ? "Not checked yet"
+                : "Counts unavailable"
               : residue.length === 0
                 ? "Nothing"
                 : residue.map(([table, n]) => (

@@ -13,7 +13,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, reads, run_connected, writes
 
 # Every place a value `server.core.secrets_at_rest.seal` made is kept:
 # (table, column, JSON path inside the column (() = the column itself), purpose,
@@ -25,6 +25,10 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.code_repos", "github_token_enc", (), "code_repos.token", ""),
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
+    ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),
+    ("loom.knowledge_source_push", "secret_enc", (), "knowledge_source_push.secret", ""),
+    ("loom.connected_accounts", "credential_enc", (), "connected_accounts.credential", ""),
+    ("loom.connected_accounts", "account_email_enc", (), "connected_accounts.email", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
     (
         "loom.provider_configuration",
@@ -52,6 +56,8 @@ _KEYS = {
     "loom.code_repos": ("org", "namespace"),
     "loom.qa_sources": ("org", "name"),
     "loom.knowledge_sources": ("org", "namespace", "name"),
+    "loom.knowledge_source_push": ("org", "namespace", "source_id"),
+    "loom.connected_accounts": ("org", "subject", "kind"),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
     "loom.analysis_secrets": ("id",),
@@ -143,6 +149,24 @@ async def reseal_all(
     counts: dict[str, int] = {}
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
+        if table == "loom.connected_accounts":
+            from server.knowledge.app.connected_accounts import reseal_registry as reseal_accounts
+
+            n, missing = await reseal_accounts(column, purpose, dry_run=dry_run, ch=ch)
+            counts[f"{table}.{column}"] = n
+            if missing:
+                lost[f"{table}.{column}"] = missing
+            continue
+        if table == "loom.knowledge_source_push":
+            # This registry is physically erased. Its writer fence and re-read
+            # under the source lease prevent a scanned row from reviving it.
+            from server.knowledge.app.source_push import reseal_registry
+
+            n, missing = await reseal_registry(dry_run=dry_run, ch=ch)
+            counts[f"{table}.{column}"] = n
+            if missing:
+                lost[f"{table}.{column}"] = missing
+            continue
         async with contextlib.AsyncExitStack() as held:
             if table in _LEASED:
                 # One writer of the row at a time, reading the newest copy.
@@ -245,7 +269,7 @@ def _cmd_reseal(args: argparse.Namespace) -> int:
         print("✓ dry run, nothing written" if dry else "✓ resealed under LOOM_JWT_SECRET")
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, org_free=_reseal_org_free(args))
 
 
 def register_secrets_cli(sub: Any) -> None:
@@ -263,3 +287,10 @@ def register_secrets_cli(sub: Any) -> None:
         "LOOM_JWT_SECRET_PREVIOUS",
     )
     rs.set_defaults(func=_cmd_reseal)
+
+
+def _reseal_org_free(args: argparse.Namespace) -> OrgFree:
+    """What this run does to the cell's stores: its read-only mode reads."""
+    if args.dry_run or args.check:
+        return reads("counts what a reseal would write")
+    return writes("reseals this cell's stored credentials")

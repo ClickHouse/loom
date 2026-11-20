@@ -22,12 +22,45 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, each with the caller's role there
-  and its directory description (the dashboard's Library shows them), and
+  and its title and description (the dashboard's Library shows them). With
+  `include_document_counts=true`, each returned collection also carries its direct live
+  document count, excluding child collections. Counts read the same current document
+  metadata as `knowledge.list`, which can lag a commit awaiting publication. Without
+  that option, `document_count` is null. Only namespaces authorized for the returned
+  page are counted, in one grouped query.
   `collection.delete` takes one out of the directory and the tree (its children become
   top-level) once a purging erasure of it has taken what it holds off disk
   (`namespace.delete` refuses a collection). A
   deleted collection's name is never used again, and no grant reaches it any more. A
-  document lives in one collection and follows its grants from the moment it is written.
+  document lives in one collection and follows its grants from the moment it is written;
+  `knowledge.move` writes it into another, whose grants it follows from then on, and
+  deletes it where it was ([moving documents](../features/knowledge.md#moving-documents)).
+- **Collections in the namespace lists.** `namespace.list_mine` gives a collection
+  `kind = 'collection'` from its directory row; a `col-` name with no row takes
+  `collection`, or `personal` for `col-me-…`, from its reserved prefix, so it still reads
+  as a collection. Each `list_mine` row also carries the directory's `title`. A refusal
+  on a collection says "cannot access the collection org/name", chosen by the prefix
+  alone, so it reads the same whether or not the collection exists. The dashboard never
+  shows a collection as a namespace: the Library lists them, the token form and Flow give
+  them a Collections heading of their own, and admin Users tags each grant on one inline
+  ("collection Research · writer"), each by its title, and another person's own collection
+  as "personal collection".
+- **A collection's name and its title.** The name is the address: grants, search scope,
+  audit and erasure key on it, so it is unique in the org and never reused. The title is
+  what people see; titles repeat. `collection.create` with `derive_name` takes a title
+  and derives the name (`server/identity/domain/collection_names.py`): the title's slug
+  (`col-q3-plans`), else the slug with a four-character suffix hashed from the request,
+  so a retry walks the same names. For a derived create, within one parent a title names
+  one collection (at the top level, one per creator): a create whose title one already
+  has answers it with `created: false`, which makes it safe to retry and a folder upload
+  safe to repeat. A create that names the collection keeps the title it is given, without
+  that check. A title is what people read, not an identity: two titles can look alike
+  (letters from different scripts do), and the address tells the collections apart; the
+  dashboard shows it beside a title that looks like another. The title sits in
+  `loom.namespaces.title`, beside the description: every writer of an existing directory
+  row copies the row whole, so a build that does not know the column keeps it. A name
+  already used answers `COLLECTION_NAME_TAKEN`, saying whether a deleted collection held
+  it, with a free name to use instead.
 - **Only grants open a collection**, and only one in the tree: a `col-` name that was
   deleted, or never created, admits no one but a platform admin. A collection is known by
   its name (`col-…`; the prefix is reserved: `namespace.register` and `namespace.restore`
@@ -134,9 +167,10 @@ group to keep in step with the org's users. No token is ever `everyone`.
 
 **An agent's files** go in a collection of its own (say `col-agent-<id>`) granted to
 `agent:<id>`: whoever the service signs in with that agent reads them. An agent's search
-names its collections explicitly (`knowledge.search` with `namespaces`), each checked as a
-read of its own, so it never reaches another agent's files; a chat's attachments go in
-the user's `@me` with the conversation as their `session_id`.
+and listing name its collections explicitly (`knowledge.search` and `knowledge.list` with
+`namespaces`), each checked as a read of its own, so it never reaches another agent's
+files; a chat's attachments go in the user's `@me` with the conversation as their
+`session_id`.
 
 **Groups** come from one place: SCIM `/scim/v2/Groups`, written with a token of the org's
 admin. The group lands in that org; a member is a user id, held as `user:<id>`.
@@ -225,7 +259,7 @@ writer's.
 
 A user erasure (`scope_type = user_id`) supersedes the documents and chunks that user
 wrote in any namespace of the org (an end-user token, or a token minted with
-`--read-user-id`, stamps its `user_id`), or, with `purge` (a GDPR deletion), deletes every
+`--read-user-id`, stamps its `user_id`), or, with `purge`, deletes every
 version of them from disk, after superseding another writer's versions that one of theirs
 replaced, so none reads as live again. It deletes their uploaded originals that no other
 writer's live document shares (each upload by an end user is recorded in

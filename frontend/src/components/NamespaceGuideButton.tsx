@@ -5,7 +5,9 @@ import { GuideDialog } from "../flows/GuideDialog";
 import { IconButton } from "./IconButton";
 import { useAbortableEffect } from "../lib/hooks";
 import { isPersonalCollection } from "../lib/namespace";
-import { canEditGuide, useNamespaceRole } from "../lib/namespaceRole";
+import { canEditGuide, useNamespaceRoleRead } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { useStore } from "../lib/state";
 import { Tip } from "./ui";
 
 /**
@@ -26,8 +28,12 @@ export function NamespaceGuideButton({
   // An end user's personal collection takes no guide, and its name says so at render: no
   // button, no read, and nothing moves for it.
   const personal = isPersonalCollection(identity.namespace);
-  const role = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const { role } = roleRead;
+  const whoami = useStore((s) => s.whoami);
   const writer = canEditGuide(role, identity.namespace);
+  // Edit stays in the dialog, unavailable, from the gate the tune card's guide draft uses.
+  const editReason = personal ? null : callReason("namespace.guide_set", roleRead, whoami, identity.namespace);
   const describedBy = useId();
   const [guide, setGuide] = useState<NamespaceGuide | null>(null);
   const [open, setOpen] = useState(false);
@@ -90,6 +96,7 @@ export function NamespaceGuideButton({
           org={identity.org}
           namespace={identity.namespace}
           canEdit={writer}
+          editReason={editReason}
           startEditing
           onSaved={() => setReads((n) => n + 1)}
         />

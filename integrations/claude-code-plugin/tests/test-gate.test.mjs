@@ -1,7 +1,18 @@
 import "./temp-home.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { decideBlock, gatePayload, gateSignature, renderGate, sessionScope, venvPython } from "../lib/test-gate.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import {
+  checkoutPython,
+  decideBlock,
+  gatePayload,
+  gateSignature,
+  renderGate,
+  sessionScope,
+  venvPython,
+} from "../lib/test-gate.mjs";
 
 const GATE = {
   obligations: true,
@@ -244,9 +255,9 @@ test("pytest runs use the checkout's interpreter; none found is said plainly", (
   assert.equal(withPython("pytest tests/a.py", undefined), "pytest tests/a.py");
   const found = renderGate(GATE, { python: ".venv/bin/python" });
   assert.match(found, /run: \.venv\/bin\/python -m pytest tests\/unit\/test_a\.py/);
-  assert.doesNotMatch(found, /No Python env/);
+  assert.doesNotMatch(found, /No Python was found/);
   const none = renderGate(GATE, { python: "" });
-  assert.match(none, /No Python env with pytest was found in this checkout/);
+  assert.match(none, /No Python was found for this checkout/);
   assert.match(renderGate(GATE), /run: pytest tests\/unit\/test_a\.py/);
 });
 
@@ -258,4 +269,97 @@ test("nothing to run asks for a test, not for running tests", () => {
   assert.match(text, /no test reaches: server\.naming::validate_namespace_name/);
   assert.match(text, /Add a test that reaches it, or say why the change needs none/);
   assert.doesNotMatch(text, /Run the tests/);
+});
+
+test("checkoutPython names a PATH python without running it", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-path-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-"));
+  const marker = path.join(dir, "ran");
+  const win = process.platform === "win32";
+  const write = (name, mode = 0o755) =>
+    fs.writeFileSync(path.join(dir, win ? `${name}.exe` : name), `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`, {
+      mode,
+    });
+  const env = { PATH: `${path.delimiter}${win ? `"${dir}"` : dir}` };
+  try {
+    assert.equal(checkoutPython(root, { env }), "");
+    write("python");
+    assert.equal(checkoutPython(root, { env }), "python");
+    write("python3");
+    // Windows looks for python first: python.org installs ship no python3.exe.
+    assert.equal(checkoutPython(root, { env }), win ? "python" : "python3");
+    assert.equal(fs.existsSync(marker), false);
+    if (!win) {
+      fs.chmodSync(path.join(dir, "python3"), 0o644); // a shell would not run it
+      assert.equal(checkoutPython(root, { env }), "python");
+    }
+    // An empty file, like the Store aliases Windows puts on PATH, does not count.
+    for (const f of fs.readdirSync(dir)) fs.writeFileSync(path.join(dir, f), "");
+    assert.equal(checkoutPython(root, { env }), "");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("checkoutPython prefers the checkout's virtualenvs, then an active one, then PATH", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-"));
+  const active = fs.mkdtempSync(path.join(os.tmpdir(), "loom-venv-"));
+  const make = (venv) => {
+    const py = venvPython(venv);
+    fs.mkdirSync(path.dirname(py), { recursive: true });
+    fs.writeFileSync(py, "");
+    return py;
+  };
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "loom-path-"));
+  const pathPy = process.platform === "win32" ? ["python", ".exe"] : ["python3", ""];
+  fs.writeFileSync(path.join(bin, pathPy.join("")), "#!/bin/sh\n", { mode: 0o755 });
+  const env = { PATH: bin, VIRTUAL_ENV: active };
+  try {
+    assert.equal(checkoutPython(root, { env }), pathPy[0]);
+    const activePy = make(active);
+    assert.equal(checkoutPython(root, { env }), activePy);
+    make(path.join(root, "venv"));
+    assert.equal(
+      checkoutPython(root, { env }),
+      path
+        .relative(root, venvPython(path.join(root, "venv")))
+        .split(path.sep)
+        .join("/"),
+    );
+    make(path.join(root, ".venv"));
+    assert.equal(
+      checkoutPython(root, { env }),
+      path
+        .relative(root, venvPython(path.join(root, ".venv")))
+        .split(path.sep)
+        .join("/"),
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(bin, { recursive: true, force: true });
+    fs.rmSync(active, { recursive: true, force: true });
+  }
+});
+
+test("the test gate's lib and hook do not import node:child_process", () => {
+  for (const file of ["../lib/test-gate.mjs", "../hooks/loom-test-gate.mjs"]) {
+    const src = fs.readFileSync(new URL(file, import.meta.url), "utf8");
+    assert.doesNotMatch(src, /child_process/, file);
+  }
+});
+
+test("checkoutPython runs no pytest.py planted in the checkout", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "loom-gate-"));
+  const marker = path.join(root, "ran");
+  fs.writeFileSync(path.join(root, "pytest.py"), `open(${JSON.stringify(marker)}, "w").write("x")\n`);
+  const cwd = process.cwd();
+  process.chdir(root); // a Stop hook runs with the checkout as working directory
+  try {
+    checkoutPython(root, { env: { PATH: process.env.PATH } });
+    assert.equal(fs.existsSync(marker), false);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

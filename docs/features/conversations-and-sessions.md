@@ -20,7 +20,7 @@ extracted memory, and a brief never competes with facts in recall.
 on. The switch (`conversation_logging_enabled` on `loom.namespaces`) is off by default
 and fails closed: a namespace with no row is not
 recorded. The owner turns it on with `conversation.set_logging(enabled=true)` (admin) or
-the Recording toggle on the dashboard's Conversations page.
+the **Record conversations** switch on the dashboard's Conversations page.
 
 When logging is off the append is accepted and nothing is kept: the response says
 `stored: false, reason: "logging_disabled"`. A client cannot override the owner's choice.
@@ -76,8 +76,9 @@ compaction. See the
 
 They differ from `conversation.append` and `conversation.search` in six ways:
 
-- **The logging switch does not apply.** The save is stored even when
-  `conversation.set_logging` is off, and it does not turn logging on.
+- **The Record conversations switch does not apply.** The save is stored even when the
+  switch (or `conversation.set_logging`) has turned recording off, and saving does not turn
+  recording on.
 - **The message is flagged, not re-labelled.** The transcript row and its embedding row
   carry `is_saved` and `saved_at`, the time the user saved the message. A message the
   transcript already holds is flagged in place: its `run_id` and content stay as
@@ -239,7 +240,7 @@ last `LOOM_CONVERSATION_TITLER_WINDOW_HOURS` (168) with at least
 | Codex plugin       | The same capture, see [Codex](./integrations/codex.md).                                                                                                                                                                                                                 |
 | Cursor             | `integrations/cursor/cursor-session-hook.sh`, run by Cursor's after-conversation hook, hands the transcript to `loom ingest-transcript`.                                                                                                                                |
 | Other agents       | `integrations/generic/ingest.sh` on the exported transcript.                                                                                                                                                                                                            |
-| Any MCP client     | The model calls `loom_conversation_append` (in the `core` toolset).                                                                                                                                                                                                     |
+| Any MCP client     | The default `core` listing does not carry `conversation.append`, and nothing there prompts the model to log turns: capture with a transcript hook, or mount `?toolset=all`, which lists `loom_conversation_append`.                                                     |
 | Your own code      | `conversation.append`, or the Python SDK's `Session`, below.                                                                                                                                                                                                            |
 
 `loom ingest-transcript --namespace NS --file session.md` reads a Markdown file with

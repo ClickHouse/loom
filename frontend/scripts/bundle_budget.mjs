@@ -3,11 +3,11 @@
 // fails when the chunk is over budget or carries a surface that opens on a click (a flow
 // dialog, the header search's body, a view), or when the stylesheets or the scripts every
 // page loads at boot are over their budgets. Run from frontend/: node scripts/bundle_budget.mjs
-import { execSync } from "node:child_process";
 import fs from "node:fs";
 import zlib from "node:zlib";
 import path from "node:path";
 import { TraceMap, originalPositionFor } from "@jridgewell/trace-mapping";
+import { build } from "vite";
 
 const INDEX_BUDGET_BYTES = 120 * 1024;
 // The stylesheets block first paint on every route; gzipped, as served: Click UI's light
@@ -22,7 +22,8 @@ const FORBIDDEN_IN_INDEX = [/^flows\/.*Dialog\.tsx$/, /^components\/HeaderSearch
 
 const out = path.resolve("dist-budget");
 fs.rmSync(out, { recursive: true, force: true });
-execSync(`npx vite build --sourcemap --outDir ${JSON.stringify(out)} --emptyOutDir`, { stdio: "inherit" });
+// Vite's API reads vite.config.ts as its CLI does, and no shell parses the output path.
+await build({ build: { sourcemap: true, outDir: out } });
 const assets = path.join(out, "assets");
 // The entry is the module script index.html loads, not the first index-*.js on disk: other
 // modules named index (a Radix package's) become chunks with the same prefix.
@@ -54,6 +55,15 @@ for (let li = 0; li < lines.length; li++) {
   }
 }
 const problems = [];
+// lib/staleChunk.ts skips its reload for the error wording's chunk by the file's name
+// (WORDING_CHUNK, read from its source): the build must keep that name, or every browser
+// reloads on its failure.
+const wording = /export const WORDING_CHUNK = "([^"]+)"/.exec(
+  fs.readFileSync(path.join(import.meta.dirname, "..", "src", "lib", "staleChunk.ts"), "utf8"),
+)?.[1];
+if (!wording) problems.push("lib/staleChunk.ts declares no WORDING_CHUNK");
+else if (!fs.readdirSync(assets).some((f) => f.startsWith(`${wording}-`) && f.endsWith(".js")))
+  problems.push(`no ${wording}-*.js chunk: the build no longer names the wording's file after WORDING_CHUNK`);
 if (code.length > INDEX_BUDGET_BYTES)
   problems.push(`index chunk ${(code.length / 1024).toFixed(1)} kB over the ${INDEX_BUDGET_BYTES / 1024} kB budget`);
 const css = [...html.matchAll(/<link rel="stylesheet"[^>]*href="[^"]*\/assets\/([^"/]+\.css)"/g)].map((m) => m[1]);

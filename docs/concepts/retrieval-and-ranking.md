@@ -38,7 +38,7 @@ nothing; a leg that errors fails open and the response names it in `degraded`.
 
 | Leg                   | Reads                                                   | Finds what the others miss                                                                                   |
 | --------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| **Fact, vector**      | `loom.memory_embeddings` value vector (exact scan)      | Paraphrases: the question and the stored claim share meaning, not words.                                     |
+| **Fact, vector**      | `loom.memory_embeddings` value vector (no vector index) | Paraphrases: the question and the stored claim share meaning, not words.                                     |
 | **Fact, key axis**    | The same table's `memory_key` vector                    | A question that names the attribute a key encodes. Scores `least(value distance, key distance)`.             |
 | **Lexical**           | Lowercased, stemmed and lemmatised excerpts and the key | Exact identifiers, numbers and rare words that embed poorly. Stemming runs in ClickHouse (`stem`).           |
 | **BM25**              | Per-token IDF and corpus length roll-ups                | Rare-term weighting for `bm25_hybrid`, with a live tail so new rows count at once.                           |
@@ -54,6 +54,10 @@ nothing; a leg that errors fails open and the response names it in `degraded`.
 poorly), passages deep in a long value (only the first part is embedded), and rows that
 name an entity in other words. Each leg is a query over a table Loom already writes, so
 adding one costs a statement, not a second system.
+
+**The vector legs scan, with no vector index.** The scan is exact, or, where
+[codes-first reads](../architecture/clickhouse.md#vector-storage) apply, a pass over
+quantized codes keeps a candidate pool and rescores it at full precision.
 
 **The key axis** is on per namespace when its keys are reused (`LOOM_MEMORY_SEARCH_KEY_AXIS=auto`,
 threshold `LOOM_MEMORY_SEARCH_KEY_AXIS_AUTO_REUSE_SHARE`): reading two vector columns
@@ -199,7 +203,9 @@ absence.
 `explain=true` on `memory.search` attaches `score_components` to each served hit: the
 ranking signals, the RRF score and weight when that mode ran, and after a reranker each
 row's move (`rerank_from`, `rerank_pos`, `rerank_delta`) and, when the reranker changed
-the order, its own fused score (`rank_score_pre_rerank`). `memory.search_trace` takes
+the order, its own fused score (`rank_score_pre_rerank`). A memory whose linked code
+changed and that moved down carries how many places (`code_changed_places`; when it
+moves is in [memories linked to code](memory.md#memories-linked-to-code)). `memory.search_trace` takes
 the same request and scores the vector leg alone (no fusion, assembly or reranker):
 every candidate with its `similarity`, `entity_boost`, `rank_score`, `rank` and the
 plane it came from (`source`: `fact` or `chunk`). With

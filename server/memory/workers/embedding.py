@@ -1,10 +1,10 @@
 """Embedding recovery worker.
 
-Recovery leg for the synchronous handler write path: scans for stub rows
-(`embedding_dim = 0`) left behind by a failed inline embed, computes the
-embedding, and writes a replacement row that wins under ReplacingMergeTree
-FINAL. `memory.search` filters `embedding_dim > 0`, so stubs are hidden
-until filled.
+Scans for two kinds of row: stubs (`embedding_dim = 0`), written by paths that
+can wait for a vector (such as `memory.promote` after a failed embed), and
+memories with no embedding row. It computes the embedding and writes a
+replacement row that wins under ReplacingMergeTree FINAL. `memory.search`
+filters `embedding_dim > 0`, so stubs are hidden until filled.
 
 A row whose embed raises deterministically (content-policy, token limit)
 accrues `embed_attempts` and retries; after `max_attempts` it's poisoned

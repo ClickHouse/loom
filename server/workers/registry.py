@@ -234,6 +234,14 @@ _WORKERS: tuple[_Worker, ...] = (
         "pg_delivery_interval_seconds",
         idle_interval="pg_delivery_idle_interval_seconds",
     ),
+    # Clears the payloads of the Postgres authority's revisions every ClickHouse backup
+    # holds; idle under the ClickHouse authority.
+    _Worker(
+        "pg_payload_clear",
+        "server.memory.workers.pg_payload_clear",
+        "pg_payload_clear_enabled",
+        "pg_payload_clear_interval_seconds",
+    ),
     _Worker(
         "usage_fold",
         "server.memory.workers.usage_fold",
@@ -272,6 +280,21 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.knowledge.workers.conversation_titler",
         "conversation_titler_enabled",
         "conversation_titler_interval_seconds",
+    ),
+    _Worker(
+        "query_history",
+        "server.knowledge.workers.query_history",
+        "knowledge_query_history_enabled",
+        "knowledge_query_history_interval_seconds",
+        max_pass_setting="knowledge_query_history_max_pass_seconds",
+    ),
+    _Worker(
+        "knowledge_gaps",
+        "server.knowledge.workers.knowledge_gaps",
+        "knowledge_gaps_enabled",
+        "knowledge_gaps_interval_seconds",
+        first_pass_due="first_pass_due",  # Misses waiting → now
+        max_pass_setting="knowledge_gaps_max_pass_seconds",
     ),
     _Worker(
         "profile_consolidation",
@@ -335,6 +358,7 @@ _WORKERS: tuple[_Worker, ...] = (
         "server.memory.workers.extraction_queue",
         "extraction_queue_enabled",
         "extraction_queue_interval_seconds",
+        max_pass_setting="extraction_queue_max_pass_seconds",
     ),
     _Worker(
         "code_ingest",
@@ -419,6 +443,21 @@ _WORKERS: tuple[_Worker, ...] = (
         idle_interval="knowledge_source_sync_idle_interval_seconds",
         # the pass stops starting sources at three quarters of it
         max_pass_setting="knowledge_source_sync_max_pass_seconds",
+    ),
+    _Worker(
+        "knowledge_source_retire",
+        "server.knowledge.workers.source_retirements",
+        None,
+        "knowledge_source_sync_interval_seconds",
+        idle_interval="knowledge_source_sync_idle_interval_seconds",
+        max_pass_attr="MAX_PASS_SECONDS",
+    ),
+    _Worker(
+        "knowledge_source_push",
+        "server.knowledge.workers.source_push",
+        "knowledge_source_push_enabled",
+        "knowledge_source_push_interval_seconds",
+        max_pass_setting="knowledge_source_push_max_pass_seconds",
     ),
     _Worker(
         "code_embed_recovery",

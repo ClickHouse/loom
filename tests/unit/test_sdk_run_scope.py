@@ -12,6 +12,8 @@ from loom.run import current_run, current_run_id
 
 
 class _FakeTransport:
+    session_protection = None
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.fail_complete = False

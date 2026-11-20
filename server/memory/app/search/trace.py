@@ -8,9 +8,11 @@ from typing import Any
 
 from server.core import pg
 from server.core.ch import get_client, sequential_reads
+from server.core.errors import VectorInputTooLargeError
 from server.core.naming import named
 from server.embedding import get_embedder
 from server.memory.api.models_search import (
+    SEARCH_ENTITY_FILTER_MAX,
     MemorySearchTraceInput,
     MemorySearchTraceOutput,
     SearchTraceLogInput,
@@ -23,6 +25,7 @@ from server.memory.app.search import pg_validation
 from server.memory.app.search.embed import _bounded_query_embed
 from server.memory.app.search.filters import read_filters
 from server.memory.app.search.query_spelling import embed_query
+from server.memory.app.search.shared_definitions import without_withheld_definitions
 from server.memory.app.search.vector_legs import _plane_fields, _stamp_row_fields
 
 
@@ -36,6 +39,8 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     from server.memory.app.retrieval import SearchQuery, vector_search_trace
     from server.observability.otel import traced
 
+    if len(input.entity_filter) > SEARCH_ENTITY_FILTER_MAX:
+        raise VectorInputTooLargeError("entity_filter accepts at most 64 raw names")
     input, _ = pin_read_filters(input, current_auth())
     input = input.model_copy(update={"run_id": named(input.run_id)})
     embedder = get_embedder()
@@ -67,7 +72,9 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
             )
         )
 
-    served = await _served(input, hits)
+    fresh = await _served(input, hits)
+    # The check memory.search makes, so a trace serves no withheld definition either.
+    served = await without_withheld_definitions(input.org, input.namespace, fresh)
     results: list[_SearchTraceHit] = []
     for i, h in enumerate(served, start=1):
         results.append(
@@ -89,7 +96,7 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
         entity_filter=entity_filter_lower,
         query_spellings=spellings or {},
         query_spellings_skipped=spellings is None,
-        stale_dropped=len(hits) - len(served),
+        stale_dropped=len(hits) - len(fresh),
     )
 
 

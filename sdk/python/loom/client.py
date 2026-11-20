@@ -677,6 +677,33 @@ class ConflictsOps:
         )
 
 
+class ConnectionOps:
+    """The `connection.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def disconnect(
+        self, body: _ops.ConnectionDisconnectBody | None = None, /, **options: Any
+    ) -> _ops.ConnectionDisconnectOutput:
+        """`connection.disconnect`."""
+        return cast(
+            "_ops.ConnectionDisconnectOutput",
+            await self._agent.call("connection.disconnect", body, **options),
+        )
+
+    async def list(
+        self, body: _ops.ConnectionListBody | None = None, /, **options: Any
+    ) -> _ops.ConnectionListOutput:
+        """`connection.list`."""
+        return cast(
+            "_ops.ConnectionListOutput", await self._agent.call("connection.list", body, **options)
+        )
+
+
 class ConsolidationsOps:
     """The `consolidations.*` operations."""
 
@@ -1157,6 +1184,28 @@ class GrantsOps:
         )
 
 
+class HelpOps:
+    """The `help.*` operations."""
+
+    # SyncAgent proxies a nested client's coroutines as blocking calls.
+    _loom_nested_client = True
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def get(
+        self, body: _ops.HelpGetBody | None = None, /, **options: Any
+    ) -> _ops.HelpGetOutput:
+        """`help.get`."""
+        return cast("_ops.HelpGetOutput", await self._agent.call("help.get", body, **options))
+
+    async def search(
+        self, body: _ops.HelpSearchBody | None = None, /, **options: Any
+    ) -> _ops.HelpSearchOutput:
+        """`help.search`."""
+        return cast("_ops.HelpSearchOutput", await self._agent.call("help.search", body, **options))
+
+
 class InboxOps:
     """The `inbox.*` operations."""
 
@@ -1323,6 +1372,24 @@ class KnowledgeOps:
             await self._agent.call("knowledge.formats", body, **options),
         )
 
+    async def gaps_draft(
+        self, body: _ops.KnowledgeGapsDraftBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeGapsDraftOutput:
+        """`knowledge.gaps.draft`."""
+        return cast(
+            "_ops.KnowledgeGapsDraftOutput",
+            await self._agent.call("knowledge.gaps.draft", body, **options),
+        )
+
+    async def gaps_list(
+        self, body: _ops.KnowledgeGapsListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeGapsListOutput:
+        """`knowledge.gaps.list`."""
+        return cast(
+            "_ops.KnowledgeGapsListOutput",
+            await self._agent.call("knowledge.gaps.list", body, **options),
+        )
+
     async def get(
         self, body: _ops.KnowledgeGetBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeGetOutput:
@@ -1375,6 +1442,14 @@ class KnowledgeOps:
             "_ops.KnowledgeListOutput", await self._agent.call("knowledge.list", body, **options)
         )
 
+    async def move(
+        self, body: _ops.KnowledgeMoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeMoveOutput:
+        """`knowledge.move`."""
+        return cast(
+            "_ops.KnowledgeMoveOutput", await self._agent.call("knowledge.move", body, **options)
+        )
+
     async def outline(
         self, body: _ops.KnowledgeOutlineBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeOutlineOutput:
@@ -1390,6 +1465,33 @@ class KnowledgeOps:
         """`knowledge.query`."""
         return cast(
             "_ops.KnowledgeQueryOutput", await self._agent.call("knowledge.query", body, **options)
+        )
+
+    async def query_history_add(
+        self, body: _ops.KnowledgeQueryHistoryAddBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryAddOutput:
+        """`knowledge.query_history.add`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryAddOutput",
+            await self._agent.call("knowledge.query_history.add", body, **options),
+        )
+
+    async def query_history_list(
+        self, body: _ops.KnowledgeQueryHistoryListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryListOutput:
+        """`knowledge.query_history.list`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryListOutput",
+            await self._agent.call("knowledge.query_history.list", body, **options),
+        )
+
+    async def query_history_remove(
+        self, body: _ops.KnowledgeQueryHistoryRemoveBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeQueryHistoryRemoveOutput:
+        """`knowledge.query_history.remove`."""
+        return cast(
+            "_ops.KnowledgeQueryHistoryRemoveOutput",
+            await self._agent.call("knowledge.query_history.remove", body, **options),
         )
 
     async def reads(
@@ -1454,6 +1556,42 @@ class KnowledgeOps:
             await self._agent.call("knowledge.source.list", body, **options),
         )
 
+    async def source_parse_links(
+        self, body: _ops.KnowledgeSourceParseLinksBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceParseLinksOutput:
+        """`knowledge.source.parse_links`."""
+        return cast(
+            "_ops.KnowledgeSourceParseLinksOutput",
+            await self._agent.call("knowledge.source.parse_links", body, **options),
+        )
+
+    async def source_push_configure(
+        self, body: _ops.KnowledgeSourcePushConfigureBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_configure`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_configure", body, **options),
+        )
+
+    async def source_push_confirm(
+        self, body: _ops.KnowledgeSourcePushConfirmBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_confirm`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_confirm", body, **options),
+        )
+
+    async def source_push_status(
+        self, body: _ops.KnowledgeSourcePushStatusBody | None = None, /, **options: Any
+    ) -> _ops.PushStatusOutput:
+        """`knowledge.source.push_status`."""
+        return cast(
+            "_ops.PushStatusOutput",
+            await self._agent.call("knowledge.source.push_status", body, **options),
+        )
+
     async def source_remove(
         self, body: _ops.KnowledgeSourceRemoveBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeSourceRemoveOutput:
@@ -1479,6 +1617,15 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSourceSyncNowOutput",
             await self._agent.call("knowledge.source.sync_now", body, **options),
+        )
+
+    async def source_update(
+        self, body: _ops.KnowledgeSourceUpdateBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceUpdateOutput:
+        """`knowledge.source.update`."""
+        return cast(
+            "_ops.KnowledgeSourceUpdateOutput",
+            await self._agent.call("knowledge.source.update", body, **options),
         )
 
     async def synthesize(
@@ -1696,6 +1843,15 @@ class MemoryOps:
         return cast(
             "_ops.MemoryDedupResolveOutput",
             await self._agent.call("memory.dedup_resolve", body, **options),
+        )
+
+    async def definitions_list(
+        self, body: _ops.MemoryDefinitionsListBody | None = None, /, **options: Any
+    ) -> _ops.MemoryDefinitionsListOutput:
+        """`memory.definitions.list`."""
+        return cast(
+            "_ops.MemoryDefinitionsListOutput",
+            await self._agent.call("memory.definitions.list", body, **options),
         )
 
     async def delete(
@@ -3398,6 +3554,7 @@ class OpsClient:
         self.code = CodeOps(agent)
         self.collection = CollectionOps(agent)
         self.conflicts = ConflictsOps(agent)
+        self.connection = ConnectionOps(agent)
         self.consolidations = ConsolidationsOps(agent)
         self.context = ContextOps(agent)
         self.conversation = ConversationOps(agent)
@@ -3407,6 +3564,7 @@ class OpsClient:
         self.extraction_policy = ExtractionPolicyOps(agent)
         self.facts = FactsOps(agent)
         self.grants = GrantsOps(agent)
+        self.help = HelpOps(agent)
         self.inbox = InboxOps(agent)
         self.insights = InsightsOps(agent)
         self.knowledge = KnowledgeOps(agent)

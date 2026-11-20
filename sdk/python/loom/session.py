@@ -22,13 +22,23 @@ tail. The blocking twin is `SyncAgent.session(...)`.
 
 from __future__ import annotations
 
+import contextlib
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from loom._logging import logger
 from loom.errors import NotFound
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    automatic_for,
+    automatic_roots,
+    observation_scope,
+    require_automatic_allowed,
+)
 
 if TYPE_CHECKING:
     from loom.agent import Agent
@@ -63,6 +73,8 @@ class Session:
         extraction: Mapping[str, Any] | None = None,
     ) -> None:
         self.agent = agent
+        self._producers: tuple[SessionProtection, ...] = ()
+        self._remember_producers()
         self.session_id = session_id
         self.user_id = user_id
         self.run_id = run_id
@@ -84,14 +96,53 @@ class Session:
         """The per-call identity every op in this session carries."""
         return {"session_id": self.session_id, "user_id": self.user_id, "run_id": self.run_id}
 
+    def _remember_producers(self) -> None:
+        roots = automatic_roots()
+        bound = self.agent.transport.session_protection
+        if bound is not None:
+            roots = (*roots, bound)
+        self._producers = tuple(dict.fromkeys((*self._producers, *roots)))
+
+    def _discard_if_protected(self) -> bool:
+        if not any(root.protected for root in self._producers):
+            return False
+        self._pending.clear()
+        self._last_flushed.clear()
+        return True
+
     async def _call(self, op: str, body: Mapping[str, Any]) -> dict[str, Any]:
-        return await self.agent.call(
-            op, body, user_id=self.user_id, session_id=self.session_id, run_id=self.run_id
-        )
+        self._remember_producers()
+        try:
+            with observation_scope(self._producers):
+                return await self.agent.call(
+                    op, body, user_id=self.user_id, session_id=self.session_id, run_id=self.run_id
+                )
+        finally:
+            self._discard_if_protected()
+
+    @contextlib.contextmanager
+    def _capture(self) -> Iterator[None]:
+        self._remember_producers()
+        try:
+            with automatic_for(self._producers):
+                yield
+        finally:
+            # Failures and cancellation must discard tainted retry and carry-over text too.
+            self._discard_if_protected()
+
+    async def _capture_call(
+        self, op: str, body: Mapping[str, Any], *, write: bool = False
+    ) -> dict[str, Any]:
+        with self._capture():
+            out = await self._call(op, body)
+            if write:
+                require_automatic_allowed(self.agent.transport.session_protection)
+            return out
 
     @property
     def buffered(self) -> list[dict[str, Any]]:
         """Turns appended since the last flush (a copy)."""
+        self._discard_if_protected()
         return list(self._pending)
 
     async def resume(
@@ -105,19 +156,22 @@ class Session:
     ) -> Resumed:
         """The context pack for this scope (the system prompt) and the recent
         transcript. `history=0` skips the transcript read."""
-        pack = await self._call(
+        pack = await self._capture_call(
             "context.pack",
             {"query": query, "mode": mode, "token_budget": token_budget, **pack_fields},
         )
         messages: list[dict[str, Any]] = []
-        if history > 0 and self.transcript:
-            messages = await self.history(history)
+        if history > 0 and self.transcript and not self._discard_if_protected():
+            try:
+                messages = await self.history(history)
+            except AutomaticCaptureSuppressed:
+                pass  # a later optional recall cannot withhold the completed pack
         return Resumed(system=str(pack.get("rendered") or ""), pack=pack, messages=messages)
 
     async def history(self, limit: int = 20) -> list[dict[str, Any]]:
         """The most recent transcript turns, oldest first; `[]` for a new thread."""
         try:
-            got = await self._call(
+            got = await self._capture_call(
                 "conversation.get",
                 {"thread_id": self.session_id, "include_messages": True, "limit": limit},
             )
@@ -133,46 +187,58 @@ class Session:
         once `flush_every` turns are buffered (its result is returned then)."""
         if not turns:
             return None
-        if self.transcript and self.transcript_stored is not False:
-            await self._ensure_thread()
-            for t in turns:
-                body: dict[str, Any] = {
-                    "thread_id": self.session_id,
-                    "msg_id": str(uuid.uuid4()),
-                    "role": t.get("role", "user"),
-                    "content": t["content"],
-                }
-                if t.get("name"):
-                    body["metadata"] = {"name": t["name"]}
-                res = await self._call("conversation.append", body)
-                if res.get("stored") is False and res.get("reason") == "logging_disabled":
-                    self.transcript_stored = False
-                    logger.warning(
-                        "session %s: conversation logging is off for namespace %s; turns are "
-                        "not stored in the transcript (an admin enables it with "
-                        "conversation.set_logging). Extraction still runs.",
-                        self.session_id,
-                        self.agent.namespace,
-                    )
-                    break
-                self.transcript_stored = True
-        self._pending.extend(dict(t) for t in turns)
-        if self.flush_every and len(self._pending) >= self.flush_every:
-            return await self.flush()
+        with self._capture():
+            if self.transcript and self.transcript_stored is not False:
+                await self._ensure_thread()
+                for t in turns:
+                    body: dict[str, Any] = {
+                        "thread_id": self.session_id,
+                        "msg_id": str(uuid.uuid4()),
+                        "role": t.get("role", "user"),
+                        "content": t["content"],
+                    }
+                    if t.get("name"):
+                        body["metadata"] = {"name": t["name"]}
+                    res = await self._capture_call("conversation.append", body, write=True)
+                    if res.get("stored") is False and res.get("reason") == "logging_disabled":
+                        self.transcript_stored = False
+                        logger.warning(
+                            "session %s: conversation logging is off for namespace %s; turns are "
+                            "not stored in the transcript (an admin enables it with "
+                            "conversation.set_logging). Extraction still runs.",
+                            self.session_id,
+                            self.agent.namespace,
+                        )
+                        break
+                    self.transcript_stored = True
+            self._pending.extend(dict(t) for t in turns)
+            if self.flush_every and len(self._pending) >= self.flush_every:
+                return await self.flush()
         return None
 
     async def flush(self) -> dict[str, Any] | None:
         """Send the buffered turns to `memory.set_from_messages` now."""
         if not self._pending:
+            self._discard_if_protected()
             return None
+        # Guard before taking the batch so suppression never becomes a retry.
+        with self._capture():
+            return await self._flush_pending()
+
+    async def _flush_pending(self) -> dict[str, Any]:
         batch, self._pending = self._pending, []
         body: dict[str, Any] = {**self._extraction, "messages": batch}
         if self._last_flushed and self.carry_over:
             body["last_messages"] = self._last_flushed[-self.carry_over :]
         try:
-            out = await self._call("memory.set_from_messages", body)
+            out = await self._capture_call("memory.set_from_messages", body, write=True)
+        except (AutomaticCaptureSuppressed, SessionProtectionUnavailable):
+            self._pending.clear()
+            self._last_flushed.clear()
+            raise
         except Exception:
-            self._pending = batch + self._pending  # not lost; the next flush retries
+            if not self._discard_if_protected():
+                self._pending = batch + self._pending  # a clean ordinary failure can retry
             raise
         self._last_flushed = batch
         return out
@@ -234,10 +300,15 @@ class Session:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
-        await self.close()
+        try:
+            await self.close()
+        except Exception:
+            if not exc or exc[0] is None:
+                raise
+            # Preserve the body failure; protected buffers were cleared by close().
 
     async def _ensure_thread(self) -> None:
         if self._thread_created:
             return
-        await self._call("conversation.create", {"thread_id": self.session_id})
+        await self._capture_call("conversation.create", {"thread_id": self.session_id}, write=True)
         self._thread_created = True

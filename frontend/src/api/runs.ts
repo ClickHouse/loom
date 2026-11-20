@@ -73,6 +73,7 @@ export interface RunListOptions {
   q?: string;
   fields?: string[];
   memoryActivity?: "" | "with" | "without";
+  signal?: AbortSignal;
 }
 
 export interface RunListPage {
@@ -98,19 +99,23 @@ export async function listRunsPage(
 ): Promise<RunListPage> {
   // Cut by characters (code points, as the server counts), never inside one.
   const q = opts.q ? Array.from(opts.q.trim()).slice(0, RUN_LIST_MAX_Q).join("") : undefined;
-  const out = await post<{ runs: RunRow[]; total?: number; ignored_args?: string[] }>("/v1/run.list", {
-    org: id.org,
-    namespace: id.namespace,
-    status: opts.status ?? "",
-    agent: opts.agent ?? "",
-    limit: opts.limit ?? 100,
-    // The fold is a server filter so `limit` counts visible runs.
-    memory_activity: opts.memoryActivity ?? "",
-    ...(opts.offset ? { offset: opts.offset } : {}),
-    ...(opts.orderBy ? { order_by: opts.orderBy } : {}),
-    ...(q ? { q } : {}),
-    ...(opts.fields ? { fields: opts.fields } : {}),
-  });
+  const out = await post<{ runs: RunRow[]; total?: number; ignored_args?: string[] }>(
+    "/v1/run.list",
+    {
+      org: id.org,
+      namespace: id.namespace,
+      status: opts.status ?? "",
+      agent: opts.agent ?? "",
+      limit: opts.limit ?? 100,
+      // The fold is a server filter so `limit` counts visible runs.
+      memory_activity: opts.memoryActivity ?? "",
+      ...(opts.offset ? { offset: opts.offset } : {}),
+      ...(opts.orderBy ? { order_by: opts.orderBy } : {}),
+      ...(q ? { q } : {}),
+      ...(opts.fields ? { fields: opts.fields } : {}),
+    },
+    opts.signal,
+  );
   const total = typeof out.total === "number" ? out.total : null;
   const paged = opts.offset ? !(out.ignored_args ?? []).includes("offset") : total !== null;
   return { runs: out.runs || [], total, paged };

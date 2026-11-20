@@ -1,17 +1,21 @@
 # Schema reference
 
-Loom keeps all of its state in one ClickHouse database, `loom`. The shape of
-that database is defined by the numbered migrations in `schemas/migrations/`;
-`schemas/schema.sql` is the result of applying all of them, dumped from a live
-server. The table at the end of this page is generated from `schema.sql`.
+Loom keeps its ClickHouse state in the `loom` and `loom_telemetry` databases. Under the
+Postgres memory authority, Postgres holds live memory, knowledge state and the records
+beside them, in the tables
+[storage authority](../architecture/storage-authority.md#the-tables) lists. The Postgres
+schema is defined by `schemas/pg_migrations/`, and the shape of the ClickHouse databases
+by the numbered migrations in `schemas/migrations/`; `schemas/schema.sql` is the result
+of applying every ClickHouse migration, dumped from a live server. The table at the end
+of this page is generated from `schema.sql`.
 
 ## Where the schema comes from
 
-| File                           | What it is                                                                                                                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schemas/migrations/NNN_*.sql` | The journal. Applied in numeric order by `loom migrate` (and at boot with `LOOM_BOOT_MIGRATE=true`), each recorded with its SHA-256 in the `loom._migrations` ledger.       |
-| `schemas/schema.sql`           | The canonical current state: every `loom.*` table and materialized view as ClickHouse prints it after a full replay. Read this to understand the shape; never hand-edit it. |
-| `scripts/ops/dump_schema.py`   | Writes `schema.sql` (`make schema-dump`) and compares it with a live server (`make schema-check`, run in CI after a replay).                                                |
+| File                           | What it is                                                                                                                                                                                               |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schemas/migrations/NNN_*.sql` | The journal. Applied in numeric order by `loom migrate` (and at boot with `LOOM_BOOT_MIGRATE=true`), each recorded with its SHA-256 in the `loom._migrations` ledger.                                    |
+| `schemas/schema.sql`           | The canonical current state: every `loom.*` and `loom_telemetry.*` table, view and materialized view as ClickHouse prints it after a full replay. Read this to understand the shape; never hand-edit it. |
+| `scripts/ops/dump_schema.py`   | Writes `schema.sql` (`make schema-dump`) and compares it with a live server (`make schema-check`, run in CI after a replay).                                                                             |
 
 A migration change regenerates the dump in the same pull request:
 
@@ -30,10 +34,11 @@ page. How to write a migration (additive only, never edit a merged file) is in
 
 ## Reading schema.sql
 
-Each object is one `CREATE … IF NOT EXISTS loom.<name>` statement under a
-`-- loom.<name>` comment, tables first and then materialized views, each group
-sorted by name. A table statement lists its columns, then its skip indexes
-(`INDEX … TYPE …`) and projections, then the clauses the table below extracts:
+Each object is one `CREATE … IF NOT EXISTS <database>.<name>` statement, the database
+being `loom` or `loom_telemetry`, under a `-- <database>.<name>` comment, tables first,
+then views, then materialized views, each group sorted by database (`loom` first), then
+by name. A table statement lists its columns, then its skip indexes (`INDEX … TYPE …`)
+and projections, then the clauses the table below extracts:
 
 - **`ENGINE`** decides what a read sees. `MergeTree` tables are append-only
   logs. `ReplacingMergeTree(version)` tables keep the latest row per sort key
@@ -128,8 +133,8 @@ indexes, vector indexes, merges and the settings it depends on).
 `scripts/codegen/docs_reference.py` (`render_schema`) parses each `CREATE`
 statement in `schemas/schema.sql`: the `ENGINE`, `ORDER BY`, `PARTITION BY` and
 `TTL` clauses, the types of the skip indexes and the number of projections,
-and, for each materialized view, its target, the `loom` tables it reads and
-whether it is refreshable. `make lint` fails when the page is stale.
+the `loom` tables each view reads, and, for each materialized view, its target, the
+`loom` tables it reads and whether it is refreshable. `make lint` fails when the page is stale.
 
 ## Tables and views
 
@@ -137,7 +142,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 <!-- Generated by `python scripts/codegen/docs_reference.py`; edit the source, not this region. -->
 <!-- prettier-ignore-start -->
 
-184 tables and 19 materialized views in the `loom` and `loom_telemetry` databases; a `loom_telemetry` object keeps its database prefix.
+196 tables, 5 views and 19 materialized views in the `loom` and `loom_telemetry` databases; a `loom_telemetry` object keeps its database prefix.
 
 #### Tables
 
@@ -146,6 +151,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `acl_versions` | `SummingMergeTree(changes)` | `(org, kind)` |  |  |  |
 | `agent_cost_rollup_daily` | `AggregatingMergeTree` | `(org, namespace, agent, day, operation)` | `toYYYYMM(day)` |  |  |
 | `agent_events` | `MergeTree` | `(org, namespace, agent, ts)` | `toYYYYMM(ts)` |  | 2 skip index (bloom_filter, minmax) |
+| `agent_events_private` | `MergeTree` | `(org, namespace, agent, ts)` | `toYYYYMM(ts)` |  | 2 skip index (bloom_filter, minmax) |
 | `agent_run_claims` | `KeeperMap('/loom/agent_run_claims')` |  |  |  |  |
 | `agent_runs` | `ReplacingMergeTree(version)` | `(org, namespace, run_id)` |  |  | 1 skip index (bloom_filter) |
 | `agent_turn_usage` | `ReplacingMergeTree(version)` | `(org, namespace, session_id, message_id)` | `toYYYYMM(turn_at)` |  |  |
@@ -160,6 +166,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `blob_uploads` | `MergeTree` | `(org, user_id, namespace, sha256)` |  |  |  |
 | `carry_acks` | `ReplacingMergeTree(at)` | `process` |  | `toDateTime(at) + toIntervalDay(1)` |  |
 | `categories` | `ReplacingMergeTree(version)` | `(org, namespace, name)` |  |  |  |
+| `cell_heartbeats` | `KeeperMap('/loom/cell_heartbeats')` |  |  |  |  |
 | `chunk_supersessions` | `ReplacingMergeTree(created_at)` | `(org, namespace, embedding_model, source_uri, doc_version)` |  |  |  |
 | `chunk_term_freq` | `AggregatingMergeTree` | `(org, namespace, term)` | `toYYYYMM(df_added_at)` |  |  |
 | `chunks` | `MergeTree` | `(org, namespace, embedding_model, source_uri, chunk_idx)` | `toYYYYMM(created_at)` |  | 5 skip index (bloom_filter, text) |
@@ -199,6 +206,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `code_unit_signal` | `SummingMergeTree((positive, negative))` | `(org, namespace, unit_id)` |  |  |  |
 | `collections` | `ReplacingMergeTree(version)` | `(org, namespace)` |  |  |  |
 | `conflict_allowlist` | `ReplacingMergeTree(allowed_at)` | `(org, namespace, memory_key_a, memory_key_b)` |  |  |  |
+| `connected_accounts` | `ReplacingMergeTree(version)` | `(org, subject, kind)` |  |  |  |
 | `consolidation_runs` | `MergeTree` | `(org, namespace, ran_at, run_id)` | `toYYYYMM(ran_at)` | `ran_at + toIntervalDay(180)` |  |
 | `context_blobs` | `ReplacingMergeTree(version)` | `(org, namespace, blob_key)` | `toYYYYMM(expires_at)` | `expires_at + toIntervalDay(1)` |  |
 | `conversation_embeddings` | `ReplacingMergeTree(ts)` | `(org, namespace, embedding_model, thread_id, msg_id)` | `toYYYYMM(ts)` |  |  |
@@ -210,7 +218,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `deployment_config` | `ReplacingMergeTree(version)` | `name` |  |  |  |
 | `derived_facts` | `MergeTree` | `(org, namespace, subject, predicate, category)` | `toYYYYMM(created_at)` |  |  |
 | `document_blobs` | `ReplacingMergeTree(created_at)` | `(org, namespace, sha256)` |  |  |  |
-| `documents` | `ReplacingMergeTree(version)` | `(org, namespace, source_uri)` | `toYYYYMM(ingested_at)` |  | 1 skip index (bloom_filter) |
+| `documents` | `ReplacingMergeTree(version)` | `(org, namespace, source_uri)` | `toYYYYMM(ingested_at)` |  | 2 skip index (bloom_filter) |
 | `embedder_calibration` | `ReplacingMergeTree(version)` | `embedder_model` |  |  |  |
 | `embedding_cache` | `ReplacingMergeTree(created_at)` | `(model, key)` |  | `created_at + toIntervalDay(30)` |  |
 | `entity_canonical_map` | `ReplacingMergeTree(version)` | `(org, namespace, mention_text)` | `org` |  | 1 skip index (bloom_filter) |
@@ -234,8 +242,14 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `idempotency` | `ReplacingMergeTree(created_at)` | `idempotency_key` |  | `expires_at` |  |
 | `instances` | `KeeperMap('/loom/instances')` |  |  |  |  |
 | `keyring_readers` | `MergeTree` | `(seen_at, process)` |  | `toDateTime(seen_at) + toIntervalDay(1)` |  |
+| `knowledge_gaps` | `MergeTree` | `(org, namespace, build, gap_id)` |  | `built_at + toIntervalDay(7)` |  |
+| `knowledge_group_members` | `ReplacingMergeTree(version)` | `(org, namespace, source_id, group)` |  |  |  |
 | `knowledge_ingest_cancels` | `MergeTree` | `(org, namespace, ingestion_id)` |  | `toDateTime(requested_at) + toIntervalDay(30)` |  |
 | `knowledge_ingestions` | `ReplacingMergeTree(version)` | `(org, namespace, ingestion_id)` |  | `toDateTime(updated_at) + toIntervalDay(30)` |  |
+| `knowledge_mirror_latch` | `KeeperMap('/loom/knowledge_mirror_latch')` |  |  |  |  |
+| `knowledge_mirrors` | `ReplacingMergeTree(version)` | `(org, namespace, mirror)` |  |  |  |
+| `knowledge_source_listings` | `ReplacingMergeTree(version)` | `(org, namespace, source_id)` |  |  |  |
+| `knowledge_source_push` | `ReplacingMergeTree(version)` | `(org, namespace, source_id)` |  |  |  |
 | `knowledge_sources` | `ReplacingMergeTree(version)` | `(org, namespace, name)` |  |  |  |
 | `knowledge_uploads` | `MergeTree` | `(org, namespace, upload_id)` |  | `toDateTime(expires_at) + toIntervalDay(7)` |  |
 | `learnings_queue` | `ReplacingMergeTree(version)` | `(org, namespace, candidate_id)` | `toYYYYMM(proposed_at)` |  |  |
@@ -300,10 +314,12 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `qa_rollup_days` | `ReplacingMergeTree(version)` | `(org, qa_namespace, day)` |  |  |  |
 | `qa_sources` | `ReplacingMergeTree(version)` | `(org, name)` |  |  |  |
 | `qa_test_daily` | `ReplacingMergeTree(version)` | `(org, qa_namespace, test_name, day)` |  |  |  |
+| `query_history_sources` | `ReplacingMergeTree(version)` | `(org, namespace, name)` |  |  |  |
 | `query_nodes` | `AggregatingMergeTree` | `(org, namespace, query_hash)` |  |  |  |
 | `revoked_tokens` | `ReplacingMergeTree(version)` | `jti` |  | `toDateTime(expires_at) + toIntervalDay(10)` |  |
 | `runtime_overrides` | `ReplacingMergeTree(version)` | `(kind, key)` |  |  |  |
 | `scim_users` | `ReplacingMergeTree(version)` | `id` |  |  |  |
+| `search_misses` | `MergeTree` | `(org, namespace, ts)` | `toYYYYMM(ts)` | `ts + toIntervalDay(16)` |  |
 | `search_trace_log` | `MergeTree` | `(org, namespace, ts)` | `toYYYYMM(ts)` | `ts + toIntervalDay(180)` |  |
 | `service_accounts` | `ReplacingMergeTree(version)` | `(org, name)` | `org` |  |  |
 | `session_brief_revisions` | `MergeTree` | `(org, namespace, brief_key, revision, version)` |  |  |  |
@@ -312,6 +328,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `session_summaries` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, embedding_model)` | `toYYYYMM(created_at)` |  |  |
 | `shared` | `ReplacingMergeTree(version)` | `(org, namespace, memory_key)` | `(org, namespace)` |  |  |
 | `signing_keys` | `ReplacingMergeTree(version)` | `kid` |  |  |  |
+| `sql_access` | `ReplacingMergeTree(updated_at)` | `(user_name, org, namespace)` |  |  |  |
 | `sso_links` | `ReplacingMergeTree(version)` | `(email, org, namespace)` |  |  |  |
 | `storage_authority` | `ReplacingMergeTree(epoch)` | `tuple()` |  |  |  |
 | `subject_last_seen` | `AggregatingMergeTree` | `(org, subject)` |  |  |  |
@@ -328,11 +345,21 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `working_memory` | `ReplacingMergeTree(version)` | `(org, namespace, agent, user_id, session_id, run_id, block_key)` | `(org, namespace)` |  |  |
 | `loom_telemetry.sli_minute` | `AggregatingMergeTree` | `(slo_class, minute, operation, transport, traffic_class, org)` | `toYYYYMM(ingested_hwm)` | `minute + toIntervalDay(400)` |  |
 
+#### Views
+
+| View | Reads from |
+| --- | --- |
+| `sql_v1_agent_events` | `agent_events`, `agent_events_private`, `code_repos`, `namespaces`, `sql_access` |
+| `sql_v1_conversations` | `code_repos`, `conversations`, `namespaces`, `sql_access` |
+| `sql_v1_memories` | `code_repos`, `memory`, `namespaces`, `sql_access` |
+| `sql_v1_memory_history` | `code_repos`, `memory_versions`, `namespaces`, `sql_access` |
+| `sql_v1_usage_daily` | `agent_events`, `agent_events_private`, `code_repos`, `namespaces`, `sql_access` |
+
 #### Materialized views
 
 | View | Writes to | Reads from | Runs |
 | --- | --- | --- | --- |
-| `agent_cost_rollup_refresh` | `agent_cost_rollup_daily` | `agent_events` | refreshable, every 1 minute |
+| `agent_cost_rollup_refresh` | `agent_cost_rollup_daily` | `agent_events`, `agent_events_private` | refreshable, every 1 minute |
 | `chunk_context_term_freq_mv` | `chunk_term_freq` | `chunks` | on insert |
 | `chunk_term_freq_mv` | `chunk_term_freq` | `chunks` | on insert |
 | `code_doc_stats_mv` | `code_doc_stats` | `code_chunks` | on insert |
@@ -349,7 +376,7 @@ whether it is refreshable. `make lint` fails when the page is stale.
 | `memory_usage_totals_mv` | `memory_usage_totals` | `memory_usage_events` | on insert |
 | `memory_versions_mv` | `memory_versions` | `memory` | on insert |
 | `session_brief_revisions_mv` | `session_brief_revisions` | `session_briefs` | on insert |
-| `subject_last_seen_refresh` | `subject_last_seen` | `agent_events` | refreshable, every 1 minute |
+| `subject_last_seen_refresh` | `subject_last_seen` | `agent_events`, `agent_events_private` | refreshable, every 1 minute |
 | `loom_telemetry.sli_minute_refresh` | `loom_telemetry.sli_minute` | `agent_events` | refreshable, every 1 minute |
 
 <!-- prettier-ignore-end -->

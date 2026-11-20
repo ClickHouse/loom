@@ -36,10 +36,12 @@ own subcommands:
   participant    participant
   provider_lock  provider-lock
   reports        export-actions, entity-export, audit-namespace, deploy-delta, mentor
+  restore        reconcile
   secrets        secrets
   serve          serve, migrate
   shell          config, memory-search, ingest-transcript, set-host
   signing_keys   signing-key
+  sql_access     sql-access
   tracker        tracker-probe, tracker-contract-check, tracker-dupcheck-fit,
                  tracker-embed-reset
   up             up

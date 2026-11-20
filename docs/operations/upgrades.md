@@ -79,7 +79,16 @@ checkout.
    hand: the newer build refuses to boot with it set, and under that authority no
    retention TTL reaches `loom.documents`, and a namespace's `retention_days` does not
    reach `loom.chunks` either
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38).
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). A
+   [cell](../architecture/cells.md) moving to a build that marks its sessions and
+   carries the org triggers (rule 47) first points its `LOOM_PG_DSN` straight at
+   Postgres, past any pooler ([Postgres](./postgres.md)), and a later cell prepared and
+   then backed out by unsetting `LOOM_CELL` is cleared first
+   ([troubleshooting](./troubleshooting.md#a-process-with-loom_cell-unset-is-gated)):
+   the newer build gates its processes on its state. On a later cell already prepared,
+   the newer build's first migrating boot creates the org triggers, so an older pod
+   still running there has every insert of a tenant org's row refused (an unmapped
+   error to its callers) until it is replaced: roll the cell out in one step.
 3. Deploy the new image. The first container to boot applies the migrations; the others
    wait for it and then find nothing pending.
 4. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
@@ -102,9 +111,11 @@ checkout.
 8. Turn on a feature the previous build cannot honour only once every replica runs
    the new build: `memory_extract_agent_learnings`, since the previous build does not
    erase `loom.learnings_supporters`
-   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23); and
+   ([rolling upgrades](../architecture/rolling-upgrades.md), rule 23);
    `LOOM_DOCUMENT_OBJECT_STORE=s3`, since the previous build reads a bucket row's empty
-   `data` and answers its download `410 BLOB_GONE` (rule 9).
+   `data` and answers its download `410 BLOB_GONE` (rule 9); and
+   `LOOM_PG_PAYLOAD_CLEAR_ENABLED`, no sooner than one clearing horizon after the new
+   build serves alone, since the previous build does not stamp a late delivery (rule 43).
 9. A deployment with `LOOM_CODE_ASK_MEMORY_NAMESPACE` set, now or at any time before,
    that moves from a build whose cached `code.ask` answers do not name the memory they
    quoted (one before `086_code_answer_memory_scope.sql`) to one that does, a roll
@@ -148,6 +159,176 @@ checkout.
     left is published again by the delivery worker
     ([rolling upgrades](../architecture/rolling-upgrades.md), rule 38). Do it before
     retrying a parked delivery.
+12. A deployment of the Postgres authority that moves to a build keeping knowledge
+    ingestion jobs (`005_knowledge_jobs.sql`) or the dataset catalog
+    (`007_knowledge_datasets.sql`) in Postgres, a roll forward after a rollback
+    included: once the newer build serves alone, run again every erasure that completed
+    while a replica of an older build served since the newer build first served. An
+    older build's erasure removes no job from `loom.knowledge_jobs` and no catalog row
+    from `loom.knowledge_datasets`: the newer build's worker projects such a job back
+    into `loom.knowledge_ingestions` and runs it, and the catalog rows stay until the
+    erasure runs again ([rolling upgrades](../architecture/rolling-upgrades.md), rules
+    40 and 42). Step 11's runs cover the heads, the jobs and the catalog rows alike; one
+    run per erasure is enough. Ask again, too, each `knowledge.delete` and
+    `knowledge.bulk_delete` an older build answered in that window: it removed the
+    sources' datasets from `loom.datasets` alone.
+13. Moving to a build that keeps document sources on any namespace, a roll forward
+    after a rollback included: once the newer build serves alone, retire the sources an
+    older build's `namespace.delete`, `collection.delete` or namespace erasure left
+    active ([rolling upgrades](../architecture/rolling-upgrades.md), rule 44). The
+    sources on a deleted namespace:
+
+    ```sql
+    SELECT s.org, s.namespace, s.name
+    FROM (SELECT org, namespace, name FROM loom.knowledge_sources FINAL WHERE active) AS s
+    INNER JOIN (SELECT org, namespace FROM loom.namespaces FINAL WHERE NOT active) AS n
+        ON s.org = n.org AND s.namespace = n.namespace
+    ```
+
+    and the sources registered before a namespace erasure completed that it did not
+    retire (one an older build ran, or one an older build added while a newer build's
+    erasure ran):
+
+    ```sql
+    SELECT s.org, s.namespace, s.name, e.id
+    FROM (
+        SELECT org, namespace, name, active, created_at, updated_at
+        FROM loom.knowledge_sources FINAL
+    ) AS s
+    INNER JOIN (
+        SELECT id, org, completed_at,
+               arrayJoin(if(scope_type = 'namespace', [scope_value],
+                            if(JSONType(scope_value) = 'Array',
+                               JSONExtract(scope_value, 'Array(String)'),
+                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+    ) AS e ON s.org = e.org AND s.namespace = e.namespace
+    WHERE s.created_at <= e.completed_at AND (s.active OR s.updated_at > e.completed_at)
+    ```
+
+    For the first query, remove each listed source (`knowledge.source.remove`), or
+    delete its namespace again with the newer build, which retires it. For the second,
+    remove each listed source with `knowledge.source.remove` and
+    `delete_documents=true`, which retires the documents it wrote back (it accepts a
+    source already retired, by a later delete of its namespace for one), and delete with
+    `memory.delete` the decision rows mined from them. A namespace erasure with the
+    newer build does both, but it also erases everything written to the namespace since
+    the first erasure; request it again only for a namespace nobody has written to
+    since. A source registered after the erasure is not listed: the erasure never
+    covered it. The second list is a worklist to act on once: a source removed as above
+    stays listed, since its removal row is newer than the erasure.
+
+    A namespace erasure an older build started and the newer build finished needs
+    nothing here: its final census finds the documents and decisions its source wrote
+    back and reopens their steps, so the saga completes only once they are gone.
+
+14. Moving to a build whose namespace erasure reaches `loom.shared`, a roll forward after a
+    rollback included: once the newer build serves alone, clear the promoted rows an older
+    build's namespace erasure left ([rolling upgrades](../architecture/rolling-upgrades.md),
+    rule 45). The query below lists each namespace that a `namespace` or `namespace_list`
+    erasure in the ledger (kept 90 days) reached and that holds a promoted row, with the
+    time the last one without a purge (`erased_at`) and with one (`purged_at`) ran its
+    census. The statements below take rows promoted before that second, so a row promoted
+    after the census stays, and so may one promoted earlier in the census's own second,
+    which `promoted_at`'s whole seconds cannot tell apart; the newer build's step already
+    took such a row in an erasure it ran.
+    Only a `namespace_list` purges, and an older build's `namespace` row may hold the flag
+    it was asked for.
+
+    ```sql
+    SELECT org, namespace,
+           maxIf(counted_at, NOT purged) AS erased_at,
+           maxIf(counted_at, purged) AS purged_at
+    FROM (
+        -- The census's time: a row promoted after it was never in the erasure's reach.
+        SELECT org, ifNull(verified_at, completed_at) AS counted_at,
+               scope_type = 'namespace_list' AND purge AS purged,
+               arrayJoin(if(scope_type = 'namespace', [scope_value],
+                            if(JSONType(scope_value) = 'Array',
+                               JSONExtract(scope_value, 'Array(String)'),
+                               JSONExtract(scope_value, 'namespaces', 'Array(String)')))) AS namespace
+        FROM loom.erasure_requests FINAL
+        WHERE scope_type IN ('namespace', 'namespace_list') AND status = 'completed'
+    )
+    -- Only a namespace that holds a promoted row has anything to clear.
+    WHERE (org, namespace) IN (SELECT org, namespace FROM loom.shared)
+    GROUP BY org, namespace
+    ```
+
+    For each, run what the newer build's step runs, over every version promoted before the
+    erasure's census, a version a later promotion of the same key hides from `FINAL`
+    included. Where `purged_at` is set, delete them:
+
+    ```sql
+    ALTER TABLE loom.shared DELETE
+    WHERE org = '<org>' AND namespace = '<namespace>' AND promoted_at < '<purged_at>'
+    SETTINGS mutations_sync = 2
+    ```
+
+    and where `erased_at` is set, tombstone the live ones left:
+
+    ```sql
+    ALTER TABLE loom.shared UPDATE tombstoned_at = toDateTime('<the time you run it>')
+    WHERE org = '<org>' AND namespace = '<namespace>' AND tombstoned_at IS NULL
+      AND promoted_at < '<erased_at>'
+    SETTINGS mutations_sync = 2
+    ```
+
+    The setting waits for each statement on every replica. The time is written as a
+    literal, as the step binds it, because a replicated table refuses a mutation that calls
+    a non-deterministic function such as `now()`. A namespace erasure requested
+    before the ledger's 90 days is not listed, and the promoted rows it left cannot be told
+    apart from a live namespace's; they stay as the older build left them.
+
+15. Moving to a build where every CLI command declaring an org (a code-index command, an
+    import) checks its deployment: under either authority its ClickHouse user needs
+    `SELECT` on `loom.storage_authority`, and the command refuses against a deployment that
+    records another authority. Under the Postgres authority it also needs `LOOM_PG_DSN`
+    and reads the cell state (with `LOOM_CELL` unset, on a session of its own). With
+    `LOOM_CELL` set, a command that writes for no org but changes the cell's stores
+    (`loom settings set`, `loom secrets reseal`, `loom code compact` and the rest) or
+    revokes access checks its deployment the same way and reads the cell's `first` row on
+    a session of its own. Grant the Postgres role it connects as:
+    - with `LOOM_CELL` unset, `USAGE` on schema `loom`, `SELECT` on `loom.cell_first`,
+      `loom.tenancy_mode` and `loom.authority`, `SELECT (updated_at)` on `loom.cell_self`
+      and `SELECT (since)` on `loom.tenancy` (the column grants keep the fingerprints and
+      the orgs out of its reach), and a `CONNECTION LIMIT` at least `LOOM_PG_POOL_MAX_SIZE`
+      times the number of such commands that run at once, since each opens its own pool for
+      its writes (the state read retries a full limit briefly, then refuses);
+    - with `LOOM_CELL` set, the same with `SELECT` on `loom.cell_self` and `loom.tenancy`
+      in full, and, to record a new org while the first cell is `recording`, `INSERT` on
+      `loom.tenancy` and `UPDATE (since)` on `loom.tenancy_mode`; revoke both with
+      `LOOM_CELL_ROUTER_TOKEN` when the cell attaches. Its document bucket settings
+      (`LOOM_DOCUMENT_S3_BUCKET`, `LOOM_DOCUMENT_S3_PREFIX`) equal the servers'.
+
+    A write that a role holding only the column grants makes on a cell past `recording` is
+    refused as a permission error (SQLSTATE 42501) rather than `LT001`.
+
+16. Before a first cell's attach, every CLI and CI image runs a build with that state read,
+    and every CLI that writes for an org has `LOOM_CELL` set. A CLI publishes no instance
+    or cell heartbeat for attach to read, so attach cannot check either, and a CLI of an
+    older build is not refused on an `enforced` cell
+    ([cells](../architecture/cells.md#failure-modes)).
+
+17. Moving to a build whose first-cell processes read their cell's state from the router on
+    a timer: every router replica (`loom router serve`) runs this build before any cell's
+    processes do. Each process of a prepared first cell asks the router's state route from
+    its first cell-state read until it reads `serving`, and a router of an earlier build
+    reads the directory on every such call: about one read per server process per
+    `min(LOOM_INSTANCE_HEARTBEAT_SECONDS, LOOM_TENANCY_MODE_CACHE_S)`, so 1,600 reads a
+    second for a thousand pods of eight workers at the defaults; a router of this build
+    answers them from one read per replica per `LOOM_ROUTER_DIRECTORY_CACHE_S`
+    ([cells](../architecture/cells.md#the-heartbeats-keys)).
+
+18. Before a first cell's attach, once `LOOM_CELL` is set on every process and every CLI and
+    CI configuration of the cell (step 16), rotate the ClickHouse credential they write
+    with: a new user or password for the cell's servers and CLIs, the old one dropped. A
+    CLI publishes no instance or cell heartbeat for attach to read, so attach cannot see a
+    job still configured with `LOOM_CELL` unset; the rotation cuts off any the rollout
+    missed before it can write an org's rows
+    past attach's last scan. Name the new user with `--ch-allow-user`
+    ([attaching the first cell](./cell-attach.md)).
 
 While a migration applies, the old build keeps serving: every migration is additive.
 The rules that let the two builds serve side by side are in
@@ -165,7 +346,9 @@ its bot. To prevent that, delete the documents tagged `source-kind:assistant_tur
 `knowledge.delete` before rolling back; otherwise accept the wider serving.
 A namespace erasure the previous build runs once namespace guides exist leaves that
 namespace's guide; run the erasure again once the newer build serves
-([rolling upgrades](../architecture/rolling-upgrades.md), rule 24).
+([rolling upgrades](../architecture/rolling-upgrades.md), rule 24). A namespace erasure
+the previous build runs leaves the namespace's promoted rows live; step 14 of the upgrade
+procedure lists them once the newer build serves again (rule 45).
 After a rollback to a build without bot token maximums, every bot's tokens last an hour,
 and a bot that build saves keeps 3600 as its maximum; reapply a shorter or longer one
 once the newer build serves
@@ -181,6 +364,34 @@ After a rollback to a build before `086_code_answer_memory_scope.sql` with a mem
 namespace bound to `code.ask`, clear the answer cache as in step 9 twice: once the older
 build serves alone, and again once the newer build serves again. The migration is already
 in the ledger, so the roll forward applies nothing that would prompt the second.
+Turn `LOOM_PG_PAYLOAD_CLEAR_ENABLED` off before rolling back, and on again no sooner
+than one clearing horizon after the newer build serves alone again; once a clearing pass
+has run, run `loom reconcile` only with a build that carries
+`010_revision_delivered_at.sql`, start the deployment on that build after it, and roll
+back only once the newer build owes no claimable delivery for a cleared revision, which
+this returns as 0 (rule 43):
+
+```sql
+SELECT count(*) FROM loom.memory_deliveries d
+JOIN loom.memory_revisions r USING (org, namespace, seq)
+WHERE r.row IS NULL AND NOT d.settled AND d.lease_until <> 'infinity';
+```
+
+Until it does, let the newer build deliver them. The previous build never claims a
+parked delivery, so a parked one may stay. While the previous build serves, a retry
+leaves out the cleared revisions
+([Postgres operations](postgres.md#what-the-boot-checks)), and no `loom reconcile` runs:
+it would release reconcile's holds to the previous build.
+Before rolling a prepared cell (one with a `loom.cell_first` row) back to a build
+without the [cell](../architecture/cells.md) org triggers, stop every pod of the newer
+build, then run only the trigger drop of
+[A process with LOOM_CELL unset is gated](troubleshooting.md#a-process-with-loom_cell-unset-is-gated),
+not its state transaction (the cell stays prepared), and run it again if a newer pod
+boots with migrations on before the rollback ends: the older build's sessions send no
+tenancy marker, so once the newer build has created the triggers and the `loom.tenancy`
+guard, each of its writes for an org the cell holds no tenancy row for is refused (on a
+later cell before attach, every tenant org), as is its tenancy row for each newly placed
+org, and its other writes pay the triggers' state read.
 There is no migration to undo: the previous build reads and writes the newer schema.
 Its version writes to `loom.memory` and the other `ReplacingMergeTree` memory tables
 keep the columns it does not know
@@ -208,8 +419,11 @@ Then run the earlier release's installer naming its version, as an older install
 newer install refuses otherwise:
 
 ```bash
-curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh | LOOM_VERSION=X.Y.Z sh
+curl -fsSL https://github.com/ClickHouse/loom/releases/download/vX.Y.Z/install.sh -o loom-install.sh && LOOM_VERSION=X.Y.Z sh loom-install.sh && rm loom-install.sh
 ```
+
+Run it from your home directory, or another
+[directory only you can write to](../getting-started/quickstart.md#fast-path-released-image-no-clone).
 
 The installer keeps `.env`, so the pin holds ClickHouse through later upgrades too:
 delete the `LOOM_CLICKHOUSE_IMAGE` line before installing a newer Loom version, and do not

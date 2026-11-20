@@ -82,8 +82,8 @@ async def test_the_head_takes_the_rerankers_order_and_shows_each_chunks_context(
 
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
     hits = [_hit("a.md"), _hit("b.md"), _hit("c.md")]
-    contexts = {("n", "a.md", 0): "Lantern handbook > Refunds"}
-    out, reranked = await ks._rerank("builtin:openai", "refunds", hits, contexts, 2)
+    hits[0]._context = "Lantern handbook > Refunds"
+    out, reranked = await ks._rerank("builtin:openai", "refunds", hits, 2)
     assert reranked is True
     # the head of two is reversed; the third stays after it
     assert [h.source_uri for h in out] == ["b.md", "a.md", "c.md"]
@@ -104,7 +104,7 @@ async def test_a_rerank_that_keeps_the_fused_order_says_none_ran(monkeypatch, co
 
     monkeypatch.setattr(rerank_mod, "rerank", _kept)
     hits = [_hit("a.md"), _hit("b.md")]
-    out, reranked = await ks._rerank("builtin:openai", "q", hits, {}, 30)
+    out, reranked = await ks._rerank("builtin:openai", "q", hits, 30)
     assert reranked is False and out is hits
 
 
@@ -122,7 +122,8 @@ def _stub_handler(
         async def embed(self, text: str) -> list[float]:
             return [1.0]
 
-    def _search(input: Any, embedder: Any, vec: Any, pool: int):
+    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any, *, checked: Any):
+        assert checked is None
         if pools is not None:
             pools.append(pool)
 
@@ -134,7 +135,7 @@ def _stub_handler(
     async def _first(input: Any, namespaces: list[str], search: Any) -> Any:
         return await search(namespaces)
 
-    async def _named(input: Any) -> list[str]:
+    async def _named(org: str, namespace: str, names: list[str]) -> list[str]:
         return ["n"]
 
     async def _reversed(**kw: Any) -> list[Any]:
@@ -144,7 +145,7 @@ def _stub_handler(
     monkeypatch.setattr(ks, "get_embedder", _Embedder)
     monkeypatch.setattr(ks, "_namespaces_search", _search)
     monkeypatch.setattr(ks, "_search_private_first", _first)
-    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    monkeypatch.setattr(ks, "readable_namespaces", _named)
     monkeypatch.setattr(rerank_mod, "rerank", _reversed)
 
 
@@ -190,17 +191,19 @@ async def test_each_chunk_shows_its_own_namespaces_context(monkeypatch) -> None:
         for ns, d in (("n", 0.1), ("m", 0.2))
     ]
 
-    def _search(input: Any, embedder: Any, vec: Any, pool: int):
+    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any, *, checked: Any):
+        assert checked is None
+
         async def _run(namespaces: list[str]) -> list[tuple[str, list[Any]]]:
             return per_ns
 
         return _run
 
-    async def _named(input: Any) -> list[str]:
+    async def _named(org: str, namespace: str, names: list[str]) -> list[str]:
         return ["n", "m"]
 
     monkeypatch.setattr(ks, "_namespaces_search", _search)
-    monkeypatch.setattr(ks, "_named_namespaces", _named)
+    monkeypatch.setattr(ks, "readable_namespaces", _named)
     await ks.handle_knowledge_search(
         _input(rerank="builtin:openai", namespaces=["n", "m"], collapse_sections=False)
     )
@@ -254,7 +257,7 @@ async def test_a_reranker_past_its_time_limit_keeps_the_fused_order(monkeypatch)
 
     monkeypatch.setattr(rerank_mod, "rerank", _slow)
     hits = [_hit("a.md"), _hit("b.md")]
-    out, reranked = await ks._rerank("builtin:openai", "q", hits, {}, 30)
+    out, reranked = await ks._rerank("builtin:openai", "q", hits, 30)
     assert reranked is False and out is hits
 
 

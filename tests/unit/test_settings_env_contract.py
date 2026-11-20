@@ -56,6 +56,8 @@ _CROSS_CHECKED = {
     # URLs checked by a model validator (test_llm_gateway.py).
     "openai_base_url",
     "anthropic_base_url",
+    # Also test_local_llm.py.
+    "local_llm_base_url",
     "inference_token_url",
     # Read with the API roots and the embedder (test_llm_gateway.py).
     "inference_gateway_required",
@@ -73,6 +75,9 @@ _CROSS_CHECKED = {
     # Host lists checked by a model validator (test_llm_gateway.py).
     "memory_classify_private_hosts",
     "memory_webhook_private_hosts",
+    # Refused beside the required sandbox, which the sweep also sets
+    # (test_repo_job_sandbox.py).
+    "code_self_service_git_unsandboxed",
 }
 
 
@@ -93,8 +98,21 @@ def _bounded(f: FieldInfo, value: float) -> bool:
     return True
 
 
+# Strings of one fixed form (a field pattern), given a valid value of that form.
+_VALID = {
+    "cell_router_token": "lcr_" + "0" * 128,
+    "router_operator_sha256": "0" * 64,
+    "router_operator_token": "lco_" + "0" * 128,
+    # The four other code_git_proxy_* settings load only beside it, and the bundle for
+    # the proxy's own certificate only beside an https one.
+    "code_git_proxy_url": "https://proxy.example:8443",
+}
+
+
 def _other(name: str, f: FieldInfo) -> Any:
     """A valid value for `f` that differs from its default, or None."""
+    if name in _VALID:
+        return _VALID[name]
     if name in _CROSS_CHECKED:
         return None
     ann, default = f.annotation, _default(f)

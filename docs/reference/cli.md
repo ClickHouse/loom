@@ -38,12 +38,16 @@ Commands fall into two kinds:
   whatever `--token` says, `loom init` refuses before it signs anything up, and `loom call`
   exchanges the workload token itself.
 
-`loom mint-token` needs only `LOOM_JWT_SECRET`: it signs a token locally.
+`loom mint-token` signs locally with `LOOM_JWT_SECRET` after verifying its paired
+stores and enrolling as a participant. It refuses when those stores cannot be verified
+or enrollment fails, including offline and before the deployment is migrated. Run it
+against the deployment's migrated stores.
 
 **Session commands** (`login`, `logout`, `whoami`, `call`, `token`) are the Python SDK's
 own (`loom.cli`; `python -m loom …` with only the SDK installed), so `loom`
 needs `pip install clickhouse-loom` for them. `loom login [--server URL]
-[--profile NAME] [--no-browser]` signs in with a one-time code;
+[--profile NAME] [--no-browser] [--org ORG [--wait S]]` signs in with a one-time code,
+with `--org` at that org's [cell](../architecture/cells.md), as the router's lookup names it;
 `loom call <op|/path> [key=text|key:=json …] [--data JSON] [--org] [--namespace]` reaches
 any operation or route with that session, and `loom token create|list|revoke`
 makes, lists and revokes your own tokens for CI and agents. See
@@ -250,18 +254,22 @@ python scripts/codegen/docs_reference.py
 | `loom code export-matrix` | Maintenance matrix from merged-PR co-change: 'when this file changes, these usually change too', with evidence, as markdown for an instructions file (AGENTS.md / copilot-instructions.md). | `--org`, `--namespace`, `--prs`, `--min-together`, `--min-conf`, `--max-partners`, `--max-rows`, `--out`, `--json` |
 | `loom code lint-instructions` | Agent-instruction files (CLAUDE.md, AGENTS.md, copilot-instructions, .claude/.md, skills) whose path or symbol references no longer resolve at the clone's head. | `--org`, `--namespace`, `--file`, `--glob`, `--symbols`, `--all`, `--json`, `--fail-on-stale` |
 | `loom decisions` | Decision records mined from documents. |  |
-| `loom decisions extract` | Mine one knowledge document into decision records: the model reads the document whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a heading over only an image… | `--org`, `--namespace`, `--source-uri`, `--repo`, `--into`, `--max-per-section`, `--window-chars`, `--apply`, `--dry-run` |
+| `loom decisions extract` | Mine one knowledge document into decision records: the model reads the document whole (or in windows of whole sections past LOOM_MEMORY_DECISION_EXTRACT_WINDOW_CHARS; a heading over only an image and… | `--org`, `--namespace`, `--source-uri`, `--repo`, `--into`, `--max-per-section`, `--window-chars`, `--apply`, `--dry-run` |
 | `loom knowledge` | Knowledge documents and their sources. |  |
-| `loom knowledge sync` | Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing… | `--org`, `--namespace`, `--source`, `--full` |
+| `loom knowledge sync` | Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no… | `--org`, `--namespace`, `--source`, `--full` |
+| `loom knowledge source` | A namespace's document sources, over a running server. |  |
+| `loom knowledge source list` | List the namespace's sources, items and sync state. | `--namespace`, `--org`, `--server-url`, `--token` |
+| `loom knowledge source add` | Register a source from links or items, probed with the credential before anything is stored (knowledge.source.add). | `--namespace`, `--org`, `--server-url`, `--token`, `--name`, `--kind`, `--link`, `--item-json`, `--include`, `--credential-file`, `--dry-run` |
+| `loom knowledge source update` | Add and remove a source's items or change its file kinds, the added items probed with the stored credential (knowledge.source.update). | `--namespace`, `--org`, `--server-url`, `--token`, `--name`, `--link`, `--item-json`, `--include`, `--remove-link`, `--remove-item-json` |
 | `loom knowledge migrate-originals` | Move the document originals still held in ClickHouse, that a document, upload or ingestion needs, to LOOM_DOCUMENT_S3_BUCKET: each is copied to its own object, hash-verified and switched, fenced by… | `--org`, `--namespace`, `--dry-run` |
 | `loom export-okf` | Render a namespace as an OKF v0.2 bundle (Markdown + frontmatter) — the git-reviewable projection of Loom memory. | `--server-url`, `--token`, `--org`, `--namespace`, `--out`, `--title`, `--include-tombstoned`, `--limit`, `--dry-run`, `--no-evidence`, `--no-links`, `--include-high` |
 | `loom import-okf` | Write the concepts of an OKF v0.2 bundle into a namespace via memory.set. | `<path>`, `--server-url`, `--token`, `--org`, `--namespace`, `--agent`, `--user-id`, `--session-id`, `--keep-sessions`, `--verify`, `--dry-run`, `--no-evidence`, `--no-lint`, `--force-import`, `--no-links`, `--prune` |
 | `loom okf-lint` | Lint an OKF bundle directory offline — the compile gate a mirror repository's CI runs. | `<path>`, `--json`, `--strict` |
 | `loom up` | Boot the local stack (Loom, its document extractor and ClickHouse) and print how to connect: creates .env and the ClickHouse config from their templates, runs docker compose up --build, waits for… | `--root`, `--file`, `--env-file`, `--no-build`, `--rebuild`, `--port`, `--timeout`, `--subject`, `--org`, `--namespace`, `--open` |
 | `loom down` | Stop the local stack while preserving data; --delete-data performs a confirmed reset. | `--root`, `--file`, `--env-file`, `--delete-data`, `-y` |
-| `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql`, `--print-analyst-sql` |
+| `loom ch-setup` | Prepare a self-managed ClickHouse or a ClickHouse Cloud service for Loom: create the loom database and the read-only reader user, or print the SQL for an admin. | `--print-sql`, `--print-analyst-sql`, `--apply-analyst-sql` |
 | `loom participant` | The Loom processes a provider change waits for. |  |
-| `loom participant retire` | Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health). | `--participant`, `--yes` |
+| `loom participant retire` | Verify exact physical death on this trusted host and retire its participant after all queries settle (the id is participant_id in /v1/health). | `--participant` |
 | `loom deployment` | The configuration every replica checks itself against. |  |
 | `loom deployment publish` | Publish this env's configuration as the deployment's, replacing its root secret or LOOM_EMBEDDING_MODEL/DIM on purpose. | `--yes`, `--check` |
 | `loom settings` | Every setting's value in force, and overrides of the live ones. |  |
@@ -279,6 +287,10 @@ python scripts/codegen/docs_reference.py
 | `loom provider-lock` | The provider configuration lock. |  |
 | `loom provider-lock clear` | Free the provider configuration lock of a holder whose process stopped (refused while it renews, heartbeats or has a query running). | `--holder` |
 | `loom export-analytics` | Write one UTC day of usage and a namespace snapshot to S3 as Parquet, names hashed under LOOM_ANALYTICS_EXPORT_NAME_KEY. | `--bucket`, `--prefix`, `--day`, `--role-arn`, `--region`, `--expected-bucket-owner` |
+| `loom sql-access` | Make, rescope or drop a ClickHouse user that reads a tenant's memory, conversations and request ledger through the sql_v1_* views. |  |
+| `loom sql-access grant` | Make the user read exactly this scope, creating it (and printing its password once) when there is none. | `--user`, `--org`, `--namespaces`, `--all`, `--rotate` |
+| `loom sql-access revoke` | Take the user's scope away, then drop the user. | `--user` |
+| `loom sql-access list` | Every granted scope row, by SQL user. |  |
 | `loom reembed` | Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). | `--org`, `--namespace`, `--batch-size`, `--in-database`, `--dry-run`, `--delete-old`, `--key-only`, `--resume` |
 | `loom reextract` | Replay a namespace's raw evidence (memory.set_from_messages turns) through a running server's write path into ANOTHER namespace — the current extractor over the stored transcripts; the source is… | `--org`, `--namespace`, `--into`, `--base-url`, `--token`, `--dates`, `--concurrency`, `--limit-sessions`, `--dry-run` |
 | `loom deploy-delta` | What a colour swap changed: the deployment's ledger rows (volume, errors, p50/p95, upstream spend per operation) and its ClickHouse statement shapes (runs, bytes, seconds) for a window on each side… | `--swap-at`, `--window-min`, `--ch-os-user`, `--cluster`, `--top`, `--json` |
@@ -295,7 +307,7 @@ python scripts/codegen/docs_reference.py
 | `loom import-recall` | Import an external vector-recall agent-memory SQLite export into Loom. | `--sqlite`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |
 | `loom import-brain` | Import a markdown agent 'brain' directory into Loom: MEMORY.md (always-injected HOT layer) → profile.set sections; memory/contexts/*.md (read-on-demand WARM layer) → knowledge.add docs. | `--dir`, `--org`, `--namespace`, `--agent`, `--base-url`, `--token`, `--dry-run` |
 | `loom claim-release` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it. | `--org`, `--namespace`, `-y` |
-| `loom mint-token` | Mint a JWT locally (requires LOOM_JWT_SECRET). | `--subject`, `--org`, `--namespaces`, `--roles`, `--platform-admin`, `--namespace-role`, `--ttl-days`, `--save`, `--read-scope`, `--read-user-id`, `--traffic-class`, `--consumer`, `--service-account`, `--user-token`, `--json` |
+| `loom mint-token` | Mint a JWT locally (requires LOOM_JWT_SECRET and verified stores). | `--subject`, `--org`, `--namespaces`, `--roles`, `--platform-admin`, `--namespace-role`, `--ttl-days`, `--save`, `--read-scope`, `--read-user-id`, `--traffic-class`, `--consumer`, `--service-account`, `--user-token`, `--json` |
 | `loom revoke-token` | Revoke one token by jti or subject (writes loom.revoked_tokens through the revocation module; needs the configured ClickHouse). | `--jti`, `--subject`, `--list`, `--issued-before`, `--scim`, `--reason`, `--expires-at`, `--json` |
 | `loom sso` | Carry password accounts over to single sign-on. |  |
 | `loom sso adopt` | Let SSO sign-ins reach the password accounts whose email is at --domain: each person then signs in with the identity provider to their own account, its namespaces and data. | `--domain`, `--org`, `--skip`, `--keep-tokens`, `--apply`, `--dry-run` |
@@ -306,15 +318,34 @@ python scripts/codegen/docs_reference.py
 | `loom bot create` | Register a bot: its namespaces, and a key (--generate-key or --public-key) and/or a CI trust (--issuer, --audience, --claim). | `--name`, `--org`, `--namespace-role`, `--generate-key`, `--public-key`, `--issuer`, `--audience`, `--claim`, `--jwks-uri`, `--max-token-age`, `--max-access-token-ttl`, `--max-agents`, `--agent-claim`, `--platform-admin`, `--replace` |
 | `loom bot list` | Every bot, active or disabled. |  |
 | `loom bot disable` | Refuse its proofs and revoke the tokens it holds. | `--name` |
-| `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--token` |
+| `loom doctor` | Diagnose pre-boot misconfig (Python version, settings, JWT, CH reachability) and print the problem list /v1/health carries, each with its fix. | `--json`, `--client`, `--server-url`, `--pg-allow-role`, `--stray-orgs`, `--stray-orgs-budget`, `--token` |
 | `loom report` | Print the bug form's Environment field: versions and the `loom doctor` checks. | `--open` |
 | `loom drops` | Print the memory ingest drop ledger (loom.memory_drops) for a namespace, by stage/reason — what the pipeline discarded, truncated or gave up on. | `--namespace`, `--org`, `--hours` |
 | `loom namespaces-gc` | List (default) or erase throwaway namespaces — finished bench runs under the bench prefixes that nobody registered and nobody has written to for --idle-hours — in one list-scoped erasure saga per… | `--org`, `--prefix`, `--namespace`, `--exclude-prefix`, `--idle-hours`, `--include-registered`, `--erase`, `--no-purge`, `--skip-external`, `--batch`, `--show`, `--requester`, `--worker-pass` |
 | `loom erasure-re-verify` | Re-verify failed erasure sagas: print each one's last step-named reason and a fresh residue census (default, read-only); --resume re-runs them from their checkpoint past the recovery worker's… | `--org`, `--id`, `--resume`, `--skip-external`, `--completed-since`, `--orphan-graph`, `--erase`, `--batch`, `--show`, `--requester` |
+| `loom reconcile` | After a restore of ClickHouse or Postgres, run again in the restored store the erasures and redactions the other records past the restore point, and (after a ClickHouse restore) publish again every… | `--restored`, `--point`, `--allow-live`, `--apply`, `--dry-run` |
+| `loom router` | The router in front of a deployment's cells. |  |
+| `loom router serve` | Serve the placement, lookup and operator APIs; route other requests to cells. | `--host`, `--port`, `--log-level` |
+| `loom router migrate` | Apply the directory's pending migrations. |  |
+| `loom cell` | Operate a deployment's cells through the router's directory. |  |
+| `loom cell scim-token` | Generate a cell's SCIM token offline. |  |
+| `loom cell scim-token new` | Print a random token for the named cell. | `--cell` |
+| `loom cell credential` | Make a router credential, or rotate a cell's. | `<action>`, `--cell`, `--next`, `--finish`, `--revert`, `--operator`, `--router` |
+| `loom cell limit` | Close, reopen or bound a cell to new orgs. | `--cell`, `--closed`, `--open`, `--placements-max`, `--router` |
+| `loom cell which` | Print the lookup's cell and host for an org (the first cell if not placed). | `--org`, `--router` |
+| `loom cell remove` | Remove the directory row of a cell attaching with no placement. | `--cell`, `--router` |
+| `loom cell place` | Place an org in this cell and record its tenancy. | `--cell`, `--org`, `--router` |
+| `loom cell prepare` | Register this cell in the router's directory and write its rows. | `--cell`, `--host`, `--credential-sha256`, `--probe-url`, `--wait`, `--router` |
+| `loom cell attach` | Attach the prepared first cell: place its orgs, serve. | `--cell`, `--wait`, `--scan-budget`, `--dry-run`, `--ch-allow-user`, `--ch-allow-user-directory`, `--ch-allow-object`, `--ch-allow-replica`, `--pg-allow-role`, `--revoke-unprovisioned`, `--router` |
+| `loom cell update` | Reserve configuration, finish or revert its rollout, or refresh verified addresses. | `--cell`, `--config`, `--finish`, `--revert`, `--probe-url`, `--revoke-unprovisioned`, `--router`, `--wait` |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |
 | `loom tracker-dupcheck-fit` | Refit tracker.duplicate_check's calibrated confidence for one tracker namespace now: replays the duplicate gold at filing time, fits, stores the fit. | `--namespace`, `--org`, `--negatives`, `--dry-run`, `--out` |
 | `loom tracker-embed-reset` | Clear the tracker_embed pass cursors of one tracker namespace so the next pass re-walks the window and re-embeds every item whose text recipe changed. | `--namespace`, `--org`, `--kind`, `--apply`, `--dry-run` |
+| `loom tracker-feed` | Maintain a team's GitHub tracker record |  |
+| `loom tracker-feed init` |  | `--org`, `--writer-user`, `--writer-password-env`, `--host`, `--port`, `--database`, `--insecure` |
+| `loom tracker-feed configure` |  | `--org`, `--writer-user`, `--writer-password-env`, `--source`, `--repo`, `--token-env`, `--read-only-token`, `--max-pages` |
+| `loom tracker-feed sync` |  | `--org`, `--writer-user`, `--writer-password-env`, `--source`, `--repo` |
 | `loom namespaces-adopt` | Give namespaces that hold live memory and no registry row an owner row: kind=bench under the bench prefixes, else memory; retention_days 0, no TTL. | `--org`, `--owner`, `--prefix`, `--namespace`, `--kind`, `--apply`, `--dry-run`, `--show` |
 | `loom sensitivity-sweep` | Label live rows the sensitivity detector would have labelled on write but a path skipped. | `--org`, `--namespace`, `--since-days`, `--limit`, `--show`, `--only-shape`, `--apply`, `--dry-run` |
 | `loom integrity-repair` | Read the row-level integrity gauges (dim-0 rows holding a vector, tombstoned_at/status drift, active rows past valid_to) and, with --apply, re-emit the dim-0 rows with their true dimension so search… | `--org`, `--namespace`, `--limit`, `--show`, `--apply`, `--dry-run` |
@@ -333,6 +364,7 @@ python scripts/codegen/docs_reference.py
 | `loom whoami` | Show who the stored session signs you in as. |  |
 | `loom call` | Call any operation or API route with the stored session (`loom call --help`). |  |
 | `loom token` | Make, list and revoke your own tokens for CI and agents (`loom token --help`). |  |
+| `loom connect` | Print the dashboard link to connect your own Google, Notion or Linear account. |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: cli -->

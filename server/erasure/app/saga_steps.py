@@ -7,22 +7,28 @@ each."""
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 from server.auth.grant_claims import account_change, collections_change, group_change
 from server.code.app.index.retire import code_tables_keyed_by_namespace, refresh_code_views
 from server.core import grant_cache
+from server.core.ch import sequential_reads
 from server.core.errors import caller_text
+from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
+from server.core.repo_base import _CHClient
 from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
 from server.erasure.store import steps_pg as pg_steps
 from server.erasure.store import steps_principals as principal_steps
+from server.erasure.store.mutations import namespaces_of, purge_scope
+from server.knowledge.app import mirrors as knowledge_mirrors
+from server.knowledge.app.sources import retire_sources_of
 from server.memory.app.code_links import queue_lease
 from server.workers.registry import DEADLINE_CAP_SECONDS
 
@@ -64,7 +70,10 @@ async def _step_verify_residue(
     """Verified forgetting: count what is still live in scope across every
     substrate the read paths touch. Fills `holder` for the terminal
     checkpoint; zero is the only pass."""
-    per_table = await erasure_census.residue_census(org, scope_type, scope_value)
+    spellings = await census_spellings(org, scope_type, scope_value)
+    per_table = await erasure_census.residue_census(
+        org, scope_type, scope_value, spellings=spellings
+    )
     if scope_type == "namespace":  # and the scope's objects left in the document bucket
         per_table[erasure_census.OBJECT_RESIDUE] = await erasure_census.object_residue(
             org, scope_value
@@ -91,6 +100,34 @@ async def _step_purge_code_index_by_ns(org: str, namespace: _NS) -> int:
 # how long a code-link erasure waits for a linking pass to give up the queue lease: longer
 # than the link worker's pass deadline (a test holds it so)
 _LINK_PASS_WAIT_S = DEADLINE_CAP_SECONDS
+_SOURCE_RETIRE_WAIT_S = 30.0  # not a setting: well inside a request and the recovery pass
+
+
+async def census_spellings(org: str, scope_type: str, scope_value: object) -> list[str]:
+    """The spellings a census of the scope counts misses under: the user's, for a user
+    scope (`folded_spellings`), and none for any other."""
+    if scope_type != "user_id":
+        return []
+    return await folded_spellings(org, str(scope_value))
+
+
+async def folded_spellings(org: str, user_id: str) -> list[str]:
+    """Every spelling the directory ties to the user (`aliases.spellings`, unverified
+    ties included, as a revocation reaches), so a miss stored under any of them, folded
+    when the tie stood differently, is found. A failed directory read raises: the step
+    fails closed and the saga retries it."""
+    from server.auth.aliases import spellings
+
+    # Lower-cased, as MISS_ASKER compares them; spellings includes the user id.
+    return sorted({s.lower() for s in await spellings(org, user_id)})
+
+
+async def _step_delete_search_misses_by_user(org: str, user_id: str) -> int:
+    """The user's misses, and first the gap builds of the namespaces they asked in, found
+    through those misses: derived rows the next pass rebuilds without the user."""
+    spellings = await folded_spellings(org, user_id)
+    n = await ledger_steps.delete_knowledge_gaps_by_user(org, spellings)
+    return n + await ledger_steps.delete_search_misses_by_user(org, spellings)
 
 
 async def _step_delete_code_links_by_user(org: str, user_id: str) -> int:
@@ -146,19 +183,66 @@ async def _step_remove_from_groups_by_user(org: str, user_id: str) -> int:
 
 async def _step_retire_personal_collection_by_user(org: str, user_id: str) -> int:
     """Under its directory row's claim, which `namespace.delete` holds too."""
+    from server.auth.authz import identity_write
+
     async with account_change(org, personal_name(org, "user:" + user_id)):
-        return await principal_steps.retire_personal_collection_by_user(org, user_id)
+        with identity_write():
+            return await principal_steps.retire_personal_collection_by_user(org, user_id)
+
+
+async def _step_retire_knowledge_sources_by_ns(org: str, namespace: _NS) -> int:
+    """First of all, so no source writes back what the later steps erase."""
+    return await retire_sources_of(org, namespaces_of(namespace), wait_s=_SOURCE_RETIRE_WAIT_S)
+
+
+async def _mirrors_of(
+    org: str, namespace: _NS, *, live_only: bool = False, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The named namespaces' mirrors (`knowledge_mirrors.mirrors_of`), read from every
+    replica's writes; a mirror has none of its own."""
+    if not (named := [ns for ns in namespaces_of(namespace) if not is_mirror_name(ns)]):
+        return {}
+    with sequential_reads():
+        return await knowledge_mirrors.mirrors_of(org, named, live_only=live_only, ch=ch)
+
+
+@asynccontextmanager
+async def erased_scope(
+    org: str, scope_type: str, scope_value: _NS, *, ch: _CHClient | None = None
+) -> AsyncIterator[_NS]:
+    """The scope a namespace step erases and a census counts: when it holds a mirror,
+    every named namespace and every mirror they have had, as a purge."""
+    names = namespaces_of(scope_value) if scope_type == "namespace" else []
+    mirrors = list(await _mirrors_of(org, names, ch=ch))
+    if not mirrors and not any(is_mirror_name(ns) for ns in names):
+        yield scope_value
+        return
+    with purge_scope(True):
+        # A scope that names one of its own mirrors lists it once.
+        yield list(dict.fromkeys([*names, *mirrors]))
+
+
+async def _step_forget_mirrors_by_ns(org: str, namespace: _NS) -> int:
+    """The last Loom step, before the backends and the census: writes the named
+    namespaces' live mirrors `deleted`, so the name registered again gets a new one; a
+    scope of only mirrors forgets none."""
+    found = await _mirrors_of(org, namespace, live_only=True)
+    await knowledge_mirrors.forget_mirrors(org, found)
+    return len(found)
 
 
 async def _step_forget_collection_owner_by_user(org: str, user_id: str) -> int:
     """Under each directory row's claim, then the tree's, so neither a
     `namespace.delete` nor a move that lands meanwhile writes back what it read."""
+    from server.auth.authz import identity_write
+
     async with AsyncExitStack() as held:
         for namespace in await principal_steps.collections_created_by(org, user_id):
             await held.enter_async_context(account_change(org, namespace))
         await held.enter_async_context(collections_change(org))
-        # No watermark: the cached tree holds parents, not owners.
-        return await principal_steps.forget_collection_owner_by_user(org, user_id)
+        # The tree cache holds parents; the person memo also reads these owners.
+        with identity_write():
+            return await principal_steps.forget_collection_owner_by_user(org, user_id)
 
 
 async def _step_tombstone_documents_by_user(org: str, user_id: str) -> int:
@@ -190,6 +274,8 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("memory_exposures.delete", ledger_steps.delete_memory_exposures_by_namespace),
     ("search_trace_log.delete", ledger_steps.delete_search_trace_log_by_namespace),
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_namespace),
+    ("search_misses.delete", ledger_steps.delete_search_misses_by_namespace),
+    ("knowledge_gaps.delete", ledger_steps.delete_knowledge_gaps_by_namespace),
     ("events.delete", ledger_steps.delete_events_by_namespace),
     ("memory_drops.delete", ledger_steps.delete_memory_drops_by_namespace),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_namespace),
@@ -205,11 +291,13 @@ _LATE_STEPS_NS: tuple[NamespaceStep, ...] = (
     ("code_index.purge", _step_purge_code_index_by_ns),
 )
 _LATE_STEPS_USER: tuple[UserStep, ...] = (
+    ("tasks.delete", ledger_steps.delete_task_events_by_user),
     ("conversations.tombstone", ledger_steps.tombstone_conversations_by_user),
     ("context_blobs.tombstone", ledger_steps.tombstone_context_blobs_by_user),
     ("session_briefs.delete", ledger_steps.delete_session_briefs_by_user),
     ("memory_exposures.delete", ledger_steps.delete_memory_exposures_by_user),
     ("code_search_trace.delete", ledger_steps.delete_code_search_trace_by_user),
+    ("search_misses.delete", _step_delete_search_misses_by_user),
     ("events.delete", ledger_steps.delete_events_by_user),
     ("delete_version_checks.delete", ledger_steps.delete_delete_version_checks_by_user),
     ("memory_webhook_outbox.delete", ledger_steps.delete_memory_webhook_outbox_by_user),
@@ -225,14 +313,14 @@ _LATE_STEPS_USER: tuple[UserStep, ...] = (
 
 
 # Steps a ClickHouse-authority saga never runs.
-_PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
+PG_ONLY_STEPS = frozenset({"pg_memory.delete", "pg_knowledge.delete"})
 
 
 def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[StepT]:
     """The steps a saga runs: the Postgres authority's step only under that authority."""
     from server.core import pg
 
-    return [s for s in steps if pg.enabled() or s[0] not in _PG_ONLY_STEPS]
+    return [s for s in steps if pg.enabled() or s[0] not in PG_ONLY_STEPS]
 
 
 # The loom-side steps of a user erasure over (org, user_id), in saga order.
@@ -298,10 +386,14 @@ USER_STEPS: tuple[UserStep, ...] = (
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
+    ("knowledge_sources.retire", _step_retire_knowledge_sources_by_ns),
+    ("knowledge_source_push.delete", ledger_steps.delete_source_push_by_namespace),
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),
     ("pg_knowledge.delete", pg_steps.delete_pg_knowledge_by_namespace),
+    ("query_history_sources.delete", ledger_steps.delete_query_history_by_namespace),
     ("memory.tombstone", memory_steps.tombstone_memory_by_namespace),
     ("memory_embeddings.tombstone", memory_steps.tombstone_embeddings_by_namespace),
+    ("shared.tombstone", memory_steps.tombstone_shared_by_namespace),
     ("memory_versions.delete", memory_steps.delete_memory_versions_by_namespace),
     ("code_links.delete", _step_delete_code_links_by_ns),
     ("working_memory.tombstone", memory_steps.tombstone_working_memory_by_namespace),
@@ -332,4 +424,7 @@ NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
     ("chunks.supersede", memory_steps.supersede_chunks_by_namespace),
     ("documents.tombstone", _step_tombstone_documents_by_ns),
     *_LATE_STEPS_NS,
+    ("knowledge_source_listings.delete", ledger_steps.delete_source_listings_by_namespace),
+    ("knowledge_group_members.delete", ledger_steps.delete_group_members_by_namespace),
+    ("knowledge_mirrors.forget", _step_forget_mirrors_by_ns),
 )

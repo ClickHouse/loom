@@ -242,8 +242,9 @@ describe("the object a page shows is in its URL", () => {
     expect(useStore.getState().inspectedMemoryKey).toBe("api/rate-limit");
   });
 
-  // The sidebar's Memories link lands on the list, not on the Insights tab it was left on.
-  it("navigating to Memories drops its tab from the URL", () => {
+  // An old link's `?section=insights` is no key of Memories: a navigation there leaves it out
+  // (the assistant's panel opens on the audit card instead, lib/assistantDock.ts).
+  it("navigating to Memories leaves an old section key out of the URL", () => {
     setLocation("/memories?section=insights");
     useStore.getState().navigate("memories");
     expect(window.location.search).toBe("?namespace=team");

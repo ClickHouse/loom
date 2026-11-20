@@ -14,8 +14,8 @@ a token scanner with brace tracking reads it without a tree-sitter grammar:
     bind_sites` — scalars, `map<>` keys and `google.protobuf.*` name nothing;
   * `import "a/b.proto"` is a raw include specifier; the import root is
     protoc's `-I`, unknown to the index, so the candidates are the file's
-    directory and every ancestor + the specifier (`lane_units.
-    ancestor_candidates`), settled against the namespace's live paths.
+    directory and its nearest ancestors, then the root, + the specifier
+    (`lane_units.ancestor_candidates`), settled against the namespace's live paths.
 
 `ParsedFile.tree` stays None: chunks come from `lane_units.span_chunks`,
 edges from the sites. Outside the extractor stamp with the other lanes.
@@ -362,24 +362,24 @@ def is_external_import(spec: str) -> bool:
 
 def wanted_paths(from_path: str, specs: list[str]) -> list[str]:
     """Every repository path the imports may name, for one membership read."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
         if is_external_import(spec):
             continue
-        out.extend(c for c in ancestor_candidates(from_path, spec) if c not in out)
-    return out
+        out.update(dict.fromkeys(ancestor_candidates(from_path, spec)))
+    return list(out)
 
 
 def resolve_imports(from_path: str, specs: list[str], present: set[str]) -> list[str]:
     """One indexed file per import: the nearest candidate `present` holds."""
-    out: list[str] = []
+    out: dict[str, None] = {}
     for spec in specs:
         if is_external_import(spec):
             continue
         hit = next((c for c in ancestor_candidates(from_path, spec) if c in present), None)
-        if hit and hit != from_path and hit not in out:
-            out.append(hit)
-    return out
+        if hit and hit != from_path:
+            out[hit] = None
+    return list(out)
 
 
 __all__ = [

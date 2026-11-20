@@ -119,6 +119,15 @@ id, content hash, actor, source class, verdict; never the value). See
 `memory.set`, `memory.get` and `memory.get_by_id` return `content_sha256`. Pass it back as
 `if_match_sha256` and the write succeeds only if the live row still has that content.
 
+For a missing key, `memory.set` also accepts `if_match_sha256="absent"`. The write
+requires no unexpired row under the full identity and key; `agent="*"` is refused.
+Two conditional creators cannot both replace the same absence: the loser gets 409
+`PRECONDITION_FAILED`, reads the winner, and retries with its hash. A deleted or expired
+row can be created again. Expiry does not bypass the row's lock, pin or retention policy.
+An omitted or empty precondition keeps unconditional set behavior. The absence value
+also reaches `memory.pin` and `profile.set` through their `memory.set` write path;
+`memory.update`, `memory.update_by_id` and `memory.move` require a content hash.
+
 ```python
 from loom import Agent
 from loom.errors import PreconditionFailed
@@ -172,7 +181,7 @@ key then answers `conflict_verdict: "conflict"`, `peers[0].memory_key:
 | Op                    | Behaviour                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory.update`       | Resolves `memory_key` across the namespace when no identity is given (`"-"` counts as none, and `"*"` for `agent`). One live row: updated. None: `updated=false, reason="not_found"`. Several: 409 `AMBIGUOUS_KEY` with `candidates`. Runs the conflict check and keeps a pin. An expired row answers 409 `EXPIRED` unless `revive=true`.                                                                                                                              |
-| `memory.update_by_id` | One row by `(org, memory_id)`. The namespace is checked after the fetch; a refusal answers `updated=false`, not 403.                                                                                                                                                                                                                                                                                                                                                   |
+| `memory.update_by_id` | One row by `(org, memory_id)`. The namespace is resolved and checked before the read; a refusal answers `updated=false`, not 403.                                                                                                                                                                                                                                                                                                                                      |
 | `memory.delete`       | Writes a tombstone, looking past the caller's identity for the key (`found=false` when no live row exists). `memory.delete_version` instead reads only the caller's exact identity (a concrete agent) and, under the key's write lock, deletes only the version it names, else `tombstoned=false, reason="version_changed"`. Consolidated summaries lose the row: retired when no source survives, else `conflicted`. `memory.restore` revives the key within 14 days. |
 | `memory.move`         | Renames a key, carrying value, type, tags, entities, validity and provenance. The source becomes a redirect (`canonical_key`, `follow=true`) or, with `keep_redirect=false`, a tombstone. See [optimize a namespace](../../guides/optimize-namespace.md).                                                                                                                                                                                                              |
 | `memory.lock`         | `read_only` refuses value, expiry and deletion changes; `no_delete` refuses tombstone, redact, clear and consolidation. Both refuse `memory.reject` (423 `LOCKED`); a negative-outcome quarantine leaves a locked row as it is, while its negatives keep counting. A writer may lock or tighten (`until`, `ttl_seconds`); `memory.unlock` is admin. `locked=false, reason="not_found"` is not a lock.                                                                  |

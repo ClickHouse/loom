@@ -72,10 +72,10 @@ namespaces it may reach; the grant table decides the role.
 | `grants.revoke`                                                      | admin     | Remove a grant.                                                                                                                                        |
 | `grants.approve`                                                     | admin     | Approve or reject a pending request, optionally with a different role.                                                                                 |
 | `grants.pending_for_me`                                              | viewer    | Every pending request in the namespaces the caller administers, org-wide.                                                                              |
-| `namespace.browse`                                                   | viewer    | Public namespaces in the org (`closed` ones only with `include_closed`).                                                                               |
+| `namespace.browse`                                                   | viewer    | Public namespaces in the org, never a collection (`closed` ones only with `include_closed`).                                                           |
 | `namespace.join`                                                     | viewer    | Self-join a public namespace. `viewer` is granted at once; a `writer` or `admin` request always lands pending, with no access until an admin approves. |
 | `namespace.leave`, `namespace.cancel_request`, `namespace.mark_seen` | viewer    | Drop one's own grant, withdraw a pending request, acknowledge an invitation.                                                                           |
-| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to.                                                                                                                  |
+| `namespace.list_mine`                                                | viewer    | The namespaces the caller belongs to, each with its `kind` (`collection` for a collection) and `title`.                                                |
 | `namespace.list`                                                     | org admin | Every namespace in the org.                                                                                                                            |
 
 Minting tokens, service accounts, read scopes and restricted namespaces are covered in
@@ -92,6 +92,33 @@ Inside a namespace every writer's rows are visible to every reader by default
 | `memory.demote`        | admin                | Tombstone the shared copy and its embedding; `was_reversible` says whether it was inside the window.                                                                      |
 | `memory.copy_to`       | writer on the target | Self-service copy of a memory you can read into a namespace you can write, by key. Non-destructive; the target is re-embedded by its own embedder.                        |
 | `memory.cross_promote` | admin on both ends   | The operator form, addressed by memory id, with `cross_promoted_from_*` lineage on the target.                                                                            |
+
+`memory.copy_to` reads the source row by key and records the caller as the copy's actor, so it needs a signed-in
+caller: with `LOOM_AUTH_REQUIRED=true` and a token that reads the source and writes the target. The stock single-user
+stack refuses it. The Python SDK reaches it through `agent.client`:
+
+```python
+from loom import Agent
+from loom.errors import NotFound
+
+async with Agent(org="acme", namespace="support", agent="triage-bot") as agent:
+    try:
+        result = await agent.client.memory.copy_to(
+            from_org="acme",
+            from_namespace="support",
+            memory_key="customer/4812/plan",
+            to_namespace="billing",
+            rationale="Billing checks invoices against this plan.",
+        )
+    except NotFound:
+        ...  # no live row under that key in the source namespace
+    else:
+        print(result["copied"], result["target_key"])  # True customer/4812/plan
+```
+
+The copy keeps the source key unless `target_key` names another, and it is namespace-owned in the target
+(`target_agent="-"`) unless you name an agent. `from_agent="*"` (the default) copies the most recently written row
+for the key. The rationale is not stored as text: the audit row keeps its SHA-256 and length.
 
 Copies are not atomic across namespaces: a copy that fails
 halfway leaves the source intact and the target without the row. The learnings queue
@@ -382,13 +409,13 @@ widens no read: `namespace.browse` shows the org each public namespace's summary
 the whole guide is for its members (`namespace.join`). In the dashboard, the Memories
 page header has a **Guide** button beside **Add memory**, described by the guide's
 revision and summary; on a namespace with no guide it opens a writer straight into the
-editor. A first guide, from there or from Spaces, starts on an outline of what a
-newcomer asks (what the namespace holds, its keys, its tags, how to use it) that cannot
-be saved unchanged. Spaces shows a public namespace's guide summary under its
-description; for a namespace you belong to, the summary opens the guide, or the
-**Guide** menu item where no summary is shown. A writer edits it from either place,
-saving from the revision they opened, as an agent does. A namespace erasure deletes
-every revision of its guide.
+editor. A first guide, from there or from Namespaces in your org, starts on an outline
+of what a newcomer asks (what the namespace holds, its keys, its tags, how to use it)
+that cannot be saved unchanged. Namespaces in your org shows a public namespace's guide
+summary under its description; for a namespace you belong to, the summary opens the
+guide, or the **Guide** menu item where no summary is shown. A writer edits it from
+either place, saving from the revision they opened, as an agent does. A namespace
+erasure deletes every revision of its guide.
 
 ## The mentor
 
@@ -466,7 +493,7 @@ and [configuration: context](../reference/configuration.md#context).
 
 - [Identities and namespaces](../concepts/identities-and-namespaces.md) — the model.
 - [Tokens and grants](../guides/tokens-and-grants.md) — minting and scoping access.
-- [The dashboard](dashboard.md) — Spaces, Settings and the admin drawer.
+- [The dashboard](dashboard.md) — Namespaces in your org, Settings and the admin drawer.
 - [Security architecture](../architecture/security.md) — how a request is authorized.
 - [Operations reference: namespace](../reference/operations.md#namespace),
   [grants](../reference/operations.md#grants), [mentor](../reference/operations.md#mentor),

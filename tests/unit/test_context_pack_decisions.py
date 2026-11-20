@@ -14,6 +14,7 @@ import pytest
 
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
+from tests.unit.checked_pack_fakes import install_pack_target
 
 _FACT = NS(
     namespace="ns",
@@ -74,7 +75,7 @@ def _dead_other_sections(monkeypatch: pytest.MonkeyPatch) -> None:
         "server.memory.app.profile.handle_profile_render",
         "server.memory.app.procedure.handle_procedure_match",
     ):
-        monkeypatch.setattr(target, _empty)
+        install_pack_target(monkeypatch, target, _empty)
 
 
 def test_decision_hits_render_as_their_own_section(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -170,7 +171,7 @@ def test_only_sections_skips_every_other_plane(monkeypatch: pytest.MonkeyPatch) 
         ("server.knowledge.app.knowledge_search.handle_knowledge_search", "knowledge"),
         ("server.knowledge.app.conversations.handle_conversation_search", "conversations"),
     ):
-        monkeypatch.setattr(target, _tracking(name))
+        install_pack_target(monkeypatch, target, _tracking(name))
     monkeypatch.setattr("server.memory.app.search.handle_memory_search", _search_stub([_FACT]))
 
     async def _match(*a: Any, **k: Any) -> Any:
@@ -236,3 +237,72 @@ def test_a_proposed_decision_renders_as_proposed(monkeypatch: pytest.MonkeyPatch
     )
     dec = out.sections["decisions"]
     assert "→ proposed: Postgres" in dec and "decided" not in dec
+
+
+def test_a_line_whose_code_changed_says_so_with_the_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _dead_other_sections(monkeypatch)
+    link = {"state": "changed", "changed_since": "c0ffee" * 4, "checked_at": "2026-11-01"}
+    fact = NS(**{**vars(_FACT), "code_state": "changed", "_code_links": [link]})
+    gone = {"state": "missing", "changed_since": "dead" * 10, "path": "a.py", "qualified_name": ""}
+    decision = NS(**{**vars(_DECISION), "code_state": "missing", "_code_links": [gone]})
+    moved = NS(**{**vars(_FACT), "memory_key": "m2", "code_state": "moved"})
+    monkeypatch.setattr(
+        "server.memory.app.search.handle_memory_search", _search_stub([fact, decision, moved])
+    )
+
+    async def _records(ch: Any, org: str, ns: str, keys: list[str]) -> dict[str, Any]:
+        return {}
+
+    monkeypatch.setattr("server.memory.app.decision._decision_records", _records)
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
+    )
+    memories = out.sections["memories"]
+    assert "code_state=changed@c0ffeec0ffee] deploys are Tue/Thu" in memories
+    assert memories.count("code_state=") == 1  # a moved memory needs no label
+    assert (
+        "(the code it is about is gone, commit deaddeaddead: check before relying on it) "
+        "we chose clickhouse"
+    ) in out.sections["decisions"]
+
+
+def test_every_governed_definition_leads_the_memories_block(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Four governed definitions from one namespace: the per-group cap never moves one
+    below an ordinary fact."""
+    _dead_other_sections(monkeypatch)
+    governed = [
+        NS(
+            **{
+                **vars(_FACT),
+                "memory_key": f"definition/d{i}",
+                "content_excerpt": f"term {i}",
+                "rank_score": 5.0 - i,
+                "memory_type": "definition",
+                "governed": True,
+            }
+        )
+        for i in range(4)
+    ]
+    # a row of another group, which the cap would otherwise put above the fourth
+    other = NS(
+        **{
+            **vars(_FACT),
+            "memory_key": "m2",
+            "content_excerpt": "a resource row",
+            "source_resource_id": "doc-1",
+            "rank_score": 0.5,
+        }
+    )
+    monkeypatch.setattr(
+        "server.memory.app.search.handle_memory_search", _search_stub([*governed, _FACT, other])
+    )
+    out = asyncio.run(
+        handle_context_pack(ContextPackInput(org="o", namespace="ns", agent="a", query="q"))
+    )
+    block = out.sections["memories"]
+    positions = [block.index(f"term {i}") for i in range(4)]
+    assert positions == sorted(positions) and positions[-1] < block.index("a resource row")

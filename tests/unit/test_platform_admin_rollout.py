@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -87,9 +88,10 @@ def test_cli_admin_mint_reads_the_fleet_before_minting(
 
     monkeypatch.setattr(instances, "live_rows", lambda: [{"schema_version": 76}])
     monkeypatch.setattr(instances, "read_live", read_live)
-    monkeypatch.setattr(keyring, "load_for_offline_mint", lambda **kw: None)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(None)))
-    monkeypatch.setattr(access, "_audit_platform_admin_mint", lambda *a: True)
+    monkeypatch.setattr(keyring, "load_for_connected_mint", AsyncMock())
+    monkeypatch.setattr("server.cli._ch.check_acceptance", AsyncMock())
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
+    monkeypatch.setattr(access, "_audit_platform_admin_mint", AsyncMock(return_value=True))
     monkeypatch.setattr(jwt, "mint_token", mint)
     code = cli.main(
         [
@@ -114,11 +116,11 @@ def test_cli_admin_mint_reads_the_fleet_before_minting(
         assert minted == []
 
 
-def test_cli_admin_mint_refuses_an_unread_fleet(monkeypatch, capsys) -> None:
+def test_cli_admin_mint_refuses_when_the_connection_scope_cannot_open(monkeypatch, capsys) -> None:
     from server.auth import jwt
     from server.cli import access
 
-    def unread(run):
+    def unread(run, **_declared: object):
         raise ConnectionError("offline")
 
     def mint(**kw):
@@ -139,7 +141,51 @@ def test_cli_admin_mint_refuses_an_unread_fleet(monkeypatch, capsys) -> None:
         ]
     )
     out, err = capsys.readouterr()
+    assert code == 1 and out == "" and "enrolled scope" in err
+
+
+def test_cli_admin_mint_refuses_an_unread_fleet(monkeypatch, capsys) -> None:
+    import asyncio
+
+    from server.auth import jwt, keyring
+    from server.cli import access
+
+    connected = object()
+    reads = []
+    minted = []
+
+    async def unread(ch, *, all_deployments):
+        assert all_deployments
+        reads.append(ch)
+        raise ConnectionError("offline")
+
+    def mint(**kwargs):
+        minted.append(kwargs)
+        return "secret-token"
+
+    monkeypatch.setattr(instances, "read_live", unread)
+    monkeypatch.setattr(keyring, "load_for_connected_mint", AsyncMock())
+    monkeypatch.setattr("server.cli._ch.check_acceptance", AsyncMock())
+    monkeypatch.setattr(access, "run_connected", lambda run, **kwargs: asyncio.run(run(connected)))
+    monkeypatch.setattr(access, "_audit_platform_admin_mint", AsyncMock(return_value=True))
+    monkeypatch.setattr(jwt, "mint_token", mint)
+    code = cli.main(
+        [
+            "mint-token",
+            "--subject",
+            "sa:controlplane",
+            "--org",
+            "acme",
+            "--platform-admin",
+            "--ttl-days",
+            "7",
+        ]
+    )
+    out, err = capsys.readouterr()
+    assert reads == [connected]
     assert code == 1 and out == "" and "rollout" in err
+    assert "secret-token" not in out + err
+    assert minted == []
 
 
 def test_admin_token_floor_matches_the_physical_migration() -> None:
@@ -214,7 +260,7 @@ def test_cli_sees_older_replicas_of_the_other_kind(monkeypatch, capsys, deployme
         raise AssertionError("an older replica of either kind must refuse issuance")
 
     monkeypatch.setattr(settings, "deployment", deployment)
-    monkeypatch.setattr(access, "run_connected", lambda run: asyncio.run(run(fleet)))
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(fleet)))
     monkeypatch.setattr(jwt, "mint_token", mint)
     code = cli.main(
         [

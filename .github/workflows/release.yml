@@ -18,12 +18,15 @@ name: release
 # architecture's own runner) -> docker-tag -> sign (keyless, the indexes
 # docker-tag made; every run verifies both images' X.Y.Z tag) and
 # docker-smoke (the quickstart and the installer rehearsal) -> github-release
+# -> sign-files (keyless, each file the release serves) -> attach-signatures
 # -> release-check (tag push only), and pypi, npm, mcp-registry (dispatch
-# only). A re-run after a partial publish is safe: the bundle keeps the
+# only). A re-run after a partial publish is safe: the stack bundle keeps the
 # ClickHouse release it was first published with, the release is updated in
 # place, PyPI skips files it already has, npm and the MCP Registry skip a
 # version they already have, a re-run of failed jobs tags the same build again,
-# and a run on a tag whose images are published builds and tags none.
+# and a run on a tag whose images are published builds and tags none. A tag
+# run whose file signing failed is the exception: re-run its failed jobs
+# before any dispatch (docs/development/release-process.md).
 #
 # The PyPI, npm and MCP Registry jobs are dispatch-only, so a tag's GitHub
 # Release can be checked before the SDKs and the server listing reach the
@@ -247,19 +250,27 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
       # The SDK sources carry the tag's version, so every published file names it.
-      # check-version.mjs compares package.json, package-lock.json (npm version
-      # rewrites both) and src/version.ts.
-      - name: Sync SDK versions to the tag
+      # The Python SDK takes its PEP 440 form (1.2.0rc1 for 1.2.0-rc.1): the
+      # build backend writes the version into METADATA as given, and the verify
+      # step and PyPI read the normalized one.
+      - name: Sync the Python SDK version to the tag
+        id: sync-python
         run: |
+          pip install packaging==26.3
           python - <<'PY'
           import os, pathlib, re
-          version = os.environ["VERSION"]
+          from packaging.version import Version
+          version = str(Version(os.environ["VERSION"]))
           p = pathlib.Path("sdk/python/pyproject.toml")
           p.write_text(re.sub(r'^version = ".*"$', f'version = "{version}"', p.read_text(), count=1, flags=re.M))
           v = pathlib.Path("sdk/python/loom/_version.py")
           v.write_text(re.sub(r'__version__ = ".*"', f'__version__ = "{version}"', v.read_text()))
           PY
-          cd sdk/typescript
+      # check-version.mjs compares package.json, package-lock.json (npm version
+      # rewrites both) and src/version.ts.
+      - name: Sync the TypeScript SDK version to the tag
+        working-directory: sdk/typescript
+        run: |
           npm version --no-git-tag-version --allow-same-version "$VERSION"
           sed -i "s/export const SDK_VERSION = \".*\";/export const SDK_VERSION = \"$VERSION\";/" src/version.ts
       - name: Build Python sdist + wheel
@@ -465,8 +476,9 @@ jobs:
             image: ghcr.io/clickhouse/loom
             file: Dockerfile
             pin: image.digest
-            # The repository's title and description, metadata-action's defaults.
-            labels: ""
+            # Title and description are the repository's, metadata-action's defaults.
+            labels: |
+              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
           - artifact: extractor
             image: ghcr.io/clickhouse/loom-extractor
             file: extractor/Dockerfile
@@ -474,6 +486,7 @@ jobs:
             labels: |
               org.opencontainers.image.title=loom-extractor
               org.opencontainers.image.description=Loom's document extractor service, which parses originals apart from the server
+              org.opencontainers.image.documentation=https://clickhouse.github.io/loom/
           - arch: amd64
             runner: ubuntu-latest
           - arch: arm64
@@ -492,7 +505,7 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
         if: ${{ !inputs.dry_run }}
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -502,7 +515,8 @@ jobs:
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ matrix.image }}
-          # The extractor's own title and description; the defaults are the repository's.
+          # Added to metadata-action's defaults: the extractor's own title and description,
+          # and both images' documentation link.
           labels: ${{ matrix.labels }}
           # docker-tag adds `:latest` when this is the highest final version;
           # metadata-action would add it to any final version.
@@ -588,7 +602,7 @@ jobs:
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Log in to ghcr.io
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -641,11 +655,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Log in to ghcr.io
         id: login
         if: ${{ needs.docker-tag.result == 'success' }}
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -823,7 +837,7 @@ jobs:
       # An existing release for the tag is updated and its other files replaced,
       # so a re-run or the later dispatch leaves the published bytes attached.
       - name: Create or update the release with notes and files
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -842,12 +856,69 @@ jobs:
             release/stack/*
             release/agent/agent-setup.txt
 
+  # Signs the files the release serves, downloaded as users download them, when
+  # they are the bytes this run built (sign_release_files.sh). Its own job, so
+  # no step that can write to the release can also request the OIDC token;
+  # attach-signatures uploads the Sigstore bundles.
+  sign-files:
+    name: Sign the release files
+    if: ${{ !cancelled() && needs.github-release.result == 'success' }}
+    needs: [version, github-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write # each file's keyless signature names this workflow and tag
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-files
+          path: built
+      - name: Sign and verify each file
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          GH_TOKEN: ${{ github.token }} # the release listing only; files download anonymously
+        run: |
+          bash scripts/release/download_release_files.sh "$VERSION" files
+          bash scripts/release/sign_release_files.sh "$VERSION" files built signed
+          cp signed/*.sigstore.json files/
+          bash scripts/release/verify_release_files.sh "$VERSION" files
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signatures
+          path: signed/*.sigstore.json # only the new ones: a kept bundle is left in place
+          if-no-files-found: error
+          overwrite: true # a re-run of this job replaces the earlier attempt's
+          retention-days: 30 # as long as the run can be re-run
+
+  attach-signatures:
+    name: Attach the Sigstore bundles to the release
+    if: ${{ !cancelled() && needs.sign-files.result == 'success' }}
+    needs: sign-files
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-signatures
+          path: sigstore
+      - name: Upload the Sigstore bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" sigstore/*.sigstore.json --clobber --repo "$GITHUB_REPOSITORY"
+
   # The published release as a user meets it, signed in to nothing. The SDKs are
   # checked by a dispatch of release-check after the registry dispatch.
   release-check:
     name: Published release from outside
-    if: ${{ !cancelled() && needs.github-release.result == 'success' && github.event_name == 'push' }}
-    needs: [version, github-release]
+    if: ${{ !cancelled() && needs.attach-signatures.result == 'success' && github.event_name == 'push' }}
+    needs: [version, attach-signatures]
     uses: ./.github/workflows/release-check.yml
     with:
       version: ${{ needs.version.outputs.version }}
@@ -887,15 +958,17 @@ jobs:
       name: npm
       url: https://www.npmjs.com/package/@clickhouse/loom
     permissions:
-      id-token: write # npm provenance; trusted publishing once registered on npmjs.com
+      id-token: write # npm trusted publishing (OIDC) and provenance
     env:
       VERSION: ${{ needs.version.outputs.version }}
       PRERELEASE: ${{ needs.version.outputs.prerelease }}
       LATEST: ${{ needs.github-release.outputs.latest }}
     steps:
+      # Trusted publishing needs npm 11.5.1 or later, which current Node 24
+      # ships; the tarball itself is built on NODE_VERSION.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: "24"
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -906,8 +979,6 @@ jobs:
       # keeps the highest final.
       - name: Publish the verified tarball (provenance)
         id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }} # fallback while trusted publishing is not registered
         run: |
           if npm view "@clickhouse/loom@$VERSION" version >/dev/null 2>&1; then
             echo "@clickhouse/loom@$VERSION is already published"

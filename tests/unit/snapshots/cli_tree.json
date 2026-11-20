@@ -2188,7 +2188,7 @@
            "nargs": null,
            "type": null,
            "required": false,
-           "help": "Record the command's outcome as this compiler tier's health on the entry: exit 0 clears a failure, except that for go the modules its output names as not built fail it; exit 3 (the window's base is gone) records nothing; any other exit records a failure with the end of the output, a timeout when a SIGTERM to entry-lock (the caller's time limit) stopped it. The command's output, stderr included, is relayed to stdout.",
+           "help": "Record the command's outcome as this compiler tier's health on the entry: exit 0 clears the tier's record (a failure or an unavailable note), except that for go the modules its output names as not built fail it (or, when only a dependency the host cannot fetch stopped them, are noted as unavailable, not failed); exit 3 (the window's base is gone) records nothing; any other exit records a failure with the end of the output, a timeout when a SIGTERM to entry-lock (the caller's time limit) stopped it. The command's output, stderr included, is relayed to stdout.",
            "metavar": null
           },
           {
@@ -3780,7 +3780,7 @@
            "nargs": null,
            "type": null,
            "required": true,
-           "help": "The repository's trunk code namespace",
+           "help": "The namespace the sources live in",
            "metavar": null
           },
           {
@@ -3812,6 +3812,623 @@
            "required": false,
            "help": "Record a full sync request for each source, as knowledge.source.sync_now full=true does, so every file is listed and waiting files are retried; a run while that request is unfinished goes on with it",
            "metavar": null
+          }
+         ]
+        },
+        "source": {
+         "prog": "loom knowledge source",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "source_command"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "source_command",
+           "action": "_SubParsersAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "A...",
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null,
+           "subcommands": {
+            "list": {
+             "prog": "loom knowledge source list",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_list"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              }
+             ]
+            },
+            "add": {
+             "prog": "loom knowledge source add",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_add"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token",
+                "name",
+                "kind",
+                "link",
+                "item_json",
+                "include",
+                "credential_file",
+                "dry_run"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--name"
+               ],
+               "dest": "name",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--kind"
+               ],
+               "dest": "kind",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "gdrive, notion or linear",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--link"
+               ],
+               "dest": "link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to read; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--item-json"
+               ],
+               "dest": "item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--include"
+               ],
+               "dest": "include",
+               "action": "_AppendAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--credential-file"
+               ],
+               "dest": "credential_file",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The file holding the source's read-only credential; - reads it from stdin",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--dry-run"
+               ],
+               "dest": "dry_run",
+               "action": "_StoreTrueAction",
+               "default": false,
+               "const": true,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "Probe and store nothing",
+               "metavar": null
+              }
+             ]
+            },
+            "update": {
+             "prog": "loom knowledge source update",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.knowledge_source:_cmd_update"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "namespace",
+                "org",
+                "server_url",
+                "token",
+                "name",
+                "link",
+                "item_json",
+                "include",
+                "remove_link",
+                "remove_item_json"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--namespace"
+               ],
+               "dest": "namespace",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The namespace the source's documents live in",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--org"
+               ],
+               "dest": "org",
+               "action": "_StoreAction",
+               "default": "",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "Default: the token's org",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--server-url"
+               ],
+               "dest": "server_url",
+               "action": "_StoreAction",
+               "default": "http://localhost:7777",
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--token"
+               ],
+               "dest": "token",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "JWT (default: $LOOM_API_KEY, ~/.loom/token)",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--name"
+               ],
+               "dest": "name",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": null,
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--link"
+               ],
+               "dest": "link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to read; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--item-json"
+               ],
+               "dest": "item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to read as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--include"
+               ],
+               "dest": "include",
+               "action": "_AppendAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "gdrive: a file kind to read (docs, slides, pdf, pptx, docx); repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--remove-link"
+               ],
+               "dest": "remove_link",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "A link to remove; repeatable",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--remove-item-json"
+               ],
+               "dest": "remove_item_json",
+               "action": "_AppendAction",
+               "default": [],
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": false,
+               "help": "An item to remove as JSON, such as {\"type\": \"folder\", \"id\": \"...\"}; repeatable",
+               "metavar": null
+              }
+             ]
+            }
+           },
+           "aliases_of": {
+            "list": "loom knowledge source list",
+            "add": "loom knowledge source add",
+            "update": "loom knowledge source update"
+           },
+           "choices_help": [
+            {
+             "dest": "list",
+             "help": "List the namespace's sources, items and sync state.",
+             "metavar": "list"
+            },
+            {
+             "dest": "add",
+             "help": "Register a source from links or items, probed with the credential before anything is stored (knowledge.source.add).",
+             "metavar": "add"
+            },
+            {
+             "dest": "update",
+             "help": "Add and remove a source's items or change its file kinds, the added items probed with the stored credential (knowledge.source.update).",
+             "metavar": "update"
+            }
+           ]
           }
          ]
         },
@@ -3911,6 +4528,7 @@
        },
        "aliases_of": {
         "sync": "loom knowledge sync",
+        "source": "loom knowledge source",
         "migrate-originals": "loom knowledge migrate-originals"
        },
        "choices_help": [
@@ -3918,6 +4536,11 @@
          "dest": "sync",
          "help": "Run one sync pass over a repository namespace's document sources now: list each source's changed files (every file with --full), write the changed ones as documents and retire those a full listing no longer has, then mine each document written since it was last mined for decisions (model calls, within LOOM_KNOWLEDGE_SOURCE_SYNC_CAP_SHARE of the namespace's cost cap), bounded like a worker pass by LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS; run it again to go on. Leaves a manual knowledge_source_sync row in loom.worker_status. Exits 1 when a source's turn or a document's extraction failed.",
          "metavar": "sync"
+        },
+        {
+         "dest": "source",
+         "help": "A namespace's document sources, over a running server.",
+         "metavar": "source"
         },
         {
          "dest": "migrate-originals",
@@ -4927,11 +5550,21 @@
        "dests": [
         "help",
         "print_sql",
-        "print_analyst_sql"
+        "print_analyst_sql",
+        "apply_analyst_sql"
        ]
       }
      ],
-     "mutually_exclusive": [],
+     "mutually_exclusive": [
+      {
+       "required": false,
+       "dests": [
+        "print_sql",
+        "print_analyst_sql",
+        "apply_analyst_sql"
+       ]
+      }
+     ],
      "arguments": [
       {
        "option_strings": [
@@ -4976,7 +5609,22 @@
        "nargs": 0,
        "type": null,
        "required": false,
-       "help": "Print the SQL that writes insights.query's analyst user, for an admin where LOOM_CH_USER lacks access management. It holds the user's password and the scope key stored sealed in loom.analysis_secrets (drawn when there is none; where LOOM_CH_USER cannot list users, a missing row is drawn again, which moves the key): run it in full with `clickhouse-client --multiquery --queries-file <file>`, do not store it.",
+       "help": "Refuse unchecked analyst SQL files and name the guarded apply command.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--apply-analyst-sql"
+       ],
+       "dest": "apply_analyst_sql",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Apply only the analyst user with configured access-management credentials, after live policy, writer and private-event checks. Does not prepare the reader.",
        "metavar": null
       }
      ]
@@ -5059,8 +5707,7 @@
            "description": null,
            "dests": [
             "help",
-            "participant",
-            "yes"
+            "participant"
            ]
           }
          ],
@@ -5096,21 +5743,6 @@
            "required": true,
            "help": "The participant id to retire",
            "metavar": null
-          },
-          {
-           "option_strings": [
-            "--yes"
-           ],
-           "dest": "yes",
-           "action": "_StoreTrueAction",
-           "default": false,
-           "const": true,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "Its process is confirmed stopped",
-           "metavar": null
           }
          ]
         }
@@ -5121,7 +5753,7 @@
        "choices_help": [
         {
          "dest": "retire",
-         "help": "Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health).",
+         "help": "Verify exact physical death on this trusted host and retire its participant after all queries settle (the id is participant_id in /v1/health).",
          "metavar": "retire"
         }
        ]
@@ -6442,6 +7074,327 @@
        "required": false,
        "help": "The AWS account id that must own the bucket; a write to any other is refused",
        "metavar": null
+      }
+     ]
+    },
+    "sql-access": {
+     "prog": "loom sql-access",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "sql_access_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "sql_access_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "grant": {
+         "prog": "loom sql-access grant",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_grant"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "user",
+            "org",
+            "namespaces",
+            "all",
+            "rotate"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": true,
+           "dests": [
+            "org",
+            "all"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--user"
+           ],
+           "dest": "user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The ClickHouse user name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The org the user reads",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--namespaces"
+           ],
+           "dest": "namespaces",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Comma-separated namespaces of the org, or * for every one of them",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--all"
+           ],
+           "dest": "all",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Every org and namespace: for a deployment whose data belongs to one org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--rotate"
+           ],
+           "dest": "rotate",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Give an existing user a new password, printed once",
+           "metavar": null
+          }
+         ]
+        },
+        "revoke": {
+         "prog": "loom sql-access revoke",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_revoke"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "user"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--user"
+           ],
+           "dest": "user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The ClickHouse user name",
+           "metavar": null
+          }
+         ]
+        },
+        "list": {
+         "prog": "loom sql-access list",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.sql_access:_cmd_list"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "grant": "loom sql-access grant",
+        "revoke": "loom sql-access revoke",
+        "list": "loom sql-access list"
+       },
+       "choices_help": [
+        {
+         "dest": "grant",
+         "help": "Make the user read exactly this scope, creating it (and printing its password once) when there is none.",
+         "metavar": "grant"
+        },
+        {
+         "dest": "revoke",
+         "help": "Take the user's scope away, then drop the user.",
+         "metavar": "revoke"
+        },
+        {
+         "dest": "list",
+         "help": "Every granted scope row, by SQL user.",
+         "metavar": "list"
+        }
+       ]
       }
      ]
     },
@@ -10269,6 +11222,9 @@
         "json",
         "client",
         "server_url",
+        "pg_allow_role",
+        "stray_orgs",
+        "stray_orgs_budget",
         "token"
        ]
       }
@@ -10334,6 +11290,51 @@
        "type": null,
        "required": false,
        "help": "Override the client's server URL.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--pg-allow-role"
+       ],
+       "dest": "pg_allow_role",
+       "action": "_AppendAction",
+       "default": [],
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "On a cell: a Postgres role that may make an org held (the servers' role).",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--stray-orgs"
+       ],
+       "dest": "stray_orgs",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "On a cell: also read the orgs its stores hold without a tenancy row.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--stray-orgs-budget"
+       ],
+       "dest": "stray_orgs_budget",
+       "action": "_StoreAction",
+       "default": 60.0,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "builtins:float",
+       "required": false,
+       "help": "Seconds --stray-orgs may read for, smallest tables first (default 60).",
        "metavar": null
       },
       {
@@ -10965,6 +11966,1691 @@
       }
      ]
     },
+    "reconcile": {
+     "prog": "loom reconcile",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {
+      "dry_run": true,
+      "apply_gated": true,
+      "func": "server.cli.restore:_cmd_reconcile"
+     },
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help",
+        "restored",
+        "point",
+        "allow_live",
+        "dry_run",
+        "dry_run"
+       ]
+      }
+     ],
+     "mutually_exclusive": [
+      {
+       "required": false,
+       "dests": [
+        "dry_run",
+        "dry_run"
+       ]
+      }
+     ],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--restored"
+       ],
+       "dest": "restored",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": [
+        "clickhouse",
+        "postgres",
+        "both"
+       ],
+       "nargs": null,
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--point"
+       ],
+       "dest": "point",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": true,
+       "help": "the restored backup's time (ISO 8601, UTC when no offset), from the backup's own metadata",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--allow-live"
+       ],
+       "dest": "allow_live",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "run although a worker reported a pass within two workers-lease terms (LOOM_SUPERVISOR_LEASE_TTL_S, a minute by default)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--apply"
+       ],
+       "dest": "dry_run",
+       "action": "_StoreFalseAction",
+       "default": true,
+       "const": false,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "run the erasures and redactions again and publish (default: dry run)",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--dry-run"
+       ],
+       "dest": "dry_run",
+       "action": "_StoreTrueAction",
+       "default": true,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "report what --apply would write, write nothing (the default)",
+       "metavar": null
+      }
+     ]
+    },
+    "router": {
+     "prog": "loom router",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "router_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "router_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "serve": {
+         "prog": "loom router serve",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.router:_cmd_serve"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "host",
+            "port",
+            "log_level"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": "127.0.0.1",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Address to listen on",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--port"
+           ],
+           "dest": "port",
+           "action": "_StoreAction",
+           "default": 7780,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Port to listen on",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--log-level"
+           ],
+           "dest": "log_level",
+           "action": "_StoreAction",
+           "default": "info",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "uvicorn's log level",
+           "metavar": null
+          }
+         ]
+        },
+        "migrate": {
+         "prog": "loom router migrate",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.router:_cmd_migrate"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "serve": "loom router serve",
+        "migrate": "loom router migrate"
+       },
+       "choices_help": [
+        {
+         "dest": "serve",
+         "help": "Serve the placement, lookup and operator APIs; route other requests to cells.",
+         "metavar": "serve"
+        },
+        {
+         "dest": "migrate",
+         "help": "Apply the directory's pending migrations.",
+         "metavar": "migrate"
+        }
+       ]
+      }
+     ]
+    },
+    "cell": {
+     "prog": "loom cell",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "cell_cmd"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "cell_cmd",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "scim-token": {
+         "prog": "loom cell scim-token",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "action"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "action",
+           "action": "_SubParsersAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "A...",
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null,
+           "subcommands": {
+            "new": {
+             "prog": "loom cell scim-token new",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.cell:_cmd_scim_token"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "cell"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--cell"
+               ],
+               "dest": "cell",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The cell's exact LOOM_CELL name",
+               "metavar": null
+              }
+             ]
+            }
+           },
+           "aliases_of": {
+            "new": "loom cell scim-token new"
+           },
+           "choices_help": [
+            {
+             "dest": "new",
+             "help": "Print a random token for the named cell.",
+             "metavar": "new"
+            }
+           ]
+          }
+         ]
+        },
+        "credential": {
+         "prog": "loom cell credential",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_credential"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "action"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "next",
+            "finish",
+            "revert",
+            "operator",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "action",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": [
+            "new"
+           ],
+           "nargs": "?",
+           "type": null,
+           "required": false,
+           "help": "new: make one offline",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The cell whose credential to rotate",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--next"
+           ],
+           "dest": "next",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Record a new credential's sha256 as next",
+           "metavar": "SHA256"
+          },
+          {
+           "option_strings": [
+            "--finish"
+           ],
+           "dest": "finish",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Make the next credential current",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revert"
+           ],
+           "dest": "revert",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Drop the pending next credential",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--operator"
+           ],
+           "dest": "operator",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "With new: make the router's operator credential",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "limit": {
+         "prog": "loom cell limit",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_limit"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "closed",
+            "open",
+            "placements_max",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "closed",
+            "open"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The cell to limit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--closed"
+           ],
+           "dest": "closed",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Refuse its new orgs",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--open"
+           ],
+           "dest": "open",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Take new orgs again once serving",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--placements-max"
+           ],
+           "dest": "placements_max",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Its quota of orgs (none: no quota)",
+           "metavar": "N|none"
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "which": {
+         "prog": "loom cell which",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_which"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The org",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "remove": {
+         "prog": "loom cell remove",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell:_cmd_remove"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The cell to remove (its LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "place": {
+         "prog": "loom cell place",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_place:cmd_place"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "org",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The org to place",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "prepare": {
+         "prog": "loom cell prepare",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_prepare:cmd_prepare"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "host",
+            "credential_sha256",
+            "probe_url",
+            "wait",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The host the cell serves its orgs at",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--credential-sha256"
+           ],
+           "dest": "credential_sha256",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The sha256 of the cell's router credential (`loom cell credential new`)",
+           "metavar": "SHA256"
+          },
+          {
+           "option_strings": [
+            "--probe-url"
+           ],
+           "dest": "probe_url",
+           "action": "_StoreAction",
+           "default": "",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A later cell's probe listener address (not the first's)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds to retry a busy or unreachable probe listener",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "attach": {
+         "prog": "loom cell attach",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_attach:cmd_attach"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "wait",
+            "scan_budget",
+            "dry_run",
+            "ch_allow_user",
+            "ch_allow_user_directory",
+            "ch_allow_object",
+            "ch_allow_replica",
+            "pg_allow_role",
+            "revoke_unprovisioned",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds of wall time the waits share; 0 runs one try of each, with no retry",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--scan-budget"
+           ],
+           "dest": "scan_budget",
+           "action": "_StoreAction",
+           "default": 7200,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds one full org scan may take",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Run the refusals and the scan and print what would be placed; keep cell state, tenancy triggers and placements unchanged. Command participation is still recorded (the router's own begin refusals do not run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-user"
+           ],
+           "dest": "ch_allow_user",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse user that may write the configured databases",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-user-directory"
+           ],
+           "dest": "ch_allow_user_directory",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse user directory the check cannot read",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-object"
+           ],
+           "dest": "ch_allow_object",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse object (db.name) that writes the databases",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-replica"
+           ],
+           "dest": "ch_allow_replica",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A replica outside the cluster (db.table:replica)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--pg-allow-role"
+           ],
+           "dest": "pg_allow_role",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A Postgres role that may make an org held (the servers' role)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "update": {
+         "prog": "loom cell update",
+         "usage": null,
+         "description": null,
+         "epilog": "Finish/revert require foundation-capable runtimes and completed positive legacy-process turnover. A census cannot verify that external inventory. Address refresh requires every router updated first; retain old endpoints until every router refreshes or restarts after the directory change.",
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_update:cmd_update"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "config",
+            "finish",
+            "revert",
+            "probe_url",
+            "revoke_unprovisioned",
+            "router",
+            "wait"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "config",
+            "finish",
+            "revert",
+            "probe_url"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--config"
+           ],
+           "dest": "config",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Nonsecret version: 1 settings YAML overlaid on this CLI's effective settings; does not install the file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--finish"
+           ],
+           "dest": "finish",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Promote next after durable local narrowing and permanent participant turnover",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revert"
+           ],
+           "dest": "revert",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Retain current after durable local narrowing and permanent participant turnover; keep placements",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--probe-url"
+           ],
+           "dest": "probe_url",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Later cell's verified probe listener URL; no flag refreshes the first cell's router-configured addresses",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-update tokens of subjects that cannot satisfy the target SCIM policy",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "Seconds to wait for probe readiness or participant turnover (0 to 86400, default: 600)",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "scim-token": "loom cell scim-token",
+        "credential": "loom cell credential",
+        "limit": "loom cell limit",
+        "which": "loom cell which",
+        "remove": "loom cell remove",
+        "place": "loom cell place",
+        "prepare": "loom cell prepare",
+        "attach": "loom cell attach",
+        "update": "loom cell update"
+       },
+       "choices_help": [
+        {
+         "dest": "scim-token",
+         "help": "Generate a cell's SCIM token offline.",
+         "metavar": "scim-token"
+        },
+        {
+         "dest": "credential",
+         "help": "Make a router credential, or rotate a cell's.",
+         "metavar": "credential"
+        },
+        {
+         "dest": "limit",
+         "help": "Close, reopen or bound a cell to new orgs.",
+         "metavar": "limit"
+        },
+        {
+         "dest": "which",
+         "help": "Print the lookup's cell and host for an org (the first cell if not placed).",
+         "metavar": "which"
+        },
+        {
+         "dest": "remove",
+         "help": "Remove the directory row of a cell attaching with no placement.",
+         "metavar": "remove"
+        },
+        {
+         "dest": "place",
+         "help": "Place an org in this cell and record its tenancy.",
+         "metavar": "place"
+        },
+        {
+         "dest": "prepare",
+         "help": "Register this cell in the router's directory and write its rows.",
+         "metavar": "prepare"
+        },
+        {
+         "dest": "attach",
+         "help": "Attach the prepared first cell: place its orgs, serve.",
+         "metavar": "attach"
+        },
+        {
+         "dest": "update",
+         "help": "Reserve configuration, finish or revert its rollout, or refresh verified addresses.",
+         "metavar": "update"
+        }
+       ]
+      }
+     ]
+    },
     "tracker-probe": {
      "prog": "loom tracker-probe",
      "usage": null,
@@ -11360,6 +14046,527 @@
        "required": false,
        "help": "report what --apply would write, write nothing (the default)",
        "metavar": null
+      }
+     ]
+    },
+    "tracker-feed": {
+     "prog": "loom tracker-feed",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": true,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": [
+        "feed_command"
+       ]
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": [
+        "help"
+       ]
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": [
+      {
+       "option_strings": [
+        "-h",
+        "--help"
+       ],
+       "dest": "help",
+       "action": "_HelpAction",
+       "default": "==SUPPRESS==",
+       "const": null,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "show this help message and exit",
+       "metavar": null
+      },
+      {
+       "option_strings": [],
+       "dest": "feed_command",
+       "action": "_SubParsersAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": "A...",
+       "type": null,
+       "required": true,
+       "help": null,
+       "metavar": null,
+       "subcommands": {
+        "init": {
+         "prog": "loom tracker-feed init",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "host",
+            "port",
+            "database",
+            "insecure"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--host"
+           ],
+           "dest": "host",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--port"
+           ],
+           "dest": "port",
+           "action": "_StoreAction",
+           "default": 8443,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--database"
+           ],
+           "dest": "database",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--insecure"
+           ],
+           "dest": "insecure",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Use HTTP for a private development record",
+           "metavar": null
+          }
+         ]
+        },
+        "configure": {
+         "prog": "loom tracker-feed configure",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "source",
+            "repo",
+            "token_env",
+            "read_only_token",
+            "max_pages"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--repo"
+           ],
+           "dest": "repo",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "A repository in the source's allowlist",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--token-env"
+           ],
+           "dest": "token_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_GITHUB_TOKEN",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--read-only-token"
+           ],
+           "dest": "read_only_token",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Attest the token has only read permissions",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--max-pages"
+           ],
+           "dest": "max_pages",
+           "action": "_StoreAction",
+           "default": 5,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Pages per stream, from 2 to 100",
+           "metavar": null
+          }
+         ]
+        },
+        "sync": {
+         "prog": "loom tracker-feed sync",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.tracker_feed:_command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "org",
+            "writer_user",
+            "writer_password_env",
+            "source",
+            "repo"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-user"
+           ],
+           "dest": "writer_user",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--writer-password-env"
+           ],
+           "dest": "writer_password_env",
+           "action": "_StoreAction",
+           "default": "LOOM_TRACKER_FEED_WRITER_PASSWORD",
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--source"
+           ],
+           "dest": "source",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--repo"
+           ],
+           "dest": "repo",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "A repository in the source's allowlist",
+           "metavar": null
+          }
+         ]
+        }
+       },
+       "aliases_of": {
+        "init": "loom tracker-feed init",
+        "configure": "loom tracker-feed configure",
+        "sync": "loom tracker-feed sync"
+       },
+       "choices_help": []
       }
      ]
     },
@@ -12324,7 +15531,8 @@
         "vscode",
         "cline",
         "windsurf",
-        "zed"
+        "zed",
+        "gemini"
        ],
        "nargs": "+",
        "type": null,
@@ -12389,7 +15597,7 @@
        "nargs": null,
        "type": "server.cli.install:_toolset_arg",
        "required": false,
-       "help": "MCP toolset the client lists, as `?toolset=` on the URL: `coding` for a coding agent, empty for the server default (core; claude-code and codex default to `coding`).",
+       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, gemini, else the server default (LOOM_MCP_TOOLSET).",
        "metavar": null
       },
       {
@@ -13407,6 +16615,30 @@
      ],
      "mutually_exclusive": [],
      "arguments": []
+    },
+    "connect": {
+     "prog": "loom connect",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -13426,6 +16658,7 @@
     "signing-key": "loom signing-key",
     "provider-lock": "loom provider-lock",
     "export-analytics": "loom export-analytics",
+    "sql-access": "loom sql-access",
     "reembed": "loom reembed",
     "reextract": "loom reextract",
     "deploy-delta": "loom deploy-delta",
@@ -13451,10 +16684,14 @@
     "drops": "loom drops",
     "namespaces-gc": "loom namespaces-gc",
     "erasure-re-verify": "loom erasure-re-verify",
+    "reconcile": "loom reconcile",
+    "router": "loom router",
+    "cell": "loom cell",
     "tracker-probe": "loom tracker-probe",
     "tracker-contract-check": "loom tracker-contract-check",
     "tracker-dupcheck-fit": "loom tracker-dupcheck-fit",
     "tracker-embed-reset": "loom tracker-embed-reset",
+    "tracker-feed": "loom tracker-feed",
     "namespaces-adopt": "loom namespaces-adopt",
     "sensitivity-sweep": "loom sensitivity-sweep",
     "integrity-repair": "loom integrity-repair",
@@ -13472,7 +16709,8 @@
     "logout": "loom logout",
     "whoami": "loom whoami",
     "call": "loom call",
-    "token": "loom token"
+    "token": "loom token",
+    "connect": "loom connect"
    },
    "choices_help": [
     {
@@ -13556,6 +16794,11 @@
      "metavar": "export-analytics"
     },
     {
+     "dest": "sql-access",
+     "help": "Make, rescope or drop a ClickHouse user that reads a tenant's memory, conversations and request ledger through the sql_v1_* views.",
+     "metavar": "sql-access"
+    },
+    {
      "dest": "reembed",
      "help": "Re-embed vectors whose embedding_model != the configured embedder (run after changing LOOM_EMBEDDING_MODEL — Loom does not auto-re-embed). Covers memory, entity, and conversation vectors. Coded vector tables keep their width: change a model of another width in Settings → Models & keys, which rebuilds them.",
      "metavar": "reembed"
@@ -13637,7 +16880,7 @@
     },
     {
      "dest": "mint-token",
-     "help": "Mint a JWT locally (requires LOOM_JWT_SECRET).",
+     "help": "Mint a JWT locally (requires LOOM_JWT_SECRET and verified stores).",
      "metavar": "mint-token"
     },
     {
@@ -13681,6 +16924,21 @@
      "metavar": "erasure-re-verify"
     },
     {
+     "dest": "reconcile",
+     "help": "After a restore of ClickHouse or Postgres, run again in the restored store the erasures and redactions the other records past the restore point, and (after a ClickHouse restore) publish again every revision committed after it. Stop every server and worker first. Dry run by default.",
+     "metavar": "reconcile"
+    },
+    {
+     "dest": "router",
+     "help": "The router in front of a deployment's cells.",
+     "metavar": "router"
+    },
+    {
+     "dest": "cell",
+     "help": "Operate a deployment's cells through the router's directory.",
+     "metavar": "cell"
+    },
+    {
      "dest": "tracker-probe",
      "help": "Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces.",
      "metavar": "tracker-probe"
@@ -13699,6 +16957,11 @@
      "dest": "tracker-embed-reset",
      "help": "Clear the tracker_embed pass cursors of one tracker namespace so the next pass re-walks the window and re-embeds every item whose text recipe changed. Dry run by default (prints the cursors); --apply clears them.",
      "metavar": "tracker-embed-reset"
+    },
+    {
+     "dest": "tracker-feed",
+     "help": "Maintain a team's GitHub tracker record",
+     "metavar": "tracker-feed"
     },
     {
      "dest": "namespaces-adopt",
@@ -13789,6 +17052,11 @@
      "dest": "token",
      "help": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
      "metavar": "token"
+    },
+    {
+     "dest": "connect",
+     "help": "Print the dashboard link to connect your own Google, Notion or Linear account.",
+     "metavar": "connect"
     }
    ]
   }

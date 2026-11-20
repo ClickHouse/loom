@@ -65,6 +65,15 @@ def test_pinned_rows_never_retire_and_the_last_new_row_for_a_key_is_the_newest()
     assert same_key_victims(new, []) == []
 
 
+def test_a_private_write_of_a_definition_key_keeps_its_namespace_wide_row() -> None:
+    # Only a write of the namespace-wide row revises an admin's definition.
+    new = [{"memory_id": "n1", "memory_key": "definition/arr"}]
+    shared = {**_live("d1", "definition/arr", "-"), "agent": "-", "memory_type": "definition"}
+    private = {**_live("p1", "definition/arr", "s1"), "memory_type": "definition"}
+    live = [shared, private, _live("n1", "definition/arr", "s2")]
+    assert [v["memory_id"] for v in same_key_victims(new, live)] == ["p1"]
+
+
 def test_variant_suffixes_fold_back_onto_the_attribute_key() -> None:
     assert (
         strip_variant_suffix("andy_warhol_death_location_alternate") == "andy_warhol_death_location"
@@ -1184,6 +1193,7 @@ def _head(session: str, **over: object) -> dict[str, object]:
         "user_id": "u",
         "session_id": session,
         "memory_key": "user/pref/editor",
+        "memory_type": "preference",
         "value": "vim",
         "pinned": False,
         "status": "active",

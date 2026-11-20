@@ -122,13 +122,15 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
         if briefing:
             text, named = briefing
             tokens = estimate_tokens(text)
-            return CodeContextPackOutput(
+            out = CodeContextPackOutput(
                 context=text,
                 tokens_used=tokens,
                 source="task",
                 merge_commit_sha="",
                 trace_run_id=_trace(route="pack_task", ids=named[:50], tokens=tokens),
             )
+            out._paths = named
+            return out
 
     # Orientation mode: repo map + top module cards.
     with code_span("context_pack.orientation"):
@@ -185,8 +187,12 @@ async def _with_repo_docs(org: str, ns: str, text: str, token_budget: int) -> st
     room = min(DOCS_SECTION_MAX_TOKENS, int(token_budget) - estimate_tokens(text))
     if room < 40:
         return text
-    docs_ns, docs = await list_repo_docs(org, ns)
-    section = docs_section(docs_ns, docs, room)
+    from server.knowledge.app import source_publication
+
+    listing = await list_repo_docs(org, ns)
+    section = docs_section(listing.namespace, listing.docs, room)
+    if section:
+        source_publication.retain(listing.proof)
     return f"{text}\n\n{section}" if section and text else (section or text)
 
 

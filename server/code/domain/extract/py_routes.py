@@ -39,7 +39,8 @@ import re
 from typing import Any
 
 from server.code.domain.extract.lang_sql_model import Facet
-from server.code.domain.extract.treesitter import ParsedFile, line_of
+from server.code.domain.extract.text_lines import line_at, newline_offsets
+from server.code.domain.extract.treesitter import ParsedFile
 
 FACET_ROUTE = "http_route"
 FACET_COMMAND = "command"
@@ -48,6 +49,9 @@ FACET_MODIFIER = "modifier"
 
 _MAX_FACETS_PER_FILE = 400
 _MAX_NAME = 200
+# not a setting: a router prefix, and a route path joined once per method, is cut to this
+# first, so a cut path still fills a cut name and costs a constant per route or method
+_MAX_PATH = 2 * _MAX_NAME
 _HTTP = "get|post|put|patch|delete|head|options"
 _STR = r"""r?['"]([^'"]*)['"]"""
 
@@ -56,7 +60,7 @@ _DEC_ROUTE_RE = re.compile(
     re.S,
 )
 _DEC_COMMAND_RE = re.compile(r"^@\s*([\w.]+)\.(command|group)\b\s*(?:\((.*)\))?\s*$", re.S)
-_METHODS_RE = re.compile(r"methods\s*=\s*[\[(]([^\])]*)[\])]")
+_METHODS_RE = re.compile(r"methods\s*=\s*[\[(]([^\[\]()]*)[\])]")  # stops at the next opener
 _NAME_KW_RE = re.compile(r"\bname\s*=\s*" + _STR)
 _FIRST_STR_RE = re.compile(r"^\s*" + _STR)
 _ANY_STR_RE = re.compile(r"""['"]([^'"]+)['"]""")
@@ -69,17 +73,21 @@ _PREFIX_DECL_RE = re.compile(
     re.M,
 )
 _PREFIX_KW_RE = re.compile(r"\b(?:url_)?prefix\s*=\s*" + _STR)
+# A call's arguments stop at the next same call: an unclosed one is not searched on to
+# the end of the file from each.
 _INCLUDE_ROUTER_RE = re.compile(
-    r"\.include_router\(\s*([\w.]+)\s*,[^)]*?\bprefix\s*=\s*" + _STR,
+    r"\.include_router\(\s*([\w.]+)\s*,(?:(?!\.include_router\()[^)])*?\bprefix\s*=\s*" + _STR,
 )
-_ADD_URL_RULE_RE = re.compile(r"\.add_url_rule\(\s*" + _STR + r"([^)]*)\)")
+_ADD_URL_RULE_RE = re.compile(r"\.add_url_rule\(\s*" + _STR + r"((?:(?!\.add_url_rule\()[^)])*)\)")
 _AIOHTTP_RES = (
     re.compile(r"\bweb\.(" + _HTTP + r"|view)\(\s*" + _STR),
     re.compile(r"\.add_(" + _HTTP + r"|view)\(\s*" + _STR),
 )
 _AIOHTTP_ROUTE_RE = re.compile(r"\.add_route\(\s*['\"](\w+|\*)['\"]\s*,\s*" + _STR)
 _DJANGO_RE = re.compile(r"\b(?:path|re_path|url)\(\s*" + _STR + r"\s*,(?!\s*include\b)")
-_STARLETTE_RE = re.compile(r"\b(Route|WebSocketRoute)\(\s*" + _STR + r"([^)]*)\)")
+_STARLETTE_RE = re.compile(
+    r"\b(Route|WebSocketRoute)\(\s*" + _STR + r"((?:(?!\b(?:WebSocket)?Route\()[^)])*)\)"
+)
 _TORNADO_RE = re.compile(r"\(\s*r?['\"](/[^'\"]*)['\"]\s*,\s*[\w.]+\s*[,)]")
 _ADD_PARSER_RE = re.compile(r"\.add_parser\(\s*" + _STR)
 
@@ -115,11 +123,17 @@ def _prefixes(text: str) -> dict[str, str]:
     out: dict[str, str] = {}
     for m in _PREFIX_DECL_RE.finditer(text):
         kw = _PREFIX_KW_RE.search(m.group(2))
-        out[m.group(1).rsplit(".", 1)[-1]] = kw.group(1) if kw else ""
+        out[m.group(1).rsplit(".", 1)[-1]] = _cut_prefix(kw.group(1) if kw else "")
     for m in _INCLUDE_ROUTER_RE.finditer(text):
         name = m.group(1).rsplit(".", 1)[-1]
-        out[name] = _url_join(m.group(2), out.get(name, ""))
+        out[name] = _cut_prefix(_url_join(m.group(2), out.get(name, "")))
     return out
+
+
+def _cut_prefix(prefix: str) -> str:
+    """A router's prefix is joined into every route on it, and joined again per
+    `include_router` call: cut, since a route name keeps only `_MAX_NAME` characters."""
+    return prefix.lstrip("/")[:_MAX_PATH]
 
 
 class _Collector:
@@ -183,6 +197,7 @@ def _one_decorator(
         if verb in ("websocket", "ws"):
             col.add(FACET_ROUTE, f"WS {full}", line)
         elif verb in ("route", "api_route"):
+            full = full[:_MAX_PATH]
             for meth in _methods(rest, "GET"):
                 col.add(FACET_ROUTE, f"{meth} {full}", line)
         else:
@@ -199,32 +214,35 @@ def _one_decorator(
 
 def _registrations(text: str, path: str, col: _Collector) -> None:
     """Routes and commands named in calls rather than decorators."""
+    newlines = newline_offsets(text)
     for m in _ADD_URL_RULE_RE.finditer(text):
+        route = _url_join("", m.group(1))[:_MAX_PATH]
         for meth in _methods(m.group(2), "ANY"):
-            col.add(FACET_ROUTE, f"{meth} {_url_join('', m.group(1))}", line_of(text, m.start()))
+            col.add(FACET_ROUTE, f"{meth} {route}", line_at(newlines, m.start()))
     for rx in _AIOHTTP_RES:
         for m in rx.finditer(text):
             verb = "ANY" if m.group(1) == "view" else m.group(1).upper()
-            col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_of(text, m.start()))
+            col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_at(newlines, m.start()))
     for m in _AIOHTTP_ROUTE_RE.finditer(text):
         verb = "ANY" if m.group(1) == "*" else m.group(1).upper()
-        col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_of(text, m.start()))
+        col.add(FACET_ROUTE, f"{verb} {m.group(2)}", line_at(newlines, m.start()))
     if posixpath.basename(path) == "urls.py" or "django.urls" in text or "django.conf.urls" in text:
         for m in _DJANGO_RE.finditer(text):
-            col.add(FACET_ROUTE, f"ANY {_django_path(m.group(1))}", line_of(text, m.start()))
+            col.add(FACET_ROUTE, f"ANY {_django_path(m.group(1))}", line_at(newlines, m.start()))
     if "starlette.routing" in text or "fastapi.routing" in text:
         for m in _STARLETTE_RE.finditer(text):
-            line = line_of(text, m.start())
+            line = line_at(newlines, m.start())
             if m.group(1) == "WebSocketRoute":
                 col.add(FACET_ROUTE, f"WS {m.group(2)}", line)
             else:
+                route = m.group(2)[:_MAX_PATH]
                 for meth in _methods(m.group(3), "GET"):
-                    col.add(FACET_ROUTE, f"{meth} {m.group(2)}", line)
+                    col.add(FACET_ROUTE, f"{meth} {route}", line)
     if "tornado" in text:
         for m in _TORNADO_RE.finditer(text):
-            col.add(FACET_ROUTE, f"ANY {m.group(1)}", line_of(text, m.start()), 0.9)
+            col.add(FACET_ROUTE, f"ANY {m.group(1)}", line_at(newlines, m.start()), 0.9)
     for m in _ADD_PARSER_RE.finditer(text):
-        col.add(FACET_COMMAND, m.group(1), line_of(text, m.start()))
+        col.add(FACET_COMMAND, m.group(1), line_at(newlines, m.start()))
 
 
 def py_facets(pf: ParsedFile) -> list[Facet]:

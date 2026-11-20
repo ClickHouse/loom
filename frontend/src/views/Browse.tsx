@@ -18,8 +18,9 @@ import { pendingKey } from "../lib/pendingKey";
 import { MembersDialog } from "../flows/MembersDialog";
 import { NamespaceSettingsDialog } from "../flows/NamespaceSettingsDialog";
 import { GuideDialog } from "../flows/GuideDialog";
-import { isPersonalCollection } from "../lib/namespace";
+import { COLLECTION_PREFIX, NAMESPACE_NAME, isCollectionName, isPersonalCollection } from "../lib/namespace";
 import { canEditGuide, roleOnNamespace } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
 import { CreateNamespaceDialog } from "../flows/CreateNamespaceDialog";
 import { useStore, useIdentity } from "../lib/state";
 import { RowSkeleton } from "../components/Skeleton";
@@ -31,9 +32,11 @@ import { useRowNav } from "../lib/useRowNav";
 import { useFold } from "../lib/folds";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { humanizeError, isSystemKind, sentenceCase } from "../lib/format";
+import { isSystemKind, sentenceCase } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
+import { ApiError } from "../lib/errors";
 import { useAbortableEffect } from "../lib/hooks";
 import { PageContainer } from "../layout/PageContainer";
 import { ScopeBadge } from "../components/ScopeBadge";
@@ -72,13 +75,10 @@ const JOIN_ROLES: Array<{
 ];
 
 /**
- * Browse — public namespaces in the caller's org.
- *
- * Surfaces `namespace.browse` (list public namespaces) and
- * `namespace.join` (claim a viewer grant on one) so users can discover
- * and opt into shared team workspaces without leaving the dashboard.
- * Namespaces the caller already belongs to are shown as "Joined" with
- * no Join button.
+ * Namespaces in your org: the public namespaces to join (`namespace.browse`,
+ * `namespace.join`), the ones the caller manages, and, for a search that names
+ * an unlisted namespace, a request card or a pointer to the page that holds it
+ * (Repositories or the Library).
  */
 export function Browse() {
   const identity = useIdentity();
@@ -105,8 +105,11 @@ export function Browse() {
   const [settingsNs, setSettingsNs] = useState<string | null>(null);
   const [guideNs, setGuideNs] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
-  const [repoCount, setRepoCount] = useState(0);
+  // Repository names (listed and the caller's own): the hint's count and the search's pointer.
+  const [repoNames, setRepoNames] = useState<string[]>([]);
+  const repoCount = repoNames.length;
   const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const whoami = useStore((s) => s.whoami);
 
   const load = (signal?: AbortSignal, live: () => boolean = () => true) => {
@@ -117,16 +120,21 @@ export function Browse() {
         failed = e;
         return [] as BrowseEntry[];
       }),
-      // The shared membership read, not a second list_mine
-      sharedMine(identity.org).catch(() => [] as MyNamespaceEntry[]),
-    ]).then(([browseRows, mineRead]) => {
+      // The shared membership read, not a second list_mine; null when it fails, so the guide's
+      // Edit says the access could not be checked.
+      sharedMine(identity.org).catch(() => null),
+    ]).then(([browseRows, mineResult]) => {
+      const mineRead = mineResult ?? [];
       if (!live()) return;
       setRefreshing(false);
       setError(failed);
-      // Code namespaces are surfaced in the Code section, not as joinable memory.
+      // Repositories are surfaced in the Repositories section, not as joinable memory. The server
+      // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
-      setRepoCount(browseRows.filter((r) => r.kind === "code").length);
-      setMineRows(mineRead);
+      setRepoNames([
+        ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
+      ]);
+      setMineRows(mineResult);
       setMine(new Set(mineRead.map((r) => r.namespace)));
       setMyRole(Object.fromEntries(mineRead.map((r) => [r.namespace, r.role])));
       setPending(new Set(mineRead.filter((r) => r.pending_role || r.status === "pending").map((r) => r.namespace)));
@@ -183,21 +191,25 @@ export function Browse() {
       }
       setJoinDialog(null);
     } catch (e) {
-      toast(`Join failed: ${humanizeError(e)}`, "error");
+      toastError("Join failed", e);
     } finally {
       setJoining(null);
     }
   };
 
-  // A code index is kind=code and a tracker record kind=qa or tracker, as the server says.
-  const managedMemory = adminNs.filter((r) => !isCodeKind(r.kind) && !isTrackerKind(r.kind));
+  // A repository is kind=code and a tracker record kind=qa or tracker, as the server says; a
+  // collection is known by its reserved name and managed in the Library.
+  const managedCollections = adminNs.filter((r) => isCollectionName(r.namespace)).length;
+  const managedMemory = adminNs.filter(
+    (r) => !isCodeKind(r.kind) && !isTrackerKind(r.kind) && !isCollectionName(r.namespace),
+  );
   const managedCode = adminNs.filter((r) => isCodeKind(r.kind));
   const managedTracker = adminNs.filter((r) => isTrackerKind(r.kind));
   const repoHint = repoCount > 0 && (
     <div className="text-xs text-text-muted">
-      Looking for a code index or a tracker source? Both are joined from{" "}
+      Repositories are joined from the{" "}
       <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
-        Repositories
+        Repositories page
       </Link>{" "}
       — {repoCount} repositor{repoCount === 1 ? "y" : "ies"} available, each with its issues & PRs when a record covers
       it, read-only.
@@ -213,11 +225,28 @@ export function Browse() {
   // The rows filter by the text a render behind the box, so a keystroke paints the box
   // first; the memoised rows render again only when what they show changes.
   const listQuery = useDeferredValue(query).trim();
-  const filtered = useMemo(() => {
-    const q = listQuery.toLowerCase();
-    return (rows || []).filter((r) => matchesSpace(r, q));
-  }, [rows, listQuery]);
-  const managedShown = managedMemory.filter((r) => matchesSpace(r, listQuery.toLowerCase()));
+  // Names are lowercase, so the search is compared lowercased.
+  const typedName = listQuery.toLowerCase();
+  const filtered = useMemo(() => (rows || []).filter((r) => matchesSpace(r, typedName)), [rows, typedName]);
+  const managedShown = managedMemory.filter((r) => matchesSpace(r, typedName));
+  // A namespace name no listed row carries may be a private one to request, even beside
+  // partial matches; a repository's or collection's name points to its page instead.
+  // Active rows only (a pending request grants nothing); the "you read" lines use this,
+  // since an admin claim reaches no restricted repository and makes no collection exist.
+  const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
+  // The role the server would act on, for the request card: an admin claim admins every namespace.
+  const typedReach = roleOnNamespace(whoami, mineRows, typedName);
+  const elsewhere = repoNames.includes(typedName)
+    ? "repository"
+    : isCollectionName(typedName) && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
+      ? "collection"
+      : null;
+  const offersRequest =
+    NAMESPACE_NAME.test(typedName) &&
+    !elsewhere &&
+    !isCollectionName(typedName) &&
+    typedReach !== "admin" &&
+    !filtered.some((r) => r.namespace === typedName);
   const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
@@ -237,7 +266,7 @@ export function Browse() {
       toast(`Withdrew request on ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Cancel failed: ${humanizeError(e)}`, "error");
+      toastError("Cancel failed", e);
     }
   };
   const leave = async (ns: string) => {
@@ -255,7 +284,7 @@ export function Browse() {
       toast(`Left ${ns}`, "ok");
       load();
     } catch (e) {
-      toast(`Leave failed: ${humanizeError(e)}`, "error");
+      toastError("Leave failed", e);
     }
   };
   // The rows call the latest render's handlers through one object that keeps its identity,
@@ -282,7 +311,7 @@ export function Browse() {
   return (
     <PageContainer>
       <PageHeader
-        title="Spaces"
+        title="Namespaces in your org"
         actions={
           <Button type="primary" htmlType="button" iconLeft="plus" onClick={() => setCreateOpen(true)}>
             Create namespace
@@ -295,7 +324,8 @@ export function Browse() {
         </span>
       </PageHeader>
       <p className="text-sm text-text-muted mb-3">
-        Join public namespaces in your org, or invite people into the ones you manage.
+        A namespace is a project's or an agent's memory. Join public namespaces in your org, or invite people into the
+        ones you manage.
       </p>
       {/* The Repositories hint: under the description, or inside the folded code section when there is one. */}
       {managedCode.length === 0 && repoHint && <div className="mb-3">{repoHint}</div>}
@@ -340,13 +370,22 @@ export function Browse() {
             </div>
           </section>
         )}
+        {managedCollections > 0 && (
+          <p className="mb-6 text-xs text-text-muted">
+            {managedCollections === 1 ? "The collection you manage is" : "Collections you manage are"} in the{" "}
+            <Link component="button" type="button" size="sm" onClick={() => setView("knowledge")}>
+              Library
+            </Link>
+            .
+          </p>
+        )}
 
         {/* SECTION 2: public namespaces in the org to join. */}
         <section aria-labelledby="spaces-public-heading">
           <SectionHeading
             level={2}
             id="spaces-public-heading"
-            label="Public namespaces"
+            label="Public namespaces to join"
             caption={`in ${identity.org}`}
             className="mb-2"
           />
@@ -370,27 +409,12 @@ export function Browse() {
               kind="empty"
               icon="globe"
               title="No public namespaces yet"
-              description="Nobody in your org has opened a shared space yet. Until someone does, your own private namespace is the only one you can use."
-              details={
-                <>
-                  An admin creates a shared space with <code className="code-inline text-xs">namespace.register</code>{" "}
-                  and <code className="code-inline text-xs">visibility=public</code>; it then appears here for everyone
-                  in the org to join.
-                </>
-              }
+              description="Nobody in your org has opened a public namespace yet. Use Create namespace and make it public, and it appears here for everyone in the org to join. Until then, your own private namespace is the only one you can use."
             />
           )}
 
-          {rows !== null && filtered.length === 0 && listQuery && (
-            <RequestAccessCard
-              org={identity.org}
-              typedName={listQuery}
-              existingRole={myRole[listQuery]}
-              onSuccess={() => {
-                setQuery("");
-                load();
-              }}
-            />
+          {rows !== null && filtered.length === 0 && listQuery && !offersRequest && !elsewhere && (
+            <ListState kind="filtered" things="public namespaces" filter={listQuery} onClear={() => setQuery("")} />
           )}
 
           {rows !== null && filtered.length > 0 && (
@@ -411,6 +435,53 @@ export function Browse() {
                   actions={rowActions}
                 />
               ))}
+            </div>
+          )}
+
+          {rows !== null && elsewhere && (
+            <p className={`text-sm text-text-muted ${filtered.length > 0 ? "mt-3" : ""}`}>
+              <span className="font-mono">{typedName}</span>{" "}
+              {/* One the caller already reads is opened there, not requested. */}
+              {elsewhere === "repository" ? (
+                <>
+                  {typedRole ? "is a repository you read: open it in" : "is a repository: join or request it from"}{" "}
+                  <Link component="button" type="button" size="sm" onClick={() => setView("code")}>
+                    Repositories
+                  </Link>
+                </>
+              ) : (
+                <>
+                  {typedRole
+                    ? "is a collection you read: open it in the"
+                    : "is a collection: ask its admin for a grant; the collections you can read are in the"}{" "}
+                  {/* One you read opens selected in the Library, which reads `?collection=`. */}
+                  <Link
+                    component="button"
+                    type="button"
+                    size="sm"
+                    onClick={() =>
+                      typedRole ? navigate("knowledge", { query: { collection: typedName } }) : setView("knowledge")
+                    }
+                  >
+                    Library
+                  </Link>
+                </>
+              )}
+              .
+            </p>
+          )}
+
+          {rows !== null && offersRequest && (
+            <div className={filtered.length > 0 ? "mt-3" : undefined}>
+              <RequestAccessCard
+                org={identity.org}
+                typedName={typedName}
+                existingRole={typedRole}
+                onSuccess={() => {
+                  setQuery("");
+                  load();
+                }}
+              />
             </div>
           )}
         </section>
@@ -474,6 +545,17 @@ export function Browse() {
           namespace={guideNs}
           // The Memories header's rule, from the same rows: one answer for one caller.
           canEdit={canEditGuide(roleOnNamespace(whoami, mineRows, guideNs), guideNs)}
+          // As the tune card's: from the same gate, so loading and the server's say show too.
+          editReason={
+            isPersonalCollection(guideNs)
+              ? null
+              : callReason(
+                  "namespace.guide_set",
+                  { role: roleOnNamespace(whoami, mineRows, guideNs), loading: false, rows: mineRows },
+                  whoami,
+                  guideNs,
+                )
+          }
           onSaved={load}
         />
       )}
@@ -484,7 +566,7 @@ export function Browse() {
 const matchesSpace = (r: { namespace: string; description?: string }, q: string) =>
   !q || r.namespace.toLowerCase().includes(q) || (r.description || "").toLowerCase().includes(q);
 
-/** Where the caller stands in a space: its row's open action, inline button and menu follow. */
+/** Where the caller stands in a namespace: its row's open action, inline button and menu follow. */
 type SpaceStanding = "none" | "pending" | "member" | "admin";
 
 interface SpaceActions {
@@ -499,7 +581,7 @@ interface SpaceActions {
 }
 
 /**
- * One space: line 1 the namespace in mono and its visibility, line 2 its
+ * One namespace: line 1 the namespace in mono and its visibility, line 2 its
  * description, line 3 its guide's summary when it has one (a link to the guide for a
  * member, raised above the open button); at the right its member count, the one inline
  * action and the More menu. The name is the row's open button (`data-row-open`), stretched
@@ -548,9 +630,8 @@ const SpaceRow = memo(function SpaceRow({
    *  Leave where you belong. */
   const menu: RowMenuItem[] = [
     ...(standing === "admin" ? [{ label: "Settings", icon: "gear" as const, onSelect: settings }] : []),
-    // A row whose summary is shown opens the guide from it: one way in, not two. A personal
-    // collection takes no guide, so it offers none.
-    ...(canReadGuide && !guideSummary && !isPersonalCollection(namespace)
+    // A row whose summary is shown opens the guide from it: one way in, not two.
+    ...(canReadGuide && !guideSummary
       ? [{ label: "Guide", icon: "info-in-circle" as const, onSelect: () => actions.guide(namespace) }]
       : []),
     {
@@ -597,7 +678,7 @@ const SpaceRow = memo(function SpaceRow({
       </Button>
     );
   return (
-    // Back to this page focuses the space that had the focus.
+    // Back to this page focuses the namespace that had the focus.
     <ListRow data-focus-key={`space:${namespace}`}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <div className="min-w-0 flex-1 basis-60">
@@ -650,7 +731,7 @@ const SpaceRow = memo(function SpaceRow({
 });
 
 const MANAGED = {
-  code: { label: "Code indexes you manage", icon: "code", link: "Manage indexing in Repositories" },
+  code: { label: "Repositories you manage", icon: "code", link: "Manage indexing in Repositories" },
   tracker: { label: "Tracker records you manage", icon: "flag", link: "Manage tracker sources in Repositories" },
 } as const;
 
@@ -838,9 +919,9 @@ function JoinDialog({
   );
 }
 
-// Inline card that appears when the search yields no public matches:
-// the caller already typed an exact name into the list search, so we
-// reuse that input rather than asking them to type it again.
+// Inline card that appears when no public row is named what the search holds: the caller
+// may have typed the exact name of a private namespace, so the card reuses that input
+// rather than asking for it again.
 function RequestAccessCard({
   org,
   typedName,
@@ -879,10 +960,8 @@ function RequestAccessCard({
       }
       onSuccess();
     } catch (e) {
-      const raw = e instanceof Error ? e.message : String(e);
-      // post() throws "STATUS: <body>" — detect 404 to swap the
-      // raw JSON detail for a copy that tells the user what to do.
-      if (/^404[:\s]/.test(raw) || /RESOURCE_NOT_FOUND|does not exist/i.test(raw)) {
+      // A missing namespace gets a line that says what to do instead of the server's words.
+      if (e instanceof ApiError && (e.status === 404 || /does not exist/i.test(e.serverMessage))) {
         setError(
           `No namespace named "${typedName}" in ${org}. Check the spelling, or ask whoever shared it with you to confirm the exact name.`,
         );
@@ -900,7 +979,7 @@ function RequestAccessCard({
         <Icon name="globe" size="md" aria-hidden="true" className="mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-medium">
-            No public namespace matching <span className="font-mono">{typedName}</span>.
+            No listed public namespace named <span className="font-mono">{typedName}</span>.
           </div>
           <div className="text-xs text-text-muted mt-1">
             If <span className="font-mono">{typedName}</span> is a private namespace someone told you about, request

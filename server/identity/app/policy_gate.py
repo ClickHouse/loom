@@ -17,9 +17,10 @@ Failure posture: a rule that could not be evaluated is an
 error, not a verdict. In `enforce`, an error on a WRITE-shaped operation
 (required role WRITER or above) denies — authorizing a write against
 history we could not read would be failing open. An
-error on a read allows and is reported, because coupling read availability
-to the trace store is the wrong trade. In `shadow`, errors are recorded and
-never block.
+ordinary backend error on a read allows and is reported. Protected history
+is a separate UNKNOWN: it refuses every affected enforcing operation,
+including reads, without exposing protected outcomes. A shadow rule records
+that fixed reason and never blocks.
 
 The gate never applies to `policy.*` itself (an operator must always be
 able to fix a rule) or to `ops.health`.
@@ -211,8 +212,9 @@ async def gate(
     # effective mode is enforce — the deployment's mode is the default, a
     # rule may shadow under enforce (LOG_ONLY) or enforce under shadow.
     blocks = bool(decision.enforcing_rules)
-    # Fail closed on writes when an ENFORCING rule's history could not be read.
-    if not blocks and decision.enforcing_errors and write:
+    # Protected history is unavailable to every enforcing operation; ordinary
+    # backend errors keep the existing write-only refusal.
+    if not blocks and decision.enforcing_errors and (write or decision.enforcing_protected_history):
         decision = policy_rules.PolicyDecision(
             decision="deny",
             determining_rules=decision.determining_rules,
@@ -245,7 +247,9 @@ async def gate(
         )
 
     if blocks:
-        if decision.enforcing_rules:
+        if decision.enforcing_protected_history:
+            msg = f"{op.name} denied: protected history unavailable"
+        elif decision.enforcing_rules:
             msg = f"{op.name} denied by policy {', '.join(decision.enforcing_rules)} on {org}/{ns}"
         else:
             msg = (

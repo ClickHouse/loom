@@ -187,16 +187,16 @@ def test_manifest_finds_the_known_reach_paths():
 
 
 def test_agent_controlled_verbs_are_on_the_core_tier():
-    """The standing-memory and forgetting verbs an agent should control
-    (standing memory, a hot tier): pin, refuse, scratchpad."""
-    for name in ("memory.pin", "blacklist.add", "working_memory.append"):
+    """The standing-memory, refusal and lock verbs an agent controls: pin,
+    refuse, lock. The scratchpad is on the coding and atomic tiers."""
+    for name in ("memory.pin", "blacklist.add", "memory.lock"):
         assert name in _MCP_CORE_OPS and name not in _MCP_HIDDEN_OPS, name
         assert "mcp_core" in op_reach(name)
     names = {t["name"] for t in _listing("core", False)}
-    assert {"loom_memory_pin", "loom_blacklist_add", "loom_working_memory_append"} <= names
+    assert {"loom_memory_pin", "loom_blacklist_add", "loom_memory_lock"} <= names
     pin = next(t for t in _listing("core", False) if t["name"] == "loom_memory_pin")
-    # a curated description that names memory.set as the default save
-    assert "memory.set" in pin["description"] and "WHEN NOT" in pin["description"]
+    # a curated description that names loom_memory_set as the default save
+    assert "loom_memory_set" in pin["description"] and "WHEN NOT" in pin["description"]
     assert len(pin["description"]) // 4 <= 480
 
 
@@ -337,7 +337,7 @@ def test_call_counts_only_with_the_flag(monkeypatch, capsys):
             seen.append((sql, params))
             return [{"operation": "memory.set", "calls": 7, "last_ts": "2000-01-01", "agents": 2}]
 
-    def fake_run_connected(run):
+    def fake_run_connected(run, **_declared):
         import asyncio
 
         return asyncio.run(run(FakeCH()))
@@ -349,3 +349,13 @@ def test_call_counts_only_with_the_flag(monkeypatch, capsys):
 
     assert mod.call_counts(9) == {"memory.set": {"calls": 7, "last_ts": "2000-01-01", "agents": 2}}
     assert seen == [(mod.CALLS_SQL, {"days": 9})]
+
+
+def test_census_ignores_installed_and_bundled_dependencies(tmp_path):
+    from scripts.codegen.op_reach_census import _files
+
+    for rel in ["node.ts", "node_modules/sdk/client.ts", "dist/bundle.js", ".venv/lib/client.py"]:
+        target = tmp_path / "integrations" / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('call("memory.set")')
+    assert [p.name for p in _files(tmp_path, "integrations", (".ts", ".js", ".py"))] == ["node.ts"]

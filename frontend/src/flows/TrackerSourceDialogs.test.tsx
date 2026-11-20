@@ -652,6 +652,27 @@ describe("the Trackers list", () => {
     }
   });
 
+  it("lets anyone check a tracker the dashboard manages, and offers the admin verbs only to its admin", async () => {
+    const notAdmin = { ...src().namespaces[0], member_role: "viewer" as const };
+    vi.mocked(checkTrackerSource).mockClear();
+    render(
+      <main>
+        <TrackersPanel
+          org="dev"
+          sources={[src({ namespaces: [notAdmin] })]}
+          selfService
+          loading={false}
+          onAdd={() => {}}
+          onChanged={() => {}}
+        />
+      </main>,
+    );
+    for (const name of ["Edit mapping", "Rotate credential", "Retire"])
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Check now" }));
+    await waitFor(() => expect(checkTrackerSource).toHaveBeenCalledWith("dev", "kj"));
+  });
+
   it("with none connected, says how and offers the one button", () => {
     const onAdd = vi.fn();
     render(

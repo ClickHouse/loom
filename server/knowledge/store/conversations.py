@@ -739,8 +739,8 @@ async def namespace_logging_enabled(
     *,
     ch: _CHClient | None = None,
 ) -> bool:
-    """Per-namespace conversation-logging switch (the dashboard's 'record my
-    conversations' toggle).
+    """Per-namespace conversation-logging switch (the Record conversations switch
+    on the dashboard's Conversations page).
 
     Fails CLOSED: an absent namespace row or a NULL column means "not
     recording". Storing someone's chat transcripts is the kind of thing that
@@ -749,8 +749,7 @@ async def namespace_logging_enabled(
     are both "nobody has expressed a preference": defaulting those to on would
     keep transcripts for a namespace whose owner never answered the question.
 
-    Turn it on per namespace with `conversation.set_logging` or the Sessions
-    "Recording" toggle in the dashboard.
+    Turn it on per namespace with `conversation.set_logging` or that switch.
     """
     ch = ch or _default_client()
     r = await ch.query_one(

@@ -1,15 +1,8 @@
-"""`loom_search` answers a defect-report question from the tracker record.
+"""Bounded issue and pull-request search over authorized tracker records.
 
-The agent talks to Loom, not to a QA database. Asked "is this already
-reported?" with a draft crash report, a model calls `loom_search` and, without
-this leg, answers from session summaries: the tracker record is behind another
-tool and the memory search cannot say "no". A `loom_search` whose query is
-shaped like a defect report — a stack frame, an exception or error code, or
-the words that ask whether something is known — and that arrives from an
-indexed checkout (`X-Loom-Code-Scope`) runs the duplicate check (over every
-tracker record the caller may read) beside the memory legs and leads the
-answer with its verdict. Pure shape and rendering
-here; the one bounded call is `tracker_leg`.
+Targets are resolved before parallel search so every leg inherits their capture
+consent. General questions get cited similar items; defect reports under a code
+scope keep the duplicate-check verdict and its linked fixes.
 """
 
 from __future__ import annotations
@@ -17,7 +10,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from server.tracker.app.dupcheck import DuplicateCheckPlan
 
 logger = logging.getLogger(__name__)
 
@@ -157,46 +154,140 @@ def lean_tracker_section(out: Any, shape: dict[str, Any]) -> dict[str, Any]:
     return section
 
 
-async def tracker_leg(
-    query: str, *, top_k: int = TRACKER_LEG_TOP_K, timeout_s: float | None = None
-) -> dict[str, Any] | None:
-    """The duplicate check for a defect-shaped `query` under a code scope,
-    or None: no scope (not a coding checkout), not the shape, the record
-    unavailable, a timeout (`mcp_loom_search_tracker_timeout_s` unless
-    `timeout_s`) or any error — the memory legs then answer alone. One bounded
-    call; never raises."""
+@dataclass(frozen=True)
+class TrackerSearchPlan:
+    org: str
+    namespaces: tuple[str, ...]
+    deadline: float
+    namespace_limit: int
+    duplicate: DuplicateCheckPlan | None = None
+
+
+async def prepare_tracker_search(
+    query: str, *, org: str, top_k: int = TRACKER_LEG_TOP_K, timeout_s: float | None = None
+) -> TrackerSearchPlan | None:
+    """Resolve authorized targets before sibling legs inherit capture consent."""
     from server.code.domain.scope import current_code_scope
+    from server.identity.app.request_scope import request_scope
     from server.settings import settings
+    from server.tracker.app.dupcheck_fanout import readable_tracker_namespaces
 
-    scope = current_code_scope()
-    shape = defect_report_shape(query)
-    if not scope or not shape:
+    if request_scope().narrowed:
         return None
-    org, namespace = scope
+    deadline = asyncio.get_running_loop().time() + (
+        settings.mcp_loom_search_tracker_timeout_s if timeout_s is None else timeout_s
+    )
+    cap = max(1, min(settings.tracker_dupcheck_fanout_namespaces, 8))
     try:
-        from server.tracker.api.models import TrackerDuplicateCheckInput
-        from server.tracker.app.dupcheck import handle_tracker_duplicate_check
+        async with asyncio.timeout_at(deadline):
+            scope = current_code_scope()
+            shape = defect_report_shape(query)
+            if scope and shape:
+                from server.tracker.api.models import TrackerDuplicateCheckInput
+                from server.tracker.app.dupcheck import prepare_duplicate_check
 
-        out = await asyncio.wait_for(
-            handle_tracker_duplicate_check(
-                TrackerDuplicateCheckInput(
-                    org=org,
-                    namespace=namespace,
-                    title=shape["title"],
-                    body=shape["body"],
-                    frames=shape["frames"],
-                    top_k=max(1, min(int(top_k), 10)),
-                    related_prs=False,  # No room in the leg's budget
+                duplicate = await prepare_duplicate_check(
+                    TrackerDuplicateCheckInput(
+                        org=scope[0],
+                        namespace=scope[1],
+                        title=shape["title"],
+                        body=shape["body"],
+                        frames=shape["frames"],
+                        top_k=max(1, min(int(top_k), 10)),
+                        related_prs=False,
+                    )
                 )
-            ),
-            timeout=settings.mcp_loom_search_tracker_timeout_s if timeout_s is None else timeout_s,
-        )
+                if duplicate.targets:
+                    return TrackerSearchPlan(scope[0], duplicate.targets, deadline, cap, duplicate)
+            namespaces = await readable_tracker_namespaces(org, "", [], cap)
+            return TrackerSearchPlan(org, tuple(namespaces), deadline, cap) if namespaces else None
     except Exception as e:  # noqa: BLE001 — fail open: the memory legs answer
-        logger.info("loom_search qa leg skipped on %s/%s: %s", org, namespace, e)
+        logger.info("loom_search tracker discovery skipped on %s: %s", org, type(e).__name__)
         return None
-    if getattr(out, "tracker_unavailable", False):
+
+
+async def tracker_leg(
+    query: str, *, plan: TrackerSearchPlan | None, top_k: int = TRACKER_LEG_TOP_K
+) -> dict[str, Any] | None:
+    """Search the prepared targets within the original discovery-and-read deadline."""
+    if plan is None or asyncio.get_running_loop().time() >= plan.deadline:
         return None
-    return lean_tracker_section(out, shape)
+    try:
+        async with asyncio.timeout_at(plan.deadline):
+            if plan.duplicate is None:
+                return await _similar_section(plan, query, top_k)
+            from server.tracker.app.dupcheck import execute_duplicate_check
+
+            out = await execute_duplicate_check(plan.duplicate)
+            if out.tracker_unavailable:
+                return None
+            return lean_tracker_section(out, defect_report_shape(query) or {})
+    except Exception as e:  # noqa: BLE001 — fail open: the memory legs answer
+        logger.info("loom_search tracker leg skipped on %s: %s", plan.org, type(e).__name__)
+        return None
+
+
+async def _similar_section(
+    plan: TrackerSearchPlan, query: str, top_k: int
+) -> dict[str, Any] | None:
+    from server.tracker.api.models import TrackerSimilarInput
+    from server.tracker.app.similar import similar_in_namespace
+
+    limit = max(1, min(top_k, 50))
+    outputs = await asyncio.gather(
+        *(
+            similar_in_namespace(
+                TrackerSimilarInput(
+                    org=plan.org,
+                    namespace=ns,
+                    text=query[:20000],
+                    top_k=limit,
+                    # General search neither generates embeddings nor catches up the vector index.
+                    kinds=["issue", "pr"],
+                    legs=["lexical", "fields", "frames", "mentions"],
+                )
+            )
+            for ns in plan.namespaces
+        ),
+        return_exceptions=True,
+    )
+    results: list[dict[str, Any]] = []
+    served: list[str] = []
+    for namespace, output in zip(plan.namespaces, outputs, strict=True):
+        if isinstance(output, BaseException) or output.tracker_unavailable:
+            continue
+        served.append(namespace)
+        for row in output.items:
+            if float(row.get("score") or 0) <= 0:
+                continue
+            results.append(
+                {
+                    "namespace": namespace,
+                    **{
+                        field: row[field]
+                        for field in ("kind", "number", "state", "score")
+                        if field in row
+                    },
+                    "title": str(row.get("title") or "")[:300],
+                    "url": str(row.get("url") or "")[:2048],
+                }
+            )
+    results.sort(
+        key=lambda row: (
+            -float(row["score"]),
+            row["namespace"],
+            row.get("kind", ""),
+            int(row.get("number") or 0),
+        )
+    )
+    if not results:
+        return None
+    return {
+        "mode": "search",
+        "namespaces": served,
+        "namespace_limit": plan.namespace_limit,
+        "results": results[:limit],
+    }
 
 
 def tracker_text_lines(section: dict[str, Any] | None, top_k: int = TRACKER_LEG_TOP_K) -> list[str]:
@@ -204,6 +295,12 @@ def tracker_text_lines(section: dict[str, Any] | None, top_k: int = TRACKER_LEG_
     sentence, then the items. Empty when there is no section."""
     if not section:
         return []
+    if section.get("mode") == "search":
+        return [
+            "Related tracker issues and pull requests:",
+            *_item_lines((section.get("results") or [])[:top_k]),
+            "",
+        ]
     verdict = section.get("verdict") or "none"
     read = " + ".join(section.get("namespaces") or []) or "the tracker record"
     items = section.get("results") or []

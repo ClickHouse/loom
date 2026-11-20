@@ -33,7 +33,11 @@ def _is_home_fact(h: Any, home_ns: str) -> bool:
 
 
 def leading_home_fact(
-    mem_hits: list[dict[str, Any]], home_ns: str, *, lead_margin: float = 0.03
+    mem_hits: list[dict[str, Any]],
+    home_ns: str,
+    *,
+    lead_margin: float = 0.03,
+    moved: frozenset[int] = frozenset(),
 ) -> dict[str, Any] | None:
     """The memory hit that leads the pool when it is a fact from `home_ns`.
 
@@ -42,16 +46,21 @@ def leading_home_fact(
     boosts a transcript chunk earns (recency, reinforcement), similarity is
     what the question asked for. For example, a lookup chunk at sim 0.452 /
     rank 0.532 must not outrank `where_i_live` at sim 0.470 / rank 0.486.
-    None when no home fact leads or is within the margin."""
+    None when no home fact leads or is within the margin. A fact the search ranked
+    down for its stale code (`moved`: the ids of those dicts) is never the lead, at the
+    top or below it: it is served where the search put it, and another home fact within
+    the margin of the top row may lead instead."""
     if not home_ns or not mem_hits:
         return None
     first = mem_hits[0]
-    if _is_home_fact(first, home_ns):
+    if id(first) not in moved and _is_home_fact(first, home_ns):
         return first
     if not isinstance(first, dict):
         return None
     floor = float(first.get("similarity") or 0.0) - lead_margin
     for h in mem_hits[1:]:
+        if id(h) in moved:
+            continue
         if _is_home_fact(h, home_ns) and float(h.get("similarity") or 0.0) >= floor:
             return h
     return None
@@ -85,12 +94,13 @@ def _defect_answer(payload: dict[str, Any]) -> bool:
 
     echoes = drop_loom_output(payload)
     withheld = verdict_leads(payload)
+    verdict = bool((payload.get("tracker") or {}).get("verdict"))
     if echoes:
         withheld["loom_output"] = echoes
     if withheld:
-        reason = "tracker_verdict_leads" if payload.get("tracker") else "loom_output"
+        reason = "tracker_verdict_leads" if verdict else "loom_output"
         payload["withheld"] = {**withheld, "reason": reason}
-    return bool(payload.get("tracker"))
+    return verdict
 
 
 def precision_floor() -> float:
@@ -145,11 +155,14 @@ def apply_precision_floor(
 MAX_CHUNKS_BEHIND_FACT = 1
 
 
-def cap_chunks_behind_fact(payload: dict[str, Any], home_ns: str) -> int:
+def cap_chunks_behind_fact(
+    payload: dict[str, Any], home_ns: str, moved: frozenset[int] = frozenset()
+) -> int:
     """When a fact from the home namespace is in the memory section, keep at
     most MAX_CHUNKS_BEHIND_FACT transcript chunks after it (the best ranked):
     the fact is the answer, one chunk is its evidence, the rest repeat the
-    same session. Returns the number withheld."""
+    same session. A fact the search ranked down for its stale code (`moved`)
+    is not taken as the answer. Returns the number withheld."""
     mem = payload.get("memory")
     if not isinstance(mem, dict) or not isinstance(mem.get("results"), list):
         return 0
@@ -158,6 +171,7 @@ def cap_chunks_behind_fact(payload: dict[str, Any], home_ns: str) -> int:
         isinstance(h, dict)
         and str(h.get("source") or "fact") == "fact"
         and str(h.get("namespace") or home_ns) == home_ns
+        and id(h) not in moved
         for h in rows
     )
     if not has_fact:
@@ -182,6 +196,7 @@ def answer_first(
     explain: bool = False,
     margin: float = 0.03,
     home_margin: float = HOME_MARGIN,
+    moved: frozenset[int] = frozenset(),
 ) -> dict[str, Any]:
     """`payload` with the sections a leading home fact makes redundant
     withheld (see the module docstring). Foreign rows stay within `margin`
@@ -192,21 +207,72 @@ def answer_first(
 
     if explain:
         return payload
+    # No floor or rule below reads a governed definition: it leads the memory section.
+    governed = _take_governed(payload)
+    _answer_first(payload, home_ns, margin=margin, home_margin=home_margin, moved=moved)
+    _restore_governed(payload, governed)
+    return payload
+
+
+def _take_governed(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Remove the governed definitions from the memory section and return them."""
+    mem = payload.get("memory")
+    if not isinstance(mem, dict) or not isinstance(mem.get("results"), list):
+        return []
+    governed = [h for h in mem["results"] if _governed(h)]
+    if governed:
+        mem["results"] = [h for h in mem["results"] if not _governed(h)]
+    return governed
+
+
+def _governed(h: Any) -> bool:
+    return isinstance(h, dict) and bool(h.get("governed"))
+
+
+def _restore_governed(payload: dict[str, Any], governed: list[dict[str, Any]]) -> None:
+    """Put the governed definitions back first. When the tracker verdict leads, they count
+    within its memory cap, and the other rows are cut first."""
+    from server.tracker.domain.defect_answer import VERDICT_MEMORY_MAX
+
+    if not governed:
+        return
+    from server.memory.domain.search_types import governed_after_computed
+
+    mem = payload["memory"]
+    rows = governed_after_computed(governed + mem["results"])
+    tracker = payload.get("tracker")
+    verdict = isinstance(tracker, dict) and bool(tracker.get("verdict"))
+    if verdict and len(rows) > VERDICT_MEMORY_MAX:
+        withheld = payload.setdefault("withheld", {})
+        withheld["memory"] = withheld.get("memory", 0) + len(rows) - VERDICT_MEMORY_MAX
+        withheld["reason"] = "tracker_verdict_leads"
+        rows = rows[:VERDICT_MEMORY_MAX]
+    mem["results"] = rows
+
+
+def _answer_first(
+    payload: dict[str, Any],
+    home_ns: str,
+    *,
+    margin: float,
+    home_margin: float,
+    moved: frozenset[int],
+) -> None:
     _below = apply_precision_floor(payload, home_ns)
     if _defect_answer(payload):  # a tracker verdict leads instead
         if _below:
             payload.setdefault("withheld", {})["below_precision_floor"] = _below
-        return payload
+        return
     mem = payload.get("memory")
     if not isinstance(mem, dict):
-        return payload
-    _below += cap_chunks_behind_fact(payload, home_ns)
+        return
+    _below += cap_chunks_behind_fact(payload, home_ns, moved)
     hits = [h for h in (mem.get("results") or []) if isinstance(h, dict)]
-    lead = leading_home_fact(hits, home_ns)
+    lead = leading_home_fact(hits, home_ns, moved=moved)
     if lead is None:
         if _below:
             payload["withheld"] = {"memory": _below, "reason": "below_precision_floor"}
-        return payload
+        return
     lead_sim = float(lead.get("similarity") or 0.0)
     # The lead comes first whatever rank said, and a row that is
     # itself a Loom recall is withheld outright — every lookup writes one,
@@ -245,7 +311,6 @@ def answer_first(
             "reason": "home_fact_leads",
             "lead": str(lead.get("memory_key") or ""),
         }
-    return payload
 
 
 def withheld_note(payload: dict[str, Any]) -> str:

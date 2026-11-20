@@ -67,7 +67,9 @@ async def test_candidate_rows_many_chunks_by_batch_and_maps_rows_back_by_qidx() 
         [],
         [{"qidx": 0, "memory_id": "q", "memory_key": "peer_of_k4", "dist": 0.2}],
     ]
-    out = await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=2, ch=ch)
+    out = await conflicts.candidate_rows_many(
+        user_id="-", org="o", namespace="ns", items=items, batch=2, ch=ch
+    )
     assert len(ch.query_all_calls) == 3
     sizes = [len([k for k in p if k.startswith("emb")]) for _, p in ch.query_all_calls]
     assert sorted(sizes) == [1, 2, 2]
@@ -99,6 +101,7 @@ async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(mon
         }
     ]
     res = await conflicts.check_on_commit(
+        new_user_id="-",
         org="o",
         namespace="ns",
         agent="a",
@@ -108,6 +111,7 @@ async def test_check_on_commit_with_prefetched_rows_issues_no_peer_statement(mon
         new_embedding=[0.1, 0.2],
         candidate_rows=rows,
         resolved_threshold=0.85,
+        resolved_policy="auto_reinforce",
     )
     # Only the allowlist read hit ClickHouse; no threshold lookups, no peer statement.
     assert len(ch.query_one_calls) == 0
@@ -182,6 +186,89 @@ async def test_link_value_updates_uses_one_statement_per_batch(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_value_update_leaves_an_older_row_rewritten_as_a_definition(monkeypatch) -> None:
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from server.memory import store as memory_repo
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "memory_write_candidate_batch", 6)
+    skips: list[Any] = []
+
+    async def fake_write(org: str, ids: list[str], update: Any, **kw: Any) -> int:
+        skips.append(kw["skip"])
+        return 0
+
+    monkeypatch.setattr(memory_repo, "write_versions_by_ids", fake_write)
+    ch = StubCH()
+    ch.query_all_returns = [
+        [
+            {
+                "qidx": 0,
+                "memory_id": "p1",
+                "memory_key": "user_running_personal_best",
+                "value": "User's personal best for 5k is 25 minutes",
+                "valid_at": datetime(2023, 5, 23),
+                "created_at": datetime(2026, 1, 1),
+                "cos": 0.82,
+            },
+        ]
+    ]
+    row = {
+        "memory_id": "n1",
+        "memory_key": "user_5k_personal_best_time",
+        "memory_type": "semantic",
+        "value": "User's personal best for 5k is 22 minutes",
+        "valid_at": datetime(2023, 5, 30),
+        "created_at": datetime(2026, 1, 2),
+    }
+    await value_updates.link_value_updates(
+        org="o",
+        namespace="ns",
+        rows=[row],
+        embeddings_by_key={"user_5k_personal_best_time": [0.3, 0.4]},
+        agent="a",
+        ch=ch,
+    )
+    # The older row's current version, re-read before the write, is now a session's definition.
+    reread = SimpleNamespace(
+        status="active",
+        pinned=False,
+        lock_mode="",
+        memory_type="definition",
+        agent="a",
+        user_id="u",
+        session_id="s1",
+    )
+    assert skips and skips[0](reread)
+
+
+@pytest.mark.asyncio
+async def test_link_value_updates_reads_no_peer_for_a_definition() -> None:
+    from datetime import datetime
+
+    ch = StubCH()
+    row = {
+        "memory_id": "n1",
+        "memory_key": "definition/arr",
+        "memory_type": "definition",
+        "value": "ARR is annual recurring revenue",
+        "valid_at": datetime(2026, 1, 2),
+        "created_at": datetime(2026, 1, 2),
+    }
+    rep = await value_updates.link_value_updates(
+        org="o",
+        namespace="ns",
+        rows=[row],
+        embeddings_by_key={"definition/arr": [0.1, 0.2]},
+        agent="a",
+        ch=ch,
+    )
+    assert ch.query_all_calls == [] and rep.links == []
+
+
+@pytest.mark.asyncio
 async def test_batch_zero_keeps_the_per_row_statement(monkeypatch) -> None:
     from datetime import datetime
 
@@ -221,7 +308,9 @@ async def test_no_parameter_of_a_full_batch_reaches_the_128_kib_field_cap() -> N
     ch = StubCH()
     vec = [0.123456789] * 3072
     items = [("semantic", f"k{i}", vec, 0.3) for i in range(6)]
-    await conflicts.candidate_rows_many(org="o", namespace="ns", items=items, batch=6, ch=ch)
+    await conflicts.candidate_rows_many(
+        user_id="-", org="o", namespace="ns", items=items, batch=6, ch=ch
+    )
     ((sql, params),) = ch.query_all_calls
     sizes = {k: len(str(format_query_value(v))) for k, v in params.items()}
     assert max(sizes.values()) < 128 * 1024, sizes

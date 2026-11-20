@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Select } from "@clickhouse/click-ui/Select";
 import { Switch } from "@clickhouse/click-ui/Switch";
@@ -12,8 +12,8 @@ import {
   type ConversationThreadSummary,
 } from "../api";
 import { setViewParam, useStore, useIdentity } from "../lib/state";
-import { canCall } from "../lib/canCall";
-import { useNamespaceRole } from "../lib/namespaceRole";
+import { callReason } from "../lib/callReason";
+import { canWrite, useNamespaceRoleRead } from "../lib/namespaceRole";
 import { RowSkeleton, Skeleton } from "../components/Skeleton";
 import { ListRow, LoadingSkeleton, PageHeader, SectionHeading } from "../components/ui";
 import { ListPager } from "../components/ui/ListPager";
@@ -21,10 +21,10 @@ import { ListState } from "../components/ui/ListState";
 import { ListTime } from "../components/ui/ListTime";
 import { ListToolbar, ListToolbarSearch } from "../components/ui/ListToolbar";
 import { DraftSearch } from "../components/ui/DraftSearch";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { AgentBadge } from "../components/AgentBadge";
-import { displayAgent, truncate, humanizeError, sentenceCase } from "../lib/format";
-import { useAbortableEffect, useKeyboard } from "../lib/hooks";
+import { displayAgent, truncate, sentenceCase } from "../lib/format";
+import { useAbortableEffect } from "../lib/hooks";
 import { useRowNav } from "../lib/useRowNav";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { IconButton } from "../components/IconButton";
@@ -72,7 +72,8 @@ function emphasize(text: string, query: string) {
 export function Conversations() {
   const identity = useIdentity();
   const whoami = useStore((s) => s.whoami);
-  const roleHere = useNamespaceRole(identity.namespace);
+  const roleRead = useNamespaceRoleRead(identity.namespace);
+  const roleHere = roleRead.role;
   const pendingConversationThread = useStore((s) => s.pendingConversationThread);
   const clearPendingConversationThread = useStore((s) => s.clearPendingConversationThread);
   // The search last sent (on Enter); the box keeps what is typed, so a keystroke does not
@@ -85,8 +86,10 @@ export function Conversations() {
   // claude-desktop, …). Threads are scoped to the namespace; an agent filter
   // keeps you from staring at every tool's sessions at once.
   const [agentFilter, setAgentFilter] = useState("*");
-  // Per-namespace "record my conversations" switch (null = not yet loaded).
+  // The namespace's Record conversations switch (null = not yet loaded).
   const [loggingEnabled, setLoggingEnabled] = useState<boolean | null>(null);
+  // That read failed: the switch stays unknown, and the empty state offers no connect.
+  const [loggingUnread, setLoggingUnread] = useState(false);
   // Recent threads landing — populated on mount so a user with no
   // query sees what's there instead of a dead-end empty state. Also
   // shown beneath a "no matches" search result so users have a
@@ -118,30 +121,16 @@ export function Conversations() {
   // Selected thread for the message-replay dialog. Click a thread
   // card OR a search-hit thread header → the dialog reads the full messages and shows them.
   const [openThread, setOpenThread] = useState<ReplayThread | null>(null);
-  const searchRef = useRef<HTMLInputElement | null>(null);
-  // Bumped per search and per namespace switch: only the latest search writes hits.
+  // Bumped per search and per namespace change: only the latest search writes hits.
   const searchSeq = useRef(0);
-  // Bumped per namespace switch: a logging write that fails after the switch must not
-  // revert the new namespace's switch.
+  // Bumped per namespace change: a logging write that fails after the change must not
+  // revert the new namespace's Record conversations switch.
   const scopeGen = useRef(0);
 
-  // `/` focuses search anywhere on Conversations (not while typing or inside the
-  // thread dialog). Same shortcut as Recall/Recent for muscle-memory consistency
-  // across the dashboard.
-  const keys = useMemo(
-    () => ({
-      "/": () => {
-        searchRef.current?.focus();
-        searchRef.current?.select();
-      },
-    }),
-    [],
-  );
-  useKeyboard(keys);
-
-  // Hits, threads, the agent filter and the recording switch belong to the namespace
-  // they were read for; a switch clears them during render, so B's first read asks for its
-  // own first page under every agent, and B never shows A's rows or toggles A's value.
+  // Hits, threads, the agent filter and the Record conversations switch belong to the
+  // namespace they were read for; a namespace change clears them during render, so B's
+  // first read asks for its own first page under every agent, and B never shows A's rows
+  // or toggles A's value.
   const namespaceKey = `${identity.org}/${identity.namespace}`;
   const [stateFor, setStateFor] = useState(namespaceKey);
   if (stateFor !== namespaceKey) {
@@ -157,6 +146,7 @@ export function Conversations() {
     setThreadsTotal(undefined);
     setAgentFilter("*");
     setLoggingEnabled(null);
+    setLoggingUnread(false);
   }
   // Answers already in flight for the namespace left are dropped by their sequence numbers.
   useEffect(() => {
@@ -219,15 +209,20 @@ export function Conversations() {
     },
     [identity.org, identity.namespace, threadsRetry, threadPage, agentFilter],
   );
-  // The recording switch is the namespace's, read once per namespace, not per page.
+  // The Record conversations switch is the namespace's, read once per namespace, not
+  // per page.
   useAbortableEffect(
     (signal, live) => {
       getNamespace(identity, { signal })
         .then((n) => {
-          if (live()) setLoggingEnabled(n?.conversation_logging_enabled ?? true);
+          if (!live()) return;
+          setLoggingEnabled(n?.conversation_logging_enabled ?? true);
+          setLoggingUnread(false);
         })
         .catch(() => {
-          if (live()) setLoggingEnabled(null);
+          if (!live()) return;
+          setLoggingEnabled(null);
+          setLoggingUnread(true);
         });
     },
     [identity.org, identity.namespace],
@@ -325,9 +320,11 @@ export function Conversations() {
     clearPendingConversationThread();
   }, [pendingConversationThread, openThreadDialog, clearPendingConversationThread]);
 
-  const canSetLogging = canCall("conversation.set_logging", roleHere, whoami);
-  const canRenameThread = canCall("conversation.update", roleHere, whoami);
-  const canDeleteThread = canCall("conversation.delete", roleHere, whoami);
+  // Each stays in view for a role that cannot call it, with the role it needs.
+  const loggingReason = callReason("conversation.set_logging", roleRead, whoami, identity.namespace);
+  const canSetLogging = loggingReason === null;
+  const renameReason = callReason("conversation.update", roleRead, whoami, identity.namespace);
+  const deleteReason = callReason("conversation.delete", roleRead, whoami, identity.namespace);
 
   const toggleLogging = async () => {
     if (loggingEnabled === null) return;
@@ -339,7 +336,7 @@ export function Conversations() {
       toast(next ? "Conversation recording on" : "Recording off — new turns won't be stored", "ok");
     } catch (e) {
       if (gen === scopeGen.current) setLoggingEnabled(!next); // revert
-      toast(`Couldn't update: ${humanizeError(e)}`, "error");
+      toastError("Couldn't update", e);
     }
   };
 
@@ -364,7 +361,7 @@ export function Conversations() {
   if (countText && !busy && !loadingThreads) lastCount.current = countText;
   const countShown = busy || (loadingThreads && hits === null) ? lastCount.current : countText;
 
-  // One tab stop over each list's rows: arrows and j/k move, Enter opens.
+  // One tab stop over each list's rows: the arrows move, Enter opens.
   const threadsNav = useRowNav({ enabled: openThread === null && !!threads?.length });
   const hitsNav = useRowNav({ enabled: openThread === null && !!groupedHits?.length });
 
@@ -409,8 +406,8 @@ export function Conversations() {
                   <ThreadActions
                     identity={identity}
                     thread={{ thread_id: t.thread_id, agent: t.agent, title: t.title ?? "", label: title }}
-                    canRename={canRenameThread}
-                    canDelete={canDeleteThread}
+                    renameReason={renameReason}
+                    deleteReason={deleteReason}
                     onChanged={() => setThreadsRetry((n) => n + 1)}
                   />
                 }
@@ -473,11 +470,17 @@ export function Conversations() {
   };
 
   const phone = useMedia(PHONE_QUERY);
-  const recording = canSetLogging && loggingEnabled !== null && (
+  const loggingWhyId = useId();
+  // A role that cannot set it sees the switch, off-limits: a native switch cannot hold focus
+  // while disabled, so the reason sits in the info button's tooltip beside it and in the
+  // switch's own description.
+  const recording = loggingEnabled !== null && (
     <span className="flex items-center gap-1">
       <Switch
         checked={loggingEnabled}
         onCheckedChange={toggleLogging}
+        disabled={!canSetLogging}
+        aria-describedby={loggingReason ? loggingWhyId : undefined}
         // "Record" on a phone, beside the title, so the switch keeps to the title's row; the
         // name stays whole.
         label={phone ? "Record" : "Record conversations"}
@@ -489,14 +492,24 @@ export function Conversations() {
         icon="info-in-circle"
         size="xs"
         label="About recording"
-        tooltip="When off, new conversation turns are not stored for this namespace"
+        tooltip={
+          loggingReason
+            ? `${loggingReason} When off, new conversation turns are not stored for this namespace.`
+            : "When off, new conversation turns are not stored for this namespace."
+        }
       />
+      {loggingReason && (
+        <span id={loggingWhyId} className="sr-only">
+          {loggingReason}
+        </span>
+      )}
     </span>
   );
 
   return (
     <PageContainer>
-      {/* Recording is the namespace's setting, not a filter: it sits with the title. */}
+      {/* The Record conversations switch is the namespace's setting, not a filter: it sits
+          with the title. */}
       <PageHeader title="Conversations" actions={recording || undefined}>
         {/* The phone's top bar names the namespace; the title row keeps its action beside it. */}
         <span className="hidden sm:contents">
@@ -523,7 +536,6 @@ export function Conversations() {
         <ListToolbarSearch>
           <DraftSearch
             key={searchBox}
-            ref={searchRef}
             settle="enter"
             onSearch={(text) => {
               if (text) {
@@ -582,20 +594,38 @@ export function Conversations() {
         />
       )}
 
-      {!busy && hits === null && searchError === null && threads !== null && threads.length === 0 && !threadsError && (
-        <ListState
-          kind="empty"
-          icon="chat"
-          title="No conversations yet in this namespace"
-          description="Once an AI agent connected to this namespace starts saving its chats, each thread shows up here."
-          details={
-            <>
-              The agent calls <code className="code-inline text-xs">conversation.append</code> once per chat turn (the
-              MCP tool description nudges it to).
-            </>
-          }
-        />
-      )}
+      {/* Not yet known whether recording is on: nothing, rather than a state its answer takes
+          back. */}
+      {!busy &&
+        hits === null &&
+        searchError === null &&
+        threads !== null &&
+        threads.length === 0 &&
+        !threadsError &&
+        (loggingEnabled !== null || loggingUnread) && (
+          <ListState
+            kind="empty"
+            icon="chat"
+            title="No conversations yet in this namespace"
+            // Recording off: no agent can fill the page until it is on, so the next step is the
+            // switch in the header (shown to every role, unavailable to one that cannot set it),
+            // not a connect.
+            {...(loggingEnabled === false
+              ? {
+                  description: canSetLogging
+                    ? "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here: turn on Record conversations above, then connect an agent."
+                    : "Conversations appear here when an agent saves its chat turns while Record conversations is on. It is off here; an admin of this namespace can turn it on.",
+                }
+              : {
+                  // A viewer's agent saves nothing here; a read that failed leaves whether
+                  // recording is on unknown. Either way, no connect.
+                  description: canWrite(roleHere)
+                    ? "Conversations appear here when an agent connected to this namespace saves its chat turns, one thread per chat, while Record conversations is on."
+                    : "Conversations appear here when someone with writer access connects an agent that saves its chat turns, one thread per chat, while Record conversations is on.",
+                  ...(loggingEnabled === true && canWrite(roleHere) ? { connect: "primary" as const } : {}),
+                })}
+          />
+        )}
 
       {!busy &&
         hits === null &&

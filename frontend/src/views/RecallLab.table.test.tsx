@@ -69,7 +69,7 @@ describe("Recall Lab: the scores table", () => {
     useStore.setState({ identity: null, inspectedMemoryKey: null });
   });
 
-  it("draws one row per result under the seven columns", async () => {
+  it("draws one row per result under the seven columns and the assistant's", async () => {
     searchMemory.mockResolvedValue({
       results: [hit("deploy_note", 0.9), hit("rollback_runbook", 0.45, { score_components: { semantic: 0.4 } })],
       embedding_model: "text-embedding-3-small",
@@ -79,7 +79,7 @@ describe("Recall Lab: the scores table", () => {
     const heads = within(table)
       .getAllByRole("columnheader")
       .map((h) => h.textContent);
-    expect(heads).toEqual(["#", "Key", "Value", "Similarity", "Score", "Entity", "Type"]);
+    expect(heads).toEqual(["#", "Key", "Value", "Similarity", "Score", "Entity", "Type", "Assistant"]);
     const rows = within(table).getAllByRole("row").slice(1);
     expect(rows).toHaveLength(2);
     const first = within(rows[0]);
@@ -104,6 +104,26 @@ describe("Recall Lab: the scores table", () => {
     expect(within(table).getByRole("button", { name: "deploy_note" })).toBeInTheDocument();
     act(() => useStore.setState({ identity: { org: "dev", namespace: "other", agent: "loom-ui" } }));
     expect(screen.queryByRole("button", { name: "deploy_note" })).toBeNull();
+  });
+
+  it("keeps settled scores out of draft query edits and clears them with the query", async () => {
+    const result = hit("deploy_note", 0.9);
+    const readTerms = vi.fn(() => ({ semantic: 0.6, entity_ann_boost_effective: 0.06 }));
+    Object.defineProperty(result, "score_components", { get: readTerms });
+    searchMemory.mockResolvedValue({ results: [result], embedding_model: "m" });
+    render(<RecallLab />);
+    const table = await score();
+    expect(readTerms).toHaveBeenCalled();
+    readTerms.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "deploy lane" } });
+    expect(screen.getByLabelText("Recall query")).toHaveValue("deploy lane");
+    expect(within(table).getByText("excerpt of deploy_note")).toBeInTheDocument();
+    expect(readTerms).not.toHaveBeenCalled();
+    expect(searchMemory).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "" } });
+    expect(screen.queryByRole("table", { name: "Recall scores" })).toBeNull();
   });
 
   it("draws the score as Click UI's table bar, relative to the top score", async () => {

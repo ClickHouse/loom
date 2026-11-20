@@ -42,13 +42,13 @@ const TOKENS = [
 ];
 
 // An account whose list_mine holds only its auto-claimed personal namespace, with an
-// empty memory list, lands on Setup with the four-step checklist above the token form.
+// empty memory list, lands on Memories with the first-run checklist above the list.
 // The API is answered locally (fixtures.ts), so the empty state is seeded by routing, not
 // by a server.
 
 const PERSONAL = "personal-e2e";
 
-test("an empty personal namespace lands on the getting-started checklist", async ({ page }) => {
+test("an empty personal namespace lands on Memories with the getting-started checklist", async ({ page }) => {
   await installApi(page);
   // Later routes win: the personal-only list_mine and the empty memory.list
   // describe a brand-new account. `total: 0` is the fixtures' default for
@@ -83,24 +83,21 @@ test("an empty personal namespace lands on the getting-started checklist", async
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(String(e)));
 
-  await page.goto("/settings");
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/memories/);
   const region = page.getByRole("region", { name: "Getting started" });
   await expect(region).toBeVisible();
-  await expect(region.getByRole("listitem")).toHaveCount(4);
+  // Connect an agent, then its first memory; models only for whoever can set them.
+  await expect(region.getByRole("listitem")).toHaveCount(2);
   await expect(region.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "0");
-  await expect(region.getByRole("button", { name: "Mint a token" })).toBeVisible();
-  // The checklist sits above the tabs; Tokens is open with the form (no token yet), Memory is one tab away.
+  // The token form opens in place, so a first token is made without leaving the page.
+  await region.getByRole("button", { name: "Create a token" }).click();
+  await expect(region.getByRole("button", { name: /Create token/ })).toBeVisible();
+  await expect(region.getByRole("button", { name: "Add a memory yourself" })).toBeVisible();
+  // Settings holds the tokens, with no checklist of its own.
+  await page.goto("/settings");
   await expect(page.getByRole("tab", { name: "Tokens" })).toHaveAttribute("aria-selected", "true");
-  await expect(page.getByRole("tab", { name: "Memory" })).toBeVisible();
-  await expect(page.getByRole("tab", { name: "System" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /Create token/ })).toBeVisible();
-
-  // The search step opens the header palette with its hint typed in.
-  await region.getByRole("button", { name: "Search your memories" }).click();
-  await expect(page.getByRole("combobox", { name: "Search Loom" }).or(page.getByLabel("Search Loom"))).toHaveValue(
-    "deploy window",
-  );
-  await expect(region.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "1");
+  await expect(page.getByRole("region", { name: "Getting started" })).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
@@ -133,7 +130,7 @@ test.describe("settings tabs", () => {
     await shot(page, "19-settings-tokens-folded");
     await page.getByRole("button", { name: "New token" }).click();
     await expect(page.getByRole("button", { name: /Create token/ })).toBeVisible();
-    await page.getByRole("radio", { name: "Only these namespaces" }).click();
+    await page.getByRole("radio", { name: "Only what you choose" }).click();
     await expect(page.getByRole("checkbox", { name: "Read bench" })).toBeVisible();
     await shot(page, "20-settings-tokens-form-open");
     await page.getByRole("button", { name: "Cancel" }).click();
@@ -268,11 +265,14 @@ test("a restricted repository is picked by repository and branch in the token fo
     });
   });
   await page.goto("/settings");
-  await page.getByRole("radio", { name: "Only these namespaces" }).click();
+  await page.getByRole("radio", { name: "Only what you choose" }).click();
   const repo = page.getByRole("checkbox", { name: "Read every branch of acme/private" });
   await expect(repo).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Read acme/private branch 26.8" })).toBeVisible();
   await expect(page.getByRole("checkbox", { name: "Read code-acme-private" })).toHaveCount(0);
+  // Nothing is ticked at first: the namespace the page is on is picked like any other.
+  await expect(page.getByRole("checkbox", { name: "Read team-private" })).not.toBeChecked();
+  await page.getByRole("checkbox", { name: "Read team-private" }).click();
   await page.getByRole("checkbox", { name: "Read team-public" }).click();
   await page.getByRole("checkbox", { name: "Read acme/private branch master" }).click();
   await shot(page, "21-settings-token-with-a-restricted-repository");

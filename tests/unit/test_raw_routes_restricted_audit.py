@@ -15,11 +15,13 @@ through a module-level helper of another file, needs its name added there.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import inspect
 import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -65,7 +67,9 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
         is_service_account=False,
         token_id="tok-alice",
     )
-    monkeypatch.setattr("server.auth.bearer.verify_token", lambda token: alice)
+    monkeypatch.setattr(
+        "server.auth.bearer.authenticate_token", AsyncMock(side_effect=lambda token: alice)
+    )
     yield rows
 
 
@@ -371,15 +375,21 @@ async def test_a_refused_inbox_watch_writes_no_audit_row(
     assert audit_rows == []
 
 
+@dataclasses.dataclass(frozen=True)
 class _Delegated:
     """What `delegate` hands a mint: a token naming the restricted namespace."""
 
-    org = ORG
-    namespaces = (NS,)
-    ns_roles = {NS: "viewer"}
-    roles: list[str] = []
+    org: str = ORG
+    namespaces: tuple[str, ...] = (NS,)
+    ns_roles: dict[str, str] = dataclasses.field(default_factory=lambda: {NS: "viewer"})
+    roles: list[str] = dataclasses.field(default_factory=list)
+    saves_to: str = ""
 
-    def mint(self, subject: str) -> str:
+    def writes(self, namespace: str) -> bool:
+        return False  # a viewer token: it saves nowhere
+
+    def mint(self, subject: str, *, reads_as_creator: bool = False) -> str:
+        assert reads_as_creator is False  # Ordinary service accounts do not identify a reader.
         return "jwt"
 
     def expires_at(self, now: Any) -> None:
@@ -431,6 +441,12 @@ def mint_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     monkeypatch.setattr(me_service_accounts.me_callers, "caller_role_on", _viewer)
     monkeypatch.setattr(me_service_accounts, "refuse_taken_name", _nothing)
     monkeypatch.setattr(me_service_accounts, "save_token", _nothing)
+
+    async def _as_is(_org: str, delegated: Any, *_a: Any, **_k: Any) -> Any:
+        return delegated
+
+    # Where the token saves reads namespace kinds fail-closed; these tests are about audit rows.
+    monkeypatch.setattr(me_service_accounts, "saves_to_target", _as_is)
     return me_service_accounts
 
 
@@ -464,13 +480,8 @@ async def test_a_star_mint_writes_a_row_for_each_namespace_its_grant_write_grant
         asked.update(ns_roles)
         return [NS]
 
-    class _Star(_Delegated):
-        namespaces = ("*", NS, "other")
-        ns_roles = {}
-        roles = ["writer"]
-
-    async def _delegate(*_a: Any, **_k: Any) -> _Star:
-        return _Star()
+    async def _delegate(*_a: Any, **_k: Any) -> _Delegated:
+        return _Delegated(namespaces=("*", NS, "other"), ns_roles={}, roles=["writer"])
 
     async def _no_default(*_a: Any) -> str:
         return ""

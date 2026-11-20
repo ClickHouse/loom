@@ -265,6 +265,7 @@ def test_context_pack_with_a_task_answers_a_briefing(monkeypatch: pytest.MonkeyP
         hc.handle_code_context_pack(CodeContextPackInput(task="add a new tracker op"))
     )
     assert out.source == "task" and out.context == "# Task briefing: add a new tracker op"
+    assert out._paths == ["server/x.py"]  # the briefing's files: what its `lessons` read
     assert seen[0].query == "add a new tracker op" and seen[0].bodies == "none"
 
 

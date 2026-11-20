@@ -43,6 +43,8 @@ describe("Recall history run filter", () => {
     expect(opts?.run_id).toBe("r-full");
     expect(opts?.since_hours).toBe(720);
     expect(await screen.findByText("No recorded searches under this run")).toBeInTheDocument();
+    expect(screen.getByText(/the agent tags it with the run/)).toBeInTheDocument();
+    expect(screen.queryByText(/X-Loom-Run-Id|run_id/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Remove r-full" }));
     await waitFor(() => expect(listSearchTraceLog).toHaveBeenCalledTimes(2));
     const opts2 = must(listSearchTraceLog.mock.calls[1][1], "second trace-log opts");

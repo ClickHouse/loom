@@ -15,6 +15,8 @@ from server.erasure.store import census as erasure_census
 from server.erasure.store import steps_graph as graph_steps
 from tests.unit.clickhouse_local import CLICKHOUSE, ddl, run
 
+pytestmark = pytest.mark.usefixtures("no_mirrors")
+
 
 class _StubCH:
     """`counts` answer the counts in order; `rows` every read but a system.mutations poll."""
@@ -135,7 +137,7 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
     out = asyncio.run(erasure_census.residue_census("o", "namespace", "ns", ch=ch))
     assert set(out) == set(erasure_census.census_tables("namespace"))
     # every namespace-scoped substrate, entity, cache, chunk-link and code table
-    assert len(out) == 68 and sum(out.values()) == 0
+    assert len(out) == 74 and sum(out.values()) == 0
     by_table = {sql.split("FROM ")[1].split()[0]: sql for sql, _ in ch.query_one_calls}
     assert (
         " FINAL" in by_table["loom.memory"] and "tombstoned_at IS NULL" in by_table["loom.memory"]
@@ -147,6 +149,8 @@ def test_census_covers_every_substrate_and_uses_final_on_soft_deleted_tables() -
         " FINAL" not in by_table["loom.conversations"]
         and "tombstoned_at IS NULL" in by_table["loom.conversations"]
     )
+    # Historical sealed versions must be gone too, not only the current version.
+    assert " FINAL" not in by_table["loom.knowledge_source_push"]
     assert " FINAL" in by_table["loom.conversation_threads"]
     assert " FINAL" not in by_table["loom.search_trace_log"]
     # The knowledge plane: chunks by the readers' live predicate (plain
@@ -198,7 +202,9 @@ def test_census_does_not_count_the_sagas_own_erasure_announcements() -> None:
 
 def test_census_user_scope_skips_namespace_only_tables() -> None:
     ch = _StubCH([0] * 40)
-    out = asyncio.run(erasure_census.residue_census("o", "user_id", "alice", ch=ch))
+    out = asyncio.run(
+        erasure_census.residue_census("o", "user_id", "alice", ch=ch, spellings=["alice"])
+    )
     # the user scope reaches entity_communities, memory_ask_precedents,
     # llm_response_cache and code_answers through the window or memory keys / the owned
     # entities
@@ -209,9 +215,10 @@ def test_census_user_scope_skips_namespace_only_tables() -> None:
         "loom.memory_ask_precedents",
         "loom.llm_response_cache",
         "loom.code_answers",
+        "loom.task_events",
     } <= set(out)
     assert "loom.memory_answers" not in out
-    assert len(out) == 53
+    assert len(out) == 55
     assert "loom.blob_uploads" in out  # who uploaded what: the user's go
     # the user's supporter rows, and any bot-rule candidate left with no supporter
     assert {"loom.learnings_queue", "loom.learnings_supporters"} <= set(out)
@@ -228,7 +235,7 @@ def test_census_propagates_a_read_error() -> None:
 
 
 def test_verify_step_fails_closed_on_residue_and_fills_the_holder(monkeypatch) -> None:
-    async def _census(org, scope_type, scope_value, *, ch=None):
+    async def _census(org, scope_type, scope_value, *, ch=None, spellings=()):
         return {"loom.memory": 0, "loom.memory_belief_sources": 3, "loom.memory_records": 1}
 
     monkeypatch.setattr(erasure_census, "residue_census", _census)
@@ -247,10 +254,14 @@ def test_verify_step_fails_closed_on_residue_and_fills_the_holder(monkeypatch) -
 
 
 def test_verify_step_passes_on_zero(monkeypatch) -> None:
-    async def _census(org, scope_type, scope_value, *, ch=None):
+    async def _census(org, scope_type, scope_value, *, ch=None, spellings=()):
         return {"loom.memory": 0, "loom.memory_versions": 0}
 
+    async def _spellings(org, subject):
+        return [subject]
+
     monkeypatch.setattr(erasure_census, "residue_census", _census)
+    monkeypatch.setattr("server.auth.aliases.spellings", _spellings)
     holder: dict[str, Any] = {}
     assert asyncio.run(saga_steps._step_verify_residue("o", "user_id", "alice", holder)) == 0
     assert h._verify_columns(holder)["residue_count"] == 0 and h._verify_columns({}) == {}
@@ -333,6 +344,10 @@ def test_a_cached_query_vector_written_after_its_step_never_fails_the_census(
             return {"n": 1 if "loom.embedding_cache" in sql else 0}
 
     ch = _Refilled([])
-    out = asyncio.run(erasure_census.residue_census("o", scope, value, ch=ch))
+    out = asyncio.run(
+        erasure_census.residue_census(
+            "o", scope, value, ch=ch, spellings=[value] if scope == "user_id" else None
+        )
+    )
     assert "loom.embedding_cache" not in out and sum(out.values()) == 0
     assert not any("loom.embedding_cache" in sql for sql, _ in ch.query_one_calls)

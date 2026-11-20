@@ -44,7 +44,7 @@ async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
 ) -> None:
     ch = LocalCH(ddl("documents"), *(_row(n, c) for n, c in DOCS.items()))
     rows = await store.source_revisions(
-        "o", "ns", "drive", searchable_only=False, pictures=pictures, ch=ch
+        "o", "ns", source_tag("drive"), searchable_only=False, pictures=pictures, ch=ch
     )
     flagged = {r["file_id"] for r in rows if r["inline_pictures"]}
     assert len(rows) == len(DOCS)
@@ -52,6 +52,38 @@ async def test_a_full_listing_learns_which_stored_copies_hold_pictures_bytes(
     hashes = {r["file_id"]: r["stored_content_sha256"] for r in rows}
     expected = {n: sha256_text(c) if n in flagged else "" for n, c in DOCS.items()}
     assert hashes == expected
+
+
+def _chunk(name: str) -> str:
+    return (
+        "INSERT INTO loom.chunks (org, namespace, source_uri, chunk_idx, content, doc_version,"
+        " embedding_model, embedding_dim, embedding, tags) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 0, 'x', 1, 'm', 3072,"
+        f" arrayWithConstant(3072, toBFloat16(0)), ['{source_tag('drive')}'])"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pictures", [True, False])
+@pytest.mark.parametrize("searchable_only", [True, False])
+async def test_the_read_pages_by_address_to_the_last_document(
+    monkeypatch: pytest.MonkeyPatch, pictures: bool, searchable_only: bool
+) -> None:
+    monkeypatch.setattr(store, "REVISIONS_PAGE", 2)
+    # Every document but "link" has live chunks, so four of five are searchable.
+    searchable = [n for n in DOCS if n != "link"]
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        *(_row(n, c) for n, c in DOCS.items()),
+        *(_chunk(n) for n in searchable),
+    )
+    rows = await store.source_revisions(
+        "o", "ns", source_tag("drive"), searchable_only=searchable_only, pictures=pictures, ch=ch
+    )
+    assert sorted(r["file_id"] for r in rows) == sorted(searchable if searchable_only else DOCS)
 
 
 # Each line, whether the stored check flags it and whether the conversion drops it: the
@@ -80,3 +112,67 @@ async def test_the_stored_check_flags_every_line_the_conversion_drops(
     )
     assert bool(rows[0]["m"]) is flagged
     assert (_DATA_DEFINITION.fullmatch(line) is not None) is dropped
+
+
+def _version(name: str, version: int, revision: int) -> str:
+    meta = json.dumps({"ingested_from": name, "source_revision": f"r{revision}"})
+    return (
+        "INSERT INTO loom.documents (org, namespace, source_uri, content, tags, metadata,"
+        " version, revision, actor) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 'x', ['{source_tag('drive')}'],"
+        f" '{meta}', {version}, {revision}, '{SYNC_WORKER_ACTOR}')"
+    )
+
+
+def _chunk_of(name: str, version: int, revision: int | None) -> str:
+    meta = "{}" if revision is None else json.dumps({"revision": revision})
+    return (
+        "INSERT INTO loom.chunks (org, namespace, source_uri, chunk_idx, content, doc_version,"
+        " chunk_metadata, embedding_model, embedding_dim, embedding, tags) VALUES ('o', 'ns',"
+        f" 'https://docs.example.com/document/d/{name}/edit', 0, 'x', {version}, '{meta}',"
+        f" 'm', 3072, arrayWithConstant(3072, toBFloat16(0)), ['{source_tag('drive')}'])"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_row_only_rewrite_stays_searchable_and_a_cut_write_does_not() -> None:
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        # A new list or a metadata edit: a new version over the revision's chunks.
+        _version("relisted", 1, 1),
+        _chunk_of("relisted", 1, 1),
+        _version("relisted", 2, 1),
+        # A write cut between its row and its chunks: a new revision with none.
+        _version("cut", 1, 1),
+        _chunk_of("cut", 1, 1),
+        _version("cut", 2, 2),
+        # Chunks written before chunks recorded their revision count by version alone.
+        _version("old", 1, 1),
+        _chunk_of("old", 1, None),
+        _version("old_rewritten", 1, 1),
+        _chunk_of("old_rewritten", 1, None),
+        _version("old_rewritten", 2, 1),
+    )
+    rows = await store.source_revisions("o", "ns", source_tag("drive"), ch=ch)
+    assert sorted(r["file_id"] for r in rows) == ["old", "relisted"]
+
+
+@pytest.mark.asyncio
+async def test_a_read_of_every_copy_flags_which_are_searchable() -> None:
+    ch = LocalCH(
+        ddl("documents"),
+        "SET enable_quantized_codec = 1",
+        ddl("chunks"),
+        ddl("chunk_supersessions"),
+        _version("relisted", 1, 1),
+        _chunk_of("relisted", 1, 1),
+        _version("relisted", 2, 1),
+        _version("cut", 1, 1),
+        _chunk_of("cut", 1, 1),
+        _version("cut", 2, 2),
+    )
+    rows = await store.every_copy("o", "ns", source_tag("drive"), ch=ch)
+    assert {r["file_id"]: r["searchable"] for r in rows} == {"cut": "", "relisted": "1"}

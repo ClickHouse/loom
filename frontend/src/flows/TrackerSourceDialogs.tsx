@@ -35,7 +35,7 @@ import {
   setTrackerMapping,
 } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import {
   CAPABILITY_LABEL,
   contractRows,

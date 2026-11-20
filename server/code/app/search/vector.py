@@ -12,6 +12,7 @@ from server.code.app.search.state import _POOL, _model_name
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index import CodeRepo
+from server.llm import customer
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -95,7 +96,10 @@ async def _vector_leg_rows(
     the scan."""
     rows: list[dict[str, Any]] = []
     qvec: list[float] | None = None
-    if vec_embedder is None or not run_vector:
+    if not run_vector:
+        return rows, qvec
+    if vec_embedder is None:
+        work["vector_leg_failed"] = 1
         return rows, qvec
     # the embedding call is the stage wall's `embed`
     with code_span("search.vector_leg") as sp:
@@ -155,6 +159,8 @@ async def _vector_leg_rows(
                     # a second model's query vector cannot score the
                     # served model's rows (track_path reads those)
                     qvec = None
+        except customer.HOLDS:
+            raise
         except Exception as e:  # noqa: BLE001 — lexical-only degrade
             logger.warning("code.search vector leg failed: %s", e)
             work["vector_leg_failed"] = 1

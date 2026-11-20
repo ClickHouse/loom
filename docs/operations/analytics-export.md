@@ -2,7 +2,9 @@
 
 `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an
 S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load. The
-Helm chart runs it once a day as a CronJob (`analyticsExport` in `values.yaml`).
+Helm chart runs it once a day as a CronJob (`analyticsExport` in `values.yaml`). To query a
+tenant's memories, with their content, and its request ledger in place, use the
+[SQL surface](../reference/sql-surface.md) instead.
 
 ```bash
 loom export-analytics --bucket analytics-landing --prefix loom \

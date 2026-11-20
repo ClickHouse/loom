@@ -42,10 +42,11 @@ export interface OpGate {
 
 // One shared object per gate: the table sits in the index chunk, and a literal per entry
 // costs bytes on every page load.
-const VIEWER: OpGate = { min: "viewer", by: "namespace" };
-const WRITER: OpGate = { min: "writer", by: "namespace" };
-const ADMIN: OpGate = { min: "admin", by: "namespace" };
-const ADMIN_CLAIM: OpGate = { min: "admin", by: "claim" };
+// Each keeps its literal type, so `NamespaceOp` can tell the two kinds of gate apart.
+const VIEWER = { min: "viewer", by: "namespace" } as const satisfies OpGate;
+const WRITER = { min: "writer", by: "namespace" } as const satisfies OpGate;
+const ADMIN = { min: "admin", by: "namespace" } as const satisfies OpGate;
+const ADMIN_CLAIM = { min: "admin", by: "claim" } as const satisfies OpGate;
 
 export const OP_MIN_ROLE = {
   // Gated at a call site: Sidebar badge polls, Recent / MemoryInspector
@@ -56,7 +57,7 @@ export const OP_MIN_ROLE = {
   "agents.connected": VIEWER,
   "audit.list": VIEWER,
   "erasure.list": VIEWER,
-  // Activity's Exposure tab reads on open; the Agents page's "Forget its memories".
+  // The Audit log's Exposure tab reads on open; the Agents page's "Forget its memories".
   "memory.exposure_summary": ADMIN,
   "memory.clear": ADMIN,
   "admin/workers.status": ADMIN_CLAIM,
@@ -64,9 +65,9 @@ export const OP_MIN_ROLE = {
   // not list the blacklist for every visitor — that is one AUTH_INSUFFICIENT per page
   // load from a viewer token with no memory namespace. The blacklist ops are
   // namespace-scoped (`server/memory/api/ops_blacklist.py`: list VIEWER, add and sweep
-  // WRITER, remove ADMIN); the panel reads only when the role is known, and shows the add
-  // form and remove buttons only to a role that reaches them. Setup's `memory.list` total
-  // for the checklist is gated the same way.
+  // WRITER, remove ADMIN); the panel reads only when the role is known; its add form shows
+  // for every role, disabled below writer, and each control says what it needs.
+  // Setup's `memory.list` total for the checklist is gated the same way.
   "blacklist.list": VIEWER,
   "blacklist.add": WRITER,
   "blacklist.remove": ADMIN,
@@ -74,8 +75,7 @@ export const OP_MIN_ROLE = {
   "memory.auto_retirements": VIEWER,
   "memory.list": VIEWER,
   // The Memories view's "Usage audit" panel offers the button only to a role that reaches
-  // `namespace.audit` (VIEWER); the inspector's "Rename (keep redirect)" only to one that
-  // reaches `memory.move` (WRITER).
+  // `namespace.audit` (VIEWER); the inspector's Rename says what `memory.move` (WRITER) needs.
   "namespace.audit": VIEWER,
   // The mentor brief reads the ledger for one agent; a viewer of the namespace may ask.
   "mentor.brief": VIEWER,
@@ -88,7 +88,7 @@ export const OP_MIN_ROLE = {
   "assistant.ask": VIEWER,
   "memory.move": WRITER,
   "memory.pin": WRITER,
-  // The inspector's Restore on a superseded row and the Review queue's Auto-resolved Undo.
+  // The inspector's and the Memories list's Restore, and the Review queue's Auto-resolved Undo.
   "memory.restore": WRITER,
   "memory.unpin": ADMIN,
   // The inspector's lifecycle actions.
@@ -99,7 +99,7 @@ export const OP_MIN_ROLE = {
   "memory.demote": ADMIN,
   "memory.redact": ADMIN,
   "memory.outcome": WRITER,
-  // Conversations' recording toggle: a namespace setting, ADMIN on the namespace.
+  // The Record conversations switch: a namespace setting, ADMIN on the namespace.
   "conversation.set_logging": ADMIN,
   // Settings → Memory's Webhooks section, ADMIN on the namespace.
   "webhook.list": ADMIN,
@@ -107,14 +107,17 @@ export const OP_MIN_ROLE = {
   "conversation.update": WRITER,
   "conversation.delete": ADMIN,
   // A repository card's Docs and Sources facets (`canCallOn`): Add a document and Remove,
-  // and every verb on a document source.
+  // and every verb on a document source; the Library's Sources section (`canCall`) and its
+  // writes (`needsLine`).
   "knowledge.add": WRITER,
   "knowledge.delete": WRITER,
-  "knowledge.source.add": ADMIN,
-  "knowledge.source.check": ADMIN,
+  "knowledge.source.add": WRITER,
+  "knowledge.source.check": WRITER,
   "knowledge.source.rotate": ADMIN,
-  "knowledge.source.remove": ADMIN,
-  "knowledge.source.sync_now": ADMIN,
+  "knowledge.source.remove": WRITER,
+  "knowledge.source.sync_now": WRITER,
+  // The Library's gaps tile lists other people's questions.
+  "knowledge.gaps.list": ADMIN,
   // Listed for the registry mirror, not yet consulted at a call site: the
   // other namespace-scoped ops a view reads on mount. Each is the page's
   // own content (the view renders the humanized 403) or a secondary read
@@ -143,7 +146,8 @@ export const OP_MIN_ROLE = {
   "learnings.list": VIEWER,
   "policy.decisions": VIEWER,
   "consolidations.list": VIEWER,
-  // Health's Namespace tab reads on open; its Repairs tab is shown to an admin.
+  // Health's Namespace tab reads on open for a role that reaches it; its Repairs tab shows
+  // every role the repairs, unavailable to one below admin.
   "memory.health": VIEWER,
   "memory.sweep_expired": ADMIN,
   "conflicts.allowlist_list": VIEWER,
@@ -161,9 +165,11 @@ export const OP_MIN_ROLE = {
   "profile_schema.clear": ADMIN,
   "namespace.register_ontology": ADMIN,
   "namespace.register_category": WRITER,
+  // The assistant's draft of a namespace guide opens the guide editor.
+  "namespace.guide_set": WRITER,
   // The task inbox plane. The header bell polls `task.counts` only for a known role; the
-  // Tasks view offers each action to a role that reaches it (the handler still authorizes
-  // against the inbox's owner namespace).
+  // Tasks view shows each action, unavailable to a role that does not reach it (the handler
+  // still authorizes against the inbox's owner namespace).
   "task.get": VIEWER,
   "task.list": VIEWER,
   "task.counts": VIEWER,
@@ -188,7 +194,12 @@ export const OP_MIN_ROLE = {
 
 export type GatedOp = keyof typeof OP_MIN_ROLE;
 
-const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
+/** The ops gated on the caller's role on a namespace (not on the token's flat claim). */
+export type NamespaceOp = {
+  [K in GatedOp]: (typeof OP_MIN_ROLE)[K]["by"] extends "namespace" ? K : never;
+}[GatedOp];
+
+export const RANK: Record<MinRole, number> = { viewer: 1, writer: 2, admin: 3 };
 
 /**
  * True when the client can show that the current principal is allowed to
@@ -207,6 +218,19 @@ export function canCall(op: GatedOp, role: NamespaceRole | null, whoami: WhoAmI 
 
 // The flat claims, lowercased: org and platform admin reach no more than admin here.
 const CLAIM_RANK: Record<string, number> = { ...RANK, org_admin: RANK.admin, platform_admin: RANK.admin };
+
+/** Own-only connection ops use the signed-in person's org, independent of namespace grants.
+ *  The server checks canonical ownership and standing, and consent requires a primary session. */
+export function canCallOwnConnections(whoami: WhoAmI | null): boolean {
+  return !!(
+    whoami?.authenticated &&
+    whoami.subject &&
+    whoami.org &&
+    whoami.org !== "*" &&
+    !whoami.is_service_account &&
+    whoami.roles?.some((r) => CLAIM_RANK[r.toLowerCase()] >= RANK.viewer)
+  );
+}
 
 /** The ops `canCallOn` answers: namespace-gated at writer or above, the card's verbs. */
 export type RowOp = Extract<

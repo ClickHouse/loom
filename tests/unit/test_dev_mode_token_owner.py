@@ -1,13 +1,14 @@
 """With auth off (single-user included), every route that saves a token and the
-token list that shows and revokes it agree on who the caller is: a token minted
-by `/v1/admin/token.mint` or the Setup page is listed on the Tokens page and
-revoked from it, whether or not a bearer is sent."""
+token list that shows and revokes it agree on who the caller is: a valid bearer
+names its owner, and an absent bearer selects the deliberate dev identity.
+An invalid supplied credential is refused before anything is minted or saved."""
 
 from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -25,8 +26,10 @@ class _Store:
     def __init__(self) -> None:
         self.rows: dict[tuple[str, str], dict[str, Any]] = {}
         self.revocations: list[dict[str, Any]] = []  # loom.revoked_tokens
+        self.writes: list[str] = []
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
+        self.writes.append(table)
         if table == "loom.revoked_tokens":
             self.revocations.extend(rows)
         if table == "loom.service_accounts":
@@ -58,7 +61,7 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
     from server.insights.app import admin_routes
 
     if request.param == "single-user":
-        # Single-user overrides auth_required=True: no bearer is checked.
+        # Single-user retains its deliberate identity when no bearer is supplied.
         monkeypatch.setattr(settings, "auth_required", True)
         monkeypatch.setattr(settings, "identity_provider", "single-user")
     else:
@@ -122,6 +125,7 @@ def client(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> T
     monkeypatch.setattr(token_grants, "revoke_token_grants", _zero)
 
     app = FastAPI()
+    app.state.token_store = store
     app.include_router(admin_routes.org_admin_router)
     app.include_router(me_service_accounts.router)
     return TestClient(app)
@@ -134,8 +138,32 @@ def _alice() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-# Auth off ignores a bearer that does not verify: the caller is as if none were sent.
-NO_CALLER = [{}, {"Authorization": "Bearer not-a-jwt"}, {"Authorization": "Basic eA=="}]
+AUTH_HEADERS = [
+    pytest.param({}, id="absent"),
+    pytest.param({"Authorization": "Bearer not-a-jwt"}, id="bad-bearer"),
+    pytest.param({"Authorization": "Basic eA=="}, id="basic"),
+]
+
+
+def _refused_without_writes(
+    client: TestClient,
+    headers: dict[str, str],
+    path: str,
+    body: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.auth.delegation import Delegated
+
+    def _no_mint(*args: Any, **kwargs: Any) -> str:
+        pytest.fail("an invalid supplied credential reached token minting")
+
+    monkeypatch.setattr(Delegated, "mint", _no_mint)
+    response = client.post(path, json=body, headers=headers)
+    assert response.status_code == 401, response.text
+    assert response.json()["detail"]["code"] == "AUTH_INVALID"
+    store = client.app.state.token_store
+    assert store.writes == []
+    assert store.rows == {} and store.revocations == []
 
 
 def _listed(client: TestClient, headers: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -164,19 +192,80 @@ def _mint_default_token(client: TestClient, headers: dict[str, str]) -> str:
     return name
 
 
-@pytest.mark.parametrize("headers", NO_CALLER)
+@pytest.mark.parametrize("headers", AUTH_HEADERS)
 def test_a_token_minted_by_token_mint_is_listed_and_revoked(
-    client: TestClient, headers: dict[str, str]
+    client: TestClient, headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _token_mint(client, headers, "default")
-    assert _listed(client, headers)["ci-bot"]["created_by"] == "dev"
+    if headers:
+        _refused_without_writes(
+            client,
+            headers,
+            "/v1/admin/token.mint",
+            {
+                "name": "ci-bot",
+                "org": settings.self_signup_org,
+                "namespaces": ["home"],
+                "roles": ["viewer"],
+            },
+            monkeypatch,
+        )
+        return
+    _token_mint(client, headers, settings.self_signup_org)
+    assert _listed(client, headers)["ci-bot"]["created_by"] == "you"
     _revoke_and_check(client, headers, "ci-bot")
 
 
-@pytest.mark.parametrize("headers", NO_CALLER)
-def test_a_token_made_without_a_name_is_listed_and_revoked(
-    client: TestClient, headers: dict[str, str]
+@pytest.mark.parametrize("headers", AUTH_HEADERS)
+def test_the_single_user_mints_on_the_namespace_it_administers(
+    client: TestClient, headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The Tokens page's default, the default namespace first and then `*`: the
+    single user holds the bootstrap's admin grant there, as `you` in
+    `self_signup_org`, and that grant is the one the mint reads."""
+    from server.auth import authz
+
+    org = settings.self_signup_org
+    ns = settings.default_namespace
+    body = {"name": "laptop", "namespaces": [ns, "*"], "ttl_days": 90}
+    if headers:
+        _refused_without_writes(
+            client, headers, "/v1/me/service_accounts.create", body, monkeypatch
+        )
+        return
+
+    async def _bootstrap_grant(o: str, n: str, subject: str) -> Role | None:
+        return Role.ADMIN if (o, n, subject) == (org, ns, "you") else None
+
+    monkeypatch.setattr(authz, "grant_role_for", _bootstrap_grant)
+    r = client.post("/v1/me/service_accounts.create", json=body, headers=headers)
+    assert r.status_code == 200, r.text
+    assert r.json()["org"] == org
+    assert r.json()["namespaces"] == [ns, "*"]
+    assert _listed(client, headers)["laptop"]["created_by"] == "you"
+
+
+def test_a_token_the_old_owner_made_is_listed_and_revoked_by_name(client: TestClient) -> None:
+    """A token saved under the previous auth-off owner, `dev` in `default`, is off
+    the Tokens list and reached by naming that subject and org."""
+    old = {"subject": "dev", "org": "default"}
+    r = client.post("/v1/me/service_accounts.create", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    assert "old" not in _listed(client, {})
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("old", "dev")]
+    r = client.post("/v1/me/service_accounts.revoke", json={"name": "old", **old})
+    assert r.status_code == 200, r.text
+    rows = client.get("/v1/me/service_accounts", params=old).json()["rows"]
+    assert rows[0]["revoked_at"] is not None
+
+
+@pytest.mark.parametrize("headers", AUTH_HEADERS)
+def test_a_token_made_without_a_name_is_listed_and_revoked(
+    client: TestClient, headers: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    if headers:
+        _refused_without_writes(client, headers, "/v1/me/service_accounts.create", {}, monkeypatch)
+        return
     _revoke_and_check(client, headers, _mint_default_token(client, headers))
 
 
@@ -220,7 +309,8 @@ def test_a_wildcard_token_from_a_wildcard_bearer_names_the_personal_namespace(
 def test_a_wildcard_token_names_where_its_unaddressed_calls_land(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Alice's saved switcher pick is a team she writes: MCP lands there, so the page says so.
+    # Alice's saved pick in the namespace picker is a team she writes: MCP lands there, so the
+    # page says so.
     from server.auth import aliases
     from server.identity.app import caller_defaults
 
@@ -304,7 +394,7 @@ def test_an_unavailable_revocation_list_answers_503(
         raise jwt_mod.RevocationUnavailable("revocation list not loaded")
 
     monkeypatch.setattr(jwt_mod, "verify_token", _unavailable)
-    monkeypatch.setattr(bearer, "verify_token", _unavailable)
+    monkeypatch.setattr(bearer, "authenticate_token", AsyncMock(side_effect=_unavailable))
     r = _create(client, _alice(), namespaces=["home"])
     assert r.status_code == 503, r.text
     assert r.headers["Retry-After"] == "5"
@@ -330,7 +420,7 @@ def test_the_retired_subject_does_not_name_the_owner(client: TestClient) -> None
     assert r.status_code == 200, r.text
     assert "subject" in r.json()["ignored_args"]
     rows = client.get("/v1/me/service_accounts", params={"org": "acme"}).json()["rows"]
-    assert [(row["name"], row["created_by"]) for row in rows] == [("ci-bot", "dev")]
+    assert [(row["name"], row["created_by"]) for row in rows] == [("ci-bot", "you")]
 
 
 def test_auth_on_still_delegates_from_the_bearer(

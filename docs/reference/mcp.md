@@ -33,8 +33,9 @@ Query parameters on the URL select what `tools/list` shows for that connection:
 An unknown value for either falls back to the deployment default, so a typo
 never widens or narrows a listing silently. The `?toolset=` value also shapes the
 session primer (`initialize` instructions, `server/discover`, the `loom` prompt,
-`loom://primer` and `loom_activate`): the primer names an op's own tool only when the
-toolset lists it, and `loom_op` with the op name otherwise.
+`loom://primer` and `loom_activate`): the primer names an op's own tool when the
+toolset lists it, else the op name marked "(via loom_op)", and leaves out an op
+`loom_op` does not route there.
 
 Methods served: `initialize`, `notifications/initialized`,
 `notifications/cancelled`, `ping`, `tools/list`, `tools/call`, `prompts/list`,
@@ -54,11 +55,11 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
-| `open`               | nothing; an invalid bearer is ignored (trusted networks only) |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
+| `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
 `LOOM_ALLOW_INSECURE=1`. A deployment with auth off (`LOOM_AUTH_REQUIRED=false`)
@@ -74,6 +75,10 @@ is an ordinary Loom JWT; see [Tokens and grants](../guides/tokens-and-grants.md)
 The bearer is read from the `Authorization` header only. A token passed as `?token=` on
 the `/mcp` URL is ignored and the request is unauthenticated: request lines land in proxy
 and access logs, where a URL token would be written in the clear.
+
+A bearer that verifies but fails required cell provisioning is refused in every mode;
+an unavailable provisioning read answers retryable 503. Neither becomes an anonymous
+caller. See [cell provisioning](../architecture/cells.md#scim-and-sign-in-across-cells).
 
 ### OAuth
 
@@ -127,7 +132,12 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   that namespace as if it had been named. `loom_search` under the header also reads
   the repository's documents and `decision` memories from its trunk code namespace,
   when the caller may read it, and runs the tracker duplicate check for a
-  defect-shaped query.
+  defect-shaped query. A `memory.set` with no `repo:` tag takes the `repo:<id>` of the
+  repository configured for the scope's namespace, when the scope's org is the write's
+  org and the caller may read that repository; with such a scope, a write into another
+  configured code namespace takes that namespace's repository tag instead. A scope that
+  names no configured, readable repository adds no tag, and an explicit `repo:` tag
+  always stays.
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which
@@ -150,7 +160,19 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
   (`server/transport/mcp_descriptions.py`) when there is one, else a one-line
   fallback with the op's latency budget, idempotency and minimum role. The
   curated texts say when to use a tool and when not to; the choice is left to
-  the model.
+  the model. A text names other ops by op name, and each listing renders it for
+  the client that reads it (`name_ops_for_listing` in
+  `server/transport/mcp_op.py`): an op the listing carries is named by its
+  tool (`loom_memory_update`), and an op it does not carry keeps its op name,
+  the one `loom_op` takes, with "(via loom_op)" after its first mention when
+  `loom_op` routes it on that connection; it does not route a hidden op, a
+  write on `readonly` or anything on `assistant`. Input field descriptions, and
+  the output schema the `full` profile keeps, are rendered the same way, and so
+  is a hidden op's `instead` text; `loom_op`'s own text, which is about op
+  names, is built per listing instead. Mentor text is rendered for the
+  caller's listing over MCP too (a tool result's `hint`, `context.pack`'s
+  `mentor` section, and `mentor.brief`'s hints and plane `when`); over HTTP it
+  reads as stored.
 - **Input schema.** The op's Pydantic input model without the fields the
   server fills itself (`org`, `agent`, `user_id`, `session_id`, `consumer`),
   the dashboard-only fields (`_HIDDEN_OP_PROPS` in
@@ -166,11 +188,11 @@ Every registry operation not in `_MCP_HIDDEN_OPS` is a tool:
 
 Three synthetic tools are listed on every toolset but `assistant`:
 
-| Tool            | Does                                                                                                                                                           |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom_search`   | One call searches memory, profile, knowledge and conversations in parallel and returns all four sections. `explain: true` adds why each memory hit ranked.     |
-| `loom_activate` | Returns the session primer (profile, preferences, default workspace), the same text as the `loom` prompt.                                                      |
-| `loom_op`       | `{op, arguments}` runs any op the roster does not list, through the same path as a listed tool; `{op: "help", query}` lists matching ops with their arguments. |
+| Tool            | Does                                                                                                                                                                                                                 |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom_search`   | One call searches memory, profile, knowledge and conversations in parallel and returns all four sections. `explain: true` adds why each memory hit ranked.                                                           |
+| `loom_activate` | Returns the session primer (profile, preferences, default workspace), the same text as the `loom` prompt.                                                                                                            |
+| `loom_op`       | `{op, arguments}` runs any op the roster does not list, through the same path as a listed tool; `{op: "help", query}` lists up to 15 matching ops (`_CATALOG_LIMIT`), each with its required and optional arguments. |
 
 `loom_search` is the registry's `search.query` operation (`POST /v1/search.query`
 over HTTP, the same sections without the text summary). Over MCP it runs the same
@@ -192,29 +214,51 @@ instead. They stay reachable over HTTP and the SDKs. On the `assistant` toolset
 other hidden op answers `UNKNOWN_OP`. The rule for hiding an op: would a typical end
 user, not an operator, reach for it in chat? A namespace-wide view can be hidden
 while a variant bounded to the caller stays on MCP: `namespace.list` is hidden and
-`namespace.list_mine` listed; `memory.extraction_status` (every batch queued in the
-namespace) is hidden and `memory.extraction_status_mine` (the batches the caller
+`namespace.list_mine` callable (listed on `all` and `readonly`, through `loom_op` on
+every other toolset except `assistant`); `memory.extraction_status` (every batch queued
+in the namespace) is hidden and `memory.extraction_status_mine` (the batches the caller
 queued, by `queue_id`, at most 20 a call) is callable by name or through `loom_op`
 on every toolset except `assistant` (`readonly` included). Its write twin,
 `memory.extraction_retry_mine`, replays the caller's failed batches once more;
 `loom_op` routes it on every toolset but `readonly` and `assistant`.
 
+**Compiler-tier uploads.** `LOOM_MCP_CODE_UPLOAD_TOOLS=true` (default off) takes
+`code.scip_ingest` and `code.scip_status` off the hidden ops, for a deployment whose
+uploader of compiler-tier indexes reaches Loom through MCP only. Both are then callable
+on every toolset but `assistant`, by tool name and through `loom_op` (which routes only
+`code.scip_status` on `readonly`). `all` lists them by its own rules, so only with
+`LOOM_MCP_CODE_TOOLS=true`, and `readonly` then lists `code.scip_status`; no curated
+roster lists either. Each keeps its role: writer for the upload, viewer for the status.
+
+With the setting on, `code.scip_ingest` accepts a part only for a namespace that has a
+repository entry, self-service or operator-configured
+([adding repositories](../features/code-index/repositories.md)), over HTTP as over MCP.
+Without that rule a caller could store upload batches in any namespace it may write,
+its own memory namespace included. A part for another namespace answers
+`RESOURCE_NOT_FOUND` (404 over HTTP). Send the namespace itself: when a code tool's
+`namespace` names a repository and is not a namespace the caller can read, MCP resolves
+it to the index of the repository's default branch, and the upload lands there.
+`ops.capabilities` and the generated [operations reference](./operations.md) describe
+the default: they report both ops as hidden whatever the setting.
+
 ### Toolsets
 
 A toolset decides what is **listed**; every non-hidden op stays callable by
-tool name, or through `loom_op`, whatever the toolset. The `assistant` toolset is the
-exception: on it only its own reads are callable.
+tool name, or through `loom_op`, whatever the toolset. Two exceptions: on
+`assistant` only its own reads are callable, and on `readonly`, named by
+`?toolset=` or by `LOOM_MCP_TOOLSET` when the request names none, `loom_op`
+routes read ops only.
 
-| Toolset     | Lists                                                                                                                                                                                                                                                                                                                                                                                                             | For                                            |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `core`      | The chat loop: memory save, recall and manage, working memory, knowledge documents, profile, conversation logging, namespace orientation, erasure, `blacklist.add`, `context.pack`. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                                                                                          | chat clients (the default)                     |
-| `coding`    | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                            | coding agents                                  |
-| `tracker`   | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                                                                                                        | sessions working a failing test, crash or PR   |
-| `tasks`     | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                                                                                                                                                          | a session acting as an agent with a task inbox |
-| `atomic`    | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                                                                                                                                                                   | minimal, policy-shaped agents                  |
-| `readonly`  | The `all` listing minus every tool whose `readOnlyHint` is false.                                                                                                                                                                                                                                                                                                                                                 | read-only registrations                        |
-| `assistant` | A fixed set of reads for investigating Loom on a person's behalf: `namespace.get/summary/inventory/tune/taxonomy/audit/validate/guide_get/guide_history/list_categories`, `mentor.brief/guide`, `grants.list`, `memory.inspect/search/ask/get/list/history/provenance/aggregate`, `facts.traverse/path`, `knowledge.search/get/list/inspect`, `code.search/symbol`, `insights.catalog/query`. No synthetic tools. | a chat client acting for a signed-in person    |
-| `all`       | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                                                      | operators                                      |
+| Toolset     | Lists                                                                                                                                                                                                                                                                                                                                                                                                                                | For                                            |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| `core`      | The memory loop: `memory.set/update/delete/pin/get/history/apply/lock`, `blacklist.add`, `context.pack`. Every other op runs through `loom_op`; no tool listed on `core` logs conversation turns. The code tools join with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                                                                                               | chat clients (the default)                     |
+| `coding`    | `memory.set/update/get/delete`, `working_memory.set`, `context.pack`, the code tools (`code.search`, `grep`, `enclosing`, `ask`, `symbol`, `outline`, `callers`, `context_pack`), `tracker.duplicate_check`, `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                                               | coding agents                                  |
+| `tracker`   | `tracker.answer`, `binding`, `component`, `duplicate_check`, `flaky`, `item`, `links`, `release`, `similar`, `test_signal`, plus `code.bisect_candidates`, `code.pr_check`, `code.impact`.                                                                                                                                                                                                                                           | sessions working a failing test, crash or PR   |
+| `tasks`     | `task.pull/create/complete/fail/wont_do/defer/heartbeat/updates/list/get`, `inbox.list`.                                                                                                                                                                                                                                                                                                                                             | a session acting as an agent with a task inbox |
+| `atomic`    | `memory.set/get/delete/ask`, `working_memory.set/append`, `run.begin/complete`.                                                                                                                                                                                                                                                                                                                                                      | minimal, policy-shaped agents                  |
+| `readonly`  | The `all` listing minus every tool whose `readOnlyHint` is false; `loom_op` routes read ops only.                                                                                                                                                                                                                                                                                                                                    | read-only registrations                        |
+| `assistant` | A fixed set of reads for investigating Loom on a person's behalf: `namespace.get/summary/inventory/tune/taxonomy/audit/validate/guide_get/guide_history/list_categories`, `mentor.brief/guide`, `help.search/get`, `grants.list`, `memory.inspect/search/ask/get/list/history/provenance/aggregate`, `facts.traverse/path`, `knowledge.search/get/list/inspect`, `code.search/symbol`, `insights.catalog/query`. No synthetic tools. | a chat client acting for a signed-in person    |
+| `all`       | Every non-hidden op whose `maturity` is `stable`, plus the `experimental` ops the core or atomic roster lists. An experimental op that neither roster lists is left out; it is still callable by name or through `loom_op`. Code tools only with `LOOM_MCP_CODE_TOOLS=true`.                                                                                                                                                         | operators                                      |
 
 Curated rosters combine: `?toolset=coding+tracker`, `coding,tracker`, or an
 unescaped `+` that arrives as a space. Only curated rosters join (`all`,

@@ -230,3 +230,21 @@ def test_lean_drops_the_per_hit_bookkeeping() -> None:
 def test_conversations_section_carries_one_list() -> None:
     src = inspect.getsource(loom_search_fanout.search_sections)
     assert 'conv_dump.pop("hits", None)' in src
+
+
+def test_a_fail_closed_kind_read_refuses_without_a_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mint-time check must not pass on the configured kinds alone; a sweep still may."""
+    import server.core.ch as chmod
+    from server.core.errors import BackendUnavailableError
+
+    class _Unconnected:
+        _client = None
+
+    nk.reset_cache()
+    monkeypatch.setattr(chmod, "get_client", lambda: _Unconnected())
+    with pytest.raises(BackendUnavailableError):
+        asyncio.run(nk.kind_map("o", fail_closed=True))
+    assert isinstance(asyncio.run(nk.kind_map("o")), dict)
+    nk.reset_cache()

@@ -64,12 +64,20 @@ describe("ProposalsPanel", () => {
     expect(await screen.findByText("No proposals")).toBeInTheDocument();
   });
 
-  it("offers a viewer the proposals and no decision", async () => {
+  it("shows a viewer the proposals, and Accept and Reject unavailable with the role they need", async () => {
     signIn("viewer");
     await show([P]);
     expect(screen.getByText("Deploys run on Tuesdays")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Accept deploy_window" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Actions for deploy_window" })).toBeNull();
+    const needs = "Needs writer on team. An admin of it can grant that.";
+    const accept = screen.getByRole("button", { name: "Accept deploy_window" });
+    expect(accept).toHaveAttribute("aria-disabled", "true");
+    expect(accept).toHaveAccessibleDescription(needs);
+    await userEvent.click(accept);
+    await userEvent.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
+    const reject = await screen.findByRole("menuitem", { name: "Reject" });
+    expect(reject).toHaveAccessibleDescription(needs);
+    await userEvent.click(reject);
+    expect(api.decideProposals).not.toHaveBeenCalled();
   });
 
   it("says a decision did not happen, and reads the list again", async () => {

@@ -50,6 +50,7 @@ def test_blank_normalises_to_local(monkeypatch) -> None:  # type: ignore[no-unty
     "value",
     [
         "personal-avery",  # collides with per-subject auto-provisioning
+        "acl-0123456789abcdef01234567",  # a mirror's name, refused on every request
         "Team Alpha/prod",  # spaces + separator, inserted verbatim otherwise
         "TeamAlpha",  # uppercase: no other creation path emits it
         "-leading",
@@ -409,7 +410,7 @@ async def test_mcp_defaults_use_default_namespace_in_single_user(  # type: ignor
 ) -> None:
     """The blocking gap: an auth-off MCP/SDK caller must land in the SAME
     namespace the dashboard serves — not `personal-you`, and not a stale
-    `loom.user_state` row left by an old switcher click (no DB lookup at
+    `loom.user_state` row left by an old click in the namespace picker (no DB lookup at
     all: get_client raising proves the resolution is static)."""
     from server.settings import settings
     from server.transport.mcp_identity import _caller_defaults

@@ -80,7 +80,7 @@ metadata and license files under the Python installation. They include
 packages under permissive licenses and packages under MPL-2.0; those packages
 remain separately licensed and Loom does not relicense them.
 
-The dashboard includes JavaScript packages and the Inter and JetBrains Mono
+The dashboard includes JavaScript packages and the Inter and Inconsolata
 font assets under their publishers' licenses, including MIT, BSD, Apache-2.0,
 ISC, and the SIL Open Font License. Its build creates and embeds
 THIRD_PARTY_NOTICES.txt from the installed production dependency tree so the

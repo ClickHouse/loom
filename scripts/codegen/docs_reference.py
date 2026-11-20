@@ -15,7 +15,7 @@ table it carries. A region's name picks its renderer:
   `tests/unit/snapshots/cli_tree.json` (a unit test keeps it equal to the parser)
 - `errors`: the typed errors in `server/core/errors.py` and every other `"code"`
   literal the server answers with
-- `schema`: the tables and materialized views in `schemas/schema.sql`
+- `schema`: the tables, views and materialized views in `schemas/schema.sql`
 - `status_ops`, `status_switches`: each op group's stable and experimental ops (op
   `maturity`), and every boolean setting in `server/settings/catalog.py` that loads false
 
@@ -47,6 +47,12 @@ if str(ROOT) not in sys.path:  # run as a file
     sys.path.insert(0, str(ROOT))
 
 from scripts.codegen.common import write_atomic  # noqa: E402
+from scripts.codegen.page_summary import (  # noqa: E402
+    SECTIONS,
+    first_sentence,
+    page_key,
+    page_summary,
+)
 from scripts.codegen.sdk_py_admin_gen import render_admin_routes_table  # noqa: E402
 from server.core.errors import (  # noqa: E402
     CLASS_BY_CODE,
@@ -77,21 +83,6 @@ def _code(text: str) -> str:
     return f"`{_cell(text)}`" if text else ""
 
 
-def _first_sentence(text: str | None, limit: int = 200) -> str:
-    """The first sentence of a docstring or description, on one line."""
-    if not text:
-        return ""
-    para = " ".join(text.strip().split("\n\n")[0].split())
-    # Not after "e.g." or "i.e.", which never end a sentence ("etc." may).
-    m = re.search(r"(?<!\.\.)(?<![eE]\.g\.)(?<![iI]\.e\.)(?<=[.!?])\s+(?=[A-Z`*(])", para)
-    sentence = para[: m.start()] if m else para
-    sentence = sentence.replace("**", "")
-    if len(sentence) > limit:
-        cut = sentence[: limit - 1].rsplit(" ", 1)[0]
-        sentence = cut.rstrip(",;:—- ") + "…"
-    return sentence
-
-
 # --- operations ---------------------------------------------------------------
 
 
@@ -102,7 +93,7 @@ def _op_summary(op: Operation, curated: dict[str, str]) -> str:
     if model_doc and "Usage docs: https://docs.pydantic.dev" in model_doc:
         model_doc = None  # pydantic's inherited BaseModel docstring
     for text in (model_doc, curated.get(op.name), op.handler.__doc__):
-        s = _first_sentence(text)
+        s = first_sentence(text)
         if s:
             return s
     return ""
@@ -232,7 +223,7 @@ def render_status_switches() -> str:
         for name, field in Settings.model_fields.items()
         if field.annotation is bool and getattr(loaded, name) is False
     )
-    rows = [f"| `LOOM_{n.upper()}` | {_cell(_first_sentence(described[n]))} |" for n in off]
+    rows = [f"| `LOOM_{n.upper()}` | {_cell(first_sentence(described[n]))} |" for n in off]
     return "\n".join(
         [
             f"{len(off)} boolean settings load false.\n",
@@ -346,7 +337,7 @@ def _field_rows(model: type, with_default: bool) -> list[str]:
                 text = repr(info.default)
                 default = f"`{_cell(text if len(text) <= 40 else text[:37] + '…')}`"
             cells.append(default)
-        cells.append(_cell(_first_sentence(meaning, 240)))
+        cells.append(_cell(first_sentence(meaning, 240)))
         rows.append("| " + " | ".join(cells) + " |")
     return rows
 
@@ -361,7 +352,10 @@ def render_group(group: str, ops: list[Operation]) -> str:
         "edit the models, not this page. -->\n",
         "Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity "
         "fields (`org`, `namespace`, `agent`, `user_id`, `session_id`) are filled from the "
-        "token and the MCP session when a transport can; see "
+        "token and the MCP session when a transport can; for an HTTP call with no "
+        "token on a single-user server, the install's org on every op but `code.*` and "
+        "`tracker.*` (which keep their plane's), and on [some ops](../http-api.md#request) "
+        "its namespace and agent; see "
         "[identities and namespaces](../../concepts/identities-and-namespaces.md). The "
         "[operations index](../operations.md) explains role, kind and the MCP `all` "
         "listing. Unknown input fields are served and named in `ignored_args`.\n",
@@ -400,69 +394,78 @@ def render_group_pages() -> dict[str, str]:
 # --- llms.txt -----------------------------------------------------------------
 
 LLMS_TXT = ROOT / "llms.txt"
-_LLMS_SECTIONS = (
-    ("Getting started", "getting-started"),
-    ("Operations", "operations"),
-    ("Features", "features"),
-    ("Reference", "reference"),
-    ("Concepts", "concepts"),
-    ("Guides", "guides"),
-    ("Architecture", "architecture"),
-    ("Benchmarks", "benchmarks"),
-    ("Development", "development"),
+_AGENT_SETUP_TXT = "https://github.com/ClickHouse/loom/releases/latest/download/agent-setup.txt"
+
+
+# llms.txt's sections in order: what Loom is for and how to use it first ("faq" is the FAQ and
+# glossary block), then operations and reference; Development is last, as the Optional section
+# the llms.txt format lets a reader skip.
+_LLMS_ORDER = (
+    "getting-started",
+    "use-cases",
+    "faq",
+    "concepts",
+    "features",
+    "guides",
+    "operations",
+    "reference",
+    "architecture",
+    "benchmarks",
+    "development",
 )
-
-
-def _page_summary(path: Path) -> tuple[str, str]:
-    """A page's title and the first sentence of its opening paragraph (the first plain
-    paragraph after the title: not a heading, status note, list, table or code block)."""
-    text = path.read_text(encoding="utf-8")
-    title = next((ln[2:].strip() for ln in text.splitlines() if ln.startswith("# ")), path.stem)
-    body = re.sub(r"^(```|~~~).*?^\1", "", text, flags=re.DOTALL | re.MULTILINE)
-    summary = ""
-    for para in re.split(r"\n\s*\n", body):
-        first = para.lstrip()
-        if not first or first[0] in "#>|-*<!" or first[:2].isdigit() or first.startswith("1."):
-            continue
-        summary = _first_sentence(" ".join(para.split()), 240)
-        break
-    summary = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", summary)  # links are page-relative
-    return title.replace("`", ""), summary
 
 
 def render_llms_txt() -> str:
     """The llms.txt index agents read: every doc page, grouped, with its outcome line."""
     docs = ROOT / "docs"
     out = [
-        "# Loom",
+        "# ClickHouse Loom",
         "",
-        "> Loom is a memory, knowledge and code-intelligence data plane for AI "
-        "agents, built on one ClickHouse database and served over MCP, HTTP and "
-        "Python/TypeScript SDKs.",
+        "> Loom is a self-hosted MCP server that gives AI agents shared long-term memory, "
+        "document search with citations and a code index. It keeps its data in ClickHouse, "
+        "with Postgres as an option for live memory and knowledge state, and serves it over "
+        "MCP, HTTP and the Python and TypeScript SDKs.",
         "",
-        "Start with docs/index.md (the map) and docs/getting-started/connect-a-coding-agent.md "
-        "(the fastest path). Every operation's fields are in docs/reference/operations/.",
+        "Start with [the docs map](docs/index.md). To install Loom, a coding agent reads "
+        "[agent setup](docs/getting-started/agent-setup.md) and follows "
+        f"[agent-setup.txt]({_AGENT_SETUP_TXT}), "
+        "which each release attaches with its pins filled in; for Cline or another MCP "
+        "client, it follows [llms-install.md](llms-install.md). To connect to a running "
+        "server: [connect a coding agent](docs/getting-started/connect-a-coding-agent.md). "
+        "To decide whether Loom fits: [the overview](docs/getting-started/overview.md); for "
+        "one need, [use cases](docs/use-cases/index.md). Every operation's fields are in "
+        "[operations](docs/reference/operations.md) and the pages it links.",
         "",
     ]
-    for heading, sub in _LLMS_SECTIONS:
-        pages = sorted(p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR)
+
+    def entry(path: Path) -> str:
+        title, outcome = page_summary(path)
+        rel = path.relative_to(ROOT).as_posix()
+        return f"- [{title}]({rel})" + (f": {outcome}" if outcome else "")
+
+    titles = {sub: heading for heading, sub in SECTIONS}
+    if sorted(_LLMS_ORDER) != sorted([*titles, "faq"]):
+        raise ValueError("_LLMS_ORDER must name every section in SECTIONS once")
+    for sub in _LLMS_ORDER:
+        if sub == "faq":
+            out.append("## FAQ and glossary\n")
+            out += [entry(docs / "faq.md"), entry(docs / "glossary.md"), ""]
+            continue
+        # In the sidebar's order (page_key); the per-group operation pages are reached through
+        # docs/reference/operations.md.
+        pages = sorted(
+            (p for p in (docs / sub).rglob("*.md") if p.parent != GROUP_DIR),
+            key=lambda p: page_key(p.relative_to(docs).as_posix()),
+        )
         if not pages:
             continue
-        out.append(f"## {heading}\n")
-        for p in pages:
-            title, outcome = _page_summary(p)
-            rel = p.relative_to(ROOT).as_posix()
-            out.append(f"- [{title}]({rel})" + (f": {outcome}" if outcome else ""))
+        out.append(f"## {'Optional' if sub == 'development' else titles[sub]}\n")
+        out += [entry(p) for p in pages]
+        if sub == "getting-started":
+            # The other install route, for clients without a Loom plugin, closes the section.
+            out.append(entry(ROOT / "llms-install.md"))
         out.append("")
-    out.append("## Optional\n")
-    for p in (docs / "glossary.md", docs / "faq.md"):
-        if p.exists():
-            title, outcome = _page_summary(p)
-            out.append(
-                f"- [{title}]({p.relative_to(ROOT).as_posix()})"
-                + (f": {outcome}" if outcome else "")
-            )
-    return "\n".join(out) + "\n"
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 # --- workers ------------------------------------------------------------------
@@ -484,7 +487,7 @@ def _module_summary(module: str) -> str:
     path = ROOT / (module.replace(".", "/") + ".py")
     if not path.exists():
         return ""
-    return _first_sentence(ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))))
+    return first_sentence(ast.get_docstring(ast.parse(path.read_text(encoding="utf-8"))))
 
 
 def render_workers() -> str:
@@ -532,7 +535,7 @@ def _cli_rows(node: dict, out: list[str]) -> None:
         for name, child in subs.items():
             summary = helps.get(name) or child.get("description") or ""
             out.append(
-                f"| `{child['prog']}` | {_cell(_first_sentence(summary))} | {_flags(child)} |"
+                f"| `{child['prog']}` | {_cell(first_sentence(summary))} | {_flags(child)} |"
             )
             _cli_rows(child, out)
 
@@ -592,7 +595,7 @@ def _typed_errors() -> dict[str, tuple[int, str, str]]:
                     attrs[target.id] = value.value
             code, status = attrs.get("code"), attrs.get("status_code")
             if isinstance(code, str) and _CODE_LITERAL.match(code) and isinstance(status, int):
-                doc = _first_sentence(ast.get_docstring(cls))
+                doc = first_sentence(ast.get_docstring(cls))
                 typed.setdefault(code, (status, doc, f"{module}.{cls.name}"))
     return typed
 
@@ -655,7 +658,7 @@ def _common_error_codes() -> set[str]:
 
 SCHEMA = ROOT / "schemas" / "schema.sql"
 _STMT = re.compile(
-    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW) IF NOT EXISTS "
+    r"^CREATE (?P<kind>TABLE|MATERIALIZED VIEW|VIEW) IF NOT EXISTS "
     r"(?P<name>loom(?:_telemetry)?\.\w+)(?P<body>.*?);\n",
     re.DOTALL | re.MULTILINE,
 )
@@ -668,7 +671,7 @@ def _clause(body: str, keyword: str) -> str:
 
 def render_schema() -> str:
     text = SCHEMA.read_text(encoding="utf-8")
-    tables, views = [], []
+    tables, plain_views, views = [], [], []
     for m in _STMT.finditer(text):
         name, body = m.group("name").removeprefix("loom."), m.group("body")
         if m.group("kind") == "TABLE":
@@ -686,6 +689,11 @@ def render_schema() -> str:
                 f"{_code(_clause(body, 'ORDER BY'))} | {_code(_clause(body, 'PARTITION BY'))} | "
                 f"{_code(ttl)} | {'; '.join(extras)} |"
             )
+        elif m.group("kind") == "VIEW":
+            read = sorted(set(re.findall(r"\bFROM (loom\.\w+)", body)))
+            plain_views.append(
+                f"| `{name}` | {', '.join(_code(s.removeprefix('loom.')) for s in read)} |"
+            )
         else:
             head = " ".join(body.split("(", 1)[0].split())
             target = re.search(r"\bTO (loom(?:_telemetry)?\.\w+)", head)
@@ -700,12 +708,17 @@ def render_schema() -> str:
                 f"{runs} |"
             )
     out = [
-        f"{len(tables)} tables and {len(views)} materialized views in the `loom` and "
-        "`loom_telemetry` databases; a `loom_telemetry` object keeps its database prefix.\n",
+        f"{len(tables)} tables, {len(plain_views)} views and {len(views)} materialized views "
+        "in the `loom` and `loom_telemetry` databases; a `loom_telemetry` object keeps its "
+        "database prefix.\n",
         "#### Tables\n",
         "| Table | Engine | ORDER BY | PARTITION BY | TTL | Indexes |",
         "| --- | --- | --- | --- | --- | --- |",
         *tables,
+        "\n#### Views\n",
+        "| View | Reads from |",
+        "| --- | --- |",
+        *plain_views,
         "\n#### Materialized views\n",
         "| View | Writes to | Reads from | Runs |",
         "| --- | --- | --- | --- |",

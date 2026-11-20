@@ -4,7 +4,7 @@ import type { MyNamespaceEntry, RunRow, WhoAmI } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
 import { RUNS_FIELDS, Runs } from "./Runs";
-import { getRun } from "../api";
+import { getRun, gradeRun } from "../api";
 import userEvent from "@testing-library/user-event";
 import runsSource from "./Runs.tsx?raw";
 
@@ -25,6 +25,7 @@ vi.mock("../api", async (importOriginal) => {
       return { runs, total: runs.length, paged: true };
     },
     getRun: vi.fn(async () => ({ found: false, run: null })),
+    gradeRun: vi.fn(),
     listMine: vi.fn(async () => []),
     isAuthDisabled: () => false,
   };
@@ -139,6 +140,33 @@ describe("Runs: the projected field list covers what the row reads", () => {
       expect(await screen.findByText("make the tests pass")).toBeInTheDocument();
       expect(screen.getByText("done")).toBeInTheDocument();
       expect(screen.getByText("confidence 0.80")).toBeInTheDocument();
+    });
+
+    it("a viewer's replay shows the grade section with both grades unavailable, with the role they need", async () => {
+      useStore.setState({ myNamespaces: [row("ns", "viewer")] });
+      listRuns.mockResolvedValue([projected(RUNS_FIELDS, FULL)]);
+      vi.mocked(getRun).mockResolvedValue({
+        found: true,
+        run: FULL,
+        recalled: 0,
+        recalled_keys: [],
+        memories_written: [],
+        observations: 0,
+        turns: 0,
+        cost_usd: 0,
+        unpriced_turns: 0,
+        elapsed_seconds: 0,
+        over_budget: [],
+      } as never);
+      render(<Runs />);
+      await userEvent.click(await screen.findByRole("button", { name: "fix the thing" }));
+      const held = await screen.findByRole("button", { name: "Held up" });
+      expect(held).toHaveAttribute("aria-disabled", "true");
+      expect(held).toHaveAccessibleDescription("Needs writer on ns. An admin of it can grant that.");
+      expect(screen.getByRole("button", { name: "Did not hold" })).toHaveAttribute("aria-disabled", "true");
+      await userEvent.click(held);
+      await userEvent.click(screen.getByRole("button", { name: "Did not hold" }));
+      expect(gradeRun).not.toHaveBeenCalled();
     });
 
     it("opening another run never shows the run opened before's request", async () => {

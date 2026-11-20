@@ -30,7 +30,7 @@ from server.auth.bearer import missing_bearer, verify_bearer_header
 from server.auth.context import set_current_auth
 from server.auth.gateway import effective_auth
 from server.auth.jwt import AuthInfo
-from server.core import fail_open, tenant_slots
+from server.core import fail_open, request_tail, request_work, shielded, tenant_slots
 from server.core.errors import (
     AssistantUnavailableError,
     AuthInsufficientError,
@@ -70,12 +70,14 @@ def _refusal(e: BaseException) -> LoomServerError | HTTPException:
     return AuthInsufficientError("the caller may not ask the assistant here")
 
 
-def _bearer(request: Request) -> AuthInfo:
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+async def _bearer(request: Request) -> AuthInfo:
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None:
         if not settings.auth_actually_required():
             # Each answer reads under a token delegated from the caller's.
-            raise AssistantUnavailableError("the assistant answers as its caller: it needs auth on")
+            raise AssistantUnavailableError(
+                "the assistant answers as its caller: it needs auth on", reason="auth_off"
+            )
         raise missing_bearer()
     return auth
 
@@ -88,9 +90,14 @@ class _Row:
         self.request_id = uuid.uuid4().hex
         self.started = time.perf_counter()
         self.written = False
+        self.work = request_work.begin()
         cost_accumulator.begin_op()  # the answer's spend lands on this row
 
     def write(self, error: BaseException | None) -> None:
+        with request_work.bind(self.work):
+            self._write(error)
+
+    def _write(self, error: BaseException | None) -> None:
         if self.written:
             return
         self.written = True
@@ -127,7 +134,10 @@ class _Row:
                 slo_class=slo_class,
                 budget_ms=budget_ms,
             )
-        except Exception as e:  # noqa: BLE001 — telemetry never fails an answer
+        except Exception as e:  # noqa: BLE001 — ordinary telemetry stays best effort
+            if self.work.mirror_marked:
+                request_tail.fail_required()
+                raise request_tail.RequiredTailError() from None
             log.debug("assistant answer: ledger row not written: %s", e)
 
 
@@ -160,7 +170,7 @@ class _Held:
 
     def __init__(self, ticket: bridge.Ticket, row: _Row, slots: contextlib.ExitStack) -> None:
         self.ticket, self.row, self.slots = ticket, row, slots
-        self.answer = bridge.Answer()
+        self.answer = bridge.Answer(mirrored=ticket.mirrored)
         self.finished = False  # the stream reached its end, or its error event
 
     def close(self, error: BaseException | None) -> None:
@@ -186,6 +196,15 @@ class _AnswerStream(StreamingResponse):
         self.held = held
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        lifetime = (
+            request_tail.streaming_scope()
+            if self.held.ticket.mirrored
+            else contextlib.nullcontext()
+        )
+        async with lifetime:
+            await self._serve(scope, receive, send)
+
+    async def _serve(self, scope: Any, receive: Any, send: Any) -> None:
         error: BaseException | None = None
         try:
             await super().__call__(scope, receive, send)
@@ -193,15 +212,25 @@ class _AnswerStream(StreamingResponse):
             error = e
             raise
         finally:
-            try:
-                # Ends the body however the response ended, so its charge lands on the row.
+            if self.held.ticket.mirrored:
+                await shielded.to_its_end(self._close(error), name="assistant.stream.close")
+            else:
+                await self._close(error)
+
+    async def _close(self, error: BaseException | None) -> None:
+        try:
+            # Join producers before capturing final usage, including repeated cancellation.
+            async with asyncio.timeout(request_tail.REQUIRED_STEP_TIMEOUT_S):
                 await self.body_iterator.aclose()  # type: ignore[attr-defined]
-            finally:
-                if error is None and not self.held.finished:
-                    # The response returned with the stream unfinished: the client left
-                    # (below ASGI 2.4 Starlette absorbs the disconnect).
-                    error = asyncio.CancelledError()
+        finally:
+            if error is None and not self.held.finished:
+                # ASGI 2.3 can absorb a disconnect without raising it to the response.
+                error = asyncio.CancelledError()
+            try:
                 self.held.close(error)
+            except request_tail.RequiredTailError:
+                if error is None:
+                    raise
 
 
 @router.post("/v1/assistant/chat/completions")
@@ -209,7 +238,7 @@ async def chat_completions(request: Request) -> Any:
     """One answer from the Loom assistant. Body: OpenAI's chat request (`messages`,
     `stream`); any `model`, `conversation_id`, system message, tool or file is ignored.
     The caller needs `viewer` on the namespace."""
-    bearer = _bearer(request)
+    bearer = await _bearer(request)
     # An org-wide token's `*` is no org a row can name, as the op transport keeps it out.
     org_seen = "-" if bearer.org == "*" else bearer.org
     row = _Row(bearer, org_seen, request.headers.get("X-Loom-Namespace") or "")
@@ -267,19 +296,27 @@ async def chat_completions(request: Request) -> Any:
     except BaseException as e:
         held.close(e)
         raise
-    chunks = bridge.stream(ticket, messages, held.answer)
+    # Only a streamed answer sends its steps and the end of its text while it runs (a whole
+    # one sends neither).
     if payload.get("stream"):
+        chunks = bridge.stream(ticket, messages, held.answer, live=True)
         return _AnswerStream(_streamed(chunks, held), held)
-    return await _whole(chunks, held)
+    return await _whole(bridge.stream(ticket, messages, held.answer), held)
 
 
 async def _streamed(chunks: AsyncIterator[bytes], held: _Held) -> AsyncIterator[bytes]:
     try:
         async for chunk in chunks:
+            if chunk == b"data: [DONE]\n\n":
+                await chunks.aclose()  # type: ignore[attr-defined]
+                held.close(None)
+                await request_tail.settle_current()
             yield chunk
     except LoomServerError as e:
         # The status is sent: LibreChat's failure goes out as an error event, and on the row.
-        held.row.write(e)
+        await chunks.aclose()  # type: ignore[attr-defined]
+        held.close(e)
+        await request_tail.settle_current()
         held.finished = True
         yield bridge.error_event(e)
         return
@@ -301,6 +338,7 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
         held.close(error)
     return JSONResponse(
         {
+            **({"mirrored": True} if answer.mirrored else {}),
             "id": answer.run_id,
             "object": "chat.completion",
             "model": service.current_definition().model,
@@ -312,6 +350,8 @@ async def _whole(chunks: AsyncIterator[bytes], held: _Held) -> JSONResponse:
                 }
             ],
             "citations": [c.model_dump() for c in answer.citations],
+            "support": answer.support,
+            "unknown_names": answer.unknown_names,
             "usage": {
                 "prompt_tokens": answer.prompt_tokens,
                 "completion_tokens": answer.completion_tokens,

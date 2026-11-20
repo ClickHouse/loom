@@ -1,0 +1,14 @@
+#!/bin/sh
+# Loom for Cline: copy this file into .clinerules/hooks/ and set LOOM_CLINE_DIR to a Loom
+# checkout's integrations/cline (README.md). Never fails the task: every path answers
+# {"cancel": false}; no directory or no Node 18+ adds nothing, no server adds only the
+# primer's static notes.
+dir="${LOOM_CLINE_DIR:-}"
+if [ -n "$dir" ] && [ -f "$dir/loom-cline.mjs" ]; then
+  out=$(sh "$dir/../claude-code-plugin/bin/loom-node" "$dir/loom-cline.mjs" PreToolUse 2>/dev/null) && [ -n "$out" ] && {
+    printf '%s\n' "$out"
+    exit 0
+  }
+fi
+echo '{"cancel": false}'
+exit 0

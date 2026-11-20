@@ -9,6 +9,7 @@ import {
   createToken,
   registerNamespace,
   revokeToken,
+  type CollectionEntry,
   type MyNamespaceEntry,
   type TokenEntry,
   type TokenCreated,
@@ -16,28 +17,46 @@ import {
 } from "../api";
 import { useStore, useIdentity } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
-import { toast } from "../components/Toast";
+import { toast, toastError } from "../components/Toast";
 import { confirmAction } from "../components/ConfirmDialog";
-import { relativeTime, humanizeError, parseChTime } from "../lib/format";
+import { relativeTime, parseChTime } from "../lib/format";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { canCallCodeRepos } from "../lib/canCall";
-import { Alert, ListTime, LoadingSkeleton, Tip } from "../components/ui";
+import { Alert, ListTime, LoadingSkeleton, Tip, TipTarget } from "../components/ui";
 import { ChoiceGroup } from "../components/ui/ChoiceGroup";
 import { Modal } from "../components/ui/Modal";
 import { IconButton } from "../components/IconButton";
-import { isMemoryNamespace } from "../lib/namespace";
+import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
+import { COARSE_POINTER, useMedia } from "../lib/useMedia";
 import {
   CLIENTS,
   configPreviewText,
+  FIRST_CALL_POLL_MS,
+  FIRST_CALL_WAIT_MS,
   formatMcpConfig,
   isClientId,
   pluginInstallLines,
   type ClientId,
 } from "../lib/clients";
-import { describeTokenScope, everythingScope } from "../lib/tokenScope";
+import {
+  claimReaches,
+  describeTokenScope,
+  everythingScope,
+  noCollection,
+  offersCollection,
+  starClaim,
+} from "../lib/tokenScope";
 import { TokenReadScopePanel } from "../components/TokenReadScope";
 import { CopyButton } from "../components/CopyButton";
 import { invalidateShared, sharedCodeRepos, sharedMine } from "../lib/sharedReads";
+import {
+  collectionPlace,
+  collectionTitleOf,
+  knownCollections,
+  readsCollections,
+  useSharedCollections,
+  withTwinNames,
+} from "../lib/collectionPlaces";
 
 const RESTRICTED_DOCS =
   "https://github.com/ClickHouse/loom/blob/main/docs/guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted";
@@ -62,7 +81,21 @@ function grantRoleOf(rows: MyNamespaceEntry[] | null, ns: string): GrantRole {
 const rolesUpTo = (grant: GrantRole): GrantRole[] => GRANT_ROLES.slice(0, GRANT_ROLES.indexOf(grant) + 1);
 const writes = (role: GrantRole) => role !== "viewer";
 
-/** What the token reads: everything you belong to, or only the namespaces listed. */
+/** Whether a token may be made to save in `ns`: a memory namespace, never a repository, a
+ *  tracker, a bench corpus or a collection (the server refuses the rest with a 422). */
+function canSaveIn(ns: string, mine: MyNamespaceEntry[] | null): boolean {
+  return isMemoryNamespace(ns, mine) && kindOf(ns, mine) !== "bench";
+}
+
+/** Whether `ns` is one a token may write when a call names it: a memory namespace or a
+ *  collection (though nothing saves in a collection unasked); never a repository or a
+ *  tracker record, which are read. `claimReaches` then drops the collections a `*` token
+ *  cannot reach. */
+function writableWhenNamed(ns: string, mine: readonly MyNamespaceEntry[] | null): boolean {
+  return isMemoryNamespace(ns, mine) || isCollectionName(ns);
+}
+
+/** What the token reads: everything you belong to, or only what is ticked. */
 type Reach = "everything" | "listed";
 
 const REACH_OPTIONS = [
@@ -73,8 +106,8 @@ const REACH_OPTIONS = [
   },
   {
     value: "listed",
-    label: "Only these namespaces",
-    hint: "Exactly the ones you tick, and nothing you join later. For a script, a CI job or a shared bot.",
+    label: "Only what you choose",
+    hint: "Exactly the namespaces, collections and repositories you tick, and nothing you join later. For a script, a CI job or a shared bot.",
   },
 ] as const;
 
@@ -117,15 +150,12 @@ function parseTtl(raw: string): number | null | "invalid" {
 export function TokensSection({
   tokens,
   reloadTokens,
-  onMinted,
   formOpen,
   onFormOpenChange,
 }: {
-  /** The tokens list, fetched once by Setup and shared with the checklist. */
+  /** The tokens list, fetched once by Setup. */
   tokens: TokenEntry[] | null;
   reloadTokens: () => void;
-  /** A token was made — the checklist renders its connect line. */
-  onMinted: (r: { token: string; mcpUrl: string }) => void;
   /** The form is folded once a live token exists; `null` follows the list. */
   formOpen: boolean | null;
   onFormOpenChange: (open: boolean) => void;
@@ -156,10 +186,10 @@ export function TokensSection({
   const [mintedAtMs, setMintedAtMs] = useState<number | null>(null);
   const waitingForFirstCall =
     mintedAtMs !== null &&
-    Date.now() - mintedAtMs < 10 * 60_000 &&
+    Date.now() - mintedAtMs < FIRST_CALL_WAIT_MS &&
     (tokens || []).some((s) => !s.last_used_at && !s.revoked_at);
   // Each poll's reload re-renders, which re-checks the ten-minute window.
-  useVisiblePoll(reloadTokens, 15_000, waitingForFirstCall);
+  useVisiblePoll(reloadTokens, FIRST_CALL_POLL_MS, waitingForFirstCall);
 
   const onRevoke = async (tokenName: string) => {
     if (
@@ -177,7 +207,7 @@ export function TokensSection({
       toast("Revoked", "ok");
       reloadTokens();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     }
   };
 
@@ -202,7 +232,6 @@ export function TokensSection({
             onCancel={liveTokens.length > 0 ? () => toggleForm(false) : undefined}
             onCreated={(r) => {
               setCreated(r);
-              onMinted({ token: r.token, mcpUrl: r.mcp_url });
               setMintedAtMs(Date.now());
               reloadTokens();
             }}
@@ -213,6 +242,210 @@ export function TokensSection({
       </section>
 
       <CreatedDialog created={created} onClose={() => setCreated(null)} />
+    </>
+  );
+}
+
+/** The ticked namespaces as one ordered list: number 1 is searched first. Each row moves by
+ *  its Move up and Move down buttons, and, where the pointer is not coarse and two or more
+ *  rows are listed, by dragging its grip; its role is at most the person's own. */
+function SearchOrder({
+  order,
+  label,
+  isRepo,
+  role,
+  grant,
+  onRole,
+  onMove,
+  touch,
+}: {
+  order: string[];
+  label: (ns: string) => string;
+  isRepo: (ns: string) => boolean;
+  role: (ns: string) => GrantRole;
+  grant: (ns: string) => GrantRole;
+  onRole: (ns: string, r: GrantRole) => void;
+  onMove: (ns: string, to: number) => void;
+  /** A touch screen: no grip, since a long-press drag is not what a touch user expects; the
+   *  arrows move the rows. */
+  touch: boolean;
+}) {
+  const titleId = useId();
+  const hintId = useId();
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [over, setOver] = useState<number | null>(null);
+  // Focus goes back to the pressed arrow after every move (a row moved down is re-inserted,
+  // which drops focus), or to the row's other arrow when the pressed one is now disabled.
+  const arrows = useRef(new Map<string, HTMLButtonElement | null>());
+  const focusAfter = useRef<string | null>(null);
+  useEffect(() => {
+    const key = focusAfter.current;
+    focusAfter.current = null;
+    if (key) arrows.current.get(key)?.focus();
+  }, [order]);
+  const move = (ns: string, i: number, by: -1 | 1) => {
+    const to = i + by;
+    const atEnd = to === 0 || to === order.length - 1;
+    const pressed = by === -1 ? "up" : "down";
+    const other = by === -1 ? "down" : "up";
+    focusAfter.current = `${ns}:${atEnd ? other : pressed}`;
+    onMove(ns, to);
+  };
+  return (
+    <div>
+      <div id={titleId} className="section-label mb-1">
+        Search order
+      </div>
+      {order.length > 1 && (
+        <p id={hintId} className="mb-1 text-xs text-text-muted">
+          Number 1 is searched first.{" "}
+          {touch
+            ? "Use a row's arrows to change the order."
+            : "Drag a row by its grip, or use its arrows, to change the order."}
+        </p>
+      )}
+      <ol
+        // biome-ignore lint/a11y/noRedundantRoles: WebKit drops list semantics from an unstyled list without it.
+        role="list"
+        aria-labelledby={titleId}
+        aria-describedby={order.length > 1 ? hintId : undefined}
+        className="rounded-md border border-border bg-surface-2 divide-y divide-border"
+      >
+        {order.map((ns, i) => {
+          const repo = isRepo(ns);
+          return (
+            // biome-ignore lint/a11y/noNoninteractiveElementInteractions: a drop target for a dragged row; its Move up and Move down buttons are the keyboard path
+            <li
+              key={ns}
+              onDragOver={(e) => {
+                if (dragging === null) return;
+                e.preventDefault();
+                setOver(i);
+              }}
+              onDragLeave={(e) => {
+                // A move between the row's own parts is no leave.
+                if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === i ? null : o));
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                if (dragging !== null) onMove(dragging, i);
+                setDragging(null);
+                setOver(null);
+              }}
+              className={`flex flex-wrap items-center gap-2 px-2 py-1.5 text-sm ${over === i && dragging !== ns ? "bg-surface" : ""} ${dragging === ns ? "opacity-60" : ""}`}
+            >
+              {/* Only the grip drags, so a press on the role or an arrow stays a press and the name can be selected. */}
+              {!touch && order.length > 1 && (
+                <span
+                  className="cursor-grab text-text-muted"
+                  aria-hidden="true"
+                  draggable
+                  onDragStart={(e) => {
+                    setDragging(ns);
+                    e.dataTransfer.effectAllowed = "move";
+                    e.dataTransfer.setData("text/plain", ns);
+                    const row = e.currentTarget.closest("li");
+                    if (row) e.dataTransfer.setDragImage(row, 16, 16);
+                  }}
+                  onDragEnd={() => {
+                    setDragging(null);
+                    setOver(null);
+                  }}
+                >
+                  <Icon name="dots-vertical-double" size="sm" />
+                </span>
+              )}
+              <span className="w-5 shrink-0 text-right tabular text-text-muted">{i + 1}</span>
+              {/* A 10rem basis for the name: on a phone the role and arrows wrap under it. */}
+              <span className={`${isCollectionName(ns) ? "" : "font-mono "}min-w-0 flex-1 basis-40 truncate`}>
+                {label(ns)}
+              </span>
+              {repo ? (
+                <span className="text-xs text-text-muted shrink-0">read-only</span>
+              ) : (
+                <Tip content={`At most your own role (${ROLE_LABELS[grant(ns)]})`}>
+                  <div className="w-28 shrink-0">
+                    <Select
+                      triggerProps={{ "aria-label": `Role on ${label(ns)}` }}
+                      value={role(ns)}
+                      onSelect={(r) => {
+                        if (isGrantRole(r)) onRole(ns, r);
+                      }}
+                    >
+                      {rolesUpTo(grant(ns)).map((r) => (
+                        <Select.Item key={r} value={r}>
+                          {ROLE_LABELS[r]}
+                        </Select.Item>
+                      ))}
+                    </Select>
+                  </div>
+                </Tip>
+              )}
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:up`, el);
+                }}
+                icon="arrow-up"
+                label={`Move ${label(ns)} up`}
+                disabled={i === 0}
+                onClick={() => move(ns, i, -1)}
+              />
+              <IconButton
+                ref={(el) => {
+                  arrows.current.set(`${ns}:down`, el);
+                }}
+                icon="arrow-down"
+                label={`Move ${label(ns)} down`}
+                disabled={i === order.length - 1}
+                onClick={() => move(ns, i, 1)}
+              />
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+/** The token form and the dialog that shows each client's setup once a token is made, on
+ *  their own: the first-run checklist on Memories makes a token in place with them. */
+export function QuickConnect({
+  onMinted,
+  onClose,
+  focusTitle = true,
+}: {
+  onMinted: (r: TokenCreated) => void;
+  /** Cancelled, or the token's setup dialog closed: the form is done here. */
+  onClose: () => void;
+  /** False inside a dialog, which places focus itself. */
+  focusTitle?: boolean;
+}) {
+  const formRef = useRef<HTMLElement>(null);
+  const [created, setCreated] = useState<TokenCreated | null>(null);
+  // It opens in place of the button that asked for it: focus moves to the form's title,
+  // which is there at once (its fields follow their reads), not its header's Cancel, which
+  // one key press would take to close the form again.
+  useEffect(() => {
+    if (focusTitle) formRef.current?.querySelector<HTMLElement>("#new-token-title")?.focus();
+  }, [focusTitle]);
+  return (
+    <>
+      <TokenForm
+        formRef={formRef}
+        titleAs="h4"
+        onCancel={onClose}
+        onCreated={(r) => {
+          setCreated(r);
+          onMinted(r);
+        }}
+      />
+      <CreatedDialog
+        created={created}
+        onClose={() => {
+          setCreated(null);
+          onClose();
+        }}
+      />
     </>
   );
 }
@@ -246,11 +479,21 @@ function useRepoInfo(mine: MyNamespaceEntry[] | null): RepoInfo {
   return repoInfo;
 }
 
-/** A namespace in words: a repository's as "repo · branch", any other as itself. */
-function nsLabeler(repoInfo: RepoInfo): (ns: string) => string {
+/** A namespace in words: a repository's as "repo · branch", a collection's as "the
+ *  collection Research" (by title, from `collection.list` or its list_mine row), or, with
+ *  `standalone` (a row's own name, not a phrase in a sentence), as "Research". */
+function nsLabeler(
+  repoInfo: RepoInfo,
+  collections: readonly CollectionEntry[] | null,
+  mine: readonly MyNamespaceEntry[] | null,
+  { standalone = false } = {},
+): (ns: string) => string {
   return (ns) => {
     const r = repoInfo[ns];
-    return r ? `${r.repo} · ${r.branch}` : ns;
+    if (r) return `${r.repo} · ${r.branch}`;
+    if (!isCollectionName(ns)) return ns;
+    const title = collectionTitleOf(ns, collections, mine);
+    return standalone ? title : `the collection ${title}`;
   };
 }
 
@@ -258,8 +501,11 @@ function TokenForm({
   formRef,
   onCancel,
   onCreated,
+  titleAs: Title = "h2",
 }: {
   formRef: React.RefObject<HTMLElement>;
+  /** The title's level: a checklist step's form sits under its h3. */
+  titleAs?: "h2" | "h4";
   /** Absent while no live token exists: the form is the page's first step. */
   onCancel?: () => void;
   onCreated: (r: TokenCreated) => void;
@@ -278,16 +524,22 @@ function TokenForm({
   // and the restricted repositories (by repo name) added to it.
   const [homeEdited, setHomeEdited] = useState<string | null>(null);
   const [restrictedRepos, setRestrictedRepos] = useState<Set<string>>(() => new Set());
-  // Only these: `selectedNs` order = read priority (index 0 = searched first, and where it
-  // saves when it may write there). nsRole is the role per namespace, capped at your grant.
+  // Only what you choose: `selectedNs` order = read priority (index 0 is searched first); `listPick`
+  // where it saves, recorded in the token. nsRole is the role per namespace, capped at your
+  // grant.
   const [selectedNs, setSelectedNs] = useState<string[]>([]);
   const [nsRole, setNsRole] = useState<Record<string, GrantRole>>({});
+  const [listPick, setListPick] = useState("");
+  // Said when ticks or roles take the picked namespace away from the choices.
+  const [pickNote, setPickNote] = useState("");
   const [newNs, setNewNs] = useState("");
   const [addingNs, setAddingNs] = useState(false);
+  const touch = useMedia(COARSE_POINTER);
   const [loadFailed, setLoadFailed] = useState(false);
+  // The last move of the search order, said to a screen reader (`moveTo`).
+  const [moved, setMoved] = useState("");
 
-  // Once per identity; an answer for an org or namespace the page has left is dropped.
-  // The first answer ticks the page's namespace for "Only these" when nothing is ticked.
+  // Once per org; an answer for an org the page has left is dropped.
   useAbortableEffect(
     async (_signal, live) => {
       let all: MyNamespaceEntry[];
@@ -300,19 +552,29 @@ function TokenForm({
       if (!live()) return;
       setLoadFailed(false);
       setRows(all);
-      const active = all.filter((r) => r.status !== "pending");
-      const seed = active.find((r) => r.namespace === identity.namespace && r.kind !== "code");
-      if (!seed) return;
-      setSelectedNs((prev) => (prev.length > 0 ? prev : [seed.namespace]));
-      setNsRole((prev) =>
-        Object.keys(prev).length > 0 ? prev : { [seed.namespace]: grantRoleOf(active, seed.namespace) },
-      );
     },
-    [identity.org, identity.namespace],
+    [identity.org],
   );
 
-  const eligibleNs = useMemo(() => (mine ?? []).filter((n) => n.kind !== "code"), [mine]);
+  // Three groups: namespaces, collections and repositories. A collection is offered only
+  // where you hold a grant on it yourself, the one the mint accepts (not one you read
+  // through a parent, a group or everyone).
+  const eligibleNs = useMemo(
+    () => (mine ?? []).filter((n) => n.kind !== "code" && !isCollectionName(n.namespace)),
+    [mine],
+  );
+  const eligibleCollections = useMemo(() => (mine ?? []).filter(offersCollection), [mine]);
+  // The titles and places it shows, and whether the person reads a collection at all.
+  const collections = useSharedCollections(identity.org);
+  const readsAny = readsCollections(collections, mine);
+  // Two that look the same are told apart by their names, as in the Library.
+  const offeredTitle = useMemo(
+    () => withTwinNames((ns) => collectionTitleOf(ns, collections, mine), knownCollections(collections, mine)),
+    [collections, mine],
+  );
   const eligibleRepos = useMemo(() => (mine ?? []).filter((n) => n.kind === "code"), [mine]);
+  // A repository is read-only: the list says so and the request sends viewer.
+  const isRepo = (ns: string) => eligibleRepos.some((r) => r.namespace === ns);
   const repoInfo = useRepoInfo(mine ?? storedMine);
   const repoGroups = useMemo(() => {
     const by = new Map<string, { repo: string; restricted: boolean; rows: { namespace: string; branch: string }[] }>();
@@ -331,19 +593,27 @@ function TokenForm({
   }, [eligibleRepos, repoInfo]);
 
   // Where it saves. Everything: the memory namespace picked here, the page's own by
-  // default. Only these: the server picks (`caller_home`), from your saved pick, which
-  // the page cannot see, so the form states the rule and the result names the namespace.
+  // default. Only what you choose: one of the ticked memory namespaces it writes, the first in the
+  // search order by default; the token records it, so switching namespace never moves it.
   const writableMemory = eligibleNs
-    .filter((n) => isMemoryNamespace(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)))
+    .filter((n) => canSaveIn(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)))
     .map((n) => n.namespace);
-  const listedWrites = selectedNs.some((ns) => isMemoryNamespace(ns, mine) && writes(nsRole[ns] ?? "viewer"));
+  const listTargets = selectedNs.filter((ns) => canSaveIn(ns, mine) && writes(nsRole[ns]));
+  const listSaves = listTargets.includes(listPick) ? listPick : (listTargets[0] ?? "");
+  // It writes somewhere (a collection, say) even with no default target; a repository is
+  // always read.
+  const listWrites = selectedNs.some((ns) => !isRepo(ns) && writes(nsRole[ns]));
+  // A memory namespace you write, for Everything mode's "nowhere": a `*` claim names no
+  // collection, so a token of it reads none and writes none.
+  const youWriteSomewhere = eligibleNs.some(
+    (n) => isMemoryNamespace(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)),
+  );
   const everythingHome =
     homeEdited && writableMemory.includes(homeEdited)
       ? homeEdited
       : writableMemory.includes(identity.namespace)
         ? identity.namespace
         : (writableMemory[0] ?? "");
-  const savesNowhere = reach === "everything" ? !everythingHome : !listedWrites;
 
   const scope = useMemo(
     () =>
@@ -355,6 +625,10 @@ function TokenForm({
   );
 
   const toggleNs = (ns: string) => {
+    // A move after a tick says its line again, even when the words are the same; a pick
+    // the tick takes away says its own.
+    setMoved("");
+    setPickNote("");
     if (selectedNs.includes(ns)) {
       setSelectedNs((prev) => prev.filter((x) => x !== ns));
       setNsRole(({ [ns]: _, ...rest }) => rest);
@@ -363,13 +637,32 @@ function TokenForm({
       setNsRole((m) => ({ ...m, [ns]: grantRoleOf(mine, ns) }));
     }
   };
-  const setPriority = (ns: string, pos: number) => {
-    setSelectedNs((prev) => {
-      const without = prev.filter((x) => x !== ns);
-      const idx = Math.max(0, Math.min(without.length, pos - 1));
-      without.splice(idx, 0, ns);
-      return without;
-    });
+  const label = nsLabeler(repoInfo, collections, mine);
+  // A search-order row is named by its title alone.
+  const rowName = withTwinNames(nsLabeler(repoInfo, collections, mine, { standalone: true }), [
+    ...selectedNs,
+    ...knownCollections(collections, mine),
+  ]);
+  // With no pick the first choice in search order is the target, and follows the order. A
+  // pick stays put; once a tick or a role takes it away, the first choice left takes its
+  // place, and the hint says why.
+  useEffect(() => {
+    if (!listPick || listPick === listSaves) return;
+    const why = selectedNs.includes(listPick)
+      ? `it can no longer write to ${label(listPick)}`
+      : `${label(listPick)} is no longer ticked`;
+    setPickNote(listSaves ? `Saves to ${label(listSaves)} now: ${why}.` : `Saves nowhere now: ${why}.`);
+    setListPick("");
+  }, [listPick, listSaves, selectedNs, label]);
+  // The order the ticked namespaces are searched in: moved by drag, or by a row's arrows.
+  const moveTo = (ns: string, to: number) => {
+    const from = selectedNs.indexOf(ns);
+    if (from < 0 || from === to) return;
+    const next = selectedNs.filter((x) => x !== ns);
+    next.splice(to, 0, ns);
+    setSelectedNs(next);
+    setPickNote("");
+    setMoved(`${rowName(ns)} moved to ${to + 1} of ${next.length}`);
   };
 
   // A namespace of its own for a bot: register it (the server makes you its admin), then
@@ -391,11 +684,12 @@ function TokenForm({
       useStore.getState().setMyNamespaces(fresh);
       setRows(fresh);
       setSelectedNs((prev) => [...prev.filter((x) => x !== ns), ns]);
+      setMoved("");
       setNsRole((m) => ({ ...m, [ns]: "admin" }));
       setNewNs("");
       toast(`Created ${ns}; you are its admin`, "ok");
     } catch (e) {
-      toast(`Failed to create namespace: ${humanizeError(e)}`, "error");
+      toastError("Failed to create namespace", e);
     } finally {
       setAddingNs(false);
     }
@@ -418,23 +712,31 @@ function TokenForm({
       // Ordered = read priority; repositories are read-only.
       namespaces = selectedNs.map((ns) => ({
         namespace: ns,
-        role: eligibleRepos.some((r) => r.namespace === ns) ? "viewer" : (nsRole[ns] ?? grantRoleOf(mine, ns)),
+        role: isRepo(ns) ? "viewer" : nsRole[ns],
       }));
     }
+    // A list token's target goes as `saves_to`; with none, the field is left out.
+    const savesTo = reach === "listed" && listSaves ? { saves_to: listSaves } : {};
     setBusy(true);
     try {
-      onCreated(await createToken({ name: name.trim() || undefined, namespaces, ttl_days: ttl }));
+      onCreated(await createToken({ name: name.trim() || undefined, namespaces, ttl_days: ttl, ...savesTo }));
       setName("");
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setBusy(false);
     }
   };
 
-  const nothingListed = mine !== null && eligibleNs.length === 0 && eligibleRepos.length === 0;
+  const nothingListed =
+    mine !== null && eligibleNs.length === 0 && eligibleCollections.length === 0 && eligibleRepos.length === 0;
   // Not before the memberships load: the form would describe a token it cannot know.
   const canCreate = rows !== null && (reach === "everything" || selectedNs.length > 0);
+  // What the ticked list means; how to reorder it is the list's own description (SearchOrder).
+  const listHint =
+    selectedNs.length === 0
+      ? "Tick what this token reads; it reads nothing else, whatever you join later."
+      : `${selectedNs.length} ticked, and nothing else, whatever you join later.`;
 
   return (
     <section
@@ -443,9 +745,9 @@ function TokenForm({
       aria-labelledby="new-token-title"
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="new-token-title" className="text-text">
+        <Title id="new-token-title" className="text-text" tabIndex={-1}>
           New token
-        </h2>
+        </Title>
         {onCancel && (
           <Button type="empty" htmlType="button" onClick={onCancel}>
             Cancel
@@ -458,6 +760,7 @@ function TokenForm({
       {reach === "everything" ? (
         <TokenReadScopePanel
           scope={scope}
+          readsCollections={readsAny}
           docsHref={RESTRICTED_DOCS}
           included={restrictedRepos}
           onToggleRepo={(r) =>
@@ -473,62 +776,76 @@ function TokenForm({
         <p className="text-sm text-text-muted">You are not a member of any namespace yet.</p>
       ) : (
         <fieldset className="space-y-3">
-          <legend className="sr-only">Namespaces this token reads</legend>
-          <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
-            {eligibleNs.map((n) => {
-              const pos = selectedNs.indexOf(n.namespace);
-              const isOn = pos >= 0;
-              const grant = grantRoleOf(mine, n.namespace);
-              return (
-                <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
-                  <Checkbox
-                    checked={isOn}
-                    onCheckedChange={() => toggleNs(n.namespace)}
-                    aria-label={`Read ${n.namespace}`}
-                  />
-                  <Tip content="Search order (1 = searched first)">
-                    <div className="w-16 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Search order for ${n.namespace}` }}
-                        value={isOn ? String(pos + 1) : ""}
-                        placeholder="–"
-                        disabled={!isOn}
-                        onSelect={(value) => setPriority(n.namespace, Number(value))}
-                      >
-                        {selectedNs.map((_, i) => (
-                          <Select.Item key={i} value={String(i + 1)}>
-                            {i + 1}
-                          </Select.Item>
-                        ))}
-                      </Select>
+          <legend className="sr-only">What this token reads</legend>
+          {eligibleNs.length > 0 && (
+            <div>
+              <div className="section-label mb-1">Namespaces</div>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
+                {eligibleNs.map((n) => (
+                  <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                    <Checkbox
+                      checked={selectedNs.includes(n.namespace)}
+                      onCheckedChange={() => toggleNs(n.namespace)}
+                      aria-label={`Read ${n.namespace}`}
+                    />
+                    <span className="font-mono flex-1 truncate">{n.namespace}</span>
+                    <span className="text-xs text-text-muted shrink-0">
+                      Your role: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {eligibleCollections.length > 0 && (
+            <div>
+              <div className="section-label mb-1">Collections</div>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
+                {eligibleCollections.map((n) => {
+                  const title = offeredTitle(n.namespace);
+                  const place = collectionPlace(n.namespace, collections);
+                  return (
+                    <div key={n.namespace} className="flex items-center gap-2 px-3 py-1.5 text-sm">
+                      <Checkbox
+                        checked={selectedNs.includes(n.namespace)}
+                        onCheckedChange={() => toggleNs(n.namespace)}
+                        aria-label={`Read the collection ${title}`}
+                        // Where it sits is the checkbox's description; look-alikes differ by name.
+                        aria-describedby={`token-place-${n.namespace}`}
+                      />
+                      {/* Title over place, so a long title never squeezes the place out. The
+                          title truncates itself, with no clipping wrapper, so its focus ring is
+                          drawn whole; its tip has it whole, with its place and address. */}
+                      <div className="flex-1 min-w-0 flex flex-col">
+                        <TipTarget
+                          // An untitled one's title is its address: shown once.
+                          tip={[...new Set([collectionTitleOf(n.namespace, collections, mine), place, n.namespace])]
+                            .filter(Boolean)
+                            .join(" · ")}
+                          className="max-w-full self-start truncate rounded"
+                        >
+                          {title}
+                        </TipTarget>
+                        <span
+                          id={`token-place-${n.namespace}`}
+                          className="truncate text-xs text-text-muted"
+                          data-collection-place
+                        >
+                          {place}
+                        </span>
+                      </div>
+                      <span className="text-xs text-text-muted shrink-0">
+                        Your role: {ROLE_LABELS[grantRoleOf(mine, n.namespace)]}
+                      </span>
                     </div>
-                  </Tip>
-                  <span className="font-mono flex-1 truncate">{n.namespace}</span>
-                  <Tip content={`At most your own role (${grant})`}>
-                    <div className="w-28 shrink-0">
-                      <Select
-                        triggerProps={{ "aria-label": `Role on ${n.namespace}` }}
-                        value={isOn ? (nsRole[n.namespace] ?? grant) : grant}
-                        disabled={!isOn}
-                        onSelect={(r) => {
-                          if (isGrantRole(r)) setNsRole((m) => ({ ...m, [n.namespace]: r }));
-                        }}
-                      >
-                        {rolesUpTo(grant).map((r) => (
-                          <Select.Item key={r} value={r}>
-                            {ROLE_LABELS[r]}
-                          </Select.Item>
-                        ))}
-                      </Select>
-                    </div>
-                  </Tip>
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
           {repoGroups.length > 0 && (
             <div>
-              <div className="text-xs font-medium text-text-muted mb-1">Repositories (read-only)</div>
+              <div className="section-label mb-1">Repositories (read-only)</div>
               <div className="max-h-56 overflow-y-auto rounded-md border border-border bg-surface-2 divide-y divide-border">
                 {repoGroups.map((grp) => {
                   const onCount = grp.rows.filter((n) => selectedNs.includes(n.namespace)).length;
@@ -572,6 +889,24 @@ function TokenForm({
               </div>
             </div>
           )}
+          {selectedNs.length > 0 && (
+            <SearchOrder
+              touch={touch}
+              order={selectedNs}
+              label={rowName}
+              isRepo={isRepo}
+              role={(ns) => nsRole[ns]}
+              grant={(ns) => grantRoleOf(mine, ns)}
+              onRole={(ns, r) => {
+                setPickNote("");
+                setNsRole((m) => ({ ...m, [ns]: r }));
+              }}
+              onMove={moveTo}
+            />
+          )}
+          <p className="sr-only" role="status">
+            {moved}
+          </p>
           <div className="flex gap-2">
             <div className="min-w-0 flex-1">
               <TextField
@@ -592,9 +927,7 @@ function TokenForm({
               Create namespace
             </Button>
           </div>
-          <p className="text-xs text-text-muted">
-            {selectedNs.length} ticked, and nothing else, whatever you join later. Search order 1 is searched first.
-          </p>
+          <p className="text-xs text-text-muted">{listHint}</p>
         </fieldset>
       )}
 
@@ -607,15 +940,22 @@ function TokenForm({
             <div className="font-medium text-text-muted mb-1">Saves memories to</div>
             <div className="text-text-muted">{loadFailed ? "Unknown" : "Loading…"}</div>
           </div>
-        ) : savesNowhere ? (
+        ) : reach === "everything" && !everythingHome ? (
           <div className="text-xs" data-testid="token-saves-nowhere">
             <div className="font-medium text-text-muted mb-1">Saves memories to</div>
-            <div className="text-text">Nowhere: it only reads.</div>
-            <div className="text-text-muted mt-1">
-              {reach === "everything"
-                ? "You cannot write to any namespace."
-                : "Give it Writer on a ticked namespace to let it save."}
-            </div>
+            {youWriteSomewhere ? (
+              <>
+                <div className="text-text">Nowhere by default.</div>
+                <div className="text-text-muted mt-1">
+                  You write no memory namespace a token saves to unasked; a call may still name one it can write.
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="text-text">Nowhere: this token only reads.</div>
+                <div className="text-text-muted mt-1">You cannot write to any namespace.</div>
+              </>
+            )}
           </div>
         ) : reach === "everything" ? (
           <Field hint="Where memories and captured sessions go when a call names no namespace.">
@@ -635,15 +975,50 @@ function TokenForm({
             )}
           </Field>
         ) : (
-          <div className="text-xs" data-testid="token-saves-listed">
-            <div className="font-medium text-text-muted mb-1">Saves memories to</div>
-            <div className="text-text">The namespace you work in, when it is ticked and it can write there</div>
-            <div className="text-text-muted mt-1">
-              Else one named after you, else the first ticked one it can write. The new token names it.
-            </div>
-          </div>
+          // One hint line for the choice and for "Nowhere", so a pick that drops is read out.
+          <Field
+            live
+            hint={
+              pickNote ||
+              (listSaves
+                ? "A ticked namespace it can write. The token keeps it, wherever you work in Loom later."
+                : listWrites
+                  ? "To give it a default, tick a memory namespace, not a collection, with Writer."
+                  : "Give it Writer on a ticked namespace to let it save.")
+            }
+          >
+            {(hintId) =>
+              !listSaves ? (
+                <div className="text-xs" data-testid="token-saves-nowhere">
+                  <div className="font-medium text-text-muted mb-1">Saves memories to</div>
+                  <div className="text-text">
+                    {/* Writing somewhere a call names is not reading only: only no write role is. */}
+                    {listWrites
+                      ? "Nowhere by default: a call names where it saves."
+                      : "Nowhere: this token only reads."}
+                  </div>
+                </div>
+              ) : (
+                <Select
+                  label="Saves memories to"
+                  value={listSaves}
+                  onSelect={(ns) => {
+                    setListPick(ns);
+                    setPickNote("");
+                  }}
+                  triggerProps={{ "aria-describedby": hintId }}
+                >
+                  {listTargets.map((ns) => (
+                    <Select.Item key={ns} value={ns}>
+                      {label(ns)}
+                    </Select.Item>
+                  ))}
+                </Select>
+              )
+            }
+          </Field>
         )}
-        <Field hint="Optional. Shown in the list below; it cannot be changed later.">
+        <Field hint="Optional. Shown in the tokens list; it cannot be changed later.">
           {(hintId) => (
             <TextField
               label="Name"
@@ -685,35 +1060,62 @@ function TokenForm({
   );
 }
 
-/** One line on what a just-made token reads and where it saves, as the server minted it. */
-function createdScope(c: TokenCreated, writesAnywhere: boolean, label: (ns: string) => string): string {
+/** One line on what a just-made token reads and where it saves, as the server minted it.
+ *  `targets`: the namespaces you write that a token saves to; `writesAnywhere`: whether you
+ *  write a namespace this token may write when a call names it (for a `*` token, a
+ *  collection counts only where its claim names it); both unknown while your rows load. */
+function createdScope(
+  c: TokenCreated,
+  targets: readonly string[] | undefined,
+  writesAnywhere: boolean | undefined,
+  label: (ns: string) => string,
+  readsAny: boolean,
+): string {
   const named = c.namespaces.filter((n) => n !== "*").map(label);
+  // What a `*` claim names beside its home: restricted repositories, or a collection.
+  const { also } = starClaim(c.namespaces);
   const reads = c.reads_everything
     ? `Reads everything you belong to, including namespaces you join later${
-        c.restricted_namespaces.length ? `, plus ${c.restricted_namespaces.map(label).join(", ")}` : ""
-      }.`
-    : `Reads only ${named.join(", ")}.`;
-  const roles = Object.values(c.ns_roles);
-  // A `*` token writes only with a writing role of its own and a namespace its owner writes.
-  const readOnly = c.reads_everything
-    ? !writesAnywhere || !c.roles.some((r) => r !== "viewer")
-    : roles.length > 0 && roles.every((r) => r === "viewer");
+        also.length ? `, plus ${also.map(label).join(", ")}` : ""
+      }${noCollection(also, readsAny)}.`
+    : named.length > 1
+      ? `Reads only these, searched in this order: ${named.map((n, i) => `${i + 1}. ${n}`).join(", ")}.`
+      : `Reads only ${named.join(", ")}.`;
+  // The answer names the token's default namespace, which may be one it only reads. It writes
+  // through a writing role of its own and a namespace its owner writes.
+  const writing = (role: string) => role === "writer" || role === "admin";
+  const roleOn = (ns: string) => c.ns_roles[ns] ?? c.roles[0] ?? "";
+  const tokenWrites = c.reads_everything ? writing(c.roles[0] ?? "") : Object.values(c.ns_roles).some(writing);
+  const writesSomewhere = tokenWrites && writesAnywhere !== false;
+  const writesThere = (ns: string) =>
+    writing(c.reads_everything ? (c.roles[0] ?? "") : roleOn(ns)) && (!targets || targets.includes(ns));
   const saves =
     c.saves_to === null
       ? "Where it saves is worked out on each call."
       : c.saves_to === ""
         ? "Each call must name a namespace."
-        : readOnly
-          ? `Read-only; calls that name no namespace read ${c.saves_to}.`
-          : `Saves to ${c.saves_to}.`;
+        : writesThere(c.saves_to)
+          ? `Saves to ${c.saves_to}.`
+          : writesSomewhere
+            ? `Nowhere by default; calls that name no namespace read ${c.saves_to}.`
+            : `Read-only; calls that name no namespace read ${c.saves_to}.`;
   return `${reads} ${saves}`;
 }
 
 function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onClose: () => void }) {
   const identity = useIdentity();
   const mine = useStore((s) => s.myNamespaces);
-  const writesAnywhere = useWritable().length > 0;
-  const label = nsLabeler(useRepoInfo(mine));
+  const targets = useWritable();
+  // What you write that a token may write when a call names it: a memory namespace or a
+  // collection (for a `*` token, only one its claim names).
+  const writesAny = useWritable(writableWhenNamed);
+  const writesAnywhere = writesAny && !!created && writesAny.some((ns) => claimReaches(created.namespaces, ns));
+  const collections = useSharedCollections(identity.org);
+  const readsAny = readsCollections(collections, mine);
+  const label = withTwinNames(nsLabeler(useRepoInfo(mine), collections, mine), [
+    ...(created?.namespaces ?? []),
+    ...knownCollections(collections, mine),
+  ]);
   // The last target picked; none yet: a script for a token that reads only some
   // namespaces, Claude Code for one that reads everything.
   const [stored, setStored] = useState<ConnectTarget | null>(() => {
@@ -751,7 +1153,7 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             text="Copy it now: this is the only time it is shown. The same token works in every tool."
           />
           <div className="text-xs text-text-muted" data-testid="minted-token-scope">
-            {createdScope(created, writesAnywhere, label)}
+            {createdScope(created, targets, writesAnywhere, label, readsAny)}
           </div>
           <div className="relative">
             <div className="text-xs text-text-muted mb-1.5">Token</div>
@@ -789,7 +1191,7 @@ function CreatedDialog({ created, onClose }: { created: TokenCreated | null; onC
             <ClientConnect client={target} token={created.token} mcpUrl={created.mcp_url} />
           )}
           <div className="text-xs text-text-muted leading-relaxed">
-            Revoke it in the list below to disconnect every tool that uses it at once.
+            Revoke it in Settings › Tokens to disconnect every tool that uses it at once.
           </div>
         </div>
       )}
@@ -897,20 +1299,25 @@ function CodeBlock({
   );
 }
 
-/** The memory namespaces you may write: a `*` token writes nowhere you do not. */
-function useWritable(): string[] {
+/** The namespaces you may write, among those `keep` admits: a token writes nowhere you do not.
+ *  Undefined while your rows are unknown (not loaded, or the read failed). */
+function useWritable(keep: (ns: string, mine: MyNamespaceEntry[] | null) => boolean = canSaveIn): string[] | undefined {
   const mine = useStore((s) => s.myNamespaces);
-  return (mine ?? [])
-    .filter(
-      (n) => n.status !== "pending" && isMemoryNamespace(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)),
-    )
+  if (!mine) return undefined;
+  return mine
+    .filter((n) => n.status !== "pending" && keep(n.namespace, mine) && writes(grantRoleOf(mine, n.namespace)))
     .map((n) => n.namespace);
 }
 
 function TokenList({ tokens, onRevoke }: { tokens: TokenEntry[] | null; onRevoke: (name: string) => void }) {
   const writable = useWritable();
+  const writesAny = useWritable(writableWhenNamed);
   const me = useStore((s) => s.whoami?.subject ?? "");
-  const label = nsLabeler(useRepoInfo(useStore((s) => s.myNamespaces)));
+  const storedMine = useStore((s) => s.myNamespaces);
+  const org = useStore((s) => s.identity?.org);
+  const collections = useSharedCollections(org);
+  const readsAny = readsCollections(collections, storedMine);
+  const label = nsLabeler(useRepoInfo(storedMine), collections, storedMine);
   return (
     <div className="rounded-2xl border border-border bg-surface p-2">
       <TokensStatusSummary tokens={tokens} />
@@ -943,7 +1350,12 @@ function TokenList({ tokens, onRevoke }: { tokens: TokenEntry[] | null; onRevoke
                     {describeTokenScope(s, {
                       yours: s.yours ?? (!me || s.created_by === me),
                       writable,
-                      label,
+                      writesAny,
+                      label: withTwinNames(label, [
+                        ...(s.namespaces || []),
+                        ...knownCollections(collections, storedMine),
+                      ]),
+                      readsCollections: readsAny,
                     })}{" "}
                     · created <ListTime time={s.created_at} quiet />
                     {" · "}
@@ -1056,13 +1468,22 @@ function ConnectionBadge({ token }: { token: TokenEntry }) {
 }
 
 /** A form control (which carries its own label) with a hint line under it. `children`
- * gets the hint's id for the control's aria-describedby, so the hint is announced. */
-function Field({ hint, children }: { hint: string; children: (hintId: string) => React.ReactNode }) {
+ * gets the hint's id for the control's aria-describedby, so the hint is announced; a
+ * `live` hint is also read out when it changes. */
+function Field({
+  hint,
+  live = false,
+  children,
+}: {
+  hint: string;
+  live?: boolean;
+  children: (hintId: string) => React.ReactNode;
+}) {
   const hintId = useId();
   return (
     <div>
       {children(hintId)}
-      <div id={hintId} className="text-xs text-text-muted mt-1">
+      <div id={hintId} aria-live={live ? "polite" : undefined} className="text-xs text-text-muted mt-1">
         {hint}
       </div>
     </div>

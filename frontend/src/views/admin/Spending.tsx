@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { NumberField } from "@clickhouse/click-ui/NumberField";
@@ -17,21 +17,25 @@ import {
   type NamespaceInfo,
 } from "../../api";
 import { useStore, useIdentity } from "../../lib/state";
-import { canUpdateNamespace, hasOrgAdminClaim } from "../../lib/role";
+import { hasOrgAdminClaim } from "../../lib/role";
+import { canUpdateNamespace, restrictedReason } from "../../lib/namespaceUpdate";
+import { needsRole, useNamespaceRoleRead } from "../../lib/namespaceRole";
+import { holdsDirectRow, roleGap, scopedUnseen, serverDecides, unreadLine } from "../../lib/callReason";
 import { invalidateShared, sharedBudgetStatus } from "../../lib/sharedReads";
+import { useGrantRows } from "../../lib/useGrantRows";
 import { Skeleton } from "../../components/Skeleton";
 import { ListState } from "../../components/ui/ListState";
 import { ListToolbar } from "../../components/ui/ListToolbar";
 import { PHONE_QUERY, useMedia } from "../../lib/useMedia";
 import { ScopeBadge } from "../../components/ScopeBadge";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { IconButton } from "../../components/IconButton";
-import { Tip } from "../../components/ui/Tooltip";
-import { displayAgent, humanizeError, SENTINEL_AGENTS } from "../../lib/format";
+import { displayAgent, SENTINEL_AGENTS } from "../../lib/format";
 import { useAbortableEffect } from "../../lib/hooks";
 import { PageContainer } from "../../layout/PageContainer";
 import { AgentSpend } from "./AgentSpend";
-import { Alert, LoadingSkeleton, PageHeader, Stat } from "../../components/ui";
+import { Alert, LoadingSkeleton, PageHeader, Stat, Unavailable } from "../../components/ui";
+import { COST_CAP_EFFECT } from "../../lib/costCap";
 
 /**
  * Usage — LLM operations / cost rollup view.
@@ -83,19 +87,49 @@ export function Spending() {
   // The cap editor round-trips namespace.register, whose update path needs ADMIN on the
   // namespace or the owner of an auto-registered row, and on a restricted row a named,
   // directly granted admin; the row says which (owner, tags, classification).
-  const myNamespaces = useStore((s) => s.myNamespaces);
   const [nsRow, setNsRow] = useState<NamespaceInfo | null>(null);
+  // The row's read: still out, answered (a row, or null for a namespace with none), or failed.
+  // Only a pending read says loading; a failed one says the access could not be checked.
+  const [nsRowRead, setNsRowRead] = useState<"pending" | "answered" | "failed">("pending");
   useAbortableEffect(
     (signal, live) => {
+      setNsRowRead("pending");
       getNamespace({ org: identity.org, namespace: identity.namespace }, { signal })
         .then((n) => {
-          if (live()) setNsRow(n);
+          if (!live()) return;
+          setNsRow(n);
+          setNsRowRead("answered");
         })
-        .catch(() => {});
+        .catch(() => live() && setNsRowRead("failed"));
     },
     [identity.org, identity.namespace],
   );
-  const canEditCap = canUpdateNamespace(whoami, myNamespaces, identity.namespace, nsRow);
+  // Edit cap stays in view for whoever cannot change it, with what that needs (editCapReason).
+  const capRead = useNamespaceRoleRead(identity.namespace);
+  const canEditCap = canUpdateNamespace(whoami, capRead.rows, identity, nsRow);
+  const bothRead = capRead.rows !== null && nsRowRead === "answered";
+  const capUnread = roleGap(capRead, whoami, identity.namespace);
+  // A restricted row's gate wants the direct grant even under an admin claim, whose role read
+  // skips list_mine: the store's grants, else this page's own read, as the settings dialog's.
+  const restricted = nsRow?.classification === "restricted";
+  const grantRows = useGrantRows(identity.org, restricted && whoami?.authenticated !== false);
+  const editCapReason = (): string | null => {
+    const ns = identity.namespace;
+    // Nothing is named while the role or the namespace's row is unread.
+    if (nsRowRead !== "answered") {
+      if (capUnread) return capUnread;
+      return nsRowRead === "pending" ? `Reading the settings of ${ns}.` : unreadLine(false, ns);
+    }
+    if (restricted)
+      return restrictedReason(grantRows, whoami, identity, { name: ns, adminWord: "admin", what: "its cap" });
+    // canUpdateNamespace counts an unread grant list as admin, so an unread role wins over its
+    // yes unless both reads answered (it then admits an auto-registered row's owner too).
+    if (capUnread && !(canEditCap && bothRead)) return capUnread;
+    if (canEditCap) return null;
+    if (scopedUnseen(whoami, holdsDirectRow(capRead.rows, ns))) return serverDecides(ns);
+    return needsRole("admin", ns);
+  };
+  const capReason = editCapReason();
 
   // Rows re-fetch when the pivot changes; the budget bars don't. Another namespace starts
   // from the skeleton, during render, so its usage never paints under the new badge.
@@ -108,6 +142,7 @@ export function Spending() {
     // The budget and its editor are the namespace's too; the org's budget is not.
     setBudget(null);
     setNsRow(null);
+    setNsRowRead("pending");
   }
   useAbortableEffect(
     (signal, live) => {
@@ -209,7 +244,7 @@ export function Spending() {
   );
 
   // The share of the daily cap spent, in percent; past 100 once over the cap.
-  const pct = Math.round((budget?.pct_of_cap ?? 0) * 100);
+  const pct = budget?.pct_of_cap == null ? null : Math.round(budget.pct_of_cap * 100);
 
   return (
     <PageContainer>
@@ -217,10 +252,10 @@ export function Spending() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
 
-      {orgBudget && orgBudget.spent_24h_usd > 0 && (
+      {orgBudget && orgBudget.spent_24h_usd !== null && orgBudget.spent_24h_usd > 0 && (
         <div className="mb-4 rounded-xl border border-border bg-surface p-4 flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-xs text-text-muted mb-1">Org-wide 24h LLM spend</div>
+            <div className="text-xs text-text-muted mb-1">Org-wide 24h spend</div>
             <div className="text-xl font-semibold tabular">${orgBudget.spent_24h_usd.toFixed(4)}</div>
           </div>
           <div className="text-right text-xs text-text-muted">
@@ -239,41 +274,41 @@ export function Spending() {
               state="warning"
               size="small"
               showIcon
-              text="Daily LLM cap reached — extraction paused for this namespace"
+              text="Daily cost cap reached for this namespace"
             />
           )}
           <div className="flex items-baseline justify-between gap-3 mb-2">
-            <div className="text-sm font-medium">Daily LLM budget</div>
+            <div className="text-sm font-medium">Daily cost cap</div>
             <div className="text-xs tabular text-text-muted">
-              ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
+              {budget.spent_24h_usd === null ? "Spend withheld" : `$${budget.spent_24h_usd.toFixed(4)}`} / $
+              {budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
           </div>
           {/* Click UI's ProgressBar sets no role or value, so the meter's ARIA is passed in.
               Past the cap the bar stays full and the value text says by how much. */}
-          <ProgressBar
-            type="small"
-            progress={Math.min(100, pct)}
-            role="progressbar"
-            aria-label="Daily LLM budget used"
-            aria-valuenow={Math.min(100, pct)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuetext={`${pct}% — $${budget.spent_24h_usd.toFixed(4)} of the $${budget.cap_usd.toFixed(2)} cap`}
-          />
+          {pct !== null && budget.spent_24h_usd !== null && (
+            <ProgressBar
+              type="small"
+              progress={Math.min(100, pct)}
+              role="progressbar"
+              aria-label="Daily cost cap used"
+              aria-valuenow={Math.min(100, pct)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuetext={`${pct}% — $${budget.spent_24h_usd.toFixed(4)} of the $${budget.cap_usd.toFixed(2)} cap`}
+            />
+          )}
           <div className="mt-2 flex items-baseline justify-between gap-3">
             <div className="text-xs text-text-muted leading-relaxed">
-              Rolling 24h sum of upstream LLM cost on this namespace. When the cap is hit,{" "}
-              <code className="code-inline text-xs">entity_extractor</code> skip writes here until usage drops below the
-              cap.
+              Rolling 24h sum of upstream model and embedding cost on this namespace. {COST_CAP_EFFECT}
             </div>
-            {canEditCap && (
-              <BudgetCapEditor
-                org={identity.org}
-                namespace={identity.namespace}
-                currentCap={budget.cap_source === "namespace" ? budget.cap_usd : 0}
-                onSaved={() => setBudgetReload((n) => n + 1)}
-              />
-            )}
+            <BudgetCapEditor
+              org={identity.org}
+              namespace={identity.namespace}
+              currentCap={budget.cap_source === "namespace" ? budget.cap_usd : 0}
+              unavailable={capReason}
+              onSaved={() => setBudgetReload((n) => n + 1)}
+            />
           </div>
         </div>
       )}
@@ -300,8 +335,9 @@ export function Spending() {
           text={
             <>
               <strong>$0 in this window.</strong> The {totalOps.toLocaleString()} operations counted are all read-only
-              API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost shows up here once your
-              agent writes memories (embedder fires), or once the entity_extractor worker is enabled.
+              API calls (memory listing, audit reads, etc.) that don't hit a paid provider. Cost shows up here once Loom
+              makes a model or embedding call for this namespace (indexing memories, extracting entities, answering
+              questions, summarising code).
             </>
           }
         />
@@ -314,10 +350,9 @@ export function Spending() {
           showIcon
           text={
             <>
-              <strong>{fmt(totalEmbedTokens)} embed tokens but $0 cost.</strong> Your embedder fired but its
-              upstream-cost field isn't yet attributed in the rollup — known gap, applies to every Loom deployment
-              today. Once the attribution wiring lands, the number under Total cost will include embedder usage.
-              (LLM-extraction worker costs are tracked correctly.)
+              <strong>{fmt(totalEmbedTokens)} embed tokens but $0 cost.</strong> Embedding calls here were recorded at
+              $0: the model has no price in Loom's table, or each operation's embedding cost was below the $0.000001 a
+              row records.
             </>
           }
         />
@@ -330,7 +365,7 @@ export function Spending() {
             <Stat
               label="Total cost"
               value={`$${totalCost.toFixed(4)}`}
-              hint="LLM extraction + embedder (attribution coming)"
+              hint="upstream model and embedding calls, on priced models"
             />
             <Stat label="LLM tokens" value={fmt(totalTokens)} hint="extraction / classify / rerank" />
             <Stat label="Embed tokens" value={fmt(totalEmbedTokens)} hint="memory + knowledge writes" />
@@ -478,20 +513,28 @@ function BudgetCapEditor({
   org,
   namespace,
   currentCap,
+  unavailable,
   onSaved,
 }: {
   org: string;
   namespace: string;
   currentCap: number;
+  /** Why the caller cannot change the cap: Edit cap stays in view, unavailable, with it. */
+  unavailable: string | null;
   onSaved: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<string>(String(currentCap || 0));
   const [busy, setBusy] = useState(false);
+  // A reason that appears while the editor is open closes it: nothing is sent once the role
+  // falls short, and the editor does not come back by itself if the reason clears.
+  useEffect(() => {
+    if (unavailable) setEditing(false);
+  }, [unavailable]);
 
-  if (!editing) {
+  if (!editing || unavailable) {
     return (
-      <Tip content="Edit this namespace's daily LLM budget">
+      <Unavailable reason={unavailable} tip="Edit this namespace's daily cost cap">
         <Button
           type="empty"
           htmlType="button"
@@ -504,11 +547,12 @@ function BudgetCapEditor({
         >
           Edit cap
         </Button>
-      </Tip>
+      </Unavailable>
     );
   }
 
   const save = async () => {
+    if (unavailable) return;
     const v = parseFloat(draft);
     if (Number.isNaN(v) || v < 0) {
       toast("Cap must be a non-negative number", "error");
@@ -531,7 +575,7 @@ function BudgetCapEditor({
       setEditing(false);
       onSaved();
     } catch (e) {
-      toast(`Couldn't save cap: ${humanizeError(e)}`, "error");
+      toastError("Couldn't save cap", e);
     } finally {
       setBusy(false);
     }
@@ -541,7 +585,7 @@ function BudgetCapEditor({
     <div className="inline-flex items-center gap-1.5 shrink-0">
       <div className="w-32">
         <NumberField
-          aria-label="Daily LLM budget cap in dollars"
+          aria-label="Daily cost cap in dollars"
           startContent="$"
           step="0.01"
           min="0"

@@ -79,7 +79,7 @@ terms) and tags its queries `worker.<name>` in `log_comment`.
 | Value            | Behaviour                                                                                                                                                                                         |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `auto` (default) | The process of the deployment that holds the `workers_supervisor` lease (a Keeper key in `loom._migration_lock`) runs the supervisor; the others contend for it and take it over once it expires. |
-| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container).                                                                                                         |
+| `on`             | Always run the supervisor (a single-process container, or a dedicated workers container); under the Postgres authority, only while the cell gate lets the process serve.                          |
 | `off`            | Never run it (a pure web replica).                                                                                                                                                                |
 
 One lease for the whole deployment, so N replicas with `uvicorn --workers N`
@@ -230,11 +230,14 @@ adding its row.
 | `erasure_recovery` | Erasure Saga recovery worker. | `LOOM_ERASURE_RECOVERY_ENABLED` | True | `LOOM_ERASURE_RECOVERY_INTERVAL_SECONDS` | 60 |
 | `extraction_queue` | Replays deferred `memory.set_from_messages` requests. | `LOOM_EXTRACTION_QUEUE_ENABLED` | True | `LOOM_EXTRACTION_QUEUE_INTERVAL_SECONDS` | 15 |
 | `keeper_sweep` | Delete the KeeperMap keys a process died holding (`server.core.leases.DEAD_KEYS`): leases and claims an hour past their expiry, and graph projection slots a day old. | always on |  | `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | 3600.0 |
+| `knowledge_gaps` | Once a day, group each namespace's recent misses into the gaps `knowledge.gaps.list` serves. | `LOOM_KNOWLEDGE_GAPS_ENABLED` | False | `LOOM_KNOWLEDGE_GAPS_INTERVAL_SECONDS` | 86400 |
 | `knowledge_ingest` | Runs ingestion jobs (`server/knowledge/app/ingest_run.py`). | `LOOM_KNOWLEDGE_INGEST_ENABLED` | True | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | 0 |
 | `knowledge_pg_delivery` | Knowledge delivery worker: publishes the knowledge documents a request committed to the Postgres authority but did not publish to ClickHouse (`server.knowledge.app.pg_delivery`), and sweeps expired… | `LOOM_PG_DELIVERY_ENABLED` | True | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | 2 |
-| `knowledge_source_sync` | Pulls each registered document source's changed files into its repository's documents (`server.knowledge.app.source_sync`). | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
+| `knowledge_source_push` | Renew bounded Drive channel sets; ordinary source polling remains independent. | `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | 300 |
+| `knowledge_source_retire` | Finish queued source deletions even when source syncing or authentication is off. | always on |  | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
+| `knowledge_source_sync` | Pulls each registered document source's changed files into its namespace's documents (`server.knowledge.app.source_sync`). | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | False | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | 900 |
 | `mcp_session_run_sweep` | MCP session run sweeper. | always on |  | `LOOM_MCP_SESSION_RUN_SWEEP_INTERVAL_SECONDS` | 60 |
-| `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |
+| `memory_code_links` | Code link pass: link the memories written since the last pass to the code they name (and, on the first pass or after falling behind the queue, the ones written before), then follow every repository's… | `LOOM_MEMORY_CODE_LINKS_ENABLED` | True | `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS` | 60 |
 | `memory_expiry_sweep` | Memory expiry sweep worker. | `LOOM_MEMORY_EXPIRY_SWEEP_ENABLED` | True | `LOOM_MEMORY_EXPIRY_SWEEP_INTERVAL_SECONDS` | 300 |
 | `memory_webhook_deliver` | Memory webhooks: POST the outbox's due events to their webhooks. | `LOOM_MEMORY_WEBHOOK_DELIVER_ENABLED` | True | `LOOM_MEMORY_WEBHOOK_DELIVER_INTERVAL_SECONDS` | 5 |
 | `namespace_gc` | namespace_gc worker — a registered bench namespace nobody writes to leaves. | `LOOM_NAMESPACE_GC_WORKER_ENABLED` | True | `LOOM_NAMESPACE_GC_INTERVAL_SECONDS` | 3600 |
@@ -242,8 +245,10 @@ adding its row.
 | `observe_extract` | Deferred-extraction worker for the ambient-capture (observe) plane. | `LOOM_OBSERVE_EXTRACT_ENABLED` | False | `LOOM_OBSERVE_EXTRACT_INTERVAL_SECONDS` | 300 |
 | `orphan_vector_reconcile` | Orphan-vector reconcile worker. | `LOOM_ORPHAN_VECTOR_RECONCILE_ENABLED` | True | `LOOM_ORPHAN_VECTOR_RECONCILE_INTERVAL_SECONDS` | 600 |
 | `pg_delivery` | Postgres delivery worker: publishes committed revisions a request did not. | `LOOM_PG_DELIVERY_ENABLED` | True | `LOOM_PG_DELIVERY_INTERVAL_SECONDS` | 2 |
+| `pg_payload_clear` | Postgres payload clearing: drops the payload (`row`) of a memory revision once every ClickHouse backup a restore may use holds it. | `LOOM_PG_PAYLOAD_CLEAR_ENABLED` | False | `LOOM_PG_PAYLOAD_CLEAR_INTERVAL_SECONDS` | 60 |
 | `profile_consolidation` | Profile-consolidation worker. | `LOOM_PROFILE_CONSOLIDATION_ENABLED` | False | `LOOM_PROFILE_CONSOLIDATION_INTERVAL_SECONDS` | 21600 |
 | `projection_repair` | Projection repair worker. | `LOOM_PROJECTION_REPAIR_ENABLED` | True | `LOOM_PROJECTION_REPAIR_INTERVAL_SECONDS` | 300 |
+| `query_history` | Opt-in query groups become private drafts; the supervisor persists source rotation. | `LOOM_KNOWLEDGE_QUERY_HISTORY_ENABLED` | False | `LOOM_KNOWLEDGE_QUERY_HISTORY_INTERVAL_SECONDS` | 3600 |
 | `recalibration` | Recalibration worker — re-runs the embedder calibration probe so threshold values stay aligned if the vendor silently revises the embedder. | `LOOM_RECALIBRATION_ENABLED` | True | `LOOM_RECALIBRATION_INTERVAL_SECONDS` | 604800 |
 | `reflection_distill` | Reflection distillation worker (default-off). | `LOOM_REFLECTION_DISTILL_ENABLED` | False | `LOOM_REFLECTION_DISTILL_INTERVAL_SECONDS` | 3600 |
 | `retention_reconcile` | Retention reconcile worker. | `LOOM_RETENTION_RECONCILE_ENABLED` | True | `LOOM_RETENTION_RECONCILE_INTERVAL_SECONDS` | 300 |

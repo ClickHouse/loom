@@ -1,24 +1,27 @@
 # System overview
 
 Loom is a Python server (a FastAPI application plus a supervisor of background workers)
-and one ClickHouse database. Loom is stateful: everything it knows is stored in
-ClickHouse, including facts and their vectors, documents, conversations, the entity graph,
-the code index, tasks, audit, cost and erasure progress. The server processes keep no
-durable state of their own, so any number of them can serve the same database and a
-request can land on any of them. The few pieces of state kept
-outside ClickHouse are listed under [Deployment topology](#deployment-topology).
+and ClickHouse, with Postgres as an option for live memory and knowledge state. Loom is
+stateful: everything it knows (facts and their vectors, documents, conversations, the
+entity graph, the code index, tasks, audit, cost and erasure progress) is stored in
+ClickHouse, except that under `LOOM_STORAGE_AUTHORITY=postgres` Postgres holds its live
+memory, knowledge state and the records beside them
+([storage authority](storage-authority.md#the-tables)). The server processes keep no
+durable state of their own, so any number of them can serve the same deployment and a
+request can land on any of them. The few pieces of state kept outside those stores are
+listed under [Deployment topology](#deployment-topology).
 
 The storage layout is in [ClickHouse](clickhouse.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                                  | Non-goals                                                                                         |
-| ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| One engine for every kind of state: vectors, full text, graph edges, time series and ledgers.          | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
-| One wire surface, declared once, served the same over HTTP and MCP.                                    | Cross-table transactions. Derived rows catch up after the primary write.                          |
-| Server processes hold no durable state: add web capacity by running more of them.                      | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
-| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`). | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
-| A keyless install that boots and answers, with fake providers reported.                                |                                                                                                   |
+| Goals                                                                                                                | Non-goals                                                                                         |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| One engine for every kind of state (ClickHouse authority): vectors, full text, graph edges, time series and ledgers. | File formats in the server: `knowledge.add` takes `content: str`; parsing is the CLI's job.       |
+| One wire surface, declared once, served the same over HTTP and MCP.                                                  | Cross-table transactions. Derived rows catch up after the primary write.                          |
+| Server processes hold no durable state: add web capacity by running more of them.                                    | Bi-temporal history. Validity is valid-time only; transaction-time history is the version mirror. |
+| Every row attributable to a tenant (identity tuple), a writer (`actor`) and a request (`log_comment`).               | A GDPR-compliance guarantee. Erasure and audit hashing are engineering primitives.                |
+| A keyless install that boots and answers, with fake providers reported.                                              |                                                                                                   |
 
 ## Components
 
@@ -109,18 +112,19 @@ HTTP answers with a status and a `detail` body, MCP with a result that carries `
 0 disables the cap. Each request then passes these phases in order (`_make_endpoint`). A
 refusal ends the request.
 
-| Phase                | Code                                   | Refusal                                                                                                                                                                      |
-| -------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's when it is 1 to 64 letters, digits, `.`, `_` or `-`, else a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`. |
-| Verify token         | `_extract_auth`                        | 401 `AUTH_INVALID` (missing when auth is on, foreign scheme, failing token); 503 `AUTH_UNAVAILABLE` until the revocation list is loaded.                                     |
-| Read body            | `_read_body`                           | 400 `VALIDATION_FAILED` on invalid JSON; 422 `UNKNOWN_ARGUMENT` when a write op's unknown key is close to one of its fields.                                                 |
-| Validate             | `_validate_payload`                    | 422 `VALIDATION_FAILED` naming the fields.                                                                                                                                   |
-| Authorize            | `_authorize` → `gates.authorize`       | 400 `IDENTITY_INCOMPLETE` (no namespace or org), 403 `AUTH_INSUFFICIENT`.                                                                                                    |
-| Bind context, policy | `_bind_context_and_policy`             | Sets the auth context and the ledger run (`X-Loom-Run-Id`); 403 `POLICY_FORBIDDEN` when a history policy denies in `enforce` mode.                                           |
-| Rate limit           | `_rate_limit` → `gates.rate_limit`     | 429 `RATE_LIMITED` with `Retry-After`; `X-RateLimit-*` headers on every limited call.                                                                                        |
-| Idempotency          | `_idempotency_gate`                    | Replays a stored answer (`X-Idempotent-Replay: true`), or 409 `IDEMPOTENT_CONFLICT` when the key is reused with a different body.                                            |
-| Handler              | `_run_handler`                         | The handler's `HTTPException`, a `LoomServerError`'s code and status, or 500 `INTERNAL_ERROR`.                                                                               |
-| After success        | `_finish_success`, `post_handler_rows` | None. Ledger row, metrics, the body with `ignored_args`, then budget-violation, audit and idempotency rows.                                                                  |
+| Phase                | Code                                   | Refusal                                                                                                                                                                                                                                                                                                                                                                                                |
+| -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's when it is 1 to 64 letters, digits, `.`, `_` or `-`, else a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`.                                                                                                                                                                                                                           |
+| Verify token         | `_extract_auth`                        | 401 `AUTH_INVALID` (missing when auth is on, foreign scheme, failing token); 503 `AUTH_UNAVAILABLE` until the revocation list is loaded.                                                                                                                                                                                                                                                               |
+| Read body            | `_read_body`                           | 400 `VALIDATION_FAILED` on invalid JSON; 422 `UNKNOWN_ARGUMENT` when a write op's unknown key is close to one of its fields.                                                                                                                                                                                                                                                                           |
+| Fill identity        | `gates.with_single_user_identity`      | None. On a single-user server, for a call with no token: the install's org on every op but `code.*` and `tracker.*`, and its namespace and the op's agent on the everyday memory and search ops ([which ops](../reference/http-api.md#request)); a blank or `"-"` namespace on any other op that requires one, code and tracker ops aside, is dropped, so validation refuses it as missing. HTTP only. |
+| Validate             | `_validate_payload`                    | 422 `VALIDATION_FAILED` naming the fields.                                                                                                                                                                                                                                                                                                                                                             |
+| Authorize            | `_authorize` → `gates.authorize`       | 400 `IDENTITY_INCOMPLETE` (no namespace or org), 403 `AUTH_INSUFFICIENT`.                                                                                                                                                                                                                                                                                                                              |
+| Bind context, policy | `_bind_context_and_policy`             | Sets the auth context and the ledger run (`X-Loom-Run-Id`); 403 `POLICY_FORBIDDEN` when a history policy denies in `enforce` mode.                                                                                                                                                                                                                                                                     |
+| Rate limit           | `_rate_limit` → `gates.rate_limit`     | 429 `RATE_LIMITED` with `Retry-After`; `X-RateLimit-*` headers on every limited call.                                                                                                                                                                                                                                                                                                                  |
+| Idempotency          | `_idempotency_gate`                    | Replays a stored answer (`X-Idempotent-Replay: true`), or 409 `IDEMPOTENT_CONFLICT` when the key is reused with a different body.                                                                                                                                                                                                                                                                      |
+| Handler              | `_run_handler`                         | The handler's `HTTPException`, a `LoomServerError`'s code and status, or 500 `INTERNAL_ERROR`.                                                                                                                                                                                                                                                                                                         |
+| After success        | `_finish_success`, `post_handler_rows` | None. Ledger row, metrics, the body with `ignored_args`, then budget-violation, audit and idempotency rows.                                                                                                                                                                                                                                                                                            |
 
 Why this order:
 
@@ -172,7 +176,8 @@ connector can find the OAuth server (`mcp_auth.py`).
 `tools/list` shows the roster chosen by `LOOM_MCP_TOOLSET` (default `core`) or `?toolset=`
 (`server/operations/toolsets.py`). A roster is visibility only: every op stays callable by
 name, except the ops in `_MCP_HIDDEN_OPS`, which MCP neither lists nor calls (HTTP still
-serves them). The toolsets are in the [MCP reference](../reference/mcp.md). Three tools
+serves them; `LOOM_MCP_CODE_UPLOAD_TOOLS` serves the two compiler-tier upload ops over MCP
+as well). The toolsets are in the [MCP reference](../reference/mcp.md). Three tools
 have hand-written descriptors: `loom_search` (the `search.query` op, rendered as a text
 summary plus the lean sections), `loom_op` (calls any op by name through the same path;
 `op: "help"` lists them, `server/transport/mcp_op.py`) and `loom_activate` (the primer,
@@ -232,17 +237,18 @@ Grants and `ns_roles` carry only `viewer`, `writer` or `admin`; `ORG_ADMIN` and
 
 One image serves every role. Settings decide what a process does:
 
-| Mode                | Settings                                                             | What runs                                                                               |
-| ------------------- | -------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                             | Web tier, and the workers in the process that holds the deployment's ClickHouse lease.  |
-| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                        | HTTP, MCP and the dashboard. Refreshes its own revocation snapshot and signing keyring. |
-| Workers             | `LOOM_BACKGROUND_WORKERS=on`, or `auto`                              | The supervisor and its workers; `/v1/health` still answers.                             |
-| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>` | Serves a shared ClickHouse without applying migrations; `auto` runs no workers there.   |
+| Mode                | Settings                                                                         | What runs                                                                               |
+| ------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| All-in-one          | `LOOM_BACKGROUND_WORKERS=auto` (default)                                         | Web tier, and the workers in the process that holds the deployment's ClickHouse lease.  |
+| Web replica         | `LOOM_BACKGROUND_WORKERS=off`                                                    | HTTP, MCP and the dashboard. Refreshes its own revocation snapshot and signing keyring. |
+| Workers             | `LOOM_BACKGROUND_WORKERS=auto`, `LOOM_DEPLOYMENT=1`, `LOOM_SERVES_TRAFFIC=false` | The supervisor and its workers; `/v1/health` still answers.                             |
+| Branch / A-B server | `LOOM_BOOT_MIGRATE=false`, `LOOM_INSTANCE_LABEL=<who>:<what>:<port>`             | Serves a shared ClickHouse without applying migrations; `auto` runs no workers there.   |
 
 `LOOM_WEB_WORKERS` sets uvicorn processes per container (unset, the image starts one per
 CPU the container may use, at most one per GiB of memory and at most 8). Each runs the full
 lifespan; under `auto` the deployment's lease picks the one that runs the workers. `on`
-takes no lease, so it belongs only on a single-process workers container.
+takes no lease: each process runs its own copy of the workers, and unless an `auto` process
+holds the lease the others report `workers_lease_absent`. A workers container runs `auto`.
 
 **Leader election.** `server/workers/leader.py` (`decide_supervisor`, `keep_lease`) elects
 one supervisor per deployment through ClickHouse: key `workers_supervisor` in the Keeper
@@ -273,10 +279,13 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
    deployment's migration lock before applying: a KeeperMap key in `loom._migration_lock`
    (`server/core/schema/migrate_lease.py`). A server without a Keeper, or a failed
    migration, stops the boot. With `LOOM_BOOT_MIGRATE=false` the process logs pending files and
-   reports them on `/v1/health`.
+   reports them on `/v1/health`. Under the Postgres authority, read the deployment's cell
+   state before the first heartbeat and the lease decision; a failed first read stops
+   the boot (with Postgres migrations pending it boots gated and unready until a read
+   lands) ([cells](cells.md#the-tenancy-check-and-placement)).
 4. **Start the `agent_events` emitter.**
 5. **Default namespace.** With auth off, give the configured namespace its
-   `loom.namespaces` row.
+   `loom.namespaces` row, unless the cell gate refuses this process.
 6. **Elect the worker leader.**
 7. **Leader duties.** Apply retention TTL overrides where they differ, and register the
    configured tracker namespaces.
@@ -287,7 +296,8 @@ The `lifespan` in `server/main.py` runs in every process, in this order (its ste
    `LOOM_RUNTIME_OVERRIDES_REFRESH_SECONDS`; the workers child process adopts them too. A
    live setting's override is laid over the process's own `settings`, so code reads it as
    `settings.<field>` ([runtime settings](../operations/runtime-settings.md)).
-9. **Start the workers** in the leader, and the lease loop in `auto`.
+9. **Start the workers** in the leader, and the lease loop in `auto` (and in `on` under
+   the Postgres authority, where the cell gate starts and stops them).
 10. **Provider report.** Log the resolved LLM provider and probe the embedder's dimension.
 11. **Vector features.** Probe the quantized-codes read setting, patch parts and whether
     inserts can skip the vector-index build.
@@ -337,16 +347,21 @@ flowchart LR
 ```
 
 - **Server processes hold no durable state.** Cross-replica state (revocations, signing
-  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor lease,
-  erasure checkpoints, the blacklist version, the idempotency cache) and uploaded document
-  originals live in ClickHouse, the bytes of those written with
-  `LOOM_DOCUMENT_OBJECT_STORE=s3` in an S3-compatible bucket instead. A new Loom with the
-  same ClickHouse, env config and `LOOM_JWT_SECRET`, and that bucket while rows name objects
-  in it, gets every feature back.
-- **State outside ClickHouse.** The code plane's git mirrors under `var/code_repos` (a
-  cache: a host without them re-clones) and the rate-limit buckets on the `loom-shared`
-  volume, neither the system of record; and, while any catalog row names an object in it,
-  `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those originals.
+  keys, runtime overrides, sign-in attempt counts, graph write marks, the supervisor
+  lease, erasure checkpoints, the blacklist version, the idempotency cache under the
+  default authority, the recorded authority) and uploaded document originals live in
+  ClickHouse, the bytes of those written with `LOOM_DOCUMENT_OBJECT_STORE=s3` in an
+  S3-compatible bucket instead. Under the Postgres authority, Postgres holds the tables
+  [storage authority](storage-authority.md#the-tables) lists, among them the idempotency
+  cache, its own erasure ledger and a copy of the recorded authority. A new Loom with
+  the same ClickHouse (and Postgres, under that authority), env config and
+  `LOOM_JWT_SECRET`, and that bucket while rows name objects in it, gets every feature
+  back.
+- **State outside ClickHouse and Postgres.** The code plane's git mirrors under
+  `var/code_repos` (a cache: a host without them re-clones) and the rate-limit buckets
+  on the `loom-shared` volume, neither the system of record; and, while any catalog row
+  names an object in it, `LOOM_DOCUMENT_S3_BUCKET`, holding the bytes of those
+  originals.
 - **Two containers, one image.** `dev/docker-compose.cloud.yml` runs `loom-server`
   (`LOOM_BACKGROUND_WORKERS=off`) and `loom-workers` (`auto`: it runs the workers while it
   holds the lease), so a long worker pass never shares an event loop with requests.
@@ -364,8 +379,13 @@ and on this page.
 
 ### One engine: ClickHouse
 
-Every plane (facts and vectors, BM25 and token indexes, the entity graph walked with
-`WITH RECURSIVE`, the code index, ledgers and cost) is a set of tables in one database.
+Under the default ClickHouse authority, every plane (facts and vectors, BM25 and token
+indexes, the entity graph walked with one bounded query per hop, the code index,
+ledgers and cost) is a set of ClickHouse tables. Under
+`LOOM_STORAGE_AUTHORITY=postgres`, live memory and knowledge state are held in Postgres,
+which trades one backup and one consistency domain for transactional memory writes
+([why two stores](storage-authority.md#why-two-stores)); the Why and Cost below are the
+default's.
 
 **Why:** one backup, one access boundary, one query language for retrieval and analytics,
 and joins between memory and its telemetry without a sync job. Hybrid retrieval runs as

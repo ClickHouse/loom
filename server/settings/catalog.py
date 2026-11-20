@@ -28,6 +28,7 @@ import httpx
 import idna
 from pydantic import AfterValidator, BaseModel, Field, PrivateAttr, field_validator, model_validator
 
+from server.core import org_patterns
 from server.core.document_formats import route_key
 from server.core.embedding_space import inferred_provider
 from server.core.numbers import parse_budget_value
@@ -49,7 +50,8 @@ class AssistantSettings(BaseModel):
     """The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it."""
 
     # LibreChat's internal address (http://librechat:3080), reachable only from Loom. ""
-    # = no assistant: no service setup at boot.
+    # = no assistant: no service setup at boot, and the panel's chat is off; its starters
+    # still read.
     assistant_librechat_url: str = ""
     # Email of the LibreChat service user that owns the agent, read once, when the first
     # boot writes loom.assistant_service; LibreChat sends it no mail.
@@ -67,7 +69,7 @@ class AssistantSettings(BaseModel):
     # can overshoot it.
     assistant_concurrent_answers: int = Field(default=2, ge=1, le=50)
     # USD charged for an answer cut before LibreChat reported its usage (a
-    # disconnect, a timeout) or on a model with no price, so no answer is free.
+    # disconnect, a timeout) or on a model with no price; 0 charges nothing.
     assistant_answer_ceiling_usd: float = Field(default=0.10, ge=0, le=10)
 
 
@@ -94,17 +96,6 @@ def _public_numbers(pem: str) -> object:
         return load_pem_public_key(pem.encode()).public_numbers()  # type: ignore[union-attr]
     except Exception:  # noqa: BLE001 — a key that does not load matches none
         return None
-
-
-def _overlap(a: str, b: str) -> bool:
-    """Whether two org patterns (a name, or `prefix*`) can match one org."""
-    if a.endswith("*") and b.endswith("*"):
-        return a[:-1].startswith(b[:-1]) or b[:-1].startswith(a[:-1])
-    if a.endswith("*"):
-        return b.startswith(a[:-1])
-    if b.endswith("*"):
-        return a.startswith(b[:-1])
-    return a == b
 
 
 @dataclass(frozen=True)
@@ -147,7 +138,7 @@ class EndUserIssuer:
 
     def signs_for(self, org: str) -> bool:
         """Whether this issuer's tokens may name `org`: listed, or under a `prefix*`."""
-        return any(org.startswith(o[:-1]) if o.endswith("*") else org == o for o in self.orgs)
+        return any(org_patterns.matches(o, org) for o in self.orgs)
 
 
 class AuthSettings(BaseModel):
@@ -168,8 +159,8 @@ class AuthSettings(BaseModel):
     # identity. identity_provider=single-user forces auth off regardless.
     auth_required: bool = True
     # The one namespace auth-off mode serves (SPA identity, dashboard bootstrap,
-    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` is
-    # reserved and rejected.
+    # MCP/SDK caller defaults). Ignored when auth is required; `personal-*` and a
+    # mirror's name (`acl-` and 24 hex digits) are reserved and rejected.
     default_namespace: str = "local"
 
     @field_validator("default_namespace")
@@ -191,13 +182,14 @@ class AuthSettings(BaseModel):
         `namespace.register` and the create dialog accept). `personal-*` is
         additionally reserved for per-subject auto-provisioning: reusing it
         collides with that scheme and skews the `NOT LIKE 'personal-%'`
-        analytics split in the dashboard.
+        analytics split in the dashboard. A mirror's name (`acl-` and 24 hex
+        digits) is refused too: the gate refuses every request that names one.
 
         Auth-ON deployments never read the setting, so a stale value left in
         a shared .env must not crash-loop the server/CLI/migrations for a
         mode that ignores it — warn and carry on instead.
         """
-        from server.core.naming import validate_namespace_name
+        from server.core.naming import is_mirror_name, validate_namespace_name
 
         v = self.default_namespace
         error: str | None = None
@@ -206,6 +198,11 @@ class AuthSettings(BaseModel):
                 f"LOOM_DEFAULT_NAMESPACE={v!r} uses the reserved 'personal-' "
                 "prefix, which belongs to per-subject auto-provisioning. "
                 "Pick a name that doesn't start with 'personal-'."
+            )
+        elif is_mirror_name(v):
+            error = (
+                f"LOOM_DEFAULT_NAMESPACE={v!r} has the form 'acl-' and 24 hex digits, which "
+                "is reserved for mirrors and refused on every request. Pick another name."
             )
         else:
             try:
@@ -268,6 +265,9 @@ class AuthSettings(BaseModel):
     identity_provider_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Bearer tokens (comma-separated, any one accepted) an identity provider presents to
     # deactivate and reactivate people over SCIM 2.0 (/scim/v2). Empty = off; needs auth on, oidc.
+    # With LOOM_CELL set, at most two entries, named for that cell; only the observed first
+    # cell also accepts unnamed tokens. Generate one with `loom cell scim-token new --cell NAME`.
+    # Enforced cells also require active provisioning for every nonexempt person.
     scim_token: str = ""
 
     @property
@@ -320,6 +320,61 @@ class AuthSettings(BaseModel):
     # Seconds between re-reads of loom.signing_keys in every process (at least
     # 1); `loom signing-key rotate` waits out two of the slowest process's.
     jwt_keyring_refresh_seconds: float = Field(default=30.0, ge=1.0)
+    # This cell's name (1 to 32 of a-z, 0-9, '-') behind a router, "" = not a cell; set,
+    # the process serves only while its cell's rows accept it (docs/architecture/cells.md).
+    cell: str = ""
+    # The port of the probe listener, which answers the deployment id and the values under
+    # `loom cell prepare`'s nonce keys (docs/architecture/cells.md); 0 = off.
+    cell_probe_port: int = Field(default=0, ge=0, le=65535)
+    # The router's base URL a cell calls to place a new org, and the `loom cell` commands'
+    # default router; "" = none: in `enforced`, a new org answers 503. With LOOM_CELL set, a
+    # value other than an http(s) URL with a host, a port at most 65535 and no '?' or '#'
+    # refuses the boot.
+    cell_router_url: str = ""
+    # The credential a cell calls the router with: `lcr_` then `openssl rand -hex 64`
+    # (never the length of a SHA-256); any other form is refused at boot. "" = none.
+    cell_router_token: Annotated[str, Field(pattern=r"^(?:lcr_[0-9a-f]{128})?$")] = ""
+    # Seconds a whole call to the router may take: a placement call, after which the request
+    # answers 503, and a cell's state read, which is also the margin past its read period
+    # before that read's answer counts as late.
+    cell_router_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds (at least 1) between reads of the cell state rows once the first read landed
+    # (every second until then), in every process that reads them under the Postgres
+    # authority, and before an org read as not held is read again; also the most a first
+    # cell's server process waits between reads of the router's state route (with
+    # LOOM_INSTANCE_HEARTBEAT_SECONDS) and the window of a process that reads it on demand.
+    # LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times this.
+    tenancy_mode_cache_s: float = Field(default=5.0, ge=1.0)
+    # The router's directory, its own Postgres database (`loom router serve` and
+    # `loom router migrate`); "" = none. Never a cell's memory authority database.
+    router_pg_dsn: str = ""
+    # Placement calls one cell may make in a minute, counted by each router replica.
+    router_placements_per_minute: int = Field(default=60, ge=1)
+    # Seconds (at least 1) a router replica keeps the cells' credential hashes, a placed
+    # org's lookup answer and the first cell's state-route answer before reading again; a
+    # new credential or host works within this. A cell's processes carry the router's value:
+    # 401s from the state route last this long before the heartbeat's `router` turns false.
+    router_directory_cache_s: float = Field(default=5.0, ge=1.0)
+    # Org lookups one client address may make in a minute, counted by each router
+    # replica (`GET /cells/lookup`).
+    router_lookups_per_minute: int = Field(default=60, ge=1)
+    # The deployment's shared host (`loom.example.com`) the router serves by rules 2 to 4,
+    # beside the first cell's own host and aliases; "" = no cell registers (registration
+    # tells the first cell by this host), and once one has, only its own host and aliases.
+    router_shared_host: str = ""
+    # Where the router forwards the shared host until a first cell registers, which copies
+    # it into its row; "" = 503 there and no first cell registers.
+    router_upstream_url: str = ""
+    # The probe listener address of the deployment behind the shared host, at which the
+    # first cell's registration is checked; "" = no first cell can be registered.
+    router_upstream_probe_url: str = ""
+    # SHA-256 (64 lowercase hex) of the router's operator credential, which `loom cell
+    # limit`, `loom cell credential` and `loom cell prepare` call its operator API with;
+    # "" = that API refuses.
+    router_operator_sha256: Annotated[str, Field(pattern=r"^(?:[0-9a-f]{64})?$")] = ""
+    # The operator credential itself, for the CLI that calls the router's operator API:
+    # `lco_` then `openssl rand -hex 64` (`loom cell credential new --operator`). "" = none.
+    router_operator_token: Annotated[str, Field(pattern=r"^(?:lco_[0-9a-f]{128})?$")] = ""
 
     def jwt_secret_is_dev_default(self) -> bool:
         """Whether the root secret is the checked-in dev default — the value
@@ -362,8 +417,10 @@ class AuthSettings(BaseModel):
     # caps a token's claim at the grant it holds there. The backstop: a grant
     # change reaches other processes through the per-org grant watermark
     # (acl_watermark_poll_seconds), and this bounds one whose watermark row was
-    # never written. It also bounds how long a SCIM deactivation of an email, or a
-    # bot disable, takes to stop a trusted caller acting for it on another process.
+    # never written. SCIM and bot final decisions use this TTL from read start.
+    # A complete enforced-cell SCIM check has a separate 30-second ceiling, so
+    # its cross-process observation bound is the larger of this TTL and that
+    # check's budget; a smaller positive read timeout reduces the latter.
     grant_cache_ttl_seconds: float = 10.0
     # Seconds between each process's reads of the per-org grant watermark
     # (loom.acl_versions): a revoke on one replica is enforced on every other
@@ -388,6 +445,8 @@ class AuthSettings(BaseModel):
 
     # Browser self-signup: "off" (endpoint 404s) or "open"
     # (/v1/auth/self-signup mints JWTs scoped to the requested namespace).
+    # A non-loopback bind refuses "open" unless identity_provider is "trust-network",
+    # allow_insecure is set, or oauth_login_provider is "oidc" (which closes sign-up).
     self_signup: Literal["off", "open"] = "off"
     # Default org for self-signed tokens.
     self_signup_org: str = "dev"
@@ -450,10 +509,21 @@ class AuthSettings(BaseModel):
                 raise ValueError(f"end-user issuer {issuer!r}: keys {same} are federated keys")
         # `user:<id>` names one person per org, so one issuer alone signs for an org.
         for (a, spec_a), (b, spec_b) in itertools.combinations(issuers.items(), 2):
-            shared = [(x, y) for x in spec_a.orgs for y in spec_b.orgs if _overlap(x, y)]
+            shared = [
+                (x, y) for x in spec_a.orgs for y in spec_b.orgs if org_patterns.overlap(x, y)
+            ]
             if shared:
                 raise ValueError(f"end-user issuers {a!r} and {b!r} both sign for {shared[0]}")
         return self
+
+    def self_signup_served(self) -> bool:
+        """Whether the sign-up gate lets self-signup and agent sign-up through:
+        "open", and sign-in not delegated to OIDC (which closes them)."""
+        return self.self_signup == "open" and self.oauth_login_provider != "oidc"
+
+    def signup_open_without_trust_network(self) -> bool:
+        """Self-signup is served but identity_provider does not name trust-network."""
+        return self.self_signup_served() and self.identity_provider != "trust-network"
 
     def auth_actually_required(self) -> bool:
         """Whether the HTTP transport should require a bearer.
@@ -510,6 +580,12 @@ class AuthSettings(BaseModel):
             raise ValueError(
                 "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
                 "LOOM_JWT_KEYRING_REFRESH_SECONDS"
+            )
+        # A cell's rows go stale at the same limit, so the same margin (a cell only).
+        if self.cell and self.jwt_revocation_max_stale_seconds < 3 * self.tenancy_mode_cache_s:
+            raise ValueError(
+                "LOOM_JWT_REVOCATION_MAX_STALE_SECONDS must be at least three times "
+                "LOOM_TENANCY_MODE_CACHE_S"
             )
         return self
 
@@ -598,6 +674,9 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
+    # Additional trusted writer HTTP origins for analyst setup policy observations.
+    # Uses the configured service credentials; missing or duplicate writers refuse.
+    ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
     # A statement that carries a secret, or one run as the analyst, gets its
@@ -624,7 +703,9 @@ class ClickHouseSettings(BaseModel):
     # empty-pool retry remains the backstop).
     ch_read_your_writes_window_s: float = 20.0
     # Deadline, seconds, for read statements, applied as `max_execution_time` and as a
-    # client-side bound that frees the pool slot. 0 = no bound for reads.
+    # client-side bound that frees the pool slot. 0 = no general read bound.
+    # Enforced-cell SCIM decisions still have a complete 30-second ceiling,
+    # reduced by a smaller positive value.
     ch_timeout_read_s: float = 30.0
     # Deadline, seconds, for INSERT and UPDATE statements; 0 = no bound.
     ch_timeout_write_s: float = 60.0
@@ -796,7 +877,7 @@ class CodeSettings(BaseModel):
     # passes no token_budget.
     code_ask_token_budget: int = 4000
     # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
-    # in code/app/answers.py; a value in (0, 1] pins one threshold for
+    # in code/app/answers_entry.py; a value in (0, 1] pins one threshold for
     # every model.
     code_ask_cache_threshold: float = Field(default=0.0, ge=0.0, le=1.0)
     # A cached code.ask answer older than this many days is a miss (checked
@@ -831,6 +912,15 @@ class CodeSettings(BaseModel):
     code_ask_memory_namespace: str = ""
     # The org of `code_ask_memory_namespace`; empty = `code_org`.
     code_ask_memory_org: str = ""
+    # --- memories on code results ---
+    # Whether the code ops that return files carry `lessons`, the readable memories about
+    # their top files.
+    code_result_lessons: Annotated[bool, LIVE] = True
+    # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
+    # 4 characters a token.
+    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=250, ge=50, le=2000)
+    # How many of an answer's files, in rank order, its `lessons` are read for.
+    code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
     # --- repository access ---
     # True lets every authenticated principal of the org read every configured
     # code namespace (right for public or org-internal repos); false leaves reads
@@ -864,6 +954,10 @@ class CodeSettings(BaseModel):
     # for a namespace a member added from the page is skipped.
     # Off = the operator's JSON is the only source.
     code_self_service_enabled: bool = True
+    # True leaves code.repo.remote_branches, code.repo.add and code.repo.add_branch to
+    # platform admins: a token scoped to namespaces, or a trusted caller acting for
+    # another subject, is refused too. False: each op's own role decides.
+    code_self_service_platform_admin_only: bool = False
     # Where the code ingest worker clones a self-service entry's bare mirror (one per
     # GitHub repository, shared by its branches).
     code_repos_root: str = "var/code_repos/self"
@@ -938,6 +1032,13 @@ class CodeSettings(BaseModel):
     # missing sandbox as an error. False: without the sandbox, jobs fall back
     # to plain processes as "Without the sandbox" in code-index-operations.md says.
     code_sandbox_required: bool = False
+    # True lets a host without the sandbox add and fetch a self-service entry with a
+    # network remote: its git jobs (ls-remote, clone, fetch) run as plain processes and
+    # it gets no compiler tier. Refused at load without
+    # code_self_service_platform_admin_only, where a request can carry no principal
+    # (auth off, or mcp_auth_mode open), and with code_sandbox_required. False: such an
+    # entry needs the sandbox.
+    code_self_service_git_unsandboxed: bool = False
     # Largest file one process of a sandboxed repository job may write, in MiB (a
     # pack or index.scip).
     code_sandbox_max_file_mb: int = 32768
@@ -970,6 +1071,66 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # The code index's network git (clone, fetch, ls-remote, submodule update) through
+    # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
+    # a git job connects through it or is refused: never directly.
+    # --- git through a forward proxy ---
+    # The proxy: `http://host:port` or `https://host:port`, the port named, with no
+    # credentials, path or query. Empty = git connects directly.
+    code_git_proxy_url: str = ""
+    # File holding the proxy password, read again for every git job. Empty = no password;
+    # a file that cannot be read or is empty refuses the job. Needs code_git_proxy_url.
+    code_git_proxy_token_file: str = ""
+    # PEM bundle git verifies TLS with through the proxy, in place of its default roots
+    # (a proxy that terminates TLS under its own authority). Needs code_git_proxy_url.
+    code_git_proxy_ca_file: str = ""
+    # PEM bundle git verifies the proxy's own certificate with, in place of its default
+    # roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one
+    # is for the remote, behind a proxy that terminates TLS under its own authority; this
+    # one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url.
+    code_git_proxy_tls_ca_file: str = ""
+    # The proxy user of an entry that names no `git_proxy_identity`: letters, digits and
+    # `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs
+    # code_git_proxy_url.
+    code_git_proxy_identity: str = ""
+
+    @model_validator(mode="after")
+    def _check_git_proxy(self) -> CodeSettings:
+        """A proxy URL git cannot use, or a proxy setting without the proxy, fails at
+        load, not at the first fetch. The URL holds no credentials, so it is not a secret."""
+        url = self.code_git_proxy_url
+        if url:
+            parts = urlsplit(url)
+            if not is_http_url(url) or "@" in parts.netloc or parts.path not in ("", "/"):
+                raise ValueError(
+                    "LOOM_CODE_GIT_PROXY_URL must be http://host:port or https://host:port, "
+                    "with no credentials, path or query"
+                )
+            if parts.port is None:
+                # git's HTTP library would otherwise assume 1080 for an http proxy.
+                raise ValueError("LOOM_CODE_GIT_PROXY_URL must name the proxy's port")
+        identity = self.code_git_proxy_identity
+        needs_url = {
+            "LOOM_CODE_GIT_PROXY_TOKEN_FILE": self.code_git_proxy_token_file,
+            "LOOM_CODE_GIT_PROXY_CA_FILE": self.code_git_proxy_ca_file,
+            "LOOM_CODE_GIT_PROXY_TLS_CA_FILE": self.code_git_proxy_tls_ca_file,
+            "LOOM_CODE_GIT_PROXY_IDENTITY": identity,
+        }
+        for variable, value in needs_url.items():
+            if value and not url:
+                raise ValueError(f"{variable} needs LOOM_CODE_GIT_PROXY_URL")
+        if self.code_git_proxy_tls_ca_file and urlsplit(url).scheme != "https":
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_TLS_CA_FILE needs an https:// LOOM_CODE_GIT_PROXY_URL: "
+                "an http:// proxy has no TLS of its own to verify"
+            )
+        if identity and not GIT_PROXY_IDENTITY.fullmatch(identity):
+            raise ValueError(
+                "LOOM_CODE_GIT_PROXY_IDENTITY takes letters, digits and . _ ~ @ - only, "
+                "at most 128 characters"
+            )
+        return self
+
     # --- open-PR fill ---
     # Open-PR rows per pass whose head_sha / base_sha / files the PR-history
     # worker fills from the mirror; rows the mirror lacks fall back to GitHub
@@ -1109,11 +1270,15 @@ class CodeSettings(BaseModel):
     # Seconds the C++ delta harness may run before it is killed.
     code_scip_delta_timeout_seconds: int = 3600
     # Largest compiler-tier delta file the server reads, in MiB; a larger one fails the
-    # entry's pass (sizing: code-index-operations.md).
+    # entry's pass. It bounds the work of an entry's pass and the path text kept
+    # (code-index-operations.md).
     code_scip_delta_file_max_mb: Annotated[int, LIVE] = Field(default=180, ge=1)
     # Most `{`, `[` and `,` bytes a compiler-tier delta may hold, counted before it is
     # parsed; more fails the entry's pass (sizing: code-index-operations.md).
     code_scip_delta_max_nodes: Annotated[int, LIVE] = Field(default=6_000_000, ge=1)
+    # Most `{`, `[` and `,` bytes one apply round of a compiler-tier delta parses: its
+    # memory bound; one value over it fails the pass (code-index-operations.md).
+    code_scip_delta_round_max_nodes: Annotated[int, LIVE] = Field(default=3_000_000, ge=1)
     # C++ full re-index: seeds an entry the delta has no watermark for, and
     # re-indexes each entry every `code_scip_full_every_hours` (heals deltas
     # that hit the TU cap). One entry per pass, under its entry lock.
@@ -1549,6 +1714,9 @@ class CodeSettings(BaseModel):
     # unless the query asks for documentation or the search is constrained to paths;
     # 1.0 = off.
     code_search_prose_penalty: float = 0.25
+    # Chunk-kind ranking prior when the request names none: structural boosts the
+    # kind named by the question; flat/default apply fixed tables; off disables it.
+    code_search_kind_prior: Literal["off", "default", "flat", "structural"] = "flat"
     # The question kinds `code_search_catalogue_penalty` applies to.
     code_search_catalogue_kinds: str = "responsibility"
     # Cap of code.search's fan-in rank prior:
@@ -1784,6 +1952,9 @@ class CodeSettings(BaseModel):
     # tests corpus measurable from here — holds for a namespace across a brief, so it is
     # kept, in this process only.
     code_coverage_control_ttl_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
+    # Seconds a repository job's egress tunnel may move no byte after its client's EOF
+    # before it is closed; while bytes still wait for the client, the idle timeout applies.
+    code_egress_half_close_timeout_s: Annotated[float, LIVE] = Field(default=10.0, gt=0)
     # Seconds a repository job's egress tunnel may move no byte before it is closed.
     code_egress_idle_timeout_s: Annotated[float, LIVE] = Field(default=300.0, gt=0)
     # Seconds a repository job's connection waits for a free egress tunnel slot.
@@ -1873,6 +2044,9 @@ class ErasureSettings(BaseModel):
     # Bytes of conversation text after which `erasure.export` stops its `conversations`
     # section, marked `truncated`; a page holds up to this plus the turn that crosses it.
     erasure_export_conversation_max_bytes: Annotated[int, LIVE] = Field(default=67108864, ge=1)
+    # Days `loom.erasure_ledger` keeps each erasure under the Postgres authority: the oldest
+    # backup's age plus the longest an erasure runs (at most 89, as ClickHouse's ledger reads).
+    erasure_ledger_days: Annotated[int, LIVE] = Field(default=89, ge=1, le=89)
 
     # ---- external erasure backends ----
     # The database ClickStack's OTel tables (HyperDX's) live in, on the same ClickHouse
@@ -2028,16 +2202,21 @@ class ExtractionSettings(BaseModel):
     extraction_defer_agents: Annotated[str, LIVE] = ""
     # Seconds between deferred-extraction queue passes.
     extraction_queue_interval_seconds: int = 15
+    # Seconds a deferred-extraction pass (up to `extraction_queue_max_batches_per_pass`
+    # replays) may run before the supervisor cancels it; 0 = four intervals, kept
+    # between 60 and 900 s.
+    extraction_queue_max_pass_seconds: float = Field(default=0.0, ge=0)
     # Most queued batches one pass claims.
     extraction_queue_max_batches_per_pass: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Seconds a claimed batch stays leased to one worker before another may claim it; at
-    # least a minute. Set it above the longest pass
-    # (`extraction_queue_max_batches_per_pass` times one replay), or an overlapping
-    # worker may claim a batch still waiting in the pass.
+    # least a minute. A lease shorter than the pass deadline plus a minute is raised to
+    # that, so an overlapping worker never claims a batch still waiting in the pass.
     extraction_queue_lease_seconds: Annotated[int, LIVE] = Field(default=600, ge=60)
     # Attempts before a failing batch stops returning to `pending` and is marked failed;
     # each failure waits 15 s, 1, 5, then 30 minutes before the next. A model provider or
-    # gateway that cannot be reached, or a held call, spends none.
+    # gateway that cannot be reached, or a held call, spends none; on a `local` provider a
+    # read timeout from that model server and a cancelled replay (pass deadline,
+    # shutdown) spend one.
     extraction_queue_max_attempts: Annotated[int, LIVE] = Field(default=8, ge=0)
     # Namespaces replayed concurrently per pass; batches inside one namespace
     # stay serial in session-date order. At least 1: none would hang the pass.
@@ -2066,8 +2245,9 @@ class KnowledgeSettings(BaseModel):
     conversation_search_excerpt_chars: Annotated[int, LIVE] = Field(default=240, ge=1, le=2048)
 
     # LLM-title untitled threads in namespaces with conversation_logging_enabled
-    # (the Sessions "Recording" toggle is the off-switch). Skipped with the fake
-    # LLM.
+    # (the Record conversations switch on the dashboard's Conversations page is the
+    # off-switch).
+    # Skipped with the fake LLM.
     conversation_titler_enabled: bool = True
     # Seconds between titler passes.
     conversation_titler_interval_seconds: int = 1800
@@ -2102,6 +2282,59 @@ class KnowledgeSettings(BaseModel):
     )
     # Seconds a knowledge.search waits on its reranker before it keeps the fused order.
     knowledge_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+
+    # ---- knowledge gaps ----
+    # Record searches that found nothing and group them daily into knowledge.gaps.list
+    # (docs/architecture/knowledge-gaps.md).
+    # Off by default: a miss stores the query text, so it is an operator opt-in, and a
+    # miss is recorded only where the namespace's capture level is not `off`.
+    knowledge_gaps_enabled: bool = False
+    # Seconds between knowledge_gaps passes (each groups every namespace with misses). At
+    # most 3 days, with the pass deadline at most 6 hours, so two of each (a restart can
+    # add an interval) fit in a build's 7-day life.
+    knowledge_gaps_interval_seconds: int = Field(default=86_400, ge=3600, le=3 * 86_400)
+    # One pass's deadline, at most 6 hours: up to knowledge_gaps_max_namespaces namespaces,
+    # each one embed.
+    knowledge_gaps_max_pass_seconds: int = Field(default=3600, ge=60, le=6 * 3600)
+    # Distinct users a query needs, in that form, before a gap shows it: one person's
+    # question is never shown as a gap.
+    knowledge_gaps_min_askers: Annotated[int, LIVE] = Field(default=3, ge=3)
+    # Most asked query groups a pass embeds and merges per namespace.
+    knowledge_gaps_max_groups: Annotated[int, LIVE] = Field(default=200, ge=1, le=1000)
+    # Cosine similarity at which two query groups are one gap.
+    knowledge_gaps_merge_similarity: Annotated[float, LIVE] = Field(default=0.85, gt=0, le=1)
+    # Distinct askers a pass holds per query group, at most, never below
+    # knowledge_gaps_min_askers; past it a gap's count reads as the cap. Askers are held in
+    # memory for the pass and never stored.
+    knowledge_gaps_max_askers_per_group: Annotated[int, LIVE] = Field(default=10_000, ge=3)
+    # Miss recordings in flight in one process, at most; past it a miss is dropped
+    # and counted, so a burst of abstentions cannot pile up background reads.
+    knowledge_gaps_max_in_flight: Annotated[int, LIVE] = Field(default=256, ge=1)
+    # Namespaces one pass groups, at most; the ones with the most misses first.
+    knowledge_gaps_max_namespaces: Annotated[int, LIVE] = Field(default=500, ge=1)
+
+    # ---- query-history definitions ----
+    # Permit opt-in ClickHouse query-history sources to queue definition drafts.
+    knowledge_query_history_enabled: bool = False
+    # Distinct initial ClickHouse accounts required before drafting a query group.
+    knowledge_query_history_min_users: Annotated[int, LIVE] = Field(default=3, ge=3)
+    # Drafts one source may queue in a worker turn, at most.
+    knowledge_query_history_max_drafts: Annotated[int, LIVE] = Field(default=20, ge=1, le=100)
+    # Most-used query groups inspected per source turn before skipping existing drafts.
+    knowledge_query_history_max_groups: Annotated[int, LIVE] = Field(default=200, ge=1, le=1000)
+    # Days of finished SELECT query history a turn groups.
+    knowledge_query_history_window_days: Annotated[int, LIVE] = Field(default=7, ge=1, le=30)
+    # Seconds allowed for one query-history source read.
+    knowledge_query_history_read_timeout_s: Annotated[float, LIVE] = Field(default=30, gt=0, le=120)
+    # Deadline of one query-history pass; it starts no new group after half this budget.
+    knowledge_query_history_max_pass_seconds: float = Field(default=120.0, ge=30.0, le=600.0)
+    # Seconds between query-history passes.
+    knowledge_query_history_interval_seconds: int = Field(default=3600, ge=300)
+    # Sources one pass reads, at most; each turn is separately time bounded.
+    knowledge_query_history_max_sources: Annotated[int, LIVE] = Field(default=100, ge=1, le=1000)
+
+    # Query-history circuit states kept per process, at most; older sources are evicted first.
+    knowledge_query_history_max_breakers: int = Field(default=1000, ge=1, le=100000)
 
     # ---- chunking ----
     # Sliding-window chunking on knowledge.add/upsert, in characters.
@@ -2169,17 +2402,92 @@ class KnowledgeSettings(BaseModel):
     document_extractor_max_artifact_bytes: int = Field(default=64 * 1024 * 1024, ge=1024)
 
     # ---- document sources ----
-    # Active document sources (knowledge.source.add) one repository namespace may
-    # register; an add past it is refused with SOURCE_QUOTA.
+    # OAuth client id for personal Drive connections; empty disables the provider.
+    connect_gdrive_client_id: str = ""
+    # Secret of that Drive OAuth registration; kept outside source rows.
+    connect_gdrive_client_secret: str = ""
+    # Public-integration client id for personal page-store connections; empty disables it.
+    connect_notion_client_id: str = ""
+    # Secret of that page-store registration; kept outside source rows.
+    connect_notion_client_secret: str = ""
+    # OAuth client id for personal project-tracker connections; empty disables it.
+    connect_linear_client_id: str = ""
+    # Secret of that project-tracker registration; kept outside source rows.
+    connect_linear_client_secret: str = ""
+    # The operator has restricted the public integration to read-content capability.
+    # Its token response cannot prove this registration setting; false disables it.
+    connect_notion_read_content_only: bool = False
+    # Seconds for the whole optional live-search leg, including final membership checks.
+    # At most five; provider credential deadlines may shorten it further.
+    knowledge_live_search_timeout_s: float = Field(default=5.0, gt=0, le=5.0)
+    # Connected registrations searched per live-search request, from one to three.
+    knowledge_live_search_max_sources: int = Field(default=3, ge=1, le=3)
+    # Live hits across all registrations, and the per-provider page bound, from one to ten.
+    knowledge_live_search_max_hits: int = Field(default=10, ge=1, le=10)
+    # Bytes read from one live-search provider response, at most 256 KiB.
+    # The document-source download limit may shorten this bound further.
+    knowledge_live_search_response_max_bytes: int = Field(default=256 * 1024, ge=1, le=256 * 1024)
+    # Registered Drive items searched per source, from one to four; no pagination.
+    knowledge_live_search_max_items: int = Field(default=4, ge=1, le=4)
+    # Native parent lookups per Notion membership check, from zero to three.
+    # Zero accepts directly registered pages and database membership without parent fetches.
+    knowledge_live_search_max_ancestors: int = Field(default=3, ge=0, le=3)
+    # Seconds for local connection stops, including their source retirement writes.
+    knowledge_connected_stop_timeout_s: float = Field(default=20.0, gt=0)
+    # Seconds for best-effort provider revocation after every local stop has committed.
+    knowledge_connected_revoke_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds the renewed account-generation lease lives. Source leases follow it;
+    # provider requests hold neither.
+    knowledge_connected_lease_ttl_s: float = Field(default=60.0, gt=0)
+    # Seconds a connection change waits for another holder's account-generation lease.
+    knowledge_connected_lease_wait_s: float = Field(default=5.0, ge=0)
+    # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
+    knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
+    # Registrations per page during root-secret resealing.
+    knowledge_connected_registry_page_size: int = Field(default=256, ge=1, le=4096)
+    # Seconds one connected-account OAuth request may take, including its response.
+    # The caller's remaining deadline can shorten this bound.
+    knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)
+    # Bytes read from a connected-account token or identity response; larger metadata
+    # replies are refused before parsing.
+    knowledge_connected_oauth_response_max_bytes: int = Field(default=64 * 1024, ge=1024)
+    # Active document sources (knowledge.source.add) one namespace may register; an
+    # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
-    # Seconds a document source's probe (add, check, rotate) may take in all; past it
-    # add and rotate answer SOURCE_UNREACHABLE and check answers reachable: false.
+    # Active connected sources per namespace, separate from the shared/crawl quota.
+    knowledge_connected_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=64, ge=1)
+    # Active connected sources one canonical person may register in one namespace.
+    knowledge_connected_sources_max_per_person: Annotated[int, LIVE] = Field(default=8, ge=1)
+    # Seconds a document source's probe (add, update, check, rotate) or tracker short-id
+    # lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE
+    # and check answers reachable: false.
     knowledge_source_probe_timeout_s: Annotated[float, LIVE] = Field(default=20.0, gt=0, le=25.0)
     # The knowledge_source_sync worker: pulls each registered document source's changed
-    # files into its repository's documents. Off by default: it needs each source's
+    # files into its namespace's documents. Off by default: it needs each source's
     # credential, spends embedding calls on every changed document and model calls
     # mining it for decisions.
     knowledge_source_sync_enabled: bool = False
+    # Require protected automatic session capture and persist deployment privacy state.
+    # Off does not lift protection while the deployment latch remains set.
+    knowledge_mirrored_sources_enabled: bool = False
+    # Mirrored reads require a complete listing and group observation within this
+    # many seconds; missing or older evidence admits nobody.
+    knowledge_source_acl_stale_seconds: int = Field(default=3600, ge=1)
+    # Maximum team and member rows read for one project's complete permission list.
+    # A larger list refuses publication rather than granting from a partial page.
+    knowledge_source_acl_max_entries: int = Field(default=10000, ge=1)
+    # Enable optional source push setup, callbacks and Drive renewal; false keeps polling only.
+    knowledge_source_push_enabled: bool = False
+    # Seconds between bounded channel-renewal pages; channels renew a day before expiry.
+    knowledge_source_push_interval_seconds: int = Field(default=300, ge=60)
+    # Seconds one push setup or Drive renewal may spend on provider work, before cleanup.
+    knowledge_source_push_provider_timeout_s: float = Field(default=40.0, gt=0)
+    # Seconds allowed to stop one superseded or unpublished Drive channel.
+    knowledge_source_push_stop_timeout_s: float = Field(default=2.0, gt=0)
+    # Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait.
+    knowledge_source_push_cleanup_timeout_s: float = Field(default=5.0, gt=0)
+    # Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows.
+    knowledge_source_push_max_pass_seconds: float = Field(default=120.0, gt=0)
     # Seconds between sync passes while there are sources.
     knowledge_source_sync_interval_seconds: int = Field(default=900, ge=60)
     # Seconds between passes that found no source to sync; one idle sleep plus one
@@ -2189,9 +2497,19 @@ class KnowledgeSettings(BaseModel):
     # at three quarters of it. At least 180: 90 for the sync, then 60 of read time for
     # one document's extraction and 30 for its writes before the deadline.
     knowledge_source_sync_max_pass_seconds: int = Field(default=600, ge=180)
-    # Documents one pass fetches, writes, retires or mines for decisions across all
-    # sources; the rest wait for the next pass.
+    # Documents one pass fetches, writes, retires or mines for decisions across the
+    # namespace sources; the rest wait for the next pass.
     knowledge_source_sync_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one pass fetches, writes and retires for the mirrored sources, apart from
+    # the namespace sources' per-pass bound, so a mirror's size never takes their share.
+    knowledge_source_mirror_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents of stopped mirrored sources retired per cleanup pass, independently of
+    # the content-sync budget. Cleanup continues while syncing is switched off.
+    knowledge_source_retire_documents_per_pass: Annotated[int, LIVE] = Field(default=40, ge=1)
+    # Documents one source holds: its stored ones plus the new ones a turn writes. At it a
+    # turn tries no new file, notes how many as `too_many_documents`, and still updates
+    # and retires. At most 200,000: each read of the stored copies grows with its square.
+    knowledge_source_max_documents: Annotated[int, LIVE] = Field(default=50_000, ge=1, le=200_000)
     # Seconds after which a source's next pass lists every file, not only those
     # changed since the last one: what finds a file trashed or moved out of a folder.
     knowledge_source_sync_full_interval_seconds: Annotated[int, LIVE] = Field(default=86400, ge=900)
@@ -2221,6 +2539,31 @@ class KnowledgeSettings(BaseModel):
         return {url.rstrip("/"): token for url, token in items}
 
     @model_validator(mode="after")
+    def _check_source_push_budgets(self) -> KnowledgeSettings:
+        provider = self.knowledge_source_push_provider_timeout_s
+        cleanup = self.knowledge_source_push_cleanup_timeout_s
+        if self.knowledge_source_push_stop_timeout_s > cleanup:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S must not exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        # holding() permits work for 40% of renew_drive's 120-second lease.
+        # Keep this window in sync with leases.work_left; the regression checks both.
+        if provider + cleanup >= 48:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S must stay below the "
+                "48-second renewal work window"
+            )
+        if provider + 2 * cleanup >= self.knowledge_source_push_max_pass_seconds:
+            raise ValueError(
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS must exceed "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S plus twice "
+                "LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _check_document_extractors(self) -> KnowledgeSettings:
         """Every extractor URL is http(s) with a host. The error names the entry,
         never the URL (it can carry a credential)."""
@@ -2243,7 +2586,7 @@ class KnowledgeSettings(BaseModel):
             f"LOOM_DOCUMENT_EXTRACTORS_JSON {key[:64]!r}": url for key, url in routes.items()
         }
         for name, url in urls.items():
-            if url and not _is_http_url(url):
+            if url and not is_http_url(url):
                 raise ValueError(f"{name} is not an http(s) URL")
         # A token for a URL no route names would leave that service on the shared
         # token without a word: refused, as is a token that is not a string.
@@ -2309,9 +2652,10 @@ class McpSettings(BaseModel):
 
     # Which tools `tools/list` shows when a connection names no `?toolset=` (a request that
     # names one gets that one instead). Rosters are the frozensets in
-    # server/operations/toolsets.py plus loom_search and loom_activate; on every toolset
-    # but "assistant" this is visibility only and every op stays callable by name over MCP
-    # and /v1/*.
+    # server/operations/toolsets.py plus loom_search, loom_activate and loom_op (none on
+    # "assistant"); on every toolset but "assistant" this is visibility only and every op
+    # stays callable by name over MCP and /v1/*, except that loom_op on "readonly" routes
+    # read ops only.
     #   "core"      — (default) _MCP_CORE_OPS (+ _MCP_CODE_CORE_OPS when
     #                 mcp_code_tools is on).
     #   "coding"    — _MCP_CODING_OPS + _MCP_CODE_CORE_OPS; the plugin selects it
@@ -2319,23 +2663,24 @@ class McpSettings(BaseModel):
     #   "tracker", "tasks" — the tracker plane and the task inbox rosters.
     #   "atomic"    — CRUD + scratchpad + run ledger (_MCP_ATOMIC_OPS),
     #                 policy-shaped descriptions.
-    #   "readonly"  — the "all" listing without the tools whose readOnlyHint is false.
+    #   "readonly"  — the "all" listing without the tools whose readOnlyHint is false;
+    #                 loom_op routes read ops only.
     #   "assistant" — MCP_ASSISTANT_OPS only, and only those are callable on a connection
     #                 that resolves to it. Not a server-wide read-only switch: a request
     #                 naming another toolset gets it, and the token is the boundary.
-    #   "all"       — every op except _MCP_HIDDEN_OPS and the experimental ones
-    #                 no curated tier lists (they stay callable by name).
+    #   "all"       — the stable ops plus the experimental ops the core or atomic
+    #                 roster lists; the other experimental ops stay callable by name,
+    #                 and _MCP_HIDDEN_OPS are never listed, the two upload ops under
+    #                 mcp_code_upload_tools aside.
     # An unknown value is "core".
     mcp_toolset: str = "core"
     # tools/list schema profile: "standard" (curated prose + inputSchema),
     # "full" (+ outputSchema) or "compact" (first paragraph, argument tree).
     # Per request: `?schema_profile=`.
     mcp_schema_profile: Annotated[Literal["standard", "full", "compact"], CaseFolded] = "standard"
-    # Ops whose tools/list entry carries `_meta: {"anthropic/alwaysLoad": true}`, so a host
-    # that defers MCP tools behind tool search lists these up front and an agent calls them
-    # on its first turn instead of spending a turn loading them. Comma-separated op names;
-    # empty = none.
-    mcp_always_load_tools: str = "code.search,code.symbol"
+    # Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad.
+    # Empty leaves loading to the host; set names to keep selected tools upfront.
+    mcp_always_load_tools: str = ""
     # Seconds without a tool call after which the mcp_session_run_sweep worker
     # closes an MCP session's implicit run (one per token and `Mcp-Session-Id`,
     # begun on the first run-scoped tool call); with no background workers
@@ -2352,6 +2697,10 @@ class McpSettings(BaseModel):
     # List code.* tools on the MCP surface (core toolset union). Off = code
     # ops are HTTP/SDK-only.
     mcp_code_tools: bool = False
+    # Serve the compiler-tier upload ops (code.scip_ingest, code.scip_status) over MCP, which
+    # hides both when off. On, an upload is accepted, on every transport, only for a
+    # namespace that has a repository entry.
+    mcp_code_upload_tools: bool = False
 
 
 # ===== Memory =================================================================
@@ -2359,6 +2708,14 @@ class McpSettings(BaseModel):
 
 class MemorySettings(BaseModel):
     """The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, workers."""
+
+    # ---- governed definitions ----
+    # Most shared definitions a namespace holds; a promotion past it is refused
+    # (docs/concepts/identities-and-namespaces.md).
+    memory_shared_definitions_max: Annotated[int, LIVE] = Field(default=500, ge=1)
+    # How much longer memory.search waits for its term leg once the other legs are done;
+    # past it the leg adds nothing (docs/concepts/identities-and-namespaces.md).
+    memory_term_leg_wait_ms: Annotated[int, LIVE] = Field(default=100, ge=1)
 
     # ---- prompt safety and search priors ----
     # Cap on memory.search's metadata priors (confidence, soft tag/category) so
@@ -2509,6 +2866,10 @@ class MemorySettings(BaseModel):
     # the write path; matches the per-fact concurrency so wall time stays flat.
     # 0 = one statement per fact.
     memory_write_candidate_batch: int = 6
+    # How a bulk write reads each fact's conflict and value-update peers: batched = one join
+    # per memory_write_candidate_batch facts; per_fact = memory.set's codes-first read per
+    # fact, for large namespaces (it may pick another last peer where distances tie).
+    memory_bulk_peer_read: Literal["batched", "per_fact"] = "batched"
 
     # Cosine ≥ this with a canonical-form mismatch marks a write 'duplicate'
     # with a duplicate_of pointer instead of 'conflicted'. Per-namespace
@@ -2848,6 +3209,13 @@ class MemorySettings(BaseModel):
     memory_code_links_pending_days: int = Field(default=14, ge=1)
     # Changed claims one pass re-checks with the LLM under the `revise` policy.
     memory_code_links_revise_per_pass: int = Field(default=20, ge=0)
+    # Changed files that may hold a lost link's name (its callers count) for the mirror's
+    # answer to be used; from this many on, the code index alone decides.
+    memory_code_links_mirror_naming_files: int = Field(default=200, ge=1)
+    # Files under the entry's prefixes a lost link's commit range may change for the
+    # mirror to be searched (at most 20,000: each is an argument to git); past it, the
+    # code index alone decides.
+    memory_code_links_mirror_changed_files: int = Field(default=5000, ge=1, le=20000)
 
     # ---- memory chunks ----
     # Max ~800-char verbatim chunks one set_from_messages call writes (512 ≈
@@ -3298,6 +3666,9 @@ class MemorySearchSettings(BaseModel):
     # or builtin:cohere) may take to answer; past it the search keeps its input order and
     # says so in `degraded`. builtin:openai is an LLM call and waits llm_request_timeout_s.
     memory_search_rerank_timeout_s: Annotated[float, LIVE] = Field(default=8.0, gt=0)
+    # Places a search hit moves down within the served results when its linked code
+    # changed, was not found again or is gone (0 moves nothing).
+    memory_search_code_changed_places: Annotated[int, LIVE] = Field(default=3, ge=0)
     # Key-embedding axis on the fact leg: "on" scores least(value_dist,
     # key_dist) and reads both vector columns (measured 399 vs 203 MB/query on
     # a 30k-row namespace); "off" reads the value vector only; "auto" turns it
@@ -3710,18 +4081,21 @@ class ModelSettings(BaseModel):
     Every setting that names a model lives here, one per job, so a deployment changes
     a job's model with one env var (`LOOM_<FIELD>`). The provider is inferred from the
     name (`claude*` → Anthropic, `gpt*` / o-series → OpenAI), so any job can run on
-    either provider when its API key is set. "" means the job uses `llm_model`.
+    either provider when its API key is set; `llm_model` itself, or a name with no such
+    prefix, runs on `llm_provider` (`provider_of`). "" means the job uses `llm_model`.
     """
 
     # --- defaults ---------------------------------------------------------------
     # The deployment's LLM: memory extraction, rerank and every job whose own model
     # setting (the other *_model settings) is left "". Empty takes the resolved
-    # provider's default model (gpt-6-luna / claude-haiku-4-5 / fake-echo-1).
+    # provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1).
     llm_model: str = ""
-    # The assistant agent's model, which LibreChat runs on its own Anthropic key and Loom
-    # writes into the agent definition at boot. "" = the definition's own
-    # (integrations/librechat/agent.yaml), not llm_model.
+    # The assistant agent's model, which Loom writes into the agent definition at boot.
+    # "" = the definition's own (integrations/librechat/agent.yaml), not llm_model.
     assistant_model: str = ""
+    # The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local"
+    # = LibreChat's local endpoint (a model server the operator runs; needs assistant_model).
+    assistant_provider: Literal["", "anthropic", "local"] = ""
     # Model to answer with when a client's provider is still unavailable after
     # its retries (429 / 5xx / transport / timeout) or rejected the request
     # (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are
@@ -3796,6 +4170,15 @@ class ModelSettings(BaseModel):
     # different model from the ones answering: a same-model judge measures
     # agreement, not quality.
     retrieval_judge_model: str = "gpt-6.1-sol"
+
+    @model_validator(mode="after")
+    def _check_assistant_provider(self) -> ModelSettings:
+        """A local endpoint runs no model the definition names, so it needs its own."""
+        if self.assistant_provider == "local" and not self.assistant_model:
+            raise ValueError(
+                "LOOM_ASSISTANT_PROVIDER=local needs LOOM_ASSISTANT_MODEL, a model it serves"
+            )
+        return self
 
 
 # ===== Namespace ==============================================================
@@ -3976,6 +4359,9 @@ class ObservabilitySettings(BaseModel):
     # Metric export cadence, seconds. Spans keep their own 3 s batch delay,
     # which bounds span loss at SIGTERM.
     otel_metrics_export_interval_s: int = 60
+    # Most series per metric; past it, new attribute sets join one `otel.metric.overflow`
+    # series. Request metrics need about operations x namespaces x transports x outcomes.
+    otel_metrics_cardinality_limit: int = Field(default=20_000, ge=1)
     # Delta temporality for counters and histograms (an idle synchronous
     # series writes no row). Off: the dashboards (deploy/hyperdx_dashboards.md)
     # read cumulative rows — flip together with them.
@@ -3997,7 +4383,7 @@ class ObservabilitySettings(BaseModel):
     otel_environment: str = "dev"
     # Comma-separated path regexes the FastAPI instrumentation opens no span
     # for (health polls). "" = instrument every path but the sign-in routes
-    # (/oauth/), which are always left out: their URLs carry codes.
+    # (/oauth/ and /v1/connect/), which are always left out: their URLs carry codes.
     otel_excluded_urls: str = "/v1/health"
 
     # Scales every op's p99 budget (OP_BUDGETS_P99_MS in server/settings/catalog.py,
@@ -4118,10 +4504,11 @@ def url_host(url: str) -> str:
         return ""
 
 
-def _is_http_url(url: str) -> bool:
-    """An http(s) base URL with a host that the extractor client's httpx can
-    parse, and no query or fragment (the client appends `/v1/...`): a bad one is
-    refused at load, not on the first call."""
+def is_http_url(url: str) -> bool:
+    """Whether `url` is an http(s) base URL a client can append paths to: httpx parses it,
+    with a host and a port at most 65535, and it holds no `?` or `#` (no query or fragment).
+    A setting holding any other value is refused before its first call (at load, or at boot
+    for LOOM_CELL_ROUTER_URL)."""
     try:
         parsed = httpx.URL(url)
         urlsplit(url).port  # noqa: B018 — over 65535 raises, which httpx lets by
@@ -4173,10 +4560,12 @@ def host_list_refusal(setting: str, hosts: str) -> str:
     return ""
 
 
-# The settings the gateway check reads; a dashboard configuration overrides the embedding ones.
+# The gateway check merges these settings with the proposed dashboard configuration.
 _GATEWAY_CHECKED = (
+    "llm_provider",
     "openai_base_url",
     "anthropic_base_url",
+    "local_llm_base_url",
     "embedding_base_url",
     "inference_token_url",
     "embedding_provider",
@@ -4203,6 +4592,9 @@ _HEADER_NAME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _HEADER_TEXT = re.compile(r"[A-Za-z0-9._~:@-]*")
 # A customer or feature name sent as a header value: the same characters, at least one.
 _HEADER_VALUE = re.compile(r"[A-Za-z0-9._~:@-]+")
+# The user name a repository's git presents to LOOM_CODE_GIT_PROXY_URL: those characters
+# without the colon, which would split the Basic pair it travels in.
+GIT_PROXY_IDENTITY = re.compile(r"[A-Za-z0-9._~@-]{1,128}")
 # What an identity header template names, each as `{name}` (server/llm/identity.py).
 IDENTITY_PLACEHOLDERS = ("org", "namespace", "agent", "tenant", "subject", "user_id", "email")
 IDENTITY_PLACEHOLDER = re.compile(r"\{(" + "|".join(IDENTITY_PLACEHOLDERS) + r")\}")
@@ -4278,6 +4670,9 @@ _SENDER_HEADERS = frozenset(
         "content-type",
         "content-length",
         "host",
+        "x-amz-date",
+        "x-amz-security-token",
+        "x-amz-content-sha256",
     }
 )
 
@@ -4324,11 +4719,11 @@ class ProviderSettings(ModelSettings):
 
     # "" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-*
     # → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin
-    # "openai", "gemini", "local", "fake".
+    # "openai", "gemini", "bedrock" (Cohere Embed v4), "local", "fake".
     # Switching providers changes the embedding space: a full re-embed is
     # required.
     embedding_provider: Annotated[
-        Literal["", "openai", "gemini", "compatible", "local", "fake"], CaseFolded
+        Literal["", "openai", "gemini", "compatible", "bedrock", "local", "fake"], CaseFolded
     ] = ""
     # API root for an explicitly selected OpenAI-compatible embedding service,
     # e.g. https://provider.example/v1. Empty is invalid for compatible providers.
@@ -4347,6 +4742,12 @@ class ProviderSettings(ModelSettings):
     # a gateway in front of Anthropic. Off the default, the key also goes as a
     # bearer, the scheme gateways take.
     anthropic_base_url: str = "https://api.anthropic.com"
+    # Region for native Bedrock model requests; empty uses the AWS SDK's region chain.
+    # AWS credentials use the SDK's role, profile or environment credential chain.
+    bedrock_region: str = ""
+    # LOOM_LLM_PROVIDER=local's chat-completions root, called with no key (Ollama's
+    # <host>:11434/v1, llama.cpp's server <host>:8080/v1).
+    local_llm_base_url: str = "http://localhost:11434/v1"
     # Model calls with no provider key: exchange an identity token (RFC 8693)
     # at this token endpoint of the gateway, and send the answer as the bearer
     # (server/llm/gateway.py). The gateway must trust the token's issuer. "" =
@@ -4461,11 +4862,12 @@ class ProviderSettings(ModelSettings):
     # (loom.embedder_calibration), so every replica serves the same gates.
     calibration_refresh_seconds: float = 60.0
 
-    # "openai" | "anthropic" | "fake"; "" = infer from LOOM_LLM_MODEL's name
-    # (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key
-    # present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once
-    # at load; an explicit value is never overridden. Run `make bench-quick`
-    # before making anthropic a default.
+    # "openai" | "anthropic" | "bedrock" | "local" (LOOM_LOCAL_LLM_BASE_URL, no key) | "fake"; "" =
+    # infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* →
+    # anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then
+    # ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never
+    # overridden. Bedrock requires llm_model and the SDK credential chain.
+    # Run `make bench-quick` before making anthropic a default.
     llm_provider: str = ""
     # A fake or key-less provider is a `warn` in /v1/health `problems`; true
     # (production) makes it an `error` and `status: degraded`, which preflight
@@ -4494,6 +4896,21 @@ class ProviderSettings(ModelSettings):
             return self
         if alias in LOCAL_EMBEDDING_MODELS:  # an unknown alias fails when the embedder is built
             self.embedding_dim = LOCAL_EMBEDDING_MODELS[alias][1]
+            self._inferred_fields |= {"embedding_dim"}
+        return self
+
+    @model_validator(mode="after")
+    def _resolve_bedrock_embedding_dim(self) -> ProviderSettings:
+        """Cohere Embed v4 uses its native width unless the operator pins one."""
+        native = self.embedding_provider == "bedrock" or (
+            not self.embedding_provider and self.embedding_model.startswith("bedrock:")
+        )
+        if native and (
+            not self.embedding_model.strip() or self.embedding_model.startswith("fake-ngram")
+        ):
+            raise ValueError("LOOM_EMBEDDING_PROVIDER=bedrock requires a Cohere Embed v4 model")
+        if "embedding_dim" not in self.model_fields_set and native:
+            self.embedding_dim = 1536
             self._inferred_fields |= {"embedding_dim"}
         return self
 
@@ -4613,6 +5030,7 @@ class ProviderSettings(ModelSettings):
         urls = {
             "openai_base_url": self.openai_base_url,
             "anthropic_base_url": self.anthropic_base_url,
+            "local_llm_base_url": self.local_llm_base_url,
             "inference_token_url": self.inference_token_url,
         }
         for name, value in urls.items():
@@ -4664,6 +5082,8 @@ class ProviderSettings(ModelSettings):
         pair = frozenset({"llm_provider", "llm_model"})
         inferred = pair if not (pair & self.model_fields_set) else frozenset()
         resolved = resolve_llm_provider(self.llm_provider, self.llm_model)
+        if resolved.provider == "bedrock" and not resolved.model:
+            raise ValueError("LOOM_LLM_PROVIDER=bedrock requires LOOM_LLM_MODEL")
         self.llm_provider = resolved.provider
         self.llm_model = resolved.model
         self._llm_provider_source = resolved.source
@@ -4697,10 +5117,10 @@ class ProviderSettings(ModelSettings):
     # reasoning. The reserve per model is learned from the reasoning tokens its
     # replies report (twice the most it has spent) and capped here.
     llm_hidden_reasoning_reserve_max: int = Field(16384, ge=0)
-    # Seconds an LLM call waits for its reply before the client retries. Generous
-    # on purpose: it only catches a hung connection, so a slow model or a long
-    # output never hits it. Calls that must be fast set their own, shorter
-    # deadline (HyDE, search budgets).
+    # Seconds an LLM call waits for its reply before the client retries. Generous for
+    # hosted models, where only a hung connection reaches it; a model server on a CPU
+    # can need longer (the local preset sets 900). Calls that must be fast set their
+    # own, shorter deadline (HyDE, search budgets).
     llm_request_timeout_s: float = Field(300.0, gt=0)
     # Attempts an LLM call makes on a retryable failure (a 429, a 5xx, a dropped
     # connection) before the fallback model takes over.
@@ -4757,13 +5177,19 @@ class ProviderSettings(ModelSettings):
             return f"{why} needs LOOM_INFERENCE_GATEWAY_HOSTS, the hosts model calls may go to"
         saved = dict(changes or {})
         v = self.model_dump(include=set(_GATEWAY_CHECKED)) | saved
-        # Both API roots count, a provider unused included: a model named per
-        # request may be either provider's.
-        for field, what in (
+        if v["llm_provider"] == "bedrock":
+            return f"{why} refuses native Bedrock: use the inference gateway"
+        # Both hosted API roots count, a provider unused included: a model named per
+        # request may be either provider's. The local root is called only while it is
+        # the provider, since no model name reaches it otherwise.
+        roots = [
             ("openai_base_url", "LOOM_OPENAI_BASE_URL"),
             ("anthropic_base_url", "LOOM_ANTHROPIC_BASE_URL"),
             ("embedding_base_url", "LOOM_EMBEDDING_BASE_URL"),
-        ):
+        ]
+        if v["llm_provider"] == "local":
+            roots.append(("local_llm_base_url", "LOOM_LOCAL_LLM_BASE_URL"))
+        for field, what in roots:
             host = self.off_gateway(v[field]) if v[field] else ""
             if host:
                 if field in saved:
@@ -4787,12 +5213,13 @@ class ProviderSettings(ModelSettings):
                 provider = inferred_provider(v["embedding_model"])
             except ValueError:
                 provider = ""  # an unknown model is refused where the embedder is built
-        if provider == "gemini":
+        if provider in {"gemini", "bedrock"}:
             # The Gemini embedder calls Google's own API, never a gateway.
+            label = "Bedrock" if provider == "bedrock" else "Gemini"
             which = (
-                "the saved Gemini embedder"
+                f"the saved {label} embedder"
                 if "embedding_provider" in saved
-                else "the Gemini embedder"
+                else f"the {label} embedder"
             )
             return f"{why} refuses {which}: embed through the gateway"
         return ""
@@ -4912,6 +5339,11 @@ class RuntimeSettings(BaseModel):
     # namespace whose rolling 24 h cost reached it. Overridden per namespace by
     # loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers.
     default_daily_cost_cap_usd: float = 1.0
+    # Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it.
+    # A namespace's daily_user_cost_cap_usd overrides this default when positive.
+    default_daily_user_cost_cap_usd: Annotated[float, LIVE] = Field(default=0.0, ge=0)
+    # Fraction of a cap that warns its namespace's configured inbox on the next check.
+    cost_budget_alert_share: Annotated[float, LIVE] = Field(default=0.8, gt=0, le=1)
     # True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion
     # embeddings, and rerank only as named, since a reranker is a model call.
     reads_llm_free: bool = False
@@ -4939,7 +5371,8 @@ class RuntimeSettings(BaseModel):
     # Which processes run the WorkerSupervisor: auto = the one process of the
     # deployment holding the `workers_supervisor` lease in ClickHouse
     # (server/workers/leader.py), and none outside the deployment (no
-    # LOOM_DEPLOYMENT); on = always; off = never (a pure web replica).
+    # LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell
+    # gate lets the process serve); off = never (a pure web replica).
     background_workers: Literal["auto", "on", "off"] = "auto"
     # auto mode: seconds a lease holder that stops renewing keeps the workers
     # before another process takes them over (failover time). At least 24: below
@@ -4953,10 +5386,16 @@ class RuntimeSettings(BaseModel):
     # process it starts and stops with the lease, so the passes do not share
     # the event loop that serves requests; inline = in the serving process.
     workers_process: Literal["child", "inline"] = "child"
+    # At most this many seconds to certify a reaped worker child; also bounded by
+    # the remaining stop or restart delay. Expiry leaves its participant unretired.
+    workers_child_retirement_timeout_s: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     # Seconds a process keeps serving after SIGTERM while /v1/health/ready
     # answers 503, so the load balancer stops routing to it before its port
     # closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once.
     shutdown_ready_delay_s: float = Field(default=15.0, ge=0)
+    # Seconds a native CLI command allows its producers, deferred writes and
+    # participant retirement to finish. Expiry leaves the participant unretired.
+    native_command_drain_timeout_s: float = Field(default=15.0, gt=0, allow_inf_nan=False)
     # Seconds boot waits for the first load of the tracker registry and the
     # runtime overrides, and the first publish of the dashboard bundle, before
     # it serves; readiness stays false until the first two load.
@@ -4990,26 +5429,43 @@ class RuntimeSettings(BaseModel):
     # The address Loom is reachable on: `loom serve` and `make server` bind
     # it; in a container (which listens on all its interfaces) it is the
     # address the port is published on. Anything but loopback turns on the
-    # startup checks: public_base_url set, and no auth-off, MCP open mode, dev
-    # secret or weak root, gateway or end-user key.
+    # startup checks in the deployment guide's "Proxy and TLS" section.
     bind_host: str = "127.0.0.1"
     # Comma-separated peer addresses or CIDRs whose X-Forwarded-For/Proto
     # headers uvicorn applies; any other peer's are ignored. "*" trusts all.
     # Required behind a load balancer: at the default every client counts as the
     # balancer's address for the sign-in and sign-up limits.
     trusted_proxies: str = "127.0.0.1"
-    # True lets a non-loopback bind start with auth off, MCP open mode, the dev
-    # signing secret or a weak root, gateway or end-user key. Only for a port others
-    # cannot reach.
+    # True lets a non-loopback bind start with auth off, MCP open mode, open self-signup
+    # outside trust-network, the dev signing secret or a weak root, gateway or end-user
+    # key. Only for a port others cannot reach.
     allow_insecure: bool = False
+    # PEM certificate chain the web port serves, with tls_key_file: both set, HTTPS only and a
+    # renewed pair served without a restart (scripts/serve.sh, `loom serve`); both "", HTTP.
+    tls_cert_file: str = ""
+    # PEM private key of tls_cert_file, not encrypted: a key that needs a passphrase is refused.
+    tls_key_file: str = ""
+    # Lowest TLS version the web port accepts with tls_cert_file: "1.2" or "1.3".
+    tls_min_version: Literal["1.2", "1.3"] = "1.2"
+
+    @model_validator(mode="after")
+    def _check_tls_pair(self) -> RuntimeSettings:
+        """A certificate without its key, or a key without its certificate, serves nothing."""
+        if bool(self.tls_cert_file) != bool(self.tls_key_file):
+            raise ValueError("set LOOM_TLS_CERT_FILE and LOOM_TLS_KEY_FILE together, or neither")
+        return self
 
     def workers_mode(self) -> str:
         """`background_workers` as this process runs it: `auto` outside the
         deployment is `off`, so a branch server never runs the deployment's
         workers. `on` is the explicit opt-in there."""
-        if self.background_workers == "auto" and not self.deployment:
+        if self.auto_outside_deployment():
             return "off"
         return self.background_workers
+
+    def auto_outside_deployment(self) -> bool:
+        """`auto` on a process outside the deployment, which runs no workers."""
+        return self.background_workers == "auto" and not self.deployment
 
     # ---- outbound HTTP ----
     # Seconds the shared outbound HTTP clients (server/clients/_http.py: model and
@@ -5192,6 +5648,12 @@ class StorageSettings(BaseModel):
     # search before answering 503 PROJECTION_BEHIND; a diagnostic report waits as long,
     # then reads on and names `projection` in `skipped`.
     pg_projection_wait_ms: int = Field(default=2000, ge=0)
+    # The most deliveries one backlog reading counts per source (`loom.pg.backlog`, health's
+    # `postgres.backlog`); past it the reading stops counting and says so (`capped`).
+    pg_backlog_count_cap: int = Field(default=10000, ge=1)
+    # Seconds each process keeps its own backlog reading for
+    # `GET /v1/health?include=postgres`.
+    pg_backlog_health_cache_seconds: float = Field(default=10.0, ge=0, allow_inf_nan=False)
     # Seconds the writing request holds its revisions' delivery; past it, the delivery
     # worker or a waiting admission in the namespace publishes them instead.
     pg_request_lease_seconds: int = Field(default=5, ge=1)
@@ -5209,9 +5671,20 @@ class StorageSettings(BaseModel):
     pg_delivery_interval_seconds: int = 2
     # Seconds between delivery passes that found nothing.
     pg_delivery_idle_interval_seconds: int = 10
-    # Deliveries one pass of each delivery worker publishes; also the expired deletion
-    # evidence and settled knowledge deliveries one pass sweeps.
+    # Deliveries one delivery pass publishes; also the expired deletion evidence and settled
+    # knowledge deliveries one pass sweeps, and the revisions one payload clearing batch checks.
     pg_delivery_batch_rows: int = Field(default=500, ge=1)
+    # The pg_payload_clear worker: clears a revision's payload once every usable ClickHouse
+    # backup holds it. Turn it off before a ClickHouse restore (backup-and-recovery.md).
+    pg_payload_clear_enabled: bool = False
+    # Seconds between payload clearing passes.
+    pg_payload_clear_interval_seconds: int = Field(default=60, ge=1)
+    # Minutes between the starts of scheduled ClickHouse backups. The clearing horizon is
+    # never under it plus 60.
+    ch_backup_interval_minutes: Annotated[int, LIVE] = Field(default=1440, ge=1)
+    # Minutes a delivered revision keeps its payload: 0 is twice the backup interval plus 60;
+    # under the interval plus 60 or the insert bound plus 60, it is raised to the larger.
+    pg_payload_restore_horizon_minutes: Annotated[int, LIVE] = Field(default=0, ge=0)
     # Memories one Postgres commit of a `namespace.restore` writes; each batch commits
     # within a request's lease (`pg_request_lease_seconds`).
     pg_restore_batch_rows: int = Field(default=500, ge=1)
@@ -5665,6 +6138,10 @@ class TrackerSettings(BaseModel):
 # the handler time a budget measures.
 
 OP_BUDGETS_P99_MS: dict[str, int] = {
+    # Own connection listing rechecks current identity and provider registration;
+    # disconnect includes bounded local retirement followed by best-effort revocation.
+    "connection.list": 1000,
+    "connection.disconnect": 30000,
     "admin.users": 300,
     "agents.connected": 120,
     # One agent answer: a model turn per tool call (measured p95 10.7 s, at most 15 s
@@ -5840,7 +6317,7 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # One frontier query per hop, at most max_hops of them.
     "facts.path": 250,
     "facts.related": 60,
-    # Recursive CTE — heavier than a single hop.
+    # One frontier query per hop, up to max_hops.
     "facts.traverse": 200,
     "grants.approve": 80,
     "grants.create": 50,
@@ -5849,6 +6326,10 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "grants.revoke": 80,
     "grants.share_agent": 80,
     "grants.unshare_agent": 80,
+    # BM25 over the shipped docs' in-process index. A process's first call also reads
+    # and indexes the docs (about a second, off the event loop): over budget by design.
+    "help.get": 20,
+    "help.search": 50,
     "inbox.list": 800,
     "inbox.policy_list": 800,
     "inbox.policy_set": 800,
@@ -5868,6 +6349,13 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.dedup_list": 400,
     "knowledge.dedup_resolve": 400,
     "knowledge.delete": 100,
+    # At most 50 documents, four at a time, in server/knowledge/app/move.py: the clock once
+    # a call, then per document about 30 statements (the erasure ledger for both namespaces
+    # twice, its claim in both namespaces, not waited for, its rows by (org, namespace,
+    # source_uri), its chunks and tables copied inside ClickHouse, its row, its delete, its
+    # tables' cleanup), its original copied inside ClickHouse or read and stored again. 50
+    # documents took 3.7-3.9 s on a development ClickHouse.
+    "knowledge.move": 8000,
     # The reads and writes in server/knowledge/app/restore.py: the document's rows by (org,
     # namespace, source_uri) (the chunk and supersession reads range over the namespace's key
     # prefix), the erasure ledger twice (every namespace list of the org's last 90 days is
@@ -5878,6 +6366,11 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # most the listing's 5 s bound, and a service it could not read is not waited for
     # again for a minute.
     "knowledge.formats": 5500,
+    "knowledge.gaps.draft": 30000,
+    "knowledge.query_history.add": 30000,
+    "knowledge.query_history.list": 250,
+    "knowledge.query_history.remove": 1000,
+    "knowledge.gaps.list": 300,
     "knowledge.get": 30,
     "knowledge.ingest": 60,
     "knowledge.ingest_cancel": 60,
@@ -5895,16 +6388,24 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.query": 1500,
     "knowledge.reads": 500,
     "knowledge.search": 250,
-    # add and rotate: a probe bounded by knowledge_source_probe_timeout_s, up to 5 s
-    # waiting for the namespace's lease, a few reads and inserts; check: the probe
-    # alone, writing nothing.
-    "knowledge.source.add": 30000,
+    # add: a short-id resolve and a probe, each under knowledge_source_probe_timeout_s;
+    # update: at most two such bounds (the added items and, on an `include` change, the
+    # kept file items, or a short-id resolve and a probe); rotate: one probe; each op
+    # then waits up to 5 s once for the namespace's lease and makes a few reads and
+    # inserts; check: the probe alone, writing nothing. parse_links reads no store,
+    # only the links it is sent.
+    "knowledge.source.add": 60000,
     "knowledge.source.check": 30000,
     "knowledge.source.inspect": 400,
     "knowledge.source.list": 300,
+    "knowledge.source.parse_links": 50,
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
     "knowledge.source.sync_now": 300,
+    "knowledge.source.push_configure": 60000,
+    "knowledge.source.push_status": 1000,
+    "knowledge.source.push_confirm": 1000,
+    "knowledge.source.update": 60000,
     # One LLM call per window plus the reduce; bounded by max_windows.
     "knowledge.synthesize": 60000,
     # A read and an insert; an ingested document's edit also takes the source's claim
@@ -5943,6 +6444,9 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "memory.dedup_list": 300,
     # 1-2 ALTER UPDATEs; mutations_sync=2.
     "memory.dedup_resolve": 400,
+    # A namespace at the ceiling of 500 definitions: one shared read, one bulk head read
+    # and a grade of each value (p95 225 ms on one server).
+    "memory.definitions.list": 400,
     "memory.delete": 30,
     # memory.delete's work plus two committed check inserts and the read after the
     # tombstone: about 2.6x memory.delete's p99 on one server.
@@ -6228,8 +6732,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
         "ranked": 3000,
         "uses_brief": 1500,
     },
-    # The batched-insert shapes below are the base + the default
-    # ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
+    # The batched-insert shapes below (audited, webhook, undo, rewrite) are the base +
+    # the default ch_batched_insert_wait_max_ms (50 ms), not a measured p99.
     # "audited": a high-sensitivity row was read, + its audit-row wait.
     # "webhook": a webhook took the event (announce sent outbox rows), + its outbox-row wait.
     # "undo": memory.restore's Undo, + its audit-record wait.
@@ -6239,10 +6743,14 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
     "memory.delete_version": {"webhook": 130},
+    # "definition": the namespace's claim around a definition's strong read and writes.
+    "memory.demote": {"definition": 150},
     "memory.evidence": {"audited": 200},
     "memory.get": {"audited": 75},
     "memory.get_by_id": {"audited": 100},
     "memory.history": {"audited": 130},
+    # "definition": the namespace's claim around the name check and the writes.
+    "memory.promote": {"definition": 150},
     "memory.restore": {"undo": 130, "webhook": 130},
     "memory.update": {"webhook": 220},
     "memory.update_by_id": {"webhook": 180},
@@ -6265,6 +6773,8 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
 # input stays a formula at its call.
 
 LLM_MAX_TOKENS: dict[str, int] = {
+    # The private metric definition drafted from eligible gap or query-history evidence.
+    "definition_draft": 1600,
     # code.ask: the synthesized answer; part of its cached answers' version, so a change
     # marks them stale.
     "code_answer_synth": 900,

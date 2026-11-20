@@ -8,12 +8,14 @@ create dialog — so they cannot drift apart.
 The shape: 1–128 chars of lowercase `[a-z0-9-]`, starting with a letter
 or digit (a trailing hyphen is legal). Callers with *extra* rules (e.g.
 the settings validator reserving `personal-*` for per-subject
-auto-provisioning) layer them on top.
+auto-provisioning) layer them on top. Two forms are kept for one writer here:
+single sign-on's `u-…` names and a mirror's `acl-` and 24 hex digits.
 """
 
 from __future__ import annotations
 
 import re
+import secrets
 from typing import Any
 
 NAMESPACE_MAX_LEN = 128
@@ -35,11 +37,48 @@ _SSO_NAMESPACE_RE = re.compile(
 )
 
 
+def is_sso_namespace_name(namespace: str) -> bool:
+    """Whether `namespace` has the form of a name JIT gives a person."""
+    return bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
+
+
 def reserved_for_sso(namespace: str) -> bool:
     """Whether a new namespace by this name is single sign-on's to create."""
     from server.settings import settings
 
-    return settings.oidc_jit_provision and bool(_SSO_NAMESPACE_RE.fullmatch(namespace))
+    return settings.oidc_jit_provision and is_sso_namespace_name(namespace)
+
+
+# A namespace's mirror: where its mirrored sources' documents live, each shown only to
+# a reader its store's permission list admits (docs/architecture/document-sources.md).
+# No token is admitted to a name of this form, and no org-wide scope reaches one.
+_MIRROR_FORM = "acl-[0-9a-f]{24}"
+_MIRROR_NAME = re.compile(_MIRROR_FORM)
+MIRROR_REFUSED = "names of the form acl-<24 hex> are reserved for mirrors"
+
+
+def new_mirror_name() -> str:
+    """A fresh mirror name, of the form `is_mirror_name` reads."""
+    return "acl-" + secrets.token_hex(12)
+
+
+def is_mirror_name(namespace: str) -> bool:
+    """Whether `namespace` has a mirror's name, which the gate admits no token to."""
+    return _MIRROR_NAME.fullmatch(namespace) is not None
+
+
+def mirror_name_sql(column: str = "namespace") -> str:
+    """`is_mirror_name` over `column`, as a ClickHouse term."""
+    return f"match({column}, '^{_MIRROR_FORM}$')"
+
+
+def not_mirror_sql(column: str = "namespace") -> str:
+    """A WHERE term that leaves mirrors out of a read over `column`."""
+    return f"NOT {mirror_name_sql(column)}"
+
+
+# `not_mirror_sql` over `namespace`, in Postgres's regex operator.
+NOT_MIRROR_PG = f"namespace !~ '^{_MIRROR_FORM}$'"
 
 
 def named(value: str | None, *, wildcard: bool = False) -> str | None:

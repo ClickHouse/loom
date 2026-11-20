@@ -37,15 +37,15 @@ def test_plugin_plus_user_scope_entry_warns_registered_twice(tmp_path: Path) -> 
     assert _grades(checks)["client:claude-code:mcp-duplicate"] == "WARN"
     d = _detail(checks, "client:claude-code:mcp-duplicate")
     assert "registered twice" in d and "claude mcp remove loom -s user" in d
-    assert "toolset=core: 41 more tools" in d
+    assert "toolset=core: a second roster" in d
 
 
-def test_the_warning_sizes_the_entry_by_its_own_roster(tmp_path: Path) -> None:
+def test_the_warning_names_the_entry_toolset(tmp_path: Path) -> None:
     _plugin_and_entry(tmp_path, "https://loom.test/mcp?toolset=all")
     d = _detail(
         dc.claude_code_checks(tmp_path, "https://loom.test"), "client:claude-code:mcp-duplicate"
     )
-    assert "toolset=all: 109 more tools" in d
+    assert "toolset=all: a second roster" in d
 
 
 def test_entry_without_plugin_or_plugin_without_entry_is_not_a_duplicate(tmp_path: Path) -> None:
@@ -80,6 +80,7 @@ def test_code_access_names_every_blind_credential_and_the_fix() -> None:
     assert none[0][:2] == ("client:code-access", "WARN")
     assert "no credential on this machine reads an index" in none[0][2]
     assert "claim-*.txt" in none[0][2] and "loom mint-token --save" in none[0][2]
+    assert "request access from the dashboard's Repositories page" in none[0][2]
     one = dc.code_access_check("ClickHouse/loom", "https://loom.test", creds, _repos({"sa-tok"}))
     assert one[0][1] == "WARN" and "NOT by user-scope 'loom'" in one[0][2]
     both = dc.code_access_check(

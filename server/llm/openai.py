@@ -37,6 +37,10 @@ def _reasoning_effort(model: str, wanted: str = "") -> str:
     return pinned or floor
 
 
+# The output cap's field OpenAI reads first.
+CAP_FIELD = "max_completion_tokens"
+
+
 def _payload(
     model: str,
     system: str,
@@ -45,8 +49,10 @@ def _payload(
     response_format: dict[str, str] | None,
     temperature: float | None,
     effort: str = "",
+    cap_name: str = CAP_FIELD,
 ) -> dict[str, Any]:
-    """The request this call would like to send, minus what the model refused."""
+    """The request this call would like to send, minus what the model refused.
+    `cap_name` is the output cap's field the server reads first."""
     t = traits.traits(model)
     # Prompt caching here is automatic and prefix-based (≥ 1,024 tokens,
     # no breakpoint to place): the cached run is `system` followed by
@@ -61,7 +67,7 @@ def _payload(
     # The output cap counts hidden reasoning, so the model's learned reserve
     # rides on top of the caller's cap. Endpoints that still call it
     # `max_tokens` refuse the newer name once and get the older one after.
-    cap_field = "max_tokens" if "max_completion_tokens" in t.refused else "max_completion_tokens"
+    cap_field = "max_tokens" if "max_completion_tokens" in t.refused else cap_name
     payload[cap_field] = traits.output_cap(model, max_tokens)
     if "reasoning_effort" not in t.refused:
         payload["reasoning_effort"] = _reasoning_effort(model, effort)
@@ -116,21 +122,24 @@ def _starved(data: dict[str, Any]) -> bool:
 
 
 async def _post(
-    client: Any, model: str, headers: dict[str, str], payload: dict[str, Any]
+    client: Any, url: str, headers: dict[str, str], payload: dict[str, Any]
 ) -> httpx.Response:
     from server.settings import settings
 
     r: httpx.Response = await client.post(
-        f"{settings.openai_base_url.rstrip('/')}/chat/completions",
-        headers=headers,
-        json=payload,
-        timeout=settings.llm_request_timeout_s,
+        url, headers=headers, json=payload, timeout=settings.llm_request_timeout_s
     )
     return r
 
 
 class OpenAILLMClient:
     provider = "openai"
+    # What /v1/health and an error's detail call this client's calls.
+    _source = "openai:chat"
+    # The output cap's field. OpenAI's reasoning models take only the newer name.
+    _cap_name = CAP_FIELD
+    # Whether the client refuses to start without OPENAI_API_KEY.
+    _needs_key = True
     # This client's own reasoning effort ('' = the pin, else the lowest the model takes).
     reasoning_effort = ""
 
@@ -139,12 +148,23 @@ class OpenAILLMClient:
     ) -> None:
         self.model = model
         self.reasoning_effort = reasoning_effort
-        self._api_key = provider_key("openai") if api_key is None else api_key
-        if not self._api_key and not gateway.keyless():
-            raise RuntimeError(
-                "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
-                "Use LOOM_LLM_PROVIDER=fake for local dev."
-            )
+        self._api_key = ""
+        if self._needs_key:
+            self._api_key = provider_key("openai") if api_key is None else api_key
+            if not self._api_key and not gateway.keyless():
+                raise RuntimeError(
+                    "OPENAI_API_KEY not set; OpenAILLMClient requires a key. "
+                    "Use LOOM_LLM_PROVIDER=fake for local dev."
+                )
+
+    def _root(self) -> str:
+        from server.settings import settings
+
+        return settings.openai_base_url
+
+    async def _headers(self, url: str) -> dict[str, str]:
+        bearer = await gateway.bearer(self._api_key, url)  # an outage is the provider's
+        return {"Authorization": f"Bearer {bearer}"}
 
     async def complete(
         self,
@@ -161,30 +181,35 @@ class OpenAILLMClient:
         data: dict[str, Any] = {}
         effort = self.reasoning_effort
         payload = _payload(
-            self.model, system, user, max_tokens, response_format, temperature, effort
+            self.model,
+            system,
+            user,
+            max_tokens,
+            response_format,
+            temperature,
+            effort,
+            self._cap_name,
         )
         # Span covers the WHOLE retry loop: tenacity retries up to 4
         # attempts and only the last one's usage is returned, so timing a
         # single attempt would under-report latency by up to 4x.
         from server.observability.genai import generation_span
         from server.observability.provider_health import recording
-        from server.settings import settings
 
         with generation_span(provider=self.provider, model=self.model) as _gen:
             # A failure after the retries (or a non-retryable one, or an
             # unreadable answer) marks the provider failing for /v1/health.
-            with recording("openai:chat"):
-                url = f"{settings.openai_base_url.rstrip('/')}/chat/completions"
-                bearer = await gateway.bearer(self._api_key, url)  # an outage is the provider's
+            with recording(self._source):
+                url = f"{self._root().rstrip('/')}/chat/completions"
                 headers = {
-                    "Authorization": f"Bearer {bearer}",
+                    **await self._headers(url),
                     "Content-Type": "application/json",
                     **customer.headers(who),
                 }
                 async for attempt in retrying():
                     with attempt:
                         _gen.note_attempt()
-                        r = await _post(client, self.model, headers, payload)
+                        r = await _post(client, url, headers, payload)
                         for _ in range(traits.MAX_NEGOTIATION):
                             # A refused field or effort: re-send without it.
                             if not _learn_from_refusal(self.model, r, payload):
@@ -197,9 +222,10 @@ class OpenAILLMClient:
                                 response_format,
                                 temperature,
                                 effort,
+                                self._cap_name,
                             )
-                            r = await _post(client, self.model, headers, payload)
-                        _raise_for_status(r, "openai:chat")
+                            r = await _post(client, url, headers, payload)
+                        _raise_for_status(r, self._source)
                         data = r.json()
                         hidden = _reasoning_tokens(data)
                         traits.note_hidden(self.model, hidden)
@@ -211,8 +237,8 @@ class OpenAILLMClient:
                             payload[cap_field] = traits.starved_cap(
                                 self.model, int(payload[cap_field]), hidden
                             )
-                            r = await _post(client, self.model, headers, payload)
-                            _raise_for_status(r, "openai:chat")
+                            r = await _post(client, url, headers, payload)
+                            _raise_for_status(r, self._source)
                             data = r.json()
                 text = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
                 usage = data.get("usage") or {}

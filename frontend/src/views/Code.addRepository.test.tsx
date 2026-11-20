@@ -165,7 +165,7 @@ describe("Add repository — fetching versus reading are two questions", () => {
     await waitFor(() => expect(onAdded).toHaveBeenCalled());
   });
 
-  it("a long branch list is bounded: the search box shows, Enter asks GitHub with the query", async () => {
+  it("a long branch list is bounded: the search box shows, Search the remote asks GitHub with the query", async () => {
     const big = { ...REMOTE, total: 15898, matched: 15898, truncated: true };
     vi.mocked(remoteBranches)
       .mockResolvedValueOnce(big)
@@ -186,14 +186,75 @@ describe("Add repository — fetching versus reading are two questions", () => {
     const search = await screen.findByLabelText("Search branches");
     expect(screen.getByText(/showing 4 of 15,898/)).toBeTruthy();
     fireEvent.change(search, { target: { value: "22.3" } });
-    // not in the page: the hint says to search GitHub's full list, Enter does it
-    expect(screen.getByText(/press Enter to search/)).toBeTruthy();
-    fireEvent.keyDown(search, { key: "Enter" });
+    // not in the page: Search the remote asks the remote's full list
+    expect(screen.queryByText(/press Enter/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
     await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(2));
     expect(vi.mocked(remoteBranches).mock.calls[1]).toEqual(["dev", "acme/app", "", "22.3"]);
     await waitFor(() => expect(screen.getByRole("button", { name: /^22\.3/ })).toBeTruthy());
     // the pre-selected default survives the re-query
     expect(screen.getByRole("button", { name: /^master/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // After a remote search the page answers that query in full (truncated=false). The text
+  // the page answered, in any case, offers no button even where nothing on the page matches
+  // it; a different text that misses offers the remote's full list again.
+  it("after one remote search, only a different text that misses offers Search the remote", async () => {
+    const big = { ...REMOTE, total: 15898, matched: 15898, truncated: true };
+    vi.mocked(remoteBranches)
+      .mockResolvedValueOnce(big)
+      .mockResolvedValueOnce({
+        ...REMOTE,
+        branches: [{ name: "master", sha: "a" }],
+        total: 15898,
+        matched: 0,
+        truncated: false,
+        query: "Release-99",
+      })
+      .mockResolvedValueOnce({
+        ...REMOTE,
+        branches: [
+          { name: "master", sha: "a" },
+          { name: "Release-24", sha: "y" },
+        ],
+        total: 15898,
+        matched: 1,
+        truncated: false,
+        query: "Release-24",
+      });
+    mount();
+    await fillRepo();
+    fireEvent.click(screen.getByRole("button", { name: /Find branches/ }));
+    const search = await screen.findByLabelText("Search branches");
+    fireEvent.change(search, { target: { value: "Release-99" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
+    await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(2));
+    // The same text, nothing on the page matching it: the remote already answered it.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Search the remote" })).toBeNull());
+    expect(screen.queryByRole("button", { name: /^Release-99/ })).toBeNull();
+    // The same text in another case is the same query.
+    fireEvent.change(search, { target: { value: "release-99" } });
+    expect(screen.queryByRole("button", { name: "Search the remote" })).toBeNull();
+    // A different text that misses the page asks the remote again.
+    fireEvent.change(search, { target: { value: "Release-24" } });
+    fireEvent.click(screen.getByRole("button", { name: "Search the remote" }));
+    await waitFor(() => expect(remoteBranches).toHaveBeenCalledTimes(3));
+    expect(vi.mocked(remoteBranches).mock.calls[2]).toEqual(["dev", "acme/app", "", "Release-24"]);
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Release-24/ })).toBeTruthy());
+  });
+
+  // A page the server calls whole (not truncated, answering no query) offers no button,
+  // whatever the text.
+  it("a whole page with no query offers no Search the remote for a text that misses", async () => {
+    vi.mocked(remoteBranches).mockResolvedValueOnce({ ...REMOTE, total: 10, matched: 10, truncated: false });
+    mount();
+    await fillRepo();
+    fireEvent.click(screen.getByRole("button", { name: /Find branches/ }));
+    const search = await screen.findByLabelText("Search branches");
+    fireEvent.change(search, { target: { value: "nothing-like-it" } });
+    // Only the pre-selected default stays shown, and it does not match.
+    expect(screen.getByText(/showing 1 of 10/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Search the remote" })).toBeNull();
   });
 
   it("a refused branch listing becomes the token step, and the typed branch still works without a listing", async () => {

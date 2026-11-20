@@ -14,7 +14,7 @@ import { Tip } from "./Tooltip";
  *   and fills the chip the way Click UI fills a checked control. An action chip (a key that
  *   opens a memory) leaves `selected` out.
  * - With `onRemove` a second button "Remove {label}" follows (a button
- *   never nests a button).
+ *   never nests a button); `removeLabel` names it otherwise.
  * - Without either it is a static `<span>`.
  * - `countLabel` qualifies the count for assistive technology ("in
  *   namespace") without repeating it on every chip visually; the section
@@ -28,6 +28,7 @@ export interface ChipProps {
   selected?: boolean;
   onClick?: () => void;
   onRemove?: () => void;
+  removeLabel?: string;
   swatch?: string;
   mono?: boolean;
   /** Drawn outlined (a tag), where a plain chip is filled (a filter value). */
@@ -62,6 +63,7 @@ export function Chip({
   selected,
   onClick,
   onRemove,
+  removeLabel,
   swatch,
   mono = false,
   outline = false,
@@ -146,7 +148,7 @@ export function Chip({
       {wrap(main)}
       <button
         type="button"
-        aria-label={`Remove ${label}`}
+        aria-label={removeLabel ?? `Remove ${label}`}
         disabled={disabled}
         aria-disabled={disabled || undefined}
         onClick={onRemove}

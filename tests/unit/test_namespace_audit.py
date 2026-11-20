@@ -765,6 +765,8 @@ def test_cli_command_prints_the_table_or_json_and_exits_on_criticals(
         return sample
 
     class _Client:
+        connected = False
+
         async def connect(self) -> None: ...
         async def disconnect(self) -> None: ...
 
@@ -1284,7 +1286,13 @@ async def test_the_ledger_summary_counts_a_dashboard_write_but_no_inspector_read
         async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
             # The ledger summary also reads which keys are procedures (loom.memory).
             return run(
-                ["SET enable_quantized_codec = 1", ddl("memory"), ddl("agent_events"), *rows],
+                [
+                    "SET enable_quantized_codec = 1",
+                    ddl("memory"),
+                    ddl("agent_events"),
+                    ddl("agent_events_private"),
+                    *rows,
+                ],
                 sql,
                 params,
             )
@@ -1445,7 +1453,7 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
         # A worker's own row (an extractor's spend on the rows) says nothing about callers.
         _ledger_row("worker.entity_extractor", kind="worker"),
     ]
-    ch = _LocalCH(["memory", "agent_events"], rows)
+    ch = _LocalCH(["memory", "agent_events", "agent_events_private"], rows)
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await na.run_checks(audit, ["telemetry_unavailable"])
     gap = _finding(audit, "telemetry_unavailable")
@@ -1458,7 +1466,7 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
         _ledger_row("namespace.register", consumer="loom-ui"),
     )
     for closer in closers:
-        closed = _LocalCH(["memory", "agent_events"], [*rows, closer])
+        closed = _LocalCH(["memory", "agent_events", "agent_events_private"], [*rows, closer])
         audit = na.new_audit(_inp(window_seconds=3600), ch=closed)
         await na.run_checks(audit, ["telemetry_unavailable"])
         assert _finding(audit, "telemetry_unavailable").count == 0, closer
@@ -1469,7 +1477,10 @@ async def test_an_audit_run_twice_still_sees_writes_the_ledger_never_recorded() 
 async def test_a_workers_revision_of_an_old_row_is_not_an_unrecorded_write() -> None:
     # Created two days ago, relabelled by a sweep ten minutes ago, with no call in the window.
     old = _memory_row("team/fact", minutes_ago=10, created_minutes_ago=2 * 24 * 60)
-    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], [old]))
+    audit = na.new_audit(
+        _inp(window_seconds=3600),
+        ch=_LocalCH(["memory", "agent_events", "agent_events_private"], [old]),
+    )
     await na.run_checks(audit, ["telemetry_unavailable"])
     assert _finding(audit, "telemetry_unavailable").severity == "info"
 
@@ -1533,7 +1544,7 @@ async def test_a_hot_short_procedure_is_not_coordination_state() -> None:
         _memory_row("lease/y", minutes_ago=10, value="taken"),
         *reads,
     ]
-    ch = _LocalCH(["memory", "agent_events"], rows)
+    ch = _LocalCH(["memory", "agent_events", "agent_events_private"], rows)
     audit = na.new_audit(_inp(window_seconds=3600), ch=ch)
     await audit.coordination_as_memory()
     f = _finding(audit, "coordination_as_memory")
@@ -1628,7 +1639,8 @@ async def test_a_copied_row_is_not_an_unrecorded_write() -> None:
         "now() - INTERVAL 10 MINUTE, now() - INTERVAL 10 MINUTE, 'source')"
     )
     audit = na.new_audit(
-        _inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], [copied])
+        _inp(window_seconds=3600),
+        ch=_LocalCH(["memory", "agent_events", "agent_events_private"], [copied]),
     )
     await na.run_checks(audit, ["telemetry_unavailable"])
     assert _finding(audit, "telemetry_unavailable").severity == "info"
@@ -1644,7 +1656,10 @@ async def test_a_procedure_read_over_mcp_is_left_out_of_the_object_store_gauge()
         *(_ledger_row("memory.get", arg_key="runbook/restart") for _ in range(25)),
         *(_ledger_row("memory.get", arg_key="team/fact") for _ in range(21)),
     ]
-    audit = na.new_audit(_inp(window_seconds=3600), ch=_LocalCH(["memory", "agent_events"], rows))
+    audit = na.new_audit(
+        _inp(window_seconds=3600),
+        ch=_LocalCH(["memory", "agent_events", "agent_events_private"], rows),
+    )
     await audit.summary_ledger()
     await audit.exact_key_store()
     s = audit.summary

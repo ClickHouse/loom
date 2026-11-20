@@ -10,7 +10,7 @@ body:
     id: page
     attributes:
       label: Documentation page
-      description: A link to the page, e.g. https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md
+      description: A link to the page, e.g. https://clickhouse.github.io/loom/getting-started/quickstart/
     validations:
       required: true
   - type: textarea

@@ -41,27 +41,12 @@ from server.memory.api.models_graph import (
     _MemoryRelatedHit,
 )
 from server.memory.app import webhooks
+from server.memory.app.learning_access import candidate_visible
 from server.memory.domain import assistant_rules
+from server.memory.domain.definitions import DEFINITION_DRAFT_KINDS
+from server.memory.domain.memory_types import is_definition
+from server.memory.domain.promotion_source import parse_promotion_source
 from server.memory.store.rows import MemoryRow
-
-
-def _parse_supporter(tuple_str: str) -> dict[str, str] | None:
-    """Parse one entry of `loom.shared.promoted_from`.
-
-    Wire format: `org/namespace/agent/user_id/session_id/memory_key`.
-    Returns None on mismatch so one malformed row doesn't 500 the lineage.
-    """
-    parts = tuple_str.split("/")
-    if len(parts) != 6:
-        return None
-    return {
-        "org": parts[0],
-        "namespace": parts[1],
-        "agent": parts[2],
-        "user_id": parts[3],
-        "session_id": parts[4],
-        "memory_key": parts[5],
-    }
 
 
 async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageOutput:
@@ -108,7 +93,11 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
             cand_id,
         )
         if cand_row is not None:
-            supporter_count = len(cand_row.get("supporters") or [])
+            supporter_count = (
+                int(cand_row.get("supporter_count") or 0)
+                if cand_row.get("source_kind") in DEFINITION_DRAFT_KINDS
+                else len(cand_row.get("supporters") or [])
+            )
             if cand_row.get("source_kind") == assistant_rules.SOURCE_KIND:
                 # Its support lives in loom.learnings_supporters: distinct users.
                 stats = await learnings_repo.supporter_stats(input.org, input.namespace, [cand_id])
@@ -127,6 +116,10 @@ async def _lineage_from_memory_tags(input: MemoryLineageInput) -> MemoryLineageO
                 seeded_from_msg_id=(cand_row.get("seeded_from_msg_id") or ""),
             )
 
+    if candidate is not None and not await candidate_visible(
+        input.org, input.namespace, candidate.source_kind
+    ):
+        candidate = None
     return MemoryLineageOutput(
         found=True,
         memory_key=input.memory_key,
@@ -210,8 +203,10 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
                     candidate = _LineageCandidate(
                         candidate_id=cand_id,
                         source_kind=cand_row.get("source_kind", "") or "",
-                        supporter_count=len(
-                            cand_row.get("supporters") or [],
+                        supporter_count=(
+                            int(cand_row.get("supporter_count") or 0)
+                            if cand_row.get("source_kind") in DEFINITION_DRAFT_KINDS
+                            else len(cand_row.get("supporters") or [])
                         ),
                         rationale=cand_row.get("rationale", "") or "",
                         decided_at=cand_row.get("decided_at") or promoted_at,
@@ -220,7 +215,9 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
                         seeded_from_thread_id=(cand_row.get("seeded_from_thread_id") or ""),
                         seeded_from_msg_id=(cand_row.get("seeded_from_msg_id") or ""),
                     )
-            elif promoted_at is not None:
+            elif promoted_at is not None and not is_definition(target):
+                # A definition without an explicit candidate cannot use a key/time
+                # match: it could name another draft of the same key.
                 cand_row = await shared_repo.find_candidate_for_promotion(
                     input.org,
                     input.namespace,
@@ -243,7 +240,7 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
 
     supporters: list[_LineageSupporter] = []
     for s in target.get("promoted_from") or []:
-        parsed = _parse_supporter(str(s))
+        parsed = parse_promotion_source(str(s))
         if parsed is not None:
             supporters.append(_LineageSupporter(**parsed))
 
@@ -257,6 +254,10 @@ async def handle_memory_lineage(input: MemoryLineageInput) -> MemoryLineageOutpu
         for r in audit_rows
     ]
 
+    if candidate is not None and not await candidate_visible(
+        input.org, input.namespace, candidate.source_kind
+    ):
+        candidate = None
     return MemoryLineageOutput(
         found=True,
         memory_key=input.memory_key,

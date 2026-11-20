@@ -663,3 +663,56 @@ async def test_a_handler_cancelled_while_it_reaps_a_gone_callers_child_stays_can
     with pytest.raises(asyncio.CancelledError):
         await handler
     assert not sent, "no 499 for a handler that was itself cancelled"
+
+
+@pytest.mark.parametrize("cause", ["private-title-one", "different-private-title"])
+async def test_unexpected_request_faults_return_a_code_without_escaping_to_server_logs(
+    cause: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def broken(*args: object) -> bytes:
+        raise OSError(cause)
+
+    monkeypatch.setattr(service, "run_child", broken)
+    with caplog.at_level("DEBUG", logger="loom_extractor"):
+        response = await _extract()
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"code": "extractor_error", "message": "the extraction failed"}
+    }
+    assert not [r for r in caplog.records if r.name.startswith("loom_extractor")]
+
+
+async def test_child_stderr_is_drained_without_a_request_log_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "test_child.py").write_text(
+        "import sys\nsys.stderr.write('private document bytes\\n')\nsys.exit(7)\n"
+    )
+    monkeypatch.setattr(service, "_CHILD_MODULE", "test_child")
+    monkeypatch.setattr(service, "_PACKAGE_ROOT", f"{tmp_path}{os.pathsep}{service._PACKAGE_ROOT}")
+    with caplog.at_level("DEBUG", logger="loom_extractor"):
+        response = await _extract()
+    assert response.status_code == 500
+    assert response.json() == {
+        "error": {"code": "extractor_error", "message": "the extraction failed"}
+    }
+    assert not [r for r in caplog.records if r.name.startswith("loom_extractor")]
+
+
+def test_service_entrypoint_disables_request_access_logs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loom_extractor import __main__ as entry
+
+    monkeypatch.setenv("LOOM_EXTRACTOR_TOKEN", TOKEN)
+    for name in ("refuse_root", "refuse_unfiltered_machine", "no_new_privileges", "no_dump"):
+        monkeypatch.setattr(entry, name, lambda: None)
+    monkeypatch.setattr(entry, "check_ocr", lambda config, env: None)
+    started: dict[str, object] = {}
+
+    def run(app: object, **kwargs: object) -> None:
+        started.update(kwargs)
+
+    monkeypatch.setattr(entry.uvicorn, "run", run)
+    entry.main()
+    assert started["access_log"] is False

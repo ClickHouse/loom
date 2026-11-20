@@ -127,7 +127,11 @@ deletion:
 
 - **Revocation.** Until a process has loaded the revoked-token set once, every token gets
   503 `AUTH_UNAVAILABLE`. After that, a ClickHouse outage keeps the last snapshot.
-- **Authorization.** A failed grant read refuses; a restricted namespace whose
+- **Authorization.** A failed read of the subject's grant map answers 503, unless the
+  process holds a cached entry younger than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS`
+  (600 s) that no grant change has superseded, which it serves
+  ([tokens](security.md#tokens)). The single grant lookup
+  (`authz.grant_role_for`) counts a failed read as no grant. A restricted namespace whose
   classification cannot be read is denied.
 - **Boot migrations.** A failed migration stops the process before any worker starts.
 - **Erasure.** A federated backend that cannot confirm deletion fails its step; residue
@@ -137,7 +141,8 @@ deletion:
 
 These fail open, counted or logged, because refusing would take the service down for an
 availability control: traffic classification, the rate limiter, the idempotency cache read,
-the audit insert, boot calibration, the embedding caches and every telemetry write. See
+the audit insert (except the two restores in [data-loss boundaries](#data-loss-boundaries)),
+boot calibration, the embedding caches and every telemetry write. See
 [security](security.md).
 
 ## When a dependency is down
@@ -181,17 +186,16 @@ node. Nothing else counts: an unreachable process is not a stopped one.
   TTL is 60 s, renewed every 20 s; a contender takes it over once it expired and the
   holder's participant counts as stopped. `loom provider-lock clear --holder <holder>`
   frees one whose holder has no participant row, which never counts as stopped.
-- **Killed mid-reconfiguration.** The transition waits on a participant whose heartbeat
-  expired, since a paused process may resume with admitted work, until a process on
-  its host proves it gone (its container restarted, or its pid exited) and retires it.
-  The workers leader
-  deletes the rows of participants retired a day ago and lists, once a minute, those a
-  transition would wait on as `provider_participants_stale` in its `/v1/health`. Retire
-  one by hand with `loom participant retire --participant <id> --yes` once its process
-  is confirmed gone; the command refuses a participant whose heartbeat is fresh or whose
-  queries still run.
-- **A boot that fails after enrolling** retires its row; a crash-looping container leaves
-  none behind.
+- **Killed mid-reconfiguration.** An expired heartbeat remains a blocker until the
+  exact process dies or completes guarded shutdown. A trusted local process can
+  verify its PID, namespace, boot and start identity, then retire it after all
+  cross-replica queries settle. Use `loom participant retire --participant <id>` on
+  that trusted host. Pod deletion or replacement and namespace changes alone do
+  not prove death. The workers leader prunes only certified permanent retirements
+  older than a day; unknown legacy rows remain visible.
+- **A boot that fails after enrolling** remains nonretired unless all its actual
+  producers and writes stop. A shutdown deadline does not turn cancellation into
+  a retirement certificate.
 
 A process frozen past its heartbeat (a stopped container, a VM pause) holds the
 transition until it resumes and drains, or an operator retires it.
@@ -202,8 +206,10 @@ transition until it resumes and drains, or an operator retires it.
 - **Telemetry and audit rows.** A crash loses the unflushed `agent_events` queue (flushed
   every 100 ms) and events-stream queue (every `LOOM_EVENTS_STREAM_FLUSH_INTERVAL_S`, 1 s).
   The events stream carries budget violations only. Audit, exposure and search-trace rows
-  are inserted directly; a failed audit insert is logged and never fails the write it
-  records. Retrieval reads none of them.
+  are inserted directly; a failed audit insert is logged and fails only the two ops that
+  depend on their record, a `memory.restore` that undoes a retirement and
+  `namespace.restore` ([audit limits](../features/observability/audit.md#limits-and-failure-modes)).
+  Retrieval reads none of them.
 - **After-response projections** lost in a crash are rebuilt by the repair workers.
 - **ClickHouse OSS single node.** No replication and no point-in-time recovery. ClickHouse
   Cloud, or a replicated OSS cluster, is the production path. Back up with ClickHouse
@@ -464,7 +470,8 @@ The metrics are described in [monitoring](../operations/monitoring.md).
   then runs as a plain miss).
 - **Events-stream telemetry** (budget violations) is drained on `SIGTERM`; a `SIGKILL` or
   OOM loses at most one flush interval of it, never audit or memory rows.
-- **Namespace size drives read latency**, because vector reads are exact scans.
+- **Namespace size drives read latency**, because vector reads scan the namespace's rows
+  with no vector index.
 - **Single-node ClickHouse OSS** has no replication and no failover.
 
 ## Knowledge restore
@@ -535,6 +542,95 @@ it with sequential consistency: one a restore brought back meanwhile is live the
 keeps its chunks. It retires and counts only the chunks up to the tombstone; a newer
 write's chunks, still to commit, stay, and a delete that finds only those answers that
 nothing was deleted.
+
+## Knowledge move
+
+`knowledge.move` ([moving documents](../features/knowledge.md#moving-documents)) writes each
+document into the namespace it goes to, then deletes it where it was, so a cut-off move
+leaves the document in both places and never in neither. Per document, it reads the place it
+goes and answers `exists` for another live document there before it writes anything; under
+the claims it reads both again. It then stores the original and the extraction artifact in
+the new namespace, outside any claim (an original no row names yet is the sweep's, as any
+upload whose row did not land). An original held as a ClickHouse row is copied inside
+ClickHouse; one in the bucket, or one moved there meanwhile, is read and written again under
+the new namespace's place there. An original an erasure took (`blob_erased_at` on the
+document) is not copied, even when the bytes of its sha are still kept for another upload.
+
+Then, under the source's claim in both namespaces, taken in sorted order and not waited for
+(a held source answers `busy` at once), it refuses (`busy`) when either place changed since
+it read them, when a publication of either place may still land, or while an ingest job of
+either is open (its publish would write the document back where it was, or over the copy).
+It copies the chunks of the document's revision, with their vectors, inside ClickHouse
+(`INSERT … SELECT`, every version the row serves: a metadata edit leaves the chunks at their
+own version), then the tables, then the row, and deletes the source over the version it
+read. A copy left by an earlier move that stopped before its delete (the same text, title,
+description, tags, metadata, author and ingest time where it goes) is not written again when
+it serves as many live chunks as the source and the same tables: only the source is deleted.
+One with fewer chunks, or with no tables where the source has some (a cancelled row insert
+can land after its take-back, which leaves the row alone), is written over, as a deleted
+document is, before the source is deleted. One with more is whole: a delete cut off between
+retiring the source's chunks and writing its tombstone (it retires them first) leaves the
+source row live with none, and only the delete is left; a copy is never written over one
+that serves more chunks than the source: one that also lacks its tables answers `exists`.
+Tables there that differ otherwise were changed on one side since (an approval, a
+clarification), which cannot be told from a change on the other: that copy, like one whose
+text or metadata was edited, is another document and answers `exists`.
+
+Anything that does not land whole, or a write that took either place before the delete,
+takes back what the move wrote where it goes, and that source answers `busy`. The take-back
+runs to its end before the claims are given up, however often the request is cancelled
+meanwhile (the cancel is raised once it is done). Its first statement retires the copy's
+chunks under every embedding model at once; a take-back starts by its claims' cut-off, or
+right after a delete begun before it that the Postgres authority refuses, whose commit
+answers within `pg_commit_lock_timeout_ms` and `pg_statement_timeout_ms` (2 s and 5 s by
+default). With the statement's own bound (15% of the TTL, 9 s), that retirement ends by
+about 40 s, inside the claim's 60 s TTL. The rest can outlast it, but a later move that then
+takes the claims reads the copy short: under the claims it checks again that an earlier
+move's copy is whole, answers `busy` when it is not, and on a later call writes the copy
+again; the other sources of the call still move. After the retirement the take-back drops
+its commit (under the Postgres authority), deletes its row, then its chunks and its tables:
+a take-back that stops partway leaves no chunk serving without a row, and a cancelled
+`INSERT … SELECT` that lands after the chunks' delete is retired too. The work under the
+claims is cut off at 40% of the claim's 60 s TTL (24 s); a document whose copy runs past
+that is taken back and answers `busy`. The delete runs to its end however the request or the
+claims end meanwhile, and the document is counted as moved the moment its tombstone is in,
+so a cut-off or a cancel while the tombstone is in flight still answers moved and audits it,
+and a tombstone the Postgres authority refuses then still takes the copy back. A failure of
+the delete itself (a lost answer, which fails the call) may follow the tombstone, so the
+copy stays: the document is in both places, or only where it goes, and a retry finds the
+copy and only deletes the source, or answers `not_found`. Once the tombstone is in, the move
+is made: the source's tables are deleted after the claims are given up, as a delete of a
+live document takes none, so no cut-off reaches it; a failure there is logged, and a later
+delete of the source settles them. A document counts as moved the moment its tombstone is
+in, under the claims: its audit row and its table cleanup follow whatever ends the call
+after that (a cancel as the claims are given up, or during the cleanup). A failure that is
+not one source's (a store that does not answer) is raised once every source of the call has
+answered, after the audit row of those that moved.
+
+The erasure ledger is read for each document twice, as `knowledge.restore` reads it
+(`unfinished_reaching` for the document's namespace and writer, filtered with `may_cover`):
+before its original is stored, for an erasure that may reach it where it is (unfinished when
+its text was written there: its first chunk's `created_at`, which a move stamps with when it
+copied the chunks, while the row keeps its ingest time) or the place it goes (unfinished
+when the move started), and again under the claims, just before its delete, for one
+registered since: one may have passed the copy, this move's or an earlier move's. That one
+takes back a copy this move wrote, leaves an earlier move's copy to the erasure, and answers
+`erased` without deleting the source, so an `erased` document always stays where it was.
+Under the Postgres authority a delete over a document an erasure removed meanwhile answers
+`erased` too. The first read comes just before the original is stored in the new place, so
+an erasure whose originals step could miss it must register in the moment between that read
+and the store; the re-read before the delete then answers `erased`, and that original, named
+by no row, is the sweep's after `document_blob_min_age_seconds`, as any original whose row
+did not land. The move deletes no original itself: one is keyed by its bytes, and a
+concurrent write of the same bytes whose row has not landed yet may need it.
+
+Concurrent writes: a text write takes no claim. Under the Postgres authority the copy's row
+and the delete each commit over the version read, so a write that took the source or the
+place first refuses them (409), and the copy is taken back. Under the ClickHouse authority
+the move reads the target's head under the claims before it copies and again after its row:
+a write with a later version wins and the copy is taken back, while one that landed between
+that first read and the row (the whole chunk and table copy), with an earlier version, is
+replaced, as with two text writes of one source.
 
 ## Invariants
 

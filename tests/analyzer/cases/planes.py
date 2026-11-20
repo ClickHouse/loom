@@ -19,6 +19,7 @@ import typing
 from typing import Any
 
 from server.auth.context import current_auth
+from server.core.naming import not_mirror_sql
 from server.core.tag_sql import TagFilter
 from server.identity.domain.read_scope import (
     WHOLE_NAMESPACE,
@@ -29,12 +30,13 @@ from server.identity.domain.read_scope import (
 from tests.analyzer.cases._common import AGENT, NS, ORG, SMALL_VEC, rows_by_substring
 from tests.analyzer.corpus import Case, RecordingCH, is_drive_defect
 
-# An org admin's scope as `resolve_org_scope` builds it: a hidden restricted namespace and
-# the collections it cannot read (`tests/unit/test_projection_failures_org_scope.py` pins
-# it to the builder).
+# An org admin's scope as `resolve_org_scope` builds it: a hidden restricted namespace, no
+# mirror and the collections it cannot read
+# (`tests/unit/test_projection_failures_org_scope.py` pins it to the builder).
 ADMIN_SCOPE = (
     " AND (NOT startsWith(namespace, {col_prefix:String})"
     " OR namespace IN {col_readable:Array(String)})"
+    f" AND {not_mirror_sql()}"
     " AND namespace NOT IN {ns_hidden:Array(String)}"
 )
 ADMIN_SCOPE_PARAMS = {"col_prefix": "col-", "col_readable": [NS], "ns_hidden": ["restricted"]}
@@ -562,6 +564,14 @@ def _logged_turn_rows(embedded: bool):
     )
 
 
+async def _source_push(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import source_push
+
+    await source_push.get(ORG, NS, _UUID, ch=ch)
+    await source_push.drive_page(("", "", ""), ch=ch)
+    await source_push.sealed_page(("", "", ""), ch=ch)
+
+
 async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.api.models_conversations import ConversationSaveMessageInput
     from server.knowledge.app.conversations import handle_conversation_save_message
@@ -583,6 +593,7 @@ async def _save_logged_turn(ch: RecordingCH, c: dict[str, Any]) -> None:
 async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.knowledge.store import chunks as K
     from server.knowledge.store import documents as D
+    from server.knowledge.store import mirrors as M
 
     f = c["filters"]
     await K.count_active_by_uri(ORG, NS, ["doc://a"], ch=ch)
@@ -591,6 +602,8 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, ["h1"], excluding_source_uri="doc://b" if f else "", ch=ch
     )
     await K.find_chunk_duplicate_clusters(ORG, NS, ch=ch)
+    await M.mirrors_of(ORG, [NS], ch=ch)
+    await M.mirrors_of(ORG, [NS], live_only=True, ch=ch)
     await K.find_doc_by_content_sha256(
         ORG, NS, "s" * 64, excluding_source_uri="doc://b" if f else "", ch=ch
     )
@@ -600,17 +613,18 @@ async def _knowledge(ch: RecordingCH, c: dict[str, Any]) -> None:
         ORG, NS, "doc://a", embedding_model="m" if f else None, when=_DT, ch=ch
     )
     await K.mark_docs_superseded(ORG, NS, {"doc://a": 5}, when=_DT, ch=ch)
-    await K.retire_versions(ORG, NS, [("doc://a", 5)], embedding_model="m", when=_DT, ch=ch)
+    await K.retire_versions(ORG, NS, [("doc://a", 5)], embedding_models=["m"], when=_DT, ch=ch)
     await K.delete_versions(ORG, NS, [("doc://a", 5)], ch=ch)
     await D.get_many_by_uris(ORG, NS, ["doc://a"], include_superseded=f, ch=ch)
     await D.get_one(ORG, NS, "doc://a", include_superseded=f, ch=ch)
+    await D.current_document_counts(ORG, [NS, "n2"], ch=ch)
     await D.list_with_chunk_counts(
         ORG,
-        NS,
+        [NS],
         include_superseded=f,
         tag_filter=TagFilter(("t",), "folded_any") if f else None,
         uri_prefixes=["doc://"] if f else None,
-        cursor=(_DT, "doc://a") if f else None,
+        cursor=(_DT, NS, "doc://a") if f else None,
         ch=ch,
     )
 
@@ -697,6 +711,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import projection_failures as PF
     from server.memory.app.curation import fetch_timeline
     from server.memory.store import conflict_candidates as conflict_candidates
+    from server.memory.store import shared as SH
 
     f = c["filters"]
     await PF.list_projection_failures(
@@ -764,7 +779,7 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await PL.stats_by_revision(org=ORG, namespace=NS, memory_key="k1")
     await PL.unfolded(org=ORG, namespace=NS, memory_key="k1", since="2026-01-01")
     await CF.candidate_rows_many(
-        org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+        user_id="-", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
     )
     # The per-write peer read — stage A, stage B, the join fallback.
     _peer = {
@@ -783,18 +798,22 @@ async def _services(ch: RecordingCH, c: dict[str, Any]) -> None:
     await CF._peer_rows_joined(ch, dict(_peer))
     # A writer bounded to one user: its peers in its scope, others' pinned rows.
     one_user = ReadFilters(scope="own_user", user_id="u1", session_id=None)
-    await CF._peer_rows(ch, dict(_peer), one_user)
+    await CF.nearest_peer_rows(ch, dict(_peer), one_user)
     scoped = dict(_peer)
     await CF._peer_rows_joined(ch, scoped, scope_and(one_user, scoped, "m"))
-    await CF._foreign_pinned_rows(ch, dict(_peer), one_user, [])
+    await CF._foreign_pinned_rows(ch, dict(_peer), one_user)
     with read_filters_bound(current_auth(), one_user):  # the narrowed batch and its pinned arm
         await CF.candidate_rows_many(
-            org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
+            user_id="u1", org=ORG, namespace=NS, items=[("k1", "preference", SMALL_VEC, 0.5)], ch=ch
         )
     await CF.check_against_shared(
         org=ORG, namespace=NS, target_key="k1", memory_type="preference", embedding=SMALL_VEC
     )
     await CF.resolve_conflict_floor(ORG, NS, "preference")
+    await SH.shared_definitions(ORG, NS, 10, ch=ch)
+    await SH.definition_rows(ORG, NS, 10, ch=ch)
+    await SH.fetch_shared(ORG, NS, "definition/arr", strong=True, ch=ch)
+    await SH.newest_shared_vector_version(ORG, NS, "definition/arr", ch=ch)
     RD.clear_cache()
     await RD.resolve(ORG, NS, ch=ch)
     await CF.prefetch_write_config(ORG, NS, "preference", "k1")
@@ -850,6 +869,15 @@ async def _conversation_threads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await handle_conversation_threads(
         ConversationThreadsInput(org=ORG, namespace=NS, agent=c["agent"], fields=c["fields"])
     )
+
+
+async def _budget_warning_events(ch: RecordingCH, _v: dict[str, Any]) -> None:
+    from server.tasks.store import budget_notifications
+
+    await budget_notifications.event_seqs(ORG, "warnings", _UUID, ch=ch)
+    row = {"org": ORG, "inbox": "warnings", "task_id": _UUID, "seq": 1}
+    await budget_notifications.insert_event(row, ch=ch)
+    await budget_notifications.remove_event(row, ch=ch)
 
 
 async def _session_runs(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -925,6 +953,14 @@ async def _profiles(ch: RecordingCH, c: dict[str, Any]) -> None:
             scope=scope,
             ch=ch,
         )
+
+
+async def _namespace_in_use(ch: RecordingCH, c: dict[str, Any]) -> None:
+    """The check a name registration makes: a grant, a source, a mirror or any census
+    row of the name."""
+    from server.identity.store import namespace_census
+
+    await namespace_census.in_use(ORG, NS, ["loom.memory"], ch=ch)
 
 
 async def _grants_repo(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -1057,6 +1093,25 @@ async def _tune_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
 _ORG_ROLLUPS = frozenset({"cost", "learnings", "audit", "agents"})
 
 
+async def _definition_draft_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.knowledge.store import gaps, query_history
+    from server.memory.store import learnings
+
+    await gaps.gap_for_draft(ORG, NS, "gap")
+    await gaps.draft_queries(ORG, NS, ["revenue"], 3)
+    await query_history.find(ORG, NS, "metrics", ch=ch)
+    await query_history.list_sources(ORG, NS, 10, ch=ch)
+    await query_history.active_after(_UUID, 10)
+    await learnings.list_by_status(
+        ORG, NS, "pending", exclude_source_kinds=("query_history",), ch=ch
+    )
+    await learnings.private_candidate_namespaces("org = {org:String}", {"org": ORG})
+    await learnings.quality_by_namespace("org = {org:String}", {"org": ORG}, [])
+    await learnings.private_candidates_after(ORG, NS, "")
+    await learnings.scrub_private_candidate(ORG, NS, _UUID)
+    await learnings.delete_candidate_through(ORG, NS, _UUID, 1)
+
+
 def cases() -> list[Case]:
     out = [
         Case(
@@ -1080,7 +1135,23 @@ def cases() -> list[Case]:
             rows=_HANDLER_ROWS,
         )
     )
+    out.append(
+        Case(
+            "definition_draft_reads",
+            "server.knowledge.store.query_history",
+            _definition_draft_reads,
+            {},
+        )
+    )
     out.append(Case("session_runs.ledger", "server.tasks.store.runs", _session_runs, {}))
+    out.append(
+        Case(
+            "budget_warnings.events",
+            "server.tasks.store.budget_notifications",
+            _budget_warning_events,
+            {},
+        )
+    )
     out.append(
         Case(
             "provider_rebuild.session_chunks",
@@ -1091,6 +1162,9 @@ def cases() -> list[Case]:
     )
     out.append(Case("profiles", "server.memory.store.profile_sources", _profiles, {}))
     out.append(Case("grants_repo", "server.identity.store.grants", _grants_repo, {}))
+    out.append(
+        Case("namespace_in_use", "server.identity.store.namespace_census", _namespace_in_use, {})
+    )
     out.append(
         Case(
             "namespace_tune",
@@ -1197,7 +1271,16 @@ def cases() -> list[Case]:
             "server.knowledge.store.chunks",
             _knowledge,
             {"filters": (False, True)},
+            # A list page with a row, so its chunk counts are read too.
+            rows=rows_by_substring(
+                {
+                    "content_preview": [
+                        {"namespace": NS, "source_uri": "doc://a", "ingested_at": _DT}
+                    ]
+                }
+            ),
         ),
+        Case("source_push_repos", "server.knowledge.store.source_push", _source_push, {}),
         Case("ledger_repos", "server.insights.store.audit", _ledgers, {"filters": (False, True)}),
         Case(
             "plane_services",

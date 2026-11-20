@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from server.core.leases import ClaimExpired
+from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.tasks.api import models_task as wire
 from server.tasks.app import inboxes, transitions
 from server.tasks.store import repo
@@ -674,7 +675,9 @@ async def test_a_create_cancelled_mid_insert_and_retried_logs_one_creation(
     retry = await transitions.handle_task_create(wire.TaskCreateInput(**body))
     assert not retry.created
 
-    seen = await repo.events_since(org, since_seq=0, lag_s=0, inbox="bot")
+    seen = await repo.events_since(
+        org, since_seq=0, lag_s=0, warning_scope=WHOLE_NAMESPACE, inbox="bot"
+    )
     assert [e["event"] for e in seen] == ["created"]
     assert await _delivered(org, None) == ["created"]
     release.set()
@@ -682,10 +685,17 @@ async def test_a_create_cancelled_mid_insert_and_retried_logs_one_creation(
 
     history = await repo.task_history(org, retry.task.task_id, consistent=True)
     assert [e["event"] for e in history] == ["created"]
-    assert await repo.events_since(org, since_seq=int(seen[-1]["seq"]), lag_s=0) == []
+    assert (
+        await repo.events_since(
+            org, since_seq=int(seen[-1]["seq"]), lag_s=0, warning_scope=WHOLE_NAMESPACE
+        )
+        == []
+    )
     assert await _delivered(org, await _webhook_cursor(ch, org)) == []
     # A reader that saw neither gets one.
-    fresh = await repo.events_since(org, since_seq=0, lag_s=0, inbox="bot")
+    fresh = await repo.events_since(
+        org, since_seq=0, lag_s=0, warning_scope=WHOLE_NAMESPACE, inbox="bot"
+    )
     assert [e["event"] for e in fresh] == ["created"]
     assert await _delivered(org, None) == ["created"]
     # Within the dedup window storage keeps one row; past it the readers keep the first.

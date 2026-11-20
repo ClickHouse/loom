@@ -1,20 +1,21 @@
 # Release process
 
-Loom follows SemVer. The server, the Python SDK, the TypeScript SDK, the web app and the root skills (`loom-code`, `loom`) share one version `X.Y.Z`. The two coding-agent plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. Both manifests also declare `minServerVersion`, the oldest server the plugin's hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
+Loom follows SemVer: the server, both SDKs, the web app, the root skills (`loom-code`, `loom`), the Cursor plugin and the Agent Plugins package that ship them, and the Gemini CLI extension share one version `X.Y.Z`. The Claude Code and Codex plugins share their own version, bumped on a behaviour change to any file the plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`): installed clients pick up a hook change only through a new plugin version. `MIN_SERVER_VERSION` in the plugins' `lib/server-version.mjs` names the oldest server their hooks support: when the server's `GET /v1/health` reports an older `version`, SessionStart prints one `loom:` line asking for a server upgrade, and says nothing when the version cannot be read. It rises with a release ([cutting the release](#cutting-the-release), step 2).
 
 ## Where the version lives
 
-`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the plugins, and writes the [release notes](#release-notes):
+`.venv/bin/python scripts/release/prepare.py bump X.Y.Z` bumps each of these in the release commit, except the Claude Code and Codex plugins, and writes the [release notes](#release-notes):
 
-| Component            | Files                                                                                                                                                                                                                                                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Server               | `server/__init__.py` (`__version__`), `pyproject.toml`, `uv.lock` and `server.json`                                                                                                                                                                                                                                                                                 |
-| Python SDK           | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                                                                                                       |
-| TypeScript SDK       | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                                                                                                  |
-| Web app              | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                                                                                                            |
-| Root skills          | `.claude-plugin/plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                                                                                                                                                   |
-| Helm chart           | `deploy/helm/loom/Chart.yaml`: `appVersion` (the default tag of the server and extractor images, and the chart's `app.kubernetes.io/version` label) and the chart's own `version`: a minor for a major or minor release, a patch for a patch release                                                                                                                |
-| Coding-agent plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version, and `minServerVersion`, which rises with a release (step 2 below); bump the version on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
+| Component                     | Files                                                                                                                                                                                                                                                                                   |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Server                        | `server/__init__.py` (`__version__`), `pyproject.toml`, `uv.lock` and `server.json`                                                                                                                                                                                                     |
+| Python SDK                    | `sdk/python/pyproject.toml` and `sdk/python/loom/_version.py`                                                                                                                                                                                                                           |
+| TypeScript SDK                | `sdk/typescript/package.json`, `sdk/typescript/package-lock.json`, `sdk/typescript/src/version.ts`                                                                                                                                                                                      |
+| Web app                       | `frontend/package.json` and `frontend/package-lock.json`                                                                                                                                                                                                                                |
+| Root skills                   | `.claude-plugin/plugin.json`, `.cursor-plugin/plugin.json`, `plugin.json` and the `metadata.version` of `skills/loom-code/SKILL.md` and `skills/loom/SKILL.md`                                                                                                                          |
+| Gemini CLI extension          | `gemini-extension.json`                                                                                                                                                                                                                                                                 |
+| Helm chart                    | `deploy/helm/loom/Chart.yaml`: `appVersion` (the default tag of the server and extractor images, and the chart's `app.kubernetes.io/version` label) and the chart's own `version`: a minor for a major or minor release, a patch for a patch release                                    |
+| Claude Code and Codex plugins | `integrations/claude-code-plugin/.claude-plugin/plugin.json`, `integrations/codex-plugin/.codex-plugin/plugin.json` (their own version; bump it on a behaviour change to any file the plugin ships: `hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) |
 
 The server reads its version from `server/__init__.py` only; the OpenAPI document, MCP `serverInfo`, `loom report` and `GET /v1/health` (checked by `tests/unit/test_health_problems.py`) report it. These checks keep the numbers consistent:
 
@@ -22,11 +23,33 @@ The server reads its version from `server/__init__.py` only; the OpenAPI documen
 | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/unit/test_release_version.py`           | every surface reports the server's version, and `server.json` keeps the registry listing's shape                                      |
 | `npm run check:version` (TypeScript SDK)       | its four version sources agree                                                                                                        |
-| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version and one `minServerVersion`, no newer than the server's version                                |
+| `tests/unit/test_codex_plugin.py`              | both plugin manifests carry one version, and `MIN_SERVER_VERSION` is no newer than the server's version                               |
 | `tests/unit/test_release_prepare.py`           | every file `prepare.py` bumps names the server's version                                                                              |
 | `prepare.py check`, `check-tag`, `check-chart` | the release's `version` job ([step 1](#what-the-release-workflow-does)): one version everywhere, the candidate order, the chart moved |
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
+
+## Branches and tags
+
+Every release uses `prep/release-X.Y.Z` for its preparation pull request. Keep all three version
+components in the branch name. The pull request's base depends on the release:
+
+| Purpose                            | Branch or tag           | Starts from                                                        | Pull request base                                     |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
+| Major or minor release preparation | `prep/release-X.Y.Z`    | `origin/main`                                                      | `main`                                                |
+| Patch release preparation          | `prep/release-X.Y.Z`    | `origin/release/X.Y`                                               | `release/X.Y`                                         |
+| Backport of a fix merged on `main` | `fix/X.Y-<description>` | `origin/release/X.Y`                                               | `release/X.Y`                                         |
+| Maintained release line            | `release/X.Y`           | Final `vX.Y.0` commit                                              | Receives backport and patch preparation pull requests |
+| Release candidate tag              | `vX.Y.Z-rc.N`           | Release pull request's merge commit, or a subsequent candidate fix | —                                                     |
+| Final release tag                  | `vX.Y.Z`                | Highest-numbered candidate's commit after its soak                 | —                                                     |
+
+Reserve `release/` for maintained `release/X.Y` lines. Check the repository's branch rules before
+creating a preparation branch. A refused update requires resolution under those rules; renaming a
+branch or changing its target does not resolve the refusal.
+
+Create the maintained line after publishing its first final release. Preparation branches carry
+the version bump and notes through their pull request; they do not become maintained lines. Keep
+published tags fixed. Select backports according to the [supported release lines](../operations/supported-versions.md#release-lines).
 
 ## Release notes
 
@@ -76,13 +99,14 @@ pull request the tag ships.
    or a lock file) on `main` first. The base image's own packages move only with a new base-image
    digest; a package an `apt-get install` layer adds moves with any uncached build.
 
-2. On a branch from `main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
+2. On `prep/release-X.Y.Z` from `origin/main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
    pull request with its changes and `release-notes.md` as the [release notes](#release-notes)
    section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.
    When a merged pull request's changelog entry says it needs the next server release, the same
-   pull request raises both plugins' `minServerVersion` to this version and bumps both plugin
-   versions: clients get a manifest only through a new plugin version.
+   pull request raises `MIN_SERVER_VERSION` in
+   `integrations/claude-code-plugin/lib/server-version.mjs` to this version, syncs it into the
+   Codex plugin and bumps both plugin versions: clients get it only through a new plugin version.
 3. After the release pull request merges, tag its merge commit and push the tag. To soak a
    release candidate first, tag `vX.Y.Z-rc.1` there instead, and the final later on the
    highest-numbered candidate's commit (below):
@@ -143,10 +167,10 @@ without the provenance and SBOM attestations that only a registry keeps, and `do
 them from there. The `preflight` job reports each missing [prerequisite](#before-the-first-release)
 as a warning instead of failing. What only a published release exercises, a dry run does not:
 `docker-tag` (joining each image's two digests, the Latest decision, `:latest`), `sign`, the GitHub
-Release, the registry publishes, `release-check`, the published-images check
-(`scripts/release/published_images.sh`) with the skipped-build path it selects, the candidate-order
-check (`prepare.py check-tag`, which a dry run of a branch skips with a notice), and the chart check
-when the version is already tagged on another commit.
+Release and its files' signatures, the registry publishes, `release-check`, the published-images
+check (`scripts/release/published_images.sh`) with the skipped-build path it selects, the
+candidate-order check (`prepare.py check-tag`, which a dry run of a branch skips with a notice),
+and the chart check when the version is already tagged on another commit.
 
 ## Before the first release
 
@@ -160,7 +184,7 @@ in seconds, before any build, and names the fix for each one it finds missing:
 | `ghcr.io/clickhouse/loom` and `loom-extractor` give this repository Write access | `preflight` (an upload session it opens and cancels) |
 | Both packages are public, since an install pulls without signing in              | `preflight` (an anonymous pull token)                |
 | A `pypi` environment and a PyPI trusted publisher for `release.yml`              | the `pypi` job                                       |
-| An `npm` environment, and npm trusted publishing or an `NPM_TOKEN` secret        | the `npm` job                                        |
+| An `npm` environment and an npm trusted publisher for `release.yml`              | the `npm` job                                        |
 | An `mcp-registry` environment with the same protection rules as `pypi` and `npm` | the `mcp-registry` job                               |
 | The repository's artifact retention is at least 30 days (Settings > Actions)     | nothing                                              |
 | `release/**` branches protected like `main` (required checks, no direct pushes)  | nothing                                              |
@@ -193,22 +217,22 @@ there costs a candidate number, not a final version.
    `make schema-check` before `build` may pin it, and refuses a ClickHouse downgrade (see step 8),
    so such a run stops before it builds and pushes images
    ([when it stops](#when-the-clickhouse-job-stops)). The release is the first of:
-   - the one this version's published bundle already names, so rerunning the installer for a
-     version never moves ClickHouse (a release without a bundle resolves anew, as `github-release`
-     never replaces one, so nobody can have installed it);
+   - the one this version's published bundle already names, so running the install command again
+     for a version never moves ClickHouse (a release without a bundle resolves anew, as
+     `github-release` never replaces one, so nobody can have installed it);
    - a dispatch's `clickhouse_image`, which for a final is used in place of any release its
      candidates on the same commit published;
    - for a final, the one the highest-numbered candidate on the same commit with a published
      bundle was soaked with;
    - the release `clickhouse/clickhouse-server:latest` names now (`dev/clickhouse_release.sh`);
-4. `build` writes the version into the Python and TypeScript SDK sources and builds the
-   Python SDK wheel and sdist, the npm tarball (after the TypeScript SDK's `check:dist`),
-   and zips of the two plugins (`loom-claude-code-plugin-vX.Y.Z.zip`,
-   `loom-codex-plugin-vX.Y.Z.zip`); it also builds the source-free Compose bundle and its
-   SHA-256 file (naming that ClickHouse release), the release's `install.sh`, which installs
-   this version, and `agent-setup.txt`, the
-   [agent setup contract](../getting-started/agent-setup.md) with this version and commit
-   filled in (`scripts/release/agent_setup.py`);
+4. `build` writes the version into the Python SDK sources (in its PEP 440 form, `X.Y.ZrcN`
+   for a candidate) and the TypeScript SDK sources, and builds the Python SDK wheel and
+   sdist, the npm tarball (after the TypeScript SDK's `check:dist`), and zips of the two
+   plugins (`loom-claude-code-plugin-vX.Y.Z.zip`, `loom-codex-plugin-vX.Y.Z.zip`); it also
+   builds the source-free Compose bundle and its SHA-256 file (naming that ClickHouse
+   release), the release's `install.sh`, which installs this version, and
+   `agent-setup.txt`, the [agent setup contract](../getting-started/agent-setup.md) with
+   this version and commit filled in (`scripts/release/agent_setup.py`);
 5. `verify` checks those exact files: their names and embedded versions, the plugin
    manifests, no tests in the Claude Code zip, the executable bits git records, and
    that the bundle names the ClickHouse release the `clickhouse` job checked,
@@ -255,12 +279,26 @@ there costs a candidate number, not a final version.
    `gh workflow run release.yml --ref vX.Y.Z -f allow_clickhouse_downgrade=true`.
    When neither is taken, move `:latest` (if it moved) and, for a final, `:X.Y` back to the
    previous release on both images, as in [a failed tag or signature](#a-failed-tag-or-signature);
-9. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
-   was just published, signed in to nothing: the one-liner from github.com in the same clean
-   containers, pulling both images anonymously, and verifies both images' signatures, which
-   must come from `release.yml` on that tag, as a user does
-   ([container images](../operations/deployment.md#container-images)). A release published
-   before the release workflow signed carries none, so a check of it fails its `signatures` job.
+9. `sign-files` downloads every file the release now serves, as users do
+   (`scripts/release/download_release_files.sh`), and signs each one that is byte-identical to
+   this run's build with a keyless signature like the images', into a Sigstore bundle
+   `<file>.sigstore.json` (`scripts/release/sign_release_files.sh`). The stack bundle and
+   checksum the release kept from an earlier run keep their Sigstore bundles when those verify;
+   any other file that is not this run's build fails the job, signing nothing
+   ([a failed tag or signature](#a-failed-tag-or-signature)). It then verifies each file as
+   users do (`scripts/release/verify_release_files.sh`). It holds the run's OIDC token in a job of
+   its own, with read-only contents; `attach-signatures` then uploads the Sigstore bundles it made
+   (a kept one stays as it is, since replacing an asset deletes it first). A dispatch builds the
+   files again, and `github-release` replaces them, so until its own `sign-files` and
+   `attach-signatures` finish, the tag run's Sigstore bundles do not verify the replaced files;
+10. `release-check` (on a tag push) runs `.github/workflows/release-check.yml` against what
+    was just published, signed in to nothing: the one-liner from github.com in the same clean
+    containers, pulling both images anonymously, and verifies the signatures of both images and
+    of every release file, which must come from `release.yml` on that tag, as a user does
+    ([container images](../operations/deployment.md#container-images),
+    [release files](../operations/deployment.md#release-files)); a file without its
+    `.sigstore.json` fails. A release published before the release workflow signed its images,
+    or its files, lacks those signatures, so a check of it fails its `signatures` job.
 
 The server and extractor images are published before the GitHub Release, so an installer
 shown on the release page never points at a missing image.
@@ -273,7 +311,7 @@ three publish jobs run:
 | Job            | Publishes                                                        | How                                                                                                                                                                                                                                   |
 | -------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pypi`         | `clickhouse-loom` (the Python SDK only) to PyPI                  | the verified wheel and sdist; trusted publishing (OIDC); files PyPI already has are skipped                                                                                                                                           |
-| `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; `latest` only for the highest final, a prerelease to `next`, a patch to an older line to `release-X.Y`; `NPM_TOKEN` as fallback                                                 |
+| `npm`          | `@clickhouse/loom` to npm with provenance                        | the verified tarball; a published version is skipped; `latest` only for the highest final, a prerelease to `next`, a patch to an older line to `release-X.Y`; trusted publishing (OIDC)                                               |
 | `mcp-registry` | `server.json` to the MCP Registry as `io.github.ClickHouse/loom` | the committed file, whose version the `version` job checks against the tag; GitHub OIDC login with a pinned `mcp-publisher`; a listed version and a prerelease are skipped; `preflight` refuses a private repository before any build |
 
 The images are already published by the tag run: a dispatch on a tag whose images carry the
@@ -284,7 +322,9 @@ move the version's tags onto other bytes.
 Never move a published `X.Y.Z` tag: `published_images.sh` fails when a published image was built
 from another commit than the run's, and a fix needs a new version.
 
-A re-run after a partial publish is safe: each publish job skips what already exists.
+A re-run after a partial publish is safe: each publish job skips what already exists. The one
+exception is a tag run whose file signing failed, which [a failed tag or
+signature](#a-failed-tag-or-signature) recovers.
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
@@ -334,6 +374,27 @@ the `digest=` line, then the `docker buildx imagetools create` command without t
   || { echo "<tag> does not name $digest" >&2; false; }
 ```
 
+A failed `sign-files` or `attach-signatures` (Sigstore or the GitHub API down, say) leaves files on
+the release without a Sigstore bundle that verifies them. Any later run signs them again while the
+stack bundle and checksum on the release carry Sigstore bundles that verify: "Re-run failed jobs" on
+the run that failed. When they carry none, because the tag run's own signing failed, only "Re-run
+failed jobs" on the tag run signs them, while its artifacts are kept (30 days, unless the
+repository's artifact retention limit is shorter) and before any dispatch: a dispatch, "Re-run all
+jobs" or a second push of the tag rebuilds the stack bundle and checksum but keeps the ones the
+release carries, which then no run can sign. Past that, release a new version.
+
+A `release-check` that fails on a listing or a download: "Re-run failed jobs". One that finds a
+Sigstore bundle that does not verify after the latest release run's `sign-files` and
+`attach-signatures` passed means the release changed after it was signed: a security incident
+([SECURITY.md](../../SECURITY.md)). A run whose signing failed is recovered as above instead.
+
+`sign-files` refuses any file that is not this run's build, except a kept stack bundle or checksum
+whose Sigstore bundle verifies. A file attached to the release by hand: delete it from the release
+when the workflow does not make it, then "Re-run failed jobs". A kept stack bundle or checksum with
+no Sigstore bundle was never signed (above). Any other refusal, and a kept file whose Sigstore
+bundle does not verify outside a Sigstore outage, means the file was changed outside the workflow:
+a security incident, not a signing failure.
+
 ### When the clickhouse job stops
 
 A run that stopped in `clickhouse` published nothing.
@@ -381,18 +442,22 @@ The coding-agent plugins install from the repository's marketplaces (`claude plu
 
 Agents and people find Loom through these listings. Each reads files in this repository:
 
-| Listing                                        | Reads                                                                                                                                                                                | How it updates                                                                                                                                 |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| MCP Registry, and the directories that copy it | `server.json`: a remote at `https://{loom_host}/mcp` with an optional secret `Authorization` header                                                                                  | the `mcp-registry` job on each dispatched release                                                                                              |
-| Claude plugin directory                        | `integrations/claude-code-plugin/.claude-plugin/plugin.json` (`displayName`, `description`, `keywords`, `icon`, `documentationUrl`, `supportUrl`, `privacyPolicyUrl`) and the README | submitted once in the developer portal; later versions are picked up from the tracked branch. The icon is read only on the first submission    |
-| Claude Code plugin suggestions                 | the `relevance` block of the `loom` entry in `.claude-plugin/marketplace.json`: the `loom` command, Loom's config files, an SDK dependency in a manifest                             | read from the marketplace on the default branch; shown only where an administrator allowlists the marketplace (`pluginSuggestionMarketplaces`) |
-| Codex plugin directory                         | `integrations/codex-plugin/.codex-plugin/plugin.json` (`interface`)                                                                                                                  | submitted in the plugin portal; a plugin with lifecycle hooks is not eligible there, so the public listing needs a build without them          |
-| Docs index for coding agents                   | `context7.json`                                                                                                                                                                      | refreshed from the default branch after the repository is added once                                                                           |
-| Agent Skills index                             | `skills/loom-code`, `skills/loom` and the Claude Code plugin's skills; the contributor skills are marked internal in their frontmatter and are not offered                           | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                         |
+| Listing                                        | Reads                                                                                                                                                                                | How it updates                                                                                                                                                                                                                               |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| MCP Registry, and the directories that copy it | `server.json`: its metadata and a remote at `https://{loom_host}/mcp` with an optional secret `Authorization` header                                                                 | the `mcp-registry` job on each dispatched final release                                                                                                                                                                                      |
+| PyPI page of `clickhouse-loom`                 | the `[project]` metadata of `sdk/python/pyproject.toml`, and `sdk/python/README.md` as the page body                                                                                 | the `pypi` job on each dispatched release; the page shows the highest final version, or the highest candidate before the first final                                                                                                         |
+| npm page of `@clickhouse/loom`                 | the metadata of `sdk/typescript/package.json`, and `sdk/typescript/README.md` as the page body                                                                                       | the `npm` job on each dispatched release; the page shows the version tagged `latest`, which the job sets only for the highest final                                                                                                          |
+| Claude plugin directory                        | `integrations/claude-code-plugin/.claude-plugin/plugin.json` (`displayName`, `description`, `keywords`, `icon`, `documentationUrl`, `supportUrl`, `privacyPolicyUrl`) and the README | submitted once in the developer portal; later versions are picked up from the tracked branch. The icon is read only on the first submission                                                                                                  |
+| Claude Code plugin suggestions                 | the `relevance` block of the `loom` entry in `.claude-plugin/marketplace.json`: the `loom` command, Loom's config files, an SDK dependency in a manifest                             | read from the marketplace on the default branch; shown only where an administrator allowlists the marketplace (`pluginSuggestionMarketplaces`)                                                                                               |
+| Cursor Marketplace                             | `.cursor-plugin/plugin.json` (`displayName`, `description`, `keywords`, `logo`, `variables`), `.cursor-plugin/marketplace.json`                                                      | not submitted; a submission at cursor.com/marketplace/publish is reviewed by hand, and so is each update                                                                                                                                     |
+| Awesome Copilot marketplace                    | the root `plugin.json` and `mcp.json` (the Agent Plugins package), at the release tag and commit the submission names                                                                | not submitted; a submission goes through the external-plugin issue form of `github/awesome-copilot`, which checks the package and installs it with Copilot CLI; a new version is a pull request to that repository's `plugins/external.json` |
+| Codex plugin directory                         | `integrations/codex-plugin/.codex-plugin/plugin.json` (`interface`)                                                                                                                  | submitted in the plugin portal; a plugin with lifecycle hooks is not eligible there, so the public listing needs a build without them                                                                                                        |
+| Docs index for coding agents                   | `context7.json`                                                                                                                                                                      | refreshed from the default branch after the repository is added once                                                                                                                                                                         |
+| Agent Skills index                             | `skills/loom-code`, `skills/loom` and the Claude Code plugin's skills; the contributor skills are marked internal in their frontmatter and are not offered                           | ranked by `npx skills add ClickHouse/loom` installs; nothing to submit                                                                                                                                                                       |
 
 The `mcp-registry` job runs in the `mcp-registry` environment. Give it the same protection rules as `pypi` and `npm` before the first dispatch: GitHub creates a missing environment with none. Its login needs no secret.
 
-After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin` for the plugin and `claude plugin validate .` for the marketplace: they run the directory's structural checks.
+After changing the Claude manifest or the marketplace entry, and before pushing, run `claude plugin validate integrations/claude-code-plugin --profile directory --strict` for the plugin and `claude plugin validate .` for the marketplace: they run the directory's structural checks, and the plugin's must pass with no warning.
 
 ## After the release
 

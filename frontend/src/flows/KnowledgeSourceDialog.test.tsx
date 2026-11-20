@@ -45,6 +45,7 @@ vi.mock("../components/Toast", async (importOriginal) => {
 
 const SECRET = "secret-value-7f3a";
 const KEY = `{"type": "service_account", "private_key": "${SECRET}"}`;
+const ZOOM_KEY = JSON.stringify({ account_id: "account", client_id: "client", client_secret: SECRET });
 const FOLDER = "1AbCdEfGhIjKlMnOp";
 const NS = { org: "o", namespace: "code-x" };
 
@@ -84,7 +85,7 @@ const addResult = (dryRun: boolean) => ({
 });
 
 function renderAdd(onAdded = vi.fn()) {
-  render(<AddSourceDialog open onOpenChange={() => {}} {...NS} repo="Acme/x" onAdded={onAdded} />);
+  render(<AddSourceDialog open onOpenChange={() => {}} {...NS} label="Acme/x" onAdded={onAdded} />);
   return onAdded;
 }
 
@@ -188,7 +189,7 @@ describe("AddSourceDialog's kinds", () => {
   it("offers each kind, the shared folder first", () => {
     renderAdd();
     const kinds = screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
-    expect(kinds).toEqual(["Shared folder", "Project documents", "Pages", "Meeting transcripts"]);
+    expect(kinds).toEqual(["Shared folder", "Project documents", "Pages", "Zoom transcripts"]);
     expect(screen.getByRole("radio", { name: "Shared folder" })).toHaveAttribute("aria-checked", "true");
   });
 
@@ -236,17 +237,18 @@ describe("AddSourceDialog's kinds", () => {
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
-  it("adds a meeting store's meetings, each provider with its own ids", async () => {
+  it("adds Zoom meetings without a provider choice", async () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
-    expect(screen.getByRole("radio", { name: "meet" })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
+    expect(screen.queryByRole("radio", { name: "meet" })).toBeNull();
+    expect(screen.queryByRole("radio", { name: "zoom" })).toBeNull();
+    expect(screen.queryByLabelText(/^Meeting spaces/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
     await typeInto(/^Meetings/, "abc-DEF_1");
     const credential = screen.getByLabelText(/^Read-only credential/);
     expect(credential).toHaveAttribute("type", "password");
-    fireEvent.change(credential, { target: { value: KEY } });
-    // A space id is no meeting id: the form says so before anything is sent.
+    fireEvent.change(credential, { target: { value: ZOOM_KEY } });
+    // Space ids are refused before anything is sent.
     expect(screen.getByText(/Not a meeting id \(9-12 digits\): abc-DEF_1/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Check" })).toBeDisabled();
     await userEvent.setup().clear(screen.getByRole("textbox", { name: /^Meetings/ }));
@@ -255,48 +257,30 @@ describe("AddSourceDialog's kinds", () => {
     expect(sentBody(0)).toMatchObject({
       kind: "recording",
       config: { provider: "zoom", ids: ["81234567890"] },
-      credential: KEY,
+      credential: ZOOM_KEY,
     });
     expectKeyNowhere();
     expect(unlabeledControls(document.body)).toEqual([]);
     expect(await axeViolations(document.body)).toEqual([]);
   });
 
-  it("clears the ids when the provider changes, so one provider's ids are never read by the other's rule", async () => {
+  it("routes Meet notes and transcripts through the shared folder form", async () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
-    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
-    await typeInto(/^Meetings/, "812 3456 7890");
-    fireEvent.click(screen.getByRole("radio", { name: "meet" }));
-    expect(screen.getByRole("textbox", { name: /^Meeting spaces/ })).toHaveValue("");
-  });
-
-  it("adds a meeting store's spaces with a meet credential", async () => {
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meeting spaces/, "spaces/abc-DEF_1");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
-    await checkAndAdd(/The credential reads the meetings: standups lists 12 documents/);
+    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
+    expect(screen.getByText(/For Meet notes and transcripts, choose Shared folder/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
+    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
+    expect(screen.getByText(/including Meet notes and transcripts saved as documents/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
+    expect(screen.getByRole("checkbox", { name: "Documents" })).toBeChecked();
+    await fill();
+    await checkAndAdd(/The key reads the folders: design-docs lists 12 documents/);
     expect(sentBody(0)).toMatchObject({
-      kind: "recording",
-      config: { provider: "meet", ids: ["abc-DEF_1"] },
+      kind: "gdrive",
+      config: { folder_ids: [FOLDER], include: ["docs", "slides", "pdf", "pptx"] },
       credential: KEY,
     });
     expectKeyNowhere();
-  });
-
-  it("clears an error on screen when the provider changes", async () => {
-    vi.mocked(addKnowledgeSource).mockRejectedValue(refused());
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
-    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meeting spaces/, "abc");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
-    fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("refused the credential");
-    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
-    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("a check of one kind does not pass the form once the kind changes", async () => {
@@ -320,28 +304,20 @@ describe("AddSourceDialog's kinds", () => {
     expect(add).toBeEnabled();
   });
 
-  it("clears the credential when the provider changes, so one provider's credential never goes to the other", async () => {
-    renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
-    fireEvent.click(screen.getByRole("radio", { name: "zoom" }));
-    expect(screen.getByLabelText(/^Read-only credential/)).toHaveValue("");
-  });
-
-  it("locks the kind and the provider while a check runs", async () => {
+  it("locks the kind while a Zoom check runs", async () => {
     let answer: (v: ReturnType<typeof addResult>) => void = () => {};
     vi.mocked(addKnowledgeSource).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meeting spaces/, "abc");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    await typeInto(/^Meetings/, "81234567890");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(screen.getByRole("radio", { name: "Pages" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "zoom" })).toBeDisabled();
+    expect(screen.queryByRole("radio", { name: "meet" })).toBeNull();
     await act(async () => answer(addResult(true)));
     expect(screen.getByRole("radio", { name: "Pages" })).toBeEnabled();
-    expect(screen.getByRole("radio", { name: "zoom" })).toBeEnabled();
+    expect(screen.queryByRole("radio", { name: "zoom" })).toBeNull();
   });
 
   it("shows the server's refusal of a config as it comes back", async () => {
@@ -359,14 +335,15 @@ describe("AddSourceDialog's kinds", () => {
   });
 
   it("shows the server's refusal as it comes back", async () => {
-    // What the server answers when the account cannot see the space.
-    const message = "the source could not be listed: space abc: http_404; check the id and that the account can see it";
+    // What the server answers when the account cannot see the meeting.
+    const message =
+      "the source could not be listed: meeting 81234567890: http_404; check the id and that the account can see it";
     vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "SOURCE_UNREACHABLE", message }));
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Meeting transcripts" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "standups" } });
-    await typeInto(/^Meeting spaces/, "abc");
-    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: KEY } });
+    await typeInto(/^Meetings/, "81234567890");
+    fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     // The error was the meeting store's: another kind does not show it.

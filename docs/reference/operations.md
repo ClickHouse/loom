@@ -13,20 +13,20 @@ an `ops*.py` module in its domain's `api/` package (`server/memory/api/ops_memor
 `_OPERATION_MODULES` into `ALL_OPERATIONS`, which the transports iterate. An `Operation`
 carries:
 
-| Field                                   | Meaning                                                                                                                                               |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                                  |
-| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                               |
-| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                                         |
-| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                                       |
-| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                   |
-| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                   |
-| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                   |
-| `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op nothing reaches. |
-| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                 |
-| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one; the handler checks membership. The role check still runs.                    |
-| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                       |
-| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`). The handler authorizes the row's namespace and hides a foreign row.                |
+| Field                                   | Meaning                                                                                                                                                                                                                       |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `name`                                  | Dotted `<group>.<verb>`. The group is the text before the first dot.                                                                                                                                                          |
+| `input_model`, `output_model`           | Pydantic models: the request body and the 200 response.                                                                                                                                                                       |
+| `handler`                               | The async function that runs the op, in its domain's `app/` package (`server/<domain>/app/`).                                                                                                                                 |
+| `required_role`                         | The minimum role the caller's token must hold on the namespace.                                                                                                                                                               |
+| `idempotent`                            | Safe to retry. Idempotent ops accept an idempotency key; see [HTTP API](./http-api.md#idempotency).                                                                                                                           |
+| `audit`                                 | A successful call writes a row to `loom.audit_log`.                                                                                                                                                                           |
+| `writes`                                | Set on the few viewer-callable, idempotent ops that still change stored state (a feedback row, a watch), so they are not read-only.                                                                                           |
+| `maturity`                              | `stable` or `experimental`. It decides the [MCP `all` listing](#mcp-all-listing), and `op_reach_census.py --check` fails a stable op nothing reaches.                                                                         |
+| `budget_p99_ms`, `shape_budgets_p99_ms` | The target p99 latency, overall and per request shape. A successful call over budget emits a `budget.violated` event.                                                                                                         |
+| `skip_namespace_authz`                  | The op acts _on_ a namespace (join, leave, register) rather than in one, or its target is one only the handler can resolve (an id, an erasure scope); the handler enforces its own rules. The role check still runs.          |
+| `deployment_scoped`                     | The op reads facts about the deployment (build, registry), not tenant data; a namespace-scoped token passes with its best role.                                                                                               |
+| `row_scoped`                            | The op is addressed by an org-wide id (`memory_id`, `erasure_id`, `pattern_id`). The handler authorizes the row's scope and hides a foreign row ([row-scoped operations](../architecture/security.md#row-scoped-operations)). |
 
 [Adding an operation](../development/adding-an-operation.md) walks through declaring one.
 
@@ -123,11 +123,11 @@ python scripts/codegen/docs_reference.py --check  # exit 1 when a region is stal
 <!-- Generated by `python scripts/codegen/docs_reference.py`; edit the source, not this region. -->
 <!-- prettier-ignore-start -->
 
-359 operations in 41 groups. Every op is served at `POST /v1/<op>` and as the MCP tool `loom_<op>` (dots become underscores).
+375 operations in 43 groups. Every op is served at `POST /v1/<op>` and as the MCP tool `loom_<op>` (dots become underscores).
 
 Columns: **Role** is the minimum role (`viewer` < `writer` < `admin` < `org_admin` < `platform_admin`); **Kind** is `read` (idempotent, viewer, unaudited, writes nothing — MCP `readOnlyHint`), `idempotent` (safe to retry) or `write`; **Listed under `all`** says whether an MCP connection on the `all` toolset lists the op in `tools/list` (`code.*` ops only with `LOOM_MCP_CODE_TOOLS=true`); an op marked `no` is still callable by name or through `loom_op`, unless it is hidden from MCP; **Audit** marks ops that leave an `audit_log` row.
 
-Groups: [`admin`](#admin) · [`agents`](#agents) · [`assistant`](#assistant) · [`audit`](#audit) · [`blacklist`](#blacklist) · [`calibration`](#calibration) · [`code`](#code) · [`collection`](#collection) · [`conflicts`](#conflicts) · [`consolidations`](#consolidations) · [`context`](#context) · [`conversation`](#conversation) · [`cost`](#cost) · [`decision`](#decision) · [`erasure`](#erasure) · [`extraction_policy`](#extraction_policy) · [`facts`](#facts) · [`grants`](#grants) · [`inbox`](#inbox) · [`insights`](#insights) · [`knowledge`](#knowledge) · [`learnings`](#learnings) · [`memory`](#memory) · [`memory_schema`](#memory_schema) · [`mentor`](#mentor) · [`namespace`](#namespace) · [`observe`](#observe) · [`ops`](#ops) · [`org`](#org) · [`policy`](#policy) · [`procedure`](#procedure) · [`profile`](#profile) · [`profile_schema`](#profile_schema) · [`run`](#run) · [`search`](#search) · [`session`](#session) · [`task`](#task) · [`tracker`](#tracker) · [`ui`](#ui) · [`webhook`](#webhook) · [`working_memory`](#working_memory)
+Groups: [`admin`](#admin) · [`agents`](#agents) · [`assistant`](#assistant) · [`audit`](#audit) · [`blacklist`](#blacklist) · [`calibration`](#calibration) · [`code`](#code) · [`collection`](#collection) · [`conflicts`](#conflicts) · [`connection`](#connection) · [`consolidations`](#consolidations) · [`context`](#context) · [`conversation`](#conversation) · [`cost`](#cost) · [`decision`](#decision) · [`erasure`](#erasure) · [`extraction_policy`](#extraction_policy) · [`facts`](#facts) · [`grants`](#grants) · [`help`](#help) · [`inbox`](#inbox) · [`insights`](#insights) · [`knowledge`](#knowledge) · [`learnings`](#learnings) · [`memory`](#memory) · [`memory_schema`](#memory_schema) · [`mentor`](#mentor) · [`namespace`](#namespace) · [`observe`](#observe) · [`ops`](#ops) · [`org`](#org) · [`policy`](#policy) · [`procedure`](#procedure) · [`profile`](#profile) · [`profile_schema`](#profile_schema) · [`run`](#run) · [`search`](#search) · [`session`](#session) · [`task`](#task) · [`tracker`](#tracker) · [`ui`](#ui) · [`webhook`](#webhook) · [`working_memory`](#working_memory)
 
 ### admin
 
@@ -167,7 +167,7 @@ Fields for every `blacklist` op: [operations/blacklist.md](operations/blacklist.
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`blacklist.add`](operations/blacklist.md#blacklistadd) | Add a pattern that prevents matching content from being saved to memory. | writer | idempotent | yes | yes |
+| [`blacklist.add`](operations/blacklist.md#blacklistadd) | Refuse future memory writes whose value matches a pattern. | writer | idempotent | yes | yes |
 | [`blacklist.list`](operations/blacklist.md#blacklistlist) | List patterns that suppress memory storage. | viewer | read | no |  |
 | [`blacklist.remove`](operations/blacklist.md#blacklistremove) | Remove a previously-added blacklist pattern. | admin | idempotent | no | yes |
 | [`blacklist.sweep`](operations/blacklist.md#blacklistsweep) | Tombstone the live rows an existing pattern matches. | writer | idempotent | no | yes |
@@ -192,7 +192,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.bisect_candidates`](operations/code.md#codebisect_candidates) | Rank PRs that may have introduced a bug; Loom does not test or reproduce it. | viewer | read | no |  |
 | [`code.blame_range`](operations/code.md#codeblame_range) | Which merged PRs last touched these lines, between release A and B? | viewer | read | no |  |
 | [`code.calibrate`](operations/code.md#codecalibrate) | Derive code-specific abstention thresholds from the authored probe corpus (query/positive/hard-distractor triples over the indexed repo) and persist them as this namespace's calibration. | admin | write | no | yes |
-| [`code.callees`](operations/code.md#codecallees) | What does this symbol call — forward call edges (depth<=3), tier-marked like loom_code_callers. | viewer | read | no |  |
+| [`code.callees`](operations/code.md#codecallees) | What does this symbol call — forward call edges (depth<=3), tier-marked like code.callers. | viewer | read | no |  |
 | [`code.callers`](operations/code.md#codecallers) | Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved where available; `edge_kinds: ['inherits']` narrows the walk to what implements or extends a type. | viewer | read | yes |  |
 | [`code.context_pack`](operations/code.md#codecontext_pack) | Briefing at the START of a task, instead of exploring file by file. | viewer | read | yes |  |
 | [`code.context_packs`](operations/code.md#codecontext_packs) | List the stored per-PR context packs of a repository, optionally for one PR. | viewer | read | no |  |
@@ -206,7 +206,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.files`](operations/code.md#codefiles) | Which indexed files have this NAME — an rg-style glob (`tests/queries/0_stateless/05138_*`, `/*Parquet*.cpp`), a basename stem (`05138_with_fill` matches the stem exactly or as its leading prefix… | viewer | read | no |  |
 | [`code.first_build`](operations/code.md#codefirst_build) | Which CI build first carried this commit? | viewer | read | no |  |
 | [`code.grep`](operations/code.md#codegrep) | Exact-match lookup over the indexed corpus. | viewer | read | yes |  |
-| [`code.history`](operations/code.md#codehistory) | The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review… | viewer | read | yes |  |
+| [`code.history`](operations/code.md#codehistory) | The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review comments… | viewer | read | yes |  |
 | [`code.impact`](operations/code.md#codeimpact) | Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius. | viewer | read | yes |  |
 | [`code.index_errors`](operations/code.md#codeindex_errors) | List the files the code index failed to parse or ingest, with the error and the commit. | viewer | read | yes |  |
 | [`code.index_status`](operations/code.md#codeindex_status) | Health of the code index: indexed head commit, compiler-tier commit, row counts, watermarks, and the weekly tables' state (symbol_stats_rows/at, unit_risk_rows/at; 0 = not written yet). | viewer | read | yes |  |
@@ -234,7 +234,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.symbol_history`](operations/code.md#codesymbol_history) | The regression history of one function: the merged PRs that touched it (with linked issues, reverts, inline review comments inside its span), and — through the tracker namespace bound to this code… | viewer | read | no |  |
 | [`code.test_gate`](operations/code.md#codetest_gate) | The pre-PR question in one call: for THIS change, which tests must run, and which touched code no test reaches. | viewer | read | no |  |
 | [`code.test_home`](operations/code.md#codetest_home) | Where does a new test case belong? | viewer | read | no |  |
-| [`code.tests_for`](operations/code.md#codetests_for) | Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an… | viewer | read | no |  |
+| [`code.tests_for`](operations/code.md#codetests_for) | Which stateless tests carry EVERY named facet: the tests that `SET` a setting, call a function, create an `ENGINE`, read a `system.*` table, use a `FORMAT`, carry a `-- Tags:` tag, or expect an error… | viewer | read | no |  |
 | [`code.trace`](operations/code.md#codetrace) | Paste a stack trace / backtrace; get each frame resolved to its definition in one call — the incident-workflow entry point. | viewer | read | yes |  |
 | [`code.verify`](operations/code.md#codeverify) | Verify one closed-form claim against the index and return a three-valued verdict. | viewer | read | yes |  |
 | [`code.verify_citations`](operations/code.md#codeverify_citations) | Every citation a draft carries, resolved against the index before the draft is posted somewhere public and irreversible. | viewer | read | no |  |
@@ -246,7 +246,7 @@ Fields for every `collection` op: [operations/collection.md](operations/collecti
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`collection.create`](operations/collection.md#collectioncreate) | Create a collection: a namespace read and written only through grants. | viewer | idempotent | no | yes |
-| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never… | admin | idempotent | no | yes |
+| [`collection.delete`](operations/collection.md#collectiondelete) | Delete a collection with what it holds: a purging erasure of the namespace (documents, chunks, originals, memory leave the disk), then it leaves the directory and the tree, and its name is never used… | admin | idempotent | no | yes |
 | [`collection.list`](operations/collection.md#collectionlist) | List the collections the caller can read, by name. | viewer | read | no |  |
 | [`collection.move`](operations/collection.md#collectionmove) | Put a collection under another one, or detach it. | admin | idempotent | no | yes |
 
@@ -261,6 +261,15 @@ Fields for every `conflicts` op: [operations/conflicts.md](operations/conflicts.
 | [`conflicts.list`](operations/conflicts.md#conflictslist) | List unresolved conflicts where two memories contradict each other. | viewer | read | no |  |
 | [`conflicts.propose_revision`](operations/conflicts.md#conflictspropose_revision) | Return non-destructive revise/contract/allow suggestions. | viewer | read | no |  |
 | [`conflicts.resolve`](operations/conflicts.md#conflictsresolve) | Pick the winner of a conflict (keep A, keep B, keep both, merge). | admin | idempotent | no | yes |
+
+### connection
+
+Fields for every `connection` op: [operations/connection.md](operations/connection.md).
+
+| Operation | Summary | Role | Kind | Listed under `all` | Audit |
+| --- | --- | --- | --- | --- | --- |
+| [`connection.disconnect`](operations/connection.md#connectiondisconnect) | Disconnect the caller's own provider account and stop its connected sources. | viewer | idempotent | no |  |
+| [`connection.list`](operations/connection.md#connectionlist) | List the signed-in caller's own connected provider accounts. | viewer | read | no |  |
 
 ### consolidations
 
@@ -278,7 +287,7 @@ Fields for every `context` op: [operations/context.md](operations/context.md).
 | --- | --- | --- | --- | --- | --- |
 | [`context.fetch`](operations/context.md#contextfetch) | Read back a parked result by key: a character slice (offset/limit) or only the lines matching a regex (pattern, with context_lines). | viewer | read | no |  |
 | [`context.offload`](operations/context.md#contextoffload) | Park a large tool result (log, page, diff, query output) outside the model context. | writer | idempotent | no |  |
-| [`context.pack`](operations/context.md#contextpack) | Startup context pack for this session, once near the start of a substantial task: profile, relevant memories, matching procedures, optionally docs/conversations, in one prompt-sized bundle. | viewer | read | yes |  |
+| [`context.pack`](operations/context.md#contextpack) | A task's memories, decisions and procedures: call it first in each task, unless a Loom hook already put Loom's context in this session. | viewer | read | yes |  |
 
 ### conversation
 
@@ -286,9 +295,9 @@ Fields for every `conversation` op: [operations/conversation.md](operations/conv
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to the active thread. | writer | idempotent | yes |  |
+| [`conversation.append`](operations/conversation.md#conversationappend) | Log one chat turn (role + content) to a thread. | writer | idempotent | yes |  |
 | [`conversation.compact`](operations/conversation.md#conversationcompact) | Summarize old turns into one embedded system turn and tombstone the originals. | writer | idempotent | no | yes |
-| [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | yes |  |
+| [`conversation.create`](operations/conversation.md#conversationcreate) | Open a thread container. | writer | idempotent | no |  |
 | [`conversation.delete`](operations/conversation.md#conversationdelete) | Soft-delete one thread: its messages, thread row and embeddings no other agent holds. | admin | idempotent | no | yes |
 | [`conversation.get`](operations/conversation.md#conversationget) | Fetch one thread by id: thread metadata + optional messages. | viewer | read | no |  |
 | [`conversation.list`](operations/conversation.md#conversationlist) | Enumerate stored conversation threads for an agent / namespace. | viewer | read | no |  |
@@ -330,9 +339,9 @@ Fields for every `erasure` op: [operations/erasure.md](operations/erasure.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`erasure.export`](operations/erasure.md#erasureexport) | GDPR Article 20 portability. | admin | idempotent | yes | yes |
+| [`erasure.export`](operations/erasure.md#erasureexport) | Export the rows about a user or namespace, each section capped at `section_limit`. | admin | idempotent | yes | yes |
 | [`erasure.list`](operations/erasure.md#erasurelist) | Audit-shaped roll-up of the org's erasures the caller may see: the org-wide view for an org admin, the namespace sagas of the caller's own namespaces otherwise. | viewer | read | no |  |
-| [`erasure.request`](operations/erasure.md#erasurerequest) | GDPR Article 17 forgetting. | writer | idempotent | yes | yes |
+| [`erasure.request`](operations/erasure.md#erasurerequest) | Erase the rows about a user or namespace (the audit trail is kept). | writer | idempotent | yes | yes |
 | [`erasure.status`](operations/erasure.md#erasurestatus) | Check the status of an in-flight erasure request (queued, running, completed, failed). | viewer | read | no |  |
 
 ### extraction_policy
@@ -371,13 +380,22 @@ Fields for every `grants` op: [operations/grants.md](operations/grants.md).
 | [`grants.share_agent`](operations/grants.md#grantsshare_agent) | Let another agent of the caller's trust read, or write, the caller's own namespace. | writer | idempotent | no | yes |
 | [`grants.unshare_agent`](operations/grants.md#grantsunshare_agent) | Take back what the caller lent another agent of its trust. | writer | idempotent | no | yes |
 
+### help
+
+Fields for every `help` op: [operations/help.md](operations/help.md).
+
+| Operation | Summary | Role | Kind | Listed under `all` | Audit |
+| --- | --- | --- | --- | --- | --- |
+| [`help.get`](operations/help.md#helpget) | Read one page of this build's documentation, or one section of it. | viewer | read | no |  |
+| [`help.search`](operations/help.md#helpsearch) | Search this build's documentation. | viewer | read | no |  |
+
 ### inbox
 
 Fields for every `inbox` op: [operations/inbox.md](operations/inbox.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the… | viewer | read | no |  |
+| [`inbox.list`](operations/inbox.md#inboxlist) | Inboxes the caller may see: those owned by ``namespace`` (the authorized namespace) plus, with ``mine_everywhere``, every inbox in the org the caller may post to: one whose owner namespace the caller… | viewer | read | no |  |
 | [`inbox.policy_list`](operations/inbox.md#inboxpolicy_list) | List an inbox's trust policies. | viewer | read | no |  |
 | [`inbox.policy_set`](operations/inbox.md#inboxpolicy_set) | Set the trust mode an inbox owner chose for a poster and task kind (Loom stores it, never changes it). | admin | idempotent | no | yes |
 | [`inbox.principals`](operations/inbox.md#inboxprincipals) | The identities loom already knows in the org — the poster picker's source. | admin | idempotent | no |  |
@@ -405,26 +423,37 @@ Fields for every `knowledge` op: [operations/knowledge.md](operations/knowledge.
 | [`knowledge.dataset_get`](operations/knowledge.md#knowledgedataset_get) | The typed datasets an ingested file's tables became: their schemas, what needs a person's answer, the rows rejected and, on request, the first rows. | viewer | read | no |  |
 | [`knowledge.dedup_list`](operations/knowledge.md#knowledgededup_list) | List cross-URI doc duplicates and (optionally) chunk-overlap clusters. | admin | idempotent | no |  |
 | [`knowledge.dedup_resolve`](operations/knowledge.md#knowledgededup_resolve) | Resolve one document duplicate pair. | admin | idempotent | no | yes |
-| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: writes its tombstone. | writer | idempotent | yes | yes |
+| [`knowledge.delete`](operations/knowledge.md#knowledgedelete) | Soft-delete a document by source_uri: writes its tombstone. | writer | idempotent | no | yes |
 | [`knowledge.formats`](operations/knowledge.md#knowledgeformats) | The document formats this deployment reads, as `knowledge.ingest` sends them to its extractors, and the upload's limits. | viewer | read | no |  |
+| [`knowledge.gaps.draft`](operations/knowledge.md#knowledgegapsdraft) | Draft a definition from a knowledge gap for an admin to review. | admin | idempotent | no | yes |
+| [`knowledge.gaps.list`](operations/knowledge.md#knowledgegapslist) | The questions people keep asking in a namespace that nothing answers. | admin | idempotent | no |  |
 | [`knowledge.get`](operations/knowledge.md#knowledgeget) | Fetch a single document by source_uri. | viewer | read | yes |  |
 | [`knowledge.ingest`](operations/knowledge.md#knowledgeingest) | Extract an uploaded file (the extractor service parses it, the server checks what it returns) and publish it as a document revision, asynchronously: the answer names the job, and… | writer | write | no |  |
 | [`knowledge.ingest_cancel`](operations/knowledge.md#knowledgeingest_cancel) | A pending job is cancelled at once; a running one stops before it publishes; a finished one stays as it ended. | writer | idempotent | no |  |
 | [`knowledge.ingest_status`](operations/knowledge.md#knowledgeingest_status) | A knowledge.ingest job's state, stage, coverage, failure and published revision. | viewer | read | no |  |
 | [`knowledge.inspect`](operations/knowledge.md#knowledgeinspect) | Report a namespace's documents, read-only. | viewer | read | no |  |
-| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of documents in a namespace, for curation tools. | viewer | read | yes |  |
+| [`knowledge.list`](operations/knowledge.md#knowledgelist) | Paginated listing of the documents of one namespace or several, for curation tools. | viewer | read | yes |  |
+| [`knowledge.move`](operations/knowledge.md#knowledgemove) | Move documents to another namespace of the org: a collection, `@me` (an end user's own collection), or a namespace. | writer | idempotent | no | yes |
 | [`knowledge.outline`](operations/knowledge.md#knowledgeoutline) | A document's table of contents, as recorded on its chunks at ingest, and optionally one section's assembled text. | viewer | read | no |  |
 | [`knowledge.query`](operations/knowledge.md#knowledgequery) | Calculate over the live snapshots of ingested datasets with a typed plan: filters, inner joins, groups and aggregates, or the rows themselves. | viewer | read | no |  |
+| [`knowledge.query_history.add`](operations/knowledge.md#knowledgequery_historyadd) | Register a read-only ClickHouse query-history source for definition drafts. | admin | write | no | yes |
+| [`knowledge.query_history.list`](operations/knowledge.md#knowledgequery_historylist) | List the namespace's registered query-history sources. | admin | idempotent | no |  |
+| [`knowledge.query_history.remove`](operations/knowledge.md#knowledgequery_historyremove) | Remove a query-history source registration from the namespace. | admin | idempotent | no | yes |
 | [`knowledge.reads`](operations/knowledge.md#knowledgereads) | How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out). | viewer | read | no |  |
 | [`knowledge.restore`](operations/knowledge.md#knowledgerestore) | Undo a `knowledge.delete` or `knowledge.bulk_delete` of one document. | writer | idempotent | no | yes |
 | [`knowledge.search`](operations/knowledge.md#knowledgesearch) | Search the user's uploaded document library — bills, contracts, receipts, resumes, policies, manuals, technical docs. | viewer | read | no |  |
-| [`knowledge.source.add`](operations/knowledge.md#knowledgesourceadd) | Register a document source on a repository's trunk code namespace: a kind, the ids it reads and a read-only credential. | admin | write | no | yes |
-| [`knowledge.source.check`](operations/knowledge.md#knowledgesourcecheck) | Probe a registered document source with its stored credential now (a check and a listing of each folder or project), nothing written. | admin | idempotent | no |  |
-| [`knowledge.source.inspect`](operations/knowledge.md#knowledgesourceinspect) | One registered document source: its config, its sync state and the documents it wrote (the 200 most recently ingested). | viewer | read | no |  |
-| [`knowledge.source.list`](operations/knowledge.md#knowledgesourcelist) | The document sources registered on a repository's code namespace, with each one's sync state. | viewer | read | no |  |
-| [`knowledge.source.remove`](operations/knowledge.md#knowledgesourceremove) | Retire a registered document source: its registry row goes inactive and its credential is cleared. | admin | write | no | yes |
+| [`knowledge.source.add`](operations/knowledge.md#knowledgesourceadd) | Register a document source on a namespace: a kind, what it reads (items and links, or a config) and a read-only credential. | writer | write | no | yes |
+| [`knowledge.source.check`](operations/knowledge.md#knowledgesourcecheck) | Probe a registered document source with its stored credential now (a check of every item, or of the 20 added last, and a listing), nothing written. | writer | idempotent | no |  |
+| [`knowledge.source.inspect`](operations/knowledge.md#knowledgesourceinspect) | One registered document source: its items, its sync state and the documents it wrote (the 200 most recently ingested). | viewer | read | no |  |
+| [`knowledge.source.list`](operations/knowledge.md#knowledgesourcelist) | The document sources registered on a namespace, with each one's sync state. | viewer | read | no |  |
+| [`knowledge.source.parse_links`](operations/knowledge.md#knowledgesourceparse_links) | Read pasted links as a source's items, with no request to any store and nothing written: each link answers its kind and item, or why it is unreadable. | viewer | read | no |  |
+| [`knowledge.source.push_configure`](operations/knowledge.md#knowledgesourcepush_configure) | Enable provider sync hints for an existing source, or disable its setup. | admin | write | no | yes |
+| [`knowledge.source.push_confirm`](operations/knowledge.md#knowledgesourcepush_confirm) | Activate the exact pending setup. | admin | write | no | yes |
+| [`knowledge.source.push_status`](operations/knowledge.md#knowledgesourcepush_status) | Read push setup as a namespace admin. | admin | write | no |  |
+| [`knowledge.source.remove`](operations/knowledge.md#knowledgesourceremove) | Retire a registered document source: its registry row goes inactive and its credential is cleared. | writer | write | no | yes |
 | [`knowledge.source.rotate`](operations/knowledge.md#knowledgesourcerotate) | Replace a registered document source's credential. | admin | write | no | yes |
-| [`knowledge.source.sync_now`](operations/knowledge.md#knowledgesourcesync_now) | Record a request to sync one document source in its sync state: the sync worker starts its next pass with it. | admin | idempotent | no | yes |
+| [`knowledge.source.sync_now`](operations/knowledge.md#knowledgesourcesync_now) | Record a request to sync one document source in its sync state: the sync worker starts its next pass with it. | writer | idempotent | no | yes |
+| [`knowledge.source.update`](operations/knowledge.md#knowledgesourceupdate) | Add items to a registered document source or remove them, or change a gdrive source's file kinds. | writer | write | no | yes |
 | [`knowledge.synthesize`](operations/knowledge.md#knowledgesynthesize) | Complete a task over WHOLE documents, not a search slice: every active chunk of the named documents is read in order, in windows that respect section boundaries, each window is noted once, and the… | viewer | idempotent | no | yes |
 | [`knowledge.update_metadata`](operations/knowledge.md#knowledgeupdate_metadata) | Edit doc-level metadata (title, description, tags). | writer | idempotent | no | yes |
 | [`knowledge.upsert`](operations/knowledge.md#knowledgeupsert) | Same fields as knowledge.add. | writer | idempotent | no |  |
@@ -462,6 +491,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.dedup_collapse`](operations/memory.md#memorydedup_collapse) | Collapse every duplicate pair of a namespace onto its canonical — no LLM, every key kept, nothing tombstoned. | writer | idempotent | no | yes |
 | [`memory.dedup_list`](operations/memory.md#memorydedup_list) | List clusters of status='duplicate' rows in a namespace. | admin | idempotent | no |  |
 | [`memory.dedup_resolve`](operations/memory.md#memorydedup_resolve) | Resolve one duplicate pair. | admin | idempotent | no | yes |
+| [`memory.definitions.list`](operations/memory.md#memorydefinitionslist) | The namespace's shared definitions and whether each is governed. | admin | idempotent | no |  |
 | [`memory.delete`](operations/memory.md#memorydelete) | WHAT: Tombstone a memory by key (14-day recovery in the dashboard). | writer | idempotent | yes | yes |
 | [`memory.delete_version`](operations/memory.md#memorydelete_version) | Tombstone one version of a key under this exact identity, or nothing when the row under it has moved on. | writer | idempotent | no | yes |
 | [`memory.demonstrate`](operations/memory.md#memorydemonstrate) | Test-time learning from memory: the nearest memories tagged as examples (default tag `example`, label carried as `label:<value>`), a similarity-weighted vote over their labels, the predicted label… | viewer | read | no |  |
@@ -490,7 +520,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.move`](operations/memory.md#memorymove) | Rename `from_key` to `to_key`, leaving the old key answering. | writer | write | yes | yes |
 | [`memory.outcome`](operations/memory.md#memoryoutcome) | External outcome signal for a memory row. | writer | write | no | yes |
 | [`memory.outcome_run`](operations/memory.md#memoryoutcome_run) | Apply one outcome to many recalled memories in a single call — the bulk form of memory.outcome, so callers skip a per-key loop. | writer | write | yes | yes |
-| [`memory.outline`](operations/memory.md#memoryoutline) | A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has… | viewer | read | no |  |
+| [`memory.outline`](operations/memory.md#memoryoutline) | A namespace's table of contents, read from structure alone: row counts by type, the dated sessions with their digest's first line, the hub entities by degree, the communities when a pass has computed… | viewer | read | no |  |
 | [`memory.owner_report`](operations/memory.md#memoryowner_report) | The owner's view of their memory: what they own, who read it, how it was used. | viewer | read | no |  |
 | [`memory.pin`](operations/memory.md#memorypin) | WHAT: Save a standing fact and protect it. | writer | idempotent | yes |  |
 | [`memory.promote`](operations/memory.md#memorypromote) | Promote a single source memory to the namespace's shared layer. | admin | write | no | yes |
@@ -505,7 +535,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.redact`](operations/memory.md#memoryredact) | Scrub the value of a historical memory row, preserving its audit entry. | admin | idempotent | no | yes |
 | [`memory.reindex`](operations/memory.md#memoryreindex) | Re-embed a namespace's memories whose vectors were made by another embedding model (or all of them with `force`). | admin | idempotent | no | yes |
 | [`memory.reject`](operations/memory.md#memoryreject) | Mark a memory as explicitly rejected (extractor / user review decided the candidate fact is wrong), so it isn't re-extracted. | writer | idempotent | no | yes |
-| [`memory.related`](operations/memory.md#memoryrelated) | Find memories sharing entities with the source memory. | viewer | read | yes |  |
+| [`memory.related`](operations/memory.md#memoryrelated) | Find memories sharing entities with the source memory. | viewer | read | no |  |
 | [`memory.resolve_orphan_duplicates`](operations/memory.md#memoryresolve_orphan_duplicates) | Scan (org, namespace) for orphaned duplicate rows and re-activate them. | writer | idempotent | yes | yes |
 | [`memory.restore`](operations/memory.md#memoryrestore) | Bring back a deleted memory (within 14 days) or one Loom retired on its own. | writer | idempotent | yes | yes |
 | [`memory.search`](operations/memory.md#memorysearch) | Semantic search over the agent's own memory. | viewer | read | no |  |
@@ -518,7 +548,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.sweep_expired`](operations/memory.md#memorysweep_expired) | Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to one namespace. | admin | idempotent | no | yes |
 | [`memory.timeline`](operations/memory.md#memorytimeline) | Return memories about an entity (or matching a tag filter) in strict temporal order — newest first, with optional since/until windows. | viewer | read | no |  |
 | [`memory.touch`](operations/memory.md#memorytouch) | Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear_expiry`), for one key or up to 1,000 (`memory_keys`), without rewriting its value, entities, conflict state or… | writer | write | no |  |
-| [`memory.unlock`](operations/memory.md#memoryunlock) | Lift a memory.lock (admin). | admin | idempotent | no | yes |
+| [`memory.unlock`](operations/memory.md#memoryunlock) | Lift a lock set by memory.lock (admin). | admin | idempotent | no | yes |
 | [`memory.unpin`](operations/memory.md#memoryunpin) | Remove the write-time pin from one live memory. | admin | idempotent | no | yes |
 | [`memory.update`](operations/memory.md#memoryupdate) | Key-addressed update: the fact changed or got more specific. | writer | write | yes |  |
 | [`memory.update_by_id`](operations/memory.md#memoryupdate_by_id) | Update a memory by UUID with an optimistic concurrency check. | writer | idempotent | yes |  |
@@ -553,7 +583,7 @@ Fields for every `namespace` op: [operations/namespace.md](operations/namespace.
 | [`namespace.audit`](operations/namespace.md#namespaceaudit) | Usage report for one namespace: is it being used as a memory, or as an object store? | viewer | read | yes |  |
 | [`namespace.browse`](operations/namespace.md#namespacebrowse) | Discover public namespaces in the org; anyone can join returned rows via namespace.join. | viewer | read | yes |  |
 | [`namespace.cancel_request`](operations/namespace.md#namespacecancel_request) | Withdraw the caller's own pending elevation request. | viewer | idempotent | no | yes |
-| [`namespace.delete`](operations/namespace.md#namespacedelete) | Tombstone a namespace and stop accepting writes against it. | admin | idempotent | no | yes |
+| [`namespace.delete`](operations/namespace.md#namespacedelete) | Tombstone a namespace and stop accepting writes against it; the document sources it retires are named in `sources_retired`, also when `deleted` is false. | admin | idempotent | no | yes |
 | [`namespace.get`](operations/namespace.md#namespaceget) | Fetch one namespace's metadata + settings (owner, visibility, feature flags, retention). | viewer | read | yes |  |
 | [`namespace.guide_get`](operations/namespace.md#namespaceguide_get) | The namespace's guide: Markdown its writers keep on what it holds, its key layout and what its tags mean. | viewer | read | no |  |
 | [`namespace.guide_history`](operations/namespace.md#namespaceguide_history) | The guide's revisions, newest first, with summary, note, writer and length. | viewer | read | no |  |
@@ -642,10 +672,10 @@ Fields for every `profile` op: [operations/profile.md](operations/profile.md).
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
 | [`profile.activity`](operations/profile.md#profileactivity) | Recent profile reads per agent — "which AI client read my profile, when?". | viewer | read | yes |  |
-| [`profile.append`](operations/profile.md#profileappend) | WHAT: Atomic append to an existing profile section. | writer | write | yes |  |
+| [`profile.append`](operations/profile.md#profileappend) | WHAT: Atomic append to an existing profile section. | writer | write | no |  |
 | [`profile.render`](operations/profile.md#profilerender) | Render every section in (org, namespace) into one prompt fragment. | viewer | read | yes |  |
 | [`profile.replace`](operations/profile.md#profilereplace) | WHAT: Substring rewrite within a profile section. | writer | idempotent | no |  |
-| [`profile.set`](operations/profile.md#profileset) | WHAT: Create or replace a profile section at `label`. | writer | idempotent | yes |  |
+| [`profile.set`](operations/profile.md#profileset) | WHAT: Create or replace a profile section at `label`. | writer | idempotent | no |  |
 | [`profile.structured`](operations/profile.md#profilestructured) | The user's structured profile and whether it is current. | viewer | read | no |  |
 
 ### profile_schema
@@ -708,7 +738,7 @@ Fields for every `task` op: [operations/task.md](operations/task.md).
 | [`task.heartbeat`](operations/task.md#taskheartbeat) | WHAT: Renew the lease on a task you claimed (fence from task.pull) and optionally leave a progress note. | writer | idempotent | no |  |
 | [`task.history`](operations/task.md#taskhistory) | Return a task's event history (posted, accepted, claimed, progress, finished, ...). | viewer | read | no |  |
 | [`task.list`](operations/task.md#tasklist) | Tasks in ``inbox`` (owner side) or, with ``posted_by_me``, the tasks the caller posted anywhere in the org. | viewer | read | no |  |
-| [`task.progress`](operations/task.md#taskprogress) | Record a progress note on a claimed task and extend its lease. | writer | write | no |  |
+| [`task.progress`](operations/task.md#taskprogress) | Record a progress note on a claimed task without extending its lease. | writer | write | no |  |
 | [`task.pull`](operations/task.md#taskpull) | ``namespace`` is the inbox's owner namespace; the caller must be a writer there. | writer | write | no |  |
 | [`task.reassign`](operations/task.md#taskreassign) | Owner side: cancel here, re-post into another inbox as a child task (the destination's trust policy applies to the original poster). | writer | write | no |  |
 | [`task.reopen`](operations/task.md#taskreopen) | A transition anyone entitled may make, with a reason; ``fence`` is required only when the caller is the current owner of an in_progress task. | writer | write | no |  |
@@ -724,7 +754,7 @@ Fields for every `tracker` op: [operations/tracker.md](operations/tracker.md).
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`tracker.answer`](operations/tracker.md#trackeranswer) | Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations /… | viewer | read | no |  |
+| [`tracker.answer`](operations/tracker.md#trackeranswer) | Answer a tracker question in prose — or from an artefact's anchors — by running the catalogue's templates: escalation / incident context, a customer across channels, incidents / escalations… | viewer | read | no |  |
 | [`tracker.binding`](operations/tracker.md#trackerbinding) | What this namespace may ask the tracker plane: a QA namespace answers itself; a code namespace answers the tracker namespace bound to it (`LOOM_TRACKER_CODE_NAMESPACE_BINDINGS_JSON`), passed through… | viewer | read | no |  |
 | [`tracker.component`](operations/tracker.md#trackercomponent) | One component's risk snapshot and its open issues, most severe first. | viewer | read | no |  |
 | [`tracker.contract`](operations/tracker.md#trackercontract) | The record contract as the register page shows it before anyone connects: every table loom reads, required or optional, each column's family, the type a view writes, whether a default is safe, what… | viewer | read | no |  |
@@ -733,7 +763,7 @@ Fields for every `tracker` op: [operations/tracker.md](operations/tracker.md).
 | [`tracker.item`](operations/tracker.md#trackeritem) | The tracker record of up to ten issue / PR numbers: component, severity, bisect verdict and branches still affected, test presence, CI result, reviewers, backport lineage, and the fixes / backports… | viewer | read | no |  |
 | [`tracker.links`](operations/tracker.md#trackerlinks) | Which PR probably fixed this issue — or which issue this PR probably fixed — when nobody wrote the link down. | viewer | read | no |  |
 | [`tracker.release`](operations/tracker.md#trackerrelease) | Release readiness for one version (`26.3`): the blocker rows with their status and the latest health snapshot. | viewer | read | no |  |
-| [`tracker.similar`](operations/tracker.md#trackersimilar) | The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become… | viewer | read | no |  |
+| [`tracker.similar`](operations/tracker.md#trackersimilar) | The reports that already say it: duplicate and related issues / PRs for a pasted report (`text`), an existing item (`issue_number` — its own title, body, component, versions and error code become the… | viewer | read | no |  |
 | [`tracker.source.add`](operations/tracker.md#trackersourceadd) | Register a tracker source: a ClickHouse endpoint and database holding the record contract (docs/features/tracker/record-contract.md), a read-only credential, and the tracker namespaces that read it. | viewer | write | no | yes |
 | [`tracker.source.check`](operations/tracker.md#trackersourcecheck) | Run the record-contract check on a configured tracker source now: the same read the boot gate runs, its verdict cached. | viewer | read | no |  |
 | [`tracker.source.inspect`](operations/tracker.md#trackersourceinspect) | Connect with a read-only credential and say what the database holds — every table the user can read, its columns and types — plus a first mapping of it onto loom's logical model. | viewer | read | no |  |
@@ -768,12 +798,12 @@ Fields for every `working_memory` op: [operations/working_memory.md](operations/
 
 | Operation | Summary | Role | Kind | Listed under `all` | Audit |
 | --- | --- | --- | --- | --- | --- |
-| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | Append to a working-memory block. | writer | write | yes |  |
-| [`working_memory.delete`](operations/working_memory.md#working_memorydelete) | Delete one working-memory block. | writer | idempotent | yes |  |
+| [`working_memory.append`](operations/working_memory.md#working_memoryappend) | Append text to a working-memory block, creating it when missing. | writer | write | yes |  |
+| [`working_memory.delete`](operations/working_memory.md#working_memorydelete) | Delete one working-memory block. | writer | idempotent | no |  |
 | [`working_memory.get`](operations/working_memory.md#working_memoryget) | Fetch one working-memory block by key. | viewer | read | no |  |
 | [`working_memory.render`](operations/working_memory.md#working_memoryrender) | Render working-memory blocks as XML or markdown. context.pack already includes this section; direct render is mainly for SDK or custom orchestration code. | viewer | read | yes |  |
-| [`working_memory.replace`](operations/working_memory.md#working_memoryreplace) | Replace exact text inside a working-memory block. | writer | idempotent | yes |  |
-| [`working_memory.set`](operations/working_memory.md#working_memoryset) | Replace one small working-memory block. | writer | idempotent | yes |  |
+| [`working_memory.replace`](operations/working_memory.md#working_memoryreplace) | Replace exact text inside a working-memory block. | writer | idempotent | no |  |
+| [`working_memory.set`](operations/working_memory.md#working_memoryset) | Overwrite one working-memory block. | writer | idempotent | yes |  |
 
 <!-- prettier-ignore-end -->
 <!-- END GENERATED: operations -->

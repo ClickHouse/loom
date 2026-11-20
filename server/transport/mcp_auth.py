@@ -15,6 +15,7 @@ from server.code.domain.scope import set_code_scope
 from server.core.errors import (
     IdentityIncompleteError,
     LoomServerError,
+    WrongCellError,
     classified,
     unverified_class,
 )
@@ -53,6 +54,12 @@ async def _may_read(auth: AuthInfo, org: str, ns: str) -> tuple[bool, bool]:
     return True, False
 
 
+# Where a person asks for a memory namespace's grant in the dashboard, in the namespace
+# refusals only (access_refusal words a code or tracker index's refusal).
+DASHBOARD_REQUEST = (
+    "(namespace picker → Find public namespaces to join; for a private namespace, "
+    "search its exact name on the Namespaces in your org page)"
+)
 # The next step for a namespace the token may not read. A namespace that does not exist
 # is refused alike, so the step is the same for both and confirms neither.
 NAMESPACE_NEXT = (
@@ -87,13 +94,15 @@ def _not_accessible_result(
     # Someone else's personal collection takes no grant: no advice could work. Any other
     # collection is shared by grants, never joined; the words are the same whether or not
     # it exists.
-    not_listed = f"namespace {ns!r} is not in your accessible list."
+    collection = sharing.is_collection(ns)
+    noun = "collection" if collection else "namespace"
+    not_listed = f"{noun} {ns!r} is not in your accessible list."
     if sharing.is_personal(ns):
         return _refusal_body(not_listed, ns)
-    if unverified and sharing.is_collection(ns):
+    if unverified and collection:
         return _refusal_body(not_listed, ns, **unverified_class("NAMESPACE_NOT_ACCESSIBLE", True))
     creator = ""
-    if sharing.is_collection(ns):
+    if collection:
         # A delegated token's creator needs the role too, as the gate says.
         if getattr(auth, "creator", None):
             creator = " This token's creator must be active and hold a grant on it too."
@@ -102,22 +111,20 @@ def _not_accessible_result(
         needs = sharing.claim_cap(auth, auth.org, ns, Role.VIEWER)
         if needs:
             return _refusal_body(
-                f"namespace {ns!r} is not in your accessible list: {needs}, and"
+                f"collection {ns!r} is not in your accessible list: {needs}, and"
                 f" {getattr(auth, 'subject', '')!r} must hold a grant of at least viewer on it or"
                 f" a collection above it (directly, through a group or to everyone).{creator}",
                 ns,
             )
-    msg = (
-        f"namespace {ns!r} is not in your accessible list and you don't have an active grant on it."
-    )
+    msg = f"{noun} {ns!r} is not in your accessible list and you don't have an active grant on it."
     if assistant:
         msg += (
             f" Ask the collection's admin for a grant on it or a collection above it.{creator}"
-            if sharing.is_collection(ns)
+            if collection
             else " Omit the namespace argument to use your default namespace, or request a "
-            "grant from the dashboard's Spaces page."
+            f"grant from the dashboard {DASHBOARD_REQUEST}."
         )
-    elif sharing.is_collection(ns):
+    elif collection:
         # Never "omit the namespace": a write meant for the collection would land in the
         # default namespace instead.
         msg += (
@@ -132,8 +139,8 @@ def _not_accessible_result(
         )
         msg += (
             f" Next: {NAMESPACE_NEXT}. Omit the namespace argument to use your default "
-            f"namespace (loom_search reads {reads}), or request a grant from the dashboard's "
-            f"Spaces page.{creator}"
+            f"namespace (loom_search reads {reads}), or request a grant from the dashboard "
+            f"{DASHBOARD_REQUEST}.{creator}"
         )
         return _refusal_body(msg, ns, next=NAMESPACE_NEXT)
     return _refusal_body(msg, ns)
@@ -154,7 +161,7 @@ def _ledger_refusal(
     consumer: str = "",
 ) -> None:
     from server.transport.mcp_ledger import emit_token_refusal
-    from server.transport.mcp_tools import TOOLS_BY_NAME
+    from server.transport.mcp_op import TOOLS_BY_NAME
 
     op = TOOLS_BY_NAME.get(str(tool_name or ""))
     if op is not None:
@@ -201,7 +208,7 @@ async def _plane_namespace(
     return nr.unknown_result(ns, nr.suggest(ns, nr.suggestable(org, auth.can_access))), False
 
 
-def _verify_bearer(request: Request) -> AuthInfo | None:
+async def _verify_bearer(request: Request) -> AuthInfo | None:
     """Verify the JWT on an MCP request.
 
     The bearer comes from the ``Authorization: Bearer <jwt>`` header only. A
@@ -219,12 +226,12 @@ def _verify_bearer(request: Request) -> AuthInfo | None:
     set_code_scope(request.headers.get("x-loom-code-scope"))
     from server.auth.bearer import bearer_token
     from server.auth.gateway import is_end_user
-    from server.auth.jwt import verify_token
+    from server.auth.jwt import authenticate_token
 
     token = bearer_token(request.headers.get("authorization"))
     if token is None:
         return None
-    auth = verify_token(token)
+    auth = await authenticate_token(token)
     if is_end_user(auth):
         # An end user's service calls the HTTP API, which maps `@me` and its downloads.
         raise PermissionError("an end-user token calls the HTTP API (/v1/<op>), not MCP")
@@ -428,6 +435,13 @@ async def _screen_tool_call(
 
     try:
         return await _screen_namespace(req, tool_name, args, auth, target_org, req_ns, consumer)
+    except WrongCellError as e:
+        # Another cell's org, as a tool result: escaping, it would answer a bare HTTP
+        # 409 with no JSON-RPC frame and lose the batch's other answers.
+        from server.transport.mcp_refusals import refusal_result
+
+        _ledger_refusal(tool_name, auth, error_code=e.code, org=target_org, consumer=consumer)
+        return _ok(req.get("id"), refusal_result(e))
     except LoomServerError as e:
         # A read the check could not make past its cache (a 503): counted
         # against the server, then raised.

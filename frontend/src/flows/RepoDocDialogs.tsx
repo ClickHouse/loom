@@ -18,8 +18,11 @@ import { Tabs } from "@clickhouse/click-ui/Tabs";
 import { TextAreaField } from "@clickhouse/click-ui/TextAreaField";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { addKnowledge, downloadKnowledge, getKnowledge, textDownloadName, type KnowledgeEntry } from "../api";
-import { humanizeError, relativeTime } from "../lib/format";
+import { relativeTime } from "../lib/format";
+import { humanizeError, toastCommitted } from "../lib/errorWords";
 import { toast, toastError } from "../components/Toast";
+import { isPublicationPending } from "../lib/errors";
+import { DropZone } from "../components/ui/DropZone";
 import { TabTrigger } from "../components/ui/TabTrigger";
 import { Loading } from "../components/ui/Loading";
 import { slugify } from "../lib/docFiles";
@@ -56,8 +59,9 @@ export function RepoDocAddDialog({
   namespace: string;
   repo: string;
   takenUris: string[];
-  /** `lost`: what a file published as partial lost ([] for nothing named); null when whole. */
-  onAdded: (title: string, lost: string[] | null) => void;
+  /** `lost`: what a file published as partial lost ([] for nothing named); null when whole.
+   *  `said`: the line for it was already toasted (a write that committed with lists behind). */
+  onAdded: (title: string, lost: string[] | null, said?: boolean) => void;
 }) {
   const [mode, setMode] = useState<"file" | "paste">("file");
   const [file, setFile] = useState<File | null>(null);
@@ -70,7 +74,6 @@ export function RepoDocAddDialog({
   const [busy, setBusy] = useState<IngestPhase | "saving" | null>(null);
   const [step, setStep] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [over, setOver] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const formats = useKnowledgeFormats({ org, namespace }, open);
   const verdict = file ? fileVerdict(file, formats) : null;
@@ -91,9 +94,7 @@ export function RepoDocAddDialog({
   };
 
   const onDrop = (e: DragEvent) => {
-    e.preventDefault();
-    setOver(false);
-    if (busy === null) take(e.dataTransfer.files?.[0]); // not while a file is on its way
+    take(e.dataTransfer.files?.[0]);
   };
 
   const saveFile = async (f: File): Promise<string[] | null> => {
@@ -146,6 +147,13 @@ export function RepoDocAddDialog({
         onOpenChange(false);
         return;
       }
+      if (isPublicationPending(e)) {
+        // Added, with only lists and search behind: closed as after a success, not sent again.
+        toastCommitted(e, `Added ${title.trim()}; the list may not show it for a moment`);
+        onAdded(title.trim(), null, true);
+        onOpenChange(false);
+        return;
+      }
       setError(humanizeError(e)); // a job's reason passes through; a dropped connection is worded
     } finally {
       setBusy(null);
@@ -192,21 +200,15 @@ export function RepoDocAddDialog({
         </Tabs.TriggersList>
         <Tabs.Content value="file" className="pt-4">
           {/* Not Click UI's FileUpload: its file input has no name, and it cannot show what was read. */}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: a drop target for dragged files; the "Choose a file" button inside is the keyboard path */}
-          {/* biome-ignore lint/a11y/noNoninteractiveElementInteractions: as above */}
-          <div
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (busy === null) setOver(true); // no target while a file is on its way
-            }}
-            onDragLeave={() => setOver(false)}
-            onDrop={onDrop}
-            className={`rounded border border-dashed p-5 text-center text-sm ${over ? "border-accent bg-accent-soft" : "border-border-strong"}`}
-          >
+          <DropZone busy={busy !== null} onDrop={onDrop} className="p-5 text-center text-sm">
             {file && verdict ? (
               <PickedFile file={file} verdict={verdict} />
             ) : (
-              <p className="text-text-muted">Drop a file here{readable ? ` (${readable})` : ""}</p>
+              <p className="text-text-muted">
+                {/* The formats stay on a touch screen; the drop words go. */}
+                <span className="drop-hint">Drop a file here </span>
+                {readable ? `(reads ${readable})` : ""}
+              </p>
             )}
             <div className="mt-3 flex justify-center">
               <Button
@@ -227,7 +229,7 @@ export function RepoDocAddDialog({
               onChange={(e) => take(e.target.files?.[0])}
               tabIndex={-1}
             />
-          </div>
+          </DropZone>
           <div className="mt-3 space-y-2">
             {verdict?.refusal && <ErrorNote>{verdict.refusal}</ErrorNote>}
             <AllowPartial checked={allowPartial} onChange={setAllowPartial} disabled={busy !== null} />
@@ -304,7 +306,7 @@ export function RepoDocViewer({
           );
       })
       .catch((e) => {
-        if (live) setState({ kind: "error", message: humanizeError(e) });
+        if (live) setState({ kind: "error", message: humanizeError(e, { read: true }) });
       });
     return () => {
       live = false;
@@ -319,7 +321,7 @@ export function RepoDocViewer({
         doc.original_filename || textDownloadName(doc.source_uri),
       );
     } catch (e) {
-      toastError("Download failed", e);
+      toastError("Download failed", e, { read: true });
     } finally {
       setDownloading(false);
     }

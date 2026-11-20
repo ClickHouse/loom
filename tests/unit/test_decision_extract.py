@@ -370,7 +370,7 @@ class _World:
         mp.setattr(repo_registry, "refresh_db_repos", no_refresh)
         mp.setattr(repo_registry, "registry_read", lambda: True)
         mp.setattr(llm_client, "get_llm_client", lambda: _LLM())
-        mp.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+        mp.setattr(document_reads, "ordinary_get", knowledge_get)
         mp.setattr(document_reads, "document_chunks", chunks)
         mp.setattr(de, "live_writer_record", writer)
         mp.setattr(de, "get_by_key", get_by_key)
@@ -2839,7 +2839,7 @@ async def test_a_captioned_diagram_is_not_sent_and_is_reported_image_only(monkey
             CorpusChunk(uri, 1, caption, ("Spilling", "Architecture")),
         ]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -2894,7 +2894,7 @@ async def test_a_long_sections_last_chunk_with_an_image_and_a_short_tail_is_sent
             CorpusChunk(uri, 1, tail, ("Spilling", "Final DISTINCT")),
         ]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -2933,7 +2933,7 @@ async def test_a_parent_sections_captioned_picture_is_not_sent(monkeypatch) -> N
             CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
         ]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -2993,7 +2993,7 @@ async def test_a_badge_and_caption_preamble_is_not_sent_and_is_reported(
             CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
         ]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -3021,7 +3021,7 @@ async def test_chunks_stored_with_no_section_path_are_judged_on_their_own_text(
         # Chunked when no heading was seen: every chunk has the preamble's empty path.
         return [CorpusChunk(uri, 0, badge, ()), CorpusChunk(uri, 1, BODY, ())]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -3152,7 +3152,7 @@ async def test_a_linked_badge_and_caption_preamble_is_not_sent(monkeypatch) -> N
             CorpusChunk(uri, 1, BODY, ("Spilling", "Final DISTINCT")),
         ]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     prompt, retry = world.prompts  # an empty reply is read once more, with the same prompt
@@ -3176,7 +3176,7 @@ async def test_a_headingless_document_of_a_captioned_picture_is_not_sent(
     async def chunks(org, ns, uri):
         return [CorpusChunk(uri, 0, picture, ())]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert world.prompts == [] and report.windows == 0
@@ -3250,7 +3250,7 @@ async def test_a_captioned_picture_in_a_preamble_with_text_is_sent(monkeypatch) 
     async def chunks(org, ns, uri):
         return [CorpusChunk(uri, 0, picture, ()), CorpusChunk(uri, 1, BODY, ())]
 
-    monkeypatch.setattr(document_reads, "handle_knowledge_get", knowledge_get)
+    monkeypatch.setattr(document_reads, "ordinary_get", knowledge_get)
     monkeypatch.setattr(document_reads, "document_chunks", chunks)
     report = await _run()
     assert dx.image_only(picture) and "" not in report.image_only

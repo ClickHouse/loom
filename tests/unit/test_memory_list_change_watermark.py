@@ -124,7 +124,7 @@ async def test_a_nanosecond_version_round_trips_as_a_string(
 
 def test_the_poll_field_is_hidden_from_the_mcp_listing() -> None:
     """The watermark is the dashboard's; an agent never sends it, and every
-    listed property is paid for on every turn (the core listing budget)."""
+    listed property is paid for on every turn, on every listing that carries memory.list."""
     from server.transport.mcp_schemas import _strip_blob_fields_from_knowledge
 
     schema = {

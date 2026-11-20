@@ -170,6 +170,74 @@ async def test_a_delete_is_a_deleted_head_and_the_get_finds_nothing(
     assert not again["deleted"]
 
 
+async def test_the_head_lists_answer_each_live_head_s_permission_list(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.domain import access_list
+    from server.knowledge.store import documents, pg_documents
+
+    await call("knowledge.add", {"source_uri": "docs/kept.md", "content": "Kept."})
+    await call("knowledge.add", {"source_uri": "docs/listed.md", "content": "Listed."})
+    await call("knowledge.add", {"source_uri": "docs/gone.md", "content": "Soon gone."})
+    await call("knowledge.delete", {"source_uri": "docs/gone.md"})
+    # A row whose list a mirrored source's turn wrote, as that turn writes it.
+    listed = access_list.to_json(access_list.AccessList(emails=("ann@example.com",)))
+    doc = await documents.get_one(org, ns, "docs/listed.md")
+    assert doc is not None
+    row = documents.build_document_row(
+        doc, version=documents.version_past(doc.version), access_json=listed
+    )
+    await documents.insert_one(row, over=doc.version)
+    uris = ["docs/kept.md", "docs/listed.md", "docs/gone.md", "docs/none.md"]
+    lists = await pg_documents.head_lists(org, ns, uris)
+    assert lists == {"docs/kept.md": "", "docs/listed.md": listed}
+    # The rewrite carried the row's chunks: the document is still found by its text.
+    head = await _head(pg_conn, org, ns, "docs/listed.md")
+    assert head["revision"] == doc.revision
+    hits = await call("knowledge.search", {"query": "Listed", "top_k": 5})
+    assert any(h["source_uri"] == "docs/listed.md" for h in hits["results"])
+
+
+async def test_an_owed_delivery_counts_only_for_the_source_whose_addresses_it_ends(
+    pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.store import pg_documents
+
+    # Leased a day ahead, so no delivery worker claims these rows; removed at the end.
+    for uri in ("https://docs.example.com/d/1#sid-a", "https://docs.example.com/d/2#sid-b"):
+        await pg_conn.execute(
+            "INSERT INTO loom.knowledge_deliveries "
+            "(org, namespace, source_uri, version, user_id, row, targets, lease_until) "
+            "VALUES ($1, $2, $3, 1, '-', '{}'::jsonb, 1, now() + interval '1 day')",
+            org,
+            ns,
+            uri,
+        )
+    try:
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == "owed"
+        assert await pg_documents.owed_ending(org, ns, "#sid-c") == ""
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET settled = true "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-a'",
+            org,
+            ns,
+        )
+        assert await pg_documents.owed_ending(org, ns, "#sid-a") == ""
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "owed"  # the other's
+        await pg_conn.execute(
+            "UPDATE loom.knowledge_deliveries SET lease_until = 'infinity', "
+            "fenced_until = now(), attempts = 10 "
+            "WHERE org = $1 AND namespace = $2 AND source_uri LIKE '%#sid-b'",
+            org,
+            ns,
+        )
+        assert await pg_documents.owed_ending(org, ns, "#sid-b") == "parked"
+    finally:
+        await pg_conn.execute(
+            "DELETE FROM loom.knowledge_deliveries WHERE org = $1 AND namespace = $2", org, ns
+        )
+
+
 async def test_a_commit_over_a_version_its_writer_did_not_read_is_refused(
     call: Any, pg_conn: Any, org: str, ns: str
 ) -> None:
@@ -991,3 +1059,218 @@ async def test_inspect_says_what_clickhouse_does_not_hold_and_lists_only_served_
     assert any(s.startswith("listed.heads: 1 document(s) rewritten") for s in after["skipped"])
     got = await call("knowledge.get", {"source_uri": moved})
     assert got["content"] == "# Moved\nNew."
+
+
+async def test_inspect_counts_a_job_whose_latest_version_clickhouse_does_not_hold(
+    call: Any, pg_conn: Any, org: str, ns: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job saved in Postgres whose projection did not land is counted in `skipped`:
+    knowledge.inspect's ingestion sections read ClickHouse's older copy."""
+    from datetime import UTC, datetime, timedelta
+
+    from server.knowledge.store import ingestions, pg_jobs
+
+    later = datetime.now(UTC).replace(tzinfo=None) + timedelta(hours=6)  # no worker takes it
+    row = ingestions.ingestion_row(
+        org=org,
+        namespace=ns,
+        ingestion_id=str(uuid.uuid4()),
+        source_uri="repo://behind.sql",
+        upload_id=str(uuid.uuid4()),
+        sha256="a" * 64,
+        state="pending",
+        next_attempt_at=later,
+    )
+    await pg_jobs.insert(row)
+    before = await call("knowledge.inspect", {"sample_limit": 10})
+    assert not [s for s in before["skipped"] if s.startswith("ingestions.projection")]
+
+    async def lost(*_: object, **__: object) -> None:
+        raise TimeoutError("the projection did not land")
+
+    taken = await pg_jobs.take(org, ns, row["ingestion_id"])
+    assert taken is not None
+    with monkeypatch.context() as m:
+        m.setattr(ingestions, "insert_ingestion", lost)
+        saved = ingestions.ingestion_row(row, state="failed", stage="parse")
+        assert await pg_jobs.save(saved, taken[0]) == "saved"
+
+    after = await call("knowledge.inspect", {"sample_limit": 10})
+    assert (
+        "ingestions.projection: 1 ingestion job(s) whose latest state ClickHouse does not "
+        "hold yet; the ingestion sections and the listed jobs may miss them or show an "
+        "older state"
+    ) in after["skipped"]
+    assert after["ingestions"]["pending"] == 1  # ClickHouse's older copy
+
+
+async def _live_versions(org: str, ns: str, uri: str) -> set[int]:
+    """The chunk versions of the source ClickHouse reads as live."""
+    from server.core.ch import get_client
+    from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
+
+    rows = await get_client().query_all(
+        "SELECT DISTINCT doc_version FROM loom.chunks WHERE org = {org:String} "
+        "AND namespace = {ns:String} AND source_uri = {uri:String} AND "
+        + LIVE_CHUNK_SQL
+        + " SETTINGS select_sequential_consistency = 1",
+        params={"org": org, "ns": ns, "uri": uri},
+    )
+    return {int(r["doc_version"]) for r in rows}
+
+
+async def _search(call: Any, query: str) -> dict[str, Any]:
+    return await call("knowledge.search", {"query": query, "top_k": 10})
+
+
+async def test_a_search_serves_the_heads_version_while_the_older_ones_retirement_is_owed(
+    call: Any, pg_conn: Any, org: str, ns: str, ch_client: Any
+) -> None:
+    """ClickHouse reads both versions' chunks as live until the older one's retirement
+    lands: search, the outline and a synthesis read show the head's alone."""
+    from server.knowledge.app.document_reads import document_chunks
+    from server.knowledge.store import documents as documents_repo
+
+    uri = "docs/zebra.md"
+    await call("knowledge.upsert", {"source_uri": uri, "content": "# Zebra\nzebra original"})
+    first = await documents_repo.get_one(org, ns, uri)
+    await call("knowledge.upsert", {"source_uri": uri, "content": "# Zebra\nzebra replacement"})
+    head = await _head(pg_conn, org, ns, uri)
+    assert head is not None and first is not None
+    ch_client.command(  # the older version's retirement, not landed yet
+        "DELETE FROM loom.chunk_supersessions WHERE org = {org:String} AND "
+        "namespace = {ns:String} AND source_uri = {uri:String} AND doc_version = {v:UInt64} "
+        "SETTINGS lightweight_deletes_sync = 2",
+        parameters={"org": org, "ns": ns, "uri": uri, "v": first.version},
+    )
+    assert await _live_versions(org, ns, uri) == {first.version, head["version"]}
+
+    out = await _search(call, "zebra")
+    assert [r["content"] for r in out["results"]] == ["zebra replacement"]
+    assert out["stale_dropped"] >= 1
+    outline = await call("knowledge.outline", {"source_uri": uri})
+    assert outline["chunk_count"] == 1
+    [served] = await document_chunks(org, ns, uri)
+    assert "replacement" in served.text and "original" not in served.text
+
+
+@pytest.mark.parametrize("racer", [False, True])
+async def test_chunks_of_a_write_that_did_not_commit_are_not_served(
+    call: Any, pg_conn: Any, org: str, ns: str, racer: bool
+) -> None:
+    """A write's chunks land before its commit; one still to commit (its next revision)
+    or one refused for a racer that took the revision first (the head's revision, its own
+    version) serves nothing until it commits, even when its cleanup failed."""
+    from datetime import UTC, datetime
+
+    from server.embedding import get_embedder
+    from server.knowledge.app import writes
+    from server.knowledge.store import chunks as knowledge_repo
+
+    uri = "docs/quokka.md"
+    await call("knowledge.upsert", {"source_uri": uri, "content": "The committed text."})
+    head = await _head(pg_conn, org, ns, uri)
+    assert head is not None
+    embedder = get_embedder()
+    chunks = writes._chunk_text("quokka pending text")
+    contexts = writes._contexts(chunks, "", "")
+    vectors = await writes._embed_inline_batch(embedder, writes._embedding_texts(chunks, contexts))
+    version = head["version"] + 1000
+    await knowledge_repo.insert_chunks(
+        knowledge_repo.build_chunk_rows(
+            org=org,
+            namespace=ns,
+            source_uri=uri,
+            title="",
+            chunks=chunks,
+            contexts=contexts,
+            embeddings=vectors,
+            tags=[],
+            metadata="{}",
+            doc_version=version,
+            revision=head["revision"] if racer else head["revision"] + 1,
+            doc_format="",
+            embedding_model=embedder.model_name,
+            embedding_dim=embedder.dim,
+            now=datetime.now(UTC).replace(tzinfo=None),
+            author={"agent": "-", "user_id": "-", "session_id": "-", "source_class": ""},
+        )
+    )
+    assert version in await _live_versions(org, ns, uri)
+    out = await _search(call, "quokka")
+    assert all("quokka" not in r["content"] for r in out["results"])
+    assert out["stale_dropped"] >= 1
+
+
+async def test_a_deleted_documents_chunks_are_not_served_while_its_tombstone_is_owed(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    from server.knowledge.store import documents as documents_repo
+    from server.knowledge.store import pg_documents
+
+    uri = "docs/kiwi.md"
+    await call("knowledge.add", {"source_uri": uri, "content": "kiwi orchard notes"})
+    live = await documents_repo.get_one(org, ns, uri)
+    assert live is not None
+    tomb = documents_repo.build_document_row(
+        live, version=documents_repo.version_past(live.version), superseded_at=live.ingested_at
+    )
+    await pg_documents.commit(  # committed, not published: ClickHouse still serves the row
+        [tomb],
+        over={uri: live.version},
+        targets={uri: pg_documents.DOCUMENT_ROW | pg_documents.RETIRE_OLDER},
+    )
+    assert await _live_versions(org, ns, uri) == {live.version}
+    out = await _search(call, "kiwi orchard")
+    assert all(r["source_uri"] != uri for r in out["results"])
+    assert out["stale_dropped"] >= 1
+    assert not (await call("knowledge.get", {"source_uri": uri}))["found"]
+
+
+async def test_a_metadata_edit_a_delete_and_a_restore_keep_the_chunks_the_head_serves(
+    call: Any, pg_conn: Any, org: str, ns: str
+) -> None:
+    """None of them inserts chunks: the head keeps serving the ones its last chunked write
+    recorded, at a version older than its own row's."""
+    uri = "docs/lynx.md"
+    await call("knowledge.upsert", {"source_uri": uri, "content": "lynx habitat survey"})
+    written = await _head(pg_conn, org, ns, uri)
+    await call("knowledge.update_metadata", {"source_uri": uri, "title": "Lynx"})
+    await call("knowledge.delete", {"source_uri": uri})
+    await call("knowledge.restore", {"source_uri": uri})
+    head = await pg_conn.fetchrow(
+        "SELECT version, revision, chunks_revision, chunks_version FROM loom.knowledge_heads "
+        "WHERE org = $1 AND namespace = $2 AND source_uri = $3",
+        org,
+        ns,
+        uri,
+    )
+    assert head["version"] > written["version"]
+    assert (head["chunks_revision"], head["chunks_version"]) == (
+        written["revision"],
+        written["version"],
+    )
+    out = await _search(call, "lynx habitat")
+    assert [r["source_uri"] for r in out["results"]][:1] == [uri]
+
+
+@pytest.mark.parametrize("op", ["knowledge.add", "knowledge.bulk_add"])
+async def test_an_add_again_retires_the_earlier_text(
+    call: Any, pg_conn: Any, org: str, ns: str, op: str
+) -> None:
+    """Search serves the head's version alone, so an add or a bulk add over an existing
+    document retires the older chunks, as an upsert does, rather than leave chunks nothing
+    serves."""
+    uri = "docs/heron.md"
+
+    async def write(content: str) -> None:
+        entry = {"source_uri": uri, "content": content}
+        await call(op, {"entries": [entry]} if op == "knowledge.bulk_add" else entry)
+
+    await write("heron first sighting")
+    await write("heron second sighting")
+    head = await _head(pg_conn, org, ns, uri)
+    assert head is not None and await _live_versions(org, ns, uri) == {head["version"]}
+    out = await _search(call, "heron sighting")
+    assert [r["content"] for r in out["results"]] == ["heron second sighting"]
+    assert out["stale_dropped"] == 0

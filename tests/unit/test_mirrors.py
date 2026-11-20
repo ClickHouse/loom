@@ -19,6 +19,7 @@ class _Cfg:
         self.org, self.namespace, self.label = "o", ns, f"o/{ns}"
         self.git_dir, self.git_remote = git_dir, "https://github.com/o/r.git"
         self.git_branch, self.github_token, self.classification = "main", "", "standard"
+        self.git_proxy_identity = ""
         self.source, self.git_fetch_pr_heads = source, True
         self.scip_extra_producers: tuple[str, ...] = ()
         self.scip_checkout_dir = ""
@@ -60,6 +61,33 @@ async def test_a_read_on_a_host_still_cloning_names_the_entry(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_without_the_sandbox_a_read_clones_a_self_registered_mirror_only_with_the_git_waiver(
+    monkeypatch, tmp_path
+) -> None:
+    """A history read on a host without the repository-job sandbox starts no clone of
+    an entry added through the API, and says why; with
+    LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED it clones the mirror as for any entry."""
+    from server.code.app.index import compiler_tier, sandbox
+
+    started = asyncio.Event()
+
+    async def _slow(cfg: Any) -> str:
+        started.set()
+        await asyncio.sleep(1)
+        return ""
+
+    monkeypatch.setattr(bootstrap, "clone_and_pin", _slow)
+    monkeypatch.setattr(sandbox, "_available", False)
+    cfg = _Cfg(str(tmp_path / "r.git"), source="registry")
+    refused = f"no_git_mirror: o/code-r {compiler_tier.UNSANDBOXED_NETWORK_SKIP}"
+    assert await mirrors.history_dir(cfg) == ("", refused)
+    assert bootstrap._MIRROR_JOBS == {}
+    monkeypatch.setattr(settings, "code_self_service_git_unsandboxed", True)
+    assert await mirrors.history_dir(cfg) == ("", "no_git_mirror: cloning o/code-r")
+    await asyncio.wait_for(started.wait(), 1)  # the read started the clone
+
+
+@pytest.mark.asyncio
 async def test_no_history_mode_reads_no_mirror(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(settings, "git_history", "none")
     assert await mirrors.history_dir(_Cfg(str(tmp_path))) == ("", mirrors.NO_GIT_HISTORY)
@@ -73,7 +101,9 @@ async def test_a_merge_the_remote_no_longer_serves_is_recorded_and_the_rest_fetc
     gone, kept = "a" * 40, "b" * 40
     sent: list[list[str]] = []
 
-    async def _fetch_shas(git_dir: str, remote: str, shas: list[str], *, token: str = "") -> int:
+    async def _fetch_shas(
+        git_dir: str, remote: str, shas: list[str], *, token: str = "", proxy_identity: str = ""
+    ) -> int:
         sent.append(list(shas))
         if gone in shas:
             raise gitrepo.GitError(f"fatal: remote error: upload-pack: not our ref {gone}")

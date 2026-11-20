@@ -59,7 +59,10 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
   not the deployment; otherwise `ok`. A readiness check should also require
   `schema.pending` to be empty (the zero-downtime pair's swap does exactly this).
 - **`problems`** is a list of `{code, severity, message, fix, source}`, worst first. The
-  same list is printed by `loom doctor` and shown as the dashboard banner.
+  same list is printed by `loom doctor` and shown as the dashboard banner. `loom doctor`
+  names each entry it lists in `code_tier_failing`, up to five (`code.repos` names the
+  rest); a platform admin's token names each listed entry that is not restricted
+  ([when a tier fails](./code-index-operations.md#when-a-tier-fails)).
 
 | Problem code                              | Severity                                                                                            | Meaning                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ----------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -77,7 +80,7 @@ curl -s 'http://localhost:7777/v1/health?include=workers' | jq '.workers_leader'
 | `revocation_too_stale`                    | error                                                                                               | the snapshot is older than `LOOM_JWT_REVOCATION_MAX_STALE_SECONDS` (600 s): every bearer gets 503 until a refresh lands                                                                                                                                                                                                                                                                                 |
 | `pending_migrations`                      | error                                                                                               | the schema lacks migrations this build expects                                                                                                                                                                                                                                                                                                                                                          |
 | `instance_label_missing`                  | warn                                                                                                | a process outside the compose files has no `LOOM_INSTANCE_LABEL`                                                                                                                                                                                                                                                                                                                                        |
-| `workers_lease_absent`                    | info                                                                                                | this process runs no workers (expected on every replica but the leader)                                                                                                                                                                                                                                                                                                                                 |
+| `workers_lease_absent`                    | warn, or info                                                                                       | warn: no process holds a live workers lease (a process with `LOOM_BACKGROUND_WORKERS=on` takes none, so this shows beside one; during a handover or a cold start it can show for one beat); info: this process runs no workers and has no recent lease read                                                                                                                                             |
 | `workers_lease_unreachable`               | warn                                                                                                | this process could not ask ClickHouse for the workers lease; if every process says so, nothing runs the workers                                                                                                                                                                                                                                                                                         |
 | `workers_lease_given_up`                  | warn                                                                                                | this process released the workers lease and stopped contending (it is draining, or its workers child kept failing to start); another process takes them                                                                                                                                                                                                                                                 |
 | `otel_erasure_index`                      | warn                                                                                                | ClickStack metrics tables lack the index erasure needs ([maintenance](./maintenance.md#clickstack-erasure-index))                                                                                                                                                                                                                                                                                       |
@@ -98,6 +101,10 @@ status.
 `clickhouse_reachable`, `otel_erasure_index`, `llm_provider`), then prints the
 `problems` list as `problem:<code>` lines. Every check is reported before it exits; the
 exit code is 1 when any line is `FAIL`. `--json` prints `{ok, checks, problems}`. With
+`LOOM_CELL` set and ClickHouse reachable it also runs the [cell](../architecture/cells.md) checks
+(`cell_state`, `cell_marker`, `cell_marker_everywhere`, `cell_triggers`), graded `WARN`
+at most, and `cell_deployment`, `FAIL` when the deployment check refuses (no
+`LOOM_PG_DSN`, another recorded authority or deployment, or ClickHouse access denied). With
 code intelligence on and ClickHouse reachable it also reads the failing code-index
 tiers, and grades with the deployment's runtime overrides; `problem:code_tier_failing`
 is at most `WARN`, as it never degrades `status`.
@@ -205,6 +212,40 @@ value inside the healthy range rather than no rows.
 
 Signals that say what to scale (web replicas, provider quota, workers container, or
 ClickHouse) are in [failure and recovery](../architecture/failure-and-recovery.md).
+
+### Pipeline SLOs
+
+Under the Postgres authority a write answers at its commit and becomes searchable once its
+memory row and search document are in ClickHouse
+([storage authority](../architecture/storage-authority.md#publication)). A search that
+finds earlier writes not yet there waits for them, up to `LOOM_PG_PROJECTION_WAIT_MS`
+(default 2000 ms), and answers 503 `PROJECTION_BEHIND` past it.
+
+| Objective                                   | Target                                                                                                            | Signal                                                                        |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| A read waits for earlier writes             | p99 below half `LOOM_PG_PROJECTION_WAIT_MS`, and none ending in `deadline` outside an outage (the op answers 503) | `loom.pg.search_wait_ms` by `outcome`                                         |
+| A write is in ClickHouse                    | p99 below half `LOOM_PG_PROJECTION_WAIT_MS`, so a read's wait has the other half                                  | `loom.pg.projection_lag_ms{path="flush"}`                                     |
+| Nothing waits past a stopped writer's lease | oldest pending below twice `LOOM_PG_REQUEST_LEASE_SECONDS` plus `LOOM_PG_DELIVERY_IDLE_INTERVAL_SECONDS`          | `loom.pg.oldest_pending_age_s{source="memory"}`                               |
+| No lag errors outside an outage             | 0                                                                                                                 | `loom.requests{loom.error_code="PROJECTION_BEHIND" or "PUBLICATION_PENDING"}` |
+| Nothing ClickHouse keeps refusing           | 0 outside a restore reconcile's hold                                                                              | `loom.pg.backlog{state="parked"}`                                             |
+
+A search's worst wait under a writer that stopped before publishing is its lease
+(`LOOM_PG_REQUEST_LEASE_SECONDS`): a waiting search publishes an expired delivery itself.
+That is above the default wait, so it shows as `outcome="deadline"`, not as a latency.
+Readiness does not depend on any of these: every replica reads the same Postgres, so a
+lag-driven readiness check would take every replica out of rotation at once.
+
+Every process that runs the delivery workers exports the whole deployment's backlog, and
+several may at once, so read the backlog gauges with `max`, not `sum`.
+
+Alerts:
+
+| Signal                                            | Alert when                      | Means                                                                                                                                                                     | First step                                                                                       |
+| ------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `loom.pg.search_wait_ms{outcome="deadline"}` rate | above 0 for 5 minutes           | a read waited out the deadline: the op answers 503 `PROJECTION_BEHIND`, a report reads on                                                                                 | ClickHouse reachability, then `loom.pg.backlog` and the `pg_delivery` worker's passes            |
+| `loom.pg.oldest_pending_age_s{source="memory"}`   | above the target for 10 minutes | the delivery worker is not keeping up, or ClickHouse refuses                                                                                                              | `GET /v1/health?include=postgres` → `postgres.backlog`, the `pg_delivery` worker status          |
+| `loom.pg.backlog{state="parked"}`                 | above 0                         | a delivery ClickHouse kept refusing, or one a restore reconcile holds (its `last_error` says which)                                                                       | the delivery's `last_error` ([storage authority](../architecture/storage-authority.md#delivery)) |
+| no `loom.pg.backlog` point from any process       | for 3 export periods            | the reading stopped: the backlog read fails, no delivery pass starts, or the time between two passes' starts (a pass and the interval after it) passes two export periods | the `backlog not read` warning in the `pg_delivery` and `knowledge_pg_delivery` workers' logs    |
 
 ### Integrity invariants
 

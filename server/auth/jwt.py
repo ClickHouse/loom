@@ -82,6 +82,12 @@ class RevocationUnavailable(AuthUnavailable):
     token was revoked. The list loads on the next refresh."""
 
 
+class CellUnavailable(AuthUnavailable):
+    """The cell gate refuses this process (`server.core.cell.gate_reason`): a cell whose
+    own rows are unread or do not accept its configuration, or a process with LOOM_CELL
+    unset that its deployment's cell state gates. It judges no token."""
+
+
 class KeyringUnavailable(AuthUnavailable):
     """This process has not read the signing keyring yet, or not within
     `jwt_revocation_max_stale_seconds`, so a retired kid may not be known."""
@@ -108,7 +114,7 @@ class AuthInfo:
     # Priority/order lives in `namespaces` (a list), not here.
     ns_roles: tuple[tuple[str, str], ...] = ()
     # Bearer's real subject under X-Loom-On-Behalf-Of (`subject` holds the one it acts
-    # for); the gate refuses a revoked subject it acts for (`authz.check_acted_for`).
+    # for); the gate refuses a subject it may not act for (`authz.check_acted_for`).
     impersonated_by: str = ""
     # `read_scope` claim: the widest read this token may make inside a
     # namespace it holds — "" / "namespace" (every row: membership is the read
@@ -151,6 +157,15 @@ class AuthInfo:
     parent_subjects: tuple[str, ...] = ()
     parent_iats: tuple[int, ...] = ()
     creator: str = ""
+    # Explicit personal-agent or answer token; delegation never inherits this claim.
+    reads_as_creator: bool = False
+    # The bridge fixes the caller's session-protection promise for one answer.
+    session_protection: bool = False
+    # A marked answer's fixed mirror admission, separate from its caller's promise.
+    answer_mirrors: bool = False
+    # `saves_to` claim: where a list token's calls that name no namespace save,
+    # chosen at mint and read by `caller_home._pick_default`; '' = none recorded.
+    saves_to: str = ""
     # `sid` claim: the sign-in session (server/auth/oauth.py) an hour-long
     # access token belongs to. Revoking it ends every token of the session;
     # '' = a token minted outside a sign-in session.
@@ -251,6 +266,10 @@ def mint_token(
     parent_subjects: list[str] | None = None,
     parent_iats: list[int] | None = None,
     creator: str | None = None,
+    reads_as_creator: bool = False,
+    session_protection: bool = False,
+    answer_mirrors: bool = False,
+    saves_to: str | None = None,
     issued_at: int | None = None,
 ) -> str:
     """Mint a JWT for service accounts, user onboarding, and tests.
@@ -271,7 +290,9 @@ def mint_token(
     verifiers pick the matching key during signing-key rotation.
     `parents` / `parent_subjects` / `parent_iats` / `creator` are the delegation claims
     `delegation.delegate` computes; a token minted from another token gets
-    them from there. `issued_at` (unix seconds; default now) is the `iat`:
+    them from there. `saves_to` is the namespace a list token saves to when a
+    call names none (`token_saves_to.saves_to_target`). `issued_at` (unix
+    seconds; default now) is the `iat`:
     a path that read the revocations before minting passes the time it took
     before that read, so a revocation that landed after it still postdates
     the token.
@@ -330,6 +351,16 @@ def mint_token(
         payload["parent_iats"] = list(parent_iats)
     if creator:
         payload["creator"] = creator
+    if reads_as_creator:
+        payload["reads_as_creator"] = True
+    for name, value in (
+        ("session_protection", session_protection),
+        ("answer_mirrors", answer_mirrors),
+    ):
+        if _bool_claim({name: value}, name):
+            payload[name] = True
+    if saves_to:
+        payload["saves_to"] = saves_to
     if ttl_seconds is not None:
         payload["exp"] = now + ttl_seconds
     if secret is not None:
@@ -351,7 +382,13 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     """
     if secret is None:
         from server.auth import keyring
+        from server.core import cell
 
+        # First, before any issuer's branch: a process the cell gate refuses (a cell
+        # configured to accept what its directory row does not, among others) judges
+        # nothing.
+        if reason := cell.gate_reason():
+            raise CellUnavailable(reason)
         end_user = _end_user_key(token)
         if end_user is not None:
             return _verify_end_user(token, *end_user)
@@ -435,6 +472,10 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         parent_subjects=tuple(_str_list(decoded, "parent_subjects")),
         parent_iats=tuple(_parent_iats(decoded)),
         creator=_creator_claim(decoded),
+        reads_as_creator=_bool_claim(decoded, "reads_as_creator"),
+        session_protection=_bool_claim(decoded, "session_protection"),
+        answer_mirrors=_bool_claim(decoded, "answer_mirrors"),
+        saves_to=_optional_str_claim(decoded, "saves_to"),
         session_id=_optional_str_claim(decoded, "sid"),
         first_party=_bool_claim(decoded, "fps"),
         issued_at=_iat_of(decoded),
@@ -475,6 +516,7 @@ def _end_user_key(token: str) -> tuple[str, EndUserIssuer, Any] | None:
 
 # Claims an end-user token may not carry: its identity is the user, nothing more.
 _NOT_FOR_END_USERS = (
+    "answer_mirrors",
     "namespaces",
     "ns_write",
     "ns_roles",
@@ -483,8 +525,38 @@ _NOT_FOR_END_USERS = (
     "read_scope",
     "read_user_id",
     "creator",
+    "saves_to",
     "parents",
 )
+
+
+async def authenticate_token(
+    token: str, *, secret: str | None = None, fallback_org: str | None = None
+) -> AuthInfo:
+    """Verify the credential, then admit its complete person and ancestry graph.
+
+    Caller routes supply their configured fallback for an org-less or wildcard bearer;
+    the returned token identity remains unchanged.
+    """
+    from server.auth import login, scim
+
+    auth = verify_token(token, secret=secret)
+    org = fallback_org if auth.org in ("", "*") else None
+    try:
+        refused = (
+            await scim.refuses_auth(auth, org=org)
+            if org is not None
+            else await scim.refuses_auth(auth)
+        )
+    except login.SignInUnavailable as e:
+        raise AuthUnavailable(
+            "SCIM provisioning cannot be checked yet; retry shortly", reason="provisioning"
+        ) from e
+    if refused:
+        raise TokenError(
+            "the person is not actively provisioned in this cell", reason="provisioning"
+        )
+    return auth
 
 
 def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: Any) -> AuthInfo:

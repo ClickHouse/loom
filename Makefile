@@ -1,4 +1,4 @@
-.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-mixed-version test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
+.PHONY: bootstrap dev dev-cloud down down-all migrate migrate-status migrate-dry schema-dump schema-check bench-matrix server frontend-build frontend-dev init onboard test test-unit test-integration test-sdk-adapters test-mixed-version test-unit-cov ingest bench bench-quick bench-algorithm-gate bench-quality-gate bench-code-intel-dry bench-code-portability-dry bench-code-intel bench-code-legs bench-clickgap-replay lint format format-check typecheck mypy-gate install clean bench-clickgap-golden
 
 # Interpreter for the python-invoking targets: the local .venv, which CI also
 # builds from uv.lock (`uv sync --locked`).
@@ -141,6 +141,41 @@ test-unit:
 
 test-integration:
 	$(PYTHON) -m pytest tests/integration -v
+
+# The adapters whose framework is an SDK extra (tests in sdk/python/tests), each
+# with the framework its extra names, in a venv of its own: a framework's
+# dependencies would otherwise constrain the server's uv.lock, and two frameworks
+# may pin one package incompatibly. SDK_ADAPTERS_RESOLUTION=lowest-direct installs
+# every direct requirement (the SDK's own, the extra's, pytest) at its lower bound.
+# mypy is the [dev] pin. `make test-sdk-adapter-crewai` runs one.
+SDK_ADAPTER_EXTRAS := agno haystack langchain llamaindex openai-agents crewai autogen pydantic-ai ag2 agent-framework claude-memory google-adk pipecat dspy
+SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
+SDK_ADAPTERS_PYTHON ?= 3.12
+SDK_ADAPTERS_RESOLUTION ?= highest
+# The adapters typed through structural twins need no extra: every venv checks them too.
+SDK_ADAPTERS_NO_EXTRA = $(addprefix sdk/python/loom/integrations/,__init__.py langgraph.py strands.py)
+test-sdk-adapters: $(addprefix test-sdk-adapter-,$(SDK_ADAPTER_EXTRAS))
+.PHONY: test-sdk-mastra-memory test-sdk-mastra-memory-live
+test-sdk-mastra-memory:
+	npm --prefix sdk/typescript run test -- src/integrations/mastra-memory.test.ts
+
+test-sdk-mastra-memory-live:
+	@test -n "$(LOOM_BASE_URL)" || (echo "LOOM_BASE_URL must name the task's Loom server"; exit 1)
+	@test -n "$(LOOM_API_KEY)" || (echo "LOOM_API_KEY must authorize the test namespace"; exit 1)
+	npm --prefix sdk/typescript run test:integ -- test/integ/mastra-memory.test.ts
+
+test-sdk-adapter-%: PY = $(abspath $(SDK_ADAPTERS_VENV))/$*/bin/python
+test-sdk-adapter-%: MODULE = $(subst -,_,$*)
+test-sdk-adapter-%:
+	uv venv --clear -q --python $(SDK_ADAPTERS_PYTHON) $(SDK_ADAPTERS_VENV)/$*
+	$(PY) scripts/gates/sdk_extra_requirements.py $* > $(SDK_ADAPTERS_VENV)/$*/requirements.txt
+	uv pip install -q --python $(PY) --resolution $(SDK_ADAPTERS_RESOLUTION) \
+	  -e ./sdk/python -r $(SDK_ADAPTERS_VENV)/$*/requirements.txt "pytest>=8.0" mypy==2.3.1
+	uv pip list --python $(PY)
+	cd sdk/python && $(PY) -m pytest -q tests/test_$(MODULE).py
+	$(PY) -m mypy --strict --cache-dir $(SDK_ADAPTERS_VENV)/$*/.mypy_cache --python-version \
+	  "$$($(PY) -c 'import sys; print("%d.%d" % sys.version_info[:2])')" sdk/python/loom/integrations/$(MODULE).py \
+	  $(SDK_ADAPTERS_NO_EXTRA)
 
 # Builds N-1 (BASE, default the merge base with origin/main) and N side by side
 # on one throwaway ClickHouse (docker); skips without docker (REQUIRE=1 fails

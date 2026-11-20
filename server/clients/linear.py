@@ -28,11 +28,13 @@ from typing import Any
 
 import httpx
 
+from server.clients._checked_access import CheckedAccess, Credential
 from server.clients._http import get_client
 from server.clients._vendor import read_capped
+from server.settings import settings
 
 _GRAPHQL_URL = "https://api.linear.app/graphql"
-# Documents per listing page: the API's own default page size.
+# Nodes per page (documents, or projects by short id): the API's own default page size.
 PAGE_SIZE = 50  # not a setting: the API's page size, the same on every deployment
 # Seconds between listing pages, so a long list stays under the API's hourly
 # request limit per key.
@@ -56,6 +58,15 @@ query ProjectDocuments($id: String!, $first: Int!, $after: String) {
 }
 """
 
+# Projects by the short id their links carry, a page of them at a time.
+_PROJECTS_BY_SLUG = """
+query ProjectsBySlug($slugs: [String!]!, $first: Int!) {
+  projects(filter: { slugId: { in: $slugs } }, first: $first) {
+    nodes { id slugId }
+  }
+}
+"""
+
 _DOCUMENT = """
 query Document($id: String!) {
   document(id: $id) { id content updatedAt url }
@@ -65,6 +76,28 @@ query Document($id: String!) {
 _DOCUMENT_STATE = """
 query DocumentState($id: String!) {
   document(id: $id) { id trashed archivedAt project { id } }
+}
+"""
+
+_PROJECT_TEAMS = """
+query ProjectTeams($id: String!, $first: Int!, $after: String) {
+  project(id: $id) {
+    teams(first: $first, after: $after) {
+      nodes { id }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+"""
+
+_TEAM_MEMBERS = """
+query TeamMembers($id: String!, $first: Int!, $after: String) {
+  team(id: $id) {
+    members(first: $first, after: $after, includeDisabled: true) {
+      nodes { id email active }
+      pageInfo { hasNextPage endCursor }
+    }
+  }
 }
 """
 
@@ -115,9 +148,11 @@ def valid_id(value: str) -> bool:
     return bool(_ID_RE.fullmatch(value))
 
 
-def valid_key(api_key: str) -> bool:
+def valid_key(api_key: Credential) -> bool:
     """Whether `api_key` can be an API key: printable ASCII with no space, so it
     travels in a header unchanged."""
+    if isinstance(api_key, CheckedAccess):
+        return api_key.kind == "linear"
     return bool(_KEY_RE.fullmatch(api_key))
 
 
@@ -163,20 +198,31 @@ def _raise_for(status: int, body: Any, what: str) -> None:
 
 
 async def _query(
-    api_key: str, query: str, variables: dict[str, Any], what: str, *, max_bytes: int
+    api_key: Credential, query: str, variables: dict[str, Any], what: str, *, max_bytes: int
 ) -> dict[str, Any]:
     """The `data` of one GraphQL request, its answer read up to `max_bytes`."""
-    api_key = api_key.strip()  # a pasted key often ends in a newline
+    checked = api_key if isinstance(api_key, CheckedAccess) else None
+    if isinstance(api_key, str):
+        api_key = api_key.strip()  # a pasted key often ends in a newline
     if not valid_key(api_key):
         raise CredentialRefused(what, "not_an_api_key")
     try:
-        async with get_client().stream(
-            "POST",
-            _GRAPHQL_URL,
-            headers={"Authorization": api_key, "Content-Type": "application/json"},
-            json={"query": query, "variables": variables},
-        ) as resp:
-            raw = await read_capped(resp, max_bytes)
+        async with asyncio.timeout_at(checked.deadline if checked is not None else None):
+            authorization = (
+                await api_key.authorization(_GRAPHQL_URL)
+                if isinstance(api_key, CheckedAccess)
+                else api_key
+            )
+            async with get_client().stream(
+                "POST",
+                _GRAPHQL_URL,
+                headers={"Authorization": authorization, "Content-Type": "application/json"},
+                json={"query": query, "variables": variables},
+                follow_redirects=False if checked is not None else httpx.USE_CLIENT_DEFAULT,
+            ) as resp:
+                raw = await read_capped(resp, max_bytes)
+            if checked is not None:
+                await checked.check()
     except httpx.RequestError as e:
         raise LinearError(what, "unreachable") from e
     if raw is None:
@@ -186,6 +232,8 @@ async def _query(
     except ValueError:
         body = None
     _raise_for(resp.status_code, body, what)
+    if checked is not None and not resp.is_success:
+        raise LinearError(what, f"http_{resp.status_code}", status=resp.status_code)
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, dict):
         raise LinearError(what, "no_data", status=resp.status_code)
@@ -193,7 +241,7 @@ async def _query(
 
 
 async def documents_page(
-    api_key: str, project_id: str, *, after: str = ""
+    api_key: Credential, project_id: str, *, after: str = ""
 ) -> tuple[list[dict[str, Any]], str]:
     """One page of a project's documents (id, title, updatedAt, url) and the cursor
     of the next page, '' after the last. NotFound when the tracker says the key
@@ -224,7 +272,84 @@ async def documents_page(
     return nodes, cursor
 
 
-async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any]]:
+async def _acl_nodes(
+    api_key: Credential,
+    query: str,
+    root: str,
+    field: str,
+    ident: str,
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Read a complete bounded ACL connection; no partial page grants a reader."""
+    cursor = ""
+    seen: set[str] = set()
+    found: list[dict[str, Any]] = []
+    while True:
+        data = await _query(
+            api_key,
+            query,
+            {"id": ident, "first": PAGE_SIZE, "after": cursor or None},
+            "permissions",
+            max_bytes=_PAGE_MAX_BYTES,
+        )
+        parent = data.get(root)
+        connection = parent.get(field) if isinstance(parent, dict) else None
+        nodes = connection.get("nodes") if isinstance(connection, dict) else None
+        info = connection.get("pageInfo") if isinstance(connection, dict) else None
+        if (
+            not isinstance(nodes, list)
+            or any(
+                not isinstance(node, dict) or not valid_id(str(node.get("id"))) for node in nodes
+            )
+            or not isinstance(info, dict)
+            or not isinstance(info.get("hasNextPage"), bool)
+        ):
+            raise LinearError("permissions", "invalid_connection")
+        if len(found) + len(nodes) > limit or len(seen) >= limit:
+            raise TooLarge("permissions", "too_many_entries")
+        found.extend(nodes)
+        if not info["hasNextPage"]:
+            return found
+        next_cursor = info.get("endCursor")
+        if not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen:
+            raise LinearError("permissions", "invalid_cursor")
+        seen.add(next_cursor)
+        cursor = next_cursor
+        await _sleep(PAGE_PACE_S)
+
+
+async def project_member_emails(api_key: Credential, project_id: str) -> tuple[str, ...]:
+    """Only explicitly active members of the project's visible teams may match an ACL."""
+    maximum = settings.knowledge_source_acl_max_entries
+    teams = await _acl_nodes(api_key, _PROJECT_TEAMS, "project", "teams", project_id, limit=maximum)
+    remaining = maximum - len(teams)
+    emails: set[str] = set()
+    for team in teams:
+        members = await _acl_nodes(
+            api_key, _TEAM_MEMBERS, "team", "members", team["id"], limit=remaining
+        )
+        remaining -= len(members)
+        for member in members:
+            email = member.get("email")
+            if member.get("active") is True and isinstance(email, str) and email.strip():
+                emails.add(email.strip().lower())
+    return tuple(sorted(emails))
+
+
+async def organization_id(api_key: Credential) -> str:
+    """The credential's organization, for binding incoming notifications."""
+    data = await _query(
+        api_key, "query { organization { id } }", {}, "push identity", max_bytes=4096
+    )
+    org = data.get("organization")
+    value = org.get("id") if isinstance(org, dict) else None
+    if not isinstance(value, str) or not value:
+        raise LinearError("push identity", "no_organization")
+    return value
+
+
+async def project_documents(api_key: Credential, project_id: str) -> list[dict[str, Any]]:
     """Every document of a project, every page read and paced; a failure on any page
     raises."""
     found: list[dict[str, Any]] = []
@@ -237,13 +362,41 @@ async def project_documents(api_key: str, project_id: str) -> list[dict[str, Any
         await _sleep(PAGE_PACE_S)
 
 
+async def project_ids(api_key: Credential, slug_ids: list[str]) -> dict[str, str]:
+    """{short id: project UUID} of the projects the key sees among `slug_ids`, the
+    short ids a project's link carries; one the tracker does not answer for is
+    left out. One page answers them: the ops bound a call well under it."""
+    if len(slug_ids) > PAGE_SIZE:
+        raise ValueError(f"at most {PAGE_SIZE} short ids in one lookup")
+    data = await _query(
+        api_key,
+        _PROJECTS_BY_SLUG,
+        {"slugs": slug_ids, "first": PAGE_SIZE},
+        "projects",
+        max_bytes=_PAGE_MAX_BYTES,
+    )
+    projects = data.get("projects")
+    nodes = projects.get("nodes") if isinstance(projects, dict) else None
+    if not isinstance(nodes, list):
+        # An answer without the list says nothing about which projects exist.
+        raise LinearError("projects", "no_projects")
+    found: dict[str, str] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        slug, project_id = str(node.get("slugId") or ""), str(node.get("id") or "")
+        if slug in slug_ids and valid_id(project_id):
+            found[slug] = project_id
+    return found
+
+
 def _checked(document_id: str) -> str:
     if not valid_id(document_id):
         raise ValueError("not a document id")
     return document_id
 
 
-async def document(api_key: str, document_id: str, *, max_bytes: int) -> dict[str, Any]:
+async def document(api_key: Credential, document_id: str, *, max_bytes: int) -> dict[str, Any]:
     """One document's Markdown `content`, `updatedAt` and `url`, its answer read up to
     `max_bytes`; NotFound when the tracker says the key cannot see it."""
     what = f"document {document_id}"
@@ -257,7 +410,7 @@ async def document(api_key: str, document_id: str, *, max_bytes: int) -> dict[st
     return doc
 
 
-async def document_state(api_key: str, document_id: str) -> dict[str, Any]:
+async def document_state(api_key: Credential, document_id: str) -> dict[str, Any]:
     """A document's `trashed`, `archivedAt` and `project`; NotFound when the key
     cannot see it."""
     what = f"document {document_id}"
@@ -287,6 +440,7 @@ __all__ = [
     "document_state",
     "documents_page",
     "project_documents",
+    "project_ids",
     "valid_id",
     "valid_key",
 ]

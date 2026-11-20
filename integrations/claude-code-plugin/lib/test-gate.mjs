@@ -15,6 +15,7 @@
 // shell command, so a tree left dirty before the session (a branch parked
 // mid-change, a teammate's edits) does not gate a turn that touched nothing.
 
+import fs from "node:fs";
 import path from "node:path";
 import { commandText, extractFiles, normalizeToolName, pathUnder } from "./loom-client.mjs";
 
@@ -97,7 +98,7 @@ export function renderGate(gate, { maxRuns = 4, maxNames = 4, python, testExists
       : "Add a test that reaches it, or say why the change needs none, before finishing.";
   const env =
     python === "" && raw.some(isPytest)
-      ? " No Python env with pytest was found in this checkout (no .venv, none on PATH): name the test you would run instead of searching for one."
+      ? " No Python was found for this checkout (no .venv, venv or VIRTUAL_ENV, no python3 or python on PATH): name the test you would run instead of searching for one."
       : "";
   return `Loom test gate${floor}: ${parts.join(" · ")}. ${tail}${env}`;
 }
@@ -161,6 +162,55 @@ export function commentOnlyDiff(diff) {
  *  Scripts\python.exe. */
 export function venvPython(dir, platform = process.platform) {
   return platform === "win32" ? path.win32.join(dir, "Scripts", "python.exe") : path.posix.join(dir, "bin", "python");
+}
+
+/** The interpreter that runs this checkout's pytest: its own virtualenv
+ *  first, then an active one, then a python3 or python on PATH; "" when there
+ *  is none. Nothing is run to check for pytest: a Python started to ask would
+ *  run what the checkout puts on its path at startup. */
+export function checkoutPython(root, { env = process.env } = {}) {
+  const win = process.platform === "win32";
+  const cands = [
+    venvPython(path.join(root, ".venv")),
+    venvPython(path.join(root, "venv")),
+    env.VIRTUAL_ENV ? venvPython(env.VIRTUAL_ENV) : "",
+  ].filter(Boolean);
+  for (const c of cands) {
+    if (isFile(c)) return pathUnder(root, c) ?? c;
+  }
+  const dirs = (env.PATH ?? "")
+    .split(path.delimiter)
+    .map((d) => (win ? d.replace(/^"(.*)"$/, "$1") : d))
+    .filter(Boolean);
+  // Windows: python first, since python.org installs ship no python3.exe;
+  // .bat and .cmd are shims such as pyenv-win's, which the shell runs too.
+  const exts = win ? [".exe", ".bat", ".cmd"] : [""];
+  for (const py of win ? ["python", "python3"] : ["python3", "python"]) {
+    if (dirs.some((d) => exts.some((e) => isProgram(path.join(d, py + e), win)))) return py;
+  }
+  return "";
+}
+
+function isFile(p) {
+  try {
+    return fs.statSync(p).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** A PATH entry a shell would start: executable on POSIX, and not empty, so
+ *  the zero-byte Store aliases Windows puts on PATH when no Python is
+ *  installed do not count. */
+function isProgram(p, win) {
+  try {
+    const st = fs.statSync(p);
+    if (!st.isFile() || st.size === 0) return false;
+    if (!win) fs.accessSync(p, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Stop-hook payload: block once with the reason; empty text = no output. */

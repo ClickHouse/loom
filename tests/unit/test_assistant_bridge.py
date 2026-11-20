@@ -9,6 +9,7 @@ import contextvars
 import json
 import time
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -16,6 +17,7 @@ import pytest
 from server.assistant.app import bridge, service
 from server.auth.jwt import AuthInfo
 from server.core.errors import (
+    AssistantSelfCallError,
     AssistantUnavailableError,
     AssistantUpstreamError,
     AuthInsufficientError,
@@ -26,6 +28,7 @@ from server.core.errors import (
 )
 from server.llm.customer import ModelCallsDisabled
 from server.observability import cost_accumulator
+from server.observability.consumer import ASSISTANT_CONSUMER
 from server.observability.run_context import current_ledger_run
 from server.operations.base import Role
 from server.settings import settings
@@ -78,6 +81,8 @@ class _World:
         self.denied = False
         # Another answer for LibreChat to give, in place of the stream above.
         self.override: Any = None
+        self.mirror_sources: list[dict[str, str]] = []
+        self.source_queries = 0
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.override is not None:
@@ -91,6 +96,7 @@ class _World:
 def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     w = _World()
     real_client = httpx.AsyncClient
+    w.client_factory = real_client
 
     async def check_authorized(auth: Any, role: Role, org: str, ns: str) -> None:
         if w.denied:
@@ -105,9 +111,26 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
             raise ConnectionError("ClickHouse is down")
         return w.over_cap
 
+    async def active_sources(org: str, namespaces: list[str]) -> list[dict[str, str]]:
+        assert org == ORG and len(namespaces) == 1
+        w.source_queries += 1
+        return list(w.mirror_sources)
+
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None) -> str:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+            session_protection: bool = False,
+            answer_mirrors: bool = False,
+        ) -> str:
             w.delegated["minted"] = (subject, consumer)
+            w.delegated["answer_mirrors"] = answer_mirrors
             return "answer-token"
 
     async def delegate(parent: AuthInfo, **kw: Any) -> _Delegated:
@@ -117,8 +140,26 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
     monkeypatch.setattr(service, "_answering", ("agent_1", "sk-service"))
     monkeypatch.setattr(bridge, "check_authorized", check_authorized)
+
+    class Gate:  # the asker line's role probe: admits every role unless denied
+        def __init__(self, auth: Any, org: str) -> None:
+            pass
+
+        async def admits(self, ns: str, role: Role) -> bool:
+            return not w.denied
+
+    monkeypatch.setattr(bridge, "CachedGate", Gate)
+    monkeypatch.setattr(bridge, "_place", lambda org, ns: "namespace")
     monkeypatch.setattr(bridge, "switched_off", switched_off)
     monkeypatch.setattr(bridge, "operation_over_share", over_cap)
+    monkeypatch.setattr(bridge.source_access.store, "active_sources", active_sources)
+    # The answer's tool calls found nothing (a test may say otherwise).
+    monkeypatch.setattr(bridge.support.ledger, "run_rows", _found_nothing)
+    monkeypatch.setattr(bridge.support, "_wait", _no_wait)
+    # A streaming answer's live steps: none have landed (a test may say otherwise), and the
+    # poll's pause only yields to the loop, so LibreChat's reader is never starved.
+    monkeypatch.setattr(bridge.ledger, "live_rows", _found_nothing)
+    monkeypatch.setattr(bridge, "_tick", _yield)
     monkeypatch.setattr(bridge, "delegate", delegate)
     monkeypatch.setattr(bridge, "_running", {})
     monkeypatch.setattr(
@@ -156,12 +197,27 @@ def _org_slot(org: str) -> Any:
     return slots
 
 
+async def _no_wait(_seconds: float) -> None:
+    return None
+
+
+async def _yield(_seconds: float) -> None:
+    await asyncio.sleep(0)
+
+
+async def _found_nothing(*_: Any, **__: Any) -> Any:
+    return []
+
+
 def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> None:
     answer, chunks, (acc, run) = _answer(_caller(), QUESTION)
     body = world.librechat_body
     assert body["model"] == "agent_1"  # the seeded agent, whatever the caller named
     assert body["parent_message_id"] == "answer-token"
-    assert body["messages"] == QUESTION and body["stream"] is True
+    # The question as sent, with the asker line last.
+    (sent,) = body["messages"]
+    assert sent["content"].startswith("How many memories?\n\nLoom, for how-to answers only:")
+    assert body["stream"] is True
     assert world.librechat_headers["authorization"] == "Bearer sk-service"
     assert world.librechat_headers["accept-encoding"] == "identity"
     assert "".join(answer.text) == "Seven memories." and answer.run_id == "chatcmpl-1"
@@ -174,6 +230,9 @@ def test_an_answer_runs_the_seeded_agent_with_its_own_token(world: _World) -> No
         "id": "chatcmpl-1",
         "choices": [],
         "citations": [],
+        # It cites nothing and its calls found nothing: it makes no claim.
+        "support": "none",
+        "unknown_names": [],
     }
 
 
@@ -187,6 +246,7 @@ def test_the_answer_token_is_viewer_on_the_namespace_for_one_answer(world: _Worl
         "is_service_account": False,
         "ends_with_session": True,
         "minted": ("alice", "loom-assistant"),
+        "answer_mirrors": False,
     }
 
 
@@ -226,27 +286,38 @@ def test_a_refusals_body_is_never_read(world: _World) -> None:
 
 
 @pytest.mark.parametrize(
-    ("change", "refusal"),
+    ("change", "refusal", "reason"),
     [
-        ({"librechat": ""}, AssistantUnavailableError),
-        ({"answering": None}, AssistantUnavailableError),
-        ({"auth": {"org": "*"}}, AuthInsufficientError),
-        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError),
+        ({"librechat": ""}, AssistantUnavailableError, "not_configured"),
+        ({"answering": None}, AssistantUnavailableError, "starting"),
+        ({"answering": None, "ready": False}, AssistantUnavailableError, "failing"),
+        ({"auth": {"org": "*"}}, AuthInsufficientError, "org_wide"),
+        ({"auth": {"read_scope": "own_user"}}, AuthInsufficientError, "narrowed"),
         # Pinned to one end user with no `read_scope`: narrowed all the same.
-        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError),
-        ({"auth": {"expires_at": int(time.time()) + 30}}, AuthInsufficientError),
-        ({"denied": True}, AuthInsufficientError),
-        ({"switched_off": True}, ModelCallsDisabled),
-        ({"over_cap": True}, RateLimitedError),
+        ({"auth": {"read_user_id": "u1"}}, AuthInsufficientError, "narrowed"),
+        (
+            {"auth": {"expires_at": int(time.time()) + 30}},
+            AuthInsufficientError,
+            "token_expires_soon",
+        ),
+        ({"denied": True}, AuthInsufficientError, None),
+        ({"switched_off": True}, ModelCallsDisabled, None),
+        ({"over_cap": True}, RateLimitedError, None),
     ],
 )
 def test_what_the_bridge_refuses_before_calling_librechat(
-    world: _World, monkeypatch: pytest.MonkeyPatch, change: dict[str, Any], refusal: type
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    change: dict[str, Any],
+    refusal: type,
+    reason: str | None,
 ) -> None:
     if "librechat" in change:
         monkeypatch.setattr(settings, "assistant_librechat_url", change["librechat"])
     if "answering" in change:
         monkeypatch.setattr(service, "_answering", change["answering"])
+        # None: before the first setup try; False: after a failed one.
+        monkeypatch.setattr(service, "_ready", change.get("ready"))
     world.denied = change.get("denied", False)
     world.switched_off = change.get("switched_off", False)
     world.over_cap = change.get("over_cap", False)
@@ -255,9 +326,11 @@ def test_what_the_bridge_refuses_before_calling_librechat(
         await bridge.authorize(auth, ORG, NS)  # as the route and assistant.ask call them
         await bridge.open_answer(auth, ORG, NS)
 
-    with pytest.raises(refusal):
+    with pytest.raises(refusal) as refused:
         asyncio.run(ask(_caller(**change.get("auth", {}))))
     assert world.librechat_body == {} and "minted" not in world.delegated
+    # A reason a client can branch on, in the refusal's detail (none for the others).
+    assert refused.value.to_detail().get("reason") == reason
 
 
 def test_the_cap_check_is_the_assistants_share_and_fails_closed(world: _World) -> None:
@@ -328,7 +401,9 @@ def test_only_the_callers_text_turns_reach_the_agent() -> None:
 
 
 def test_a_logged_librechat_error_names_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7, "alice")
+    ticket = bridge.Ticket(
+        ORG, NS, "agent_1", "sk-secret", "answer.jwt." + "x" * 400, 7, "alice", ""
+    )
     echoed = f"bad request: parent_message_id={ticket.token} key=sk-secret"
     logged = bridge._redacted(ticket, echoed)
     assert "answer.jwt" not in logged and "sk-secret" not in logged
@@ -336,7 +411,7 @@ def test_a_logged_librechat_error_names_neither_secret() -> None:
 
 
 def test_a_ticket_prints_neither_secret() -> None:
-    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7, "alice")
+    ticket = bridge.Ticket(ORG, NS, "agent_1", "sk-secret", "answer.jwt", 7, "alice", "")
     assert "sk-secret" not in repr(ticket) and "answer.jwt" not in repr(ticket)
 
 
@@ -389,7 +464,9 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
 
     limiter = ratelimit.Limiter()
     monkeypatch.setattr(ratelimit, "get_limiter", lambda: limiter)
-    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller())
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: _caller())
+    )
     monkeypatch.setattr(routes, "check_acted_for", nothing)
     monkeypatch.setattr(routes, "note_restricted_access", nothing)
     monkeypatch.setattr(routes, "emit_agent_event", emit)
@@ -419,12 +496,36 @@ def test_the_chat_route_answers_whole_and_ledgers_its_spend(client: Any) -> None
     assert row["cost"] > 0
 
 
+def test_the_chat_route_closes_the_question_with_the_asker_line(
+    world: _World, client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(bridge, "_place", lambda org, ns: "namespace")
+    http, _ = client
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "Hello."}]
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": [*history, *QUESTION]})
+    assert r.status_code == 200
+    sent = world.librechat_body["messages"]
+    assert sent[:2] == history
+    # The test's gate admits every role.
+    assert sent[2]["content"] == (
+        "How many memories?\n\n"
+        "Loom, for how-to answers only: this question comes with a token, whose role in this "
+        "namespace is admin."
+    )
+
+
 def test_the_chat_route_streams_the_agents_chunks(client: Any) -> None:
     http, rows = client
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
     assert r.status_code == 200 and r.headers["content-type"].startswith("text/event-stream")
     events = [line for line in r.text.split("\n\n") if line]
-    assert events[-1] == "data: [DONE]" and len(events) == 5
+    # The agent's three chunks, the end of the text, the checked citations, then the end.
+    assert events[-1] == "data: [DONE]" and len(events) == 6
+    assert json.loads(events[3][6:]) == {
+        "object": "loom.text_done",
+        "id": "chatcmpl-1",
+        "choices": [],
+    }
     (row,) = rows
     assert row["success"] is True and row["cost"] > 0
     # The streamed body runs in a task of its own; the row still names the answer.
@@ -611,7 +712,9 @@ def test_the_answers_row_names_who_acted_and_its_budget(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(impersonated_by="trusted-ui")
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(impersonated_by="trusted-ui")),
     )
     http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     (row,) = rows
@@ -641,8 +744,8 @@ def test_a_client_that_went_away_is_its_own_failure(monkeypatch: pytest.MonkeyPa
 def test_a_key_librechat_no_longer_takes_is_set_up_again(
     world: _World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    forgotten: list[str] = []
-    monkeypatch.setattr(service, "forget_answering", forgotten.append)
+    forgotten: list[bool] = []
+    monkeypatch.setattr(service, "forget_answering", lambda: forgotten.append(True))
     monkeypatch.setattr(settings, "assistant_concurrent_answers", 3)
     world.status = 401
     stale = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
@@ -655,7 +758,7 @@ def test_a_key_librechat_no_longer_takes_is_set_up_again(
 
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
         asyncio.run(run(stale))
-    assert forgotten and "401" in forgotten[0]
+    assert forgotten == [True]
     # A second answer meets the same stale key while the setup still runs: told the same.
     monkeypatch.setattr(service, "_answering", None)
     with pytest.raises(AssistantUpstreamError, match="setting the assistant up again"):
@@ -674,12 +777,13 @@ def test_a_forgotten_service_is_set_up_again(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(service, "_loop", None)
     monkeypatch.setattr(service, "start_setup_loop", lambda: started.append(True))
     # Restored after the test: forgetting marks the service as setting up again.
-    monkeypatch.setattr(service, "_ready", None)
+    monkeypatch.setattr(service, "_ready", True)
     monkeypatch.setattr(service, "_problem", "")
-    service.forget_answering("LibreChat refused the stored key or agent (401)")
+    service.forget_answering()
     assert service.answering() is None and started == [True]
-    ready, problem = service.assistant_state()
-    assert ready is False and "401" in problem
+    # Starting over, not failing: `/v1/health` raises no warning for it.
+    assert service.assistant_state() == (None, "")
+    assert service.unready_reason() == "starting"
 
 
 def test_a_request_past_the_ops_bounds_is_refused() -> None:
@@ -762,7 +866,9 @@ def test_an_error_chunk_echoing_the_token_logs_no_part_of_it(
 ) -> None:
     opened = asyncio.run(bridge.open_answer(_caller(), ORG, NS))
     token = "Zq9T" + "k" * 60
-    ticket = bridge.Ticket(ORG, NS, opened.agent_id, opened.api_key, token, opened.slot, "alice")
+    ticket = bridge.Ticket(
+        ORG, NS, opened.agent_id, opened.api_key, token, opened.slot, "alice", ""
+    )
     # `{"message": "` is 13 characters: the token starts at 295, across the 300-character
     # cut, where a cut before the redaction would leave its first five in the log.
     message = "x" * 263 + f" parent_message_id={token}"
@@ -878,7 +984,9 @@ def test_a_refusal_after_the_token_is_read_carries_its_class_claim(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(traffic_class="bench")
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(traffic_class="bench")),
     )
     world.denied = True  # no viewer: refused after the claim is bound, before classifying
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
@@ -1020,7 +1128,9 @@ def test_an_org_wide_token_is_refused_with_a_row_naming_no_org(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(org="*", namespaces=("*",))
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(org="*", namespaces=("*",))),
     )
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
@@ -1049,15 +1159,17 @@ def test_an_answers_checked_citations_reach_every_surface(
 ) -> None:
     from server.assistant.api.models import AssistantAskInput, AssistantCitation
     from server.assistant.app import ask
+    from server.assistant.app.citations import Checked
+    from server.assistant.domain.support import VERIFIED
 
     checked = [
         AssistantCitation(kind="memory", text="[memory:a/b/c@v3]", verified=True, ref="a/b/c")
     ]
     asked: list[str] = []
 
-    async def verify(text: str, **_kw: Any) -> list[AssistantCitation]:
+    async def verify(text: str, **_kw: Any) -> list[Checked]:
         asked.append(text)
-        return checked
+        return [Checked(c, VERIFIED) for c in checked]
 
     monkeypatch.setattr(bridge.citations, "verify", verify)
     wire = [c.model_dump() for c in checked]
@@ -1065,18 +1177,54 @@ def test_an_answers_checked_citations_reach_every_surface(
     # The stream's last event before [DONE].
     r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
     events = [line for line in r.text.split("\n\n") if line]
-    assert json.loads(events[-2][6:])["citations"] == wire
+    last = json.loads(events[-2][6:])
+    assert (last["citations"], last["support"]) == (wire, "supported")
     # The whole answer.
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
-    assert r.json()["citations"] == wire
+    assert (r.json()["citations"], r.json()["support"]) == (wire, "supported")
     # assistant.ask.
     monkeypatch.setattr(ask, "current_auth", lambda: _caller())
     out = asyncio.run(
         ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
     )
-    assert [c.model_dump() for c in out.citations] == wire
+    assert [c.model_dump() for c in out.citations] == wire and out.support == "supported"
+    # assistant.ask sends the question with the asker line last, as the route does.
+    assert world.librechat_body["messages"][-1]["content"].endswith("namespace is admin.")
     # Each checked the answer's own text.
     assert asked and all(text == "Seven memories." for text in asked)
+
+
+def test_an_answer_naming_an_unknown_op_is_unsupported_on_every_surface(
+    world: _World, client: tuple[Any, list[dict[str, Any]]], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.api.models import AssistantAskInput, AssistantCitation
+    from server.assistant.app import ask
+    from server.assistant.app.citations import Checked
+    from server.assistant.domain.support import VERIFIED
+
+    checked = [
+        AssistantCitation(kind="memory", text="[memory:a/b/c@v3]", verified=True, ref="a/b/c")
+    ]
+
+    async def verify(text: str, **_kw: Any) -> list[Checked]:
+        return [Checked(c, VERIFIED) for c in checked]
+
+    async def unknown_names(text: str) -> list[str]:
+        return ["memory.frobnicate"]
+
+    monkeypatch.setattr(bridge.citations, "verify", verify)
+    monkeypatch.setattr(bridge.citations, "unknown_names", unknown_names)
+    http, _ = client
+    r = http.post(ROUTE, headers=HEADERS, json={"stream": True, "messages": QUESTION})
+    last = json.loads([line for line in r.text.split("\n\n") if line][-2][6:])
+    assert (last["unknown_names"], last["support"]) == (["memory.frobnicate"], "unsupported")
+    whole = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION}).json()
+    assert (whole["unknown_names"], whole["support"]) == (["memory.frobnicate"], "unsupported")
+    monkeypatch.setattr(ask, "current_auth", lambda: _caller())
+    out = asyncio.run(
+        ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+    )
+    assert (out.unknown_names, out.support) == (["memory.frobnicate"], "unsupported")
 
 
 def test_the_citation_checks_run_inside_the_answers_slot(
@@ -1103,3 +1251,786 @@ def test_the_op_gives_its_slot_back_when_charging_fails(
     with pytest.raises(RuntimeError):
         asyncio.run(bridge.ask(_caller(), ORG, NS, QUESTION))
     assert bridge._running == {}
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        # An answer's own token, and a token delegated from one (its parent's id).
+        {"consumer": ASSISTANT_CONSUMER},
+        {"parents": ("assistant-answer-0f3c",), "parent_subjects": ("alice",), "parent_iats": (1,)},
+    ],
+    ids=["answer-token", "delegated-child"],
+)
+def test_an_answer_token_or_its_child_cannot_ask_the_chat_route(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch, token: dict[str, Any]
+) -> None:
+    from server.assistant.app import routes
+
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: _caller(**token))
+    )
+    http, rows = client
+    r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
+    assert r.status_code == 403
+    assert r.json()["detail"]["code"] == "ASSISTANT_SELF_CALL"
+    # Refused before LibreChat is called, and ledgered as a refused answer.
+    assert world.librechat_body == {}
+    (row,) = rows
+    assert row["op_name"] == "assistant.ask" and row["success"] is False
+    assert row["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_an_answer_token_carries_the_id_its_children_are_told_by(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    minted: dict[str, Any] = {}
+
+    class _Delegated:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+            session_protection: bool = False,
+            answer_mirrors: bool = False,
+        ) -> str:
+            minted.update(subject=subject, consumer=consumer, jti=jti)
+            return "answer-token"
+
+    async def delegate(*_a: Any, **_k: Any) -> _Delegated:
+        return _Delegated()
+
+    monkeypatch.setattr(bridge, "delegate", delegate)
+    asyncio.run(bridge.answer_token(_caller(), ORG, NS))
+    assert minted["consumer"] == ASSISTANT_CONSUMER
+    assert str(minted["jti"]).startswith(bridge.ANSWER_JTI_PREFIX)
+    # A child names it among its parents, and is refused for it.
+    child = _caller(parents=(minted["jti"],), parent_subjects=("alice",), parent_iats=(1,))
+    with pytest.raises(AssistantSelfCallError):
+        bridge.refuse_self_call(child)
+    bridge.refuse_self_call(_caller())  # the caller's own token asks
+
+
+def test_assistant_ask_over_mcp_on_another_toolset_refuses_an_answer_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.transport.mcp_call as mcp_call
+    import server.transport.mcp_outcome as mcp_outcome
+    from tests.unit.mcp_probe import serve_probe
+
+    serve_probe(monkeypatch)
+    rows: list[tuple[Any, dict[str, Any]]] = []
+    monkeypatch.setattr(mcp_outcome, "_emit_mcp_event", lambda *a, **k: rows.append((a, k)))
+    monkeypatch.setattr(settings, "assistant_librechat_url", "http://librechat:3080")
+    answer = _caller(org="acme", namespaces=("n",), consumer=ASSISTANT_CONSUMER)
+    params = {
+        "name": "loom_assistant_ask",
+        "arguments": {"org": "acme", "namespace": "n", "question": "hi"},
+    }
+    # The default listing, not the assistant toolset (which never lists assistant.ask).
+    out = asyncio.run(mcp_call._call_tool(1, params, auth=answer))
+    result = out["result"]
+    assert result["isError"] is True
+    assert result["structuredContent"]["code"] == "ASSISTANT_SELF_CALL"
+    # Ledgered as the op's refused call.
+    ((args, kw),) = rows
+    assert args[0] == "assistant.ask" and kw["success"] is False
+    assert kw["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_an_answer_token_acting_for_someone_is_still_refused(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+
+    # A trusted caller's answer token naming another subject keeps its consumer.
+    bearer = _caller(subject="trusted-ui", consumer=ASSISTANT_CONSUMER)
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: bearer)
+    )
+    monkeypatch.setattr(settings, "trusted_callers", "trusted-ui")
+    http, rows = client
+    headers = {**HEADERS, "X-Loom-On-Behalf-Of": "bob"}
+    r = http.post(ROUTE, headers=headers, json={"messages": QUESTION})
+    assert (r.status_code, r.json()["detail"]["code"]) == (403, "ASSISTANT_SELF_CALL")
+    assert world.librechat_body == {} and rows[0]["error_code"] == "ASSISTANT_SELF_CALL"
+
+
+def test_a_short_lived_tokens_refusal_says_how_long_it_has_left(world: _World) -> None:
+    with pytest.raises(AuthInsufficientError) as refused:
+        asyncio.run(bridge.authorize(_caller(expires_at=int(time.time()) + 30), ORG, NS))
+    detail = refused.value.to_detail()
+    assert detail["reason"] == "token_expires_soon" and 0 <= detail["left_s"] <= 30
+
+
+@pytest.mark.parametrize(("ready", "reason"), [(None, "starting"), (False, "failing")])
+def test_a_process_not_set_up_says_whether_it_is_starting_or_failing(
+    monkeypatch: pytest.MonkeyPatch, ready: bool | None, reason: str
+) -> None:
+    monkeypatch.setattr(service, "_ready", ready)
+    assert service.unready_reason() == reason
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, reason)
+
+
+def test_a_process_set_up_is_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(service, "_problem", "")
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (True, "")
+
+
+def test_a_process_set_up_with_auth_off_is_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Set up all the same, but every question is refused, so a client must not offer it.
+    monkeypatch.setattr(service, "_ready", True)
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    check = service.readiness_check()
+    assert (check.ok, check.reason) == (False, "auth_off")
+
+
+def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.app import routes
+
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: None)
+    )
+    monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
+    http, _rows = client
+    r = http.post(ROUTE, headers={"X-Loom-Namespace": NS}, json={"messages": QUESTION})
+    assert r.status_code == 503
+    assert (r.json()["detail"]["code"], r.json()["detail"]["reason"]) == (
+        "ASSISTANT_UNAVAILABLE",
+        "auth_off",
+    )
+
+
+def test_assistant_ask_with_auth_off_says_so(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.assistant.api.models import AssistantAskInput
+    from server.assistant.app import ask
+
+    monkeypatch.setattr(ask, "current_auth", lambda: None)
+    with pytest.raises(AssistantUnavailableError) as refused:
+        asyncio.run(
+            ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
+        )
+    assert refused.value.to_detail()["reason"] == "auth_off"
+
+
+def _events(chunks: list[bytes]) -> list[dict[str, Any]]:
+    """The JSON events of a stream, in order (`[DONE]` left out)."""
+    out = []
+    for c in chunks:
+        data = c.decode().strip()[6:]
+        if data != "[DONE]":
+            out.append(json.loads(data))
+    return out
+
+
+def _slow_answer(closed: list[bool], pause: float = 0.05) -> Any:
+    """LibreChat writing slowly: a step's row can land between its chunks. `closed` says
+    the request was closed."""
+
+    async def body() -> Any:
+        try:
+            yield b'data: {"id": "chatcmpl-5", "choices": [{"delta": {"content": "Read "}}]}\n\n'
+            await asyncio.sleep(pause)
+            yield b'data: {"id": "chatcmpl-5", "choices": [{"delta": {"content": "it."}}]}\n\n'
+            await asyncio.sleep(pause)
+            yield b"data: [DONE]\n\n"
+        finally:
+            closed.append(True)
+
+    return lambda request: httpx.Response(200, content=body())
+
+
+def _streamed(world: _World, **kw: Any) -> tuple[bridge.Answer, list[bytes]]:
+    async def run() -> tuple[bridge.Answer, list[bytes]]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        answer = bridge.Answer()
+        chunks = [c async for c in bridge.stream(ticket, QUESTION, answer, **kw)]
+        return answer, chunks
+
+    return asyncio.run(run())
+
+
+def _audit_row(**kw: Any) -> Any:
+    from server.assistant.domain.support import CallRow
+
+    return CallRow("namespace.audit", True, out_hits="2", **kw)
+
+
+def test_a_streamed_answer_sends_each_step_as_its_row_lands(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[bool] = []
+    world.override = _slow_answer(closed)
+    asked: list[tuple[str, float]] = []
+
+    async def live_rows(
+        org: str, run_id: str, subject: str, *, namespace: str, started: float
+    ) -> Any:
+        asked.append((run_id, started))
+        return [_audit_row()]
+
+    async def run_rows(*_: Any) -> Any:
+        return [_audit_row()]
+
+    monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
+    monkeypatch.setattr(bridge.support.ledger, "run_rows", run_rows)
+    answer, chunks = _streamed(world, live=True)
+    events = _events(chunks)
+    kinds = [e.get("object", "chunk") for e in events]
+    # The step went out once, while the answer still streamed, and the list did not change.
+    assert kinds.count("loom.step") == 1
+    assert kinds.index("loom.step") < len(kinds) - 2
+    step = next(e for e in events if e.get("object") == "loom.step")
+    assert step["choices"] == [] and "model" not in step and "usage" not in step
+    assert step["steps"] == [{"op": "namespace.audit", "text": "Read the audit", "ok": True}]
+    # The first read had no run id yet; a later one read by the answer's run.
+    assert asked[0][0] == "" and asked[-1][0] == "chatcmpl-5"
+    # The final event carries the steps of one read of the run.
+    final = events[-1]
+    assert final["object"] == "loom.citations"
+    assert final["steps"] == step["steps"] and "steps_cut" not in final
+    assert answer.support == "unchecked" and closed == [True]
+
+
+def test_a_streamed_answers_poll_backs_off_and_never_resets(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.override = _slow_answer([], pause=0.2)
+    ticks: list[float] = []
+
+    async def tick(seconds: float) -> None:
+        ticks.append(seconds)
+        await asyncio.sleep(0.01)
+
+    monkeypatch.setattr(bridge, "_tick", tick)
+    _streamed(world, live=True)
+    assert len(ticks) >= 5
+    assert ticks[:5] == [1.0, 2.0, 4.0, 4.0, 4.0] and set(ticks[2:]) == {4.0}
+
+
+def test_a_failed_step_read_stops_the_steps_not_the_answer(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world.override = _slow_answer([])
+    reads: list[int] = []
+
+    async def failing(*_: Any, **__: Any) -> Any:
+        reads.append(1)
+        raise ConnectionError("ClickHouse is down")
+
+    monkeypatch.setattr(bridge.ledger, "live_rows", failing)
+    answer, chunks = _streamed(world, live=True)
+    assert "".join(answer.text) == "Read it." and reads == [1]
+    assert not any(e.get("object") == "loom.step" for e in _events(chunks))
+
+
+def test_a_whole_answer_polls_no_steps(world: _World, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def never(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a whole answer reads no live steps")
+
+    monkeypatch.setattr(bridge.ledger, "live_rows", never)
+    _, chunks = _streamed(world)
+    final = _events(chunks)[-1]
+    assert final["object"] == "loom.citations" and "steps" not in final
+    assert not any(e.get("object") == "loom.text_done" for e in _events(chunks))
+
+
+def test_a_streamed_answer_says_its_text_ended_before_its_checks(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    order: list[str] = []
+    verify = bridge.citations.verify
+
+    async def checked(text: str, **kw: Any) -> Any:
+        order.append("checks")
+        return await verify(text, **kw)
+
+    monkeypatch.setattr(bridge.citations, "verify", checked)
+
+    async def run() -> list[bytes]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        out = []
+        async for c in bridge.stream(ticket, QUESTION, bridge.Answer(), live=True):
+            if b"loom.text_done" in c:
+                order.append("text_done")
+            out.append(c)
+        return out
+
+    events = _events(asyncio.run(run()))
+    assert [e.get("object", "chunk") for e in events][-2:] == ["loom.text_done", "loom.citations"]
+    assert events[-2] == {"object": "loom.text_done", "id": "chatcmpl-1", "choices": []}
+    assert order == ["text_done", "checks"]
+
+
+def test_a_client_that_leaves_at_text_done_gives_the_slot_back(world: _World) -> None:
+    # The checks never run, so their release does not either: the stream gives it back.
+    async def run() -> None:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+        async for c in gen:
+            if b"loom.text_done" in c:
+                break
+        await gen.aclose()  # type: ignore[attr-defined]
+
+    asyncio.run(run())
+    assert bridge._running == {}
+
+
+def test_the_slot_is_free_when_the_checks_event_goes_out(world: _World) -> None:
+    # The next question may follow `loom.citations` at once: it must not find the slot held.
+    async def run() -> list[bool]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        free = []
+        async for c in bridge.stream(ticket, QUESTION, bridge.Answer(), live=True):
+            if b"loom.citations" in c:
+                free.append(bridge._running == {})
+        return free
+
+    assert asyncio.run(run()) == [True]
+
+
+def test_a_cut_run_says_so_on_its_last_event(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.domain.support import RUN_ROWS, CallRow
+
+    rows = [CallRow("memory.get", True) for i in range(RUN_ROWS + 1)]
+
+    async def run_rows(*_: Any) -> Any:
+        return rows
+
+    monkeypatch.setattr(bridge.support.ledger, "run_rows", run_rows)
+    _, chunks = _streamed(world, live=True)
+    final = _events(chunks)[-1]
+    assert len(final["steps"]) == RUN_ROWS and final["steps_cut"] is True
+
+
+@pytest.mark.parametrize("leave", ["client", "stop"])
+def test_an_answer_left_early_closes_librechat_and_leaves_no_task(
+    world: _World, monkeypatch: pytest.MonkeyPatch, leave: str
+) -> None:
+    closed: list[bool] = []
+    world.override = _slow_answer(closed, pause=5)
+
+    async def run() -> set[asyncio.Task[Any]]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+        if leave == "client":
+            # The caller went away after the first chunk: the route closes the generator.
+            await anext(gen)
+            await gen.aclose()  # type: ignore[attr-defined]
+        else:
+            # Stop: the request's task is cancelled while the answer waits on LibreChat.
+            async def drain() -> None:
+                async for _ in gen:
+                    pass
+
+            task = asyncio.create_task(drain())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        return asyncio.all_tasks() - {asyncio.current_task()}  # type: ignore[operator]
+
+    left = asyncio.run(run())
+    assert left == set() and closed == [True] and bridge._running == {}
+
+
+def test_a_reader_error_of_any_kind_ends_the_answer(world: _World) -> None:
+    # A stream error httpx does not class as an HTTPError (a RuntimeError) still reaches the
+    # caller: the relay never waits on a reader that has gone.
+    class _Broken(httpx.AsyncByteStream):
+        async def __aiter__(self) -> Any:
+            yield b'data: {"id": "chatcmpl-9", "choices": [{"delta": {"content": "Se"}}]}\n\n'
+            raise RuntimeError("the stream was closed")
+
+    world.override = lambda _request: httpx.Response(200, stream=_Broken())
+
+    async def run() -> None:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+
+        async def drain() -> None:
+            async for _ in gen:
+                pass
+
+        await asyncio.wait_for(drain(), timeout=5)
+
+    with pytest.raises(RuntimeError, match="the stream was closed"):
+        asyncio.run(run())
+    assert bridge._running == {}
+
+
+@pytest.mark.parametrize(("read", "expected"), [([], []), (None, None)])
+def test_a_streamed_answers_last_event_says_whether_its_run_was_read(
+    world: _World, monkeypatch: pytest.MonkeyPatch, read: Any, expected: Any
+) -> None:
+    # Read with no call: an empty list replaces the live one. Not read (a failed or slow
+    # read): no `steps`, so the dashboard keeps what it showed.
+    async def streamed_calls(*_: Any) -> Any:
+        return read
+
+    monkeypatch.setattr(bridge.support, "streamed_calls", streamed_calls)
+    _, chunks = _streamed(world, live=True)
+    final = _events(chunks)[-1]
+    assert final["object"] == "loom.citations" and final.get("steps") == expected
+    assert ("steps" in final) is (expected is not None)
+
+
+def test_a_failed_citation_check_ends_the_streamed_run_read(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The run is read beside the checks: when a check raises, that read is cancelled with it.
+    started: list[bool] = []
+    cancelled: list[bool] = []
+
+    async def streamed_calls(*_: Any) -> Any:
+        started.append(True)
+        try:
+            await asyncio.sleep(10)
+        except asyncio.CancelledError:
+            # Still running when the check fails: the answer waits for it to end.
+            await asyncio.sleep(0)
+            cancelled.append(True)
+            raise
+
+    async def verify(*_: Any, **__: Any) -> Any:
+        await asyncio.sleep(0)
+        raise RuntimeError("a check failed")
+
+    monkeypatch.setattr(bridge.support, "streamed_calls", streamed_calls)
+    monkeypatch.setattr(bridge.citations, "verify", verify)
+
+    async def run() -> set[asyncio.Task[Any]]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+        with pytest.raises(RuntimeError, match="a check failed"):
+            async for _ in gen:
+                pass
+        # Awaited, not only cancelled: the read has ended by the time the answer has.
+        assert cancelled == [True]
+        return asyncio.all_tasks() - {asyncio.current_task()}  # type: ignore[operator]
+
+    left = asyncio.run(run())
+    assert started == [True] and cancelled == [True] and left == set()
+
+
+def test_an_answer_cancelled_by_a_task_group_leaves_no_task(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Below ASGI 2.4 the response streams inside an anyio task group that is cancelled when
+    # the client leaves; anyio delivers that cancellation again at every await in the scope.
+    import anyio
+
+    # The response's own close, not its body generator's: a cancelled read does not close it.
+    closed: list[bool] = []
+
+    class _Slow(httpx.AsyncByteStream):
+        async def __aiter__(self) -> Any:
+            yield b'data: {"id": "chatcmpl-5", "choices": [{"delta": {"content": "Read "}}]}\n\n'
+            await asyncio.sleep(5)
+
+        async def aclose(self) -> None:
+            closed.append(True)
+
+    world.override = lambda _request: httpx.Response(200, stream=_Slow())
+
+    async def run() -> set[asyncio.Task[Any]]:
+        ticket = await bridge.open_answer(_caller(), ORG, NS)
+        gen = bridge.stream(ticket, QUESTION, bridge.Answer(), live=True)
+
+        async def drain() -> None:
+            async for _ in gen:
+                pass
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(drain)
+            await asyncio.sleep(0.05)
+            tg.cancel_scope.cancel()
+        # The route's response closes the body however it ended.
+        await gen.aclose()  # type: ignore[attr-defined]
+        return asyncio.all_tasks() - {asyncio.current_task()}  # type: ignore[operator]
+
+    left = asyncio.run(run())
+    assert left == set() and closed == [True] and bridge._running == {}
+
+
+def test_the_step_poll_names_its_reads(world: _World, monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.core import ch as core_ch
+
+    world.override = _slow_answer([])
+    tags: list[str] = []
+
+    async def live_rows(*_: Any, **__: Any) -> Any:
+        tags.append(core_ch.current_query_tag())
+        return []
+
+    monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
+    _streamed(world, live=True)
+    assert tags and set(tags) == {"assistant.steps"}
+
+
+@pytest.mark.asyncio
+async def test_signed_personal_answer_and_its_child_are_refused_by_the_chat_route(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+    from server.auth.bearer import verify_bearer_header
+    from server.auth.delegation import Delegated
+    from server.auth.jwt import verify_token
+
+    # Use real mint/verification with fixed delegated bounds: the HTTP route must
+    # refuse both the signed answer and its child before any provider work.
+    async def delegate(parent: AuthInfo, **kwargs: Any) -> Delegated:
+        return Delegated(
+            org=ORG,
+            namespaces=[NS],
+            roles=["viewer"],
+            ns_roles=None,
+            write_namespaces=None,
+            read_scope="",
+            read_user_id="",
+            ttl_seconds=60,
+            parents=[*parent.parents, parent.token_id],
+            parent_subjects=[*parent.parent_subjects, parent.subject],
+            parent_iats=[*parent.parent_iats, parent.issued_at or 0],
+            creator=parent.creator or parent.subject,
+            is_service_account=False,
+        )
+
+    monkeypatch.setattr(bridge, "delegate", delegate)
+    monkeypatch.setattr(routes, "verify_bearer_header", verify_bearer_header)
+    parent = _caller(session_id="sid", first_party=True)
+    answer = await bridge.answer_token(parent, ORG, NS)
+    answer_auth = verify_token(answer)
+    assert answer_auth.reads_as_creator
+    delegated = await delegate(answer_auth)
+    child = delegated.mint("sa:answer-child")
+    assert not verify_token(child).reads_as_creator
+    http, rows = client
+    for token in (answer, child):
+        response = http.post(
+            ROUTE,
+            headers={**HEADERS, "Authorization": f"Bearer {token}"},
+            json={"messages": QUESTION},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "ASSISTANT_SELF_CALL"
+    assert len(rows) == 2 and world.librechat_body == {}
+
+
+def _mirrored_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def active(org: str, namespaces: list[str]) -> list[dict[str, str]]:
+        assert org == ORG and namespaces == [NS]
+        return [{"namespace": NS, "source_id": "source"}]
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(bridge.source_access.store, "active_sources", active)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_marked_chat_has_a_server_owned_first_flag(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch, streamed: bool
+) -> None:
+    _mirrored_namespace(monkeypatch)
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": streamed})
+    assert response.status_code == 200
+    if streamed:
+        assert response.content.startswith(b'data: {"mirrored":true}\n\n')
+        assert b"Seven " in response.content and b"data: [DONE]" in response.content
+    else:
+        assert response.content.startswith(b'{"mirrored":true,')
+        assert response.json()["choices"][0]["message"]["content"] == "Seven memories."
+    assert len(rows) == 1 and bridge._running == {}
+    # No declaration on this request: the model's tools cannot read mirrors.
+    assert world.delegated["answer_mirrors"] is False
+
+
+def test_a_marked_pre_stream_refusal_keeps_its_first_flag(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mirrored_namespace(monkeypatch)
+    world.over_cap = True
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": True})
+    assert response.status_code == 429
+    assert response.content.startswith(b'{"mirrored":true,')
+    assert world.librechat_body == {} and len(rows) == 1
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_marked_stream_commits_real_ledger_delivery_before_done(
+    world: _World, monkeypatch: pytest.MonkeyPatch, failure: bool
+) -> None:
+    import contextlib
+
+    from server.assistant.app import routes
+    from server.core import request_work
+    from server.core.request_tail import RequiredTailError
+    from server.observability import events
+
+    _mirrored_namespace(monkeypatch)
+    committed: list[Any] = []
+    sent: list[bytes] = []
+
+    async def commit(event: Any) -> None:
+        await asyncio.sleep(0)
+        assert event.mirror_marked and event.input_tokens == 1000 and event.output_tokens == 100
+        if failure:
+            raise ConnectionError("private cost store unavailable")
+        committed.append(event)
+
+    monkeypatch.setattr(events, "write_marked_request_event", commit)
+
+    async def run() -> None:
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, contextlib.ExitStack())
+            response = routes._AnswerStream(
+                routes._streamed(bridge.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message: dict[str, Any]) -> None:
+                body = message.get("body", b"")
+                if body == b"data: [DONE]\n\n":
+                    assert len(committed) == 1
+                if body:
+                    sent.append(body)
+
+            async def receive() -> dict[str, Any]:
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            if failure:
+                with pytest.raises(RequiredTailError):
+                    await response(scope, receive, send)
+            else:
+                await response(scope, receive, send)
+
+    asyncio.run(run())
+    assert sent[0] == b'data: {"mirrored":true}\n\n'
+    assert (b"data: [DONE]\n\n" in sent) is (not failure)
+    assert len(committed) == (0 if failure else 1)
+    assert bridge._running == {}
+
+
+def test_a_source_activated_after_an_ordinary_answer_cannot_add_a_mirror_leg(
+    world: _World,
+) -> None:
+    from server.auth.context import current_auth_var
+    from server.auth.session_protection import request_declaration
+    from server.core import request_work
+    from server.knowledge.app import source_access
+
+    async def run() -> None:
+        bag = request_work.begin()
+        with request_declaration({"headers": [(b"x-loom-session-protection", b"v1")]}):
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+        try:
+            assert not ticket.mirrored and not bag.mirror_marked
+            world.mirror_sources = [{"namespace": NS, "source_id": "activated"}]
+            auth = _caller(
+                token_id=f"{bridge.ANSWER_JTI_PREFIX}ordinary",
+                session_protection=True,
+                answer_mirrors=world.delegated["answer_mirrors"],
+            )
+            token = current_auth_var.set(auth)
+            try:
+                plan = await source_access.prepare(ORG, [NS])
+            finally:
+                current_auth_var.reset(token)
+            assert not plan.marked and not plan.sources and not bag.mirror_marked
+            assert world.source_queries == 1  # preflight only, no later mirror discovery
+        finally:
+            ticket.release()
+
+    asyncio.run(run())
+
+
+def test_marked_repeated_cancellation_joins_upstream_before_its_private_row(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+
+    from server.assistant.app import routes
+    from server.core import request_work
+    from server.observability import events
+
+    _mirrored_namespace(monkeypatch)
+
+    async def run() -> None:
+        text_seen, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        closed: list[str] = []
+        committed: list[Any] = []
+
+        class Body(httpx.AsyncByteStream):
+            async def __aiter__(self) -> Any:
+                try:
+                    yield b'data: {"id":"partial","choices":[{"delta":{"content":"text"}}]}\n\n'
+                    await asyncio.Event().wait()
+                finally:
+                    closed.append("reader")
+
+            async def aclose(self) -> None:
+                closing.set()
+                await release.wait()
+                closed.append("response")
+
+        class Upstream(httpx.MockTransport):
+            async def aclose(self) -> None:
+                closed.append("client")
+
+        world.override = lambda request: httpx.Response(200, stream=Body())
+        monkeypatch.setattr(
+            bridge.httpx,
+            "AsyncClient",
+            lambda **kw: world.client_factory(transport=Upstream(world.handle), **kw),
+        )
+
+        async def commit(event: Any) -> None:
+            assert "reader" in closed and "response" in closed and "client" in closed
+            assert event.mirror_marked and event.error_code == "HTTP_499"
+            assert event.upstream_cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
+            committed.append(event)
+
+        monkeypatch.setattr(events, "write_marked_request_event", commit)
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, contextlib.ExitStack())
+            response = routes._AnswerStream(
+                routes._streamed(bridge.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message: dict[str, Any]) -> None:
+                if b'"partial"' in message.get("body", b""):
+                    text_seen.set()
+
+            async def receive() -> dict[str, Any]:
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            task = asyncio.create_task(response(scope, receive, send))
+            await text_seen.wait()
+            task.cancel()
+            await closing.wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done() and committed == []
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(committed) == 1 and bridge._running == {}
+            assert not (asyncio.all_tasks() - {asyncio.current_task()})
+
+    asyncio.run(run())

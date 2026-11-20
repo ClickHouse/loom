@@ -16,6 +16,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from server.auth.default_namespace import auth_off_subject
 from server.auth.delegation import Delegated, ceiling_role, delegate
 from server.auth.jwt import AuthInfo
 from server.auth.public_url import public_base_url
@@ -25,9 +26,10 @@ from server.core.datetimes import naive_utc_now_seconds
 from server.core.errors import BackendUnavailableError
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, namespace_classification, token_grants
-from server.identity.app.caller_home import caller_org, default_namespace
+from server.identity.app.caller_home import caller_org, default_namespace, star_home
 from server.identity.app.restricted_access import note_restricted_grants
 from server.identity.app.token_clients import client_configs
+from server.identity.app.token_saves_to import asked_saves_to, saves_to_target
 from server.operations.base import GRANT_ROLES, Role, grant_rank
 from server.settings import settings
 
@@ -199,9 +201,11 @@ async def save_token(
     *,
     created_by: str,
     now: datetime,
+    personal: bool = False,
 ) -> None:
     """List the token in its owner's token list (`loom.service_accounts`).
     Called under the name's claim."""
+    from server.auth.authz import identity_write
     from server.core.ch import get_client
     from server.core.versions import next_version
 
@@ -215,72 +219,62 @@ async def save_token(
     # revoked row from a host running ahead would otherwise replace this one.
     version = await next_version(ch, "loom.service_accounts", {"org": delegated.org, "name": name})
     lineage = {created_by, delegated.creator, *delegated.parent_subjects} - {""}
-    await ch.insert(
-        "loom.service_accounts",
-        [
-            {
-                "org": delegated.org,
-                "name": name,
-                "sa_subject": sa_subject,
-                "namespaces": delegated.namespaces,
-                "roles": roles,
-                "ns_roles": json.dumps(ns_roles),
-                "ttl_days": delegated.ttl_days,
-                "created_by": created_by,
-                "created_at": now,
-                "expires_at": delegated.expires_at(now),
-                "revoked_at": None,
-                "revoked_by": "",
-                "version": version,
-                "kind": "service_account",
-                "client": "",
-                # The gate and the namespace listings read this flag: a token
-                # reads through its creator's live grants (server/auth/service_accounts.py).
-                "inherit_creator_grants": True,
-                "lineage": sorted(lineage),
-            }
-        ],
-    )
+    with identity_write():
+        await ch.insert(
+            "loom.service_accounts",
+            [
+                {
+                    "org": delegated.org,
+                    "name": name,
+                    "sa_subject": sa_subject,
+                    "namespaces": delegated.namespaces,
+                    "roles": roles,
+                    "ns_roles": json.dumps(ns_roles),
+                    "ttl_days": delegated.ttl_days,
+                    "created_by": created_by,
+                    "created_at": now,
+                    "expires_at": delegated.expires_at(now),
+                    "revoked_at": None,
+                    "revoked_by": "",
+                    "version": version,
+                    "kind": "personal_agent" if personal else "service_account",
+                    "client": "",
+                    # The gate and the namespace listings read this flag: a token
+                    # reads through its creator's live grants (server/auth/service_accounts.py).
+                    "inherit_creator_grants": True,
+                    "lineage": sorted(lineage),
+                    "saves_to": delegated.saves_to,
+                }
+            ],
+        )
 
 
-def dev_bearer(request: Request) -> AuthInfo | None:
-    """With auth off, the principal of a valid bearer the request sends; None
-    for no bearer or one that does not verify, which auth off ignores. 503 while
-    a bearer cannot be checked yet, as `verify_bearer` answers."""
-    from server.auth.bearer import auth_unavailable, bearer_token, gateway_refused
-    from server.auth.gateway import is_end_user
-    from server.auth.jwt import AuthUnavailable, TokenError, verify_token
-    from server.observability.metrics import record_auth_refusal
+async def dev_bearer(request: Request) -> AuthInfo | None:
+    """A supplied bearer is checked in dev mode too; only absence returns None."""
+    from server.auth.bearer import verify_bearer_header
 
-    try:
-        token = bearer_token(request.headers.get("Authorization"))
-        info = None if token is None else verify_token(token)
-    except AuthUnavailable as e:
-        record_auth_refusal(e, transport="http")
-        raise auth_unavailable(e) from e
-    except TokenError:
-        return None
-    if info is not None and is_end_user(info):
-        raise gateway_refused()
-    return info
+    return await verify_bearer_header(request.headers.get("Authorization"))
 
 
-def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:
+async def dev_caller(request: Request, params: Mapping[str, object]) -> tuple[str, str]:
     """(subject, org) of the caller in dev mode (auth off): a valid bearer's,
-    else the request's `subject` and `org`, else "dev" in "default". Every
-    route that saves, lists or revokes a token reads it, so a token minted
-    with auth off is in the list it is revoked from."""
-    info = dev_bearer(request)
+    else the request's `subject` and `org`, else the single user in
+    `self_signup_org`, who holds the default namespace's admin grant
+    (`server.auth.default_namespace`). Every route that saves, lists or revokes
+    a token reads it, so a token minted with auth off is in the list it is
+    revoked from."""
+    info = await dev_bearer(request)
     if info is not None:
         return info.subject, info.org
-    return str(params.get("subject") or "dev"), str(params.get("org") or "default")
+    subject = params.get("subject") or auth_off_subject()
+    return str(subject), str(params.get("org") or settings.self_signup_org)
 
 
-def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
+async def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
     """The parent a token is delegated from in dev mode (auth off): a flat
     writer for `dev_caller`, issued now. A bearer only names the owner; its
     scope and lifetime do not cap the token, as with token.mint."""
-    subject, org = dev_caller(request, payload)
+    subject, org = await dev_caller(request, payload)
     return AuthInfo(
         subject=subject,
         org=org,
@@ -293,8 +287,46 @@ def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
 
 @router.post("/v1/me/service_accounts.create")
 async def me_service_accounts_create(
-    request: Request,
-    payload: dict[str, object],
+    request: Request, payload: dict[str, object]
+) -> dict[str, object]:
+    """Mint a general service-account token under the caller's live grants."""
+    return await _create_token(request, payload)
+
+
+@router.post("/v1/me/personal_tokens.create")
+async def me_personal_tokens_create(
+    request: Request, payload: dict[str, object]
+) -> dict[str, object]:
+    """Mint a token that reads mirrored documents as its signed-in creator."""
+    from server.auth.reader_identity import reader_subject
+
+    if not settings.auth_actually_required():
+        raise _personal_session_required()
+    parent = await me_callers.require_authed_info(request)
+    if (
+        not parent.first_party
+        or not parent.session_id
+        or parent.creator
+        or parent.is_service_account
+        or not reader_subject(parent)
+        or request.headers.get("X-Loom-On-Behalf-Of") is not None
+    ):
+        raise _personal_session_required()
+    return await _create_token(request, payload, personal_parent=parent)
+
+
+def _personal_session_required() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": "AUTH_INSUFFICIENT",
+            "message": "connect your own agent from your signed-in dashboard session",
+        },
+    )
+
+
+async def _create_token(
+    request: Request, payload: dict[str, object], *, personal_parent: AuthInfo | None = None
 ) -> dict[str, object]:
     """Mint a token for the caller's own tools, agents, scripts and CI jobs,
     never wider than the caller's grants, and hand it over with the setup of
@@ -313,6 +345,10 @@ async def me_service_accounts_create(
                           #   defaults to the top-level `role`, else the
                           #   caller's live grant on that namespace.
       role: str|null      # default role for bare entries (viewer|writer|admin)
+      saves_to: str|null  # a list token: where calls that name no namespace save,
+                          #   a memory namespace of the list it may write (422
+                          #   otherwise); null: the parent token's when it may
+                          #   write there, else the first such entry. Not with "*".
       ttl_days: int|null  # default and null: 90 days; 0: never expires
 
     Each namespace's role is delegated from the caller's token
@@ -327,17 +363,21 @@ async def me_service_accounts_create(
     Returns the JWT exactly once, with where calls that name no namespace
     save (`caller_home.default_namespace`).
     """
+    personal = personal_parent is not None
     caller: AuthInfo | None = None  # auth off: a mint writes no audit row
-    if settings.auth_actually_required():
-        parent = caller = me_callers.require_authed_info(request)
+    if personal_parent is not None:
+        parent = caller = personal_parent
+    elif settings.auth_actually_required():
+        parent = caller = await me_callers.require_authed_info(request)
     else:
-        parent = dev_parent(request, payload)
+        parent = await dev_parent(request, payload)
     subject, org = parent.subject, parent.org
 
     name = token_name(payload.get("name"), default=generated_name(naive_utc_now_seconds()))
     requested_role = _requested_roles(payload)
     ttl_seconds = parse_ttl_days(payload.get("ttl_days"))
     everything = "*" in requested_role
+    asked = asked_saves_to(payload.get("saves_to"), everything=everything)
     # A restricted repository's bound tracker record is named beside it, read-only.
     named = [
         ns
@@ -360,15 +400,20 @@ async def me_service_accounts_create(
             is_service_account=True,
         )
         # Read before anything is saved, so a refusal or a failed read strands no token.
+        delegated = await saves_to_target(
+            org, delegated, asked, before_star=star_home(list(requested_role))
+        )
         restricted_roles = await token_grants.restricted_roles(
             org, subject, delegated, requested_role
         )
         is_code = await token_grants.code_namespace_predicate(org, list(restricted_roles))
         sa_subject = new_token_subject(org, name, subject)
-        minted = delegated.mint(sa_subject)
+        minted = delegated.mint(sa_subject, reads_as_creator=personal)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
         expires_at = delegated.expires_at(now)
-        await save_token(name, sa_subject, delegated, created_by=subject, now=now)
+        await save_token(
+            name, sa_subject, delegated, created_by=subject, now=now, personal=personal
+        )
     # A restricted namespace named here is read only when the token's own subject holds a
     # direct grant: write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.
@@ -377,7 +422,7 @@ async def me_service_accounts_create(
     )
     await note_restricted_grants(
         caller,
-        op="me.service_accounts.create",
+        op="me.personal_tokens.create" if personal else "me.service_accounts.create",
         org=org,
         namespaces=restricted_granted,
         granted_to=sa_subject,
@@ -423,9 +468,9 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
-        subject, org = me_callers.require_authed_caller(request)
+        subject, org = await me_callers.require_authed_caller(request)
     else:
-        subject, org = dev_caller(request, request.query_params)
+        subject, org = await dev_caller(request, request.query_params)
 
     # Every spelling of the caller, in any case, as grants match a subject.
     subs = await me_callers.lowered_aliases(org, subject)
@@ -456,13 +501,13 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
             s.created_at AS created_at, s.expires_at AS expires_at,
             s.revoked_at AS revoked_at, s.revoked_by AS revoked_by,
             s.kind AS kind, s.client AS client, s.ns_roles AS ns_roles,
-            lu.last_used AS last_used_at
+            s.saves_to AS saves_to, lu.last_used AS last_used_at
         -- Filter + FINAL in a subquery, THEN join: CH 26.5's analyzer can't
         -- resolve a WHERE on a FINAL table that is also a JOIN side.
         FROM (
             SELECT name, sa_subject, namespaces, roles, ttl_days, created_by,
                    created_at, expires_at, revoked_at, revoked_by, kind, client,
-                   ns_roles
+                   ns_roles, saves_to
             FROM loom.service_accounts FINAL
             WHERE org = {org:String}
               AND (
@@ -501,6 +546,9 @@ async def me_service_accounts_list(request: Request) -> dict[str, object]:
                 "kind": r.get("kind") or "service_account",
                 "client": r.get("client") or "",
                 "ns_roles": me_callers.parse_ns_roles(r.get("ns_roles")),
+                # Where a list token saves, as minted; "": a `*` token, one with no
+                # default target, or one minted before tokens recorded it.
+                "saves_to": r.get("saves_to") or "",
                 # Made by the caller under any spelling of theirs, not by another person
                 # whose token names a namespace the caller administers.
                 "yours": str(r["created_by"]).lower() in subs,
@@ -518,12 +566,13 @@ async def me_service_accounts_revoke(
     """Mark an SA as revoked and revoke its subject, so its token stops
     verifying. Caller must be the creator or admin on at least one of the
     SA's namespaces."""
+    from server.auth.authz import identity_write
     from server.core.ch import get_client
 
     if settings.auth_actually_required():
-        subject, org = me_callers.require_authed_caller(request)
+        subject, org = await me_callers.require_authed_caller(request)
     else:
-        subject, org = dev_caller(request, payload)
+        subject, org = await dev_caller(request, payload)
 
     name = str(payload.get("name") or "").strip()
     if not name:
@@ -542,7 +591,8 @@ async def me_service_accounts_revoke(
             """
             SELECT sa_subject, namespaces, created_by, created_at,
                    expires_at, ttl_days, roles, kind, client,
-                   inherit_creator_grants, ns_roles, revoked_at, version, lineage
+                   inherit_creator_grants, ns_roles, revoked_at, version, lineage,
+                   saves_to
             FROM loom.service_accounts FINAL
             WHERE org = {org:String} AND name = {name:String}
             LIMIT 1
@@ -577,14 +627,15 @@ async def me_service_accounts_revoke(
         # Revoked already (a retry, a second click): its revocation stands as it was.
         now = row["revoked_at"] or naive_utc_now_seconds()
         if not row["revoked_at"]:
-            await ch.insert(
-                "loom.service_accounts",
-                [
-                    revoked_row(
-                        {**row, "org": org, "name": name}, revoked_at=now, revoked_by=subject
-                    )
-                ],
-            )
+            with identity_write():
+                await ch.insert(
+                    "loom.service_accounts",
+                    [
+                        revoked_row(
+                            {**row, "org": org, "name": name}, revoked_at=now, revoked_by=subject
+                        )
+                    ],
+                )
 
     # The row keeps no jti, so revoke by `sub` (the sa_subject); its children
     # die with it through `parent_subjects`. Through `revoke`, so this replica

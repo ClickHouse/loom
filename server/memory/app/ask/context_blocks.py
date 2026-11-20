@@ -4,9 +4,13 @@ passages and the caller's recent turns."""
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Any
 
-from server.memory.app.agent_rules import request_rule_agent, served_hits
+from server.knowledge.app.source_corpus import LostCorpus
+from server.knowledge.app.source_passages import CheckedPassages, collect
+from server.memory.app.ask.source_context import PreparedKnowledge, prepare_knowledge
+from server.observability.genai import current_stage, llm_stage
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -37,53 +41,84 @@ def knowledge_block_text(hits: list[Any]) -> str:
     return "KNOWLEDGE PASSAGES (documents this namespace holds; not memories):\n" + "\n".join(lines)
 
 
+@dataclass
+class AskKnowledge:
+    passages: CheckedPassages | None = None
+
+    @property
+    def mirrored(self) -> bool:
+        return self.passages is not None and self.passages.mirrored
+
+    def fresh(self) -> bool:
+        return self.passages is None or self.passages.fresh()
+
+    @staticmethod
+    def _render(hits: list[Any]) -> tuple[str, int]:
+        block = knowledge_block_text(hits)
+        return block, len(hits) if block else 0
+
+    async def current(self) -> tuple[str, int]:
+        if self.passages is None:
+            return "", 0
+        hits = await self.passages.current()
+        if not self.passages.fresh():
+            hits = await self.passages.ordinary()
+        return self._render(hits)
+
+    async def require(self) -> None:
+        if self.passages is not None:
+            await self.passages.current()
+            if self.passages.lost or not self.passages.fresh():
+                raise LostCorpus()
+
+    async def ordinary(self) -> tuple[str, int]:
+        if self.passages is None:
+            return "", 0
+        return self._render(await self.passages.ordinary())
+
+
+@dataclass(frozen=True)
+class CheckedAskLLM:
+    client: Any
+    knowledge: AskKnowledge
+
+    @property
+    def model(self) -> str:
+        return str(getattr(self.client, "model", "") or "")
+
+    async def complete(self, *args: Any, **kwargs: Any) -> Any:
+        await self.knowledge.require()
+        # The synthesis tier owns the stage; access renewal must not rename it.
+        with llm_stage(current_stage()):
+            result = await self.client.complete(*args, **kwargs)
+        await self.knowledge.require()
+        return result
+
+
 async def knowledge_passages(
-    search_input: Any, question: str, *, enabled: bool | None = None
-) -> tuple[str, int]:
-    """One knowledge.search over the ask's namespace, rendered
-    for the synthesizer. On unless the request turns it off (`knowledge`);
-    fail-open (a plane that errors is a plane that returned nothing)."""
-    if enabled is not None and not enabled:
-        return "", 0
+    search_input: Any,
+    question: str,
+    *,
+    enabled: bool | None = None,
+    prepared: PreparedKnowledge | None = None,
+) -> AskKnowledge:
+    """Retain the selected search proofs and both complete ordinary widths."""
+    if enabled is False:
+        return AskKnowledge()
     try:
-        from server.knowledge.api.models_knowledge import KnowledgeSearchInput
-        from server.knowledge.app.knowledge_search import handle_knowledge_search
-
-        async def search(top_k: int) -> list[Any]:
-            res = await handle_knowledge_search(
-                KnowledgeSearchInput(
-                    org=search_input.org,
-                    namespace=search_input.namespace,
-                    query=question,
-                    top_k=top_k,
-                    namespace_scope="this",
-                    # The ask's hard tag filter reaches this leg too.
-                    tags=(
-                        []
-                        if bool(getattr(search_input, "tags_soft", False))
-                        else [str(t) for t in (getattr(search_input, "tags", None) or []) if t]
-                    ),
-                    # The ask's synthesis reads these passages; a rerank call would run
-                    # before its cost cap and synthesis switch are checked.
-                    rerank="none",
-                )
-            )
-            return list(getattr(res, "results", None) or [])
-
-        top_k = int(settings.memory_ask_knowledge_top_k)
-        # Another bot's promoted rule is not a rule about this agent.
-        hits = await served_hits(
-            await search(top_k),
-            search,
-            lambda h: list(getattr(h, "tags", None) or []),
-            request_rule_agent(str(getattr(search_input, "agent", "") or "")),
-            top_k,
+        if prepared is None:
+            prepared = await prepare_knowledge(search_input, question, enabled=enabled)
+        if prepared.request is None:
+            return AskKnowledge()
+        passages = await collect(
+            prepared.request, prepared.plan, str(getattr(search_input, "agent", "") or "")
         )
-    except Exception as e:  # noqa: BLE001 — additive plane
-        logger.warning("knowledge plane on ask failed (non-fatal): %s", e)
-        return "", 0
-    block = knowledge_block_text(hits)
-    return block, (len(hits) if block else 0)
+        return AskKnowledge(passages)
+    except LostCorpus:
+        raise
+    except Exception:  # noqa: BLE001 — an unavailable additive plane contributes no passages
+        logger.warning("knowledge plane on ask unavailable")
+        return AskKnowledge()
 
 
 def recent_turns_block(messages: list[dict[str, Any]]) -> str:

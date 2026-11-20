@@ -17,7 +17,7 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { Link } from "@clickhouse/click-ui/Link";
 import { deleteKnowledge, knowledgeReads, listKnowledge, type KnowledgeEntry } from "../api";
 import { ApiError } from "../lib/errors";
-import { humanizeError } from "../lib/format";
+import { committedAnyway, humanizeError } from "../lib/errorWords";
 import { useAbortableEffect } from "../lib/hooks";
 import { confirmAction } from "../components/ConfirmDialog";
 import { Skeleton } from "../components/Skeleton";
@@ -28,7 +28,7 @@ const RepoDocAddDialog = lazy(() => import("../flows/RepoDocDialogs").then((m) =
 const RepoDocViewer = lazy(() => import("../flows/RepoDocDialogs").then((m) => ({ default: m.RepoDocViewer })));
 
 export const REPO_DOCS_HINT =
-  "Agents working in this repository's checkout find these through loom_search, and its orientation context pack lists them.";
+  "Your agents working in this repository's checkout find these with Loom search, and the orientation they get for the repository lists them.";
 const FIELDS = ["source_uri", "title", "description", "ingested_at", "has_blob", "original_filename"];
 const LIMIT = 20;
 const READS_DAYS = 7;
@@ -78,7 +78,7 @@ export function RepoDocsList({
       } catch (e) {
         if (!live()) return;
         if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
-        else setState({ kind: "error", message: humanizeError(e) });
+        else setState({ kind: "error", message: humanizeError(e, { read: true }) });
         return;
       }
       if (rows.length === 0) {
@@ -111,7 +111,7 @@ export function RepoDocsList({
       toast(`Removed ${doc.title || doc.source_uri}`, "ok");
       setNonce((n) => n + 1);
     } catch (e) {
-      toast(`Couldn't remove it: ${humanizeError(e)}`, "error");
+      if (committedAnyway("Couldn't remove it", e)) setNonce((n) => n + 1);
     } finally {
       setRemoving(null);
     }
@@ -216,7 +216,12 @@ export function RepoDocsList({
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
-            onAdded={(title, lost) => {
+            onAdded={(title, lost, said) => {
+              // A write that committed with lists behind: the dialog already said so.
+              if (said) {
+                setNonce((n) => n + 1);
+                return;
+              }
               if (lost === null) toast(`Added ${title}`, "ok");
               else
                 toast(

@@ -1,12 +1,12 @@
 [project]
 name = "clickhouse-loom-server"
-version = "1.1.0"
+version = "1.3.0"
 description = "Loom server (control plane). Shared-production agent memory + knowledge plane on ClickHouse. Distributed as a Docker image (ghcr.io/clickhouse/loom) — `pip install` is for local dev / Docker-image build only; do NOT run the server from pip in production."
 requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 readme = "README.md"
 authors = [{ name = "ClickHouse, Inc." }]
-urls = { Repository = "https://github.com/ClickHouse/loom" }
+urls = { Homepage = "https://clickhouse.github.io/loom/", Repository = "https://github.com/ClickHouse/loom" }
 # PEP 541: PyPI rejects uploads whose primary classifier is "Private ::
 # Do Not Upload". Loom's server is a shared-production data plane,
 # deployed multi-user / multi-agent against ClickHouse Cloud or self-
@@ -18,13 +18,14 @@ classifiers = ["Private :: Do Not Upload"]
 
 dependencies = [
   "fastapi>=0.118",
-  "uvicorn[standard]>=0.30",
+  "uvicorn[standard]>=0.50", # ssl_context_factory, and a worker exiting 3 stops all (server/core/tls.py)
   "pydantic>=2.9",
   "pydantic-settings>=2.5",
   # The YAML settings file (server/settings/_file.py); uvicorn[standard] pulls it in too.
   "pyyaml>=6.0",
   "clickhouse-connect>=1.7", # older ones drop milliseconds (<1.2) or bind a naive datetime as local time
   "aiohttp>=3.10",           # clickhouse-connect's async client requires it
+  "anyio>=4",                # a wait no cancellation cuts short: server.core.shielded
   "httpx[http2]>=0.27",
   "idna>=3.7",               # UTS 46 host names: server.settings.catalog.ascii_host
   "dnspython>=2.6",          # a cancellable lookup for names a tenant chooses: server.core.hosts
@@ -33,8 +34,8 @@ dependencies = [
   # OpenTelemetry: ship spans + logs to HyperDX / ClickStack's OTLP
   # collector. ClickStack is the OTel consumer in the Loom stack
   # (docs/features/integrations/clickstack.md); this wires the producer side.
-  "opentelemetry-api>=1.27",
-  "opentelemetry-sdk>=1.27",
+  "opentelemetry-api>=1.45.2",
+  "opentelemetry-sdk>=1.45.2",
   "opentelemetry-exporter-otlp-proto-http>=1.27",
   "opentelemetry-instrumentation-fastapi>=0.48b0",
   "opentelemetry-instrumentation-httpx>=0.48b0",
@@ -97,6 +98,11 @@ dev = [
   "types-PyYAML>=6.0",
   "ruff==0.16.9",
   "build>=1.0",
+  # Translation table verification uses the documentation site's parser.
+  "Markdown==3.11.2",
+  "mdx-truly-sane-lists==1.3",
+  "pymdown-extensions==12.3",
+  "markdown-it-py==4.0.0",
 ]
 # Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
 # source. Not a server dep; the CLI lazy-imports it with an actionable error
@@ -113,7 +119,8 @@ extractor = [
   "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
 ]
 # `loom export-analytics` uploads to S3 under an assumed role, and
-# LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; ships in the image.
+# LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; native Bedrock
+# model calls use its credential chain and signing. Ships in the image.
 aws = [
   # 1.36: the first whose client config takes the checksum options the document
   # bucket client sets (put_object's IfNoneMatch came in 1.35.2)
@@ -242,11 +249,47 @@ ignore_missing_imports = true
 module = ["boto3", "boto3.*", "botocore", "botocore.*"]
 ignore_missing_imports = true
 
-# The SDK's framework adapters: langgraph and strands are optional, so each adapter
-# subclasses the real base class when it imports and a structural twin otherwise.
-# Without the framework the base is Any, which strict mode refuses to subclass.
+# The SDK's framework adapters: no framework is installed here. Each framework is an SDK
+# extra, which `make test-sdk-adapters` installs to type-check its adapter; LangGraph and
+# Strands are typed through structural twins. Without the framework the base is Any,
+# which strict mode refuses to subclass.
 [[tool.mypy.overrides]]
-module = ["langgraph", "langgraph.*", "strands", "strands.*"]
+module = [
+  "langchain_core",
+  "langchain_core.*",
+  "llama_index",
+  "llama_index.*",
+  "agents",
+  "agents.*",
+  "crewai",
+  "crewai.*",
+  "autogen_core",
+  "autogen_core.*",
+  "pydantic_ai",
+  "pydantic_ai.*",
+  "ag2",
+  "ag2.*",
+  "agno",
+  "agno.*",
+  "haystack",
+  "haystack.*",
+  "agent_framework",
+  "agent_framework.*",
+  "anthropic",
+  "anthropic.*",
+  "google.adk",
+  "google.adk.*",
+  "google.genai",
+  "google.genai.*",
+  "langgraph",
+  "langgraph.*",
+  "strands",
+  "strands.*",
+  "pipecat",
+  "pipecat.*",
+  "dspy",
+  "dspy.*",
+]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
@@ -260,8 +303,8 @@ disallow_subclassing_any = false
 # coverage; treat this as a unit-coverage floor, not a total.
 source = ["server", "sdk/python/loom"]
 # The C tracer, which `sys.settrace(None)` pauses: the extraction tests' time bounds
-# (tests/unit/test_document_extraction.py `_cpu`) and `assert_linear`'s bound
-# (tests/unit/code_fixtures.py) time the code with it off, through `untraced`.
+# (tests/unit/test_document_extraction.py `_cpu`) time the code with it off, through
+# `untraced` (tests/unit/code_fixtures.py).
 core = "ctrace"
 omit = ["*/tests/*", "*/__pycache__/*"]
 
@@ -309,6 +352,7 @@ exclude = [
   "server/code/domain/extract/py_members.py",
   "server/code/domain/extract/py_receivers.py",
   "server/code/domain/extract/registration.py",
+  "server/code/domain/extract/spans.py",
   "server/code/domain/extract/tokenize.py",
   "server/code/domain/extract/treesitter.py",
   "server/code/domain/extract/ts_config.py",

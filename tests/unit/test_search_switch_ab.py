@@ -41,7 +41,7 @@ def test_plugin_manifest_version_moved_with_the_run_hook() -> None:
     )
     hooks = json.loads((root / "hooks" / "hooks.json").read_text())
     assert any(
-        "loom-run.mjs" in h["command"]
+        "loom-run.mjs" in h["args"][0]
         for grp in hooks["hooks"]["UserPromptSubmit"]
         for h in grp["hooks"]
     )

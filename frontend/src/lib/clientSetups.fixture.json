@@ -117,8 +117,26 @@
         "config": {
           "context_servers": {
             "loom": {
-              "command": "npx",
-              "args": ["-y", "mcp-remote", "http://x/mcp", "--allow-http", "--header", "Authorization: Bearer T"]
+              "url": "http://x/mcp",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
             }
           }
         },
@@ -246,8 +264,26 @@
         "config": {
           "context_servers": {
             "loom": {
-              "command": "npx",
-              "args": ["-y", "mcp-remote", "http://x/mcp?a=1", "--allow-http", "--header", "Authorization: Bearer T"]
+              "url": "http://x/mcp?a=1",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?a=1&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
             }
           }
         },
@@ -389,15 +425,26 @@
         "config": {
           "context_servers": {
             "loom": {
-              "command": "npx",
-              "args": [
-                "-y",
-                "mcp-remote",
-                "http://x/mcp?mytoolset=x",
-                "--allow-http",
-                "--header",
-                "Authorization: Bearer T"
-              ]
+              "url": "http://x/mcp?mytoolset=x",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
+            }
+          }
+        },
+        "config_toml": "",
+        "command": "",
+        "env": {}
+      },
+      "gemini": {
+        "config_key": "mcpServers",
+        "config": {
+          "mcpServers": {
+            "loom": {
+              "httpUrl": "http://x/mcp?mytoolset=x&toolset=coding",
+              "headers": {
+                "Authorization": "Bearer T"
+              }
             }
           }
         },

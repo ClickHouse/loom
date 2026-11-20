@@ -12,7 +12,12 @@ $ loom whoami
 $ loom logout
 ```
 
-`loom login` stores a session that refreshes itself. CI and services have no
+`loom login` stores a session that refreshes itself. Behind a router of
+[cells](../architecture/cells.md), `loom login --org <org>` signs in at the org's own cell:
+it asks the router's `GET /cells/lookup`, keeps the server it was given when there is no
+router or no cell yet, waits out a 429 for at most `--wait` seconds (default 120), and
+otherwise refuses without starting a sign-in. The session is then the cell host's: point
+`--server` or `LOOM_BASE_URL` at the host it prints. CI and services have no
 one to approve the code, so they sign in as a bot (below), or with a scoped
 token in `LOOM_API_KEY`. See [tokens and grants](tokens-and-grants.md#sign-in-from-a-terminal-or-a-notebook).
 With only the SDK installed, run the same commands as `python -m loom login`

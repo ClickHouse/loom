@@ -8,6 +8,7 @@ from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.store.rows import MEMORY_PERSISTED_COLS
+from server.observability import pg_pipeline
 
 
 def check_memory_rows(rows: Sequence[Mapping[str, Any]]) -> None:
@@ -36,6 +37,7 @@ async def insert_memory_versions(
     ch: _CHClient | None = None,
     published: bool = False,
     publish_now: bool = True,
+    policy: Mapping[tuple[str, str], int] | None = None,
 ) -> int:
     """The one loom.memory write: every row is checked against
     MEMORY_PERSISTED_COLS before the insert (see `check_memory_rows`), and
@@ -49,12 +51,18 @@ async def insert_memory_versions(
     from server.core import pg
 
     if pg.enabled() and not published:
-        from server.memory.store import pg_publish
+        from server.memory.store import pg_memory, pg_publish
 
-        if publish_now:
-            await pg_publish.commit_and_publish(rows, ch=ch)
-        else:
-            await pg_publish.commit(rows, publisher_lease=False)
+        admission = pg_memory.Admission(generations=dict(policy)) if policy else None
+        try:
+            if publish_now:
+                await pg_publish.commit_and_publish(rows, ch=ch, admission=admission)
+            else:
+                await pg_publish.commit(rows, publisher_lease=False, admission=admission)
+        except pg_memory.AdmissionMoved:
+            raise pg_memory.AdmissionContendedError(
+                "the write policy changed while it was checked"
+            ) from None
         return len(rows)
     ch = ch or _default_client()
     await ch.insert(
@@ -62,6 +70,7 @@ async def insert_memory_versions(
         [dict(r) for r in rows],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    pg_pipeline.record_insert("memory", len(rows))
     return len(rows)
 
 
@@ -87,3 +96,4 @@ async def insert_embedding_rows(
         rows,
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+    pg_pipeline.record_insert("memory_embeddings", len(rows))

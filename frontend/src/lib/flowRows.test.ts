@@ -42,7 +42,7 @@ describe("toolActivityRows", () => {
     expect(r.kind).toBe("namespace");
     if (r.kind !== "namespace") return;
     expect(r.rows).toEqual([{ agent: "claude-code", writes: 12, recalls: 30, cross_namespace_recalls: 4 }]);
-    expect(r.others).toBe(1);
+    expect(r.otherPlaces).toHaveLength(1);
   });
   it("names a namespace outside the summary's scope and falls back to everything", () => {
     const r = toolActivityRows(summary, "elsewhere", false);
@@ -50,7 +50,7 @@ describe("toolActivityRows", () => {
     if (r.kind !== "outside") return;
     expect(r.namespace).toBe("elsewhere");
     expect(r.rows.length).toBe(4);
-    expect(r.namespaces).toBe(2);
+    expect(r.places).toHaveLength(2);
   });
   it("shows every agent × namespace row on request, most active first", () => {
     const r = toolActivityRows(summary, "team", true);

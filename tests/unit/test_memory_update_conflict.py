@@ -181,7 +181,14 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
     assert not calls.marked and not calls.refined
     # Same-key supersession ran with the value-carrying one-row batch.
     assert calls.superseded == [
-        [{"memory_id": _ID_A, "memory_key": "deploy_day", "value": '"Deploys happen on Thursday"'}]
+        [
+            {
+                "memory_id": _ID_A,
+                "memory_key": "deploy_day",
+                "value": '"Deploys happen on Thursday"',
+                "user_id": "-",
+            }
+        ]
     ]
 
 
@@ -282,16 +289,31 @@ async def test_update_by_id_reports_the_same_verdict(wired, monkeypatch) -> None
     assert calls.marked[0]["new_memory_id"] == _ID_A
 
 
+@pytest.mark.asyncio
+async def test_an_update_is_judged_against_its_rows_user(wired, monkeypatch) -> None:
+    from server.memory.api.models_crud import MemoryUpdateByIdInput
+
+    async def _in_scope(*_: Any, **__: Any) -> bool:
+        return True
+
+    monkeypatch.setattr("server.auth.authz.row_in_scope", _in_scope)
+    _ch, calls = wired(ConflictResult(verdict="clear", peers=[]), row=_row(user_id="alice"))
+    await update_mod.handle_memory_update_by_id(
+        MemoryUpdateByIdInput(org="test", memory_id=_ID_A, value="Deploys happen on Friday")
+    )
+    assert calls.check[0]["new_user_id"] == "alice"
+
+
 def test_own_key_is_excluded_by_the_check_itself() -> None:
     """The row's earlier versions share its key; check_on_commit's candidate
     query excludes the caller's own key, so an update is never its own peer."""
     import inspect
 
-    # The peer statement lives in `_peer_rows`.
+    # The peer statement lives in `nearest_peer_rows`.
     # Stage A (`_peer_candidates_sql`) carries the exclusion.
     src = (
         inspect.getsource(cf.check_on_commit)
-        + inspect.getsource(cf._peer_rows)
+        + inspect.getsource(cf.nearest_peer_rows)
         + inspect.getsource(conflict_candidates._peer_candidates_sql)
     )
     assert "memory_key != {self_key:String}" in src

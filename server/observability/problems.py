@@ -62,6 +62,9 @@ class HealthState:
     worker_lease_error: str = ""
     # Why this process stopped contending for the workers lease ('' while it does).
     worker_lease_given_up: str = ""
+    # Whether some process holds the workers lease with a live renewal, as the
+    # last instance beat read it (None = not read within the live window).
+    worker_lease_holder_live: bool | None = None
     # `None` = not a server process (the doctor shell); '' = a server that
     # booted without a label.
     instance_label: str | None = None
@@ -90,8 +93,10 @@ class HealthState:
     # finding, None = no probe answer (`analysis_error` set once that lasts).
     analysis_ok: bool | None = None
     analysis_error: str = ""
-    # The assistant's LibreChat service: None = not set up yet or no LibreChat
-    # configured, False = its setup failed (`assistant_error` says why).
+    # The finding's own fix, when it has one.
+    analysis_fix: str = ""
+    # The assistant's LibreChat service: None = not set up yet, being set up again or
+    # no LibreChat configured, False = its setup failed (`assistant_error` says why).
     assistant_ok: bool | None = None
     assistant_error: str = ""
     # Whether a sign-in lately found loom.oauth_signin_state at its key limit.
@@ -107,8 +112,14 @@ class HealthState:
     refused_configuration: str = ""
     # The code-index tiers failing past the warn threshold, one row per entry and
     # tier (`server.code.app.index.tier_health.problem_rows`): org, namespace, tier,
-    # kind, since, failed_passes, lag_commits, fix, severity. None = not read here.
+    # kind, since, failed_passes, lag_commits, reason, restricted, repo, branch, error,
+    # fix, severity. None = not read here.
     code_tier_failures: tuple[Mapping[str, Any], ...] | None = None
+    # Which entries the `code_tier_failing` message names, with their error: `none`
+    # (anonymous `/v1/health`), `unrestricted` (a platform admin's: no admin role
+    # reads a restricted namespace) or `all` (the doctor, run on the host with the
+    # deployment's own credentials).
+    code_tier_names: Literal["none", "unrestricted", "all"] = "none"
     env: Mapping[str, str] = field(default_factory=lambda: os.environ)
     # Saved keys take precedence over the environment, including explicit empty keys.
     saved_keys: Mapping[str, bool] = field(default_factory=saved_key_presence)
@@ -290,15 +301,22 @@ def _runtime_problems(state: HealthState) -> list[Problem]:
         err = str(entry.get("last_error") or "unknown error")
         age = entry.get("last_error_age_s")
         when = f" {age}s ago" if age is not None else ""
-        key_env = _key_env_for_health_name(name)
-        behind = f"{key_env}'s quota" if key_env else f"the key and quota behind {name}"
+        if name.startswith("local:"):
+            # A model server the operator runs has no key: it is down or lacks the model.
+            fix = (
+                "Check that the model server at LOOM_LOCAL_LLM_BASE_URL is running and "
+                "serves the models Loom names (Ollama: ollama pull <model>)"
+            )
+        else:
+            key_env = _key_env_for_health_name(name)
+            behind = f"{key_env}'s quota" if key_env else f"the key and quota behind {name}"
+            fix = f"Check {behind} and the provider's status page"
         out.append(
             Problem(
                 f"provider_failing:{name}",
                 "error",
                 f"The last call to {name} failed{when}: {err}",
-                f"Check {behind} and the provider's status page; the flag clears on the "
-                "next successful call.",
+                f"{fix}; the flag clears on the next successful call.",
                 source="runtime",
             )
         )
@@ -486,6 +504,22 @@ def _exposure_problems(settings: Any) -> list[Problem]:
                 "Set LOOM_MCP_AUTH_MODE=required or bind 127.0.0.1.",
             )
         )
+    if reachable and settings.self_signup_served():
+        named = not settings.signup_open_without_trust_network()
+        out.append(
+            Problem(
+                "insecure_bind_open_signup",
+                "info" if named else severity,
+                f"LOOM_SELF_SIGNUP=open on a non-loopback bind (LOOM_BIND_HOST="
+                f"{settings.bind_host}): anyone who reaches the port can sign up and gets a "
+                "writer token.",
+                "Set LOOM_SELF_SIGNUP=off or bind 127.0.0.1 unless everyone who can reach the "
+                "port may have an account."
+                if named
+                else "Set LOOM_IDENTITY_PROVIDER=trust-network if everyone who can reach the "
+                "port may have an account, turn self-signup off, or bind 127.0.0.1.",
+            )
+        )
     weak = keyring.weak_keys(settings) if reachable else []
     if weak:
         out.append(
@@ -594,33 +628,69 @@ def _deployment_problems(settings: Any, state: HealthState) -> list[Problem]:
             )
         )
     elif state.worker_lease_held is False:
-        mode = settings.workers_mode()
-        if mode == "off" and settings.background_workers == "auto":
+        if absent := _lease_absent(settings, state.worker_lease_holder_live):
+            out.append(absent)
+    return out
+
+
+_RUN_HERE = "On a ClickHouse no deployment uses, set LOOM_BACKGROUND_WORKERS=on to run them here."
+_ON_NOT_COUNTED = (
+    "A process with LOOM_BACKGROUND_WORKERS=on takes no lease, so this check cannot see it."
+)
+_START_WORKERS = "Start the workers container (or a replica with LOOM_BACKGROUND_WORKERS=auto)."
+_WHY_NO_LEASE = (
+    "`/v1/health?include=workers` shows in `workers_leader.reason` why an auto process does "
+    "not take the lease."
+)
+
+
+def _lease_absent(settings: Any, holder_live: bool | None) -> Problem | None:
+    """This process holds no workers lease: nothing when some process holds a
+    live one, a warning when none does, a note when the last instance beat has
+    not read the lease lately."""
+    if holder_live:
+        return None
+    outside = settings.auto_outside_deployment()
+    off = settings.background_workers == "off"
+    if holder_live is False:
+        if outside:
             msg = (
-                "This process runs no background workers: LOOM_BACKGROUND_WORKERS=auto runs "
-                "none outside the deployment (LOOM_DEPLOYMENT unset). Set it to on to run them."
+                "No process holds a live workers lease, and LOOM_BACKGROUND_WORKERS=auto runs "
+                f"none outside the deployment (LOOM_DEPLOYMENT unset). {_ON_NOT_COUNTED}"
             )
-        elif mode == "off":
-            msg = (
-                "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
-                "extraction and consolidation depend on a workers container holding the lease."
+            fix = (
+                f"{_RUN_HERE} On a shared one, check the deployment's workers process; do not "
+                "run them from this one."
             )
         else:
             msg = (
-                "This process does not hold the workers lease (LOOM_BACKGROUND_WORKERS="
-                f"{mode}): another process runs the workers, or none does yet."
+                "No process holds a live workers lease, so no auto process runs the background "
+                f"workers: extraction and consolidation wait. {_ON_NOT_COUNTED}"
             )
-        out.append(
-            Problem(
-                "workers_lease_absent",
-                "info",
-                msg,
-                "Keep LOOM_BACKGROUND_WORKERS=auto on every replica; one of them holds the "
-                "lease and runs the workers.",
-                source="workers",
-            )
+            fix = f"{_START_WORKERS} {_WHY_NO_LEASE}" if off else _WHY_NO_LEASE
+        return Problem("workers_lease_absent", "warn", msg, fix, source="workers")
+    if outside:
+        msg = (
+            "This process runs no background workers: LOOM_BACKGROUND_WORKERS=auto runs "
+            "none outside the deployment (LOOM_DEPLOYMENT unset)."
         )
-    return out
+        fix = _RUN_HERE
+    elif off:
+        msg = (
+            "This process runs no background workers (LOOM_BACKGROUND_WORKERS=off): "
+            "extraction and consolidation depend on a workers container holding the lease."
+        )
+        fix = _START_WORKERS
+    else:
+        msg = (
+            "This process does not hold the workers lease (LOOM_BACKGROUND_WORKERS=auto): "
+            "another process runs the workers, or none does yet."
+        )
+        fix = (
+            "Keep LOOM_BACKGROUND_WORKERS=auto on every replica; one of them holds the lease "
+            "and runs the workers."
+        )
+    return Problem("workers_lease_absent", "info", msg, fix, source="workers")
 
 
 def _otel_problems(settings: Any, state: HealthState) -> list[Problem]:
@@ -705,7 +775,9 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
     """Repository jobs run without the sandbox: an operator's repositories still
     get their build-based tiers, which execute the repository's code on this
     host; self-registered ones get none, are not fetched over the network, and
-    adding one is refused."""
+    adding one is refused. LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lifts the last
+    two, and the warning stays: their git jobs then reach the remote with
+    nothing vetting its address."""
     if not settings.code_ingest_enabled:
         return []
     problems = _layout_problems(state)
@@ -725,6 +797,17 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
                 source="runtime",
             ),
         ]
+    self_registered = (
+        "self-registered repositories get no build tier, those with a network remote are "
+        "not cloned or fetched, and adding one from the page is refused."
+    )
+    if settings.code_self_service_git_unsandboxed:
+        self_registered = (
+            "self-registered repositories get no build tier, and those with a network "
+            "remote no compiler tier at all: LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED lets "
+            "platform admins add them and runs their clone and fetch as plain processes, "
+            "which reach the remote with no egress proxy vetting its address."
+        )
     return [
         *problems,
         Problem(
@@ -732,13 +815,35 @@ def _sandbox_problems(settings: Any, state: HealthState) -> list[Problem]:
             "warn",
             "Repository jobs (clone, fetch, dependency installs, compiler tiers) run "
             "unsandboxed: operator repositories' build tiers execute repository code on "
-            "this host; self-registered repositories get no build tier, those with a "
-            "network remote are not cloned or fetched, and adding one from the page is "
-            "refused.",
+            f"this host; {self_registered}",
             f"{_SANDBOX_FIX} Where the sandbox cannot run, list the repositories you trust "
             f"in LOOM_CODE_REPOS_JSON — {_SANDBOX_DOCS}.",
             source="runtime",
         ),
+    ]
+
+
+def _git_proxy_problems(settings: Any, state: HealthState) -> list[Problem]:
+    """LOOM_CODE_GIT_PROXY_URL on a host that runs repository jobs in the sandbox: the
+    sandbox's network does not go through that proxy, so every network git job is
+    refused (`server.code.app.index.git_proxy`). Unknown before the probe."""
+    if not (settings.code_intel_enabled and settings.code_git_proxy_url):
+        return []
+    if state.repo_sandbox is not True:
+        return []
+    return [
+        Problem(
+            "repo_git_proxy_sandboxed",
+            "error",
+            "The code index's network git (clone, fetch, ls-remote, submodule update) is "
+            "refused: LOOM_CODE_GIT_PROXY_URL is set and this host runs repository jobs in "
+            "the sandbox, whose network does not go through that proxy.",
+            "The two are not used together: unset LOOM_CODE_GIT_PROXY_URL, or run this host "
+            "without the repository-job sandbox (its container profile and "
+            "LOOM_CODE_SANDBOX_REQUIRED) — 'Git through a forward proxy' in "
+            "docs/operations/code-index-operations.md.",
+            source="runtime",
+        )
     ]
 
 
@@ -820,10 +925,11 @@ def _analysis_problems(settings: Any, state: HealthState) -> list[Problem]:
             "analysis_user_failing",
             "warn",
             f"insights.query is unavailable: {state.analysis_error}",
-            "Act on the cause above. Where it names a write the analyst user needs, give "
-            "LOOM_CH_USER access management (the bundled ClickHouse's loom user has it), which the "
-            "next probe uses, or run `loom ch-setup` as a user that has it, or "
-            "have an admin run the SQL `loom ch-setup --print-analyst-sql` prints.",
+            state.analysis_fix
+            or "Act on the cause above; the server log names what it refers to. Where "
+            "it names a write the analyst user needs, give LOOM_CH_USER access management (the "
+            "bundled ClickHouse's loom user has it), which the next probe uses, or run "
+            "`loom ch-setup --apply-analyst-sql` with existing access-management credentials.",
             source="runtime",
         )
     ]
@@ -864,8 +970,9 @@ def _participant_problems(state: HealthState) -> list[Problem]:
             f"A provider reconfiguration would wait on these participants: {ids}. "
             "`heartbeat_expired` ones stopped heartbeating (they may be paused), "
             "and `queries_running` ones did so with a query still running.",
-            "Once a participant's process is confirmed stopped, retire it with "
-            "`loom participant retire --participant <id> --yes`.",
+            "On its trusted host, verify exact physical death and settled queries with "
+            "`loom participant retire --participant <id>`. Expiry or a deleted pod "
+            "object does not prove death.",
             source="runtime",
         )
     ]
@@ -883,10 +990,11 @@ _TIER_FAILURES_NAMED = 5
 
 def _code_tier_problems(st: HealthState) -> list[Problem]:
     """One `code_tier_failing` problem for all the code-index tiers that keep failing:
-    each tier with its error kind, failed passes, since when and how far behind, and
-    the fix of each kind. It names no entry or repository, because `/v1/health` answers
-    anyone and an entry may be restricted; `code.repos` and the repository page name
-    them to whoever may read them. Its severity is the worst row's."""
+    each tier with its reason, failed passes, since when and how far behind, and the
+    fix of each kind. `/v1/health` answers anyone and an entry may be restricted, so
+    an entry is named (repository@branch, org and namespace, and the error line that
+    says why) only as `code_tier_names` allows; `code.repos` and the repository page
+    name them to whoever may read them. Its severity is the worst row's."""
     rows = st.code_tier_failures or ()
     if not rows:
         return []
@@ -894,12 +1002,32 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
     def named(r: Mapping[str, Any]) -> str:
         lag, passes = int(r["lag_commits"]), int(r["failed_passes"])
         # the count the entry's last published status made: a lower bound
-        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag >= 0 else ""
-        return (
-            f"{r['tier']} ({r['kind']}, {passes} failed pass{'' if passes == 1 else 'es'} "
-            f"since {r['since']}{behind})"
+        behind = f", at least {lag} commit{'' if lag == 1 else 's'} behind" if lag > 0 else ""
+        line = (
+            f"{r['tier']}: {r['reason']}, {passes} failed pass{'' if passes == 1 else 'es'} "
+            f"since {r['since']}{behind}"
         )
+        if st.code_tier_names == "none":
+            return line
+        if r["restricted"] and st.code_tier_names != "all":
+            return f"a restricted entry's {line}"
+        entry = f"{r['repo']}@{r['branch']} ({r['org']}/{r['namespace']})"
+        error = f' — "{r["error"]}"' if r["error"] else ""
+        return f"{entry} {line}{error}"
 
+    if st.code_tier_names != "none":
+        # within a severity, the named lines by entry; in a platform admin's view the
+        # restricted lines after them, in the anonymous answer's order
+        def by_entry(r: Mapping[str, Any]) -> tuple[Any, ...]:
+            hidden = bool(r["restricted"]) and st.code_tier_names != "all"
+            return (
+                r["severity"] != "error",
+                hidden,
+                "" if hidden else r["org"],
+                "" if hidden else r["namespace"],
+            )
+
+        rows = tuple(sorted(rows, key=by_entry))
     shown = [named(r) for r in rows[:_TIER_FAILURES_NAMED]]
     more = len(rows) - len(shown)
     tail = f" and {more} more" if more > 0 else ""
@@ -910,8 +1038,12 @@ def _code_tier_problems(st: HealthState) -> list[Problem]:
             "code_tier_failing",
             "error" if any(r["severity"] == "error" for r in rows) else "warn",
             f"{len(rows)} code-index {noun} failing, so what {it} trails the "
-            f"branch: {'; '.join(shown)}{tail}. code.repos and the repository page name "
-            "each entry.",
+            f"branch: {'; '.join(shown)}{tail}."
+            + (
+                ""
+                if st.code_tier_names == "all" and not more
+                else " code.repos and the repository page name each entry."
+            ),
             " ".join(fixes),
             source="workers",
         )
@@ -940,6 +1072,7 @@ def collect_problems(settings: Any, state: HealthState | None = None) -> list[Pr
         + _otel_problems(settings, st)
         + _drift_problems(st)
         + _sandbox_problems(settings, st)
+        + _git_proxy_problems(settings, st)
         + _reader_user_problems(settings, st)
         + _analysis_problems(settings, st)
         + _assistant_problems(settings, st)

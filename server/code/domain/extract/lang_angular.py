@@ -34,6 +34,7 @@ import re
 
 from server.code.domain.extract.edges_treesitter import Edge
 from server.code.domain.extract.lang_python import module_scope
+from server.code.domain.extract.text_lines import line_at, newline_offsets
 from server.code.domain.extract.treesitter import ParsedFile, Symbol
 
 SELECTOR_SIG = "selector:"
@@ -65,26 +66,32 @@ def is_angular_template(path: str) -> bool:
 
 
 def component_meta(source: str) -> list[dict[str, str]]:
-    """[{class, selector, template_url, inline}] for every `@Component`
-    class in a TypeScript source; `inline` is the template literal's text
-    ('' when the template is external)."""
+    """[{class, selector, template_url, inline, inline_line}] for every
+    `@Component` class in a TypeScript source; `inline` is the template literal's text
+    ('' when the template is external), `inline_line` the line it starts on."""
     out: list[dict[str, str]] = []
+    # counted on from the last class: a count from the top per class is quadratic
+    counted, line = 0, 1
     for m in _COMPONENT_RE.finditer(source):
+        line += source.count("\n", counted, m.start())
+        counted = m.start()
         meta = m.group("meta")
         sel = _SELECTOR_RE.search(meta)
         url = _TEMPLATE_URL_RE.search(meta)
         inline = ""
+        inline_line = line
         im = _INLINE_TEMPLATE_RE.search(meta)
         if im is not None:
             end = meta.find("`", im.end())
             inline = meta[im.end() : end if end >= 0 else len(meta)]
+            inline_line += source.count("\n", m.start(), m.start("meta") + im.end())
         out.append(
             {
                 "class": m.group("cls"),
                 "selector": sel.group(1).strip() if sel else "",
                 "template_url": url.group(1).strip() if url else "",
                 "inline": inline,
-                "meta_start": str(source[: m.start()].count("\n") + 1),
+                "inline_line": str(inline_line),
             }
         )
     return out
@@ -139,8 +146,10 @@ def template_sites(text: str, base_line: int = 1) -> list[tuple[int, str, str]]:
     property-binding calls; source order, deduplicated."""
     out: list[tuple[int, str, str]] = []
 
+    newlines = newline_offsets(text)
+
     def line_of(offset: int) -> int:
-        return base_line + text.count("\n", 0, offset)
+        return base_line - 1 + line_at(newlines, offset)
 
     for m in _KEBAB_TAG_RE.finditer(text):
         out.append((line_of(m.start()), m.group(1), "selector"))
@@ -186,8 +195,7 @@ def inline_template_sites(pf: ParsedFile) -> list[tuple[int, str, str, str]]:
     for m in component_meta(text):
         if not m["inline"]:
             continue
-        start = text.find(m["inline"])
-        base = text.count("\n", 0, start) + 1 if start >= 0 else int(m["meta_start"])
+        base = int(m["inline_line"])
         cls = f"{module_scope(pf.path)}::{m['class']}"
         for line, name, kind in template_sites(m["inline"], base):
             out.append((line, name, kind, cls))

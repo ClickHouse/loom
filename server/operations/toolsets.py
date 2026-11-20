@@ -86,7 +86,7 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         # Namespace backup/restore — operator-only; exposing tempts mis-fire.
         "namespace.snapshot",
         "namespace.restore",
-        # Erasure status polling (request + export stay visible — users ask).
+        # Erasure status polling (request and export stay callable through loom_op).
         "erasure.status",
         # Audit + cost dashboards.
         "audit.list",
@@ -114,6 +114,13 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
 )
 
 
+# The compiler-tier upload ops. Hidden with the rest of the ingest surface, except on a
+# deployment whose uploader reaches Loom through MCP only (LOOM_MCP_CODE_UPLOAD_TOOLS=true):
+# there both are callable by tool name and through loom_op, and `all` lists them by its
+# own rules. No curated roster names them, so the default listings stay as they are.
+_MCP_CODE_UPLOAD_OPS: frozenset[str] = frozenset({"code.scip_ingest", "code.scip_status"})
+
+
 # Code-intelligence tools joining the core listing when the deployment
 # enables them (LOOM_MCP_CODE_TOOLS=true). callees/impact/examples/history/map
 # stay callable by name so the taught arbitration in the tool descriptions
@@ -135,72 +142,29 @@ _MCP_CODE_CORE_OPS: frozenset[str] = frozenset(
 )
 
 
-# The "core" MCP toolset (settings.mcp_toolset == "core", the default): the
-# focused chat surface visible in tools/list. Everything else stays callable
-# by name over MCP and via /v1/* + SDKs — hidden only to keep the tool budget
-# under the count where selection accuracy degrades. Synthetic tools are
-# always shown. LOOM_MCP_TOOLSET=all exposes the full surface.
+# The "core" MCP toolset, the default listing: the memory loop only. Every other op
+# runs through loom_op, since each listed tool is read on every turn.
 _MCP_CORE_OPS: frozenset[str] = frozenset(
     {
-        # Save + recall + manage memory — the core loop.
+        # Save, revise, forget, keep: the belief-revision verbs.
         "memory.set",
         # The standing-memory verb: a pinned fact is never evicted by a later
         # conflicting write. Its description names memory.set as the default
         # save and pin as the exception, or a model routes every 'remember X'
         # to it.
         "memory.pin",
-        "memory.set_from_messages",
         "memory.update",
-        "memory.update_by_id",
-        "memory.get",
-        # memory.get_by_id: conflict-resolution flow — callable by name;
-        # the chat loop reaches memories via search/list/get.
-        "memory.list",
-        "memory.related",
-        "memory.history",
         "memory.delete",
+        # Refuse: the in-band "never remember X" consent verb.
+        "blacklist.add",
+        # Read by exact key, and every version of a key; recall by meaning is
+        # loom_search.
+        "memory.get",
+        "memory.history",
         # The two write shapes an agent reaches for after set/delete: a wide,
         # previewed write over a scope and a per-row lock.
         "memory.apply",
         "memory.lock",
-        # Knowledge documents.
-        "knowledge.add",
-        "knowledge.get",
-        "knowledge.list",
-        "knowledge.delete",
-        # Profile — the always-loaded persona/context. render stays
-        # callable-by-name: context.pack already loads the rendered profile,
-        # so the chat loop writes (set/append) but never re-renders.
-        "profile.set",
-        "profile.append",
-        # Conversation history — the agent opens a thread once per session
-        # and logs each turn, so the transcript shows in the dashboard. MCP is
-        # pull-based (the server
-        # only sees what the model calls), so these must be visible for any
-        # transcript to land at all; recall of past threads stays folded
-        # into loom_search.
-        "conversation.create",
-        "conversation.append",
-        # Working memory — scratchpad included by context.pack.
-        "working_memory.set",
-        "working_memory.append",
-        "working_memory.replace",
-        "working_memory.delete",
-        # Self-service namespaces: orientation stays listed; the
-        # join/leave/browse membership ops are onboarding-time actions,
-        # callable by name when an agent is told to use them. Every listing
-        # slot is a per-turn tax on every session — the roster carries the
-        # chat loop, not the whole product surface.
-        "namespace.list_mine",
-        "namespace.summary",
-        # The end-of-task integrity call: did my writes leave the namespace
-        # consistent? Read-only, returns counts + samples per check.
-        "namespace.validate",
-        # Data rights.
-        "erasure.request",
-        "erasure.export",
-        # Refuse — the in-band "never remember X" consent verb.
-        "blacklist.add",
         # One-call task-context loader.
         "context.pack",
     }
@@ -208,14 +172,14 @@ _MCP_CORE_OPS: frozenset[str] = frozenset(
 
 
 # The "coding" MCP toolset: the coding-agent archetype's listing. A coding
-# client saves, revises, reads, deletes memory, keeps a scratchpad, loads task
-# context once, and reaches the code plane; it does not open conversation
+# client saves, revises, reads, deletes memory, keeps a scratchpad, loads each
+# task's context, and reaches the code plane; it does not open conversation
 # threads, edit a profile, manage knowledge documents or namespaces, or file
 # erasures. The listing is the memory-side ops below plus _MCP_CODE_CORE_OPS
 # (the code tools ride the coding tier regardless of LOOM_MCP_CODE_TOOLS —
-# they are its point) plus the two synthetic tools. It carries what coding
+# they are its point) plus the three synthetic tools. It carries what coding
 # clients actually call; everything on `core` (memory.pin, blacklist.add,
-# working_memory.append, …) stays callable by name, since the transport reads
+# memory.lock, …) stays callable by name, since the transport reads
 # the registry, not the roster. memory.update stays: it is the revision verb
 # the descriptions and the planning bench's revision tasks name.
 _MCP_CODING_OPS: frozenset[str] = frozenset(
@@ -244,10 +208,10 @@ _MCP_CODING_OPS: frozenset[str] = frozenset(
 # for a session acting as an agent — pull and claim, post for another agent,
 # finish / fail / decline / defer what it claimed, renew the lease, watch
 # what it posted, read the board, find the inbox. Its own roster rather than
-# a core addition: the default core listing is paid by every Claude Code
-# session and its tool count sits under the tool-selection knee; a session
-# that acts as an agent mounts `?toolset=tasks` (or is told to). The ops stay
-# experimental until the ledger shows production callers.
+# a core addition: the default listing is what every connection without
+# `?toolset=` pays for; a session that acts as an agent mounts `?toolset=tasks`
+# (or is told to). The ops stay experimental until the ledger shows production
+# callers.
 _MCP_TASK_OPS: frozenset[str] = frozenset(
     {
         "task.pull",
@@ -294,8 +258,8 @@ _MCP_TRACKER_OPS: frozenset[str] = frozenset(
 # the run scratchpad and the run ledger. Create and update are one tool —
 # memory.set under a key a read returned IS the update — and read is
 # loom_search (the synthetic search tool, always listed) plus memory.get. The
-# ops below plus the two synthetic tools; a small verb set plans better than
-# the core surface.
+# ops below plus the three synthetic tools: one verb creates and updates, so
+# there is no revision split to choose between.
 _MCP_ATOMIC_OPS: frozenset[str] = frozenset(
     {
         "memory.set",
@@ -363,6 +327,9 @@ MCP_ASSISTANT_OPS: frozenset[str] = frozenset(
         "mentor.brief",
         # Loom's own guide to writing memory, which recommendations cite.
         "mentor.guide",
+        # Loom's documentation, for how a feature works and how to do something.
+        "help.search",
+        "help.get",
         "grants.list",
         # Cited questions over memory, documents and code.
         "memory.search",
@@ -411,6 +378,65 @@ ASSISTANT_NAMED_AGENT_OPS: frozenset[str] = frozenset({"memory.aggregate", "memo
 def is_assistant(toolset: str | None) -> bool:
     """Whether a connection's ``?toolset=`` is the assistant toolset."""
     return toolset_parts(toolset) == (ASSISTANT_TOOLSET,)
+
+
+# How an assistant answer's tool calls bear on its label (server/assistant/domain/support.py):
+# a call to a CITABLE op returns rows the answer can cite and the citation check verifies; an
+# UNCITABLE op's output (counts, findings, history) has no citation form; a NO_NAMESPACE_DATA
+# op returns Loom's own guide, documentation or catalog, never the namespace's data. Every
+# assistant op is in exactly one (tests/unit/test_assistant_support.py).
+ASSISTANT_CITABLE_OPS: frozenset[str] = frozenset(
+    {
+        "memory.search",
+        "memory.ask",
+        "memory.get",
+        "memory.list",
+        "memory.inspect",
+        "knowledge.search",
+        "knowledge.get",
+        "knowledge.list",
+        "code.search",
+        "code.symbol",
+        "insights.query",
+    }
+)
+ASSISTANT_NO_NAMESPACE_DATA_OPS: frozenset[str] = frozenset(
+    {"mentor.guide", "insights.catalog", "help.search", "help.get"}
+)
+ASSISTANT_UNCITABLE_OPS: frozenset[str] = (
+    MCP_ASSISTANT_OPS - ASSISTANT_CITABLE_OPS - ASSISTANT_NO_NAMESPACE_DATA_OPS
+)
+
+# Whether an assistant op's call found anything, as its ledger row records it (event_args):
+# the output lists whose summed length is `out_hits` (a dotted name reaches into a nested
+# object). An op left out reports a miss as `found: false` (`out_found`) or always returns
+# data; tests/unit/test_assistant_support.py holds every op to one of the three.
+ASSISTANT_FOUND_FIELD: dict[str, tuple[str, ...]] = {
+    "memory.search": ("results",),
+    "memory.ask": ("results",),
+    "memory.list": ("entries",),
+    # The subject's own and read rows (its counts come with them either way).
+    "memory.inspect": ("own.newest", "others.newest"),
+    "memory.history": ("rows",),
+    "memory.aggregate": ("rows",),
+    "facts.traverse": ("nodes",),
+    "knowledge.search": ("results",),
+    "knowledge.list": ("rows",),
+    "knowledge.inspect": ("listed",),
+    "code.search": ("results",),
+    # A fuzzy candidate is no find; a presence answer is.
+    "code.symbol": ("definitions", "presence"),
+    "insights.query": ("rows",),
+    "help.search": ("hits",),
+    "grants.list": ("rows",),
+    "namespace.audit": ("findings",),
+    "namespace.validate": ("findings",),
+    "namespace.tune": ("proposals",),
+    "namespace.guide_history": ("revisions",),
+    "namespace.list_categories": ("categories",),
+    "namespace.taxonomy": ("tags",),
+    "namespace.summary": ("type_counts",),
+}
 
 
 def assistant_ops() -> list[Operation]:
@@ -492,13 +518,23 @@ def curated_roster(toolset: str, *, code_tools: bool) -> frozenset[str] | None:
     return None
 
 
-def listed_under_all(op: Operation) -> bool:
+def hidden_from_mcp(name: str, *, code_upload_tools: bool) -> bool:
+    """Whether MCP neither lists nor calls the op named ``name``: a hidden op, less the
+    compiler-tier upload ops on a deployment that serves them (``code_upload_tools``)."""
+    if code_upload_tools and name in _MCP_CODE_UPLOAD_OPS:
+        return False
+    return name in _MCP_HIDDEN_OPS
+
+
+def listed_under_all(op: Operation, *, code_upload_tools: bool = False) -> bool:
     """Whether a `tools/list` on ``all`` carries ``op``: never a hidden op,
     always a synthetic tool, else the stable surface plus every op the core
     (code tools included) or atomic roster names regardless of maturity, so
     core ⊆ all holds. The experimental remainder stays callable by name.
-    The `code.*` ops also need the code tools flag; the listing applies it."""
-    if op.name in _MCP_HIDDEN_OPS:
+    The `code.*` ops also need the code tools flag; the listing applies it.
+    ``code_upload_tools`` is the deployment's switch for the compiler-tier upload
+    ops, which the listing passes; the catalogue describes the default, off."""
+    if hidden_from_mcp(op.name, code_upload_tools=code_upload_tools):
         return False
     if op.name in SYNTHETIC_TOOL_OPS or op.maturity == "stable":
         return True
@@ -537,3 +573,16 @@ def op_toolsets(name: str) -> list[str]:
     if name in MCP_ASSISTANT_OPS:
         out.add(ASSISTANT_TOOLSET)
     return sorted(out)
+
+
+def resolve_toolset(requested: str | None, configured: str | None) -> str:
+    """The toolset a listing uses: the per-request ``?toolset=`` override when
+    it names a known toolset, else the deployment's ``settings.mcp_toolset``,
+    else ``core``. An unknown value on either side falls through — a bad
+    query string never widens or narrows the listing silently (the rule
+    ``?schema_profile=`` follows)."""
+    configured_l = canonical_toolset(configured or "core")
+    if not is_toolset(configured_l):
+        configured_l = "core"
+    requested_l = canonical_toolset(requested)
+    return requested_l if requested_l and is_toolset(requested_l) else configured_l

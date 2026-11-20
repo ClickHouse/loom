@@ -27,8 +27,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from loom.integrations._session_protection import _CallbackProtection
+from loom.session_protection import automatic_roots
 
 if TYPE_CHECKING:
     from loom.agent import Agent
@@ -64,7 +68,12 @@ class LoomMemoryStore:
     metadata's short string values as tags. ``search`` runs ``memory.search``
     and returns entries newest-ranked first; when loom abstains (no hit
     above the calibrated threshold) the store returns nothing rather than a
-    low-similarity row, so the Memory Manager injects no context at all.
+    low-similarity row, so the Memory Manager injects no context at all, and
+    a hit below the threshold in a response that does not abstain is left out.
+
+    Bound and ambient protection contributors are retained across calls. An
+    application-supplied automatic context guards these calls; direct calls
+    remain explicit and observe responses.
     """
 
     def __init__(
@@ -80,6 +89,8 @@ class LoomMemoryStore:
         description: str = "Long-term memories in loom, searched by meaning with abstention",
     ) -> None:
         self._agent = agent
+        bound = getattr(getattr(agent, "transport", None), "session_protection", None)
+        self._protection = _CallbackProtection(bound)
         self._memory_type = memory_type
         self._tags = list(tags or [])
         self._honour_abstain = honour_abstain
@@ -91,47 +102,65 @@ class LoomMemoryStore:
         self.writable = True
         self.extraction = None
 
+    def _callback_scope(self) -> AbstractContextManager[None]:
+        bound = getattr(getattr(self._agent, "transport", None), "session_protection", None)
+        if automatic_roots():
+            return self._protection.automatic(bound)
+        return self._protection.observing(bound)
+
     async def add(self, content: str, metadata: dict[str, Any] | None = None) -> None:
-        content = (content or "").strip()
-        if not content:
-            return
-        tags = list(self._tags)
-        for k in _META_KEYS_KEPT:
-            v = (metadata or {}).get(k)
-            if isinstance(v, str) and v and len(v) <= 64:
-                tags.append(f"{k}:{v}")
-        await self._agent.memory.set(
-            _content_key(self._key_prefix, content),
-            content,
-            memory_type=self._memory_type,
-            tags=tags or None,
-        )
+        with self._callback_scope():
+            content = (content or "").strip()
+            if not content:
+                return
+            tags = list(self._tags)
+            for k in _META_KEYS_KEPT:
+                v = (metadata or {}).get(k)
+                if isinstance(v, str) and v and len(v) <= 64:
+                    tags.append(f"{k}:{v}")
+            await self._agent.memory.set(
+                _content_key(self._key_prefix, content),
+                content,
+                memory_type=self._memory_type,
+                tags=tags or None,
+            )
 
     async def search(
         self, query: str, options: Mapping[str, Any] | None = None
     ) -> list[MemoryEntry]:
-        # Strands' SearchOptions TypedDict; the Memory Manager fills it per store
-        top_k = int((options or {}).get("max_search_results") or self.max_search_results)
-        result = await self._agent.memory.search(
-            query,
-            top_k=top_k,
-            tags=self._tags or None,
-            memory_type=self._memory_type,
-        )
-        if self._honour_abstain and getattr(result, "abstain", False):
-            return []
-        entries: list[MemoryEntry] = []
-        for hit in list(result)[:top_k]:
-            entries.append(
-                MemoryEntry(
-                    content=hit.content_excerpt,
-                    metadata={
-                        "memory_key": hit.memory_key,
-                        "memory_type": hit.memory_type,
-                        "similarity": round(float(hit.similarity), 4),
-                        "source": hit.source,
-                        **({"valid_at": hit.valid_at} if hit.valid_at else {}),
-                    },
-                )
+        with self._callback_scope():
+            # Strands' SearchOptions TypedDict; the Memory Manager fills it per store
+            top_k = int((options or {}).get("max_search_results") or self.max_search_results)
+            result = await self._agent.memory.search(
+                query,
+                top_k=top_k,
+                tags=self._tags or None,
+                memory_type=self._memory_type,
+                # Unpinned, a large top_k serves excerpts (above 15 by default)
+                # and drops each hit's explanation.
+                bodies="full",
+                explain=False,
             )
-        return entries
+            hits = list(result)
+            if self._honour_abstain:
+                if result.abstain:
+                    return []
+                # A response that does not abstain can still carry rows below the
+                # floor; honouring abstention drops them.
+                hits = [hit for hit in hits if not hit.below_threshold]
+            entries: list[MemoryEntry] = []
+            # Derived rows may come back above the top_k slice: cut after filtering.
+            for hit in hits[:top_k]:
+                entries.append(
+                    MemoryEntry(
+                        content=hit.content_excerpt,
+                        metadata={
+                            "memory_key": hit.memory_key,
+                            "memory_type": hit.memory_type,
+                            "similarity": round(float(hit.similarity), 4),
+                            "source": hit.source,
+                            **({"valid_at": hit.valid_at} if hit.valid_at else {}),
+                        },
+                    )
+                )
+            return entries

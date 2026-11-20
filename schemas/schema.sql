@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 184 tables + 19 materialized views.
+-- Counts: 196 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (184)
+-- Tables (196)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -52,7 +52,11 @@ CREATE TABLE IF NOT EXISTS loom.agent_cost_rollup_daily
     `errors_state` AggregateFunction(sum, UInt64),
     `latency_sum_state` AggregateFunction(sum, UInt64),
     `latency_quantile_state` AggregateFunction(quantiles(0.5, 0.95, 0.99), UInt32),
-    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3)
+    `ts_hwm` SimpleAggregateFunction(max, DateTime64(3)) DEFAULT toDateTime64(0, 3),
+    `marked_cost_usd_state` AggregateFunction(sum, Decimal(18, 6)),
+    `marked_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_embed_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_ops_state` AggregateFunction(count)
 )
 ENGINE = AggregatingMergeTree
 PARTITION BY toYYYYMM(day)
@@ -98,6 +102,56 @@ CREATE TABLE IF NOT EXISTS loom.agent_events
     `status_class` LowCardinality(String) DEFAULT '',
     `budget_ms` UInt32 DEFAULT 0,
     `ingested_at` DateTime64(3) DEFAULT now64(3),
+    `mirror_marked` UInt8 DEFAULT 0,
+    INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    INDEX ingested_at_idx ingested_at TYPE minmax GRANULARITY 1,
+    CONSTRAINT ordinary_events_only CHECK (mirror_marked = 0) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (org, namespace, agent, ts)
+SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.agent_events_private
+CREATE TABLE IF NOT EXISTS loom.agent_events_private
+(
+    `ts` DateTime64(3) DEFAULT now64(),
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String DEFAULT '',
+    `operation` LowCardinality(String),
+    `request_id` String,
+    `trace_id` String DEFAULT '',
+    `latency_ms` UInt32,
+    `input_tokens` UInt32 DEFAULT 0,
+    `output_tokens` UInt32 DEFAULT 0,
+    `embedding_tokens` UInt32 DEFAULT 0,
+    `upstream_cost_usd` Decimal(18, 6) DEFAULT 0,
+    `bytes_written` UInt64 DEFAULT 0,
+    `success` Bool,
+    `error_code` LowCardinality(String) DEFAULT '',
+    `memory_key` String DEFAULT '',
+    `impersonated_by` String DEFAULT '',
+    `kind` LowCardinality(String) DEFAULT '',
+    `args` Map(LowCardinality(String), String) DEFAULT map(),
+    `model` LowCardinality(String) DEFAULT '',
+    `llm_calls` UInt16 DEFAULT 0,
+    `build_commit` LowCardinality(String) DEFAULT '',
+    `instance` LowCardinality(String) DEFAULT '',
+    `instance_label` LowCardinality(String) DEFAULT '',
+    `consumer` LowCardinality(String) DEFAULT '',
+    `response_tokens` UInt32 DEFAULT 0,
+    `traffic_class` LowCardinality(String) DEFAULT '',
+    `subject` LowCardinality(String) DEFAULT '',
+    `transport` LowCardinality(String) DEFAULT '',
+    `slo_class` LowCardinality(String) DEFAULT '',
+    `status_class` LowCardinality(String) DEFAULT '',
+    `budget_ms` UInt32 DEFAULT 0,
+    `ingested_at` DateTime64(3) DEFAULT now64(3),
+    `mirror_marked` UInt8 DEFAULT 0,
     INDEX run_id_bloom_idx run_id TYPE bloom_filter(0.01) GRANULARITY 1,
     INDEX ingested_at_idx ingested_at TYPE minmax GRANULARITY 1
 )
@@ -350,6 +404,18 @@ CREATE TABLE IF NOT EXISTS loom.categories
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.cell_heartbeats
+CREATE TABLE IF NOT EXISTS loom.cell_heartbeats
+(
+    `instance_id` String,
+    `cell` String DEFAULT '',
+    `tenancy_mode` String DEFAULT '',
+    `fingerprint` String DEFAULT '',
+    `heartbeat_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = KeeperMap('/loom/cell_heartbeats')
+PRIMARY KEY instance_id;
 
 -- loom.chunk_supersessions
 CREATE TABLE IF NOT EXISTS loom.chunk_supersessions
@@ -858,7 +924,8 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `exclude_generated` Bool DEFAULT false,
     `scip_producer` LowCardinality(String) DEFAULT '',
-    `row_kind` LowCardinality(String) DEFAULT ''
+    `row_kind` LowCardinality(String) DEFAULT '',
+    `git_proxy_identity` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
@@ -1246,6 +1313,28 @@ ENGINE = ReplacingMergeTree(allowed_at)
 ORDER BY (org, namespace, memory_key_a, memory_key_b)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
 
+-- loom.connected_accounts
+CREATE TABLE IF NOT EXISTS loom.connected_accounts
+(
+    `org` LowCardinality(String),
+    `subject` String,
+    `kind` LowCardinality(String),
+    `connection_id` String,
+    `account_id` String DEFAULT '',
+    `workspace_id` String DEFAULT '',
+    `account_email_enc` String DEFAULT '',
+    `credential_enc` String DEFAULT '',
+    `scopes` Array(String),
+    `active` Bool DEFAULT false,
+    `refresh_id` String DEFAULT '',
+    `connected_at` Nullable(DateTime64(3, 'UTC')),
+    `disconnected_at` Nullable(DateTime64(3, 'UTC')),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, subject, kind)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.consolidation_runs
 CREATE TABLE IF NOT EXISTS loom.consolidation_runs
 (
@@ -1613,7 +1702,10 @@ CREATE TABLE IF NOT EXISTS loom.documents
     `parser` String DEFAULT '',
     `coverage` String DEFAULT '',
     `ingestion_id` String DEFAULT '',
-    INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1
+    `access_json` String DEFAULT '',
+    `access_keys` Array(String) MATERIALIZED arrayDistinct(arrayConcat(arrayMap(x -> concat('e:', lowerUTF8(trimBoth(x, char(9, 10, 11, 12, 13, 28, 29, 30, 31, 32)))), JSONExtract(access_json, 'emails', 'Array(String)')), arrayMap(x -> concat('d:', lowerUTF8(trimBoth(x, char(9, 10, 11, 12, 13, 28, 29, 30, 31, 32)))), JSONExtract(access_json, 'domains', 'Array(String)')), if(JSONExtractString(access_json, 'owner') != '', ['owner'], []), if(notEmpty(JSONExtract(access_json, 'groups', 'Array(String)')), ['group'], []), if(JSONExtractBool(access_json, 'anyone'), ['anyone'], []), if(arrayExists(x -> (NOT isASCII(x)), JSONExtract(access_json, 'emails', 'Array(String)')), ['email_unicode'], []), if(arrayExists(x -> (NOT isASCII(x)), JSONExtract(access_json, 'domains', 'Array(String)')), ['domain_unicode'], []))),
+    INDEX tags_bloom tags TYPE bloom_filter() GRANULARITY 1,
+    INDEX access_keys_bloom access_keys TYPE bloom_filter(0.01) GRANULARITY 4
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(ingested_at)
@@ -1884,7 +1976,9 @@ CREATE TABLE IF NOT EXISTS loom.erasure_requests
     `residue` String DEFAULT '',
     `verified_at` Nullable(DateTime) DEFAULT NULL,
     `purge` Bool DEFAULT false,
-    `actor` String DEFAULT ''
+    `actor` String DEFAULT '',
+    `census` String DEFAULT '',
+    `mirror_marked` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id
@@ -2042,6 +2136,42 @@ ORDER BY (seen_at, process)
 TTL toDateTime(seen_at) + toIntervalDay(1)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.knowledge_gaps
+CREATE TABLE IF NOT EXISTS loom.knowledge_gaps
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `build` UInt64,
+    `gap_id` String,
+    `head` String,
+    `samples` Array(String),
+    `askers` UInt32,
+    `asks` UInt32,
+    `last_at` DateTime,
+    `built_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (org, namespace, build, gap_id)
+TTL built_at + toIntervalDay(7)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_group_members
+CREATE TABLE IF NOT EXISTS loom.knowledge_group_members
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `source_id` String,
+    `group` String,
+    `name` String,
+    `members` Array(String),
+    `read_at` DateTime64(3, 'UTC'),
+    `deleted` Bool DEFAULT false,
+    `version` UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_id, group)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_ingest_cancels
 CREATE TABLE IF NOT EXISTS loom.knowledge_ingest_cancels
 (
@@ -2104,6 +2234,68 @@ ORDER BY (org, namespace, ingestion_id)
 TTL toDateTime(updated_at) + toIntervalDay(30)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 1024;
 
+-- loom.knowledge_mirror_latch
+CREATE TABLE IF NOT EXISTS loom.knowledge_mirror_latch
+(
+    `id` UInt8,
+    `set_at` DateTime64(3),
+    CONSTRAINT one_deployment CHECK id = 0
+)
+ENGINE = KeeperMap('/loom/knowledge_mirror_latch')
+PRIMARY KEY id;
+
+-- loom.knowledge_mirrors
+CREATE TABLE IF NOT EXISTS loom.knowledge_mirrors
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `mirror` String,
+    `deleted` Bool DEFAULT false,
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, mirror)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_source_listings
+CREATE TABLE IF NOT EXISTS loom.knowledge_source_listings
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `source_id` String,
+    `name` String,
+    `started_at` DateTime64(3),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_source_push
+CREATE TABLE IF NOT EXISTS loom.knowledge_source_push
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `name` String,
+    `source_id` String,
+    `provider` LowCardinality(String),
+    `generation` String,
+    `fingerprint` String,
+    `provider_id` String DEFAULT '',
+    `status` LowCardinality(String) DEFAULT 'pending',
+    `secret_enc` String DEFAULT '',
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `actor` String DEFAULT '',
+    `source_class` LowCardinality(String) DEFAULT 'derived',
+    `updated_at` DateTime64(3) DEFAULT now64(3),
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, source_id)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_sources
 CREATE TABLE IF NOT EXISTS loom.knowledge_sources
 (
@@ -2119,7 +2311,14 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `pending_delete` Bool DEFAULT false,
     `created_at` DateTime DEFAULT now(),
     `updated_at` DateTime DEFAULT now(),
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    `source_kind` LowCardinality(String) DEFAULT '',
+    `items_json` String DEFAULT '[]',
+    `secret_enc` String DEFAULT '',
+    `access` LowCardinality(String) DEFAULT 'namespace',
+    `credential_mode` LowCardinality(String) DEFAULT 'shared',
+    `owner_subject` String DEFAULT '',
+    `connection_id` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
@@ -2171,7 +2370,8 @@ CREATE TABLE IF NOT EXISTS loom.learnings_queue
     `source_kind` LowCardinality(String) DEFAULT 'memory_supporters',
     `seeded_from_msg_id` Nullable(String) DEFAULT NULL,
     `seeded_from_thread_id` Nullable(String) DEFAULT NULL,
-    `agent` LowCardinality(String) DEFAULT ''
+    `agent` LowCardinality(String) DEFAULT '',
+    `source_resource_id` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY toYYYYMM(proposed_at)
@@ -3276,6 +3476,7 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `namespace` String,
     `owner_email` String,
     `description` String DEFAULT '',
+    `title` String DEFAULT '',
     `tags` Array(LowCardinality(String)) DEFAULT [],
     `active` Bool DEFAULT true,
     `auto_promote_enabled` Bool DEFAULT false,
@@ -3309,7 +3510,9 @@ CREATE TABLE IF NOT EXISTS loom.namespaces
     `retrieval_defaults` String DEFAULT '',
     `proposal_policy` String DEFAULT '',
     `code_change_policy` LowCardinality(String) DEFAULT '',
-    `released_aliases` Array(String) DEFAULT []
+    `released_aliases` Array(String) DEFAULT [],
+    `daily_user_cost_cap_usd` Float64 DEFAULT 0,
+    `budget_alert_inbox` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY org
@@ -3356,7 +3559,8 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
     `family` String DEFAULT '',
     `upstream_refresh` String DEFAULT '',
-    `generation` UInt32 DEFAULT 0
+    `generation` UInt32 DEFAULT 0,
+    `verified_email` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type
@@ -3654,6 +3858,33 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, qa_namespace, test_name, day)
 SETTINGS index_granularity = 1024, non_replicated_deduplication_window = 1000;
 
+-- loom.query_history_sources
+CREATE TABLE IF NOT EXISTS loom.query_history_sources
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `name` String,
+    `source_id` UUID,
+    `host` String,
+    `port` UInt16,
+    `secure` Bool,
+    `user` String,
+    `password_enc` String,
+    `cluster` String DEFAULT '',
+    `databases` Array(String),
+    `actor` String,
+    `source_class` LowCardinality(String),
+    `created_at` DateTime,
+    `tombstoned_at` Nullable(DateTime) DEFAULT NULL,
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, namespace, name)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.query_nodes
 CREATE TABLE IF NOT EXISTS loom.query_nodes
 (
@@ -3724,6 +3955,25 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY id
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.search_misses
+CREATE TABLE IF NOT EXISTS loom.search_misses
+(
+    `ts` DateTime DEFAULT now(),
+    `miss_id` String,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String) DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `asker` String,
+    `normalized` String
+)
+ENGINE = MergeTree
+PARTITION BY toYYYYMM(ts)
+ORDER BY (org, namespace, ts)
+TTL ts + toIntervalDay(16)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.search_trace_log
 CREATE TABLE IF NOT EXISTS loom.search_trace_log
 (
@@ -3772,7 +4022,8 @@ CREATE TABLE IF NOT EXISTS loom.service_accounts
     `client` LowCardinality(String) DEFAULT '',
     `inherit_creator_grants` Bool DEFAULT true,
     `ns_roles` String DEFAULT '{}',
-    `lineage` Array(String) DEFAULT []
+    `lineage` Array(String) DEFAULT [],
+    `saves_to` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY org
@@ -3932,6 +4183,19 @@ ENGINE = ReplacingMergeTree(version)
 ORDER BY kid
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.sql_access
+CREATE TABLE IF NOT EXISTS loom.sql_access
+(
+    `user_name` String,
+    `org` String,
+    `namespace` String,
+    `granted` Bool,
+    `updated_at` DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (user_name, org, namespace)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.sso_links
 CREATE TABLE IF NOT EXISTS loom.sso_links
 (
@@ -3941,7 +4205,9 @@ CREATE TABLE IF NOT EXISTS loom.sso_links
     `linked` UInt8,
     `linked_by` String,
     `linked_at` DateTime64(3, 'UTC'),
-    `version` UInt64
+    `version` UInt64,
+    `hosted_domain` String DEFAULT '',
+    `issuer` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (email, org, namespace)
@@ -4004,6 +4270,9 @@ CREATE TABLE IF NOT EXISTS loom.task_events
     `patch` String DEFAULT '{}',
     `note` String DEFAULT '',
     `ts` DateTime64(3) DEFAULT now64(3),
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `source_class` LowCardinality(String) DEFAULT '',
     INDEX idx_from_subject from_subject TYPE bloom_filter GRANULARITY 4
 )
 ENGINE = MergeTree
@@ -4237,6 +4506,802 @@ TTL minute + toIntervalDay(400)
 SETTINGS allow_dimensions_outside_sorting_key = 1, ttl_only_drop_parts = 1, non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- ======================================================================
+-- Views (5)
+-- ======================================================================
+
+-- loom.sql_v1_agent_events
+CREATE VIEW IF NOT EXISTS loom.sql_v1_agent_events
+(
+    `ts` DateTime64(3),
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `operation` LowCardinality(String),
+    `kind` LowCardinality(String),
+    `request_id` String,
+    `trace_id` String,
+    `latency_ms` UInt32,
+    `success` Bool,
+    `error_code` LowCardinality(String),
+    `status_class` LowCardinality(String),
+    `memory_key` String,
+    `input_tokens` UInt32,
+    `output_tokens` UInt32,
+    `embedding_tokens` UInt32,
+    `llm_calls` UInt16,
+    `upstream_cost_usd` Decimal(18, 6),
+    `bytes_written` UInt64,
+    `model` LowCardinality(String),
+    `consumer` LowCardinality(String),
+    `subject` LowCardinality(String),
+    `transport` LowCardinality(String)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    ts,
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    operation,
+    kind,
+    request_id,
+    trace_id,
+    latency_ms,
+    success,
+    error_code,
+    status_class,
+    memory_key,
+    input_tokens,
+    output_tokens,
+    embedding_tokens,
+    llm_calls,
+    upstream_cost_usd,
+    bytes_written,
+    model,
+    consumer,
+    subject,
+    transport
+FROM
+(
+    SELECT
+        raw.ts AS ts,
+        raw.org AS org,
+        raw.namespace AS namespace,
+        raw.agent AS agent,
+        raw.user_id AS user_id,
+        raw.session_id AS session_id,
+        raw.run_id AS run_id,
+        raw.operation AS operation,
+        raw.request_id AS request_id,
+        raw.trace_id AS trace_id,
+        raw.memory_key AS memory_key,
+        raw.impersonated_by AS impersonated_by,
+        raw.kind AS kind,
+        raw.build_commit AS build_commit,
+        raw.instance AS instance,
+        raw.instance_label AS instance_label,
+        raw.consumer AS consumer,
+        raw.traffic_class AS traffic_class,
+        raw.subject AS subject,
+        raw.transport AS transport,
+        raw.slo_class AS slo_class,
+        raw.budget_ms AS budget_ms,
+        raw.ingested_at AS ingested_at,
+        raw.mirror_marked AS mirror_marked,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.latency_ms), 'UInt32') AS latency_ms,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.input_tokens), 'UInt32') AS input_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.output_tokens), 'UInt32') AS output_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.embedding_tokens), 'UInt32') AS embedding_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST('0', 'Decimal(18, 6)'), raw.upstream_cost_usd), 'Decimal(18, 6)') AS upstream_cost_usd,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt64'), raw.bytes_written), 'UInt64') AS bytes_written,
+        CAST(if(raw.mirror_marked != 0, CAST(false, 'Bool'), raw.success), 'Bool') AS success,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.error_code), 'LowCardinality(String)') AS error_code,
+        CAST(if(raw.mirror_marked != 0, CAST(map(), 'Map(LowCardinality(String), String)'), raw.args), 'Map(LowCardinality(String), String)') AS args,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.model), 'LowCardinality(String)') AS model,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt16'), raw.llm_calls), 'UInt16') AS llm_calls,
+        CAST(if(raw.mirror_marked != 0, CAST(0, 'UInt32'), raw.response_tokens), 'UInt32') AS response_tokens,
+        CAST(if(raw.mirror_marked != 0, CAST('', 'LowCardinality(String)'), raw.status_class), 'LowCardinality(String)') AS status_class
+    FROM
+    (
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+        UNION ALL
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events_private
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+    ) AS raw
+    WHERE NOT match(raw.namespace, '^acl-[0-9a-f]{24}$')
+)
+WHERE (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)));
+
+-- loom.sql_v1_conversations
+CREATE VIEW IF NOT EXISTS loom.sql_v1_conversations
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `thread_id` String,
+    `msg_id` String,
+    `role` Enum8('user' = 1, 'assistant' = 2, 'system' = 3, 'tool' = 4),
+    `content` String,
+    `tokens` UInt32,
+    `run_id` String,
+    `ts` DateTime64(3, 'UTC')
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    thread_id,
+    msg_id,
+    argMax(role, c.ts) AS role,
+    argMax(content, c.ts) AS content,
+    max(tokens) AS tokens,
+    argMax(run_id, c.ts) AS run_id,
+    max(c.ts) AS ts
+FROM loom.conversations AS c
+WHERE (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
+GROUP BY
+    org,
+    namespace,
+    agent,
+    user_id,
+    thread_id,
+    msg_id
+HAVING countIf(c.tombstoned_at IS NOT NULL) = 0;
+
+-- loom.sql_v1_memories
+CREATE VIEW IF NOT EXISTS loom.sql_v1_memories
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `memory_key` String,
+    `memory_id` UUID,
+    `memory_type` LowCardinality(String),
+    `value` Nullable(String),
+    `value_withheld` String,
+    `version` UInt64,
+    `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7),
+    `confidence` Float32,
+    `pinned` UInt8,
+    `tags` Array(String),
+    `sensitivity` LowCardinality(String),
+    `source_class` LowCardinality(String),
+    `actor` String,
+    `content_sha256` Nullable(FixedString(64)),
+    `created_at` DateTime,
+    `updated_at` DateTime,
+    `expires_at` Nullable(DateTime),
+    `valid_at` Nullable(DateTime),
+    `invalid_at` Nullable(DateTime)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    memory_key,
+    memory_id,
+    memory_type,
+    if((redacted_at IS NULL) AND (sensitivity != 'high'), if(length(toString(value_json)) > 2, toString(value_json), value), NULL) AS value,
+    multiIf(redacted_at IS NOT NULL, 'redacted', sensitivity = 'high', 'sensitive', '') AS value_withheld,
+    version,
+    status,
+    confidence,
+    pinned,
+    tags,
+    sensitivity,
+    source_class,
+    actor,
+    if((redacted_at IS NULL) AND (sensitivity != 'high'), content_sha256, NULL) AS content_sha256,
+    created_at,
+    updated_at,
+    expires_at,
+    valid_at,
+    invalid_at
+FROM loom.memory
+FINAL
+WHERE (tombstoned_at IS NULL) AND (status NOT IN ('rejected', 'tombstoned')) AND (((org, namespace) IN (
+    SELECT
+        org,
+        namespace
+    FROM scope
+)) OR (org IN (
+    SELECT org
+    FROM scope
+    WHERE namespace = '*'
+)) OR ((
+    SELECT count()
+    FROM scope
+    WHERE org = '*'
+) > 0)) AND ((org, namespace) NOT IN (
+    SELECT
+        org,
+        namespace
+    FROM restricted
+)) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'));
+
+-- loom.sql_v1_memory_history
+CREATE VIEW IF NOT EXISTS loom.sql_v1_memory_history
+(
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` LowCardinality(String),
+    `user_id` String,
+    `session_id` String,
+    `run_id` String,
+    `memory_key` String,
+    `memory_id` UUID,
+    `memory_type` LowCardinality(String),
+    `value` Nullable(String),
+    `value_withheld` String,
+    `version` UInt64,
+    `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7),
+    `confidence` Float32,
+    `pinned` UInt8,
+    `tags` Array(String),
+    `sensitivity` LowCardinality(String),
+    `source_class` LowCardinality(String),
+    `actor` String,
+    `content_sha256` Nullable(FixedString(64)),
+    `created_at` DateTime,
+    `updated_at` DateTime,
+    `tombstoned_at` Nullable(DateTime)
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    org,
+    namespace,
+    agent,
+    user_id,
+    session_id,
+    run_id,
+    memory_key,
+    memory_id,
+    memory_type,
+    if((redacted_at IS NULL) AND (NOT ever_high), if(length(toString(value_json)) > 2, toString(value_json), value), NULL) AS value,
+    multiIf(redacted_at IS NOT NULL, 'redacted', ever_high, 'sensitive', '') AS value_withheld,
+    version,
+    status,
+    confidence,
+    pinned,
+    tags,
+    sensitivity,
+    source_class,
+    actor,
+    if((redacted_at IS NULL) AND (NOT ever_high), content_sha256, NULL) AS content_sha256,
+    created_at,
+    updated_at,
+    tombstoned_at
+FROM
+(
+    SELECT
+        *,
+        max(sensitivity = 'high') OVER (PARTITION BY org, namespace, agent, user_id, session_id, memory_key) AS ever_high
+    FROM loom.memory_versions
+    FINAL
+    WHERE (((org, namespace) IN (
+        SELECT
+            org,
+            namespace
+        FROM scope
+    )) OR (org IN (
+        SELECT org
+        FROM scope
+        WHERE namespace = '*'
+    )) OR ((
+        SELECT count()
+        FROM scope
+        WHERE org = '*'
+    ) > 0)) AND ((org, namespace) NOT IN (
+        SELECT
+            org,
+            namespace
+        FROM restricted
+    )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
+)
+WHERE status != 'rejected';
+
+-- loom.sql_v1_usage_daily
+CREATE VIEW IF NOT EXISTS loom.sql_v1_usage_daily
+(
+    `day` Date,
+    `org` LowCardinality(String),
+    `namespace` LowCardinality(String),
+    `agent` String,
+    `operation` String,
+    `kind` String,
+    `ops` UInt64,
+    `errors` UInt64,
+    `input_tokens` UInt64,
+    `output_tokens` UInt64,
+    `embedding_tokens` UInt64,
+    `llm_calls` UInt64,
+    `upstream_cost_usd` Decimal(38, 6),
+    `bytes_written` UInt64,
+    `latency_sum_ms` UInt64,
+    `latency_p50_ms` Float64,
+    `latency_p95_ms` Float64
+)
+DEFINER = loom SQL SECURITY DEFINER
+AS WITH
+    scope AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.sql_access
+        FINAL
+        WHERE (user_name = currentUser()) AND granted
+    ),
+    restricted AS
+    (
+        SELECT
+            org,
+            namespace
+        FROM loom.namespaces
+        FINAL
+        WHERE classification = 'restricted'
+        UNION ALL
+        SELECT
+            org,
+            namespace
+        FROM loom.code_repos
+        FINAL
+        WHERE classification = 'restricted'
+    )
+SELECT
+    toDate(ts, 'UTC') AS day,
+    org,
+    namespace,
+    agent,
+    operation,
+    kind,
+    count() AS ops,
+    countIf((mirror_marked = 0) AND (NOT success)) AS errors,
+    sum(input_tokens) AS input_tokens,
+    sum(output_tokens) AS output_tokens,
+    sum(embedding_tokens) AS embedding_tokens,
+    sumIf(llm_calls, mirror_marked = 0) AS llm_calls,
+    sum(upstream_cost_usd) AS upstream_cost_usd,
+    sumIf(bytes_written, mirror_marked = 0) AS bytes_written,
+    sumIf(latency_ms, mirror_marked = 0) AS latency_sum_ms,
+    ifNotFinite((quantilesIf(0.5, 0.95)(latency_ms, mirror_marked = 0) AS q)[1], 0) AS latency_p50_ms,
+    ifNotFinite(q[2], 0) AS latency_p95_ms
+FROM
+(
+    SELECT
+        raw.ts AS ts,
+        raw.org AS org,
+        raw.namespace AS namespace,
+        if(raw.mirror_marked = 0, raw.agent, '-') AS agent,
+        if(raw.mirror_marked = 0, raw.operation, '-') AS operation,
+        if(raw.mirror_marked = 0, raw.kind, '-') AS kind,
+        raw.mirror_marked AS mirror_marked,
+        raw.success AS success,
+        raw.input_tokens AS input_tokens,
+        raw.output_tokens AS output_tokens,
+        raw.embedding_tokens AS embedding_tokens,
+        raw.llm_calls AS llm_calls,
+        raw.upstream_cost_usd AS upstream_cost_usd,
+        raw.bytes_written AS bytes_written,
+        raw.latency_ms AS latency_ms
+    FROM
+    (
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+        UNION ALL
+        SELECT
+            ts,
+            org,
+            namespace,
+            agent,
+            user_id,
+            session_id,
+            run_id,
+            operation,
+            request_id,
+            trace_id,
+            latency_ms,
+            input_tokens,
+            output_tokens,
+            embedding_tokens,
+            upstream_cost_usd,
+            bytes_written,
+            success,
+            error_code,
+            memory_key,
+            impersonated_by,
+            kind,
+            args,
+            model,
+            llm_calls,
+            build_commit,
+            instance,
+            instance_label,
+            consumer,
+            response_tokens,
+            traffic_class,
+            subject,
+            transport,
+            slo_class,
+            status_class,
+            budget_ms,
+            ingested_at,
+            mirror_marked
+        FROM loom.agent_events_private
+        WHERE (((org, namespace) IN (
+            SELECT
+                org,
+                namespace
+            FROM scope
+        )) OR (org IN (
+            SELECT org
+            FROM scope
+            WHERE namespace = '*'
+        )) OR ((
+            SELECT count()
+            FROM scope
+            WHERE org = '*'
+        ) > 0)) AND ((org, namespace) NOT IN (
+            SELECT
+                org,
+                namespace
+            FROM restricted
+        )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+    ) AS raw
+    WHERE (((org, namespace) IN (
+        SELECT
+            org,
+            namespace
+        FROM scope
+    )) OR (org IN (
+        SELECT org
+        FROM scope
+        WHERE namespace = '*'
+    )) OR ((
+        SELECT count()
+        FROM scope
+        WHERE org = '*'
+    ) > 0)) AND ((org, namespace) NOT IN (
+        SELECT
+            org,
+            namespace
+        FROM restricted
+    )) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$')) AND (ts >= (toStartOfDay(now(), 'UTC') - toIntervalDay(31)))
+)
+GROUP BY
+    day,
+    org,
+    namespace,
+    agent,
+    operation,
+    kind;
+
+-- ======================================================================
 -- Materialized views (19)
 -- ======================================================================
 
@@ -4256,6 +5321,10 @@ REFRESH EVERY 1 MINUTE APPEND TO loom.agent_cost_rollup_daily
     `errors_state` AggregateFunction(sum, UInt64),
     `latency_sum_state` AggregateFunction(sum, UInt64),
     `latency_quantile_state` AggregateFunction(quantiles(0.5, 0.95, 0.99), UInt32),
+    `marked_cost_usd_state` AggregateFunction(sum, Decimal(18, 6)),
+    `marked_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_embed_tokens_state` AggregateFunction(sum, UInt64),
+    `marked_ops_state` AggregateFunction(count),
     `ts_hwm` DateTime64(3)
 )
 DEFINER = loom SQL SECURITY DEFINER
@@ -4265,15 +5334,100 @@ AS SELECT
     agent,
     toDate(ts) AS day,
     operation,
-    sumState(upstream_cost_usd) AS cost_usd_state,
-    sumState(toUInt64(input_tokens) + toUInt64(output_tokens)) AS tokens_state,
-    sumState(toUInt64(embedding_tokens)) AS embed_tokens_state,
-    countState() AS ops_state,
-    sumStateIf(toUInt64(1), success = false) AS errors_state,
-    sumState(toUInt64(latency_ms)) AS latency_sum_state,
-    quantilesState(0.5, 0.95, 0.99)(latency_ms) AS latency_quantile_state,
+    sumStateIf(upstream_cost_usd, mirror_marked = 0) AS cost_usd_state,
+    sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked = 0) AS tokens_state,
+    sumStateIf(toUInt64(embedding_tokens), mirror_marked = 0) AS embed_tokens_state,
+    countStateIf(mirror_marked = 0) AS ops_state,
+    sumStateIf(toUInt64(1), (mirror_marked = 0) AND (success = false)) AS errors_state,
+    sumStateIf(toUInt64(latency_ms), mirror_marked = 0) AS latency_sum_state,
+    quantilesStateIf(0.5, 0.95, 0.99)(latency_ms, mirror_marked = 0) AS latency_quantile_state,
+    sumStateIf(upstream_cost_usd, mirror_marked != 0) AS marked_cost_usd_state,
+    sumStateIf(toUInt64(input_tokens) + toUInt64(output_tokens), mirror_marked != 0) AS marked_tokens_state,
+    sumStateIf(toUInt64(embedding_tokens), mirror_marked != 0) AS marked_embed_tokens_state,
+    countStateIf(mirror_marked != 0) AS marked_ops_state,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (ts > (
     SELECT max(ts_hwm)
     FROM loom.agent_cost_rollup_daily
@@ -4304,7 +5458,7 @@ AS SELECT
     now() AS df_added_at
 FROM loom.chunks
 ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3), arrayMap(t -> lowerUTF8(t), splitByNonAlpha(context)))) AS term
-WHERE (content != '') AND (context != '') AND (doc_superseded_at IS NULL)
+WHERE (content != '') AND (context != '') AND (doc_superseded_at IS NULL) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -4329,7 +5483,7 @@ AS SELECT
     now() AS df_added_at
 FROM loom.chunks
 ARRAY JOIN arrayDistinct(arrayFilter(t -> (length(t) >= 3), arrayMap(t -> lowerUTF8(t), splitByNonAlpha(content)))) AS term
-WHERE (content != '') AND (doc_superseded_at IS NULL)
+WHERE (content != '') AND (doc_superseded_at IS NULL) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     namespace,
@@ -4898,12 +6052,93 @@ AS SELECT
     subject,
     maxState(ts) AS last_seen,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (subject != '') AND (ts > (
     SELECT max(ts_hwm)
     FROM loom.subject_last_seen
     WHERE (org = '') AND (subject = '')
-)) AND (ts <= (now64(3) - toIntervalSecond(10)))
+)) AND (ts <= (now64(3) - toIntervalSecond(10))) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     org,
     subject
@@ -4913,7 +6148,88 @@ SELECT
     '' AS subject,
     maxState(toDateTime64(0, 3)) AS last_seen,
     max(ts) AS ts_hwm
-FROM loom.agent_events
+FROM
+(
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events
+    UNION ALL
+    SELECT
+        ts,
+        org,
+        namespace,
+        agent,
+        user_id,
+        session_id,
+        run_id,
+        operation,
+        request_id,
+        trace_id,
+        latency_ms,
+        input_tokens,
+        output_tokens,
+        embedding_tokens,
+        upstream_cost_usd,
+        bytes_written,
+        success,
+        error_code,
+        memory_key,
+        impersonated_by,
+        kind,
+        args,
+        model,
+        llm_calls,
+        build_commit,
+        instance,
+        instance_label,
+        consumer,
+        response_tokens,
+        traffic_class,
+        subject,
+        transport,
+        slo_class,
+        status_class,
+        budget_ms,
+        ingested_at,
+        mirror_marked
+    FROM loom.agent_events_private
+)
 WHERE (ts > (
     SELECT max(ts_hwm)
     FROM loom.subject_last_seen
@@ -4967,7 +6283,7 @@ SELECT
     quantilesTDigestStateIf(0.5, 0.95, 0.99)(latency_ms, status_class = 'ok') AS latency,
     fold_to AS ingested_hwm
 FROM loom.agent_events
-WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to)
+WHERE (kind = 'request') AND (slo_class != '') AND (ts >= (now64(3) - toIntervalDay(31))) AND (ingested_at > folded) AND (ingested_at <= fold_to) AND (mirror_marked = 0) AND (NOT match(namespace, '^acl-[0-9a-f]{24}$'))
 GROUP BY
     minute,
     slo_class,

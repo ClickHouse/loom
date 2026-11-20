@@ -58,7 +58,7 @@ _BodiesStr = Literal["full", "excerpt", "none", "unit", "source"]
 
 
 class NamespaceRetrievalDefaults(BaseModel):
-    """What an unpinned memory.search on this namespace runs.
+    """What an unpinned memory search on this namespace runs.
 
     Every knob is optional; a set one is applied to a search whose caller did
     not send that field — after a recipe (a caller choice), before the
@@ -143,6 +143,10 @@ class NamespaceRegisterInput(BaseModel):
     consolidation_enabled: bool | None = None  # background memory.consolidate
     # 0.0 inherits the global cap.
     daily_cost_cap_usd: float | None = Field(default=None, ge=0.0)
+    # Separate rolling-24h cap for each named user_id, USD; 0 inherits the server default.
+    daily_user_cost_cap_usd: float | None = Field(default=None, ge=0.0)
+    # Existing task inbox owned by this namespace for budget warnings; empty disables them.
+    budget_alert_inbox: str | None = Field(default=None, max_length=128)
     # Omitted keeps the stored threshold; an explicit null inherits LOOM_CONFLICT_THRESHOLD.
     conflict_threshold: float | None = None
     # Days rows are kept, except memory, document and chunk rows under the Postgres
@@ -226,6 +230,8 @@ class _NamespaceEntry(BaseModel):
     active: bool
     consolidation_enabled: bool = False
     daily_cost_cap_usd: float = 0.0
+    daily_user_cost_cap_usd: float = 0.0
+    budget_alert_inbox: str = ""
     conflict_threshold: float | None = None
     retention_days: int = 0
     warm_days: int = 0
@@ -268,6 +274,10 @@ class NamespaceGetOutput(BaseModel):
     consolidation_enabled: bool | None = None
     # Upstream spend cap per rolling 24 hours, in USD; 0 inherits the global cap.
     daily_cost_cap_usd: float | None = None
+    # Separate rolling-24h cap for each named user_id, USD; 0 inherits the server default.
+    daily_user_cost_cap_usd: float | None = None
+    # Task inbox owned by this namespace for budget warnings; empty disables them.
+    budget_alert_inbox: str | None = None
     # Cosine at which a write is flagged `conflicted`; None inherits the server threshold.
     conflict_threshold: float | None = None
     # Rows older than this many days are deleted, except memory, document and chunk rows
@@ -326,6 +336,8 @@ class NamespaceDeleteOutput(BaseModel):
     namespace: str
     # When the soft-delete was written, or the time of the call when nothing changed.
     updated_at: datetime
+    # The document sources this delete retired, also when `deleted` is false.
+    sources_retired: list[str] = Field(default_factory=list)
 
 
 class NamespaceBrowseInput(BaseModel):
@@ -420,7 +432,7 @@ class NamespaceCancelRequestInput(BaseModel):
     """Withdraw the caller's own pending elevation request.
 
     Keeps the current (lower) role and clears `pending_role`. Self-only;
-    admin-driven cancellation goes through grants.approve(decision='reject').
+    an admin cancels it with grants.approve and decision='reject'.
     """
 
     org: str
@@ -458,7 +470,10 @@ class _MineEntry(BaseModel):
     # Admins who could approve; populated only when pending_role is set.
     pending_admins: list[str] = Field(default_factory=list)
     visibility: VisibilityStr = "private"
+    # `memory`, `code`, `tracker`, `qa`, `bench`, `collection` or `personal` (a `col-` name).
     kind: str = "memory"
+    # A collection's title from the directory; '' for a namespace or an untitled collection.
+    title: str = ""
     description: str = ""
     joined_at: datetime | None = None
     # True when unvisited since the grant; False for JWT-only namespaces.
@@ -670,8 +685,9 @@ class NamespaceRestoreInput(BaseModel):
     """
 
     org: str
-    # Where the payload is written, never a collection (`col-…`, `@me`); created (with the
-    # caller as admin) when absent, and reactivated when soft-deleted.
+    # Where the payload is written, never a collection (`col-…`, `@me`) or a mirror's name
+    # (`acl-` and 24 hex digits); created (with the caller as admin) when absent, and
+    # reactivated when soft-deleted.
     target_namespace: str
     # A `namespace.snapshot` output, unchanged.
     payload: NamespaceSnapshotOutput

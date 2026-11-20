@@ -6,7 +6,7 @@
 
 export interface TierHealth {
   tier: string;
-  state: "ok" | "failing";
+  state: "ok" | "failing" | "unavailable";
   kind: string;
   error: string;
   fix: string;
@@ -35,11 +35,14 @@ const KIND_WORD: Record<string, string> = {
   network: "host unreachable",
   timeout: "timed out",
   disk: "disk full",
+  git_lock: "git lock held",
+  file_refused: "file refused",
   permission: "permission denied",
   cmake: "build configure failed",
   harness: "indexer failed",
   module: "module failed to build",
-  unknown: "error",
+  dependency_unavailable: "dependency unavailable",
+  unknown: "unclassified error",
 };
 
 export function tierName(tier: string): string {
@@ -47,7 +50,14 @@ export function tierName(tier: string): string {
 }
 
 export function kindWord(kind: string): string {
-  return KIND_WORD[kind] ?? kind;
+  // a kind a later build adds reads as itself
+  return KIND_WORD[kind] ?? (kind || "unclassified error");
+}
+
+/** The tiers that left out a part they cannot fetch on this host (`unavailable`): a
+ *  note with its fix, not a failure. */
+export function unavailableTiers(rows: TierHealth[] | undefined): TierHealth[] {
+  return (rows ?? []).filter((t) => t.state === "unavailable");
 }
 
 /** The failing tiers, in the order the server lists them; [] for a row without any. */
@@ -59,6 +69,6 @@ export function failingTiers(rows: TierHealth[] | undefined): TierHealth[] {
  *  which the caller renders as a time element. */
 export function failureSummary(t: TierHealth): string {
   const passes = `${t.failed_passes} failed pass${t.failed_passes === 1 ? "" : "es"}`;
-  const behind = t.lag_commits >= 0 ? `, ${t.lag_commits} commit${t.lag_commits === 1 ? "" : "s"} behind` : "";
+  const behind = t.lag_commits > 0 ? `, ${t.lag_commits} commit${t.lag_commits === 1 ? "" : "s"} behind` : "";
   return `${passes}${behind} (${kindWord(t.kind)})`;
 }

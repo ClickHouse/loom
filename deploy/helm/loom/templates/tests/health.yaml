@@ -10,7 +10,7 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
-  {{- include "loom.podCommon" (dict "root" . "leads" false) | nindent 2 }}
+  {{- include "loom.podCommon" (dict "root" .) | nindent 2 }}
   containers:
     - name: health
       image: {{ include "loom.image" . }}
@@ -19,14 +19,17 @@ spec:
         - python
         - -c
         - |
-          import json, urllib.request
-          base = "http://{{ include "loom.fullname" . }}:{{ .Values.service.port }}"
+          import json, ssl, urllib.request
+          base = "{{ ternary "https" "http" (not (empty (include "loom.tls" . | fromYaml).secretName)) }}://{{ include "loom.fullname" . }}:{{ .Values.service.port }}"
+          # Over HTTPS (tls.secretName) the test reads health only and does not verify the
+          # certificate, whose names and issuer the chart does not know.
+          context = ssl._create_unverified_context() if base.startswith("https:") else None
           for path in ("/v1/health/live", "/v1/health/ready"):
-              with urllib.request.urlopen(base + path, timeout=10) as r:
+              with urllib.request.urlopen(base + path, timeout=10, context=context) as r:
                   assert r.status == 200, (path, r.status)
               print(path, "ok")
           # ClickHouse answers and no replica drifts from the published config.
-          with urllib.request.urlopen(base + "/v1/health", timeout=10) as r:
+          with urllib.request.urlopen(base + "/v1/health", timeout=10, context=context) as r:
               health = json.load(r)
           assert health["ch_ok"] and health["status"] == "ok", health["problems"]
           print("/v1/health ok, build", health["build_commit"])

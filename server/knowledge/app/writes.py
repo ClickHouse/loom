@@ -14,9 +14,12 @@ import logging
 import time
 import uuid
 from collections import Counter
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from server.core import pg
 from server.core.error_summary import error_summary
 from server.core.errors import BackendUnavailableError, PreconditionFailedError, ValidationError
 from server.core.hashing import sha256_document_text as _content_sha256
@@ -40,6 +43,7 @@ from server.knowledge.api.models_knowledge import (
     _KnowledgeBulkDeleteResult,
     _KnowledgeBulkEntryResult,
 )
+from server.knowledge.domain import access_list
 from server.knowledge.domain.chunking import Chunk, chunk_context, chunk_document, embedding_text
 from server.knowledge.domain.sources import SYNC_WORKER_ACTOR, source_tags
 from server.knowledge.store import datasets as datasets_repo
@@ -101,11 +105,10 @@ def _fresh_sha(input: KnowledgeAddInput) -> str:
         return ""
 
 
-def _published_anyway(e: BaseException) -> bool:
+def published_anyway(e: BaseException) -> bool:
     """Whether a document write that raised `e` may still serve its row: committed under
     the Postgres authority (the worker publishes it), its row in with only the
     retirement failed, or a commit whose answer was lost. Its chunks then stay."""
-    from server.core import pg
     from server.knowledge.store.documents import OlderNotRetired
 
     return isinstance(e, PublicationPending | OlderNotRetired) or pg.may_have_committed(e)
@@ -133,7 +136,7 @@ async def _drop_own_chunks(
             log.warning("knowledge write: its erased chunks stay: %s", error_summary(e))
     try:
         await knowledge_repo.retire_versions(
-            org, namespace, own, embedding_model=embedding_model, when=now
+            org, namespace, own, embedding_models=[embedding_model], when=now
         )
     except Exception as e:  # noqa: BLE001 — the write's own error is the answer, not this one
         log.warning(
@@ -321,7 +324,11 @@ def _chunk_text(content: str) -> list[Chunk]:
 
 
 async def handle_knowledge_upsert(
-    input: KnowledgeUpsertInput, *, read_version: int | None = None
+    input: KnowledgeUpsertInput,
+    *,
+    read_version: int | None = None,
+    permissions: access_list.AccessList = access_list.UNREAD,
+    commit_guard: Callable[[], AbstractAsyncContextManager[None]] | None = None,
 ) -> KnowledgeUpsertOutput:
     """Insert new chunks for `source_uri`; soft-supersede prior chunks.
 
@@ -339,6 +346,12 @@ async def handle_knowledge_upsert(
     rechunk); the write commits over it, so under the Postgres authority a source
     written since refuses it (HeadMoved, 409) and the caller's copy never replaces a
     newer write.
+
+    `permissions`: a mirrored document's permission list, for the sync's turn to pass;
+    never a field of the op, so no request writes one.
+
+    `commit_guard`: an internal source authority check held through storage writes,
+    reacquired after embedding so a retired connection cannot publish late content.
     """
     from server.knowledge.store import chunks as knowledge_repo
 
@@ -389,9 +402,10 @@ async def handle_knowledge_upsert(
     documents_repo.check_storable(
         [{**author, "org": input.org, "namespace": input.namespace, "source_uri": input.source_uri}]
     )
-    blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
-        input, _original_of(prior, author), uploader=uploader
-    )
+    async with commit_guard() if commit_guard is not None else nullcontext():
+        blob_path, blob_size, blob_content_type, original_filename = await _resolve_blob(
+            input, _original_of(prior, author), uploader=uploader
+        )
 
     # The new version's chunks first, then its document row, and only then the older
     # versions' chunks retired (`retire_older`): a store that fails or is busy leaves the
@@ -438,23 +452,26 @@ async def handle_knowledge_upsert(
         blob_content_type=blob_content_type,
         original_filename=original_filename,
         revision=revision,
+        access_json=access_list.to_json(permissions),
     )
     try:
-        # Inside the cleanup: a chunk insert that timed out may land later.
-        await knowledge_repo.insert_chunks(rows)
-        # Written over the version read (the caller's, when it built the input): under
-        # the Postgres authority a write of the source that committed since refuses this
-        # one (`pg_documents.HeadMoved`).
-        await documents_repo.insert_one(
-            doc_row,
-            over=documents_repo.version_of(prior) if read_version is None else read_version,
-            # Always: a count taken before the prior read may miss chunks a write
-            # committed since; retiring none costs one statement.
-            retire_older=True,
-            built_from=_live_id(prior),
-        )
+        async with commit_guard() if commit_guard is not None else nullcontext():
+            # Inside the cleanup: a chunk insert that timed out may land later.
+            await knowledge_repo.insert_chunks(rows)
+            # Written over the version read (the caller's, when it built the input): under
+            # the Postgres authority a write of the source that committed since refuses
+            # this one (`pg_documents.HeadMoved`).
+            await documents_repo.insert_one(
+                doc_row,
+                over=documents_repo.version_of(prior) if read_version is None else read_version,
+                # A count before the prior read may miss a newly committed chunk;
+                # retiring none costs one statement.
+                retire_older=True,
+                built_from=_live_id(prior),
+                chunked=True,
+            )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             # Shielded: a cancelled request's cleanup still runs.
             await asyncio.shield(
                 _drop_own_chunks(
@@ -581,10 +598,17 @@ async def handle_knowledge_add(input: KnowledgeAddInput) -> KnowledgeAddOutput:
             await knowledge_repo.insert_chunks(rows)
         with traced("ch.insert.documents", table="loom.documents"):
             await documents_repo.insert_one(
-                doc_row, over=documents_repo.version_of(prior), built_from=_live_id(prior)
+                doc_row,
+                over=documents_repo.version_of(prior),
+                built_from=_live_id(prior),
+                # Under the Postgres authority search serves the head's chunks alone, so an
+                # add retires the older ones (a failed write's left behind included), as an
+                # upsert does, rather than keep chunks nothing serves.
+                retire_older=pg.enabled(),
+                chunked=True,
             )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             # Shielded: a cancelled request's cleanup still runs.
             await asyncio.shield(
                 _drop_own_chunks(
@@ -746,7 +770,7 @@ async def _edit_ingested(
             try:
                 await documents_repo.insert_one(row, over=live.version)
             except BaseException as e:  # re-raised: an edit that did not land forgets them
-                if not _published_anyway(e):
+                if not published_anyway(e):
                     # Shielded: a cancelled request's cleanup still runs.
                     await asyncio.shield(datasets_repo.forget(org, ns, [uri], only=version))
                 raise
@@ -1000,9 +1024,11 @@ async def handle_knowledge_bulk_add(
             doc_rows,
             over={uri: d.version for uri, d in priors.items()},
             built_from=[i for i in map(_live_id, priors.values()) if i],
+            retire_older=set(uris) if pg.enabled() else frozenset(),  # as an add's
+            chunked=True,
         )
     except BaseException as e:  # re-raised: the chunks of a write that did not land go first
-        if not _published_anyway(e):
+        if not published_anyway(e):
             own = [(str(r["source_uri"]), int(r["version"])) for r in doc_rows]
             await asyncio.shield(
                 _drop_own_chunks(input.org, input.namespace, own, e, now, embedder.model_name)

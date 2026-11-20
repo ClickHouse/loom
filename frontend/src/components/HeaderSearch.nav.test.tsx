@@ -5,7 +5,7 @@ import { useStore } from "../lib/state";
 import { HeaderSearch } from "./HeaderSearch";
 
 // Picking a namespace in the header search switches the namespace and keeps the page; a
-// toast says what changed. The field's only hint is the platform's palette shortcut.
+// toast says what changed. The field shows no hint strip and no key chip.
 
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
@@ -87,11 +87,12 @@ describe("HeaderSearch namespace switch", () => {
     }
   });
 
-  it("shows no navigate/open hint strip, and the shortcut as the platform prints it", async () => {
+  it("shows no navigate/open hint strip and no key chip, and Ctrl K does not focus it", async () => {
     const user = userEvent.setup();
-    render(<HeaderSearch />);
-    // jsdom is not an Apple platform.
-    expect(screen.getByText("Ctrl K")).toBeInTheDocument();
+    const { container } = render(<HeaderSearch />);
+    expect(container.querySelector("kbd")).toBeNull();
+    await user.keyboard("{Control>}k{/Control}");
+    expect(screen.getByRole("combobox", { name: "Search Loom" })).not.toHaveFocus();
     await user.type(screen.getByRole("combobox", { name: "Search Loom" }), "alerts");
     await screen.findByRole("option", { name: /team-alerts/ });
     expect(screen.queryByText(/navigate · /)).toBeNull();

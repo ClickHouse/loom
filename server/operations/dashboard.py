@@ -103,6 +103,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "decision.outcome",
             "decision.precedents",
             "decision.record",
+            "help.search",
             "knowledge.outline",
             "knowledge.query",
             "knowledge.synthesize",
@@ -209,6 +210,10 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "the memory drawer's Copy to… (memory.copy_to) makes the same copy with its lineage "
             "link; this by-id form needs admin on both namespaces"
         ),
+        "memory.definitions.list": (
+            "an admin's check of which shared definitions are governed, read by an agent or a "
+            "script"
+        ),
         "memory.search_trace": "Recall Lab explains each ranking with memory.search explain=true",
         "memory.touch": (
             "an agent's keep-alive on memories it relies on; the memory drawer changes an "
@@ -241,6 +246,14 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
         "insights.query": (
             "the assistant agent's SQL tool; no dashboard page calls it until the Assistant "
             "page's chat"
+        ),
+        "knowledge.source.update": (
+            "agents and `loom knowledge source update` change a source's items; the source "
+            "dialog registers a source with knowledge.source.add"
+        ),
+        "knowledge.source.parse_links": (
+            "agents preview pasted links with it; add and update take links directly; the "
+            "source dialog takes ids"
         ),
     },
 )

@@ -29,11 +29,43 @@ Over MCP the primer names the call; an Agent-Skills client installs it with
 | **TypeScript SDK** (`@clickhouse/loom`)                      | The agent is a Node or browser-side service.                                                    | `Datapack` / `Agent`, `agent.call(op, body)` typed from the generated op table, `AgentTools`, `Session`.                                                                           |
 | **HTTP** (`POST /v1/<op>`)                                   | Any other language, or a one-off script.                                                        | Every op, the same JSON bodies; you handle retries and the `Idempotency-Key` header yourself.                                                                                      |
 
-All four serve the same ops from one registry. Choose by who decides to call: MCP when the
-model decides, an SDK when your code decides. Many agents use both: the SDK to load context at
-the start and record the run at the end, MCP tools for what the model chooses to remember or
-look up. Over MCP, pick the listing with `?toolset=` ([MCP toolsets](../reference/mcp.md#toolsets));
-an op the listing leaves out is still callable through `loom_op`.
+All four serve the same ops from one registry. The transport does not decide when to
+retrieve: your agentic architecture does. An SDK can make direct calls or expose tools for
+a model to choose. Over MCP, pick the listing with `?toolset=`
+([MCP toolsets](../reference/mcp.md#toolsets)); an op the listing leaves out is still
+callable through `loom_op`.
+
+### Who invokes Loom?
+
+An integration can combine these paths:
+
+| Path                 | Who decides when?                                       | Example                                                                                      |
+| -------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Context preparation  | Application code                                        | Load relevant lessons, conventions or a code briefing before the model starts.               |
+| Plugin hooks         | The coding client's configured lifecycle hooks          | Retrieve code context for a prompt or calculate impact after an edit.                        |
+| Investigation tools  | The model, guided by tool descriptions and instructions | Request a definition, callers or a conceptual search when existing evidence is insufficient. |
+| Checks and recording | Application code or configured hooks                    | Check for duplicates before filing, enforce a required check, or record an outcome.          |
+
+Calling an SDK method directly requires no model decision. Exposing that method as a tool
+leaves the decision to the model; connecting the tool does not guarantee its use. Plugin
+hooks can also call Loom without a model-selected tool call. A raw model API request does
+not run coding-client hooks. See the [Claude Code plugin guide](../features/integrations/claude-code.md)
+for headless invocation and hook configuration.
+
+Put a required lookup or check in the application stage that needs its result, and await
+it before advancing. Distinguish an attempted request from a successful, usable answer:
+handle errors, denied requests and abstention explicitly. A prompt instruction alone does
+not enforce a gate. For an indexed coding task, request the narrowest relevant evidence
+and let the model make additional lookups only for what remains unanswered. Reuse returned
+evidence; local tools handle uncommitted files and unsupported index results.
+
+Measure each path separately. Zero model-selected MCP calls can coexist with direct SDK
+or HTTP calls and automatic hook retrieval. Record the caller or stage, operation, request
+ID, outcome and latency, and confirm which evidence reached the model. SDK
+`call_with_meta` results expose `request_id`; the server also returns `X-Request-Id`
+([joining requests](../features/integrations/index.md#joining-a-request-across-systems)).
+Keep startup metadata, context retrieval, investigative lookups, checks and recording
+separate when reporting tool adoption and cost.
 
 ## 2. Choose the identity
 
@@ -169,9 +201,13 @@ durable.
 
 ## 7. Follow the memory skill's review
 
-The plugins ship a `loom-memory` skill (`integrations/claude-code-plugin/skills/loom-memory/`,
-generated into the Codex plugin) that encodes this guide for a model. Copy its end-of-task
-review into any agent's instructions. Before reporting done, write only what earns a yes:
+The plugins ship a `loom-memory` skill
+(`integrations/claude-code-plugin/skills/loom-memory/`, generated into the Codex plugin)
+that encodes this guide for a model. A coding agent on plain MCP uses the [agent
+instructions](../features/integrations/agent-instructions.md) block, whose last memory
+line is a short form of this review; to run the full review, paste the questions below
+under the block. Any other agent copies the questions into its instructions. Before
+reporting done, write only what earns a yes:
 
 1. Did I make or learn a decision, constraint or owner a future session needs?
 2. Did an existing memory turn out wrong or outdated? Update it, same key.

@@ -39,12 +39,28 @@ describe("landingNamespace: the saved pick wins when it is still reachable", () 
     expect(landingNamespace("team-b", ["bot-corpus", "team-b"], mine)).toBe("team-b");
   });
 
-  it("accepts a saved pick reachable only through list_mine (joined via Discover, not in the JWT)", () => {
+  it("accepts a saved pick reachable only through list_mine (joined from Namespaces in your org, not in the JWT)", () => {
     expect(landingNamespace("joined", ["claimed"], [entry("joined")])).toBe("joined");
   });
 
   it("ignores a saved pick the user can no longer reach", () => {
     expect(landingNamespace("gone", ["team-b"], [])).toBe("team-b");
+  });
+});
+
+describe("landingNamespace: a benchmark namespace is a default only when nothing else is reachable", () => {
+  it("passes over a bench namespace the user administers for a real one", () => {
+    const mine = [admin("bench", { kind: "bench" }), entry("team-b")];
+    expect(landingNamespace(null, ["bench", "team-b"], mine)).toBe("team-b");
+  });
+
+  it("lands on the bench namespace when it is all the token reaches", () => {
+    expect(landingNamespace(null, ["bench"], [admin("bench", { kind: "bench" })])).toBe("bench");
+  });
+
+  it("keeps a saved pick of a bench namespace", () => {
+    const mine = [admin("bench", { kind: "bench" }), entry("team-b")];
+    expect(landingNamespace("bench", ["bench", "team-b"], mine)).toBe("bench");
   });
 });
 
@@ -242,16 +258,7 @@ describe("deepLinkNamespace: an explicit path keeps its view and takes the names
   });
 
   it("a memory view with a code/QA-only token gets no namespace — it renders its own empty state", () => {
-    for (const v of [
-      "memories",
-      "recall",
-      "profile",
-      "knowledge",
-      "sharing",
-      "sessions",
-      "runs",
-      "assistant",
-    ] as const) {
+    for (const v of ["memories", "recall", "profile", "knowledge", "sharing", "sessions", "runs"] as const) {
       expect(needsMemoryNamespace(v)).toBe(true);
       expect(deepLinkNamespace(v, null, claims, codeTrackerOnly)).toBeNull();
     }
@@ -310,5 +317,32 @@ describe("isPersonalNamespace: the auto-claimed personal-<subject> row", () => {
     expect(isPersonalNamespace("personal")).toBe(false);
     expect(isPersonalNamespace("team-personal-x")).toBe(false);
     expect(isPersonalNamespace("")).toBe(false);
+  });
+});
+
+describe("a collection is never a namespace the header holds", () => {
+  const COLLECTION = (namespace: string, over: Partial<MyNamespaceEntry> = {}) =>
+    admin(namespace, { kind: "collection", ...over });
+
+  it("is neither selectable nor a memory namespace, by its reserved name whatever its kind", () => {
+    const mine = [COLLECTION("col-r"), admin("col-old", { kind: "memory" }), entry("team", { kind: "memory" })];
+    for (const name of ["col-r", "col-old", "col-me-0123456789abcdef"]) {
+      expect(isSelectableNamespace({ namespace: name, kind: "memory" })).toBe(false);
+      expect(isMemoryNamespace(name, mine)).toBe(false);
+    }
+    expect(isSelectableNamespace({ namespace: "team", kind: "memory" })).toBe(true);
+  });
+
+  it("a saved collection, an administered one and a claimed one are passed over", () => {
+    const mine = [COLLECTION("col-mine"), admin("team-b", { joined_at: "2026-02-01T00:00:00Z" })];
+    expect(landingNamespace("col-mine", ["col-claim", "team-b"], mine)).toBe("team-b");
+    expect(landingNamespace(null, ["col-claim"], [COLLECTION("col-mine")])).toBeNull();
+  });
+
+  it("an account that reads only collections is Setup's here: the Library's call is landingWithCollections", () => {
+    expect(landingTarget(null, [], [COLLECTION("col-a", { role: "viewer" })])).toEqual({
+      view: "setup",
+      namespace: null,
+    });
   });
 });

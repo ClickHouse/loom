@@ -25,6 +25,8 @@ locks; ClickHouse keeps doing what it is good at, scanning vectors and text.
 | Idempotency keys and replay answers                              | Postgres `loom.idempotency`                                                           |
 | Scope generations (admission)                                    | Postgres `loom.scope_generations`                                                     |
 | Knowledge document heads, their delivery jobs, deletion evidence | Postgres `loom.knowledge_heads`, `loom.knowledge_deliveries`, `loom.erased_documents` |
+| Knowledge ingestion jobs                                         | Postgres `loom.knowledge_jobs`                                                        |
+| Knowledge dataset catalog: serving snapshots, schema approvals   | Postgres `loom.knowledge_datasets`                                                    |
 | Vectors, lexical and vector search, the searchable memory rows   | ClickHouse `loom.memory_embeddings`, `loom.memory`                                    |
 | Revision history, the audit trail, usage                         | ClickHouse `loom.memory_versions`, `loom.audit_log`, usage tables                     |
 
@@ -66,23 +68,29 @@ it.
 
 ## The tables
 
-The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every primary key
-and every tenant index leads with `org`.
+The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every tenant primary
+key leads with `org`, and so does every tenant index but the maintenance indexes of the
+sweeps and claim scans ([storage layout](storage-layout.md#postgres)).
+[Storage layout](storage-layout.md) places every table, of either store, and the wave
+that moves it.
 
-| Table                       | Key                                                        | Holds                                                                                                                                                                                                                 |
-| --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                               |
-| `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                          |
-| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: its `loom.memory` row as JSON, without its default fields, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                       |
-| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                          |
-| `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands |
-| `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                     |
-| `loom.erased_memories`      | `(org, namespace, memory_id)`                              | deletion evidence: the namespace and id of each memory an erasure removed, when, and when its publishers are quiet; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                 |
-| `loom.idempotency_fences`   | `org`                                                      | when an erasure last removed the org's replay answers: the bound of its residue census                                                                                                                                |
-| `loom.audit_outbox`         | `(org, namespace, row_hash)`                               | the audit rows an erasure removed before ClickHouse had them, and those a claim deferred because the holder it replaced may still insert them, until the delivery pass publishes them; keys and ids, no values        |
-| `loom.knowledge_heads`      | `(org, namespace, source_uri)`                             | the head of each knowledge source: the complete `loom.documents` row ([knowledge documents](#knowledge-documents))                                                                                                    |
-| `loom.knowledge_deliveries` | `(org, namespace, source_uri, version)`                    | what a document commit still owes ClickHouse (bits: 1 the document row, always set, 2 the older chunks' retirement; published whole), its row, lease and token                                                        |
-| `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                   |
+| Table                       | Key                                                        | Holds                                                                                                                                                                                                                                                                                                                                                                                   |
+| --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                                                                                                                                                                                                 |
+| `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                                                                                                                                                                                            |
+| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: its `loom.memory` row as JSON, without its default fields, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                                                                                                                                                                                            |
+| `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place, and with `LOOM_PG_PAYLOAD_CLEAR_ENABLED` the clearing pass clears a delivered one's payload past the horizon: [payload clearing](#payload-clearing)), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                                       |
+| `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands                                                                                                                                                                   |
+| `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                                                                                                                                                                                       |
+| `loom.erased_memories`      | `(org, namespace, memory_id)`                              | deletion evidence: the namespace and id of each memory an erasure removed, when, and when its publishers are quiet; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                                                                                                                                                                                   |
+| `loom.idempotency_fences`   | `org`                                                      | when an erasure last removed the org's replay answers: the bound of its residue census                                                                                                                                                                                                                                                                                                  |
+| `loom.audit_outbox`         | `(org, namespace, row_hash)`                               | the audit rows an erasure removed before ClickHouse had them, and those a claim deferred because the holder it replaced may still insert them, until the delivery pass publishes them; keys and ids, no values                                                                                                                                                                          |
+| `loom.knowledge_heads`      | `(org, namespace, source_uri)`                             | the head of each knowledge source: the complete `loom.documents` row ([knowledge documents](#knowledge-documents)), and the revision and version of the chunks it serves ([knowledge search](#knowledge-search))                                                                                                                                                                        |
+| `loom.knowledge_deliveries` | `(org, namespace, source_uri, version)`                    | what a document commit still owes ClickHouse (bits: 1 the document row, always set, 2 the older chunks' retirement; published whole), its row, lease and token                                                                                                                                                                                                                          |
+| `loom.erased_documents`     | `(org, namespace, doc_id)`                                 | deletion evidence: the `doc_id` of every version of each document an erasure removed, ClickHouse's included, refused at a commit; no content, kept `LOOM_PG_ERASURE_EVIDENCE_HOURS`                                                                                                                                                                                                     |
+| `loom.knowledge_jobs`       | `(org, namespace, ingestion_id)`                           | each ingestion job: its complete `loom.knowledge_ingestions` row, the queue's columns, the token that fences its run's reads and saves, and when a cancel was asked for ([ingestion jobs](#ingestion-jobs))                                                                                                                                                                             |
+| `loom.erasure_ledger`       | `(org, id)`                                                | the erasures requested of the deployment: each one's scope, purge flag, urgency, request time, completion or abandonment time, and the Postgres steps that committed (`pg_steps`, each in its step's transaction), written before its first ClickHouse checkpoint, so a restore of either store runs again what it lost (`loom reconcile`); no content, kept `LOOM_ERASURE_LEDGER_DAYS` |
+| `loom.knowledge_datasets`   | `(org, namespace, source_uri, doc_version, dataset_id)`    | each dataset's catalog row at a document version: the snapshot that serves it, its schema and approval ([datasets](#datasets))                                                                                                                                                                                                                                                          |
 
 A head is the row `loom.memory FINAL` would serve: a commit replaces it only when its
 version is not older, as `ReplacingMergeTree(version)` decides. Holding the row
@@ -142,14 +150,65 @@ A profile revision keeps its payload for good: a redaction's reach into the prof
 folded from the memory matches on `row`, which the partial index
 `memory_revisions_profile` serves.
 
-Every commit sets a revision's payload; nothing clears it.
+Every commit sets a revision's payload; only the payload clearing pass clears it.
 
-Eight maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
+Eleven maintenance indexes do not lead with `org`: `memory_deliveries (lease_until)` and
 `knowledge_deliveries (lease_until)` `WHERE NOT settled` (the delivery workers' queues
 across tenants), the same two `WHERE settled`, `audit_outbox (due_at)`,
-`idempotency (expires_at)`, `erased_memories (erased_at)` and
-`erased_documents (erased_at)` (the sweeps). All eight are local to a Postgres database;
-a tenant's rows are still found by their primary keys.
+`idempotency (expires_at)`, `erased_memories (erased_at)`,
+`erased_documents (erased_at)`, `knowledge_jobs (updated_at)` and
+`erasure_ledger (requested_at)` (the sweeps), and `memory_revisions_payload` (the
+payload clearing pass across tenants). All eleven are local to a Postgres database,
+and a tenant's rows are still found by their primary keys.
+
+### Payload clearing
+
+With `LOOM_PG_PAYLOAD_CLEAR_ENABLED` (off by default), the `pg_payload_clear` worker
+clears the payload of a revision every ClickHouse backup a restore may use holds, keeping
+its metadata. The journal then stays the size of its metadata, plus the payloads of the
+last horizon, of the profile revisions, of revisions still owing a delivery and of
+versions ClickHouse lacks, while ClickHouse's `memory_versions` serves the old versions'
+content.
+
+- **When a revision was delivered.** A completion that empties a delivery more than
+  15 minutes after its revision's commit sets the revision's `delivered_at`, in the
+  same statement that deletes or settles the delivery; one within 15 minutes leaves the
+  journal untouched. A revision's delivery time is therefore at most
+  `coalesce(delivered_at, committed_at)` plus 15 minutes; a build without the stamp
+  breaks that bound for what it delivers late, which
+  [rolling-upgrade rule 43](rolling-upgrades.md#the-rules) waits out.
+- **What is cleared.** A pass clears a revision when all of these hold:
+  - its delivery time is past the horizon;
+  - it has no delivery row: a parked or repaired delivery, and a settled one until the
+    delivery pass sweeps it past the insert bound, keep the revision's payload;
+  - it is not a profile revision;
+  - `loom.memory_versions` holds its key and version with the same `memory_id` and
+    content hash, read with sequential consistency. A redaction keeps the hash, so a
+    redacted revision is cleared too.
+
+  A version ClickHouse lacks is counted (`missing_in_clickhouse` in the worker's
+  outcome) and kept. The pass reads the partial index `memory_revisions_payload` in
+  delivery order from where the last pass stopped (its cursor in `loom.worker_status`,
+  so a new process or colour continues it), a batch of `LOOM_PG_DELIVERY_BATCH_ROWS` at
+  a time, until one comes back short or half its deadline has gone. It clears with
+  `FOR NO KEY UPDATE SKIP LOCKED`, so a revision a redaction or an erasure holds is left
+  for a later pass.
+
+- **The horizon** is `LOOM_PG_PAYLOAD_RESTORE_HORIZON_MINUTES`, never under
+  `LOOM_CH_BACKUP_INTERVAL_MINUTES` plus 60 nor under the insert bound plus 60.
+  At 0 (the default) it is twice the backup interval plus 60. Both settings are LIVE and
+  read at each pass. A process clears nothing until it has adopted the deployment's
+  overrides. Why the horizon covers a restore, and the restore runbook that stops the
+  pass first, are in
+  [backup and recovery](../operations/backup-and-recovery.md#the-postgres-journal-and-a-clickhouse-restore).
+- **After a restore.** A delivery of a cleared revision that is still its key's head
+  sends the head's row from `memory_current`, the same version, so `loom reconcile`
+  sends again every head ClickHouse lacks or holds older. A cleared revision since
+  superseded has nothing to send: `loom reconcile` leaves it out of its holds, and a
+  delivery that still reaches one (held as a pass cleared it) parks at its claim
+  ([delivery](#delivery)).
+- **Knowledge documents** are not cleared here: a document's superseded versions live
+  only in ClickHouse once its delivery is swept.
 
 ### Rejected layouts
 
@@ -163,10 +222,9 @@ a tenant's rows are still found by their primary keys.
 
 ### A database per tenant
 
-Tenants share one schema in one database per Postgres placement unit, every key and
-tenant index led by `org`; a tenant that needs isolation gets its own placement unit
-(a cluster), not its own database. A database per tenant was weighed by what each
-of its costs grows with:
+Tenants share one schema in one database per Postgres unit, every key and tenant index
+led by `org`; a tenant that needs isolation gets a [cell](cells.md) of its own, not its
+own database. A database per tenant was weighed by what each of its costs grows with:
 
 | Cost                  | One database per tenant                                                                                                                                                                                                      | Shared schema                                      |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
@@ -175,14 +233,14 @@ of its costs grows with:
 | Vacuum and wraparound | 3 autovacuum workers by default for the whole cluster, a launch per database per naptime, a `datfrozenxid` horizon per database ([Postgres](https://www.postgresql.org/docs/16/routine-vacuuming.html))                      | one set of tables                                  |
 | Migrations            | applied once per database; a boot's advisory lock covers one database, a partial run leaves tenants on different schemas                                                                                                     | one transaction per file                           |
 | Isolation             | none: the WAL, buffers, IO, checkpoints and vacuum workers are the cluster's ([Postgres](https://www.postgresql.org/docs/16/manage-ag-overview.html))                                                                        | the same; a separate unit isolates                 |
-| Moving a tenant       | one `pg_dump` of its database                                                                                                                                                                                                | the tenant's rows by `org`, then the route's epoch |
+| Moving a tenant       | one `pg_dump` of its database                                                                                                                                                                                                | out of scope ([cells](cells.md#operations))        |
 | Erasure               | `DROP DATABASE`, fast, but not in a transaction and refused while a slot uses the database ([Postgres](https://www.postgresql.org/docs/16/sql-dropdatabase.html)); backups and archived WAL keep the data either way         | delete by `org` under the scope's generation locks |
 
 Its one advantage, moving a tenant with one dump, does not pay for the rest, and it
 isolates nothing a shared database does not. A schema per tenant has the same
 migration and catalog costs, and a transaction pooler refuses the `search_path` it
 needs per connection. A dedicated database on a shared cluster for a regulated tenant
-shares that cluster's WAL, IO and backups; a dedicated placement unit does not.
+shares that cluster's WAL, IO and backups; a cell of its own does not.
 
 ### Postgres branching
 
@@ -229,7 +287,8 @@ sequenceDiagram
    document counted as in (`pg_memory.capture`). Nothing waits here.
 3. **Verdict.** The embedding and the conflict check run outside any transaction.
    Under this authority `memory.set` fetches its peer rows itself
-   (`conflicts.peer_rows`: the writer's peers in its read scope and every pinned one)
+   (`conflicts.peer_rows`: the writer's peers in `_writer_scope`, its user's rows when it
+   names one, and every pinned one)
    and passes them to `check_on_commit`, so a later round can add to them.
 4. **Commit.** One transaction (`pg_memory.commit_versions`), locks taken in one order
    (the policy scopes' advisory locks, shared and sorted; then generation rows by
@@ -401,8 +460,8 @@ is refused at commit and reached again on peers read anew, whatever the gap:
 
 - a row that cannot be a peer is ruled out: another memory type, the writer's own key
   (rechecked under its head lock), a vector farther than the check reaches, and for
-  `memory.set` also a row not live or not active, or outside the writer's read scope and
-  not pinned (`memory.bulk_set` judges such a row by its vector too);
+  `memory.set` also a row not live or not active, or outside the writer's scope
+  (`_writer_scope`) and not pinned (`memory.bulk_set` judges such a row by its vector too);
 - vectors are measured on this process's copy of the vectors it committed, and only a
   row clearly out of reach (by a margin over ClickHouse's lower stored precision) is
   ruled out that way;
@@ -495,33 +554,93 @@ embedded it with a contextual prefix gets the plain text's vector instead, the o
 `memory.set` would have given it. Claims are published a namespace at a time, and one by
 one when a namespace's batch fails, so a revision ClickHouse keeps refusing holds back
 only itself. At `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes (a refused row, a
-refused Postgres statement, a lease that ran out during the publish) a delivery owing its
-search document and not its memory row publishes a stub the embedding worker fills; any
-other is parked: no longer claimed, left out of the published watermark, and counted by
-`GET /v1/health?include=postgres` (`postgres.parked_deliveries`). A publish that ends the
-worker process counts too: a claim is marked started just before its own publish and the
-mark cleared with its outcome, so the next pass counts one still marked as an attempt,
-publishes it alone, and parks it at the limit (a delivery owing only its search document
-gets its stub instead, and is parked if that stub stops the process too). The worker
-stops a pass between namespaces, and between claims it publishes one by one or stubs past
-their attempts, once a lease has gone by, so its deadline cuts only a publish slow on its
-own. A pass that ends without an outcome for a claim clears its mark and counts nothing:
-one cancelled (the worker's deadline, a shutdown) before that claim's publish started, or
-cut by a Postgres outage. A publish the worker was running when its pass was cancelled
-keeps its mark and counts (each claim of a batch then counts one attempt and goes alone),
-as does one its lease ran out on; an admission helping with a namespace's backlog
-releases everything it claimed. ClickHouse refused nothing when it answers with a state
-that clears on its own (a merge backlog, a read-only table, Keeper lost, too many
-queries, an insert of unknown status, the server out of memory as a whole), when every
-pooled connection is busy, or when a publish fails at the connection and ClickHouse then
-does not answer a probe: the pass stops. A connection failure while ClickHouse answers, a
-timeout, and an insert block spanning too many partitions are the rows' own and count, so
-a batch that always fails that way is tried row by row and a row that keeps failing is
-parked. A second copy of a row is harmless: both ClickHouse tables are
-`ReplacingMergeTree(version)` and every row keeps its revision's version, so a copy
+refused Postgres statement, a lease that ran out during the publish) a delivery owing
+its search document and not its memory row publishes a stub the embedding worker fills;
+any other is parked: no longer claimed, left out of the published watermark, and counted
+by `GET /v1/health?include=postgres` (`postgres.parked_deliveries`). A delivery whose
+revision's payload was cleared ([payload clearing](#payload-clearing)) sends its key's
+head row when the revision is still the head; otherwise it has nothing to send and is
+parked at its claim, with `last_error` "payload cleared, nothing to send" (what to do:
+[Postgres operations](../operations/postgres.md#what-the-boot-checks)). A publish that
+ends the worker process counts too: a claim is marked started just before its own
+publish and the mark cleared with its outcome, so the next pass counts one still marked
+as an attempt, publishes it alone, and parks it at the limit (a delivery owing only its
+search document gets its stub instead, and is parked if that stub stops the process
+too). The worker stops a pass between namespaces, and between claims it publishes one by
+one or stubs past their attempts, once a lease has gone by, so its deadline cuts only a
+publish slow on its own. A pass that ends without an outcome for a claim clears its mark
+and counts nothing: one cancelled (the worker's deadline, a shutdown) before that
+claim's publish started, or cut by a Postgres outage. A publish the worker was running
+when its pass was cancelled keeps its mark and counts (each claim of a batch then counts
+one attempt and goes alone), as does one its lease ran out on; an admission helping with
+a namespace's backlog releases everything it claimed. ClickHouse refused nothing when it
+answers with a state that clears on its own (a merge backlog, a read-only table, Keeper
+lost, too many queries, an insert of unknown status, the server out of memory as a
+whole), when every pooled connection is busy, or when a publish fails at the connection
+and ClickHouse then does not answer a probe: the pass stops. A connection failure while
+ClickHouse answers, a timeout, and an insert block spanning too many partitions are the
+rows' own and count, so a batch that always fails that way is tried row by row and a row
+that keeps failing is parked. A second copy of a row is harmless: both ClickHouse tables
+are `ReplacingMergeTree(version)` and every row keeps its revision's version, so a copy
 collapses into the first and a late one never outranks a newer write. Only the current
 token's holder clears a target, so an overtaken publisher cannot mark a newer claim's
 work done.
+
+### Only durable revisions are published
+
+A commit whose synchronous-standby wait was cancelled (a client timeout, a cancel) is
+committed on the primary alone and visible to every session there; a failover loses it
+and the new primary numbers another revision with its `seq`. So a row reaches
+ClickHouse only once the synchronous standbys hold it. A row becomes visible only after
+its own commit's standby wait ended, so a later commit that writes WAL and returns from
+its own wait covers every row its transaction read.
+
+- A claim of the delivery worker, the audit outbox or the knowledge delivery worker is
+  an UPDATE of the rows it claims, so its commit waits for the standbys (the statement
+  timeout does not cover a commit's standby wait); the client's command timeout cancels
+  a wait that outlasts it and raises, and nothing claimed is sent.
+- A writer's flush sends its own commits, which returned from their wait, and a
+  document built onto a newer copy of its row, which it reads again durably first; a
+  copy the durable read no longer finds goes to its `stale` list, for the delivery
+  worker to decide.
+- A key's head that is not the revision a delivery claimed (newer, redacted or gone),
+  and the live decision writers a record retirement keeps, are other sessions' commits.
+  They are read again in `pg.durable_transaction()`; its COMMIT carries a transactional
+  logical message (prefix `loom.durable`), so it waits for the standbys on the
+  connection that made the read. The document is built or settled from that read: a
+  copy (a pin, a touch) has a document built onto it; a delete, other content, a
+  redaction or an erasure settles the claimed document unsent.
+  The read is made durable on its own connection because the settling commit, on
+  another, could not cover it: after a failover it would mark the document done on a
+  primary where the claimed revision is the head again.
+- `decision.record` checks its writers this way after its record lands, and a delete of a
+  decision retires its record this way in its flush, so each waits for one more standby
+  round trip.
+- A knowledge job version ClickHouse lacks is projected again by the ingest run only when
+  `pg_jobs.get(..., durable=True)` returns the same version: one only the primary holds
+  would come back through `pg_jobs.adopt` after a failover lost it.
+
+The rule for any path: a ClickHouse send fed by a Postgres read sends only what the
+caller committed or claimed, or reads durably first. A decision that only changes
+Postgres state is covered by its commit when the transaction that commits it also made
+the read.
+`tests/unit/test_pg_durable_reads.py` pins every caller of a journal read with the reason
+it holds.
+
+The guarantee holds when a failover promotes a standby of the synchronous set holding
+the highest flush position, which a strict HA manager does
+([Postgres operations](../operations/postgres.md#self-hosted-postgres)). A manager that
+is not strict empties `synchronous_standby_names` when its standby drops; commits are
+then the primary's alone, as under `LOOM_PG_DURABILITY=local` with no standby named: a
+failover may lose acknowledged writes, ClickHouse may keep their rows, and the reconcile
+after a restore removes them.
+
+With the standby detached, a claim waits up to `LOOM_PG_STATEMENT_TIMEOUT_MS` plus one
+second and the pass ends as a Postgres outage does; a claim whose wait was cut keeps its
+rows leased until `LOOM_PG_DELIVERY_LEASE_SECONDS` ends after the standby is back, and
+searches in those namespaces wait for it at the barrier. A redaction or an erasure locking
+a claimed delivery waits behind that commit up to `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`, then
+answers its retryable 503, as its own commit would while the standby is down.
 
 ## Idempotency
 
@@ -547,11 +666,12 @@ retry after that is a new request.
 
 ## Erasure
 
-The first step of every erasure saga is `pg_memory.delete`
-(`server/erasure/store/steps_pg.py`). In one transaction it advances every affected
-namespace's generation (which locks it, so the scope's commits wait, and a verdict in
-flight that links a memory it removed is reached again), moves the audit rows ClickHouse
-does not have yet to `loom.audit_outbox`, deletes the scope's revisions (and with them
+The first step that erases is `pg_memory.delete` (`server/erasure/store/steps_pg.py`);
+a namespace erasure only stops the namespace's document sources before it. In one
+transaction `pg_memory.delete` advances every affected namespace's generation (which
+locks it, so the scope's commits wait, and a verdict in flight that links a memory it
+removed is reached again), moves the audit rows ClickHouse does not have yet to
+`loom.audit_outbox`, deletes the scope's revisions (and with them
 their deliveries) and heads, and reads the latest lease among the deliveries it removed.
 It then waits until every publisher that held one has stopped: a publisher sends nothing
 past its lease, every insert it sent starts on the server within a transit allowance of
@@ -940,12 +1060,13 @@ it expires.
 ## Knowledge documents
 
 `loom.knowledge_heads` holds the head of every knowledge source, keyed by
-`(org, namespace, source_uri)`: the complete `loom.documents` row a read serves, with its
-version, revision and whether it is deleted. `loom.knowledge_deliveries`, keyed by
-`(org, namespace, source_uri, version)`, holds what a commit still owes ClickHouse (bits:
-1 the `loom.documents` row, 2 the retirement of the source's older chunk versions), its
-own copy of the row, a lease and its token
-(`schemas/pg_migrations/002_knowledge_documents.sql`).
+`(org, namespace, source_uri)`: the complete `loom.documents` row a read serves, with
+its version, revision and whether it is deleted, and the revision and version of the
+chunks it serves ([knowledge search](#knowledge-search)). `loom.knowledge_deliveries`,
+keyed by `(org, namespace, source_uri, version)`, holds what a commit still owes
+ClickHouse (bits: 1 the `loom.documents` row, 2 the retirement of the source's older
+chunk versions), its own copy of the row, a lease and its token
+(`schemas/pg_migrations/002_knowledge_documents.sql`, `004_knowledge_chunk_heads.sql`).
 
 Every document write reaches Postgres through one funnel,
 `documents.insert_one` / `insert_many` (`server/knowledge/store/documents.py`), which
@@ -953,11 +1074,10 @@ takes the version its writer read (`over`, 0 for none):
 
 1. The writer refuses a row whose source URI or writer's id holds text Postgres cannot
    store (422 `VALIDATION_FAILED`; other text is kept exactly, in base64 inside the
-   stored row), then inserts the new version's chunks into ClickHouse. Search reads
-   chunks without consulting documents, so they are found beside the version they
-   replace from the moment they land, as an ingest's always were. A write whose document
-   does not land retires them (deletes them when an erasure removed what it was built
-   from).
+   stored row), then inserts the new version's chunks into ClickHouse. ClickHouse reads
+   them as live from the moment they land; search serves them once the commit makes
+   them the head's ([knowledge search](#knowledge-search)). A write whose document does
+   not land retires them (deletes them when an erasure removed what it was built from).
 2. The commit locks the sources' heads in key order and replaces each only when it is
    not newer than the version the writer read (one behind it is adopted) and the new row
    is above both. Every writer stamps its version past the one it read, so a host whose
@@ -966,13 +1086,14 @@ takes the version its writer read (`over`, 0 for none):
    version and the caller starts over from a fresh read. Two writes of one source
    therefore never both publish, and each revision number is taken once; a bulk add
    that names a source twice is refused (422) before anything is written.
-3. Under its lease the writer inserts the `loom.documents` row and, for an upsert, an
-   ingest or a delete, retires the older chunk versions (an add and a bulk add keep
-   them, as under the ClickHouse authority), then deletes the delivery under
-   its token. A writer stopped after the commit answers 503 `PUBLICATION_PENDING`; the
-   `knowledge_pg_delivery` worker takes the delivery once its lease ran out and
-   publishes it from the stored row, parking it after `LOOM_PG_DELIVERY_MAX_ATTEMPTS`
-   refusals (`postgres.parked_knowledge_deliveries` in `GET /v1/health?include=postgres`);
+3. Under its lease the writer inserts the `loom.documents` row and retires the source's
+   older chunk versions (every writer that inserts chunks, and a delete; search serves
+   the head's alone, and under the ClickHouse authority an add and a bulk add keep them,
+   both served), then deletes the delivery under its token. A writer stopped after the
+   commit answers 503 `PUBLICATION_PENDING`; the `knowledge_pg_delivery` worker takes
+   the delivery once its lease ran out and publishes it from the stored row, parking it
+   after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` refusals
+   (`postgres.parked_knowledge_deliveries` in `GET /v1/health?include=postgres`);
    ClickHouse unavailable counts no attempt.
    A second copy collapses into the first (`ReplacingMergeTree(version)`), and a
    repeated retirement retires nothing more.
@@ -1012,37 +1133,43 @@ a restore) is refused (422), so only an erasure removes it.
 the listed documents) read ClickHouse, so they can miss a commit it does not have yet.
 The report reads the namespace's unsettled deliveries once (a delivery whose row landed
 but whose older chunk versions are not retired yet counts). Any owed or parked delivery
-is counted in `skipped` (`documents.projection: …`); a Postgres that does not answer is
-named there instead (`documents.projection: POSTGRES_UNAVAILABLE: …`, covering the
-memory sections too, which then do not wait) and not asked again in the call. Either
-makes `listed_complete` false. A listed row is kept only while `get_many_by_uris` serves
-it at the version ClickHouse listed, live; a document rewritten or deleted in Postgres
-since leaves the listing, counted in `skipped` (`listed.heads: …`).
+is counted in `skipped` (`documents.projection: …`). When the deliveries read, the job
+comparison or the listing check gets no answer, the first to do so adds
+`documents.projection: POSTGRES_UNAVAILABLE: …` (covering the memory sections too,
+which then do not wait), and Postgres is not asked again in the call; the job sections
+say so under their own name when their jobs were not compared. An owed or parked
+delivery or the outage makes `listed_complete` false; the job lines do not. An outage
+the memory sections' own wait finds first is named `projection: …`. A listed row is
+kept only while `get_many_by_uris` serves it at the version ClickHouse listed, live; a
+document rewritten or deleted in Postgres since leaves the listing, counted in
+`skipped` (`listed.heads: …`).
 
 An erasure's `pg_knowledge.delete` step, after `pg_memory.delete`, runs on a connection
 of its own in one transaction:
 
 1. It takes each namespace's document lock (`pg.KNOWLEDGE_LOCK_KEY`) alone, which every
    commit holds shared, so no commit lands in a locked namespace between its read and
-   its delete. A user's scope locks every namespace holding the user's heads or
-   deliveries, reading again until no namespace more holds one. The user's namespaces
-   that hold only ClickHouse rows are read for evidence without a lock: a commit there
-   during the step makes a head carrying the user's id, which the residue census
-   finds, so the saga fails and runs again. Until the transaction ends, a knowledge
-   write in the locked namespaces, any user's, waits `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS`
-   and answers 503, so a scope with a long ClickHouse history holds them for its whole
-   evidence read.
-2. It locks the scope's heads in a commit's key order, deletes the deliveries and the
-   heads, and keeps the `doc_id` of every version of the scope's documents, those
-   ClickHouse holds included, in `loom.erased_documents` for
+   its delete. A user's scope locks every namespace holding the user's heads, deliveries
+   or dataset catalog rows (an approval adding a first Postgres row elsewhere is found
+   by the residue census), reading again until no namespace more holds one. The user's
+   namespaces that hold only ClickHouse rows are read for evidence without a lock: a
+   commit there during the step makes a head carrying the user's id, which the residue
+   census finds, so the saga fails and runs again. Until the transaction ends, a
+   knowledge write in the locked namespaces, any user's, waits
+   `LOOM_PG_COMMIT_LOCK_TIMEOUT_MS` and answers 503, so a scope with a long ClickHouse
+   history holds them for its whole evidence read.
+2. It locks the scope's heads in a commit's key order, deletes the deliveries, the
+   heads, the ingestion jobs ([ingestion jobs](#ingestion-jobs)) and, last, the dataset
+   catalog rows ([datasets](#datasets)), and keeps the `doc_id` of every version of the
+   scope's documents, those ClickHouse holds included, in `loom.erased_documents` for
    `LOOM_PG_ERASURE_EVIDENCE_HOURS`. A row built from a read of a document keeps its
    `doc_id` (a delete's tombstone, a metadata edit), and a write that carries a live
    document's original or author names it (`built_from`), so a commit built from a
    removed one is refused (`DocumentErased`, 404), read after the heads' locks the
-   erasure holds. A write built from a version a later write replaced before the
-   erasure keeps that version's id and is refused too; one that reads after the
-   erasure carries none (a new version takes a fresh id, and a deleted document lends
-   none) and commits. A version a merge folded away before the erasure leaves no id.
+   erasure holds. A write built from a version a later write replaced before the erasure
+   keeps that version's id and is refused too; one that reads after the erasure carries
+   none (a new version takes a fresh id, and a deleted document lends none) and commits.
+   A version a merge folded away before the erasure leaves no id.
 3. It waits out the leases of the deliveries it removed, and of an earlier run's
    (`quiet_at`). A parked delivery has no lease of its own: the wait covers the send
    that parked it, from its `fenced_until`. A delivery the worker took over
@@ -1054,19 +1181,159 @@ The ClickHouse steps then remove the documents and chunks. A source written befo
 namespace had heads has no head to lock: a write of it racing the erasure is the race it
 is under the ClickHouse authority. The delivery pass sweeps expired evidence.
 
+### Knowledge search
+
+ClickHouse reads a chunk as live until something retires it, so it also reads as live
+the older version's chunks while their retirement is owed, a deleted document's while its
+tombstone is, and the chunks a write inserted before its commit: one still to commit, one
+refused, or one whose cleanup failed. The head says which of them are served. A commit
+whose write inserted chunks (an add, an upsert, a bulk add, an ingest's publish) records
+their revision and version on the head (`chunks_revision`, `chunks_version`,
+`schemas/pg_migrations/004_knowledge_chunk_heads.sql`); a delete, a metadata edit or a
+restore inserts none and keeps them. A chunk is served when its source has no head (a
+document written before its namespace had heads), or when the head is not deleted, the
+chunk is of the head's revision, and, while `chunks_revision` is that revision, of
+`chunks_version` (`server/knowledge/domain/serving.py`). The version tells apart two
+writes that numbered one revision, the second refused; a chunk that recorded no revision
+is judged by the version alone while `chunks_revision` is the head's revision, and
+served otherwise.
+
+`knowledge.search` checks each page of candidates in one Postgres read
+(`server/knowledge/app/pg_serving.py`) before it reranks, collapses or cuts it. A full
+page that left a candidate out (a stale one, or a second served version of one chunk) is
+fetched once more, twice as deep, with a second read, and `stale_dropped` counts the
+stale ones. Stale chunks are a passing state under this authority: every write that
+inserts a source's chunks over an earlier version retires that version's. Fusion keys a
+chunk by its version too, so a stale chunk and the served one at the same index are two
+candidates, and the page keeps one hit per chunk. `knowledge.outline`, the chunks
+`knowledge.synthesize` reads and `memory.stack`'s knowledge section take the same check,
+and `context.pack` and `memory.ask` read through `knowledge.search`; `knowledge.get`
+serves the head itself. A search, outline or synthesis read that cannot reach the heads
+fails closed, 503 `POSTGRES_UNAVAILABLE`, rather than serve what it cannot check;
+`memory.stack` then leaves its knowledge section out. What counts chunks without serving
+them reads every chunk ClickHouse reads as live: `knowledge.inspect`, `knowledge.list`'s
+`chunk_count`, `knowledge.dedup_list` and an upsert's `duplicate_chunk_count`.
+
+## Ingestion jobs
+
+`loom.knowledge_jobs` holds each `knowledge.ingest` job under this authority, keyed by
+`(org, namespace, ingestion_id)`: its complete `loom.knowledge_ingestions` row, revised
+in place, and beside it the columns the queue reads
+(`schemas/pg_migrations/005_knowledge_jobs.sql`, `server/knowledge/store/pg_jobs.py`).
+`knowledge.ingest` commits the job, `knowledge.ingest_status` and
+`knowledge.ingest_cancel` read it, and the ingest worker's queue reads the table with
+the rules `ingestions.due` describes.
+
+- **Projection.** Once a version commits it is also inserted into
+  `loom.knowledge_ingestions`, which reports and `knowledge.inspect` read. The insert is
+  best effort: every version carries the whole row, so the next save repairs a version
+  that did not land, and a run that finds ClickHouse behind a job's last version (an
+  ended job has no next save) projects it again, from a durable read
+  ([only durable revisions are published](#only-durable-revisions-are-published)): a
+  version only the primary holds would otherwise come back through ClickHouse after a
+  failover lost it. `knowledge.inspect` compares the versions of up to 1,000 of the
+  namespace's open jobs and its 1,000 most recently saved non-pending ones with
+  ClickHouse's, each read in its partial index's order, and counts in `skipped` the
+  jobs ClickHouse holds at an older version or not at all
+  (`ingestions.projection: <n> ingestion job(s) …`): the ingestion sections and the
+  listed jobs may miss those or show them at an older state. When either read finds
+  more than its page, `ingestions.projection: at most … were compared …` says the
+  comparison stopped short; otherwise every live job was compared. ClickHouse is read
+  at the default consistency, as the job sections read it: on one server or a
+  replicated cluster (one replica per Loom process) a lag can only overcount, while
+  where reads may reach another replica a section can show a job older than the
+  comparison found. When the comparison failed, `ingestions.projection: <reason>: …`
+  says nothing was compared (`POSTGRES_UNAVAILABLE` when Postgres did not answer). The
+  originals sweep and a user erasure's shared-originals check also read the open jobs'
+  originals from Postgres (`owed_originals`), so a job whose projection has not landed
+  keeps its original.
+- **Fencing.** A run takes its job under the deployment-wide lease on its id, as under
+  ClickHouse, and the take raises the job's `lease_token`. Each read of the job the run
+  acts on, and each save, names that token: one that finds another token stops the run
+  (`LeaseLost`), and one that finds no row stops it as erased (`JobGone`). A run whose
+  lease lapsed while it ran therefore saves nothing more and retires no chunk version of
+  a later taker of this build; between those reads, its chunk and document inserts are
+  guarded by the lease (`lease.held`), as under ClickHouse. A build that predates the
+  table takes the job under the lease alone.
+- **Cancel.** A cancel sets `cancel_requested_at` on the job, and is also written to
+  `loom.knowledge_ingest_cancels` with who asked; a run reads both.
+- **Erasure.** `pg_knowledge.delete` deletes the scope's jobs with its heads and
+  deliveries; a run's next read or save finds no row and stops. Until
+  `documents.tombstone` deletes the ingestion rows, a run finds the job in ClickHouse
+  alone and runs it there, as under the ClickHouse authority; Postgres never holds a job
+  again once it is deleted. A projection that lands after `documents.tombstone` (an
+  insert that timed out and landed late) is found by the residue census, and the saga
+  runs again.
+- **Expiry.** The knowledge delivery pass deletes a job no run has saved for 30 days,
+  as `loom.knowledge_ingestions`' TTL drops it, whether or not the ingest worker runs.
+  Until the pass reaches it, no read of either store offers or waits on such a job
+  (ClickHouse's TTL drops its rows only at a later merge), and a take leaves it alone
+  rather than projecting it back.
+
+A build that predates the table keeps its jobs in ClickHouse alone, so a read takes the
+newer version of the two stores, a run of a job Postgres holds first takes ClickHouse's
+version when it is the newer, and a job only ClickHouse holds runs there
+([rolling upgrades](rolling-upgrades.md#the-rules), rule 40).
+
+## Datasets
+
+`loom.knowledge_datasets` holds the dataset catalog under this authority, keyed by
+`(org, namespace, source_uri, doc_version, dataset_id)`: each catalog row, the complete
+`loom.datasets` row, says which snapshot of `loom.dataset_rows` serves a dataset of a
+source at a document version, and its schema and approval
+(`schemas/pg_migrations/007_knowledge_datasets.sql`,
+`server/knowledge/store/pg_datasets.py`).
+
+- **Writes.** Every catalog write (an ingest's publish, an approval, a metadata edit's
+  carry) commits there, over an older version of the row only, as
+  `ReplacingMergeTree(version)` decides, then is inserted into `loom.datasets`, best
+  effort, for a build that predates the table and a rollback to one. A dataset's rows
+  are written before the catalog row that names them, as under ClickHouse.
+- **Approval.** `knowledge.dataset_approve` commits in one transaction, under the
+  namespace's lock a document commit shares and an erasure holds alone, that holds the
+  source's head (`FOR SHARE`). The switch lands unless the head has moved past the
+  document version reviewed (a later version, or that version deleted), an erasure
+  removed that document (`loom.erased_documents`), or a write of the catalog row
+  followed the one the approver read; otherwise it answers 409 `PRECONDITION_FAILED`
+  with nothing written. A source with no head (written before its namespace had heads)
+  is approved the same way. The source's claim still keeps an approval apart from an
+  ingest's publish, which checks that no approval landed while it ran.
+- **Reads.** Every read of the catalog (`datasets_repo.at_version`) takes Postgres's
+  rows, and the rows only ClickHouse holds ([rolling
+  upgrades](rolling-upgrades.md#the-rules), rule 42, lists its callers).
+- **Deletes.** A later publish, a delete and a failed run remove their catalog rows
+  there first, then the ClickHouse rows and the snapshots' rows, using the datasets
+  either store names, so a dataset whose projection never landed loses its rows too.
+- **Keys Postgres cannot store.** A source written before its namespace had heads may
+  hold a source URI or an uploader Postgres cannot store: its catalog stays in
+  ClickHouse alone, read and approved as without this authority.
+- **Erasure.** `pg_knowledge.delete` deletes the scope's catalog rows with its heads,
+  deliveries and jobs, the catalog rows last. A publish's catalog write reads its job's
+  row in the same transaction (`pg_datasets.upsert`), so it writes nothing once the
+  erasure deleted the job, and an erasure that comes after waits for it and deletes what
+  it wrote. A metadata edit's carry, a publish of a job only ClickHouse holds and an
+  approval of a dataset only ClickHouse held have no Postgres row to read: one that
+  lands between the erasure's Postgres step and its end is found by the residue census,
+  and the saga runs again.
+
+A build that predates the table keeps its catalog rows in ClickHouse alone, so a read
+also takes those, the newer version of a dataset winning, and an approval of a dataset
+only ClickHouse holds commits it to Postgres through its approval's commit ([rolling
+upgrades](rolling-upgrades.md#the-rules), rule 42).
+
 ## Failure
 
-| Failure                                              | Effect                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Postgres unreachable                                 | writes, point reads, idempotent replays and the reads of ClickHouse that wait at the barrier (`memory.list`, `memory.history`, the `as_of` replays, `namespace.rollback`'s plan) answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy |
-| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                                                                                       |
-| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions, searches and the reads that wait at the barrier in the namespace answer 503 `PROJECTION_BEHIND` until then                                                    |
-| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                                                                                       |
-| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                                                                                              |
-| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                                                                                      |
-| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                                                                                       |
-| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id)                                                                   |
-| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                                                                                      |
+| Failure                                              | Effect                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Postgres unreachable                                 | writes, point reads, idempotent replays, the reads of ClickHouse that wait at the barrier (`memory.list`, `memory.history`, the `as_of` replays, `namespace.rollback`'s plan), the knowledge reads that check heads (`knowledge.search`, `knowledge.outline`, `knowledge.synthesize`) and the dataset ops (`knowledge.dataset_get`, `knowledge.dataset_approve`, `knowledge.query`) answer 503 `POSTGRES_UNAVAILABLE`; nothing falls back to ClickHouse's copy |
+| A commit's answer lost                               | 503 `POSTGRES_UNAVAILABLE` with `outcome_unknown: true`; a retry with the same idempotency key replays what committed                                                                                                                                                                                                                                                                                                                                          |
+| ClickHouse unreachable after a commit                | the write is durable; its delivery is published once ClickHouse answers; semantic admissions, searches and the reads that wait at the barrier in the namespace answer 503 `PROJECTION_BEHIND` until then                                                                                                                                                                                                                                                       |
+| A writer dies after its commit                       | its lease runs out within `LOOM_PG_REQUEST_LEASE_SECONDS`; the next admission in the namespace, or the worker, publishes the revision                                                                                                                                                                                                                                                                                                                          |
+| Two publishers of one delivery                       | both copies collapse; only the current token clears the target                                                                                                                                                                                                                                                                                                                                                                                                 |
+| A row ClickHouse keeps refusing                      | parked after `LOOM_PG_DELIVERY_MAX_ATTEMPTS` failed publishes; the namespace's other revisions publish                                                                                                                                                                                                                                                                                                                                                         |
+| A write built from an erased memory                  | 404 `RESOURCE_NOT_FOUND`, nothing committed: the erasure's deletion evidence refuses it at the commit                                                                                                                                                                                                                                                                                                                                                          |
+| A string holding a NUL character or a lone surrogate | 422 `VALIDATION_FAILED` before the commit: Postgres text and jsonb cannot store it (a knowledge document keeps such text in base64, and refuses it only in a source URI or a writer's id)                                                                                                                                                                                                                                                                      |
+| An erasure's idempotency fence                       | a request with an `Idempotency-Key` in that org answers 503 `IDEMPOTENT_IN_PROGRESS` while the fence's two statements run, and retries                                                                                                                                                                                                                                                                                                                         |
 
 ## Recorded authority
 
@@ -1078,7 +1345,10 @@ epoch. A replica refuses to start when:
 - it is configured for ClickHouse and the record says Postgres, or the reverse;
 - it is configured for Postgres and this ClickHouse already holds memory under the
   ClickHouse authority;
-- its Postgres records another deployment, or none while ClickHouse records Postgres.
+- its Postgres records another deployment, or none while ClickHouse records Postgres;
+- its first read of the cell state rows fails, with no Postgres migration pending
+  ([cells](cells.md#the-tenancy-check-and-placement),
+  [troubleshooting](../operations/troubleshooting.md#a-process-with-loom_cell-unset-is-gated)).
 
 A process with `LOOM_BOOT_MIGRATE=0` applies no migration of either store and writes no
 record: it checks the record there is. A ClickHouse one serves without the table when
@@ -1118,11 +1388,11 @@ finds another migrating waits on the advisory lock for as long as that takes.
 
 ## Deployment profiles
 
-The Postgres connection is one DSN (`LOOM_PG_DSN`) and the pool sizes
-(`LOOM_PG_POOL_MIN_SIZE`, `LOOM_PG_POOL_MAX_SIZE`). Postgres 16 or newer, core
-features only; no extension is required. Every connection sets
-`synchronous_commit = on`. At boot Loom reads `synchronous_standby_names` and
-`pg_stat_replication`:
+The Postgres connection is one DSN (`LOOM_PG_DSN`; a deployment of several
+[cells](cells.md) has one per cell) and the pool sizes (`LOOM_PG_POOL_MIN_SIZE`,
+`LOOM_PG_POOL_MAX_SIZE`). Postgres 16 or newer, core features only; no extension is
+required. Every connection sets `synchronous_commit = on`. At boot Loom reads
+`synchronous_standby_names` and `pg_stat_replication`:
 
 | `LOOM_PG_DURABILITY`    | No synchronous standby configured | A standby configured, none attached |
 | ----------------------- | --------------------------------- | ----------------------------------- |
@@ -1138,6 +1408,12 @@ The server's own `synchronous_commit` default does not matter: Loom's sessions s
 | What Loom checks              | the same boot check                           | the same boot check                                                                                                                |
 
 Both are the operator's configuration, not code ([Postgres operations](../operations/postgres.md)).
+
+## Cells
+
+A deployment can spread its orgs over several cells, each a complete deployment with its
+own Postgres unit, ClickHouse service and bucket; every guarantee on this page holds
+within one cell. How an org is placed and routed is in [cells](cells.md).
 
 ## Release gates
 

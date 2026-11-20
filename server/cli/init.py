@@ -22,6 +22,7 @@ from typing import Any
 
 from server.cli._client import TOKEN_FILE, agent_mode, default_base_url, post_json
 from server.cli._paths import write_private
+from server.identity.app.token_clients import CODING_TOOLSET
 
 CONFIG_PATH = "~/.loom/config.json"
 
@@ -79,7 +80,7 @@ def write_config(path: Path, *, url: str, namespace: str, org: str) -> Path:
 def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config_path: str) -> str:
     ns, org = out["namespace"], out["org"]
     agent = ns[len("agent-") :] or ns
-    mcp_url = f"{base_url}/mcp?toolset=coding"
+    mcp_url = f"{base_url}/mcp?toolset={CODING_TOOLSET}"
     claim_url = out.get("claim_url") or f"{base_url}/"
     lines = [
         f"✓ signed up: {org}/{ns} (subject {out['subject']})",
@@ -88,7 +89,7 @@ def connect_lines(out: dict[str, Any], *, base_url: str, token_path: str, config
         "  Connect:",
         f'    export LOOM_API_KEY="$(cat {token_path})"',
         f"    export LOOM_BASE_URL={base_url}",
-        "    # Python:  pip install ./sdk/python  →  "
+        "    # Python:  pip install clickhouse-loom (from a clone: pip install ./sdk/python)  →  "
         f"Datapack(org={org!r}, namespace={ns!r}).agent({agent!r})",
         f'    # Claude Code:  claude mcp add --transport http loom "{mcp_url}" '
         '-H "Authorization: Bearer $LOOM_API_KEY" -s user',

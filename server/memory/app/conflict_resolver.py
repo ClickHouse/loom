@@ -28,6 +28,7 @@ from server.memory.app import intent_marks
 from server.memory.app.projection_errors import ProjectionScope
 from server.memory.domain import conflict_resolution as cr
 from server.memory.domain.conflicts import ConflictPeer
+from server.memory.domain.memory_types import is_definition
 from server.memory.domain.sensitivity import reads_high, value_reads_high
 from server.memory.domain.trust import subject_of
 from server.memory.store import conflict_resolver as queue
@@ -500,10 +501,15 @@ async def _settle_locked_pair(
         _head(org, namespace, str(judged.memory_id)),
         _head(org, namespace, str(peer["memory_id"])),
     )
-    if not (
-        _holds(row, namespace, str(judged.content_sha256 or ""))
-        and _holds(head, namespace, str(peer["content_sha256"]))
+    if (
+        not (
+            _holds(row, namespace, str(judged.content_sha256 or ""))
+            and _holds(head, namespace, str(peer["content_sha256"]))
+        )
+        or is_definition(row)
+        or is_definition(head)
     ):
+        # Revised since, or rewritten as a definition (a type-only rewrite keeps the hash).
         counts.skipped_changed += 1
         return None, None
     if row.pinned or head.pinned:
@@ -645,6 +651,11 @@ async def resolve_row(
         except PreconditionFailedError:
             counts.skipped_changed += 1  # the key is busy: the row stays owed
             return None
+    if is_definition(row):
+        # Judged against no row under another key: the resolver never judges one, however
+        # it was queued (its dead flags are released above, as for any row).
+        await queue.stamp_judged(q)
+        return None
     flagged = frozenset(str(x) for x in row.conflict_with)
     cluster = await queue.cluster_peers(
         q,
@@ -700,10 +711,12 @@ async def _still_unprotected(
     """The row and its peers re-read right before the prompt is built: a row relabelled
     'high' since it was read (same bytes, same hash) is never sent, nor one whose value
     or key holds a high shape the sweep has not labelled yet. (None, []) when the
-    judged row is no longer eligible or holds one (it is stamped judged, with no model
-    call); such a peer is dropped."""
+    judged row is no longer eligible, holds one or is now a definition (it is stamped
+    judged, with no model call); such a peer is dropped."""
     fresh = await _head(org, str(row.namespace), str(row.memory_id))
     if not _holds(fresh, str(row.namespace), str(row.content_sha256 or "")):
+        return None, []
+    if is_definition(fresh):  # rewritten as one since it was queued: never judged
         return None, []
     if _reads_high(fresh.value, fresh.memory_key):
         return None, []

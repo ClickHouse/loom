@@ -18,8 +18,8 @@ from server.code.app.index.denylist import (
 from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import (
     go_imports,
-    go_module_for,
     go_module_index,
+    go_modules,
     go_resolve_imports_indexed,
     go_wanted_paths,
     parse_go,
@@ -60,19 +60,19 @@ def test_module_index_orders_longest_first_and_reads_relative_replaces() -> None
 
 def test_module_for_picks_the_nearest_module_at_a_slash_boundary() -> None:
     index = go_module_index(MODS)
-    assert go_module_for("example.com/mono/svc/internal/h", index) == (
+    assert go_modules(index)("example.com/mono/svc/internal/h") == (
         "example.com/mono/svc",
         "svc",
     )
-    assert go_module_for("example.com/mono/lib/store", index) == ("example.com/mono/lib", "lib")
-    assert go_module_for("example.com/mono/cmd", index) == ("example.com/mono", "")
-    assert go_module_for("example.com/mono/svcx", index) == ("example.com/mono", "")  # not `svc/`
-    assert go_module_for("example.com/mono/airgap-tools/x", index) == (
+    assert go_modules(index)("example.com/mono/lib/store") == ("example.com/mono/lib", "lib")
+    assert go_modules(index)("example.com/mono/cmd") == ("example.com/mono", "")
+    assert go_modules(index)("example.com/mono/svcx") == ("example.com/mono", "")  # not `svc/`
+    assert go_modules(index)("example.com/mono/airgap-tools/x") == (
         "example.com/mono/airgap-tools",
         "tools/airgap",
     )
-    assert go_module_for("fmt", index) == ("", "")
-    assert go_module_for("github.com/jackc/pgx/v5", index) == ("", "")
+    assert go_modules(index)("fmt") == ("", "")
+    assert go_modules(index)("github.com/jackc/pgx/v5") == ("", "")
 
 
 def test_indexed_resolution_returns_hits_and_the_listing_rungs_input() -> None:

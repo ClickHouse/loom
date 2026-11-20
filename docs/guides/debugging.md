@@ -75,7 +75,8 @@ Spans go to `default.otel_traces` (in `LOOM_CLICKSTACK_DATABASE` when it is set)
 **Why did this rank here?** `memory.search` with `explain=true` attaches `score_components`
 to each served hit: the ranking signals and, after a reranker, its move (`rerank_from`,
 `rerank_pos`, `rerank_delta`) and, when the reranker changed the order, its own fused score
-(`rank_score_pre_rerank`).
+(`rank_score_pre_rerank`). A row moved down because its linked code changed carries the
+places it moved (`code_changed_places`).
 
 ```python
 out = await agent.call("memory.search", {"query": "refund window", "explain": True})

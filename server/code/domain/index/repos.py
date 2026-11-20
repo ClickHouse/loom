@@ -20,6 +20,7 @@ either:
         "include_contrib": false, "ignore_file": ".loomignore",
         "github_token": "", "org_readable": true,
         "git_extra_branches": "release/*",
+        "git_proxy_identity": "",
         "classification": "standard"}]
 
 Missing per-repo fields fall back to the scalar settings, so a second repo only declares
@@ -41,7 +42,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.errors import BackendUnavailableError, ValidationError
-from server.settings import settings
+from server.settings import Settings, settings
+from server.settings.catalog import GIT_PROXY_IDENTITY
 
 logger = logging.getLogger("loom.code_index.repos")
 
@@ -128,6 +130,11 @@ class RepoConfig:
     # A registry entry's `row_kind` (migration 089): "page" a branch added from the
     # page, "access" an operator entry's access row, "" a row from before the column.
     row_kind: str = ""
+    # The user name this entry's network git presents to an operator's forward proxy
+    # (settings.code_git_proxy_url, code/app/index/git_proxy.py), which decides by it
+    # what the fetch may reach and with which credential. '' = the deployment's
+    # settings.code_git_proxy_identity. Not a secret.
+    git_proxy_identity: str = ""
 
     @property
     def label(self) -> str:
@@ -179,27 +186,27 @@ def derived_git_dir(repo: str, root: str = CLONE_ROOT, *, fallback: str = "") ->
     return os.path.join(root, f"{name}.git") if name else ""
 
 
-def _scalar_repo() -> RepoConfig:
+def _scalar_repo(config: Settings) -> RepoConfig:
     """The scalar settings as one entry. The git dir and remote, when unset, are derived
     from `code_repo`; with no repository they stay empty (`configured_repos()` then
     lists no scalar entry)."""
-    repo = str(settings.code_repo).strip()
+    repo = str(config.code_repo).strip()
     return RepoConfig(
-        org=settings.code_org,
-        namespace=settings.code_namespace,
+        org=config.code_org,
+        namespace=config.code_namespace,
         repo=repo,
-        git_dir=settings.code_git_dir or derived_git_dir(repo),
-        git_remote=settings.code_git_remote or derived_git_remote(repo),
-        git_branch=settings.code_git_branch,
-        path_prefixes=_prefixes(settings.code_path_prefixes) or WHOLE_TREE,
-        github_token=settings.code_github_token,
-        org_readable=bool(settings.code_org_readable),
-        public=bool(settings.code_repo_public),
-        scip_checkout_dir=settings.code_scip_checkout_dir,
-        git_extra_branches=str(settings.code_git_extra_branches),
-        git_fetch_pr_heads=bool(settings.code_git_fetch_pr_heads),
-        exclude=_prefixes(settings.code_ingest_exclude),
-        ignore_file=str(settings.code_ingest_ignore_file),
+        git_dir=config.code_git_dir or derived_git_dir(repo),
+        git_remote=config.code_git_remote or derived_git_remote(repo),
+        git_branch=config.code_git_branch,
+        path_prefixes=_prefixes(config.code_path_prefixes) or WHOLE_TREE,
+        github_token=config.code_github_token,
+        org_readable=bool(config.code_org_readable),
+        public=bool(config.code_repo_public),
+        scip_checkout_dir=config.code_scip_checkout_dir,
+        git_extra_branches=str(config.code_git_extra_branches),
+        git_fetch_pr_heads=bool(config.code_git_fetch_pr_heads),
+        exclude=_prefixes(config.code_ingest_exclude),
+        ignore_file=str(config.code_ingest_ignore_file),
     )
 
 
@@ -208,7 +215,7 @@ def default_git_dir() -> str:
     no scalar repository is configured or `configured_repos()` does not list it (a
     namespace added from the page skips it). The fallback of a read whose namespace has
     no entry."""
-    base = _scalar_repo()
+    base = _scalar_repo(settings)
     listed = (
         c
         for c in configured_repos()
@@ -360,7 +367,7 @@ def configured_repos() -> list[RepoConfig]:
     degrades to the scalar single-repo config with a loud log (a typo must not
     silently stop all indexing) — loud once, then a gauge."""
     require_registry_read()
-    return _with_registry(_configured_from_env())
+    return _with_registry(_operator_entries())
 
 
 def require_registry_read() -> None:
@@ -388,6 +395,18 @@ def default_code_namespace(org: str) -> str:
     return ns
 
 
+def operator_orgs() -> set[str]:
+    """The orgs the operator's entries name (`LOOM_CODE_REPOS_JSON`, else the scalar
+    repository), without the self-service registry's: a cell's configured orgs
+    (`server.core.cell`)."""
+    return {c.org for c in _operator_entries() if c.org}
+
+
+def operator_orgs_for(config: Settings) -> set[str]:
+    """Configured orgs without changing registry state or the running diagnostics."""
+    return {c.org for c in _configured_from_env(config, {}) if c.org}
+
+
 def config_entries() -> list[RepoConfig]:
     """`configured_repos()` before the registry's first read too, for what decides
     access: a namespace's kind and classification, whether it is a code entry. Until
@@ -396,7 +415,7 @@ def config_entries() -> list[RepoConfig]:
     restricted through an access row reads as its configuration says until then. Never
     for reading, fetching or indexing a repository:
     `tests/unit/test_repo_snapshot_contract.py` pins its callers."""
-    return _with_registry(_configured_from_env()) if registry_unread() else configured_repos()
+    return _with_registry(_operator_entries()) if registry_unread() else configured_repos()
 
 
 def config_entry(org: str, namespace: str) -> RepoConfig | None:
@@ -454,10 +473,10 @@ def _with_registry(env_repos: list[RepoConfig]) -> list[RepoConfig]:
     return out + extra
 
 
-def _scalar_entries(errors: dict[str, str]) -> list[RepoConfig]:
+def _scalar_entries(config: Settings, errors: dict[str, str]) -> list[RepoConfig]:
     """The scalar entry, or none: an empty `code_repo` configures no repository, and a
     repository without its org or namespace is a configuration error, not an entry."""
-    base = _scalar_repo()
+    base = _scalar_repo(config)
     if not base.repo:
         return []
     missing = [
@@ -474,12 +493,18 @@ def _scalar_entries(errors: dict[str, str]) -> list[RepoConfig]:
     return [base]
 
 
-def _configured_from_env() -> list[RepoConfig]:
-    raw = settings.code_repos_json.strip()
+def _operator_entries() -> list[RepoConfig]:
     errors: dict[str, str] = {}
+    result = _configured_from_env(settings, errors)
+    _publish_config_errors(errors)
+    return result
+
+
+def _configured_from_env(config: Settings, errors: dict[str, str]) -> list[RepoConfig]:
+    """Parse explicit operator settings, collecting diagnostics without publishing them."""
+    raw = config.code_repos_json.strip()
     if not raw:
-        scalar = _scalar_entries(errors)
-        _publish_config_errors(errors)
+        scalar = _scalar_entries(config, errors)
         return scalar
     try:
         entries = json.loads(raw)
@@ -490,10 +515,9 @@ def _configured_from_env() -> list[RepoConfig]:
             "LOOM_CODE_REPOS_JSON is not a JSON array — falling back to the "
             "scalar single-repo config"
         )
-        scalar = _scalar_entries(errors)
-        _publish_config_errors(errors)
+        scalar = _scalar_entries(config, errors)
         return scalar
-    base = _scalar_repo()
+    base = _scalar_repo(config)
     repos: list[RepoConfig] = []
     seen: set[str] = set()
     for i, e in enumerate(entries):
@@ -536,6 +560,9 @@ def _configured_from_env() -> list[RepoConfig]:
                 )
             org_readable = False
         git_dir, git_remote = _entry_clone_fields(e, ns, repo_name, base)
+        proxy_identity = _entry_git_proxy_identity(e, ns, errors)
+        if proxy_identity is None:
+            continue
         repos.append(
             RepoConfig(
                 org=org,
@@ -577,11 +604,11 @@ def _configured_from_env() -> list[RepoConfig]:
                     str(x).strip() for x in (e.get("depends_on") or []) if str(x).strip()
                 ),
                 ignore_file=(str(e["ignore_file"]) if "ignore_file" in e else base.ignore_file),
+                git_proxy_identity=proxy_identity,
             )
         )
     if not repos:
-        repos = _scalar_entries(errors)
-    _publish_config_errors(errors)
+        repos = _scalar_entries(config, errors)
     return repos
 
 
@@ -610,6 +637,22 @@ def _entry_clone_fields(
         root = (os.path.dirname(base.git_dir.rstrip("/")) or ".") if base.git_dir else CLONE_ROOT
         git_dir = derived_git_dir(repo_name, root, fallback=ns)
     return git_dir, git_remote
+
+
+def _entry_git_proxy_identity(e: dict[str, Any], ns: str, errors: dict[str, str]) -> str | None:
+    """An entry's `git_proxy_identity` ('' when it names none), or None with the
+    reason in `errors` for a value that is not an identity: the entry is skipped, since
+    fetching it under the deployment's default identity would be a guess."""
+    raw = e.get("git_proxy_identity")
+    if raw is None or raw == "":
+        return ""
+    if isinstance(raw, str) and GIT_PROXY_IDENTITY.fullmatch(raw):
+        return raw
+    errors[f"git_proxy_identity:{ns}"] = (
+        f"code repo {ns} skipped: git_proxy_identity takes letters, digits and "
+        ". _ ~ @ - only, at most 128 characters"
+    )
+    return None
 
 
 def _globs(raw: Any) -> tuple[str, ...]:

@@ -5,7 +5,8 @@ import { listProfile, type ProfileEntry } from "../api";
 import { useStore } from "../lib/state";
 import { Skeleton } from "../components/Skeleton";
 import { Modal, ModalFooter } from "../components/ui/Modal";
-import { Tip } from "../components/ui/Tooltip";
+import { Unavailable } from "../components/ui/Unavailable";
+import { useOpReason } from "../lib/useOpReason";
 import { LoadingSkeleton } from "../components/ui/Loading";
 import { relativeTime } from "../lib/format";
 
@@ -46,9 +47,11 @@ export function ProfileSectionDialog() {
   }, [open, identity, label]);
 
   const requestEditProfile = useStore((s) => s.requestEditProfile);
+  // Editing is profile.set (WRITER): below that, Edit stays in view with what it needs.
+  const editReason = useOpReason("profile.set", identity?.namespace ?? "");
   const close = () => inspectProfile(null);
   const editOnProfile = () => {
-    if (!label) return;
+    if (!label || editReason) return;
     requestEditProfile(label);
   };
 
@@ -104,11 +107,11 @@ export function ProfileSectionDialog() {
         )}
       </div>
       <ModalFooter>
-        <Tip content="Edit this section on the Profile page">
+        <Unavailable reason={editReason} tip="Edit this section on the Profile page">
           <Button type="secondary" htmlType="button" iconLeft="pencil" onClick={editOnProfile}>
             Edit
           </Button>
-        </Tip>
+        </Unavailable>
       </ModalFooter>
     </Modal>
   );

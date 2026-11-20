@@ -1,10 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@clickhouse/click-ui/Button";
 import { TextField } from "@clickhouse/click-ui/TextField";
 import { createThreadRow, deleteThread, getConversationThread, renameThread, type Identity } from "../api";
-import { humanizeError } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { confirmAction } from "../components/ConfirmDialog";
-import { toast } from "../components/Toast";
+import { toast, toastErrorLine } from "../components/Toast";
 import { Modal, ModalFooter } from "../components/ui/Modal";
 import { RowMenu, type RowMenuItem } from "../components/ui/RowMenu";
 import { Alert } from "../components/ui";
@@ -19,21 +19,26 @@ interface Thread {
 }
 
 /** A thread row's menu: Rename (conversation.update, WRITER) and Delete
- *  (conversation.delete, ADMIN), each shown to a role that reaches it. */
+ *  (conversation.delete, ADMIN). Each `…Reason` is why the caller's role cannot use it: the
+ *  item stays in the menu, unavailable, with it. */
 export function ThreadActions({
   identity,
   thread,
-  canRename,
-  canDelete,
+  renameReason,
+  deleteReason,
   onChanged,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   thread: Thread;
-  canRename: boolean;
-  canDelete: boolean;
+  renameReason: string | null;
+  deleteReason: string | null;
   onChanged: () => void;
 }) {
   const [renaming, setRenaming] = useState(false);
+  // A reason that appears while it is open closes it, so nothing is sent below the gate.
+  useEffect(() => {
+    if (renameReason) setRenaming(false);
+  }, [renameReason]);
   const name = thread.label || thread.thread_id;
 
   const remove = async () => {
@@ -46,19 +51,20 @@ export function ThreadActions({
     if (!ok) return;
     const r = await deleteEveryAgent(identity, thread);
     if (r.error) {
-      const why = humanizeError(r.error);
-      const rest = r.left ? `; ${r.left} messages are left` : "";
-      toast(r.parts ? `Deleted part of "${name}", then failed: ${why}${rest}` : `Delete failed: ${why}`, "error");
+      const why = humanizeError(r.error, { bare: true });
+      // The error's words end the line: they may close with a full stop and a retry tail.
+      const left = r.left ? ` (${r.left} messages are left)` : "";
+      const msg = r.parts ? `Deleted part of "${name}"${left}, then failed: ${why}` : `Delete failed: ${why}`;
+      toastErrorLine(msg, r.error);
     } else if (r.left) toast(`Deleted part of "${name}"; ${r.left} messages are left`, "info");
     else toast(`Deleted "${name}"`, "ok");
     onChanged();
   };
 
   const items: RowMenuItem[] = [
-    ...(canRename ? [{ label: "Rename", icon: "pencil" as const, onSelect: () => setRenaming(true) }] : []),
-    ...(canDelete ? [{ label: "Delete", icon: "trash" as const, danger: true, onSelect: () => void remove() }] : []),
+    { label: "Rename", icon: "pencil", reason: renameReason, onSelect: () => setRenaming(true) },
+    { label: "Delete", icon: "trash", danger: true, reason: deleteReason, onSelect: () => void remove() },
   ];
-  if (items.length === 0) return null;
   return (
     <>
       <RowMenu name={name} items={items} />
@@ -66,6 +72,7 @@ export function ThreadActions({
         <RenameDialog
           identity={identity}
           thread={thread}
+          reason={renameReason}
           onClose={(changed) => {
             setRenaming(false);
             if (changed) onChanged();
@@ -79,16 +86,21 @@ export function ThreadActions({
 function RenameDialog({
   identity,
   thread,
+  reason,
   onClose,
 }: {
   identity: Pick<Identity, "org" | "namespace">;
   thread: Thread;
+  /** Why the caller cannot rename: the menu closes this dialog when it appears; submit guards
+   *  the render before it does. */
+  reason: string | null;
   onClose: (changed: boolean) => void;
 }) {
   const [title, setTitle] = useState(thread.title);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const submit = async () => {
+    if (reason) return;
     setBusy(true);
     try {
       const renamed = await retitle(identity, thread, title.trim());

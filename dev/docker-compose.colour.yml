@@ -138,8 +138,8 @@ services:
       LOOM_DEPLOYMENT: "1"
       LOOM_INSTANCE_LABEL: "deploy:web:${LOOM_COLOUR}"
       # The host proxy publishes :7777 on every interface, so this colour is
-      # reachable by others: it needs LOOM_PUBLIC_BASE_URL in .env (and auth
-      # with a real signing secret) or it refuses to start.
+      # reachable by others: it refuses to start without the safeguards in
+      # docs/operations/deployment.md ("Proxy and TLS"), LOOM_PUBLIC_BASE_URL first.
       LOOM_BIND_HOST: "0.0.0.0"
       # The proxy reaches the colour over loom-net (a Docker private range)
       # and overwrites X-Forwarded-For with the peer it saw; only loom-net

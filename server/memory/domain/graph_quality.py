@@ -98,7 +98,7 @@ _SINGLE_VALUED_RELATIONS = {
 # Code-native edge relations. These ride the EXISTING entity_triples /
 # entity_edges tables — no new graph store. They make "what fixed this error",
 # "what touches this file", "what shipped in this commit" first-class multi-hop
-# queries over the same WITH RECURSIVE facts.traverse path. Closed-class on
+# queries over the same facts.traverse walk. Closed-class on
 # purpose: a coding agent's tool actions map onto exactly these verbs.
 CODE_EDGE_RELATIONS = frozenset(
     {"imports", "modifies", "fixes", "causes", "blocked_by", "references", "touches"}
@@ -478,7 +478,7 @@ def canonical_entity_text(raw: str) -> str:
     possessives and punctuation and folds first-person forms to "user", so a
     query seed and the stored node land on identical text; a name that starts with
     "commit:" or "error:" and a non-blank is never singularised. Idempotent."""
-    return canonical_entity(raw).text
+    return _capped_normal(str(raw or "").strip()) or ""
 
 
 def canonical_entities(values: Iterable[str]) -> list[str]:

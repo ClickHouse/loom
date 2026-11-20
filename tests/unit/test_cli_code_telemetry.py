@@ -26,7 +26,7 @@ pytestmark = pytest.mark.usefixtures("stub_model_command")
 @pytest.fixture(autouse=True)
 def offline_provider_connection(monkeypatch):
     """Telemetry tests do not connect to provider configuration or a real DB."""
-    ch = SimpleNamespace(connect=AsyncMock(), disconnect=AsyncMock())
+    ch = SimpleNamespace(connected=False, connect=AsyncMock(), disconnect=AsyncMock())
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     monkeypatch.setattr("server.code.app.index.repo_registry.refresh_db_repos", AsyncMock())
 
@@ -153,6 +153,8 @@ async def test_scip_delta_subcommand_prints_result_line(
     from server.core import ch
 
     class _Client:
+        connected = False
+
         async def connect(self) -> None: ...
         async def disconnect(self) -> None: ...
 

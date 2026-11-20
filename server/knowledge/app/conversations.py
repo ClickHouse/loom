@@ -18,6 +18,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError
 from server.core.naming import SENTINEL, named
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
@@ -96,8 +97,8 @@ SaveRefusal = Literal[
 
 
 async def namespace_recording_enabled(org: str, namespace: str) -> bool:
-    """The namespace owner's "record my conversations" switch. Fails closed: a
-    namespace with no stored answer is not recording."""
+    """The namespace owner's Record conversations switch. Fails closed: a namespace
+    with no stored answer is not recording."""
     from server.knowledge.store import conversations as conversation_repo
 
     return await conversation_repo.namespace_logging_enabled(org, namespace)
@@ -153,8 +154,8 @@ async def handle_conversation_append(
         ]
     )
 
-    # Per-namespace logging switch (the dashboard toggle). When off, accept the call
-    # but store nothing — a client can't override the user's choice.
+    # The namespace's Record conversations switch. When off, accept the call but
+    # store nothing — a client can't override the user's choice.
     with traced("ch.query.conversation_logging_enabled"):
         logging_on = await conversation_repo.namespace_logging_enabled(input.org, input.namespace)
     if not logging_on:
@@ -271,7 +272,7 @@ async def _embed_turn(
         with traced(
             "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
         ):
-            vector = await embedder.embed(excerpt)
+            vector = await document_vector(embedder, excerpt)
         return EmbeddedTurn(excerpt, vector, embedder.dim, embedder.model_name, "")
     except Exception as e:  # noqa: BLE001 — a failed embed is returned to the caller, not raised
         log.warning(
@@ -474,8 +475,8 @@ async def _write_saved_turn(
     input: ConversationSaveMessageInput, *, once_per_identity: bool
 ) -> None:
     """The transcript row of a turn the transcript does not hold, flagged saved
-    for its user. The namespace's logging switch does not apply: saving is the
-    user's own choice for that one turn."""
+    for its user. The namespace's Record conversations switch does not apply:
+    saving is the user's own choice for that one turn."""
     from server.knowledge.store import conversations as conversation_repo
 
     with traced("ch.insert.conversation", role=input.role):
@@ -601,9 +602,9 @@ async def _unsave_message(
 async def handle_conversation_set_logging(
     input: ConversationSetLoggingInput,
 ) -> ConversationSetLoggingOutput:
-    """Toggle the per-namespace conversation-logging switch (the dashboard's 'record
-    my conversations' control); conversation.append enforces it (no-op when off).
-    The switch lives on the namespace directory row."""
+    """Set the namespace's `conversation_logging_enabled`, which the Record conversations
+    switch on the dashboard's Conversations page shows; conversation.append enforces it
+    (no-op when off). It lives on the namespace directory row."""
     await set_conversation_logging(input.org, input.namespace, input.enabled)
     return ConversationSetLoggingOutput(namespace=input.namespace, enabled=input.enabled)
 
@@ -1232,7 +1233,7 @@ async def handle_conversation_threads(input: ConversationThreadsInput) -> Conver
 
     Group by thread_id, aggregate message count + first/last seen,
     project the most recent message's role + content excerpt so the
-    Sessions view has something to click without typing a query.
+    Conversations page has something to click without typing a query.
     """
     from server.knowledge.store import conversations as conversation_repo
 

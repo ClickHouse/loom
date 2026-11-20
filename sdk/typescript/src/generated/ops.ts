@@ -75,18 +75,23 @@ export interface AssistantAskInput {
 }
 
 export interface AssistantCitation {
-  kind: "memory" | "doc" | "code" | "sql";
+  kind: "memory" | "doc" | "help" | "code" | "sql";
   text: string;
   verified?: boolean;
   reason?: string;
   ref?: string;
+  anchor?: string;
 }
 
 export interface AssistantAskOutput {
+  /** True when this answer is private to the caller's protected session; false by default. */
+  mirrored?: boolean;
   answer?: string;
   run_id?: string;
   model?: string;
   citations?: AssistantCitation[];
+  support?: string;
+  unknown_names?: string[];
 }
 
 export interface AuditListInput {
@@ -225,6 +230,10 @@ export interface CodeAskInput {
 
 export interface CodeAskOutput {
   answer?: string;
+  partial?: boolean;
+  partial_reason?: string;
+  note?: string;
+  coverage?: "" | "full" | "partial" | "none";
   citations?: Array<Record<string, unknown>>;
   source: "cached" | "synthesized" | "abstained";
   cache_similarity?: number;
@@ -426,6 +435,8 @@ export interface CodeCalibrateOutput {
 }
 
 export interface CodeCallersInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   pr_files?: Record<string, string>;
   pr_diff?: string;
   pr_head_sha?: string;
@@ -491,6 +502,8 @@ export interface CodeCandidateSiteWire {
 }
 
 export interface CodeCallersOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   edges: CodeEdgeWire[];
   seed_symbols: string[];
   overlay?: boolean;
@@ -514,6 +527,8 @@ export interface CodeCallersOutput {
 }
 
 export interface CodeContextPackInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -526,6 +541,8 @@ export interface CodeContextPackInput {
 }
 
 export interface CodeContextPackOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   context: string;
   tokens_used: number;
   source: "precomputed" | "task" | "orientation" | "unavailable";
@@ -920,6 +937,8 @@ export interface CodeHistoryOutput {
 }
 
 export interface CodeImpactInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   pr_files?: Record<string, string>;
   pr_diff?: string;
   pr_head_sha?: string;
@@ -942,6 +961,8 @@ export interface CodeImpactInput {
 }
 
 export interface CodeImpactOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   impacted_symbols: Array<Record<string, unknown>>;
   impacted_tests: Array<Record<string, unknown>>;
   co_change_files: Array<Record<string, unknown>>;
@@ -1121,6 +1142,8 @@ export interface CodeOutcomeOutput {
 }
 
 export interface CodeOutlineInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -1132,6 +1155,8 @@ export interface CodeOutlineInput {
 }
 
 export interface CodeOutlineOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   path: string;
   entries: Array<Record<string, unknown>>;
   total: number;
@@ -1260,6 +1285,8 @@ export interface CodeRepoAddInput {
   classification?: "standard" | "restricted";
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
+  /** The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   path_prefixes?: string[];
   exclude?: string[];
   exclude_generated?: boolean;
@@ -1296,6 +1323,8 @@ export interface CodeRepoRemoteBranchesInput {
   repo: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
+  /** The user name this read presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   /** Case-insensitive substring of the branch name to match. */
   query?: string;
   /** How many matching branches to return (default 60). */
@@ -1511,6 +1540,8 @@ export interface CodeScipStatusOutput {
 }
 
 export interface CodeSearchInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -1579,6 +1610,8 @@ export interface CodeUnit {
 }
 
 export interface CodeSearchOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: CodeUnit[];
   route: string;
   next_cursor?: string;
@@ -1858,8 +1891,12 @@ export interface CodeVerifyCitationsOutput {
 
 export interface CollectionCreateInput {
   org: string;
-  /** The collection's name, also its namespace: 'col-' then lowercase letters, digits and '-'. */
-  namespace: string;
+  /** The collection's name, also its namespace ('col-' then lowercase letters, digits and '-'), ignored with `derive_name`. */
+  namespace?: string;
+  /** What the collection is called on screen (at most 200 characters, no control or invisible ones; titles repeat across the org); '' for none. */
+  title?: string;
+  /** Derive the name from `title`, not `namespace`; a title used under the parent (top level: the caller's own) answers that one. Default false. */
+  derive_name?: boolean;
   /** The collection it sits in and inherits grants from; '' for a top-level one. */
   parent?: string;
   /** What the collection holds, shown beside its name (at most 2000 characters); '' for none. */
@@ -1871,6 +1908,8 @@ export interface CollectionCreateOutput {
   /** The collection it sits in; '' for a top-level one. */
   parent: string;
   created: boolean;
+  /** The collection's title; '' for none. */
+  title?: string;
 }
 
 export interface CollectionDeleteInput {
@@ -1891,6 +1930,8 @@ export interface CollectionListInput {
   org: string;
   /** Collections per page. */
   limit?: number;
+  /** Include the live document count directly in each collection; default false. */
+  include_document_counts?: boolean;
   /** The `next_cursor` of the previous page; none for the first. */
   cursor?: string | null;
 }
@@ -1901,10 +1942,13 @@ export interface CollectionEntry {
   personal: boolean;
   role: string;
   description?: string;
+  title?: string;
+  /** Live documents directly in this collection, excluding children; null unless requested. */
+  document_count?: number | null;
 }
 
 export interface CollectionListOutput {
-  /** The collections the caller can read on this page, by name, with the caller's role and the collection's description. */
+  /** The collections the caller can read on this page, by name, with the caller's role and the collection's title and description. */
   collections: CollectionEntry[];
   /** Pass as `cursor` for the next page; none on the last. */
   next_cursor?: string | null;
@@ -2033,6 +2077,34 @@ export interface ConflictsResolveOutput {
   affected_memory_ids: string[];
   resolved_at?: string | null;
   total?: number | null;
+}
+
+export interface ConnectionDisconnectInput {
+  /** The caller's organization. */
+  org: string;
+  /** The connected provider to disconnect. */
+  kind: "gdrive" | "notion" | "linear";
+}
+
+export interface ConnectionDisconnectOutput {
+  disconnected: boolean;
+}
+
+export interface ConnectionListInput {
+  /** The caller's organization. */
+  org: string;
+}
+
+export interface ConnectionEntry {
+  kind: "gdrive" | "notion" | "linear";
+  connected: boolean;
+  account_email?: string | null;
+  scopes?: string[];
+  connect_url: string;
+}
+
+export interface ConnectionListOutput {
+  connections: ConnectionEntry[];
 }
 
 export interface ConsolidationsListInput {
@@ -2511,14 +2583,17 @@ export interface CostAgentSummaryOutput {
 export interface CostBudgetStatusInput {
   org: string;
   namespace?: string | null;
+  user_id?: string | null;
 }
 
 export interface CostBudgetStatusOutput {
   namespace: string;
-  spent_24h_usd: number;
+  user_id?: string | null;
+  spent_24h_usd: number | null;
   cap_usd: number;
-  cap_source: "namespace" | "global" | "uncapped" | "org";
+  cap_source: "namespace" | "global" | "namespace_user" | "global_user" | "uncapped" | "org";
   over_cap: boolean;
+  namespace_over_cap?: boolean | null;
   pct_of_cap?: number | null;
   namespaces_with_spend?: number;
 }
@@ -2785,6 +2860,8 @@ export interface ErasureRequestOutput {
   residue_count?: number;
   residue?: Record<string, number>;
   verified_at?: string | null;
+  census?: Record<string, number> | null;
+  purge?: boolean;
   failure_reason?: string;
   steps_completed?: string[];
 }
@@ -2808,6 +2885,8 @@ export interface ErasureStatusOutput {
   residue_count?: number;
   residue?: Record<string, number>;
   verified_at?: string | null;
+  census?: Record<string, number> | null;
+  purge?: boolean;
 }
 
 export interface ExtractionPolicyClearInput {
@@ -3098,6 +3177,55 @@ export interface GrantsUnshareAgentInput {
 export interface GrantsUnshareAgentOutput {
   revoked: boolean;
   revoked_at?: string | null;
+}
+
+export interface HelpGetInput {
+  org?: string;
+  path: string;
+  section?: string;
+  anchor?: string;
+  offset?: number;
+}
+
+export interface HelpOutlineEntry {
+  section: string;
+  anchor: string;
+  heading?: string;
+}
+
+export interface HelpGetOutput {
+  available: boolean;
+  found: boolean;
+  path: string;
+  title?: string;
+  section?: string;
+  anchor?: string;
+  audience?: "user" | "operator";
+  text?: string;
+  truncated?: boolean;
+  next_offset?: number;
+  sections?: HelpOutlineEntry[];
+}
+
+export interface HelpSearchInput {
+  org?: string;
+  query: string;
+  limit?: number;
+}
+
+export interface HelpHit {
+  path: string;
+  title: string;
+  section: string;
+  anchor: string;
+  audience: "user" | "operator";
+  snippet: string;
+  score: number;
+}
+
+export interface HelpSearchOutput {
+  available: boolean;
+  hits: HelpHit[];
 }
 
 export interface InboxListInput {
@@ -3480,6 +3608,42 @@ export interface KnowledgeFormatsOutput {
   default_format?: string;
 }
 
+export interface KnowledgeGapsDraftInput {
+  org: string;
+  namespace: string;
+  /** The gap to draft, as returned by knowledge.gaps.list. */
+  gap_id: string;
+}
+
+export interface KnowledgeGapsDraftOutput {
+  candidate_id: string;
+}
+
+export interface KnowledgeGapsListInput {
+  /** The org. */
+  org: string;
+  /** The namespace whose gaps to list. */
+  namespace: string;
+  /** Gaps to return, at most; default 50. */
+  limit?: number;
+}
+
+export interface KnowledgeGap {
+  gap_id: string;
+  head: string;
+  samples?: string[];
+  askers: number;
+  asks: number;
+  last_at: string; // date-time
+}
+
+export interface KnowledgeGapsListOutput {
+  gaps?: KnowledgeGap[];
+  built_at?: string | null;
+  capturing?: boolean | null;
+  enabled?: boolean;
+}
+
 export interface KnowledgeGetInput {
   org: string;
   namespace: string;
@@ -3811,6 +3975,7 @@ export interface KnowledgeInspectOutput {
 export interface KnowledgeListInput {
   org: string;
   namespace: string;
+  namespaces?: string[];
   tags?: string[];
   tags_every?: boolean;
   uri_prefix?: string[];
@@ -3821,6 +3986,7 @@ export interface KnowledgeListInput {
 }
 
 export interface KnowledgeListEntry {
+  namespace: string;
   source_uri: string;
   title: string;
   description?: string;
@@ -3838,6 +4004,25 @@ export interface KnowledgeListEntry {
 export interface KnowledgeListOutput {
   rows: KnowledgeListEntry[];
   next_cursor?: string | null;
+}
+
+export interface KnowledgeMoveInput {
+  org: string;
+  namespace: string;
+  to_namespace: string;
+  source_uris: string[];
+}
+
+export interface KnowledgeMoveResult {
+  source_uri: string;
+  moved?: boolean;
+  reason?: "" | "not_found" | "exists" | "synced" | "busy" | "erased";
+}
+
+export interface KnowledgeMoveOutput {
+  found: boolean;
+  to_namespace?: string;
+  results?: KnowledgeMoveResult[];
 }
 
 export interface KnowledgeOutlineInput {
@@ -3954,6 +4139,58 @@ export interface KnowledgeQueryOutput {
   receipt: QueryReceipt;
 }
 
+export interface KnowledgeQueryHistoryAddInput {
+  org: string;
+  namespace: string;
+  name: string;
+  host: string;
+  /** The ClickHouse HTTP interface port; default 8443. */
+  port?: number;
+  /** Whether the HTTP connection uses TLS; default true. */
+  secure?: boolean;
+  user: string;
+  password: string;
+  databases: string[];
+  cluster?: string;
+}
+
+export interface KnowledgeQueryHistoryAddOutput {
+  name: string;
+  source_id: string;
+  kind?: "clickhouse_queries";
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  databases: string[];
+  cluster?: string;
+  created_at: string; // date-time
+}
+
+export interface KnowledgeQueryHistoryListInput {
+  fields?: string[] | null;
+  org: string;
+  namespace: string;
+  /** Registered sources to return, at most; default 50. */
+  limit?: number;
+}
+
+export interface KnowledgeQueryHistoryListOutput {
+  enabled?: boolean;
+  sources?: KnowledgeQueryHistoryAddOutput[];
+}
+
+export interface KnowledgeQueryHistoryRemoveInput {
+  org: string;
+  namespace: string;
+  /** The registration name of the query-history source to remove. */
+  name: string;
+}
+
+export interface KnowledgeQueryHistoryRemoveOutput {
+  removed: boolean;
+}
+
 export interface KnowledgeReadsInput {
   org: string;
   namespace: string;
@@ -4038,21 +4275,30 @@ export interface KnowledgeSearchOutput {
   reranked_by?: string;
   embedding_model: string;
   namespaces_skipped?: string[];
+  stale_dropped?: number;
 }
 
 export interface KnowledgeSourceAddInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace or collection the documents live in; a person's own (personal-…, single sign-on u-<name>-<hash>, col-me-…, or one claimed at sign-up) is refused. */
   namespace: string;
   /** Source name: 2-32 lower-case letters, digits, - or _, starting with a letter; trimmed and lower-cased. */
   name: string;
-  /** The source kind: `gdrive` (a shared folder), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording` (a m */
+  /** The source kind: `gdrive` (a shared-folder store), `linear` (a project tracker's project documents), `notion` (a page store's pages and databases) or `recording */
   kind: string;
-  /** The ids and filters the source reads, per kind; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear */
-  config: Record<string, unknown>;
+  /** The things the source reads, each an object with a `type`: 1-300 for gdrive, 1-20 for linear and 1-20 for notion; gdrive: {type: folder, id, recursive (default  */
+  items?: Array<Record<string, unknown>> | null;
+  /** Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (B */
+  links?: string[] | null;
+  /** What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, */
+  config?: Record<string, unknown> | null;
+  /** gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). */
+  include?: string[] | null;
+  /** Use the supplied shared credential, or your own mirrored connected account. */
+  credential_mode?: "shared" | "connected";
   /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
-  credential: string;
+  credential?: string;
   /** Probe and write nothing. */
   dry_run?: boolean;
 }
@@ -4061,12 +4307,16 @@ export interface KnowledgeSourceProbe {
   documents?: number;
   more?: boolean;
   sample?: string[];
+  checked?: number;
+  sampled?: boolean;
 }
 
 export interface KnowledgeSourceAddOutput {
   name: string;
   kind: string;
   namespace: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   probe?: KnowledgeSourceProbe;
   dry_run?: boolean;
@@ -4075,7 +4325,7 @@ export interface KnowledgeSourceAddOutput {
 export interface KnowledgeSourceCheckInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4087,6 +4337,8 @@ export interface KnowledgeSourceCheckOutput {
   documents?: number;
   more?: boolean;
   sample?: string[];
+  checked?: number;
+  sampled?: boolean;
   summary?: string;
   checked_at?: string;
 }
@@ -4094,7 +4346,7 @@ export interface KnowledgeSourceCheckOutput {
 export interface KnowledgeSourceInspectInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4129,6 +4381,11 @@ export interface KnowledgeSourceDocument {
 export interface KnowledgeSourceInspectOutput {
   name: string;
   kind: string;
+  credential_mode?: string;
+  access?: string;
+  owner_subject?: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   created_by?: string;
   created_at?: string;
@@ -4139,13 +4396,18 @@ export interface KnowledgeSourceInspectOutput {
 export interface KnowledgeSourceListInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the sources live in. */
   namespace: string;
 }
 
 export interface KnowledgeSourceEntry {
   name: string;
   kind: string;
+  credential_mode?: string;
+  access?: string;
+  owner_subject?: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
   config?: Record<string, unknown>;
   created_by?: string;
   created_at?: string;
@@ -4155,18 +4417,95 @@ export interface KnowledgeSourceEntry {
 export interface KnowledgeSourceListOutput {
   sources?: KnowledgeSourceEntry[];
   enabled?: boolean;
+  accepts_sources?: boolean;
+}
+
+export interface KnowledgeSourceParseLinksInput {
+  /** The org. */
+  org: string;
+  /** The namespace the source would live in. */
+  namespace: string;
+  /** 1-300 links. */
+  links: string[];
+}
+
+export interface KnowledgeSourceParsedLink {
+  link: string;
+  kind?: string;
+  item?: Record<string, unknown>;
+  unreadable?: string;
+}
+
+export interface KnowledgeSourceParseLinksOutput {
+  links?: KnowledgeSourceParsedLink[];
+}
+
+export interface KnowledgeSourcePushConfigureInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** Enable a fresh setup; false disables push. */
+  enabled?: boolean;
+  /** The configuring agent, default '-'. */
+  agent?: string;
+  /** The configuring user, default '-'. */
+  user_id?: string;
+  /** The configuring session, default '-'. */
+  session_id?: string;
+}
+
+export interface PushStatusOutput {
+  enabled?: boolean;
+  status?: string;
+  provider?: string;
+  generation?: string;
+  callback_url?: string;
+  provider_id?: string;
+  challenge_fingerprint?: string;
+  verification_token?: string;
+  channels?: number;
+  expires_at?: number;
+}
+
+export interface KnowledgeSourcePushConfirmInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** The pending setup generation. */
+  generation: string;
+  /** The inspected Notion challenge's SHA-256 fingerprint; empty for Linear. */
+  challenge_fingerprint?: string;
+  /** The Linear webhook signing secret; empty for Notion. */
+  signing_secret?: string;
+}
+
+export interface KnowledgeSourcePushStatusInput {
+  /** The org. */
+  org: string;
+  /** The source's namespace. */
+  namespace: string;
+  /** The registered source name. */
+  name: string;
+  /** Reveal a pending Notion challenge, default false. */
+  reveal_challenge?: boolean;
 }
 
 export interface KnowledgeSourceRemoveInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
   /** Type the source name to confirm. */
   confirm: string;
-  /** Record a request to retire the source's documents (default keep them). */
+  /** Retire a namespace source's documents (default keep); implied for mirrored sources. */
   delete_documents?: boolean;
 }
 
@@ -4178,7 +4517,7 @@ export interface KnowledgeSourceRemoveOutput {
 export interface KnowledgeSourceRotateInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4195,7 +4534,7 @@ export interface KnowledgeSourceRotateOutput {
 export interface KnowledgeSourceSyncNowInput {
   /** The org. */
   org: string;
-  /** The repository's trunk code namespace. */
+  /** The namespace the source's documents live in. */
   namespace: string;
   /** The source name. */
   name: string;
@@ -4208,9 +4547,39 @@ export interface KnowledgeSourceSyncNowOutput {
   enabled?: boolean;
 }
 
+export interface KnowledgeSourceUpdateInput {
+  /** The org. */
+  org: string;
+  /** The namespace the source's documents live in. */
+  namespace: string;
+  /** The source name. */
+  name: string;
+  /** Items to add, of the forms add takes; one of the same type and id replaces the stored one, and a folder of the id of a shared drive the source keeps or is given */
+  add_items?: Array<Record<string, unknown>>;
+  /** Links to add, read as items; a link to something the source holds names it as held (a recursive folder, a drive at its root), and an add_items entry for the sam */
+  add_links?: string[];
+  /** Items to remove, matched by type and id (a filter by its fields); a folder entry also removes a shared drive of the same id the source holds. One the source doe */
+  remove_items?: Array<Record<string, unknown>>;
+  /** Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. */
+  remove_links?: string[];
+  /** gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. */
+  include?: string[] | null;
+}
+
+export interface KnowledgeSourceUpdateOutput {
+  name: string;
+  items?: Array<Record<string, unknown>>;
+  include?: string[];
+  config?: Record<string, unknown>;
+  added?: Array<Record<string, unknown>>;
+  removed?: Array<Record<string, unknown>>;
+  probe?: KnowledgeSourceProbe;
+}
+
 export interface KnowledgeSynthesizeInput {
   org: string;
   namespace: string;
+  user_id?: string;
   source_uris?: string[];
   datasets?: QueryDataset[];
   task: string;
@@ -4321,6 +4690,7 @@ export interface LearningEntry {
   supporters: string[];
   rationale: string;
   source_kind?: string;
+  source_resource_id?: string;
   agent?: string;
   status: "pending" | "promoted" | "rejected";
   proposed_at: string; // date-time
@@ -4565,6 +4935,7 @@ export interface MemorySearchHit {
   distance: number;
   similarity: number;
   below_threshold?: boolean | null;
+  governed?: boolean | null;
   tags?: string[] | null;
   reinforcement_count?: number | null;
   used_count?: number | null;
@@ -4579,6 +4950,7 @@ export interface MemorySearchHit {
   valid_at?: string;
   via_path?: string[];
   entities?: string[];
+  agent?: string;
   user_id?: string;
   source?: string;
   parent_memory_key?: string;
@@ -5116,6 +5488,33 @@ export interface MemoryDedupResolveOutput {
   canonical_tombstoned?: boolean;
   duplicate_tombstoned?: boolean;
   ignored_args?: string[];
+}
+
+export interface MemoryDefinitionsListInput {
+  org: string;
+  namespace: string;
+}
+
+export interface DefinitionEntry {
+  memory_key: string;
+  promoted_at: string; // date-time
+  capped?: boolean;
+  term?: string | null;
+  aliases?: string[];
+  verdict?: "governed" | "lapsed" | null;
+  lapse_reason?: "not_namespace_wide" | "no_term" | "gone" | "superseded" | "conflicted" | "duplicate" | "not_active" | "expired" | "ended" | "changed" | "sensitive" | null;
+  lost?: LostName[];
+}
+
+export interface LostName {
+  name: string;
+  winner: string;
+}
+
+export interface MemoryDefinitionsListOutput {
+  count: number;
+  ceiling: number;
+  definitions: DefinitionEntry[];
 }
 
 export interface MemoryDeleteInput {
@@ -6192,12 +6591,14 @@ export interface MemoryPromoteInput {
   approver?: string | null;
   reversible_for_days?: number;
   promoted_from_candidate_id?: string | null;
+  approved_sha256?: string | null;
 }
 
 export interface MemoryPromoteOutput {
   shared_memory_key: string;
   promotion_event: string;
   reversible_until: string; // date-time
+  ignored_args?: string[];
 }
 
 export interface MemoryProposalDecideInput {
@@ -6585,9 +6986,9 @@ export interface MemorySearchInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
-  /** If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). Hard filter by default — only memb */
+  /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
   tags_soft?: boolean;
   /** Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). */
@@ -6671,6 +7072,7 @@ export interface MemorySearchOutput {
   score_explanation?: string;
   retrieval_confidence?: number;
   retrieval_risk?: "low" | "medium" | "high" | "abstain";
+  term_leg?: "complete" | "empty" | "capped" | "timed_out" | "failed" | "off";
   route_agreement?: number;
   calibration_explanation?: string;
   fallback_rounds_used?: number;
@@ -6712,9 +7114,9 @@ export interface MemorySearchTraceInput {
   exclude_keys?: string[];
   quality_filter?: boolean;
   read_scope?: "namespace" | "own_user" | "own_session";
-  /** If non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
+  /** Up to 64 names; if non-empty, OR-match against extracted entities — rows whose `entities` array intersects this list are boosted alongside cosine matches. */
   entity_filter?: string[];
-  /** If set, restrict the search to memories assigned to this category (via namespace.register_category + memory.assign_category). Hard filter by default — only memb */
+  /** If set, restrict the search to memories assigned to this category (one registered in the namespace). Hard filter by default — only members of the category are r */
   category?: string;
   tags_soft?: boolean;
   /** Max rank contribution from tag overlap when tags_soft (scaled by fraction of query tags present). */
@@ -7242,6 +7644,7 @@ export interface MentorHint {
   text: string;
   ops?: string[];
   evidence?: Record<string, unknown>;
+  plane?: string | null;
 }
 
 export interface MentorAdoption {
@@ -7400,6 +7803,7 @@ export interface NamespaceDeleteOutput {
   deleted: boolean;
   namespace: string;
   updated_at: string; // date-time
+  sources_retired?: string[];
 }
 
 export interface NamespaceGetInput {
@@ -7420,6 +7824,8 @@ export interface NamespaceGetOutput {
   coverage_sweep?: boolean | null;
   consolidation_enabled?: boolean | null;
   daily_cost_cap_usd?: number | null;
+  daily_user_cost_cap_usd?: number | null;
+  budget_alert_inbox?: string | null;
   conflict_threshold?: number | null;
   retention_days?: number | null;
   warm_days?: number | null;
@@ -7588,6 +7994,8 @@ export interface NamespaceEntry {
   active: boolean;
   consolidation_enabled?: boolean;
   daily_cost_cap_usd?: number;
+  daily_user_cost_cap_usd?: number;
+  budget_alert_inbox?: string;
   conflict_threshold?: number | null;
   retention_days?: number;
   warm_days?: number;
@@ -7630,6 +8038,7 @@ export interface MineEntry {
   pending_admins?: string[];
   visibility?: "private" | "public";
   kind?: string;
+  title?: string;
   description?: string;
   joined_at?: string | null;
   is_new?: boolean;
@@ -7711,6 +8120,8 @@ export interface NamespaceRegisterInput {
   coverage_sweep?: boolean | null;
   consolidation_enabled?: boolean | null;
   daily_cost_cap_usd?: number | null;
+  daily_user_cost_cap_usd?: number | null;
+  budget_alert_inbox?: string | null;
   conflict_threshold?: number | null;
   retention_days?: number | null;
   warm_days?: number | null;
@@ -8950,11 +9361,27 @@ export interface SearchQueryInput {
   recipe?: "" | "fast" | "balanced" | "quality" | "verbatim" | "code" | "temporal" | "graph";
   bodies?: "full" | "excerpt" | "none" | "unit";
   explain?: boolean;
+  live?: boolean;
   page?: string;
+}
+
+export interface LiveSearchResults {
+  live?: true;
+  results?: LiveSearchHit[];
+}
+
+export interface LiveSearchHit {
+  id: string;
+  title: string;
+  url: string;
+  provider: "gdrive" | "notion" | "linear";
+  content?: string;
+  live?: true;
 }
 
 export interface SearchQueryOutput {
   tracker?: Record<string, unknown> | null;
+  live?: LiveSearchResults | null;
   memory?: Record<string, unknown>;
   knowledge?: Record<string, unknown>;
   profile?: Record<string, unknown>;
@@ -10115,6 +10542,8 @@ export type OpName =
   | "conflicts.list"
   | "conflicts.propose_revision"
   | "conflicts.resolve"
+  | "connection.disconnect"
+  | "connection.list"
   | "consolidations.list"
   | "context.fetch"
   | "context.offload"
@@ -10161,6 +10590,8 @@ export type OpName =
   | "grants.revoke"
   | "grants.share_agent"
   | "grants.unshare_agent"
+  | "help.get"
+  | "help.search"
   | "inbox.list"
   | "inbox.policy_list"
   | "inbox.policy_set"
@@ -10177,14 +10608,20 @@ export type OpName =
   | "knowledge.dedup_resolve"
   | "knowledge.delete"
   | "knowledge.formats"
+  | "knowledge.gaps.draft"
+  | "knowledge.gaps.list"
   | "knowledge.get"
   | "knowledge.ingest"
   | "knowledge.ingest_cancel"
   | "knowledge.ingest_status"
   | "knowledge.inspect"
   | "knowledge.list"
+  | "knowledge.move"
   | "knowledge.outline"
   | "knowledge.query"
+  | "knowledge.query_history.add"
+  | "knowledge.query_history.list"
+  | "knowledge.query_history.remove"
   | "knowledge.reads"
   | "knowledge.restore"
   | "knowledge.search"
@@ -10192,9 +10629,14 @@ export type OpName =
   | "knowledge.source.check"
   | "knowledge.source.inspect"
   | "knowledge.source.list"
+  | "knowledge.source.parse_links"
+  | "knowledge.source.push_configure"
+  | "knowledge.source.push_confirm"
+  | "knowledge.source.push_status"
   | "knowledge.source.remove"
   | "knowledge.source.rotate"
   | "knowledge.source.sync_now"
+  | "knowledge.source.update"
   | "knowledge.synthesize"
   | "knowledge.update_metadata"
   | "knowledge.upsert"
@@ -10218,6 +10660,7 @@ export type OpName =
   | "memory.dedup_collapse"
   | "memory.dedup_list"
   | "memory.dedup_resolve"
+  | "memory.definitions.list"
   | "memory.delete"
   | "memory.delete_version"
   | "memory.demonstrate"
@@ -10477,6 +10920,8 @@ export interface OpMap {
   "conflicts.list": { input: ConflictsListInput; output: ConflictsListOutput };
   "conflicts.propose_revision": { input: ConflictsProposeRevisionInput; output: ConflictsProposeRevisionOutput };
   "conflicts.resolve": { input: ConflictsResolveInput; output: ConflictsResolveOutput };
+  "connection.disconnect": { input: ConnectionDisconnectInput; output: ConnectionDisconnectOutput };
+  "connection.list": { input: ConnectionListInput; output: ConnectionListOutput };
   "consolidations.list": { input: ConsolidationsListInput; output: ConsolidationsListOutput };
   "context.fetch": { input: ContextFetchInput; output: ContextFetchOutput };
   "context.offload": { input: ContextOffloadInput; output: ContextOffloadOutput };
@@ -10523,6 +10968,8 @@ export interface OpMap {
   "grants.revoke": { input: GrantsRevokeInput; output: GrantsRevokeOutput };
   "grants.share_agent": { input: GrantsShareAgentInput; output: GrantsShareAgentOutput };
   "grants.unshare_agent": { input: GrantsUnshareAgentInput; output: GrantsUnshareAgentOutput };
+  "help.get": { input: HelpGetInput; output: HelpGetOutput };
+  "help.search": { input: HelpSearchInput; output: HelpSearchOutput };
   "inbox.list": { input: InboxListInput; output: InboxListOutput };
   "inbox.policy_list": { input: InboxPolicyListInput; output: InboxPolicyListOutput };
   "inbox.policy_set": { input: InboxPolicySetInput; output: InboxPolicySetOutput };
@@ -10539,14 +10986,20 @@ export interface OpMap {
   "knowledge.dedup_resolve": { input: KnowledgeDedupResolveInput; output: KnowledgeDedupResolveOutput };
   "knowledge.delete": { input: KnowledgeDeleteInput; output: KnowledgeDeleteOutput };
   "knowledge.formats": { input: KnowledgeFormatsInput; output: KnowledgeFormatsOutput };
+  "knowledge.gaps.draft": { input: KnowledgeGapsDraftInput; output: KnowledgeGapsDraftOutput };
+  "knowledge.gaps.list": { input: KnowledgeGapsListInput; output: KnowledgeGapsListOutput };
   "knowledge.get": { input: KnowledgeGetInput; output: KnowledgeGetOutput };
   "knowledge.ingest": { input: KnowledgeIngestInput; output: KnowledgeIngestOutput };
   "knowledge.ingest_cancel": { input: KnowledgeIngestCancelInput; output: KnowledgeIngestCancelOutput };
   "knowledge.ingest_status": { input: KnowledgeIngestStatusInput; output: KnowledgeIngestStatusOutput };
   "knowledge.inspect": { input: KnowledgeInspectInput; output: KnowledgeInspectOutput };
   "knowledge.list": { input: KnowledgeListInput; output: KnowledgeListOutput };
+  "knowledge.move": { input: KnowledgeMoveInput; output: KnowledgeMoveOutput };
   "knowledge.outline": { input: KnowledgeOutlineInput; output: KnowledgeOutlineOutput };
   "knowledge.query": { input: KnowledgeQueryInput; output: KnowledgeQueryOutput };
+  "knowledge.query_history.add": { input: KnowledgeQueryHistoryAddInput; output: KnowledgeQueryHistoryAddOutput };
+  "knowledge.query_history.list": { input: KnowledgeQueryHistoryListInput; output: KnowledgeQueryHistoryListOutput };
+  "knowledge.query_history.remove": { input: KnowledgeQueryHistoryRemoveInput; output: KnowledgeQueryHistoryRemoveOutput };
   "knowledge.reads": { input: KnowledgeReadsInput; output: KnowledgeReadsOutput };
   "knowledge.restore": { input: KnowledgeRestoreInput; output: KnowledgeRestoreOutput };
   "knowledge.search": { input: KnowledgeSearchInput; output: KnowledgeSearchOutput };
@@ -10554,9 +11007,14 @@ export interface OpMap {
   "knowledge.source.check": { input: KnowledgeSourceCheckInput; output: KnowledgeSourceCheckOutput };
   "knowledge.source.inspect": { input: KnowledgeSourceInspectInput; output: KnowledgeSourceInspectOutput };
   "knowledge.source.list": { input: KnowledgeSourceListInput; output: KnowledgeSourceListOutput };
+  "knowledge.source.parse_links": { input: KnowledgeSourceParseLinksInput; output: KnowledgeSourceParseLinksOutput };
+  "knowledge.source.push_configure": { input: KnowledgeSourcePushConfigureInput; output: PushStatusOutput };
+  "knowledge.source.push_confirm": { input: KnowledgeSourcePushConfirmInput; output: PushStatusOutput };
+  "knowledge.source.push_status": { input: KnowledgeSourcePushStatusInput; output: PushStatusOutput };
   "knowledge.source.remove": { input: KnowledgeSourceRemoveInput; output: KnowledgeSourceRemoveOutput };
   "knowledge.source.rotate": { input: KnowledgeSourceRotateInput; output: KnowledgeSourceRotateOutput };
   "knowledge.source.sync_now": { input: KnowledgeSourceSyncNowInput; output: KnowledgeSourceSyncNowOutput };
+  "knowledge.source.update": { input: KnowledgeSourceUpdateInput; output: KnowledgeSourceUpdateOutput };
   "knowledge.synthesize": { input: KnowledgeSynthesizeInput; output: KnowledgeSynthesizeOutput };
   "knowledge.update_metadata": { input: KnowledgeUpdateMetadataInput; output: KnowledgeUpdateMetadataOutput };
   "knowledge.upsert": { input: KnowledgeUpsertInput; output: KnowledgeUpsertOutput };
@@ -10580,6 +11038,7 @@ export interface OpMap {
   "memory.dedup_collapse": { input: MemoryDedupCollapseInput; output: MemoryDedupCollapseOutput };
   "memory.dedup_list": { input: MemoryDedupListInput; output: MemoryDedupListOutput };
   "memory.dedup_resolve": { input: MemoryDedupResolveInput; output: MemoryDedupResolveOutput };
+  "memory.definitions.list": { input: MemoryDefinitionsListInput; output: MemoryDefinitionsListOutput };
   "memory.delete": { input: MemoryDeleteInput; output: MemoryDeleteOutput };
   "memory.delete_version": { input: MemoryDeleteVersionInput; output: MemoryDeleteVersionOutput };
   "memory.demonstrate": { input: MemoryDemonstrateInput; output: MemoryDemonstrateOutput };
@@ -10839,6 +11298,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "conflicts.list", group: "conflicts", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "conflicts.propose_revision", group: "conflicts", method: "proposeRevision", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 120, audit: false, readOnly: true },
   { name: "conflicts.resolve", group: "conflicts", method: "resolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 500, audit: true, readOnly: false },
+  { name: "connection.disconnect", group: "connection", method: "disconnect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "connection.list", group: "connection", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1000, audit: false, readOnly: true },
   { name: "consolidations.list", group: "consolidations", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: true },
   { name: "context.fetch", group: "context", method: "fetch", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 150, audit: false, readOnly: true },
   { name: "context.offload", group: "context", method: "offload", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
@@ -10885,6 +11346,8 @@ export const OPS: readonly OpSpec[] = [
   { name: "grants.revoke", group: "grants", method: "revoke", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "grants.share_agent", group: "grants", method: "shareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "grants.unshare_agent", group: "grants", method: "unshareAgent", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
+  { name: "help.get", group: "help", method: "get", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 20, audit: false, readOnly: true },
+  { name: "help.search", group: "help", method: "search", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
   { name: "inbox.list", group: "inbox", method: "list", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "inbox.policy_list", group: "inbox", method: "policyList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "inbox.policy_set", group: "inbox", method: "policySet", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
@@ -10901,24 +11364,35 @@ export const OPS: readonly OpSpec[] = [
   { name: "knowledge.dedup_resolve", group: "knowledge", method: "dedupResolve", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.delete", group: "knowledge", method: "delete", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
   { name: "knowledge.formats", group: "knowledge", method: "formats", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 5500, audit: false, readOnly: true },
+  { name: "knowledge.gaps.draft", group: "knowledge", method: "gapsDraft", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.gaps.list", group: "knowledge", method: "gapsList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "knowledge.get", group: "knowledge", method: "get", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 30, audit: false, readOnly: true },
   { name: "knowledge.ingest", group: "knowledge", method: "ingest", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_cancel", group: "knowledge", method: "ingestCancel", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: false, readOnly: false },
   { name: "knowledge.ingest_status", group: "knowledge", method: "ingestStatus", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 40, audit: false, readOnly: true },
   { name: "knowledge.inspect", group: "knowledge", method: "inspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 4000, audit: false, readOnly: true },
   { name: "knowledge.list", group: "knowledge", method: "list", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 150, audit: false, readOnly: true },
+  { name: "knowledge.move", group: "knowledge", method: "move", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 8000, audit: true, readOnly: false },
   { name: "knowledge.outline", group: "knowledge", method: "outline", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "knowledge.query", group: "knowledge", method: "query", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 1500, audit: false, readOnly: true },
+  { name: "knowledge.query_history.add", group: "knowledge", method: "queryHistoryAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
+  { name: "knowledge.query_history.list", group: "knowledge", method: "queryHistoryList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: false },
+  { name: "knowledge.query_history.remove", group: "knowledge", method: "queryHistoryRemove", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
   { name: "knowledge.reads", group: "knowledge", method: "reads", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 500, audit: false, readOnly: true },
   { name: "knowledge.restore", group: "knowledge", method: "restore", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: true, readOnly: false },
   { name: "knowledge.search", group: "knowledge", method: "search", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 250, audit: false, readOnly: true },
-  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
-  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
+  { name: "knowledge.source.add", group: "knowledge", method: "sourceAdd", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
+  { name: "knowledge.source.check", group: "knowledge", method: "sourceCheck", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 30000, audit: false, readOnly: false },
   { name: "knowledge.source.inspect", group: "knowledge", method: "sourceInspect", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "knowledge.source.list", group: "knowledge", method: "sourceList", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: true },
-  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "knowledge.source.parse_links", group: "knowledge", method: "sourceParseLinks", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 50, audit: false, readOnly: true },
+  { name: "knowledge.source.push_configure", group: "knowledge", method: "sourcePushConfigure", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
+  { name: "knowledge.source.push_confirm", group: "knowledge", method: "sourcePushConfirm", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: true, readOnly: false },
+  { name: "knowledge.source.push_status", group: "knowledge", method: "sourcePushStatus", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 1000, audit: false, readOnly: false },
+  { name: "knowledge.source.remove", group: "knowledge", method: "sourceRemove", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.source.rotate", group: "knowledge", method: "sourceRotate", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 30000, audit: true, readOnly: false },
-  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
+  { name: "knowledge.source.sync_now", group: "knowledge", method: "sourceSyncNow", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 300, audit: true, readOnly: false },
+  { name: "knowledge.source.update", group: "knowledge", method: "sourceUpdate", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.synthesize", group: "knowledge", method: "synthesize", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 60000, audit: true, readOnly: false },
   { name: "knowledge.update_metadata", group: "knowledge", method: "updateMetadata", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 400, audit: true, readOnly: false },
   { name: "knowledge.upsert", group: "knowledge", method: "upsert", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 100, audit: false, readOnly: false },
@@ -10942,6 +11416,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.dedup_collapse", group: "memory", method: "dedupCollapse", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 2000, audit: true, readOnly: false },
   { name: "memory.dedup_list", group: "memory", method: "dedupList", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.dedup_resolve", group: "memory", method: "dedupResolve", idempotent: true, role: "admin", maturity: "stable", budgetP99Ms: 400, audit: true, readOnly: false },
+  { name: "memory.definitions.list", group: "memory", method: "definitionsList", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: false },
   { name: "memory.delete", group: "memory", method: "delete", idempotent: true, role: "writer", maturity: "stable", budgetP99Ms: 30, audit: true, readOnly: false },
   { name: "memory.delete_version", group: "memory", method: "deleteVersion", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 80, audit: true, readOnly: false },
   { name: "memory.demonstrate", group: "memory", method: "demonstrate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
@@ -11134,4 +11609,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 359;
+export const GENERATED_OP_COUNT = 375;

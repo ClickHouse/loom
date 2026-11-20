@@ -18,7 +18,7 @@ test("every SessionEnd hook declares a timeout: Claude Code gives the event 1.5 
   const hooks = groups.flatMap((g) => g.hooks);
   assert.equal(hooks.length, 5);
   for (const h of hooks) {
-    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.command}: timeout=${h.timeout}`);
+    assert.ok(Number.isInteger(h.timeout) && h.timeout >= 5 && h.timeout <= 60, `${h.args[0]}: timeout=${h.timeout}`);
   }
 });
 
@@ -43,7 +43,7 @@ test("the Codex hooks.json carries only the fields Codex's strict parser accepts
         assert.deepEqual(
           // commandWindows: what Codex 0.131+ runs on Windows, through cmd.exe;
           // earlier builds ignore an unknown handler key (only top-level keys are strict)
-          Object.keys(h).filter((k) => !["type", "command", "commandWindows", "timeout"].includes(k)),
+          Object.keys(h).filter((k) => !["type", "command", "commandWindows", "timeout", "statusMessage"].includes(k)),
           [],
           `${event}: ${h.command}`,
         );

@@ -6,15 +6,61 @@ self-signup namespace claim).
 from __future__ import annotations
 
 import argparse
+import asyncio
+import codecs
 import json
+import os
 import sys
 from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from server.cli._ch import run_connected
+from server.cli._ch import OrgFree, reads, revokes, run_connected, writes
 from server.cli._client import token_path
 from server.core.pg import AuthorityMismatch
+
+
+async def _claim_release_answer() -> str:
+    """Wait for one answer without leaving a blocking read behind on cancellation."""
+    print("Continue? [y/N] ", end="", flush=True)
+    fd = sys.stdin.fileno()
+    decoder = codecs.getincrementaldecoder(sys.stdin.encoding or "utf-8")(
+        errors=sys.stdin.errors or "strict"
+    )
+    loop = asyncio.get_running_loop()
+    answer: list[str] = []
+    blocking = os.get_blocking(fd)
+    os.set_blocking(fd, False)
+    try:
+        while True:
+            try:
+                chunk = os.read(fd, 1)
+            except BlockingIOError:
+                readable: asyncio.Future[None] = loop.create_future()
+
+                def ready(pending: asyncio.Future[None] = readable) -> None:
+                    if not pending.done():
+                        pending.set_result(None)
+
+                try:
+                    loop.add_reader(fd, ready)
+                    await readable
+                finally:
+                    loop.remove_reader(fd)
+                continue
+            text = decoder.decode(chunk, final=not chunk)
+            if text in ("\n", "\r"):
+                return "".join(answer)
+            if text:
+                answer.append(text)
+            if not chunk:
+                if not answer:
+                    raise EOFError
+                return "".join(answer)
+            # A ready pipe or regular file must not starve cancellation or the heartbeat.
+            await asyncio.sleep(0)
+    finally:
+        os.set_blocking(fd, blocking)
 
 
 def _cmd_claim_release(args: argparse.Namespace) -> int:
@@ -39,31 +85,34 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
             return None
         return str(row.get("owner_email") or "") or "(unknown)"
 
-    owner = run_connected(_lookup_owner)
-    if owner is None:
-        print(
-            f"no claim found for {args.org}/{args.namespace}",
-            file=sys.stderr,
-        )
-        return 1
-    if not args.yes:
-        print(
-            f"This will release the claim on {args.org}/{args.namespace}"
-            f" (currently owned by {owner!r})."
-        )
-        print(
-            "Grants are revoked and the namespace deactivated. Its memories are "
-            "kept, and the name stays reserved: nobody can claim it again."
-        )
-        try:
-            resp = input("Continue? [y/N] ").strip().lower()
-        except EOFError:  # no terminal to answer (a pipe, a cron): the answer is no
-            resp = ""
-        if resp not in ("y", "yes"):
-            print("aborted")
-            return 1
-
     async def _go(ch: Any) -> int:
+        from server.cli._ch import check_acceptance
+
+        owner = await _lookup_owner(ch)
+        if owner is None:
+            print(
+                f"no claim found for {args.org}/{args.namespace}",
+                file=sys.stderr,
+            )
+            return 1
+        if not args.yes:
+            print(
+                f"This will release the claim on {args.org}/{args.namespace}"
+                f" (currently owned by {owner!r})."
+            )
+            print(
+                "Grants are revoked and the namespace deactivated. Its memories are "
+                "kept, and the name stays reserved: nobody can claim it again."
+            )
+            try:
+                resp = (await _claim_release_answer()).strip().lower()
+            except EOFError:  # no terminal to answer (a pipe, a cron): the answer is no
+                resp = ""
+            if resp not in ("y", "yes"):
+                print("aborted")
+                return 1
+        # Confirmation can wait while the cell changes; check again before mutation.
+        await check_acceptance(orgs=(args.org,))
         out = await release_claim(
             org=args.org,
             namespace=args.namespace,
@@ -80,7 +129,7 @@ def _cmd_claim_release(args: argparse.Namespace) -> int:
         )
         return 0
 
-    return run_connected(_go)
+    return run_connected(_go, orgs=(args.org,))
 
 
 def _normalize_namespace_args(values: list[str] | None) -> list[str]:
@@ -110,8 +159,6 @@ def _invalid_namespace_names(names: list[str]) -> list[str]:
 
 def _cmd_mint_token(args: argparse.Namespace) -> int:
     from server.auth import keyring
-    from server.auth.authz import GRANT_ROLES
-    from server.auth.jwt import mint_token, new_jti
     from server.core.principals import RESERVED_SUBJECT, is_reserved_subject
 
     if is_reserved_subject(args.subject):
@@ -122,17 +169,49 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
     if refused:
         print(f"  ✗ {refused}", file=sys.stderr)
         return 2
-    if args.platform_admin and not _platform_admin_rollout_ready():
+
+    async def _go(ch: Any) -> int:
+        from server.cli._ch import check_acceptance
+
+        if args.platform_admin and not await _platform_admin_rollout_ready(ch):
+            print(
+                "  ✗ platform-admin tokens require a readable fleet with the rollout complete",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            await keyring.load_for_connected_mint(ch=ch)
+        except ValueError as e:  # another root: no server would accept the token
+            print(f"  ✗ {e}", file=sys.stderr)
+            return 1
+        # Keyring reads can wait; signing must use a current accepting view too.
+        await check_acceptance(orgs=(args.org,))
+        minted = _mint_token(args)
+        if isinstance(minted, int):
+            return minted
+        token, summary = minted
+        if args.platform_admin and not await _audit_platform_admin_mint(args, summary):
+            print("  ✗ the mint could not be recorded in the audit log; no token", file=sys.stderr)
+            return 1
+        return _emit_minted_token(args, token, summary)
+
+    try:
+        return run_connected(_go, orgs=(args.org,))
+    except AuthorityMismatch:
+        raise
+    except Exception as e:  # noqa: BLE001 — a mint without verified enrollment is refused
         print(
-            "  ✗ platform-admin tokens require a readable fleet with the rollout complete",
+            f"  ✗ token mint did not complete in its enrolled scope: {type(e).__name__}",
             file=sys.stderr,
         )
         return 1
-    try:
-        keyring.load_for_offline_mint(run=run_connected)
-    except ValueError as e:  # another root: no server would accept the token
-        print(f"  ✗ {e}", file=sys.stderr)
-        return 1
+
+
+def _mint_token(args: argparse.Namespace) -> tuple[str, dict[str, Any]] | int:
+    """Build and sign only inside the command's enrolled admission scope."""
+    from server.auth.authz import GRANT_ROLES
+    from server.auth.jwt import mint_token, new_jti
+
     ttl_seconds = (args.ttl_days * 86400) if args.ttl_days else None
     # Every minted token carries a jti; generated here so
     # the summary can name it beside (or instead of) the token — it is the
@@ -236,11 +315,7 @@ def _cmd_mint_token(args: argparse.Namespace) -> int:
             "consumer": args.consumer or "",
         }
 
-    if args.platform_admin and not _audit_platform_admin_mint(args, summary):
-        # Never handed out unrecorded: the role spans every org.
-        print("  ✗ the mint could not be recorded in the audit log; no token", file=sys.stderr)
-        return 1
-    return _emit_minted_token(args, token, summary)
+    return token, summary
 
 
 # not a setting: the longest a minted platform-admin token may live; longer is a bot's job
@@ -270,41 +345,40 @@ def _platform_admin_refusal(args: argparse.Namespace) -> str | None:
     return None
 
 
-def _platform_admin_rollout_ready() -> bool:
+async def _platform_admin_rollout_ready(ch: Any) -> bool:
     from server.auth import machines
 
     try:
-        return bool(run_connected(machines.platform_admin_tokens_ready))
+        return bool(await machines.platform_admin_tokens_ready(ch))
     except AuthorityMismatch:
-        raise  # a shell configured for another deployment: its own one-line refusal
+        raise
     except Exception as e:  # noqa: BLE001 — an unread fleet refuses an admin token
         print(f"  ✗ fleet state could not be read: {type(e).__name__}", file=sys.stderr)
         return False
 
 
-def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]) -> bool:
+async def _audit_platform_admin_mint(args: argparse.Namespace, summary: dict[str, Any]) -> bool:
     """Record a platform-admin mint before it is handed out; False when the
     audit row could not be written."""
     import getpass
 
     from server.observability import audit
 
-    async def _emit(ch: Any) -> str:
-        return await audit.emit(
-            "auth.platform_admin_minted",
-            org=args.org,
-            namespace="-",
-            actor=f"cli:{getpass.getuser()}",
-            subject={
-                "subject": args.subject,
-                "jti": summary["jti"],
-                "namespaces": summary["namespaces"],
-                "ttl_days": args.ttl_days,
-            },
-        )
-
     try:
-        return bool(run_connected(_emit))
+        return bool(
+            await audit.emit(
+                "auth.platform_admin_minted",
+                org=args.org,
+                namespace="-",
+                actor=f"cli:{getpass.getuser()}",
+                subject={
+                    "subject": args.subject,
+                    "jti": summary["jti"],
+                    "namespaces": summary["namespaces"],
+                    "ttl_days": args.ttl_days,
+                },
+            )
+        )
     except Exception as e:  # noqa: BLE001 — an unrecorded mint is refused, never handed out
         print(f"  ✗ audit log not reached: {type(e).__name__}: {e}", file=sys.stderr)
         return False
@@ -441,6 +515,17 @@ async def _scim_give_back(
         return None, 1
 
 
+def _revoke_kind(args: argparse.Namespace, *, expires_at: Any, issued_before: Any) -> OrgFree:
+    """What a `loom revoke-token` run does to the cell's stores. Only a plain revocation
+    runs through a Postgres outage: narrowing SCIM's revocation, or one that lapses or
+    covers only older tokens, can give access back, so it is gated as a write."""
+    if args.list:
+        return reads("lists the unexpired revocations")
+    if args.scim or expires_at is not None or issued_before is not None:
+        return writes("revises a revocation: no org's rows")
+    return revokes("revokes a token or subject by id: no org's rows")
+
+
 def _cmd_revoke_token(args: argparse.Namespace) -> int:
     """Revoke one token through `server.auth.revocation`, the
     same path the `/v1/me/service_accounts.revoke` handler and the refresh
@@ -531,7 +616,10 @@ def _cmd_revoke_token(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        return run_connected(_run)
+        return run_connected(
+            _run,
+            org_free=_revoke_kind(args, expires_at=expires_at, issued_before=issued_before),
+        )
     except AuthorityMismatch:
         raise  # a shell configured for another deployment: its own one-line refusal
     except Exception as e:  # noqa: BLE001 — a revocation that did not land must say so
@@ -694,7 +782,9 @@ def _add_revoke_token_parser(sub: Any) -> None:
 
 def _add_mint_token_parser(sub: Any) -> None:
     """The `mint-token` subcommand."""
-    p_mint = sub.add_parser("mint-token", help="Mint a JWT locally (requires LOOM_JWT_SECRET).")
+    p_mint = sub.add_parser(
+        "mint-token", help="Mint a JWT locally (requires LOOM_JWT_SECRET and verified stores)."
+    )
     p_mint.add_argument("--subject", required=True)
     p_mint.add_argument("--org", required=True)
     p_mint.add_argument(

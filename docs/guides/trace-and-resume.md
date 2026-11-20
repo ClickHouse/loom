@@ -60,8 +60,9 @@ to a block and `working_memory.render(run_id=RUN)` reads the blocks back.
 
 ## Over MCP
 
-`working_memory.set` is listed (`loom_working_memory_set`) on the `core`, `coding` and
-`atomic` toolsets. `working_memory.get` is not listed on any toolset, including `all`; call it
+`working_memory.set` is listed (`loom_working_memory_set`) on the `coding`, `atomic` and
+`all` toolsets, and runs through `loom_op` on every other toolset except `readonly` and
+`assistant`. `working_memory.get` is not listed on any toolset, including `all`; call it
 through `loom_op` with `{"op": "working_memory.get", "arguments": {...}}`. An agent:
 
 1. calls `working_memory.set` with `run_id` and `block_key="checkpoint"` after each step;
@@ -93,6 +94,55 @@ state to its plane.
   returned ([debugging](debugging.md)).
 
 Loom does not snapshot in-process variables. The checkpoint holds what you put in it.
+
+## Inspect a captured coding-agent session
+
+Loom can keep coding-agent conversations, tool observations and run records on your
+self-hosted server. These are separate records: a run summary is not a full transcript,
+and tool observations are not unrestricted recordings of every tool input and output.
+
+1. [Run Loom](../getting-started/quickstart.md) and
+   [connect the coding-agent plugin](../getting-started/connect-a-coding-agent.md) to
+   the intended namespace with a writer token. For Codex, approve the plugin's hooks;
+   an MCP connection alone does not capture the transcript.
+2. The namespace owner enables **Record conversations** on the dashboard's
+   Conversations page. Recording is off by default; changing it with
+   `conversation.set_logging` needs admin access. Capture hooks send new transcript
+   turns when recording is enabled. Do not append the same turns manually.
+3. Run an ordinary task in that coding-agent session. The run hooks record its goal
+   and final response; they do not determine whether the task succeeded. Claude Code's tool hooks submit bounded, redacted observations,
+   skipping Loom and harness meta tools and deduplicating repeated file reads. See
+   [capture and data handling](../features/integrations/claude-code.md#data-handling).
+4. Use a token with viewer access to the same namespace to list recent threads:
+
+   ```bash
+   curl --fail-with-body "$LOOM_BASE_URL/v1/conversation.threads" \
+     -H "Authorization: Bearer $LOOM_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"org":"example","namespace":"coding","agent":"*","window_days":7,"limit":5}'
+   ```
+
+   Replace the example scope with your own. Take a `thread_id` from `threads` and
+   read its newest recorded turns:
+
+   ```bash
+   curl --fail-with-body "$LOOM_BASE_URL/v1/conversation.get" \
+     -H "Authorization: Bearer $LOOM_TOKEN" \
+     -H 'Content-Type: application/json' \
+     -d '{"org":"example","namespace":"coding","agent":"*","thread_id":"<thread_id>","include_messages":true,"order":"desc","limit":20}'
+   ```
+
+   These examples show the request shapes; they are not a captured session result.
+   `conversation.get` is experimental. Read the run summary with `run.get` as
+   described under [Runs](../features/runs.md).
+
+An empty thread list is not proof the agent did nothing: check the namespace, token,
+hook setup and recording switch. Tool observations are stored without extraction when
+`LOOM_OBSERVE_EXTRACT_ENABLED` is off (the default). Neither this workflow nor
+[Loom's own request telemetry](../features/observability/telemetry.md) supplies automatic
+traces of every model call in arbitrary agents. See
+[conversations and sessions](../features/conversations-and-sessions.md) for storage,
+search and retention limits.
 
 ## Why it holds
 

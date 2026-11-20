@@ -8,8 +8,8 @@ LibreChat is an optional chat client for investigating a namespace: what it hold
 is used, and cited answers over its memories, documents and code. The model calls Loom's
 assistant tools over MCP with the signed-in person's own token. Loom stays the authority
 for memory, documents, retrieval and the diagnostic rules; LibreChat keeps the chat. The
-dashboard's [Assistant page](../dashboard.md) answers the same inspect and tune questions
-with no model and no second store.
+dashboard's [Ask AI panel](../dashboard.md#ask-ai) answers the same inspect and tune
+questions with no model and no second store, as the cards its starters read.
 
 The configuration, a local compose file and the qualification harness are in
 [`integrations/librechat/`](../../../integrations/librechat/README.md). Other LibreChat
@@ -72,12 +72,17 @@ agent in the UI. It is not Loom authorization; the token on each call is.
   (`/api/agents/chat/stream/:streamId`). The agents API (`/api/agents/v1/chat/completions`)
   streams OpenAI-style chunks, but compresses the response when the client accepts
   compression, and a compressed stream arrives only when the answer is complete: a client
-  that needs incremental tokens sends `Accept-Encoding: identity`.
+  that needs incremental tokens sends `Accept-Encoding: identity`. The agents API runs
+  the MCP tools inside the run and sends no `tool_calls` chunk for them: the stream holds
+  content and reasoning deltas only, the text of every model step as one answer with
+  nothing between steps.
 - **Cancellation.** In the UI path the generation runs server-side, apart from the
   browser connection: closing the tab does not stop it, and its tool calls still reach
   Loom. The stop button (`/api/agents/chat/abort`) stops it. On the agents API, closing
-  the connection stops the run: in one probe, disconnecting after the first token left no
-  Loom call in the next 20 s.
+  the connection stops the run: in one probe, disconnecting before the agent's first tool
+  call left no Loom call in the next 20 s. The probe (`run --cancel-probe`) disconnects
+  `--cancel-after` seconds (1) into the answer and sorts the Loom calls by whether they
+  began before or after the cut; `probe_line` in `qualify.py` says what each outcome shows.
 
 ## What LibreChat stores
 
@@ -122,19 +127,27 @@ memory, so this configuration keeps its memory feature off and its search index 
 LibreChat's agents API with a model, and through the same reads over HTTP with no model,
 with the arguments the assistant toolset forces (`memory.search` with `auto_touch: false`
 and `explain: false`). The inventory, inspect and tune cases are the reads the dashboard's
-Assistant page makes; the memory cases' `memory.search` is not on that page. It seeds two
+starter cards make; the memory cases' `memory.search` is not among them. It seeds two
 orgs, mints a token per person, revokes one, and scores each answer:
 
 - **correct:** the answer contains no forbidden text and, by kind: a memory, inventory,
   inspect or tune case contains the labeled value; a refusal case says access was refused
   or failed; an abstention case says the fact is not stored. The forbidden text is the
   other org's canary for the cross-tenant case, the person's own answer (`friday`) for the
-  revoked-token case, and a stale or wrong value for some others.
-- **citation valid:** every memory key the answer names exists in the person's namespace,
-  and a version written next to it is the row's current version.
+  revoked-token case, and a stale or wrong value for some others. Through Loom's assistant
+  route, an answer of any kind that names an op or setting the build neither serves nor
+  documents (`unknown_names`) is wrong.
+- **citation valid:** every memory key the answer cites exists in the person's namespace,
+  and a version written next to it is the row's current version, or, for a question about
+  the key's history (`cite_history`), one of its earlier versions. Through Loom's assistant
+  route a memory citation is `[memory:<key>@v<version>]`; otherwise it is any key-shaped
+  text outside a `[help:]` citation, so on that path a help answer that quotes the docs'
+  example key counts it as an invalid memory citation; the help figures below come from
+  the assistant route.
 - **tool calls:** the `mcp` rows Loom ledgered under the person's subject during the answer.
 - **latency and time to first token:** end to end, and to the first streamed delta, which
-  is the model's one-line preamble before its first tool call, not the answer.
+  for the harness's own agent (`setup`) is the model's one-line preamble before its first
+  tool call, not the answer; Loom's agent (`setup-bridge`) is told to write none.
 
 | Target (LibreChat path)                                 | Value         | Measured on v0.8.8, 14 cases, `claude-haiku-4-5-20251001`                 |
 | ------------------------------------------------------- | ------------- | ------------------------------------------------------------------------- |
@@ -147,9 +160,10 @@ orgs, mints a token per person, revokes one, and scores each answer:
 | Tool calls per question                                 | at most 3     | at most 3, 16 in all                                                      |
 | Model cost per answer, every prompt token at list price | at most $0.05 | mean $0.029; max $0.064 (`abstain-cfo`, three searches) misses the target |
 
-The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune, refusal
-and abstention cases, scored against the current `cases.json` with `qualify.py rescore`;
-the direct-path numbers are from a later run of that path alone
+The LibreChat numbers are from one run of the 14 memory, inventory, inspect, tune and
+refusal cases and memory abstentions (`abstain-wifi`, `abstain-cfo`), other than
+`data-history` and `data-connected-agents`, scored against the current `cases.json` with
+`qualify.py rescore`; the direct-path numbers are from a later run of that path alone
 (`qualify.py run --native-only`) on a fresh seed. The document cases below were run
 separately.
 
@@ -206,6 +220,79 @@ breadcrumbs reach the hits, not that retrieval holds up at scale. No citation na
 revision: the hits of the measured build carry none, and the model read `knowledge.get`
 only on the two unanswerable questions.
 
+### Use cases
+
+The case set holds at least one question per use case of Loom: what a namespace holds and
+how it is used (the data tools), and how Loom works and how to do something in it (the
+help tools, which read the documentation the server ships). Each help case labels the
+values its answer must state and the pages that hold them, with a right and a wrong sample
+answer the label is tested against. Its answer is scored correct when it states them and
+does not deny them (each case's `forbid`), under the unknown-name rule above. For the case
+with no answer in the docs, the answer is correct when it says so and writes no `LOOM_`
+name that no docs page writes, as a name or as a member of a family a page writes with
+placeholders; an answer that names an invented setting only to deny it is scored wrong.
+The labels are patterns over the answer's text, so they err both ways: an answer that
+states the labeled values beside a wrong claim about them can pass, and a right answer
+worded otherwise can fail. A correct score means the answer has what the page says. A help
+citation is valid when its page is in the server's documentation (`help.get`) and its
+section is one of the page's own, by the rule the server's own check uses. The cases go
+through Loom's assistant route (`qualify.py setup-bridge`), so each answer also carries
+the question's asker line and the bridge's own citation check.
+
+| Use case                          | Cases | Correct  | No invalid citation |
+| --------------------------------- | ----- | -------- | ------------------- |
+| U1 Look up a stored fact          | 7     | 7 of 7   | 7 of 7              |
+| U2 What a document says           | 10    | 9 of 10  | 10 of 10            |
+| U3 What the namespace holds       | 4     | 4 of 4   | 4 of 4              |
+| U4 Usage counts and trends        | 3     | 3 of 3   | 3 of 3              |
+| U5 Cost and spend                 | 1     | 1 of 1   | 1 of 1              |
+| U6 Write memory better            | 4     | 4 of 4   | 2 of 4              |
+| U7 History of a fact              | 2     | 2 of 2   | 2 of 2              |
+| U8 Entity graph                   | 1     | 1 of 1   | 1 of 1              |
+| U9 Code index                     | 1     | 1 of 1   | 1 of 1              |
+| U10 Conflicts and refusal         | 1     | 1 of 1   | 1 of 1              |
+| U11 Sharing and collections       | 1     | 1 of 1   | 1 of 1              |
+| U12 My role and who can change it | 1     | 1 of 1   | 1 of 1              |
+| U13 Connect a coding agent        | 1     | 1 of 1   | 1 of 1              |
+| U14 Tokens                        | 1     | 1 of 1   | 1 of 1              |
+| U15 Models and keys               | 1     | 1 of 1   | 0 of 1              |
+| U16 Health problems               | 1     | 1 of 1   | 1 of 1              |
+| U17 Why search returned this      | 1     | 1 of 1   | 1 of 1              |
+| U18 Runs                          | 1     | 1 of 1   | 1 of 1              |
+| U19 Tasks between agents          | 1     | 1 of 1   | 1 of 1              |
+| U20 Tracker                       | 1     | 1 of 1   | 1 of 1              |
+| U21 Retention and erasure         | 1     | 1 of 1   | 1 of 1              |
+| U22 Extraction from transcripts   | 1     | 1 of 1   | 1 of 1              |
+| U23 Working memory                | 1     | 1 of 1   | 1 of 1              |
+| U24 Integrations                  | 1     | 1 of 1   | 1 of 1              |
+| U25 What a setting does           | 1     | 1 of 1   | 1 of 1              |
+| U26 Getting started               | 1     | 1 of 1   | 1 of 1              |
+| U27 Operating a deployment        | 1     | 1 of 1   | 1 of 1              |
+| U28 Refusals and abstentions      | 5     | 5 of 5   | 5 of 5              |
+| All                               | 56    | 55 of 56 | 53 of 56            |
+
+Measured on v0.8.8 with `claude-haiku-4-5`, on a server running fake embeddings and a fake
+LLM for Loom's own model jobs. A full run of the 56 cases costs about $3 at list price
+counting every prompt token, a mean of $0.053 per answer. The figures take 14 cases (three
+memory, nine document and two help cases) from one run and the other 42 from a full run,
+on agent definitions that differ from `integrations/librechat/agent.yaml` in one sentence
+on the asker's role, and for the full run also in the wording of the first step's
+searches. Twelve answers cite no memory, document or help page: two refusals, three
+abstentions, three SQL analyses (which cite their statement instead) and four counts,
+which come from tallies with no row to cite; every other answer cites one. The misses:
+
+- `doc-cache-entries` asks for a value one of the namespace's documents holds
+  (`config/cache.toml`); the answer searches Loom's own documentation instead and does not
+  find it: the question and Loom's settings share their words.
+- Two recommendation answers cite `mentor.guide`, Loom's writing guide, as a docs page,
+  which the harness marks invalid (no such page): the guide has no citation form.
+- One answer names a section the page does not have.
+
+Answers vary from run to run at this model. A question about the person's own data that
+shares words with Loom's docs (a rate limit, webhook retries) is sometimes answered from
+the docs; the agent's instructions ask for the memory, document and help searches together
+in its first step for that reason.
+
 ## The deployed assistant
 
 Loom can also run LibreChat itself, headless, with one agent it seeds: the shape the
@@ -227,6 +314,20 @@ echo "LIBRECHAT_ANTHROPIC_API_KEY=<your key>" >> .env
 echo "LOOM_ASSISTANT_LIBRECHAT_URL=http://librechat:3080" >> .env
 ```
 
+To answer on a model server on the machine instead of Anthropic, with no key, set
+`LOOM_ASSISTANT_PROVIDER=local`, `LOOM_ASSISTANT_MODEL` to a model it serves that takes
+tool calls, and `LOOM_ASSISTANT_ANSWER_CEILING_USD=0`: an unpriced model's answer is
+otherwise charged $0.10 against the assistant's share of the daily cost cap, five
+answers a day at the defaults. LibreChat reaches the server at
+`LIBRECHAT_LOCAL_LLM_BASE_URL` (default `http://host.docker.internal:11434/v1`, Ollama
+on the Docker host). See
+[a model server on your machine](../../getting-started/models-and-keys.md#a-model-server-on-your-machine-no-api-key)
+for what a small model gives up and what an answer costs. An install that took the
+installer's Ollama preset already has these three settings, so its assistant answers on
+the local model and needs no `LIBRECHAT_ANTHROPIC_API_KEY`; to answer on Claude instead,
+remove `LOOM_ASSISTANT_PROVIDER` and `LOOM_ASSISTANT_MODEL` and set
+`LOOM_ASSISTANT_ANSWER_CEILING_USD` back to its default.
+
 An installed stack runs the profiles `COMPOSE_PROFILES` names (`bundled` with its own
 ClickHouse, none with yours), so add `assistant` there and start it:
 
@@ -239,7 +340,7 @@ The `sed` reads the line as `install.sh` writes it: unquoted, with no comment af
 Stop the stack with `docker compose --profile bundled --profile assistant down`: the
 installer's printed `--profile bundled down` leaves LibreChat running, and naming
 `bundled` also stops a bundled ClickHouse a switch left running.
-Re-running `install.sh` to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
+Running the install command again to switch ClickHouse (`--clickhouse`, `--bundled`) rewrites
 `COMPOSE_PROFILES`: run the `sed` again afterwards.
 
 A checkout runs this build through `make dev`, whose `--profile bundled` takes the place
@@ -283,8 +384,9 @@ The qualification runs the same cases through Loom's assistant route
 (`POST /v1/assistant/chat/completions`), each with the person's own token, so Loom
 delegates each answer's token and runs the agent it seeded. `setup-bridge` grants each
 person `viewer` on their namespace, since an answer's token is delegated from a live
-grant. A run spends about a dollar from each namespace's daily model cost cap, and the
-assistant may spend half of it, so raise the cap for the run
+grant. A full run spends about $3, most of it from `acme-handbook`'s daily model cost cap
+(45 of the 56 cases ask there), and the assistant may spend half of a cap, so raise the cap
+for the run
 (`LOOM_DEFAULT_DAILY_COST_CAP_USD=20` on the server, or the namespace's
 `daily_cost_cap_usd`); otherwise the last cases are refused with `RATE_LIMITED`:
 
@@ -296,11 +398,11 @@ python $Q revoke
 python $Q run --cancel-probe
 ```
 
-Beside every earlier case it runs three analysis cases (`insights.query` over the
-namespace, one asking for every org's counts, whose answer must name no other tenant's
-rows) and two recommendation cases over `acme-notes`, a namespace written badly on
-purpose (hash-named keys, a JSON value encoded twice, a 6.5 KB runbook stored as a
-memory).
+Among its cases are three analysis cases (`insights.query` over the namespace, one asking
+for every org's counts, whose answer must name no other tenant's rows) and two
+recommendation cases over `acme-notes`, a namespace written badly on purpose (hash-named
+keys, a JSON value encoded twice, a 6.5 KB runbook stored as a memory). The table measures
+the data cases other than `data-history` and `data-connected-agents`.
 
 | Measured on v0.8.8, 28 cases, `claude-haiku-4-5`, fake embedder   | The deployed agent, asked directly                              |
 | ----------------------------------------------------------------- | --------------------------------------------------------------- |

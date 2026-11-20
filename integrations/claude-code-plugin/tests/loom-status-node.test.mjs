@@ -152,20 +152,93 @@ test("loom-status Node check warns when only this shell's environment finds Node
     assert.equal(shellOnly.status, 0, shellOnly.stderr);
     assert.match(
       shellOnly.stdout,
-      /ready: .*\nFound only with this shell's environment: Claude Code .*settings\.json\.\n$/,
+      /ready: .*\nFound only with this shell's environment: Claude Code .*such as "\/opt\/homebrew\/bin:\/usr\/bin:\/bin:\/usr\/sbin:\/sbin"\.\n$/,
     );
-    // Claude Code's settings env reaches a GUI-started agent: LOOM_NODE or PATH there counts.
+    // Claude Code's settings env reaches a GUI-started agent: a PATH there
+    // counts; LOOM_NODE does not, since its hooks run the node on PATH.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
-    assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+    assert.match(f.run("--check").stdout, /Found only/);
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
+    assert.doesNotMatch(f.run("--check").stdout, /Found only/);
+    // The Dock check itself needs nothing but Node on the settings PATH.
+    const onlyNode = path.join(f.dir, "only-node");
+    fs.mkdirSync(onlyNode);
+    fs.copyFileSync(path.join(f.bin, "node"), path.join(onlyNode, "node"));
+    fs.chmodSync(path.join(onlyNode, "node"), 0o755);
+    settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: onlyNode });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
     // A key that is no variable name is not passed on to the GUI run.
     settings({ LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin, "two\nlines": "x", "": "y" });
     assert.doesNotMatch(f.run("--check").stdout, /Found only/);
-    // A LOOM_NODE exported in this shell only does not.
-    settings({ LOOM_NODE_SYSTEM_DIRS: "" });
-    f.env.LOOM_NODE = path.join(f.bin, "node");
-    assert.match(f.run("--check").stdout, /Found only/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("loom-status Node check under Claude Code judges the node on PATH, not the launcher's pick", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    f.put("node", "echo v16.20.2");
+    // A version manager's Node 22 behind it: the launcher would pick that one.
+    const nvm = path.join(f.dir, ".nvm", "versions", "node", "v22.1.0", "bin");
+    fs.mkdirSync(nvm, { recursive: true });
+    fs.writeFileSync(path.join(nvm, "node"), "#!/bin/sh\necho v22.1.0\n", { mode: 0o755 });
+    assert.equal(f.run("--check").status, 0, "the launcher finds it for Codex");
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const r = f.run("--check");
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^loom: the first `node` on this PATH, .*node \(v16\.20\.2\), is not Node\.js 18\+; Claude Code's hooks run that one\.\n$/,
+    );
+    // The installer does not take the launcher's pick as done either.
+    f.put("id", "echo 1000");
+    const install = f.run();
+    assert.equal(install.status, 2);
+    assert.match(install.stderr, /needs root or passwordless sudo/);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("under Claude Code an fnm per-shell node is named by the directory it points at", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    const real = path.join(f.dir, "fnm", "node-versions", "v22.1.0", "installation");
+    fs.mkdirSync(path.join(real, "bin"), { recursive: true });
+    fs.writeFileSync(path.join(real, "bin", "node"), "#!/bin/sh\necho v22.1.0\n", { mode: 0o755 });
+    const link = path.join(f.dir, "fnm_multishells", "123_456");
+    fs.mkdirSync(path.dirname(link));
+    fs.symlinkSync(real, link);
+    f.env.PATH = `${path.join(link, "bin")}:${f.bin}`;
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const r = f.run("--check");
+    assert.equal(r.status, 0, r.stderr);
+    const resolved = path.join(fs.realpathSync(real), "bin", "node");
+    assert.equal(r.stdout, `Loom hook runtime ready: ${resolved} (v22.1.0)\n`);
+  } finally {
+    fs.rmSync(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("after an install that leaves no Node 18+, the helper names what it found, per client", () => {
+  const f = fixture();
+  try {
+    f.put("uname", "echo Linux");
+    f.put("id", "echo 0");
+    // The package manager installs an old Node, as an old Alpine's does.
+    fs.symlinkSync(whichSync("chmod"), path.join(f.bin, "chmod"));
+    f.put("apk", `printf '#!/bin/sh\\necho v16.20.2\\n' > "$TEST_BIN/node"; chmod +x "$TEST_BIN/node"`);
+    const codex = f.run();
+    assert.equal(codex.status, 2);
+    assert.match(codex.stderr, /the first Node found, .*node \(v16\.20\.2\), is older/);
+    fs.rmSync(path.join(f.bin, "node"));
+    f.env.CLAUDE_PLUGIN_ROOT = path.join(f.dir, "plugin");
+    const claude = f.run();
+    assert.equal(claude.status, 2);
+    assert.match(claude.stderr, /first `node` on this PATH, .*node \(v16\.20\.2\), is not Node\.js 18\+/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -184,7 +257,7 @@ function installAt(root) {
 test("loom-status Node check knows Claude Code by where it is installed", NEEDS_NO_GUI_NODE, () => {
   const f = fixture();
   try {
-    f.put("uname", "echo Linux");
+    f.put("uname", "echo Darwin");
     f.put("node", `if [ "$1" = --version ]; then echo v22.0.0; else exec "${process.execPath}" "$@"; fi`);
     const settings = (dir, env) => {
       fs.mkdirSync(dir, { recursive: true });
@@ -199,9 +272,18 @@ test("loom-status Node check knows Claude Code by where it is installed", NEEDS_
     const custom = installAt(path.join(f.env.CLAUDE_CONFIG_DIR, "plugins", "cache", "loom", "loom", "1.2.7"));
     const r = f.runAt(custom, "--check");
     assert.match(r.stdout, /Found only with this shell's environment: Claude Code/);
-    assert.ok(r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")}.`), r.stdout);
-    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", LOOM_NODE: path.join(f.bin, "node") });
+    assert.ok(
+      r.stdout.includes(`env block of ${path.join(f.env.CLAUDE_CONFIG_DIR, "settings.json")} to the whole search path`),
+      r.stdout,
+    );
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "", PATH: f.bin });
     assert.doesNotMatch(f.runAt(custom, "--check").stdout, /Found only/);
+    // A Linux desktop session's PATH is not the bare system one: no warning.
+    settings(f.env.CLAUDE_CONFIG_DIR, { LOOM_NODE_SYSTEM_DIRS: "" });
+    f.put("uname", "echo Linux");
+    const linux = f.runAt(custom, "--check");
+    assert.equal(linux.status, 0, linux.stderr);
+    assert.doesNotMatch(linux.stdout, /Found only/);
   } finally {
     fs.rmSync(f.dir, { recursive: true, force: true });
   }
@@ -228,23 +310,37 @@ test("loom-status Node check under Codex warns when the header helper's environm
   }
 });
 
-nodeTest("on Windows the helper checks through the launcher and names no installer", { skip: !WINDOWS }, () => {
-  const sh = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "sh.exe");
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-node-bootstrap-"));
-  try {
-    // No APPDATA or LOCALAPPDATA: the launcher's Windows install directories
-    // are not searched, so only PATH can supply a Node.
-    const env = (PATH) => hostEnv({ PATH, HOME: dir, TMPDIR: dir, PROGRAMFILES: dir, LOOM_NODE_SYSTEM_DIRS: "" });
-    const ready = spawnSync(sh, [helper, "--check"], { encoding: "utf8", env: env(process.env.PATH) });
-    assert.equal(ready.status, 0, ready.stderr);
-    assert.match(ready.stdout, /^Loom hook runtime ready: /);
-    const noNode = process.env.PATH.split(path.delimiter)
-      .filter((d) => !fs.existsSync(path.join(d, "node.exe")))
-      .join(path.delimiter);
-    const r = spawnSync(sh, [helper], { encoding: "utf8", env: env(noNode) });
-    assert.equal(r.status, 2, r.stderr);
-    assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+, or set LOOM_NODE=/);
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+nodeTest(
+  "on Windows the helper names no installer, and a Claude Code install is known by its backslash path",
+  { skip: !WINDOWS },
+  () => {
+    const sh = path.join(process.env.ProgramFiles || "C:\\Program Files", "Git", "bin", "sh.exe");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-node-bootstrap-"));
+    try {
+      // No APPDATA or LOCALAPPDATA: the launcher's Windows install directories
+      // are not searched, so only PATH can supply a Node.
+      const env = (PATH) => hostEnv({ PATH, HOME: dir, TMPDIR: dir, PROGRAMFILES: dir, LOOM_NODE_SYSTEM_DIRS: "" });
+      const ready = spawnSync(sh, [helper, "--check"], { encoding: "utf8", env: env(process.env.PATH) });
+      assert.equal(ready.status, 0, ready.stderr);
+      assert.match(ready.stdout, /^Loom hook runtime ready: /);
+      const noNode = process.env.PATH.split(path.delimiter)
+        .filter((d) => !fs.existsSync(path.join(d, "node.exe")))
+        .join(path.delimiter);
+      const r = spawnSync(sh, [helper], { encoding: "utf8", env: env(noNode) });
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(r.stderr, /No installer for this OS; install Node\.js 18\+ on PATH\./);
+      // Installed where Claude Code puts it, run by its backslash path: the check
+      // judges the node on PATH, though LOOM_NODE gives the launcher one.
+      const installed = installAt(path.join(dir, ".claude", "plugins", "cache", "loom", "loom", "1.2.21"));
+      assert.ok(installed.includes("\\"), installed);
+      const claude = spawnSync(sh, [installed, "--check"], {
+        encoding: "utf8",
+        env: { ...env(noNode), LOOM_NODE: process.execPath },
+      });
+      assert.equal(claude.status, 1, claude.stdout);
+      assert.match(claude.stderr, /^loom: no `node` on this PATH; Claude Code's hooks run the first one there\.\n$/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);

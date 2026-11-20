@@ -115,6 +115,7 @@ async def set_password_page(code: str = "") -> Response:
 
 @router.post("/oauth/set-password")
 async def set_password(request: Request) -> Response:
+    from server.auth.authz import identity_write
     from server.auth.passwords import hash_password_off_loop
 
     f = await oauth.form_body(request)
@@ -149,13 +150,14 @@ async def set_password(request: Request) -> Response:
         await sso_links.link(email, accounts, "password-link")
         now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
         # Insert-as-replace carrying every other column forward.
-        await get_client().insert(
-            "loom.namespaces",
-            [
-                {**r, "password_hash": password_hash, "updated_at": max(now, r["updated_at"])}
-                for r in rows
-            ],
-        )
+        with identity_write():
+            await get_client().insert(
+                "loom.namespaces",
+                [
+                    {**r, "password_hash": password_hash, "updated_at": max(now, r["updated_at"])}
+                    for r in rows
+                ],
+            )
         await audit.emit(
             "auth.password_set",
             org=org,

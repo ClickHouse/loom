@@ -9,7 +9,8 @@ import {
   type SearchHit,
 } from "../api";
 import { CARD_VALUE_CHARS } from "../components/MemoryCard";
-import { errorRequestId, humanizeError } from "../lib/format";
+import { errorRequestId } from "../lib/format";
+import { humanizeError } from "../lib/errorWords";
 import { useAbortableEffect, useVisiblePoll } from "../lib/hooks";
 import { KEYWORD_PAGE, keywordThenRanked } from "../lib/memoriesSearch";
 
@@ -383,6 +384,9 @@ export function useMemoryListRead({
   // The filter the rows on screen were read for: until a read of the current one lands,
   // the old rows stay up and "nothing matches" is not said.
   const [readFor, setReadFor] = useState<ListFilter | null>(null);
+  // The namespace (`org/namespace`) the rows on screen were read in: until a read there
+  // lands, the rows are the last namespace's.
+  const [listedIn, setListedIn] = useState("");
   // A filtered list's rows are its own once its read has answered.
   const filterRead = readFor !== null && sameFilter(readFor, filter);
   // A filtered list holds every match already: its pages and page size need no read.
@@ -457,6 +461,7 @@ export function useMemoryListRead({
           if (isFirst) {
             knownKeysRef.current = new Set(r.entries.map((e) => e.memory_key));
             setEntries(r.entries);
+            setListedIn(`${identity.org}/${identity.namespace}`);
             setEntriesAt({ page: off / lim, size: lim });
             setReadFor(filter);
             setLoadError(null);
@@ -494,7 +499,7 @@ export function useMemoryListRead({
             setRefreshing(false);
             // Say so inline — an empty list that is really a failed read looked like "no
             // memories yet".
-            setLoadError({ text: humanizeError(e), requestId: errorRequestId(e) });
+            setLoadError({ text: humanizeError(e, { read: true }), requestId: errorRequestId(e) });
             setEntries([]);
           }
         }
@@ -529,6 +534,7 @@ export function useMemoryListRead({
     entriesAt,
     browsedTotal,
     filterRead,
+    listedIn,
     retry,
   };
 }

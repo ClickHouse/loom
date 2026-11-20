@@ -1,13 +1,17 @@
-"""knowledge.synthesize: map-reduce over every active chunk of the named
+"""knowledge.synthesize: map-reduce over every served chunk of the named
 documents, and a calculation over the named datasets."""
 
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, get_args
 
 import pydantic
 
+from server.core import request_tail
+from server.core.ch import set_query_tag
+from server.core.diagnostics import private_work
 from server.core.errors import NotFoundError, ValidationError
 from server.knowledge.api.models_knowledge import (
     KnowledgeDatasetGetInput,
@@ -17,6 +21,7 @@ from server.knowledge.api.models_knowledge import (
     _CitedChunk,
 )
 from server.knowledge.api.models_query import KnowledgeQueryInput
+from server.knowledge.app import source_access, source_corpus
 from server.knowledge.app.datasets import handle_knowledge_dataset_get
 from server.knowledge.app.document_reads import document_chunks
 from server.knowledge.app.query import handle_knowledge_query
@@ -34,7 +39,7 @@ _PLAN_TRIES = 2  # not a setting: one plan, and one more told why the first was 
 async def handle_knowledge_synthesize(
     input: KnowledgeSynthesizeInput,
 ) -> KnowledgeSynthesizeOutput:
-    """Map-reduce over every active chunk of the named documents: windows by section and
+    """Map-reduce over every served chunk of the named documents: windows by section and
     size, one LLM note per window with chunk citations, notes folded into the answer
     (hierarchically when they do not fit one call). With datasets, a calculation over
     them (`_calculate`) is one more note the answer cites. Cost-cap gated like memory.ask;
@@ -42,11 +47,25 @@ async def handle_knowledge_synthesize(
     dataset's schema needs an answer, the model would need to ask first or proposes no
     plan that holds, or the answer is empty as written or once citations of what it did
     not read are removed."""
+    plan = await source_access.prepare(input.org, [input.namespace])
+    with private_work() if plan.marked else nullcontext():
+        try:
+            with request_tail.publication_group() as publication:
+                result = await _synthesize(input, plan)
+                publication.commit()
+                return result
+        except source_corpus.LostCorpus:
+            return _abstain("no_chunks")
+
+
+async def _synthesize(
+    input: KnowledgeSynthesizeInput, plan: source_access.ReadPlan
+) -> KnowledgeSynthesizeOutput:
     from server.memory.domain import corpus_synthesis as cs
     from server.observability.budget import namespace_over_cap
     from server.settings import settings as _s
 
-    if await namespace_over_cap(input.org, input.namespace):
+    if await namespace_over_cap(input.org, input.namespace, user_id=input.user_id):
         return _abstain("budget_capped")
     synth_model = _s.memory_ask_synth_model.strip()
     if synth_model:
@@ -68,7 +87,23 @@ async def handle_knowledge_synthesize(
         calculation, note = done
         notes.append(note)
     # Read after the calculation, so one that abstains reads no document.
-    chunks, docs = await _corpus_chunks(input)
+    proofs = None
+    if plan.marked:
+        from server.embedding import get_embedder
+
+        corpus = await source_corpus.load(
+            plan,
+            input.namespace,
+            input.source_uris,
+            ordinary_chunks=document_chunks,
+            model=get_embedder().model_name,
+        )
+        chunks, docs, proofs = corpus.chunks, corpus.documents, corpus.proofs
+    else:
+        chunks, docs = await _corpus_chunks(input)
+    generation_llm = (
+        source_corpus.CheckedLLM(llm, proofs) if proofs is not None and proofs.mirrored else llm
+    )
     if not chunks and calculation is None:
         return _abstain("no_chunks")
     wins = cs.windows(chunks, window_chars=input.window_chars)
@@ -76,15 +111,10 @@ async def handle_knowledge_synthesize(
     wins = wins[: input.max_windows]
     note_tokens = max(256, min(2000, input.window_chars // 12))
 
-    async def _map(w: cs.Window) -> str:
-        with llm_stage("knowledge_synthesize_map"):
-            res = await llm.complete(
-                cs.MAP_SYSTEM, cs.map_prompt(input.task, w), max_tokens=note_tokens
-            )
-        return (getattr(res, "text", "") or "").strip()
-
-    notes += [n for n in await asyncio.gather(*[_map(w) for w in wins]) if n]
-    answer, rounds = await _reduce(input, llm, notes, note_tokens)
+    notes += await _map_notes(input, generation_llm, wins, note_tokens)
+    answer, rounds = await _reduce(input, generation_llm, notes, note_tokens)
+    if proofs is not None:
+        await proofs.check()
     # Grounded before the cut, so removed citations take no room; a kept citation the
     # cut halves is no longer one, so `citations` is read again from what is returned.
     by_key = {(c.source_uri, c.idx): c for w in wins for c in w.chunks}
@@ -97,6 +127,9 @@ async def handle_knowledge_synthesize(
     if not any(ch.isalnum() for ch in answer):
         answer = ""
     located = _located(by_key, [k for k in cs.cited_chunks(cited, read) if k in by_key])
+    from server.knowledge.app import source_publication
+
+    source_publication.retain(proofs)
     return KnowledgeSynthesizeOutput(
         answer=answer,
         windows=len(wins),
@@ -112,6 +145,30 @@ async def handle_knowledge_synthesize(
         calculations=[calculation] if calculation is not None else [],
         model=model,
     )
+
+
+async def _map_notes(
+    input: KnowledgeSynthesizeInput, llm: Any, wins: list[Any], note_tokens: int
+) -> list[str]:
+    from server.memory.domain import corpus_synthesis as cs
+
+    set_query_tag("knowledge.synthesize.map")
+
+    async def map_one(window: cs.Window) -> str:
+        with llm_stage("knowledge_synthesize_map"):
+            result = await llm.complete(
+                cs.MAP_SYSTEM, cs.map_prompt(input.task, window), max_tokens=note_tokens
+            )
+        return (getattr(result, "text", "") or "").strip()
+
+    tasks = [asyncio.create_task(map_one(window)) for window in wins]
+    try:
+        return [note for note in await asyncio.gather(*tasks) if note]
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
 
 
 async def _reduce(
@@ -324,7 +381,7 @@ def _located(
 
 
 async def _corpus_chunks(input: KnowledgeSynthesizeInput) -> tuple[list[CorpusChunk], int]:
-    """Every active chunk of the named documents, in document order, and how
+    """Every served chunk of the named documents, in document order, and how
     many of the documents had any."""
     chunks: list[CorpusChunk] = []
     docs = 0

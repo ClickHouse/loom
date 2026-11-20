@@ -59,7 +59,8 @@ def _state_ts_page_segments() -> set[str]:
 def test_page_segments_are_the_frontend_views() -> None:
     from server.identity.app.dashboard_routes import PAGE_SEGMENTS
 
-    assert _state_ts_page_segments() == set(PAGE_SEGMENTS)
+    # `assistant` is no view: a bookmarked address the dashboard answers.
+    assert _state_ts_page_segments() | {"assistant"} == set(PAGE_SEGMENTS)
 
 
 def test_no_api_route_uses_a_page_segment() -> None:
@@ -173,6 +174,15 @@ def test_the_page_says_whether_loom_itself_asked_for_it(client, headers, own: bo
     assert r.status_code == 200
     flag = "true" if own else "false"
     assert f"window.__LOOM_OWN_ORIGIN = {flag};" in r.text
+
+
+@pytest.mark.parametrize(("url", "on"), [("http://chat.internal:3080", True), ("", False)])
+def test_the_page_says_whether_the_assistant_chat_is_set_up(client, monkeypatch, url, on) -> None:
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "assistant_librechat_url", url)
+    r = client.get("/memories")
+    assert f"window.__LOOM_ASSISTANT = {'true' if on else 'false'};" in r.text
 
 
 def test_a_referer_on_the_default_port_is_the_public_origin(client, monkeypatch) -> None:

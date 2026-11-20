@@ -4,9 +4,13 @@ synthesized result."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable, Coroutine
+from dataclasses import replace
+from functools import partial
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.knowledge.app.source_corpus import LostCorpus
 from server.memory.app.ask.abstain import _early_answer
 from server.memory.app.ask.cascade import (
     _answer_with_deep_pass,
@@ -15,7 +19,12 @@ from server.memory.app.ask.cascade import (
     _mid_verify,
     _route_tier,
 )
-from server.memory.app.ask.context_blocks import knowledge_passages, recent_turns_block
+from server.memory.app.ask.context_blocks import (
+    AskKnowledge,
+    CheckedAskLLM,
+    knowledge_passages,
+    recent_turns_block,
+)
 from server.memory.app.ask.pool import (
     _ask_pool_size,
     _AskRun,
@@ -40,6 +49,12 @@ from server.memory.app.ask.result import (
     answer_grounding,
     pool_composition,
 )
+from server.memory.app.ask.source_context import (
+    PreparedKnowledge,
+    cancel_and_drain,
+    owned_attempt,
+    prepare_knowledge,
+)
 from server.memory.app.ask.state import (
     _LAST_COUNT_RECOMPUTED,
     _LAST_SYNTH_MODEL,
@@ -49,6 +64,7 @@ from server.memory.app.ask.state import (
     _synth_telemetry,
 )
 from server.memory.domain import ask_attribution as _attr
+from server.memory.domain.search_types import governed_after_computed
 
 
 def _world_knowledge_allowed(world_knowledge: str | None, settings: Any) -> bool:
@@ -227,27 +243,22 @@ def _presupposition_on(presupposition_rule: bool | None) -> bool:
 
 
 def _start_knowledge_read(
-    search_input: Any, question: str | None, knowledge: bool | None
-) -> asyncio.Task[tuple[str, int]]:
+    search_input: Any,
+    question: str | None,
+    knowledge: bool | None,
+    prepared: PreparedKnowledge,
+) -> asyncio.Task[AskKnowledge]:
     """The knowledge plane's lookup (its own query embedding and a hybrid
     read) depends only on the request, so it starts here and is awaited right
-    before synthesis; memory retrieval runs meanwhile. `knowledge_passages` is
-    fail-open inside, so the task never raises."""
-    task: asyncio.Task[tuple[str, int]] = create_deferred_task(
-        knowledge_passages(search_input, question or search_input.query, enabled=knowledge)
+    before synthesis; memory retrieval runs meanwhile. Cancellation and failed
+    access proofs propagate; an unavailable ordinary plane contributes no passages."""
+    task = create_deferred_task(
+        knowledge_passages(
+            search_input, question or search_input.query, enabled=knowledge, prepared=prepared
+        )
     )
     task.add_done_callback(_retain_task_result)
     return task
-
-
-def _knowledge_not_needed(task: asyncio.Task[tuple[str, int]]) -> None:
-    """Cancel the knowledge read if it is still running, so its ClickHouse read
-    does not outlive the ask: an ask that returns early (abstained, record,
-    retrieval-only, capped, no client, precedent) or raises never reads the
-    block, and a read left running lands in whatever client the loop serves
-    next — under the unit suite's session loop, the next test's fake."""
-    if not task.done():
-        task.cancel()
 
 
 async def _fill_pool(
@@ -271,9 +282,105 @@ async def _fill_pool(
     # The hard tag belt and the authority's check, after the last leg that adds a row.
     run.ranked = await _tag_belt(run.ranked, run.search_input)
     run.ranked = await _served_pool(run.ranked, run.search_input)
+    # The reranks and injections above order by recency and identifiers: a governed
+    # definition any of the searches served leads again.
+    run.ranked = governed_after_computed(run.ranked, str(run.search_input.namespace))
     run.results = run.ranked[: run.target_k]
     run.synth_pool = run.ranked[: run.window]
     return notes
+
+
+async def _generate_answer(
+    knowledge_block: str,
+    knowledge_hits: int,
+    checked: AskKnowledge | None,
+    *,
+    run: _AskRun,
+    reader: _AskReader,
+    tier: str,
+    reason: str,
+    client: Any,
+    llm: Any,
+    llm_cheap: Any,
+    depth: str,
+    temporal_question: bool,
+    deep_select: str | None,
+    deep_first: bool | None,
+    consistency_mode: str | None,
+    premise: Any,
+    precedent_key: str,
+    precedent_shape: str,
+) -> MemoryAskResult:
+    reader = replace(reader, knowledge_block=knowledge_block)
+    if checked is not None:
+        client = CheckedAskLLM(client, checked) if client is not None else None
+        llm = CheckedAskLLM(llm, checked) if llm is not None else None
+        llm_cheap = CheckedAskLLM(llm_cheap, checked) if llm_cheap is not None else None
+    ans = _AskAnswer(tier=tier, reason=reason, client=client)
+    await _answer_with_deep_pass(
+        run,
+        reader,
+        ans,
+        llm=llm,
+        llm_cheap=llm_cheap,
+        depth=depth,
+        temporal_question=temporal_question,
+        deep_select=deep_select,
+        deep_first=deep_first,
+    )
+
+    await _mid_verify(run, reader, ans, llm=llm)
+
+    verdict, note, premise_text, _deferred_run = await _audit_answer(
+        run,
+        ans,
+        llm=llm,
+        llm_cheap=llm_cheap,
+        consistency_mode=consistency_mode,
+        premise=premise,
+        precedent_key=precedent_key,
+        precedent_shape=precedent_shape,
+    )
+    if checked is not None:
+        await checked.require()
+        if not checked.fresh():
+            raise LostCorpus()
+    return _synthesized_result(
+        run,
+        reader,
+        ans,
+        verdict=verdict,
+        note=note,
+        premise=premise,
+        premise_text=premise_text,
+        deferred_run=_deferred_run,
+        knowledge_hits=knowledge_hits,
+    )
+
+
+async def _answer_with_knowledge(
+    generate: Callable[[str, int, AskKnowledge | None], Coroutine[Any, Any, MemoryAskResult]],
+    knowledge: AskKnowledge,
+    *,
+    marked: bool,
+) -> MemoryAskResult:
+    block, hits = await knowledge.current()
+    if not marked:
+        return await generate(block, hits, None)
+    if knowledge.mirrored:
+        try:
+            result = await owned_attempt(generate(block, hits, knowledge))
+            if not knowledge.fresh():
+                raise LostCorpus()
+            from server.knowledge.app import source_publication
+
+            if knowledge.passages is not None:
+                for proof in knowledge.passages.publication_proofs():
+                    source_publication.retain(proof)
+            return result
+        except LostCorpus:
+            block, hits = await knowledge.ordinary()
+    return await owned_attempt(generate(block, hits, None))
 
 
 async def ask(
@@ -309,6 +416,7 @@ async def ask(
     route_prior: str | None = None,
     route_prior_max_cheap: float | None = None,
     default_answer_chars: int | None = None,
+    prepared_knowledge: PreparedKnowledge | None = None,
 ) -> MemoryAskResult:
     """Retrieve then optionally synthesize. `search_input` is a ready
     MemorySearchInput; `llm`, `allow_synthesis` and `budget_capped` are decided
@@ -336,143 +444,139 @@ async def ask(
     served, without an LLM call, if the synthesis window is byte-identical
     to the evidence it was written from; after a fresh answer that cites,
     the answer is stored as the new precedent."""
-    recent_block = recent_turns_block(recent_messages or [])
-    search_input, precedent_key = _pin_identity(search_input, precedent_key)
-    # An advice request presupposes no recorded event ("would it be a good idea to
-    # attend my reunion?"): its answer is the advice, never a note that the
-    # memories hold no reunion.
-    from server.memory.app.ask_when_evidence import is_advice_request
-
-    presupposition = _presupposition_on(presupposition_rule) and not is_advice_request(
-        question or ""
-    )
-    _knowledge_task = _start_knowledge_read(search_input, question, knowledge)
-
-    # Every exit below — an early answer, a precedent, an error — leaves the
-    # knowledge read cancelled; after a normal await it is already done.
-    try:
-        # `question` is the text the model answers; search_input.query is what
-        # retrieval embedded (the stem, when the caller's query carried an answer
-        # scaffold). Same string on the plain path.
-        question = question or search_input.query
-        _set_request_overrides(recount, personalize)
-        from server.settings import settings as _settings
-
-        run = _ask_pool_size(
-            search_input,
-            question,
-            set_window=set_window,
-            settings=_settings,
+    if prepared_knowledge is None:
+        prepared_knowledge = await prepare_knowledge(
+            search_input, question or search_input.query, enabled=knowledge
         )
-        _prior_result = await _fast_precedent(
-            run.search_input, precedent_key, precedent_shape, _settings
+    with prepared_knowledge.scope():
+        if prepared_knowledge.plan.marked:
+            precedent_key = ""
+        recent_block = recent_turns_block(recent_messages or [])
+        search_input, precedent_key = _pin_identity(search_input, precedent_key)
+        # An advice request presupposes no recorded event ("would it be a good idea to
+        # attend my reunion?"): its answer is the advice, never a note that the
+        # memories hold no reunion.
+        from server.memory.app.ask_when_evidence import is_advice_request
+
+        presupposition = _presupposition_on(presupposition_rule) and not is_advice_request(
+            question or ""
         )
-        if _prior_result is not None:
-            return _prior_result
-        inference_note, temporal_derive, chain_note = await _fill_pool(
-            run, llm=llm, llm_cheap=llm_cheap, decompose=decompose
-        )
-        _wk_allow = _world_knowledge_allowed(world_knowledge, _settings)
-
-        early, hedge_ident = await _early_answer(
-            run,
-            allow_synthesis=allow_synthesis,
-            budget_capped=budget_capped,
-            llm=llm,
-            gh_items_fallback=gh_items_fallback,
-        )
-        if early is not None:
-            return early
-
-        await _ground_and_cut(run, window_rel_floor)
-
-        # ---- grounded synthesis --------------------------------------------------
-        record_note = await _settle_window(run, token_budget=token_budget)
-        prior_result = await _reuse_precedent(run, precedent_key, precedent_shape)
-        if prior_result is not None:
-            return prior_result
-        timeline_text, temporal_question, as_of = _read_time(run)
-        omitted = _omitted_rows(run)
-
-        answer_chars = _answer_chars(
-            question,
-            run.intent,
-            max_answer_chars=max_answer_chars,
-            default_answer_chars=default_answer_chars,
-            settings=_settings,
+        _knowledge_task = _start_knowledge_read(
+            search_input, question, knowledge, prepared_knowledge
         )
 
-        tier, reason, client, stage = _route_tier(
-            run,
-            llm=llm,
-            llm_cheap=llm_cheap,
-            llm_mid=llm_mid,
-            hedge_ident=hedge_ident,
-            as_of=as_of,
-            budget_ratio=budget_ratio,
-            route_prior=route_prior,
-            route_prior_max_cheap=route_prior_max_cheap,
-            mid_routes=mid_routes,
-        )
+        # Every exit below — an early answer, a precedent, an error — leaves the
+        # knowledge read cancelled; after a normal await it is already done.
+        try:
+            # `question` is the text the model answers; search_input.query is what
+            # retrieval embedded (the stem, when the caller's query carried an answer
+            # scaffold). Same string on the plain path.
+            question = question or search_input.query
+            _set_request_overrides(recount, personalize)
+            from server.settings import settings as _settings
 
-        premise, premise_system = await _check_premise(run, llm=llm, llm_cheap=llm_cheap)
+            run = _ask_pool_size(
+                search_input,
+                question,
+                set_window=set_window,
+                settings=_settings,
+            )
+            _prior_result = await _fast_precedent(
+                run.search_input, precedent_key, precedent_shape, _settings
+            )
+            if _prior_result is not None:
+                return _prior_result
+            inference_note, temporal_derive, chain_note = await _fill_pool(
+                run, llm=llm, llm_cheap=llm_cheap, decompose=decompose
+            )
+            _wk_allow = _world_knowledge_allowed(world_knowledge, _settings)
 
-        knowledge_block, knowledge_hits = await _knowledge_task
-        reader = _AskReader(
-            question=question,
-            answer_chars=answer_chars,
-            hedge_ident=hedge_ident,
-            as_of=as_of,
-            stage=stage,
-            recent_block=recent_block,
-            presupposition=presupposition,
-            record_note=record_note,
-            inference_note=inference_note,
-            temporal_derive=temporal_derive,
-            chain_note=chain_note,
-            knowledge_block=knowledge_block,
-            intent=run.intent,
-            omitted=omitted,
-            timeline=timeline_text,
-            premise_system=premise_system,
-            world_knowledge=_wk_allow,
-            scratchpad=scratchpad,
-        )
-        ans = _AskAnswer(tier=tier, reason=reason, client=client)
-        await _answer_with_deep_pass(
-            run,
-            reader,
-            ans,
-            llm=llm,
-            llm_cheap=llm_cheap,
-            depth=depth,
-            temporal_question=temporal_question,
-            deep_select=deep_select,
-            deep_first=deep_first,
-        )
+            early, hedge_ident = await _early_answer(
+                run,
+                allow_synthesis=allow_synthesis,
+                budget_capped=budget_capped,
+                llm=llm,
+                gh_items_fallback=gh_items_fallback,
+            )
+            if early is not None:
+                return early
 
-        await _mid_verify(run, reader, ans, llm=llm)
+            await _ground_and_cut(run, window_rel_floor)
 
-        verdict, note, premise_text, _deferred_run = await _audit_answer(
-            run,
-            ans,
-            llm=llm,
-            llm_cheap=llm_cheap,
-            consistency_mode=consistency_mode,
-            premise=premise,
-            precedent_key=precedent_key,
-            precedent_shape=precedent_shape,
-        )
-        return _synthesized_result(
-            run,
-            reader,
-            ans,
-            verdict=verdict,
-            note=note,
-            premise=premise,
-            premise_text=premise_text,
-            deferred_run=_deferred_run,
-            knowledge_hits=knowledge_hits,
-        )
-    finally:
-        _knowledge_not_needed(_knowledge_task)
+            # ---- grounded synthesis --------------------------------------------------
+            record_note = await _settle_window(run, token_budget=token_budget)
+            prior_result = await _reuse_precedent(run, precedent_key, precedent_shape)
+            if prior_result is not None:
+                return prior_result
+            timeline_text, temporal_question, as_of = _read_time(run)
+            omitted = _omitted_rows(run)
+
+            answer_chars = _answer_chars(
+                question,
+                run.intent,
+                max_answer_chars=max_answer_chars,
+                default_answer_chars=default_answer_chars,
+                settings=_settings,
+            )
+
+            tier, reason, client, stage = _route_tier(
+                run,
+                llm=llm,
+                llm_cheap=llm_cheap,
+                llm_mid=llm_mid,
+                hedge_ident=hedge_ident,
+                as_of=as_of,
+                budget_ratio=budget_ratio,
+                route_prior=route_prior,
+                route_prior_max_cheap=route_prior_max_cheap,
+                mid_routes=mid_routes,
+            )
+
+            premise, premise_system = await _check_premise(run, llm=llm, llm_cheap=llm_cheap)
+
+            knowledge_context = await _knowledge_task
+            reader = _AskReader(
+                question=question,
+                answer_chars=answer_chars,
+                hedge_ident=hedge_ident,
+                as_of=as_of,
+                stage=stage,
+                recent_block=recent_block,
+                presupposition=presupposition,
+                record_note=record_note,
+                inference_note=inference_note,
+                temporal_derive=temporal_derive,
+                chain_note=chain_note,
+                knowledge_block="",
+                intent=run.intent,
+                omitted=omitted,
+                timeline=timeline_text,
+                premise_system=premise_system,
+                world_knowledge=_wk_allow,
+                scratchpad=scratchpad,
+            )
+            generate = partial(
+                _generate_answer,
+                run=run,
+                reader=reader,
+                tier=tier,
+                reason=reason,
+                client=client,
+                llm=llm,
+                llm_cheap=llm_cheap,
+                depth=depth,
+                temporal_question=temporal_question,
+                deep_select=deep_select,
+                deep_first=deep_first,
+                consistency_mode=consistency_mode,
+                premise=premise,
+                precedent_key=precedent_key,
+                precedent_shape=precedent_shape,
+            )
+            return await _answer_with_knowledge(
+                generate, knowledge_context, marked=prepared_knowledge.plan.marked
+            )
+
+        finally:
+            if not _knowledge_task.done():
+                await cancel_and_drain(_knowledge_task)

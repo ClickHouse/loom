@@ -1,17 +1,18 @@
-"""Agent-events emitter — batched async writer for `loom.agent_events`.
+"""Ordinary events use the shared queue; private events use their required writer.
 
 Every operation emits exactly one row. The transport layer calls
 `emit()` after each request (success or failure). Writes are batched:
 flush every 100 ms or every 500 rows, whichever comes first.
 
-Failure to write an event must never fail a request. Errors are logged
-and dropped; the at-most-once semantics are acceptable for cost
-attribution at this scale.
+Ordinary events use a best-effort shared queue: failed batches are logged and
+dropped. Private source events and marked request witnesses use direct awaited
+writes; their owners handle failure without shared queue statistics.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -26,6 +27,30 @@ log = logging.getLogger(__name__)
 FLUSH_INTERVAL_S = 0.1
 FLUSH_BATCH = 500
 SHUTDOWN_DRAIN_S = 5.0
+
+
+def for_this_cell(event: AgentEvent) -> AgentEvent:
+    """A request event for an org a cell does not hold keeps its op, timing and
+    outcome but names no tenant: its org, identity and arguments belong to another
+    cell, whose erasure never reaches this one (docs/architecture/cells.md)."""
+    from server.auth import tenancy
+
+    if event.kind != "request" or tenancy.attributable(event.org):
+        return event
+    return dataclasses.replace(
+        event,
+        org="-",
+        namespace="-",
+        agent="-",
+        user_id="-",
+        session_id="-",
+        memory_key="",
+        impersonated_by="",
+        run_id="",
+        subject="",
+        consumer="",
+        args={},
+    )
 
 
 @dataclass
@@ -95,6 +120,8 @@ class AgentEvent:
     slo_class: str = ""
     status_class: str = ""
     budget_ms: int = 0
+    # The logical request marks itself before any mirror admission.
+    mirror_marked: bool = False
 
     def to_row(self) -> dict[str, Any]:
         row: dict[str, Any] = {
@@ -127,6 +154,7 @@ class AgentEvent:
             "slo_class": self.slo_class,
             "status_class": self.status_class,
             "budget_ms": self.budget_ms,
+            "mirror_marked": int(self.mirror_marked),
             "response_tokens": self.response_tokens,
             "consumer": self.consumer,
             "traffic_class": self.traffic_class,
@@ -169,8 +197,9 @@ class EventEmitter:
         # Process-lifetime task: it must not inherit the tag, request id or
         # auth of whichever request first started it.
         from server.core.background import detached_task
+        from server.core.retirement import get_gate
 
-        self._task = detached_task(self._drain_loop(), name="loom-events-drain")
+        self._task = get_gate().track(detached_task(self._drain_loop(), name="loom-events-drain"))
 
     async def stop(self) -> None:
         self._running = False
@@ -188,6 +217,12 @@ class EventEmitter:
 
     def emit(self, event: AgentEvent) -> None:
         """Fire-and-forget. Never raises; never blocks the request."""
+        from server.core.diagnostics import codes_only
+        from server.core.naming import is_mirror_name
+
+        if codes_only() or event.mirror_marked or is_mirror_name(event.namespace):
+            return
+        event = for_this_cell(event)
         try:
             self.queue.put_nowait(event)
         except asyncio.QueueFull:
@@ -253,6 +288,10 @@ class EventEmitter:
                 batch.append(self.queue.get_nowait())
             except asyncio.QueueEmpty:
                 break
+        from server.core.naming import is_mirror_name
+
+        # An accidentally queued private row never enters ordinary storage or loss counts.
+        batch = [e for e in batch if not e.mirror_marked and not is_mirror_name(e.namespace)]
         if not batch:
             return
         self._inflight += 1
@@ -293,3 +332,37 @@ _emitter = EventEmitter()
 
 def get_emitter() -> EventEmitter:
     return _emitter
+
+
+async def write_private_event(event: AgentEvent) -> None:
+    """Write a mirror's event inside its private scope, without shared queue statistics."""
+    from server.core.diagnostics import codes_only
+    from server.core.naming import is_mirror_name
+
+    if not codes_only() or not is_mirror_name(event.namespace):
+        raise ValueError("private events require a mirror and a private scope")
+    await get_client().insert(
+        "loom.agent_events_private",
+        [for_this_cell(event).to_row()],
+        settings=batched_insert_settings(),
+        required_columns=frozenset({"mirror_marked"}),
+    )
+
+
+async def write_marked_request_event(event: AgentEvent) -> None:
+    """Commit a captured marked request with the server clock, outside the queue."""
+    from server.core.diagnostics import codes_only
+    from server.observability.event_args import marked_request_args
+
+    if not codes_only() or event.kind != "request" or event.mirror_marked is not True:
+        raise ValueError("marked request events require a private scope and server classification")
+    row = for_this_cell(event).to_row()
+    row.pop("ts", None)
+    row["args"] = marked_request_args(row["args"])
+    row["memory_key"] = ""
+    await get_client().insert(
+        "loom.agent_events_private",
+        [row],
+        settings=batched_insert_settings(),
+        required_columns=frozenset({"mirror_marked"}),
+    )

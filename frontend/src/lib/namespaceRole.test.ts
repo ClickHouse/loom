@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
 import {
   canWrite,
+  needsRole,
   roleOnNamespace,
   canEditGuide,
   resetNamespaceRoleCache,
@@ -70,6 +71,21 @@ describe("roleOnNamespace", () => {
     expect(roleOnNamespace(user(["WRITER"]), [row("team", "writer", "pending")], "team")).toBeNull();
     expect(roleOnNamespace(user(["WRITER"]), [row("other", "writer")], "team")).toBeNull();
   });
+
+  it("no row is unknown, under a `*` claim or a named one, and so is a pending row", () => {
+    const named = (roles: string[], namespaces: string[]) => ({ ...user(roles), namespaces });
+    expect(roleOnNamespace(named(["WRITER"], ["*"]), [], "team")).toBeNull();
+    expect(roleOnNamespace(named(["VIEWER"], ["team"]), [], "team")).toBeNull();
+    // A pending row is unknown on purpose, whatever the token claims.
+    expect(roleOnNamespace(named(["WRITER"], ["*"]), [row("team", "writer", "pending")], "team")).toBeNull();
+  });
+});
+
+describe("needsRole", () => {
+  it("names the role, the namespace and who grants it", () => {
+    expect(needsRole("writer", "team")).toBe("Needs writer on team. An admin of it can grant that.");
+    expect(needsRole("admin", "team")).toBe("Needs admin on team. An admin of it can grant that.");
+  });
 });
 
 describe("canWrite", () => {
@@ -113,17 +129,17 @@ describe("useNamespaceRoleRead", () => {
     listMine.mockImplementationOnce(() => new Promise((r) => (answer = r)));
     signIn();
     const { result } = renderHook(() => useNamespaceRoleRead("team"));
-    expect(result.current).toEqual({ role: null, loading: true });
+    expect(result.current).toMatchObject({ role: null, loading: true });
     await act(async () => answer([row("team", "viewer")]));
-    expect(result.current).toEqual({ role: "viewer", loading: false });
+    expect(result.current).toMatchObject({ role: "viewer", loading: false });
   });
 
-  it("stops loading when list_mine fails, with the role unknown", async () => {
+  it("stops loading when list_mine fails, with the role unknown and the read failed", async () => {
     listMine.mockRejectedValueOnce(new Error("down"));
     signIn();
     const { result } = renderHook(() => useNamespaceRoleRead("team"));
     await act(async () => {});
-    expect(result.current).toEqual({ role: null, loading: false });
+    expect(result.current).toEqual({ role: null, loading: false, rows: null });
   });
 
   it("drops the rows of the org it left, and loads again for the new one", async () => {
@@ -131,27 +147,27 @@ describe("useNamespaceRoleRead", () => {
     signIn();
     const { result } = renderHook(() => useNamespaceRoleRead("team"));
     await act(async () => {});
-    expect(result.current).toEqual({ role: "writer", loading: false });
+    expect(result.current).toMatchObject({ role: "writer", loading: false });
     let answer: (rows: MyNamespaceEntry[]) => void = () => {};
     listMine.mockImplementationOnce(() => new Promise((r) => (answer = r)));
     act(() => useStore.setState({ identity: { org: "acme", namespace: "team", agent: "loom-ui" } }));
-    expect(result.current).toEqual({ role: null, loading: true });
+    expect(result.current).toMatchObject({ role: null, loading: true });
     await act(async () => answer([row("team", "viewer")]));
-    expect(result.current).toEqual({ role: "viewer", loading: false });
+    expect(result.current).toMatchObject({ role: "viewer", loading: false });
     expect(listMine).toHaveBeenLastCalledWith("acme");
   });
 
   it("is not loading before an org is chosen", () => {
     useStore.setState({ whoami: user(["USER"]), identity: null, myNamespaces: null });
     const { result } = renderHook(() => useNamespaceRoleRead("team"));
-    expect(result.current).toEqual({ role: null, loading: false });
+    expect(result.current).toMatchObject({ role: null, loading: false });
   });
 
   it("reads nothing when the store already holds the rows", () => {
     signIn();
     useStore.setState({ myNamespaces: [row("team", "writer")] });
     const { result } = renderHook(() => useNamespaceRoleRead("team"));
-    expect(result.current).toEqual({ role: "writer", loading: false });
+    expect(result.current).toMatchObject({ role: "writer", loading: false });
     expect(listMine).not.toHaveBeenCalled();
   });
 });

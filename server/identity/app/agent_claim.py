@@ -141,6 +141,19 @@ async def agent_claim(request: Request) -> Response:
     if proven is None:
         return _form(namespace, "That code does not claim this namespace, or it was used.", 400)
     org, code_hash = proven
+    # The namespace's rows are this cell's, so its org is held; checked anyway, so
+    # a claim never writes for an org the cell does not hold (no principal: no
+    # placement).
+    from server.auth import tenancy
+    from server.core.errors import WrongCellError
+
+    try:
+        await tenancy.ensure_held(org, None)
+    except WrongCellError:
+        return _form(namespace, "This namespace cannot be claimed on this server.", 409)
+    except Exception as e:  # noqa: BLE001 — an unread tenancy answers the page, not a bare 500
+        _log_unexpected(namespace, e)
+        return _retry_later(namespace, "The code could not be checked: submit again in a minute.")
     # Hashed only once the code is proven, so a guess costs one hash.
     password_hash = await hash_password_off_loop(password)
     try:
@@ -365,14 +378,17 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
 
 async def _write(row: dict[str, Any], password_hash: str) -> None:
     """Replace the code with the claimer's password and mark the account claimed."""
+    from server.auth.authz import identity_write
+
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     description = str(row["description"])
     if description == AGENT_DESCRIPTION_UNCLAIMED:
         description = AGENT_DESCRIPTION
-    await get_client().insert(
-        "loom.namespaces",
-        [namespaces.claimed_row(row, password_hash, CLAIMED_TAG, description, now)],
-    )
+    with identity_write():
+        await get_client().insert(
+            "loom.namespaces",
+            [namespaces.claimed_row(row, password_hash, CLAIMED_TAG, description, now)],
+        )
 
 
 async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> None:

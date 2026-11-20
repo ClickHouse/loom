@@ -226,7 +226,7 @@ export interface RecordedCalls {
   list: Record<string, unknown>[];
   /** Every `knowledge.list` body — the Library page asks for the fields its rows read. */
   knowledge: Record<string, unknown>[];
-  /** Every `audit.list` body — the Activity page asks for the four fields its rows read. */
+  /** Every `audit.list` body — the Audit log page asks for the four fields its rows read. */
   audit: Record<string, unknown>[];
   other: string[];
 }
@@ -856,6 +856,11 @@ export interface InstallOptions {
   /** The `namespace.list_mine` rows (default: `LIST_MINE.rows`, plus any joined tracker
    *  source namespaces). */
   mine?: Record<string, unknown>[];
+  /** The Sharing page's namespaces (default: none), each with a role. */
+  sharingNamespaces?: { namespace: string; role: string }[];
+  /** Answer `collection.list` with these rows (default: two collections, one inside the
+   *  other). */
+  collections?: Record<string, unknown>[];
   /** The saved pick in localStorage; `null` saves none (default: `NAMESPACE`). */
   savedNamespace?: string | null;
   /** Answer `code.repos` with these rows (joins flip their standing). Default: none. */
@@ -996,6 +1001,16 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
     switch (url.pathname) {
       case "/v1/whoami":
         return json(who);
+      case "/v1/connection.list":
+        return json({
+          connections: ["gdrive", "notion", "linear"].map((kind) => ({
+            kind,
+            connected: false,
+            account_email: null,
+            scopes: [],
+            connect_url: `/settings/connected-accounts?kind=${kind}`,
+          })),
+        });
       // Well-shaped empties for the two summaries the Sharing and Usage views read fields
       // of; the default answer's bare rows/entries would make them throw.
       case "/v1/me/sharing-summary":
@@ -1003,18 +1018,30 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
           subject: "",
           org: "",
           window_days: 0,
-          totals: { writes: 0, recalls: 0, cross_namespace_recalls: 0, namespaces: 0, agents: 0 },
+          totals: {
+            writes: 0,
+            recalls: 0,
+            cross_namespace_recalls: 0,
+            namespaces: (options.sharingNamespaces ?? []).length,
+            agents: 0,
+          },
           writes: 0,
           recalls: 0,
           cross_namespace_recalls: 0,
-          namespaces: [],
+          namespaces: (options.sharingNamespaces ?? []).map((n) => ({
+            ...n,
+            visibility: "private",
+            member_count: 1,
+            writes_7d: 0,
+            recalls_7d: 0,
+          })),
           agents: [],
           agent_namespaces: [],
         });
       // Two collections, one inside the other, so the Library's select draws a tree.
       case "/v1/collection.list":
         return json({
-          collections: [
+          collections: options.collections ?? [
             { namespace: "col-handbook", parent: "", personal: false, role: "admin", description: "Team handbook" },
             {
               namespace: "col-handbook-oncall",
@@ -1278,6 +1305,33 @@ export async function installApi(page: Page, options: InstallOptions = {}): Prom
       case "/v1/tracker.item":
         calls.qa.push({ op: "item", ...body });
         return json(trackerItemsFor(body));
+      // The assistant's audit card (an old Insights link opens it): a clean namespace.
+      case "/v1/namespace.audit":
+        return json({
+          org: "dev",
+          namespace: String(body.namespace ?? ""),
+          computed_at: "2026-11-01T10:00:00",
+          window_seconds: Number(body.window_seconds ?? 7 * 86_400),
+          summary: {
+            live_rows: 12,
+            live_bytes: 4096,
+            excerpt_bytes: 0,
+            version_rows: 12,
+            version_bytes: 4096,
+            unembedded_rows: 0,
+            gets: 3,
+            searches: 9,
+            sets: 12,
+            get_search_ratio: 0.3,
+            inspector_calls: 0,
+          },
+          findings: [],
+          skipped: [],
+          healthy: true,
+          criticals: 0,
+          warnings: 0,
+          infos: 0,
+        });
       default:
         break;
     }
@@ -1708,17 +1762,25 @@ function taskCountsFixture(namespace: string): Record<string, unknown>[] {
   ];
 }
 
+/** The assistant panel left open at its widest: at 1280 px with the sidebar open it docks
+ *  beside the page at the push minimum (the page keeps 640 px), restored on load. */
+export async function dockAssistant(page: Page): Promise<void> {
+  await page.addInitScript(() =>
+    localStorage.setItem("loom_assistant_panel", JSON.stringify({ open: true, width: 720 })),
+  );
+}
+
 /** Every dashboard route, for the specs that sweep them all. */
 export const ROUTES = [
   "/memories",
   "/recall",
   "/settings",
+  "/settings/connected-accounts",
   "/repositories",
   "/flow",
   "/library",
   "/conversations",
   "/graph",
-  "/assistant",
   "/spaces",
   "/profile",
   "/runs",

@@ -11,17 +11,24 @@ here, once:
   the request's, else the op's plane default (code.* / tracker.*), else the
   verified token's own org. A namespace is never authorized without an org:
   that is a refusal (IDENTITY_INCOMPLETE), not a flat-role pass.
+- `with_single_user_identity`: on a single-user server, a call with no token
+  gets the install's org, and on the everyday memory and search ops
+  (SINGLE_USER_FILLED_OPS) its namespace and the op's agent, where it left
+  them out; the HTTP body every later phase reads.
 - `with_resolved_org` / `with_target`: before validation a blank or "-"
   org is set to the org the call acts in and a padded org or namespace is
-  stripped; after authorization an absent code namespace is set to the
-  authorized one, so the handler reads and writes where the call was
+  stripped; after authorization an absent optional namespace is set to the
+  authorized one, and read-only operations take its absent optional org too.
+  The handler therefore reads and writes where the call was
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
-- `authorize`: the refusal of a revoked subject a trusted caller acts for
-  (`authz.check_acted_for`), first-contact provisioning, the role + namespace gate
-  (`authorize_op`, raising PermissionError / IdentityIncompleteError; a scoped
-  token in its own org gets a refused default's own refusal instead), then
-  the restricted-access audit row and the first-write registration.
+- `authorize`: the refusal of `@me` and of a mirror's name first, then the cell's
+  complete person and acted-for check (`authz.check_acted_for`), then the tenancy
+  check (`tenancy.ensure_held`), first-contact provisioning, the
+  role + namespace gate (`authorize_op`, raising PermissionError /
+  IdentityIncompleteError; a scoped token in its own org gets a refused default's own
+  refusal instead), then the restricted-access audit row and the first-write
+  registration.
 - `policy`: the history policy gate on the authorized identity (raises
   PolicyForbiddenError).
 - `read_scope`: the read scope (token ceiling and pin, narrowed by the
@@ -40,6 +47,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final
 
+from server.auth import tenancy
 from server.code.app.common import (
     gate_default_refused,
     note_gate_default_refused,
@@ -48,7 +56,7 @@ from server.code.app.common import (
 )
 from server.core import fail_open
 from server.core.errors import IdentityIncompleteError
-from server.core.naming import present
+from server.core.naming import MIRROR_REFUSED, is_mirror_name, present
 
 if TYPE_CHECKING:
     from server.auth.jwt import AuthInfo
@@ -59,7 +67,8 @@ if TYPE_CHECKING:
 log = logging.getLogger("server.transport.gates")
 
 # The org-level ops an end user may call (server/auth/gateway.py):
-# make and list collections, read their own standing, and read the static agent guide.
+# make and list collections, read their own standing, and read the static agent guide
+# and documentation.
 END_USER_ORG_OPS = frozenset(
     {
         "collection.create",
@@ -67,12 +76,22 @@ END_USER_ORG_OPS = frozenset(
         "namespace.list_mine",
         "grants.pending_for_me",
         "mentor.guide",
+        "help.search",
+        "help.get",
     }
 )
 
 # The code a role / namespace refusal carries on both transports: the one the
 # SDKs map (`AuthInsufficient`) and docs/reference/errors.md lists.
 ROLE_REFUSAL_CODE: Final = "AUTH_INSUFFICIENT"
+
+
+async def session_content(op: Operation, auth: AuthInfo | None) -> None:
+    """Run deployment session protection before any content-bearing side effect."""
+    if op.session_content:
+        from server.knowledge.app.session_admission import require
+
+        await require(auth)
 
 
 def _token_org(auth: AuthInfo | None) -> str | None:
@@ -146,8 +165,9 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     reads the org (an inbox's webhook secret names it), then see the tenant the
     gate authorizes, never the literal "-" every token reaches or a padded name
     an erasure of the org would miss. A copy: validation, and its own refusal
-    row, read it; every later refusal's ledger row reads the raw arguments as
-    sent. A missing, null or non-string value is left for validation."""
+    row, read it; every later refusal's ledger row reads the arguments as
+    admitted (over HTTP, after the single-user fill and the `@me` mapping). A
+    missing, null or non-string value is left for validation."""
     update: dict[str, str] = {}
     if isinstance(args.get("org"), str):
         org = resolve_org(op, args["org"], auth)
@@ -160,21 +180,112 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
     return {**args, **update} if update else args
 
 
-def with_target(input_obj: Any, target: Target) -> Any:
-    """The input with an absent namespace set to the one the gate authorized
-    (a code op's plane namespace). A namespace the op requires (the code.repo.*
-    writes) is never filled: "-" must not become the plane's default index.
-    Copied, not validated again, so an absent namespace leads no code fan-out
-    list."""
-    ns_field = type(input_obj).model_fields.get("namespace")
+# Ops whose namespace a no-token single-user call may leave out, mapped to the agent
+# filled when it names none ("": none, so the op reads every agent). Each value is
+# checked against the op: "http" where it is the writer, or a key read or delete
+# that falls back to any agent; "*" where MCP also reads across agents.
+SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
+    "memory.set": "http",
+    "memory.bulk_set": "http",
+    "memory.get": "http",
+    "memory.delete": "http",
+    "memory.list": "*",
+    "memory.history": "*",
+    "memory.search": "",
+    "memory.search_trace": "",
+    "memory.ask": "",
+    "memory.update": "",
+    "search.query": "",
+    "knowledge.search": "",
+}
+
+
+async def with_single_user_identity(
+    op: Operation, args: dict[str, Any], auth: AuthInfo | None
+) -> dict[str, Any]:
+    """The body every later phase of an HTTP call reads, with the install's identity
+    where the call left it out: only for a call with no token on a single-user server.
+    The org (`caller_org`) on every op but code and tracker ones; the namespace
+    (`default_namespace`, as MCP asks it) and the agent on a SINGLE_USER_FILLED_OPS
+    op. A field is filled when missing, null, or a string the gates read as absent
+    (`_absent`: an agent of "-" is kept)."""
+    from server.identity.app.caller_home import caller_org, default_namespace
+    from server.settings import settings
+    from server.transport.arg_check import did_you_mean, unknown_args
+
+    if auth is not None or settings.effective_identity_provider() != "single-user":
+        return args
+    # Plane ops keep the plane's identity even when no plane org is configured:
+    # their org and namespace name the index, never the install's memory.
+    if op.name.startswith(("code.", "tracker.")):
+        return args
+    org = caller_org(None) or ""
+    fill = {"org": org}
+    if op.name in SINGLE_USER_FILLED_OPS:
+        fill["namespace"] = await default_namespace(None, org)
+        names_scope = present(args.get("user_id")) or present(args.get("session_id"))
+        # A history's "*" also reads every user and session (a list keeps its user
+        # and session filters): a history that names one names its agent.
+        if op.name != "memory.history" or not names_scope:
+            fill["agent"] = SINGLE_USER_FILLED_OPS[op.name]
+    fields = op.input_model.model_fields
+    # A key that misspells a field this would fill (`namepsace`) means the call
+    # named one: it is not filled, so validation names it instead of the call
+    # running in the install's namespace.
+    meant = set(did_you_mean(op.input_model, unknown_args(op.input_model, args)).values())
+    update = {
+        name: value
+        for name, value in fill.items()
+        if value and name in fields and name not in meant and _absent(name, args.get(name))
+    }
+    # A blank value the call sent is a missing one, named by validation, never the
+    # empty namespace or agent: on a field a near-miss key kept from the fill, and
+    # on a required namespace this op does not fill.
+    drop = {name for name in fill if name in meant}
+    namespace = fields.get("namespace")
+    if "namespace" not in update and namespace is not None and namespace.is_required():
+        drop.add("namespace")
+    drop = {name for name in drop if isinstance(args.get(name), str) and _absent(name, args[name])}
+    if not update and not drop:
+        return args
+    return {**{k: v for k, v in args.items() if k not in drop}, **update}
+
+
+def _absent(name: str, value: Any) -> bool:
+    """Missing, null, or a string the gates read as no identity. An agent of "-"
+    names no agent, which the agents views leave out, so it is kept."""
+    if name == "agent" and value == "-":
+        return False
+    return value is None or (isinstance(value, str) and present(value) is None)
+
+
+def with_target(op: Operation, input_obj: Any, target: Target) -> Any:
+    """Fill an absent optional namespace and a read's org from its target.
+
+    Required fields stay subject to validation. The namespace never becomes a
+    code fan-out list. Writes keep their org for stable replay hashes across
+    builds, and an explicit identity is never replaced.
+    """
+    fields = type(input_obj).model_fields
+    update: dict[str, str] = {}
+    org_field = fields.get("org")
+    if (
+        op.read_only
+        and target.org
+        and org_field is not None
+        and not org_field.is_required()
+        and present(input_obj.org) is None
+    ):
+        update["org"] = target.org
+    ns_field = fields.get("namespace")
     if (
         target.register_namespace
         and ns_field is not None
         and not ns_field.is_required()
         and present(input_obj.namespace) is None
     ):
-        return input_obj.model_copy(update={"namespace": target.register_namespace})
-    return input_obj
+        update["namespace"] = target.register_namespace
+    return input_obj.model_copy(update=update) if update else input_obj
 
 
 async def authorize(
@@ -182,17 +293,29 @@ async def authorize(
 ) -> None:
     """The role + namespace gate for an authenticated call, fail closed, then
     what an admitted call leaves (restricted-access audit, first-write
-    registration). No-op without a principal (auth off), but for `@me`."""
+    registration). No-op without a principal (auth off), but for `@me`, a mirror's name
+    and, on a cell, the tenancy check."""
     from server.auth.sharing import PERSONAL_ALIAS
 
     # HTTP maps `@me` to the end user's personal collection before this gate;
     # anywhere else it names nothing, and is never a namespace of its own.
     if target.named_namespace == PERSONAL_ALIAS:
         raise PermissionError(f"{PERSONAL_ALIAS!r} names an end user's personal collection")
+    # Before the auth-off return: no call names a mirror, whatever the deployment's auth.
+    # The namespace the request names, or the plane default it would register
+    # (`authz_target`); other namespace fields are refused where they are read.
+    if target.register_namespace and is_mirror_name(target.register_namespace):
+        raise PermissionError(MIRROR_REFUSED)
+    # A cell serves only the orgs it holds: checked before anything below provisions
+    # or writes for the call (docs/architecture/cells.md).
+    from server.auth.authz import check_acted_for
+
+    await check_acted_for(auth, target.org)
+    await tenancy.ensure_held(target.org, auth)
     if auth is None:
         _note_admitted(target)
         return
-    from server.auth.authz import check_acted_for, scope_flags
+    from server.auth.authz import scope_flags
     from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
@@ -208,12 +331,15 @@ async def authorize(
         if org_level and op.name not in END_USER_ORG_OPS:
             raise PermissionError(f"{op.name} is not open to an end user")
     else:
-        # A revoked subject a trusted caller acts for is refused before anything is
-        # provisioned for it (`check_acted_for` admits every other call).
-        await check_acted_for(auth, target.org)
-        await ensure_personal_namespace_cached(
-            org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
-        )
+        # A subject a trusted caller may not act for (revoked, deprovisioned, or an `sa:`
+        # subject naming no active bot) is refused before anything is provisioned for it
+        # (`check_acted_for` admits every other call).
+        # The personal namespace is the token's own org's: on a cell, written only
+        # where that org is held (a platform admin of another org acting here is not).
+        if auth.org == target.org or await tenancy.is_held(auth.org):
+            await ensure_personal_namespace_cached(
+                org=auth.org, subject=auth.subject, is_service_account=auth.is_service_account
+            )
     try:
         await authorize_op(auth, op, org=target.org, namespace=target.namespace, **scope_flags(op))
     except IdentityIncompleteError:

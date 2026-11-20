@@ -1,0 +1,68 @@
+// When the error wording cannot be used (its chunk failed to load after a deploy, or the
+// network dropped), the toast still says what failed, from the caller's context alone.
+import { act, cleanup, render, screen } from "../test/rtl";
+import { afterEach, expect, it, vi } from "vitest";
+import { ApiError } from "../lib/errors";
+import { ToastViewport, toastError } from "./Toast";
+
+// Throwing inside the import's `then` rejects the same promise a failed chunk load does.
+vi.mock("../lib/errorWords", () => ({
+  humanizeError: () => {
+    throw new Error("chunk gone");
+  },
+}));
+
+afterEach(cleanup);
+
+it("falls back to the context when the wording cannot load", async () => {
+  render(<ToastViewport />);
+  toastError("Couldn't delete Research notes", new Error("boom"));
+  expect(await screen.findByText("Couldn't delete Research notes.")).toBeInTheDocument();
+});
+
+it("keeps a write's lost-connection warning when the wording cannot load", async () => {
+  render(<ToastViewport />);
+  toastError("Save failed", new TypeError("Failed to fetch"));
+  expect(
+    await screen.findByText(/^Save failed: Lost connection to Loom mid-request\. The work may still have committed/),
+  ).toBeInTheDocument();
+});
+
+it("keeps a write's timeout and unreadable-answer warnings when the wording cannot load", async () => {
+  render(<ToastViewport />);
+  toastError("Rename failed", new DOMException("signal timed out", "TimeoutError"));
+  expect(
+    await screen.findByText(/^Rename failed: Loom didn't answer in time\. It may still finish/),
+  ).toBeInTheDocument();
+  toastError("Pin failed", new ApiError({ status: 200, code: "ANSWER_UNREADABLE" }));
+  expect(await screen.findByText("Pin failed: It may have been saved; check before trying again.")).toBeInTheDocument();
+  toastError("Load failed", new DOMException("signal timed out", "TimeoutError"), { read: true });
+  expect(await screen.findByText("Load failed.")).toBeInTheDocument();
+});
+
+it("gives a refusal over the deployment's setup no may-have-saved warning, and stays up to be read", async () => {
+  vi.useFakeTimers();
+  render(<ToastViewport />);
+  toastError(
+    "Save failed",
+    new ApiError({ status: 503, code: "GATEWAY_REQUIRED", detail: { category: "configuration", retryable: false } }),
+  );
+  toastError("Sync failed", new TypeError("Failed to fetch"));
+  await act(() => vi.dynamicImportSettled());
+  await act(async () => {});
+  expect(screen.getByText("Save failed.")).toBeInTheDocument();
+  const long = screen.getByText(/^Sync failed: Lost connection/);
+  act(() => vi.advanceTimersByTime(9_000));
+  expect(long).toBeInTheDocument();
+  vi.useRealTimers();
+});
+
+it("says a committed write is done even when the wording cannot load", async () => {
+  render(<ToastViewport />);
+  toastError(
+    "Delete failed",
+    new ApiError({ status: 503, code: "PUBLICATION_PENDING", detail: { category: "dependency", retryable: false } }),
+  );
+  expect(await screen.findByText(/^Done, but lists and search have not caught up yet/)).toBeInTheDocument();
+  expect(screen.queryByText(/Delete failed/)).toBeNull();
+});

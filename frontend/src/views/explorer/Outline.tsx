@@ -5,19 +5,18 @@ import { Icon } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../../components/IconButton";
 import { DirectionIcon, directionWord } from "./Direction";
 import { relationLabel, shorten, type Selection, type VisibleTree, type WalkModel, type XNode } from "./model";
-import { shortcutOff } from "../../lib/shortcuts";
 
 /**
  * Outline — the walk as a tree a keyboard can read. One row per drawn node in tree order,
  * the seed as the root; each row is one line of name and one of metadata (hop, the edge
  * that reached it, the community when known). Roving tabindex: Up / Down move, Right expands
- * a collapsed row or moves into its children, Left collapses or moves to the parent, Enter
- * selects, `w` walks from here, `p` finds a path from the seed to here, `e` expands in
- * place (`facts.related`), `r` selects the edge that reached the row, `x` pins. A click on
- * the row selects its node; the edge that reached it has its own button at the row's end,
- * clear of the name and the metadata. The other actions are drawn on the selected row
- * only, so 200 rows stay 200 rows. A tree of more than 20 rows shows the first 20 and
- * "Show all N", unless the selection sits further down.
+ * a collapsed row or moves into its children, Left collapses or moves to the parent, Home /
+ * End jump to the ends, Enter or Space selects. A click on the row selects its node; the
+ * edge that reached it has its own button at the row's end, clear of the name and the
+ * metadata. The other actions (expand in place, pin, walk from here, path from the seed)
+ * are drawn on the selected row only, so 200 rows stay 200 rows; the selected row's
+ * buttons, its edge button included, are its tab stops. A tree of more than 20 rows shows
+ * the first 20 and "Show all N", unless the selection sits further down.
  */
 
 /** Rows shown before "Show all N". */
@@ -123,8 +122,6 @@ export function Outline({
     const kids = children.get(n.entity) || [];
     const hasKids = kids.length > 0 || (visible.hiddenUnder.get(n.entity) || 0) > 0;
     const isCollapsed = collapsed.has(n.entity);
-    // The tree's letter keys (w, p, e, r, x) follow the single-key shortcut switch too.
-    if (shortcutOff(e.nativeEvent)) return;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
@@ -154,35 +151,10 @@ export function Outline({
         break;
       case "Enter":
       case " ":
+        // A button in the row (its actions, the edge) activates itself.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
         onSelect(selectedEntity === n.entity ? null : { kind: "node", entity: n.entity });
-        break;
-      case "w":
-      case "W":
-        e.preventDefault();
-        if (n.entity !== model.seed) onWalk(n.entity);
-        break;
-      case "p":
-      case "P":
-        e.preventDefault();
-        if (n.entity !== model.seed) onPath(n.entity);
-        break;
-      case "e":
-      case "E":
-        e.preventDefault();
-        if (isCollapsed) onCollapse(n.entity, false);
-        else onExpand(n.entity);
-        break;
-      case "r":
-      case "R":
-        e.preventDefault();
-        if (n.parent)
-          onSelect(selectedEdgeChild === n.entity ? null : { kind: "edge", parent: n.parent, child: n.entity });
-        break;
-      case "x":
-      case "X":
-        e.preventDefault();
-        if (n.entity !== model.seed) onPin(n.entity);
         break;
       default:
         return;
@@ -194,15 +166,10 @@ export function Outline({
       <p className="text-xs text-text-muted mb-1" id="explorer-outline-summary">
         {summary}
       </p>
-      {/* The keys are listed in the help dialog's Graph group; the tree describes them in one line. */}
-      <p className="sr-only" id="explorer-outline-keys">
-        Arrow keys move and fold, Enter selects; w walks from a row, p finds a path, e expands, r selects the edge, x
-        pins.
-      </p>
       <div
         role="tree"
         aria-label="Walk outline"
-        aria-describedby="explorer-outline-summary explorer-outline-keys"
+        aria-describedby="explorer-outline-summary"
         className="lg:flex-1 min-h-[120px] max-h-[320px] lg:max-h-none overflow-auto rounded-lg border border-border bg-surface text-xs"
       >
         {shown.map((n, i) => {
@@ -323,7 +290,8 @@ export function Outline({
                   onClick={() => onSelect(edgeSelected ? null : { kind: "edge", parent, child: n.entity })}
                   icon="share-network"
                   size="sm"
-                  tabIndex={-1}
+                  // The selected row's actions are its tab stops; the other rows' are reached by selecting them.
+                  tabIndex={isSelected ? undefined : -1}
                   aria-pressed={edgeSelected}
                   className="shrink-0"
                 />

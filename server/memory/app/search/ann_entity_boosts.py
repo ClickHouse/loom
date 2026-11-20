@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from server.core.ch import get_client
+from server.core.vectors.private_first import each
 from server.core.vectors.search_settings import vector_search_settings
 from server.observability.otel import traced
 
@@ -31,8 +32,6 @@ async def _ann_entity_boosts(
     Returns: (namespace, memory_key) → cumulative boost (capped per-key
     at 0.5 so a single strong entity match can't dominate the composite rank).
     """
-    import asyncio as _asyncio
-
     if not query_entities:
         return {}
     ch = get_client()
@@ -118,9 +117,7 @@ async def _ann_entity_boosts(
             if (sim := 1.0 - float(r["distance"])) >= 0.5
         ]
 
-    per_entity = await _asyncio.gather(
-        *[_one_entity(e) for e in query_entities],
-    )
+    per_entity = await each(_one_entity)(query_entities)
 
     # Aggregate by entity fan-out. A query entity that matches many
     # memories is a hub-like weak signal, so each hit from that entity is

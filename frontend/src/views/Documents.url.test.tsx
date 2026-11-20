@@ -123,7 +123,7 @@ describe("Library keeps the open document in its URL", () => {
     useStore.getState().bootView("knowledge");
     render(<Documents />);
     await settle();
-    expect(toastError).toHaveBeenCalledWith("Open failed", expect.any(Error));
+    expect(toastError).toHaveBeenCalledWith("Open failed", expect.any(Error), { read: true });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(new URLSearchParams(location.search).get("doc")).toBe("docs/late.md");
   });
@@ -314,13 +314,6 @@ describe("Find a passage in the Library", () => {
     const docOne = screen.getByRole("button", { name: "Preview Handbook" });
     act(() => docOne.focus());
     fireEvent.keyDown(docOne, { key: "ArrowDown" });
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
-    // j and k answer from anywhere, so only the list focus was last in may take them.
-    act(() => hitOne.focus());
-    fireEvent.keyDown(hitOne, { key: "j" });
-    expect(document.activeElement).toBe(hitTwo);
-    act(() => docOne.focus());
-    fireEvent.keyDown(docOne, { key: "j" });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Preview Runbook" }));
   });
 

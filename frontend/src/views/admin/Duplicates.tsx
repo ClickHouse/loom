@@ -20,9 +20,8 @@ import {
 } from "../../api";
 import { useIdentity } from "../../lib/state";
 import { useAbortableEffect } from "../../lib/hooks";
-import { humanizeError } from "../../lib/format";
 import { confirmAction } from "../../components/ConfirmDialog";
-import { toast } from "../../components/Toast";
+import { toast, toastError } from "../../components/Toast";
 import { ListState } from "../../components/ui/ListState";
 import { RowMenu } from "../../components/ui/RowMenu";
 import { Loading, Panel, SectionHeading } from "../../components/ui";
@@ -164,7 +163,7 @@ function MemoryCluster({
       toast("Resolved", "ok");
       onDone();
     } catch (e) {
-      toast(`Resolve failed: ${humanizeError(e)}`, "error");
+      toastError("Resolve failed", e);
     } finally {
       setWorking(false);
     }
@@ -285,7 +284,7 @@ function DocumentCluster({
       toast("Copy retired", "ok");
       onDone();
     } catch (e) {
-      toast(`Retire failed: ${humanizeError(e)}`, "error");
+      toastError("Retire failed", e);
     } finally {
       setWorking(false);
     }
@@ -358,7 +357,7 @@ function Repairs({ scope, onDone }: { scope: Scope; onDone: () => void }) {
       toast(await apply(), "ok");
       onDone();
     } catch (e) {
-      toast(`Failed: ${humanizeError(e)}`, "error");
+      toastError("Failed", e);
     } finally {
       setBusy(false);
     }

@@ -39,6 +39,7 @@ from typing import Any
 from server.core.background import TaskSet
 from server.llm import customer
 from server.llm.client import LLMClient, LLMResult
+from server.llm.traits import is_complete_stop
 
 log = logging.getLogger(__name__)
 
@@ -50,8 +51,6 @@ saved_usd = 0.0
 _hit_ms: collections.deque[float] = collections.deque(maxlen=1000)
 _TASKS = TaskSet()
 PUT_QUERY_TAG = "llm_response_cache.put"
-# Stop reasons that mean the provider ended the reply early (its text is partial).
-_PARTIAL_STOPS = frozenset({"content_filter", "refusal", "length", "max_tokens"})
 
 
 # The memory keys of the window a cached call rendered ride the
@@ -336,7 +335,7 @@ class CachedLLMClient:
         # empty completion is a failure to retry, not an answer to memo.
         # A reply the provider cut (a content filter, a refusal, the output cap)
         # is partial: serving it again would replay the cut for every retry.
-        complete = str(getattr(res, "stop_reason", "") or "") not in _PARTIAL_STOPS
+        complete = is_complete_stop(str(getattr(res, "stop_reason", "") or ""))
         if (
             getattr(res, "text", "")
             and complete

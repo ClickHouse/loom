@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry } from "../api";
 import { useStore } from "../lib/state";
 import { resetNamespaceRoleCache } from "../lib/namespaceRole";
+import { useNewDialogs } from "../lib/newDialogs";
 import { Header } from "./Header";
 
 // The header says what the role lets you do. A viewer on a claim-only namespace gets a
@@ -11,10 +12,12 @@ import { Header } from "./Header";
 // phone header carries a search button that reveals the palette input.
 
 const listMine = vi.fn();
+const auth = vi.hoisted(() => ({ off: null as boolean | null }));
 vi.mock("../api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api")>();
   return {
     ...actual,
+    isAuthDisabled: () => auth.off ?? actual.isAuthDisabled(),
     listMine: (...args: unknown[]) => listMine(...args),
     listMemories: vi.fn(async () => ({ entries: [], truncated: false, total: 0 })),
     listProfile: vi.fn(async () => ({ entries: [] })),
@@ -38,10 +41,24 @@ const jwtOnly: MyNamespaceEntry[] = [
   },
 ];
 
+/** The window's width the media queries read: 900 px (from md, below lg) unless a test
+ *  sets it. */
+let viewport = 900;
 beforeEach(() => {
   resetNamespaceRoleCache();
   listMine.mockReset();
   useStore.setState({ identity, view: "memories", myNamespaces: null });
+  useNewDialogs.setState({ memory: false, document: false });
+  viewport = 900;
+  auth.off = null;
+  vi.stubGlobal("matchMedia", (query: string) => {
+    const min = /min-width: (\d+)px/.exec(query);
+    return {
+      matches: min ? viewport >= Number(min[1]) : false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    };
+  });
 });
 
 describe("Header", () => {
@@ -52,7 +69,9 @@ describe("Header", () => {
     // The live button is replaced by the disabled one once list_mine resolves.
     // aria-disabled, not disabled: the trigger stays focusable so its tooltip can say why.
     await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toHaveAttribute("aria-disabled", "true"));
-    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(/You have read-only access here/);
+    expect(screen.getByRole("button", { name: "New" })).toHaveAccessibleDescription(
+      /^Needs writer on .+\. An admin of it can grant that\.$/,
+    );
   });
 
   it("keeps New live for a writer token on the same namespace", async () => {
@@ -61,6 +80,59 @@ describe("Header", () => {
     render(<Header />);
     await waitFor(() => expect(listMine).toHaveBeenCalled());
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
+  });
+
+  it("keeps New live for a `*` writer token that list_mine holds no row for", async () => {
+    listMine.mockResolvedValue([]);
+    useStore.setState({
+      whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"], namespaces: ["*"] },
+    });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    await act(async () => {});
+    const add = screen.getByRole("button", { name: "New" });
+    expect(add).toBeEnabled();
+    expect(add).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("names the icon-only New in a tooltip below lg", async () => {
+    listMine.mockResolvedValue(jwtOnly);
+    useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    await userEvent.setup().hover(screen.getByRole("button", { name: "New" }));
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("New");
+  });
+
+  it("keeps New's focus when the window crosses lg and its tooltip comes or goes", async () => {
+    let width = 1400;
+    const listeners = new Set<() => void>();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        const min = /min-width: (\d+)px/.exec(query);
+        return min ? width >= Number(min[1]) : false;
+      },
+      addEventListener: (_: string, f: () => void) => listeners.add(f),
+      removeEventListener: (_: string, f: () => void) => listeners.delete(f),
+    }));
+    try {
+      listMine.mockResolvedValue(jwtOnly);
+      useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+      render(<Header />);
+      await waitFor(() => expect(screen.getByRole("button", { name: "New" })).toBeEnabled());
+      const button = screen.getByRole("button", { name: "New" });
+      act(() => button.focus());
+      for (const w of [900, 1400]) {
+        width = w;
+        act(() => {
+          for (const f of listeners) f();
+        });
+        expect(screen.getByRole("button", { name: "New" })).toBe(button);
+        expect(button).toHaveFocus();
+      }
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("reads the 8540 store slice first and skips the list_mine read", async () => {
@@ -82,6 +154,31 @@ describe("Header", () => {
     expect(screen.getByRole("button", { name: "New" })).toBeEnabled();
   });
 
+  // The placeholder drawn before the search's body loads makes the body's checks, the
+  // token's claims included, so it does not change when the body arrives.
+  it("offers asking in the search's placeholder only where the search will, not with auth off", () => {
+    viewport = 1440;
+    auth.off = false;
+    listMine.mockResolvedValue(jwtOnly);
+    const { unmount } = render(<Header />);
+    expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search or ask a question");
+    unmount();
+    auth.off = true;
+    const again = render(<Header />);
+    expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
+    again.unmount();
+    // An org-wide token keeps the assistant from answering, so the search won't offer it.
+    auth.off = false;
+    const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, "");
+    localStorage.setItem("loom_token_v1", `${b64({ alg: "HS256" })}.${b64({ org: "*", sub: "ada" })}.sig`);
+    try {
+      render(<Header />);
+      expect(screen.getByLabelText("Search Loom")).toHaveAttribute("placeholder", "Search profile, memories, library…");
+    } finally {
+      localStorage.removeItem("loom_token_v1");
+    }
+  });
+
   it("has a Search button that reveals the palette input", async () => {
     listMine.mockResolvedValue(jwtOnly);
     useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
@@ -91,6 +188,28 @@ describe("Header", () => {
     await userEvent.setup().click(search);
     expect(search).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByLabelText("Search Loom")).toHaveFocus();
+  });
+
+  it("leaves New out below md: the phone's More sheet has it", async () => {
+    viewport = 390;
+    listMine.mockResolvedValue(jwtOnly);
+    useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+    render(<Header />);
+    await waitFor(() => expect(listMine).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: "New" })).toBeNull();
+    // The sheet opens the dialog the header mounts.
+    act(() => useNewDialogs.setState({ memory: true }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("holds the Ask AI button right after the search field, before the actions", () => {
+    listMine.mockResolvedValue(jwtOnly);
+    render(<Header />);
+    const ask = screen.getByRole("button", { name: "Ask AI" });
+    expect(ask).toHaveAttribute("data-focus-key", "assistant-launcher");
+    const search = screen.getByLabelText("Search Loom");
+    const controls = [...document.querySelectorAll("header input, header button")];
+    expect(controls.indexOf(ask)).toBe(controls.indexOf(search) + 1);
   });
 });
 
@@ -161,13 +280,35 @@ it("names the account menu after the signed-in subject and org", async () => {
   expect(menu).toContainElement(screen.getByRole("menuitem", { name: "Settings" }));
 });
 
-// The search field's hint is written the way the keyboard prints it: Ctrl K off Apple
-// platforms (the handler takes either modifier). The help button's tooltip names its key.
-it("labels the search shortcut for the platform, and the help key in its tooltip", async () => {
+// A header menu's trigger keeps the menu's open state, which its open style reads, also
+// under a tooltip (New's, below lg): the tooltip's own state never takes its place.
+it("keeps each header menu's trigger in the menu's open state while it is open", async () => {
   listMine.mockResolvedValue(jwtOnly);
   useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
   render(<Header />);
-  expect(document.querySelector("#header-search kbd")).toHaveTextContent(/^Ctrl K$/);
-  await userEvent.hover(screen.getByRole("button", { name: "Keyboard shortcuts" }));
-  expect((await screen.findAllByText("Keyboard shortcuts · ?")).length).toBeGreaterThan(0);
+  await waitFor(() => expect(listMine).toHaveBeenCalled());
+  for (const name of ["Account: w@example.com", "New"]) {
+    const trigger = screen.getByRole("button", { name });
+    await userEvent.click(trigger);
+    await screen.findByRole("menu");
+    expect(trigger).toHaveAttribute("data-state", "open");
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveAttribute("data-state", "closed"));
+  }
+});
+
+// The dashboard has no keyboard shortcuts: the header has no shortcuts button and its
+// search shows no key chip, and Ctrl K, ⌘K and ? do nothing.
+it("has no shortcuts button or key chip, and takes no Ctrl K, ⌘K or ?", async () => {
+  listMine.mockResolvedValue(jwtOnly);
+  useStore.setState({ whoami: { authenticated: true, subject: "w@example.com", org: "dev", roles: ["WRITER"] } });
+  const { container } = render(<Header />);
+  await screen.findByRole("button", { name: "Account: w@example.com" });
+  expect(screen.queryByRole("button", { name: /keyboard shortcuts/i })).toBeNull();
+  expect(container.querySelector("kbd")).toBeNull();
+  expect(container.querySelector("[aria-keyshortcuts]")).toBeNull();
+  await userEvent.keyboard("{Control>}k{/Control}{Meta>}k{/Meta}?");
+  expect(screen.getByLabelText("Search Loom")).not.toHaveFocus();
+  expect(screen.queryByRole("dialog")).toBeNull();
 });

@@ -39,6 +39,8 @@ services:
       - ./deploy/clickhouse-config/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro
       # A user with no row policy on a table reads none of it.
       - ./deploy/clickhouse-config/access_control.xml:/etc/clickhouse-server/config.d/access_control.xml:ro
+      # query_log and text_log keep 30 days.
+      - ./deploy/clickhouse-config/system_logs.xml:/etc/clickhouse-server/config.d/system_logs.xml:ro
       # Named collections for the SQL ai* functions; defines none as shipped.
       # Git-ignored, so `make bootstrap` makes it: a missing file is an error,
       # not a root-owned directory Docker creates in its place.
@@ -163,6 +165,8 @@ services:
       # A name of its own: the loom service loads all of .env, and an ANTHROPIC_API_KEY
       # there would become Loom's own model key.
       ANTHROPIC_API_KEY: "${LIBRECHAT_ANTHROPIC_API_KEY:-}"
+      # A model server on the Docker host, for LOOM_ASSISTANT_PROVIDER=local.
+      LOCAL_LLM_BASE_URL: "${LIBRECHAT_LOCAL_LLM_BASE_URL:-http://host.docker.internal:11434/v1}"
       HOST: 0.0.0.0
       PORT: "3080"
       MONGO_URI: mongodb://librechat-mongo:27017/LibreChat
@@ -171,6 +175,8 @@ services:
       ALLOW_REGISTRATION: "true"
       ALLOW_UNVERIFIED_EMAIL_LOGIN: "true"
       BAN_VIOLATIONS: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./deploy/librechat/assistant.librechat.yaml:/app/librechat.yaml:ro
     networks: [assistant, assistant-db, assistant-egress]

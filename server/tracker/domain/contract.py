@@ -203,6 +203,14 @@ ALIASES: dict[str, dict[str, tuple[Alias, ...]]] = {
         "severity_level": (Alias("''", note="pull requests carry no severity upstream"),),
         "test_types": (Alias("CAST([] AS Array(String))", note="no test classification"),),
         "src_components": (Alias("CAST([] AS Array(String))", note="no src/ component paths"),),
+        # as a mapped tracker derives it (`mapping.py`): a merged PR's close is its merge
+        "merged_at": (
+            Alias(
+                "if(is_merged = 1, closed_at, toDateTime64(0, 3))",
+                {"is_merged": "UInt", "closed_at": "DateTime"},
+                "a merged PR's closed_at",
+            ),
+        ),
     },
     "core_incidents": {
         "severity_level": (Alias("''", note="incidents carry no severity upstream"),),
@@ -538,6 +546,16 @@ def diff(
             and t in described
             for t, cols in tables.items()
         )
+        # A feature column the source lacks reads its alias, or else its type's default:
+        # the statements that read it answer as for a row without it instead of failing,
+        # and the feature stays absent (`has_column` is False for a default).
+        for table, wanted in tables.items():
+            have = described.get(table)
+            if have is None:
+                continue
+            for col in _resolve(rep, table, [c for c in wanted if c not in have], have):
+                rep.defaulted.setdefault(table, {})[col] = default_expr(wanted[col])
+                rep.columns[table] = list(have)
     rep.ok = not rep.missing_tables and not rep.missing_columns and not rep.type_mismatches
     return rep
 

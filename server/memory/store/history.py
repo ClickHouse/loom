@@ -98,6 +98,7 @@ class HistoryTarget:
     org: str
     memory_id: str
     content_sha256: str  # the hash of the version's text, which its search rows carry too
+    tags: tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
@@ -111,6 +112,7 @@ class HistoryTarget:
             memory_key=str(r.get("memory_key") or ""),
             version=int(r.get("version") or 0),
             content_sha256=str(r.get("content_sha256") or ""),
+            tags=tuple(r.get("tags") or ()),
         )
 
 
@@ -243,13 +245,13 @@ async def find_history_target(
     ch = ch or _default_client()
     cols = (
         "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
-        "toStringCutToZero(content_sha256) AS content_sha256"
+        "toStringCutToZero(content_sha256) AS content_sha256, tags"
     )
     at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
     r = await ch.query_one(
         f"""
         SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, content_sha256
+               memory_key, version, content_sha256, tags
         FROM (
             SELECT {cols} FROM loom.memory_versions WHERE {at}
             UNION ALL
@@ -394,3 +396,51 @@ async def earliest_version_in_namespace(
         params={"org": org, "ns": namespace},
     )
     return int((row or {}).get("v") or 0)
+
+
+async def versions_held(
+    revisions: list[pg_memory.Clearable], *, ch: _CHClient | None = None
+) -> list[pg_memory.Clearable]:
+    """The `revisions` ClickHouse's history holds: the same key and version, with the same
+    `memory_id` and content hash (a redaction keeps the hash). Read with sequential
+    consistency, since the payload clearing acts on what it reads."""
+    if not revisions:
+        return []
+    ch = ch or _default_client()
+    keys = [
+        (r.org, r.namespace, r.agent, r.user_id, r.session_id, r.memory_key, r.version)
+        for r in revisions
+    ]
+    # A slice at a time: the batch's keys can outgrow one parameter field.
+    rows = await query_all_sliced(
+        ch,
+        f"""
+        SELECT org, namespace, agent, user_id, session_id, memory_key, version,
+               toString(memory_id) AS memory_id, toStringCutToZero(content_sha256) AS sha
+        FROM loom.memory_versions
+        WHERE (org, namespace, agent, user_id, session_id, memory_key, version) IN
+              {{keys:Array(Tuple(String, String, String, String, String, String, UInt64))}}
+        {_SEQUENTIAL}
+        """,
+        {"keys": keys},
+        "keys",
+    )
+    held = {
+        (
+            r["org"],
+            r["namespace"],
+            r["agent"],
+            r["user_id"],
+            r["session_id"],
+            r["memory_key"],
+            int(r["version"]),
+            r["memory_id"],
+            r["sha"],
+        )
+        for r in rows
+    }
+    return [
+        r
+        for r, key in zip(revisions, keys, strict=True)
+        if (*key, r.memory_id, r.content_sha256) in held
+    ]

@@ -7,9 +7,10 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from server.core import llm_free
+from server.core import llm_free, request_work
 from server.core.naming import present
 from server.transport._common import ledger_identity
 from server.transport.lean_results import mcp_op_result
@@ -94,8 +95,15 @@ def _search_answer(call: _AdmittedCall, result: Any) -> dict[str, Any]:
     from server.transport.mcp_tools import search_answer
 
     answer = search_answer(result.model_dump(), call.arguments, call.rl_ns, call.mcp_session_id)
-    answer["structuredContent"] = _coerce_bigints(answer["structuredContent"])
-    return answer
+    answer["structuredContent"] = request_work.flag_response(
+        _coerce_bigints(answer["structuredContent"])
+    )
+    if request_work.mirror_marked():
+        answer["content"] = [
+            {"type": "text", "text": json.dumps({"mirrored": True})},
+            *answer["content"],
+        ]
+    return request_work.flag_response(answer)
 
 
 async def _success_response(
@@ -112,6 +120,8 @@ async def _success_response(
     auth, request_id, rl_ns, rl_org = call.auth, call.request_id, call.rl_ns, call.rl_org
     result_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
     result_dict = _coerce_bigints(result_dict)
+    if isinstance(result_dict, dict):
+        result_dict = request_work.flag_response(result_dict)
 
     # Budget violation, audit and idempotency rows in one concurrent round,
     # not three awaited writes in a row.
@@ -136,7 +146,7 @@ async def _success_response(
     )
 
     if op.name == "search.query":
-        return _ok(req_id, _search_answer(call, result))
+        return request_work.flag_response(_ok(req_id, _search_answer(call, result)))
 
     # content[0].text is raw JSON (no prose prefix) — some clients parse it
     # for display and a prefix breaks the parse. structuredContent mirrors it
@@ -150,14 +160,18 @@ async def _success_response(
     if resolved and isinstance(lean_dict, dict):
         lean_dict = {**lean_dict, "namespace_resolved": resolved}
     if isinstance(lean_dict, dict):  # a non-home default says so
-        lean_dict = {**lean_dict, **default_namespace_note()}
-    return _ok(
-        req_id,
-        {
-            "content": [{"type": "text", "text": json.dumps(lean_dict)}],
-            "isError": False,
-            "structuredContent": lean_dict,
-        },
+        lean_dict = request_work.flag_response({**lean_dict, **default_namespace_note()})
+    return request_work.flag_response(
+        _ok(
+            req_id,
+            request_work.flag_response(
+                {
+                    "content": [{"type": "text", "text": json.dumps(lean_dict)}],
+                    "isError": False,
+                    "structuredContent": lean_dict,
+                }
+            ),
+        )
     )
 
 
@@ -184,6 +198,7 @@ def _handler_failed(
     HTTP's body and is recorded under its code; any other exception is one that
     says only "internal error" and is logged with its traceback."""
     from server.core.errors import handler_failure_detail
+    from server.core.request_work import flag_response
     from server.transport.mcp_refusals import refusal_body, refusal_text, server_failure
 
     refused = refusal_body(e)
@@ -191,6 +206,7 @@ def _handler_failed(
     if failure is not None:
         failure = handler_failure_detail(failure, failure["status"], op.idempotent)
     if refused is not None:
+        refused = flag_response(refused)
         log.info("mcp.refused %s request_id=%s: %s", op.name, request_id, refused.get("code"))
     elif failure is not None:  # the raiser logged its cause; no traceback for a named 5xx
         log.warning("mcp.unavailable %s request_id=%s: %s", op.name, request_id, failure["code"])
@@ -198,12 +214,13 @@ def _handler_failed(
         # Full traceback at ERROR — the JSON-RPC error carries only the
         # request id, so this line is the only place the cause is visible.
         log.exception("mcp.internal_error %s request_id=%s: %s", op.name, request_id, e)
+    error_code = str((refused or failure or {}).get("code") or "INTERNAL_ERROR")
     _emit_mcp_event(
         op.name,
         arguments,
         elapsed_ms,
         success=False,
-        error_code=str((refused or failure or {}).get("code") or "INTERNAL_ERROR"),
+        error_code=error_code,
         request_id=request_id,
         error=e,
     )
@@ -214,7 +231,12 @@ def _handler_failed(
         from server.observability import otel as _otel
 
         _otel.record_op(
-            op.name, namespace=rl_ns or "-", success=False, duration_ms=elapsed_ms, transport="mcp"
+            op.name,
+            namespace=rl_ns or "-",
+            success=False,
+            duration_ms=elapsed_ms,
+            transport="mcp",
+            error_code=error_code,
         )
         # Scope the FAILING span too, so MCP errors filter by tenant.
         _otel.set_loom_attributes(
@@ -225,27 +247,40 @@ def _handler_failed(
     except Exception:  # noqa: BLE001 — telemetry must never mask the handler's error
         pass
     if refused is not None:
-        return _ok(
-            req_id,
-            {
-                "content": [{"type": "text", "text": refusal_text(refused)}],
-                "isError": True,
-                "structuredContent": refused,
-            },
+        return flag_response(
+            _ok(
+                req_id,
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(refused)
+                            if refused.get("mirrored") is True
+                            else refusal_text(refused),
+                        }
+                    ],
+                    "isError": True,
+                    "structuredContent": refused,
+                },
+            )
         )
     if failure is not None:  # HTTP's 503/504 body, as the error's message and data
-        return _err(
-            req_id,
-            TOOL_EXEC_FAILED,
-            f"tool execution failed: {refusal_text(failure)}; request_id={request_id}",
-            data={**failure, "tool": name, "request_id": request_id},
+        return flag_response(
+            _err(
+                req_id,
+                TOOL_EXEC_FAILED,
+                f"tool execution failed: {refusal_text(failure)}; request_id={request_id}",
+                data=flag_response({**failure, "tool": name, "request_id": request_id}),
+            )
         )
     # The exception's text (ClickHouse / SQL) stays in the log line above.
-    return _err(
-        req_id,
-        TOOL_EXEC_FAILED,
-        f"tool execution failed: internal error; request_id={request_id}",
-        data={"code": "INTERNAL_ERROR", "tool": name, "request_id": request_id},
+    return flag_response(
+        _err(
+            req_id,
+            TOOL_EXEC_FAILED,
+            f"tool execution failed: internal error; request_id={request_id}",
+            data=flag_response({"code": "INTERNAL_ERROR", "tool": name, "request_id": request_id}),
+        )
     )
 
 
@@ -256,10 +291,11 @@ def _emit_success(
     request_id: str,
     result: Any,
     mcp_session_id: str,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
     """The success row of a tool call, with the mentor's hint computed first
     so the row carries `out_hint_code`. Returns the hint for the result."""
-    hint = _mentor_hint(op.name, arguments, result, mcp_session_id)
+    hint = _mentor_hint(op.name, arguments, result, mcp_session_id, namer)
     _emit_mcp_event(
         op.name,
         arguments,
@@ -273,11 +309,15 @@ def _emit_success(
 
 
 def _mentor_hint(
-    op_name: str, arguments: dict[str, Any], result: Any, mcp_session_id: str
+    op_name: str,
+    arguments: dict[str, Any],
+    result: Any,
+    mcp_session_id: str,
+    namer: Callable[[str], str],
 ) -> tuple[str, str] | None:
-    """The mentor's one hint for this call, or None; the
-    code is published on the request context for the ledger row. Never
-    raises and never reads the store."""
+    """The mentor's one hint for this call, its ops named by ``namer`` for the
+    caller's listing, or None; the code is published on the request context
+    for the ledger row. Never raises and never reads the store."""
     try:
         from server.insights.app import mentor as _mentor
         from server.observability.ledger import set_hint_context
@@ -293,8 +333,14 @@ def _mentor_hint(
             namespace=present(tenant["namespace"]) or "",
             agent=str(arguments.get("agent") or "-"),
         )
-        set_hint_context(hint[0] if hint else "")
-        return hint
+        set_hint_context("")
+        if hint is None:
+            return None
+        # publish the code only after the text renders: a namer failure leaves the
+        # row without a hint
+        text = namer(hint[1])
+        set_hint_context(hint[0])
+        return hint[0], text
     except Exception:  # noqa: BLE001 — advice never fails a tool call
         return None
 
