@@ -14,6 +14,7 @@ from httpcore._backends.mock import AsyncMockBackend, AsyncMockStream
 from server.cli import cell_control, cell_place
 from server.settings import settings
 from tests.unit import test_cell_place as helpers
+from tests.unit.clock_fake import ManualClock
 
 local = helpers.local
 invoke_place = helpers.invoke_place
@@ -24,6 +25,10 @@ _DIRECTORY = cell_place._directory
 @pytest.fixture
 def exchange(local, monkeypatch):
     conn, _ = local
+    # The work timer stays real; scheduler delay cannot spend the fake close budget.
+    phase_clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", phase_clock)
+    monkeypatch.setattr(cell_control.pg, "time", phase_clock)
     events = []
     entered = asyncio.Event()
     state = {"mode": "response", "reads": [], "owners": []}
@@ -93,9 +98,11 @@ def exchange(local, monkeypatch):
                     raise
             return await super().__aexit__(*args)
 
+    # TLS/pool setup is not part of the inert exchange being timed.
+    transport = httpx.AsyncHTTPTransport()
+    transport._pool = httpcore.AsyncConnectionPool(network_backend=Backend([]))
+
     def client(**kwargs):
-        transport = httpx.AsyncHTTPTransport()
-        transport._pool = httpcore.AsyncConnectionPool(network_backend=Backend([]))
         return Client(transport=transport, **kwargs)
 
     conn.close = close
