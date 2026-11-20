@@ -308,27 +308,27 @@ without losing the focus or the question being typed. It reopens on reload only 
 sits beside the page, never expanded. A bookmarked `/assistant` address lands on the
 account's landing page and opens the assistant over it (expanded from 1024 px).
 
-**Chat not set up** (the native assistant is disabled, or readiness says so) is one empty state: its icon,
-"Chat isn't set up", "An operator sets up the assistant service for this deployment.", and a
-link, **How to set up the assistant service**, to the [deployed
-assistant](../operations/assistant.md) in the docs. Loom's own reads
-are listed under it as starters, with no question field and no **Also ask the model**, and
-the starters stay under the last card, so one runs after another; those cards are not saved,
-and **New chat** empties the list. History shows only conversations saved before, opened
-read-only. An open puts the focus on the first starter. A setup that is failing has the same
-layout, headed "Chat's setup is failing", with **Try again**; a platform or namespace admin
-also gets a link to Admin › Health, where the failure is shown, and anyone but a platform
-admin reads that an admin of this deployment fixes it. The line that Loom can still answer
-from its own reads shows only while the starters do.
+**Chat not set up** means the native assistant is disabled. The panel says
+"Chat isn't set up" and links to the
+[assistant configuration guide](../operations/assistant.md). Loom's own reads remain
+available as starters. Their cards are not saved, and **New chat** empties them. History
+can open saved conversations read-only.
+
+An invalid configuration says "Chat configuration needs attention", with **Try again**.
+A platform or namespace admin also gets a link to Admin › Health. Other callers are told
+that an admin fixes the configuration. Before a question is refused, these states show
+starters without a question field. If an invalid provider or budget configuration refuses a question, the panel keeps its
+draft editable while **Ask** and **Edit** remain blocked; correcting the
+configuration lets the caller continue with that draft.
 
 **Why it cannot answer** is said for the person reading it, with a link only for someone who
-can open the page it names: the assistant not set up, setting up or failing its setup
-(`/v1/health/ready`'s `assistant` check, read when the panel opens and every 10 s while it
-sets up or fails; a read that takes over 10 s counts as failed, and the chat route's refusal
+can open the page it names: the assistant disabled, unconfigured or failing its configuration
+(`/v1/health/ready`'s `assistant` check, read when the panel opens and every 10 s while its
+configuration fails; a read that takes over 10 s counts as failed, and the chat route's refusal
 then decides), and the chat route's refusals by their `detail.reason`: auth off, an org-wide
 or narrowed token (also read from the token's own claims), a token that expires before an
 answer could finish, and model calls switched off for the org (see [the
-bridge](../architecture/assistant.md#each-callers-own-identity)). **Try again**
+assistant identity checks](../architecture/assistant.md#each-callers-own-identity)). **Try again**
 reads readiness again and asks a refused question again once nothing refuses it, with what
 the chip shows then; when the chip's line would make it longer than the route accepts it
 sends nothing, leaving the question in the field, which says why, or, with other text there,

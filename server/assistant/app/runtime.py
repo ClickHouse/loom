@@ -460,11 +460,8 @@ async def _ended(ticket: Ticket, answer: Answer, *, live: bool) -> AsyncGenerato
 
 
 async def _checked(ticket: Ticket, answer: Answer, *, live: bool = False) -> bytes:
-    """The answer's citations, checked inside its slot (the checks are the answer's
-    too), as the stream's `loom.citations` event; the slot is given back after. A streamed
-    answer's run is read once beside the checks, for its support and its steps: the event
-    carries `steps` (empty when the run made no call) whenever that read succeeded, and none
-    when it did not, so the dashboard keeps the steps it showed live only then."""
+    """Verify request-owned receipts inside the answer's slot, then emit citations,
+    support and accumulated tool steps. Release the slot after these checks."""
     try:
         text = "".join(answer.text)
         receipts = answer.state.receipts if answer.state else []

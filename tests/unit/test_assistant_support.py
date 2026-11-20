@@ -1,18 +1,14 @@
-"""Pure support rules and persisted run-row isolation remain independent of the runtime."""
+"""Pure support rules derive labels from bounded tool receipts."""
 
 from __future__ import annotations
 
-import asyncio
 import typing
 from typing import Any
 
 import pytest
 
 from server.assistant.domain import support as rule
-from server.assistant.store import ledger
-from server.observability.consumer import ASSISTANT_CONSUMER
 from server.operations import toolsets
-from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
 CITABLE = toolsets.ASSISTANT_CITABLE_OPS
 NO_DATA = toolsets.ASSISTANT_NO_NAMESPACE_DATA_OPS
@@ -356,88 +352,33 @@ def _rows_of(calls: rule.RunCalls) -> list[rule.CallRow]:
     return [*rows, rule.CallRow("memory.search", False)] if calls.failed else rows
 
 
-def _event(operation: str, args: dict[str, str], **kw: Any) -> str:
-    """One `loom.agent_events` row, by default a successful call of the answer's run."""
-    cols = {
-        "org": "acme",
-        "namespace": "ns",
-        "run_id": "r1",
-        "subject": "alice",
-        "consumer": ASSISTANT_CONSUMER,
-        "operation": operation,
-        "success": 1,
-        **kw,
-    }
-    pairs = ", ".join(f"'{k}', '{v}'" for k, v in args.items())
-    values = [f"'{v}'" if isinstance(v, str) else str(v) for v in cols.values()]
-    return (
-        f"INSERT INTO loom.agent_events ({', '.join([*cols, 'args'])}) "
-        f"VALUES ({', '.join([*values, f'map({pairs})'])})"
-    )
-
-
-def _run_rows(*rows: str) -> list[rule.CallRow]:
-    ch = LocalCH(ddl("agent_events"), ddl("agent_events_private"), *rows)
-    return asyncio.run(ledger.run_rows("acme", "r1", "alice", ch=ch))  # type: ignore[arg-type]
-
-
-def _run_calls(*rows: str) -> rule.RunCalls:
-    return rule.derive(_run_rows(*rows))
-
-
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
-def test_the_run_read_names_the_ops_that_found_data() -> None:
-    calls = _run_calls(
-        _event("memory.search", {"out_hits": "2"}),
-        _event("namespace.inventory", {}),
-        _event("memory.get", {"out_found": "true"}),
-        # Under the code namespace: a code call is not filed under the answer's.
-        _event("code.search", {"out_hits": "4"}, namespace="code-loom"),
-        # Found nothing.
-        _event("knowledge.search", {"out_hits": "0"}),
-        _event("knowledge.get", {"out_found": "false"}),
-        # An abstention's hits are written as "0" (event_args).
-        _event("memory.ask", {"out_abstain": "true", "out_hits": "0"}),
-        _event("namespace.audit", {"out_hits": "0"}),
+def test_call_receipts_name_the_ops_that_found_data() -> None:
+    calls = rule.derive(
+        [
+            rule.CallRow("memory.search", True, out_hits="2"),
+            rule.CallRow("namespace.inventory", True),
+            rule.CallRow("memory.get", True, out_found="true"),
+            rule.CallRow("code.search", True, out_hits="4"),
+            rule.CallRow("knowledge.search", True, out_hits="0"),
+            rule.CallRow("knowledge.get", True, out_found="false"),
+            rule.CallRow("memory.ask", True, out_hits="0"),
+            rule.CallRow("namespace.audit", True, out_hits="0"),
+        ]
     )
     found = frozenset({"memory.search", "namespace.inventory", "memory.get", "code.search"})
     assert calls.returned == found and calls.failed is False
-    # Every successful call ran, found or not.
     nothing = {"knowledge.search", "knowledge.get", "memory.ask", "namespace.audit"}
     assert calls.ran == found | nothing
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
-def test_the_run_read_sees_a_refused_call_under_the_sentinel_namespace() -> None:
-    calls = _run_calls(_event("memory.search", {}, success=0, namespace="-"))
+def test_a_refused_call_receipt_does_not_claim_data() -> None:
+    calls = rule.derive([rule.CallRow("memory.search", False)])
     assert calls == rule.RunCalls(frozenset(), True, frozenset())
 
 
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
-def test_the_run_read_reads_only_the_answers_own_calls() -> None:
-    found = {"out_hits": "3"}
-    calls = _run_calls(
-        _event("memory.search", found, run_id="r2"),
-        _event("memory.search", found, subject="bob"),
-        _event("memory.search", found, consumer="my-script"),
-        _event("memory.search", found, org="other"),
-    )
-    assert calls == rule.RunCalls(frozenset(), False, frozenset())
-
-
-def _rows(n: int) -> str:
-    """`n` successful calls of the answer's run, each its own request."""
-    return (
-        "INSERT INTO loom.agent_events (org, namespace, run_id, subject, consumer, operation, "
-        "success, request_id) SELECT 'acme', 'ns', 'r1', 'alice', "
-        f"'{ASSISTANT_CONSUMER}', 'namespace.summary', 1, toString(number) FROM numbers({n})"
-    )
-
-
-@pytest.mark.skipif(CLICKHOUSE is None, reason="needs the clickhouse binary")
 @pytest.mark.parametrize(("n", "cut"), [(200, False), (201, True)])
-def test_a_run_past_one_reads_rows_is_cut(n: int, cut: bool) -> None:
-    rows = _run_rows(_rows(n))
+def test_a_run_past_the_receipt_bound_is_cut(n: int, cut: bool) -> None:
+    rows = [rule.CallRow("namespace.summary", True)] * n
     assert len(rows) == n
     assert rule.derive(rows).cut is cut
 

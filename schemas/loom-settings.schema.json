@@ -98,7 +98,7 @@
           "maximum": 16384,
           "minimum": 64,
           "type": "integer",
-          "description": "Output tokens per model turn and total input plus output tokens per answer."
+          "description": "Output tokens requested from one model turn."
         },
         "assistant_max_steps": {
           "default": 8,
@@ -126,7 +126,7 @@
           "maximum": 100000,
           "minimum": 1000,
           "type": "integer",
-          "description": "Characters in a tool response and in answer text; oversize results refuse."
+          "description": "Characters allowed in one tool result; oversize results refuse."
         },
         "assistant_model": {
           "default": "",

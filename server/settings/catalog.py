@@ -57,11 +57,11 @@ class AssistantSettings(BaseModel):
     assistant_max_tool_calls: int = Field(default=16, ge=1, le=64)
     # UTF-8 bytes of the complete context, tools and messages included.
     assistant_max_context_bytes: int = Field(default=100000, ge=4096, le=1000000)
-    # Characters in a tool response and in answer text; oversize results refuse.
+    # Characters allowed in one tool result; oversize results refuse.
     assistant_max_tool_result_chars: int = Field(default=20000, ge=1000, le=100000)
     # Characters of provisional answer text allowed across all model turns.
     assistant_max_output_chars: int = Field(default=20000, ge=1000, le=100000)
-    # Output tokens per model turn and total input plus output tokens per answer.
+    # Output tokens requested from one model turn.
     assistant_max_output_tokens: int = Field(default=2048, ge=64, le=16384)
     # Total reported input and output tokens allowed across all turns.
     assistant_max_tokens: int = Field(default=100000, ge=1024, le=1000000)

@@ -59,9 +59,9 @@ Native assistant admission, tool and model budgets.
 | `LOOM_ASSISTANT_MAX_STEPS` | `int` | `8` |  | Model turns, including the final answer; tool calls share a separate total bound. |
 | `LOOM_ASSISTANT_MAX_TOOL_CALLS` | `int` | `16` |  | Total host-context and model-selected tool calls allowed in one answer. |
 | `LOOM_ASSISTANT_MAX_CONTEXT_BYTES` | `int` | `100000` |  | UTF-8 bytes of the complete context, tools and messages included. |
-| `LOOM_ASSISTANT_MAX_TOOL_RESULT_CHARS` | `int` | `20000` |  | Characters in a tool response and in answer text; oversize results refuse. |
+| `LOOM_ASSISTANT_MAX_TOOL_RESULT_CHARS` | `int` | `20000` |  | Characters allowed in one tool result; oversize results refuse. |
 | `LOOM_ASSISTANT_MAX_OUTPUT_CHARS` | `int` | `20000` |  | Characters of provisional answer text allowed across all model turns. |
-| `LOOM_ASSISTANT_MAX_OUTPUT_TOKENS` | `int` | `2048` |  | Output tokens per model turn and total input plus output tokens per answer. |
+| `LOOM_ASSISTANT_MAX_OUTPUT_TOKENS` | `int` | `2048` |  | Output tokens requested from one model turn. |
 | `LOOM_ASSISTANT_MAX_TOKENS` | `int` | `100000` |  | Total reported input and output tokens allowed across all turns. |
 | `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
 | `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |

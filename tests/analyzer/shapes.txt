@@ -1028,7 +1028,6 @@
 7a87bbd25387	SELECT org, namespace, agent, user_id, thread_id, title, metadata, run_id, created_at, updated_at, tombstoned_at FROM loom.conversation_threads FINAL WHERE org = {org:String} AND user_id = {scope:Stri
 7a9d47bbc467	SELECT session_id, summary_text, key_facts, derived_from, valid_at, created_at, version FROM loom.session_summaries FINAL WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL OR
 7aad3247f4a7	SELECT count() AS n FROM loom.session_summaries FINAL WHERE org = {org:String} AND user_id = {uid:String} AND tombstoned_at IS NULL
-7ac14ad61019	WITH ( SELECT max(mirror_marked) FROM (SELECT raw.ts AS ts, raw.org AS org, raw.namespace AS namespace, raw.agent AS agent, raw.user_id AS user_id, raw.session_id AS session_id, raw.run_id AS run_id,
 7ada090d2235	ALTER TABLE loom.shared UPDATE tombstoned_at = {now:DateTime} WHERE (org = {org:String} AND tombstoned_at IS NULL AND namespace = {ns:String}) AND ({erasure_mutation_tag:String} = {erasure_mutation_ta
 7ae5fa2ffa15	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, -- Multi-vector axis: min(value_dist, key_dist). CH?t g
 7b00f0e38432	SELECT namespace, source_id, `group`, members, read_at, deleted FROM loom.knowledge_group_members FINAL WHERE org = {org:String} AND (namespace, source_id, `group`) IN {groups:Array(Tuple(String, Stri
@@ -1774,7 +1773,6 @@ cacd77ea0602	SELECT count() AS n FROM loom.code_search_trace WHERE org = {org:St
 cad920c3af77	SELECT org, code_namespace, branch_namespace, pr_number, branch, verdict, epistemic, basis, reason, cherry_pick_pr, cherry_pick_sha, backport_pr, label_wanted, wanted_branch, wanted_source, settled, p
 cafb8d603f9f	SELECT ? AS present FROM loom.code_test_map WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL LIMIT ?
 cb0b352de033	SELECT count() AS n FROM loom.search_trace_log WHERE org = {org:String} AND namespace = {ns:String} AND ?
-cb0ffcfc5116	SELECT max(mirror_marked) AS protected, groupUniqArrayIf(?)(args[?], success AND args[?] != ?) AS digests FROM (SELECT raw.ts AS ts, raw.org AS org, raw.namespace AS namespace, raw.agent AS agent, raw
 cb40a5d65a6a	SELECT count() AS n FROM loom.memory_records FINAL WHERE org = {org:String} AND namespace = {ns:String}
 cb5546d93aee	ALTER TABLE loom.memory_versions DELETE WHERE (org = {org:String} AND has(tags, ?) AND hasAny(tags, {src:Array(String)}) AND hasAny(arrayMap(t -> (namespace, t), tags), {pairs:Array(Tuple(String, Stri
 cbd6cc077d01	SELECT org, namespace, agent, user_id, session_id, memory_key, tags FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND has(tags, ?) AND has(tags, {srctag:String}) AND tomb

@@ -7,7 +7,6 @@ import pytest
 from server.assistant.domain import support as rule
 from server.assistant.domain.steps import Step, steps_of
 from server.assistant.domain.support import RUN_ROWS, CallRow
-from server.assistant.store import ledger
 from server.operations.toolsets import ASSISTANT_CITABLE_OPS, ASSISTANT_NO_NAMESPACE_DATA_OPS
 
 
@@ -22,17 +21,7 @@ def support_result(rows: list[CallRow]) -> str:
 
 
 def decoded(operation: str, success: bool, *, marked: bool) -> list[CallRow]:
-    return ledger._rows(
-        [
-            {
-                "operation": operation,
-                "success": success,
-                "out_found": "false",
-                "out_hits": "0",
-                "mirror_marked": int(marked),
-            }
-        ]
-    )
+    return [CallRow(operation, success, out_found="false", out_hits="0", protected=marked)]
 
 
 @pytest.mark.parametrize("operation", ["knowledge.search", "knowledge.get", "insights.query"])

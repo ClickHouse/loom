@@ -1058,7 +1058,6 @@ jobs:
           tests/integration/test_mirror_ask_http.py
           tests/integration/test_marked_admin_events_native.py
           tests/integration/test_marked_analytics_export_native.py
-          tests/integration/test_marked_assistant_ledger_native.py
           tests/integration/test_marked_cost_summary_native.py
           tests/integration/test_marked_derived_activity_native.py
           tests/integration/test_marked_event_readers_native.py

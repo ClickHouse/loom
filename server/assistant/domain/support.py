@@ -10,8 +10,7 @@ from dataclasses import dataclass
 
 # Why one citation ended as it did (never on the wire; the wire carries the display reason).
 VERIFIED = "verified"
-# The check could not say: the ledger or document read failed or ran past the bound, the
-# answer had no run id, or it was past the citations one answer checks.
+# The check could not establish the source evidence within the answer's bound.
 NOT_RUN = "not_run"
 PAST_CAP = "past_cap"
 # This deployment does not record what memory reads return (the exposure ledger is off).
@@ -58,13 +57,13 @@ class RunCalls:
     unknown: bool = False
 
 
-# The rows one read of a run takes; a read asks for one more, so a run past it is known cut.
-RUN_ROWS = 200  # not a setting: a bound on one read of a run, not a behaviour to tune
+# Maximum receipt rows considered for support; an extra row marks truncated evidence.
+RUN_ROWS = 200  # not a setting: a wire evidence bound, not a behaviour to tune
 
 
 @dataclass(frozen=True)
 class CallRow:
-    """One ledger row of an answer's tool call (`ledger.run_rows`, `ledger.live_rows`): its
+    """One receipt of an answer's tool call: its
     op, whether it succeeded, and what its output said it found (`out_found`, `out_hits`,
     "" when the row has none)."""
 

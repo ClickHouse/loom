@@ -952,14 +952,13 @@ settings:
   # UTF-8 bytes of the complete context, tools and messages included. [restart]
   # assistant_max_context_bytes: 100000
 
-  # Characters in a tool response and in answer text; oversize results refuse. [restart]
+  # Characters allowed in one tool result; oversize results refuse. [restart]
   # assistant_max_tool_result_chars: 20000
 
   # Characters of provisional answer text allowed across all model turns. [restart]
   # assistant_max_output_chars: 20000
 
-  # Output tokens per model turn and total input plus output tokens per answer.
-  # [restart]
+  # Output tokens requested from one model turn. [restart]
   # assistant_max_output_tokens: 2048
 
   # Total reported input and output tokens allowed across all turns. [restart]
