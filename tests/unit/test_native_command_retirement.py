@@ -245,7 +245,8 @@ def _claim_prompt_subprocess(result_path):
         # The owned child keeps this descriptor open through interpreter shutdown.
         trace_fd = os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         os.write(
-            trace_fd, f"sigint_ignored={signal.getsignal(signal.SIGINT) == signal.SIG_IGN}\n".encode()
+            trace_fd,
+            f"sigint_ignored={signal.getsignal(signal.SIGINT) == signal.SIG_IGN}\n".encode(),
         )
         outcome = None
         try:
@@ -386,15 +387,9 @@ def test_actual_claim_prompt_cancellation_exits_with_stdin_still_open(
         diagnostic = b"child diagnostic unavailable"
         try:
             child.process.send_signal(signal.SIGUSR1)
-            diagnostic_end = time.monotonic() + 0.5
-            while True:
-                with child.trace.open("rb") as trace:
-                    diagnostic = trace.read(65536)
-                if b"Current thread" in diagnostic or b"Thread 0x" in diagnostic:
-                    break
-                if time.monotonic() >= diagnostic_end:
-                    break
-                time.sleep(0.01)
+            time.sleep(0.5)
+            with child.trace.open("rb") as trace:
+                diagnostic = trace.read(65536)
         except OSError as error:
             diagnostic = type(error).__name__.encode()
         pytest.fail(
