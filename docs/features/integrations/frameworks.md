@@ -113,7 +113,7 @@ const memories = await new LoomMemoryRetriever(agent, { scope: { userId: "alice"
 `LoomRetriever` searches the namespace's documents (`knowledge.search`) as a LlamaIndex
 `BaseRetriever`, for a query engine, a chat engine or a retriever tool. `LoomMemoryBlock`
 is a long-term memory block for LlamaIndex's `Memory`. Install with
-`pip install 'clickhouse-loom[llamaindex]'` (`llama-index-core` 0.14).
+`pip install 'clickhouse-loom[llamaindex]==1.3.0rc1'` (`llama-index-core` 0.14).
 
 ```python
 from llama_index.core.memory import Memory
@@ -191,7 +191,7 @@ acknowledging an unsent extraction. The native framework owns its overflow archi
 
 `LoomDocumentStore` implements Haystack 3.5's `DocumentStore` protocol, and
 `LoomRetriever` is a native retrieval component over Loom knowledge search. Install
-`pip install 'clickhouse-loom[haystack]'` (`haystack-ai>=3.5,<3.6`).
+`pip install 'clickhouse-loom[haystack]==1.3.0rc1'` (`haystack-ai>=3.5,<3.6`).
 
 ```python
 from haystack import Document, Pipeline
@@ -249,8 +249,8 @@ directly from the imported component works as in the example.
 shape of DSPy's own `dspy.retrievers.Embeddings`: a program calls it in `forward` and gets
 a `dspy.Prediction` whose `passages` are the texts, with `sources`, `scores` and
 `metadata` in the same order, so the program can cite what it used. `as_tool()` hands the
-same search to `dspy.ReAct`. Install with `pip install 'clickhouse-loom[dspy]'` (`dspy`
-3.5.x).
+same search to `dspy.ReAct`. From the root of the Loom checkout that supplies this
+guide, install with `pip install './sdk/python[dspy]'` (`dspy` 3.5.x).
 
 ```python
 import dspy
@@ -420,7 +420,7 @@ const result = await run(assistant, "Book my usual seat to Lisbon", { session })
 agents share the namespace's memory. Set it on the `Crew`, not on an `Agent`: when CrewAI
 copies a crew (`kickoff_for_each`, `train`, `test`) it rebuilds each agent's memory as its
 own `Memory`, with a local store, and keeps only the crew's. Install with
-`pip install 'clickhouse-loom[crewai]'` (`crewai` 1.15, Python 3.11 to 3.13).
+`pip install 'clickhouse-loom[crewai]==1.3.0rc1'` (`crewai` 1.15, Python 3.11 to 3.13).
 
 ```python
 from crewai import Crew
@@ -474,7 +474,7 @@ restores that, with a local store.
 
 `LoomMemory` implements AutoGen's `Memory` protocol (`autogen_core.memory`), which an
 `AssistantAgent` takes as `memory=[...]`. Install with
-`pip install 'clickhouse-loom[autogen]' autogen-agentchat` (`autogen-core` 0.7;
+`pip install 'clickhouse-loom[autogen]==1.3.0rc1' autogen-agentchat` (`autogen-core` 0.7;
 `AssistantAgent` comes from `autogen-agentchat`, which the extra does not install).
 
 ```python
@@ -579,7 +579,8 @@ Find more projects using AG2 in [Build with AG2](https://github.com/ag2ai/build-
 `LoomContextProvider` implements Agent Framework's `ContextProvider`, which an `Agent`
 takes in `context_providers=[...]`: before each run it adds the Loom memories that match
 the user's input to the run's instructions, and after the run it sends the turn's text to
-Loom, which extracts the facts. Install with `pip install 'clickhouse-loom[agent-framework]'`
+Loom, which extracts the facts. Install with
+`pip install 'clickhouse-loom[agent-framework]==1.3.0rc1'`
 (`agent-framework-core` 1.26.x). Agent Framework succeeds AutoGen; a new project
 uses this provider, and the [AutoGen](#autogen) memory stays for AutoGen projects.
 
@@ -643,8 +644,9 @@ across conversations, and the application runs its commands. `AsyncLoomMemoryToo
 `loom.Agent`) and `LoomMemoryTool` (over a `loom.SyncAgent`) subclass the `anthropic` SDK's
 memory tool bases and run those commands against Loom: each file is a Loom document, so
 every agent of the namespace reads the same files, `knowledge.search` finds what they say,
-and the files stay in the Loom deployment. Install with
-`pip install 'clickhouse-loom[claude-memory]'` (`anthropic` 2.11.x).
+and the files stay in the Loom deployment. From the root of the Loom checkout
+that supplies this guide, install `pip install './sdk/python[claude-memory]'`
+(`anthropic` 2.11.x).
 
 ```python
 import anthropic
@@ -666,7 +668,9 @@ async with Agent(org="acme", namespace="support") as loom_agent:
 
 In TypeScript, `loomMemoryTool(agent, { store }, extras)` returns the SDK's `betaMemoryTool`
 (with `extras` such as `cache_control`) over the same documents (`@anthropic-ai/sdk` is an
-optional peer dependency, 1.8.x or 1.11.x):
+optional peer dependency, 1.8.x or 1.11.x). Build and install the Loom SDK from
+that same checkout using the [TypeScript SDK source instructions](../../../sdk/typescript/README.md),
+then run `npm install '@anthropic-ai/sdk@>=1.11.0 <1.12.0'` in your application:
 
 ```ts
 import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
@@ -714,7 +718,7 @@ Give each user their own namespace when users must not read each other's files.
 `memory_service=`. ADK's own memory tools read it: `preload_memory` searches with the
 user's message before each model call and adds the matches to the prompt, and
 `load_memory` lets the model search. A callback saves each turn. Install with
-`pip install 'clickhouse-loom[google-adk]'` (`google-adk` 2.14.x).
+`pip install 'clickhouse-loom[google-adk]==1.3.0rc1'` (`google-adk` 2.14.x).
 
 ```python
 from google.adk.agents import LlmAgent
@@ -794,7 +798,8 @@ sent, and neither is `custom_metadata` or an entry's `author` and `id`.
 | `key_prefix`                 | `adk`    | the prefix of `add_memory`'s keys; an empty one is refused                                     |
 
 The TypeScript service implements `@google/adk` 2.5's `BaseMemoryService` interface
-(`npm install @google/adk@~2.5`). It exposes `addSessionToMemory` and `searchMemory`;
+(`npm install @clickhouse/loom@1.3.0-rc.1 @google/adk@~2.5`). It exposes
+`addSessionToMemory` and `searchMemory`;
 that interface has no individual-memory deletion or event-append method. Both SDKs
 use the same derived Loom session for the same user and ADK session id. TypeScript
 options are `appName`, `topK`, `honourAbstain` and `defer`, with the Python defaults.
@@ -835,7 +840,7 @@ extracted memories and searchable documents in the user's deployment.
 ## Agno
 
 `LoomMemoryDb` implements Agno 3.2's `BaseDb` user-memory methods for one user and
-store. Install `pip install 'clickhouse-loom[agno]'` (`agno>=3.2,<3.3`). Pass it to a
+store. Install `pip install 'clickhouse-loom[agno]==1.3.0rc1'` (`agno>=3.2,<3.3`). Pass it to a
 `MemoryManager`; configure the agent's session database separately if needed.
 
 ```python
@@ -887,7 +892,7 @@ adapter makes no model call itself; its tests supply native memory objects direc
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
 agent verbs as a `FunctionToolset`, the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. Install with
-`pip install 'clickhouse-loom[pydantic-ai]' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
+`pip install 'clickhouse-loom[pydantic-ai]==1.3.0rc1' 'pydantic-ai-slim[anthropic]'` (`pydantic-ai-slim`
 2.68 or a later 2.x, plus the extra for your model's provider).
 
 ```python
@@ -918,7 +923,8 @@ refuses a `SyncAgent`. Message history stays with the caller, who passes it to e
 `loomTools(agent, scope)` returns Loom's agent verbs as Mastra tools built with
 `createTool`, keyed by name as a Mastra `Agent` takes them: the same `AgentTools` as the
 [OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83.x is an
-optional peer dependency, and needs Node 22.13 or later.
+optional peer dependency, and needs Node 22.13 or later. Install with
+`npm install @clickhouse/loom@1.3.0-rc.1 '@mastra/core@>=1.83.0 <1.84.0'`.
 
 ```ts
 import { Agent as MastraAgent } from "@mastra/core/agent";
@@ -935,7 +941,7 @@ const assistant = new MastraAgent({
 
 `LoomMemoryStorage` implements the native `MemoryStorage` domain. It keeps mutable
 threads, complete message payloads and resource working memory in Loom through the SDK.
-Install `@mastra/core` 1.83.x and `@mastra/memory` alongside `@clickhouse/loom`.
+For native storage, also run `npm install @mastra/memory@1.41.1`.
 
 For automatic native memory, the app supplies `conversationCapture`, a `SessionCapture`
 restored for the complete logical conversation family:
@@ -1026,7 +1032,8 @@ goes on.
 `loomTools(agent, scope)` returns Loom's agent verbs as an AI SDK `ToolSet`, the record
 `generateText`, `streamText` and the SDK's agents take as `tools`: the same `AgentTools` as
 the [OpenAI Agents SDK](#openai-agents-sdk) adapter. `ai` 7.x is an optional peer
-dependency, and needs Node 22.12 or later (the package is ESM-only).
+dependency, and needs Node 22.12 or later (the package is ESM-only). Install with
+`npm install @clickhouse/loom@1.3.0-rc.1 'ai@>=7.0.0 <8.0.0'`.
 
 ```ts
 import { generateText, stepCountIs } from "ai";
@@ -1226,7 +1233,7 @@ async with Agent(org="acme", namespace="support") as loom_agent:
     )
 ```
 
-Install with `pip install 'clickhouse-loom[pipecat]'` (`pipecat-ai` 1.16.x).
+Install with `pip install 'clickhouse-loom[pipecat]==1.3.0rc1'` (`pipecat-ai` 1.16.x).
 
 The [text-only example](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/pipecat_text_memory.py)
 uses a canned reply and requires the application's existing trusted session pointer.
