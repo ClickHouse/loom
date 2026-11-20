@@ -12,7 +12,7 @@ const MANIFESTS = ["../.claude-plugin/plugin.json", "../.codex-plugin/plugin.jso
 
 // The oldest Loom server the hooks support. lib/ is synced, so both plugins
 // carry the same minimum; a release raises it (docs/development/release-process.md).
-export const MIN_SERVER_VERSION = "1.0.0";
+export const MIN_SERVER_VERSION = "1.3.0";
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 

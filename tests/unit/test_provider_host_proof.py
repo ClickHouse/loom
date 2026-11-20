@@ -7,6 +7,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from time import monotonic
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -66,11 +67,11 @@ def test_a_pid_this_process_may_not_signal_still_runs(monkeypatch: pytest.Monkey
     assert not pp.proves_stopped(_with(pid=_dead_pid()))
 
 
-def test_a_container_restarted_into_a_new_pid_namespace_is_proven_stopped(
+def test_a_changed_container_pid_namespace_does_not_prove_the_old_process_stopped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(pp, "_container", lambda: "c" * 64)
-    assert pp.proves_stopped(_with(container="c" * 64, pidns="1"))
+    assert not pp.proves_stopped(_with(container="c" * 64, pidns="1"))
 
 
 @pytest.mark.parametrize("theirs", ["d" * 64, ""])
@@ -137,6 +138,18 @@ def _row(participant: UUID, proof: str, **over: Any) -> dict[str, Any]:
 async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from types import SimpleNamespace
+
+    from server.core import pg_profile
+    from server.settings import settings
+
+    async def authority(sql, params=None):
+        assert sql == pg_profile._CH_RECORD
+        return {"authority": "clickhouse", "deployment_id": str(UUID(int=1)), "epoch": 1}
+
+    client = SimpleNamespace(query_one=authority)
+    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
+    monkeypatch.setattr(barrier, "_default_client", lambda: client)
     me, dead, busy, paused, remote = (uuid4() for _ in range(5))
     monkeypatch.setattr(barrier, "process_identity", lambda: me)
     gone = _with(pid=_dead_pid())
@@ -149,130 +162,81 @@ async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     ]
     monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
     monkeypatch.setattr(
-        barrier, "running_queries", AsyncMock(side_effect=lambda p: int(str(p) == str(busy)))
+        barrier,
+        "running_queries",
+        AsyncMock(side_effect=lambda p, **_scope: int(str(p) == str(busy))),
     )
     record = AsyncMock()
-    monkeypatch.setattr(barrier, "record_participant", record)
+    monkeypatch.setattr(barrier, "record_retirement", record)
     monkeypatch.setattr(barrier, "_last_here", -float("inf"))
-    assert await barrier.retire_dead_here(now=100.0) == 1
-    record.assert_awaited_once_with(dead, UUID(int=0), "retired", after=5)
-    assert await barrier.retire_dead_here(now=100.0 + barrier.HERE_S / 2) == 0  # throttled
+    assert await barrier.retire_dead_here(end=monotonic() + 1, now=100.0) == 1
+    record.assert_awaited_once()
+    assert record.await_args.kwargs == {"ch": client}
+    proof = record.await_args.args[0]
+    assert proof.participant == dead and proof.after == 5
+    assert proof.host_proof == pp.certified(gone)
+    assert (
+        await barrier.retire_dead_here(end=monotonic() + 1, now=100.0 + barrier.HERE_S / 2) == 0
+    )  # throttled
 
 
-# -- a pod Kubernetes deleted ------------------------------------------------
-
-_POD_UID = "0b6f2c1e-1111-2222-3333-444455556666"
-
-
-def _pod_proof(
-    namespace: str = "loom", container: str = f"{_POD_UID}/loom", pod: str = "loom-7d9-abc"
+def _fresh_process_stat(
+    monkeypatch: pytest.MonkeyPatch, text: str, error: type[Exception] | None = None
 ) -> str:
-    # The host name is the pod name cut to 63 characters; the lookup uses the pod name.
-    return "|".join((pod[:63], "boot", container, "4026", "7", "99", namespace, pod))
+    """Hold the first birth check steady and supply the subsequent kernel record."""
+    from io import StringIO
+
+    monkeypatch.setattr(pp.socket, "gethostname", lambda: "host")
+    monkeypatch.setattr(pp, "_boot_and_pidns", lambda: ("boot", "77"))
+    monkeypatch.setattr(pp.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(pp, "_start_ticks", lambda pid: "900")
+
+    def fresh_open(path: str, *args: Any, **kwargs: Any) -> StringIO:
+        assert path == "/proc/424242/stat"
+        if error is not None:
+            raise error("uninspectable fresh process record")
+        return StringIO(text)
+
+    monkeypatch.setattr(pp, "open", fresh_open, raising=False)
+    return "host|boot|container|77|424242|900||"
 
 
-@pytest.fixture
-def kube(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> Any:
-    """A service-account mount, the API's address and a stand-in API: it answers
-    the (status, body) pairs queued in `answers` and keeps what it saw in `seen`."""
-    from types import SimpleNamespace
-
-    import httpx
-
-    (tmp_path / "token").write_text("tok")
-    (tmp_path / "ca.crt").write_text("")
-    monkeypatch.setattr(pp, "_SA", str(tmp_path))
-    monkeypatch.setenv("POD_NAMESPACE", "loom")
-    monkeypatch.setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
-    api = SimpleNamespace(answers=[], seen=[])
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        api.seen.append(request)
-        status, body = api.answers.pop(0)
-        return httpx.Response(status, json=body)
-
-    real = httpx.AsyncClient
-    monkeypatch.setattr(
-        httpx,
-        "AsyncClient",
-        lambda **kw: real(transport=httpx.MockTransport(handler), timeout=kw.get("timeout")),
-    )
-    return api
+def _process_stat_record(state: str = "Z", threads: str = "1", start: str = "900") -> str:
+    fields = ["0"] * 20
+    fields[0], fields[17], fields[19] = state, threads, start
+    return "424242 (owned child) " + " ".join(fields)
 
 
-@pytest.mark.asyncio
+def test_an_exact_single_thread_zombie_record_proves_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    proof = _fresh_process_stat(monkeypatch, _process_stat_record())
+    assert pp.proves_stopped(proof)
+
+
 @pytest.mark.parametrize(
-    "status,uid,phase,gone",
+    "record",
     [
-        (404, "", "", True),
-        (200, "another-uid", "Running", True),
-        (200, _POD_UID, "Failed", True),  # evicted: the object stays, its containers stopped
-        (200, _POD_UID, "Succeeded", True),
-        (200, _POD_UID, "Running", False),
-        (200, _POD_UID, "Pending", False),
-        (403, "", "", False),
+        _process_stat_record(threads="0"),
+        _process_stat_record(threads="2"),
+        _process_stat_record(threads="-1"),
+        _process_stat_record(threads="unknown"),
+        _process_stat_record(threads="1.0"),
+        *[_process_stat_record(state=state) for state in ("S", "D", "R", "T", "t", "X")],
+        _process_stat_record(start="901"),
+        _process_stat_record(start="unknown"),
+        "424242 (owned child) Z",
+        "unparseable kernel record",
     ],
 )
-async def test_a_pod_is_gone_only_when_the_api_says_so(kube, status, uid, phase, gone) -> None:
-    kube.answers.append((status, {"metadata": {"uid": uid}, "status": {"phase": phase}}))
-    assert await pp.pod_gone(_pod_proof()) is gone
-    assert kube.seen[0].url.path == "/api/v1/namespaces/loom/pods/loom-7d9-abc"
-    assert kube.seen[0].headers["authorization"] == "Bearer tok"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "proof",
-    [
-        _pod_proof(namespace="other"),
-        _pod_proof(container="a" * 64),
-        _pod_proof(pod=""),
-        "h|b|c|p|1|2",
-        "h|b|" + _POD_UID + "/loom|p|1|2|loom",  # a 7-part proof (no pod name) proves nothing
-        "",
-    ],
-)
-async def test_a_pod_elsewhere_or_outside_kubernetes_is_never_gone(kube, proof) -> None:
-    assert await pp.pod_gone(proof) is False
-    assert kube.seen == []  # nothing to ask: another namespace, a Docker container, an old row
-
-
-@pytest.mark.asyncio
-async def test_the_leader_retires_an_expired_participant_whose_pod_is_gone(
-    monkeypatch: pytest.MonkeyPatch,
+def test_fresh_kernel_record_must_prove_the_same_single_thread_exit(
+    monkeypatch: pytest.MonkeyPatch, record: str
 ) -> None:
-    me, lost, busy, kept = (uuid4() for _ in range(4))
-    monkeypatch.setattr(barrier, "process_identity", lambda: me)
-    rows = [
-        _row(me, pp.host_proof()),
-        _row(lost, _pod_proof(), expired=True, version=9),
-        _row(busy, _pod_proof(), expired=True),
-        _row(kept, _pod_proof(), expired=True),
-    ]
-    monkeypatch.setattr(barrier, "participants", AsyncMock(return_value=rows))
-    monkeypatch.setattr(barrier, "prune_retired", AsyncMock())
-    monkeypatch.setattr(
-        barrier, "running_queries", AsyncMock(side_effect=lambda p: int(str(p) == str(busy)))
-    )
-    asked: list[str] = []
-
-    async def gone(proof: str) -> bool:
-        asked.append(proof)
-        return len(asked) == 1  # the first asked (lost) is gone, kept's pod still exists
-
-    monkeypatch.setattr(barrier, "pod_gone", gone)
-    record = AsyncMock()
-    monkeypatch.setattr(barrier, "record_participant", record)
-    monkeypatch.setattr(barrier, "_STALE", None)
-    await barrier.sweep_stopped(now=5000.0)
-    record.assert_awaited_once_with(lost, UUID(int=0), "retired", after=9)
-    assert len(asked) == 2  # a participant with a query running is never asked about
-    assert [p["participant_id"] for p in barrier.stale_participants()] == [str(busy), str(kept)]
+    proof = _fresh_process_stat(monkeypatch, record)
+    assert not pp.proves_stopped(proof)
 
 
-@pytest.mark.asyncio
-async def test_a_long_pod_name_is_looked_up_whole_not_by_its_cut_host_name(kube) -> None:
-    long = "loom-memory-platform-production-workers-7d9c8b6f5d-x4kqz-abcdefgh"
-    kube.answers.append((200, {"metadata": {"uid": _POD_UID}, "status": {"phase": "Running"}}))
-    assert await pp.pod_gone(_pod_proof(pod=long)) is False
-    assert kube.seen[0].url.path == f"/api/v1/namespaces/loom/pods/{long}"
+@pytest.mark.parametrize("error", [PermissionError, OSError, IndexError])
+def test_unreadable_fresh_kernel_record_never_proves_exit(
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    proof = _fresh_process_stat(monkeypatch, _process_stat_record(), error)
+    assert not pp.proves_stopped(proof)

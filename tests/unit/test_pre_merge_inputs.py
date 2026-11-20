@@ -44,7 +44,9 @@ def test_pull_head_refs_parse_and_select() -> None:
 async def test_fetch_pull_heads_sends_one_stdin_fetch_without_prune(monkeypatch) -> None:
     calls: list[tuple[tuple[str, ...], bytes | None]] = []
 
-    async def fake_git(git_dir, *args, timeout_s=0.0, remote="", token="", stdin=None):
+    async def fake_git(
+        git_dir, *args, timeout_s=0.0, remote="", token="", stdin=None, proxy_identity=""
+    ):
         calls.append((args, stdin))
         return ""
 
@@ -708,13 +710,13 @@ async def test_ingest_fetches_only_open_pr_heads_the_mirror_lacks(monkeypatch) -
 
     sent: list[list[int]] = []
 
-    async def remote(git_dir, remote, *, token=""):
+    async def remote(git_dir, remote, *, token="", proxy_identity=""):
         return {5: "5" * 40, 4: "4" * 40, 3: "3" * 40, 2: "2" * 40}
 
     async def local(git_dir):
         return {5: "5" * 40}  # 5 is current; 4, 3, 2 are behind; the batch takes two
 
-    async def fetch(git_dir, remote, numbers, *, token=""):
+    async def fetch(git_dir, remote, numbers, *, token="", proxy_identity=""):
         sent.append(list(numbers))
         return len(numbers)
 
@@ -728,6 +730,7 @@ async def test_ingest_fetches_only_open_pr_heads_the_mirror_lacks(monkeypatch) -
         namespace: str = NS
         git_remote: str = "https://r"
         github_token: str = ""
+        git_proxy_identity: str = ""
         label: str = "o/n"
         git_fetch_pr_heads: bool = True
 

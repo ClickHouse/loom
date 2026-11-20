@@ -64,10 +64,21 @@ async def fetch_extra_branches(cfg: Any, git_dir: str, result: CodeIngestResult)
         return 0
     _EXTRA_FETCHED_AT[git_dir] = now  # a failing remote is retried next pass, not next entry
     try:
-        remote = await gitrepo.remote_branches(git_dir, cfg.git_remote, token=cfg.github_token)
+        remote = await gitrepo.remote_branches(
+            git_dir,
+            cfg.git_remote,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
         local = await gitrepo.local_branch_shas(git_dir)
         wanted = gitrepo.branches_to_fetch(remote, local, globs, skip=cfg.git_branch)
-        sent = await gitrepo.fetch_branches(git_dir, cfg.git_remote, wanted, token=cfg.github_token)
+        sent = await gitrepo.fetch_branches(
+            git_dir,
+            cfg.git_remote,
+            wanted,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
     except gitrepo.GitError as e:
         result.errors.append(f"extra branches fetch: {e}")
         return 0
@@ -183,7 +194,13 @@ async def pin_merges(cfg: Any, git_dir: str, shas: list[str]) -> int:
     want = [s for s in dict.fromkeys(shas) if s not in gone]
     while want:
         try:
-            return await gitrepo.fetch_shas(git_dir, cfg.git_remote, want, token=cfg.github_token)
+            return await gitrepo.fetch_shas(
+                git_dir,
+                cfg.git_remote,
+                want,
+                token=cfg.github_token,
+                proxy_identity=cfg.git_proxy_identity,
+            )
         except gitrepo.GitError as e:
             named = {s for s in want if any(g.format(s) in str(e) for g in _GONE)}
             if not named:
@@ -230,13 +247,22 @@ async def fetch_pr_heads(cfg: Any, git_dir: str, repo: Any, result: CodeIngestRe
         return 0  # another entry sharing the mirror may hold the ledger; it tries next
     _PR_HEADS_FETCHED_AT[git_dir] = now  # a failing remote is retried next pass, not next entry
     try:
-        remote = await gitrepo.remote_pull_heads(git_dir, cfg.git_remote, token=cfg.github_token)
+        remote = await gitrepo.remote_pull_heads(
+            git_dir,
+            cfg.git_remote,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
+        )
         local = await gitrepo.local_pull_heads(git_dir)
         wanted = gitrepo.pull_heads_to_fetch(
             open_prs, remote, local, limit=settings.code_git_pr_head_batch
         )
         sent = await gitrepo.fetch_pull_heads(
-            git_dir, cfg.git_remote, wanted, token=cfg.github_token
+            git_dir,
+            cfg.git_remote,
+            wanted,
+            token=cfg.github_token,
+            proxy_identity=cfg.git_proxy_identity,
         )
     except gitrepo.GitError as e:
         result.errors.append(f"pr heads fetch: {e}")
@@ -273,7 +299,13 @@ async def fetch_entry(cfg: Any, git_dir: str, repo: Any, result: CodeIngestResul
     async with fetch_lock(git_dir):
         try:
             if (git_dir, cfg.git_branch) not in _FETCHED_THIS_PASS:
-                await gitrepo.fetch(git_dir, cfg.git_remote, cfg.git_branch, token=cfg.github_token)
+                await gitrepo.fetch(
+                    git_dir,
+                    cfg.git_remote,
+                    cfg.git_branch,
+                    token=cfg.github_token,
+                    proxy_identity=cfg.git_proxy_identity,
+                )
         except gitrepo.GitError as e:
             result.errors.append(f"fetch: {e}")
             result.tier_failed(cfg, "fetch", f"fetch {cfg.git_remote}: {e}")
@@ -296,24 +328,28 @@ async def prefetch_mirrors(repos: list[Any], result: CodeIngestResult) -> int:
     A mirror can serve many entries; if each negotiated its own fetch in its
     turn, an entry the budget never reached would never be fetched at all. A
     mirror with one entry fetches in that entry's turn. A failed batch
-    leaves its entries to their own fetch. Returns the mirrors fetched."""
+    leaves its entries to their own fetch. Returns the mirrors fetched.
+
+    Entries share a batch only when they fetch alike: the same remote, token and
+    git proxy identity, so no branch is fetched under another entry's credentials."""
     from server.code.app.index import gitrepo
 
     _FETCHED_THIS_PASS.clear()
-    groups: dict[tuple[str, str, str], list[Any]] = {}
+    groups: dict[tuple[str, str, str, str], list[Any]] = {}
     for cfg in repos:
-        remote, token = cfg.git_remote, cfg.github_token
-        key = (cfg.git_dir, remote, token)
+        key = (cfg.git_dir, cfg.git_remote, cfg.github_token, cfg.git_proxy_identity)
         groups.setdefault(key, []).append(cfg)
     fetched = 0
-    for (git_dir, remote, token), cfgs in groups.items():
+    for (git_dir, remote, token, identity), cfgs in groups.items():
         if len(cfgs) < 2 or not await asyncio.to_thread(os.path.isdir, git_dir):
             continue
         started = time.monotonic()
         branches = [c.git_branch for c in cfgs]
         try:
             async with fetch_lock(git_dir):
-                await gitrepo.fetch_many(git_dir, remote, branches, token=token)
+                await gitrepo.fetch_many(
+                    git_dir, remote, branches, token=token, proxy_identity=identity
+                )
         except gitrepo.GitError as e:
             result.errors.append(f"mirror fetch {git_dir}: {e}")
             continue

@@ -255,12 +255,5 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "agents preview pasted links with it; add and update take links directly; the "
             "source dialog takes ids"
         ),
-        "connection.list": (
-            "client programs list their own provider connections; browser consent uses "
-            "the authenticated connection-start route"
-        ),
-        "connection.disconnect": (
-            "client programs disconnect their own provider connections through this op"
-        ),
     },
 )

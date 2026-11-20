@@ -13,6 +13,7 @@ from typing import Any
 
 from server.core.ch_writes import committed_insert_settings
 from server.core.datetimes import naive_utc_now
+from server.embedding.documents import document_vector, document_vectors
 from server.llm import customer
 from server.memory.app.projection_errors import record_input_projection_failure
 from server.memory.app.sensitive_passages import embed_chunks_of
@@ -263,13 +264,7 @@ async def _embed_chunks(embedder: Any, texts: list[str]) -> list[list[float]]:
     answering []. A held call (`customer.HOLDS`) raises: no chunk is
     unembeddable then, and the caller keeps the projection to retry."""
     try:
-        vectors = await embedder.embed_many(texts)
-        if len(vectors) != len(texts):
-            raise RuntimeError(
-                "memory_chunks batch embed returned "
-                f"{len(vectors)} vectors for {len(texts)} chunks",
-            )
-        return list(vectors)
+        return await document_vectors(embedder, texts)
     except customer.HOLDS:
         raise
     except Exception as e:  # noqa: BLE001 — falls back to one embed per chunk
@@ -277,7 +272,7 @@ async def _embed_chunks(embedder: Any, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
         for i, chunk in enumerate(texts):
             try:
-                out.append(await embedder.embed(chunk))
+                out.append(await document_vector(embedder, chunk))
             except customer.HOLDS:
                 raise
             except Exception as chunk_error:  # noqa: BLE001 — this chunk stays unembedded

@@ -1,11 +1,30 @@
 """Agno MemoryManager reads, revises and clears its bound user's Loom memories."""
 
 import json
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
+import httpx
 import pytest
 from agno.db.schemas.memory import UserMemory
 from agno.memory.manager import MemoryManager
+from loom import SyncAgent
 from loom.integrations.agno import LoomMemoryDb
+from loom.session_protection import (
+    AutomaticCaptureSuppressed,
+    SessionProtection,
+    SessionProtectionUnavailable,
+    observation_scope,
+)
+
+
+@dataclass
+class _TransportState:
+    session_protection: SessionProtection | None = None
 
 
 class FakeAgent:
@@ -14,6 +33,7 @@ class FakeAgent:
         self.calls = []
         self.cap = cap
         self.unserved = unserved
+        self.transport = _TransportState()
 
     def call(self, op, body, **scope):
         self.calls.append((op, body, scope))
@@ -188,3 +208,272 @@ def test_negative_limit_is_refused_before_read(method):
     with pytest.raises(ValueError, match="limit.*non-negative"):
         getattr(db, method)(limit=-1)
     assert not agent.calls
+
+
+@contextmanager
+def _protection_sync_agent(
+    root: SessionProtection | None,
+    reply: Callable[[str, dict[str, Any]], dict[str, Any]],
+) -> Iterator[tuple[SyncAgent, list[tuple[str, dict[str, Any]]]]]:
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        op = request.url.path.rsplit("/", 1)[-1]
+        body = json.loads(request.content)
+        posts.append((op, body))
+        return httpx.Response(200, json=reply(op, body))
+
+    with pytest.MonkeyPatch.context() as environment:
+        environment.setenv("NO_PROXY", "*")
+        environment.setenv("no_proxy", "*")
+        with SyncAgent(
+            org="acme",
+            namespace="support",
+            agent="bot",
+            base_url="http://inert.invalid",
+            api_key="test-token",
+            session_protection=root,
+            pacing=False,
+            coalesce_sets=False,
+            auto_run=False,
+            mentor_brief=False,
+            retry={"max_attempts": 1},
+        ) as agent:
+            agent.transport._client._transport = httpx.MockTransport(respond)
+            yield agent, posts
+
+
+def test_protection_sync_agent_mock_transport_ignores_inherited_proxies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    for name in (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    ):
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    monkeypatch.setenv("NO_PROXY", "localhost")
+    monkeypatch.setenv("no_proxy", "localhost")
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        raise AssertionError("Transport selection must not send a request")
+
+    with _protection_sync_agent(None, reply) as (agent, posts):
+        selected = agent.transport._client._transport_for_url(
+            httpx.URL("http://inert.invalid/v1/memory.list")
+        )
+        assert isinstance(selected, httpx.MockTransport)
+        assert not posts
+    assert os.environ["NO_PROXY"] == "localhost"
+    assert os.environ["no_proxy"] == "localhost"
+
+
+def _protection_reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+    if op == "memory.list":
+        return {"entries": [], "truncated": False}
+    if op == "memory.get":
+        return {"found": False}
+    if op == "memory.set":
+        return {"stored": True}
+    raise AssertionError(op)
+
+
+def test_protection_db_observes_constructor_family_after_binding_changes(tmp_path: Path) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        assert op == "memory.list"
+        return {"entries": [], "mirrored": True}
+
+    with _protection_sync_agent(first, reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        manager = MemoryManager(db=db)
+        agent.transport.session_protection = current
+        assert manager.get_user_memories(user_id="alice") == []
+        assert first.protected and current.protected
+        assert [op for op, _ in posts] == ["memory.list"]
+
+
+@pytest.mark.parametrize("origin", ["constructor", "callback"])
+def test_protection_db_retains_ambient_observers_after_scope_exit(
+    tmp_path: Path, origin: str
+) -> None:
+    earlier = SessionProtection.create(base=tmp_path / "earlier")
+    current = SessionProtection.create(base=tmp_path / "current")
+    marked = False
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        assert op == "memory.list"
+        return {"entries": [], "mirrored": marked}
+
+    with _protection_sync_agent(None, reply) as (agent, posts):
+        if origin == "constructor":
+            with observation_scope((earlier,)):
+                db = LoomMemoryDb(agent, user_id="alice")
+            manager = MemoryManager(db=db)
+        else:
+            db = LoomMemoryDb(agent, user_id="alice")
+            manager = MemoryManager(db=db)
+            with observation_scope((earlier,)):
+                assert manager.get_user_memories(user_id="alice") == []
+        posts.clear()
+        marked = True
+        agent.transport.session_protection = current
+        assert manager.get_user_memories(user_id="alice") == []
+        assert earlier.protected and current.protected
+        assert [op for op, _ in posts] == ["memory.list"]
+
+
+@pytest.mark.parametrize("method", ["read", "upsert"])
+def test_protection_db_automatic_callback_retains_protected_constructor(
+    tmp_path: Path, method: str
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    with _protection_sync_agent(first, _protection_reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        manager = MemoryManager(db=db)
+        agent.transport.session_protection = current
+        first.mark()
+        with producer.automatic():
+            if method == "read":
+                with pytest.raises(AutomaticCaptureSuppressed):
+                    manager.get_user_memories(user_id="alice")
+            else:
+                result = manager._upsert_db_memory(
+                    UserMemory(memory_id="one", memory="private", user_id="alice")
+                )
+                assert result == "Error adding memory"
+        assert not posts
+
+
+def test_protection_db_rechecks_retained_family_after_credentials_await(tmp_path: Path) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    callback = SessionProtection.create(base=tmp_path / "callback")
+    replacement = SessionProtection.create(base=tmp_path / "replacement")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+    with _protection_sync_agent(first, _protection_reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        agent.transport.session_protection = callback
+
+        async def credentials_ready() -> None:
+            first.mark()
+            agent.transport.session_protection = replacement
+
+        class Auth(httpx.Auth):
+            async def async_auth_flow(self, request: httpx.Request) -> Any:
+                await credentials_ready()
+                yield request
+
+        agent.transport._client.auth = Auth()
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            db.upsert_memories([UserMemory(memory_id="one", memory="private")])
+        assert not posts
+
+
+def test_protection_db_malformed_response_marks_retained_and_current_families(
+    tmp_path: Path,
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"found": False, "mirrored": "unknown"}
+
+    with _protection_sync_agent(first, reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        agent.transport.session_protection = current
+        with pytest.raises(SessionProtectionUnavailable):
+            db.get_user_memory("one")
+        assert first.protected and current.protected
+        assert [op for op, _ in posts] == ["memory.get"]
+
+
+def test_protection_db_retained_mark_failure_withholds_output_and_marks_other_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    mark = SessionProtection.mark
+
+    def fail_first(root: SessionProtection) -> None:
+        if root == first:
+            raise SessionProtectionUnavailable()
+        mark(root)
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        return {"entries": [], "mirrored": True}
+
+    with _protection_sync_agent(first, reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        agent.transport.session_protection = current
+        monkeypatch.setattr(SessionProtection, "mark", fail_first)
+        with pytest.raises(SessionProtectionUnavailable):
+            MemoryManager(db=db).get_user_memories(user_id="alice")
+        assert current.protected
+        assert [op for op, _ in posts] == ["memory.list"]
+
+
+@pytest.mark.parametrize("method", ["list", "upsert"])
+def test_protection_db_first_marked_response_stops_followups_and_marks_retained_family(
+    tmp_path: Path, method: str
+) -> None:
+    first = SessionProtection.create(base=tmp_path / "first")
+    current = SessionProtection.create(base=tmp_path / "current")
+    producer = SessionProtection.create(base=tmp_path / "producer")
+
+    def reply(op: str, body: dict[str, Any]) -> dict[str, Any]:
+        if op == "memory.list":
+            return {
+                "mirrored": True,
+                "truncated": True,
+                "entries": [{"memory_key": "held", "value_truncated": True}],
+            }
+        if op == "memory.set":
+            return {"stored": True, "mirrored": True}
+        return _protection_reply(op, body)
+
+    with _protection_sync_agent(first, reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        agent.transport.session_protection = current
+        with producer.automatic(), pytest.raises(AutomaticCaptureSuppressed):
+            if method == "list":
+                MemoryManager(db=db).get_user_memories(user_id="alice")
+            else:
+                db.upsert_memories(
+                    [
+                        UserMemory(memory_id="one", memory="first"),
+                        UserMemory(memory_id="two", memory="second"),
+                    ]
+                )
+        assert [op for op, _ in posts] == (
+            ["memory.list"] if method == "list" else ["memory.get", "memory.set"]
+        )
+        assert first.protected and current.protected and producer.protected
+
+
+@pytest.mark.parametrize("method", ["read", "upsert"])
+def test_protection_db_explicit_operation_stays_explicit_after_automatic_callback(
+    tmp_path: Path, method: str
+) -> None:
+    family = SessionProtection.create(base=tmp_path / "family")
+    with _protection_sync_agent(family, _protection_reply) as (agent, posts):
+        db = LoomMemoryDb(agent, user_id="alice")
+        manager = MemoryManager(db=db)
+        with family.automatic():
+            assert manager.get_user_memories(user_id="alice") == []
+        family.mark()
+        posts.clear()
+        if method == "read":
+            assert manager.get_user_memories(user_id="alice") == []
+        else:
+            row = db.upsert_user_memory(UserMemory(memory_id="one", memory="explicit"))
+            assert row.memory_id == "one" and row.memory == "explicit"
+        assert [op for op, _ in posts] == (
+            ["memory.list"] if method == "read" else ["memory.get", "memory.set"]
+        )

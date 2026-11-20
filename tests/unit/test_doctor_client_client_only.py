@@ -56,7 +56,7 @@ def test_clickhouse_line_names_the_probed_host_on_failure(monkeypatch: pytest.Mo
     assert detail.startswith("https://ch.example.com:8443 → TimeoutError")
 
 
-def _live() -> list[Check]:
+def _live(*_roles: Any) -> list[Check]:
     return [
         ("python_version", "PASS", "3.12"),
         ("clickhouse_reachable", "FAIL", "https://ch.example.com:8443 → TimeoutError: timed out"),

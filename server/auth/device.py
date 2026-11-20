@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 
-from server.auth import attempts, claims, oauth, oidc
+from server.auth import attempts, claims, oauth, oidc, scim
 from server.auth.attempts import Attempts, address_key, client_address
 from server.auth.jwt import new_jti
 from server.auth.oauth_store import CodeReplayed, Device, token_id
@@ -251,12 +251,22 @@ async def signed_in(
     user_code: str,
     identity: tuple[str, str, list[str], list[str]],
     upstream_refresh: str,
+    *,
+    verified_email: str = "",
 ) -> Response:
     """The user has signed in: remember who, and ask them to confirm. Two
     different people signing in with one code means one of them got it from
     the other's screen; neither can tell which, so the grant ends and the
     terminal has to start again."""
     subject, org, *_ = identity
+    if refused := await oauth._refused_sign_in(
+        subject,
+        {"kind": "device", "user_code": user_code},
+        upstream_refresh,
+        org=org,
+        verified_email=verified_email,
+    ):
+        return refused
     ticket = secrets.token_urlsafe(32)
     try:
         for attempt in range(3):
@@ -265,7 +275,9 @@ async def signed_in(
                 outcome, dropped = "decided", [upstream_refresh]
                 break
             try:
-                outcome, dropped = await _sign_in(device, identity, upstream_refresh, ticket)
+                outcome, dropped = await _sign_in(
+                    device, identity, upstream_refresh, ticket, verified_email=verified_email
+                )
                 break
             except claims.Changed:
                 if attempt == 2:
@@ -312,6 +324,8 @@ async def _sign_in(
     identity: tuple[str, str, list[str], list[str]],
     upstream_refresh: str,
     ticket: str,
+    *,
+    verified_email: str = "",
 ) -> tuple[str, list[str]]:
     """Record who signed in on `device`: the outcome, and the IdP tokens no
     longer needed."""
@@ -324,17 +338,17 @@ async def _sign_in(
         return "conflict", [upstream_refresh, device["upstream_refresh"]]
     # The same person signing in again replaces their IdP token.
     previous = device["upstream_refresh"]
-    await oauth.store.save_device(
-        device
-        | {
-            "subject": subject,
-            "org": org,
-            "namespaces": namespaces,
-            "roles": roles,
-            "upstream_refresh": upstream_refresh,
-            "ticket": token_id(ticket),
-        }
-    )
+    signed_in_device: Device = {
+        **device,
+        "subject": subject,
+        "org": org,
+        "namespaces": namespaces,
+        "roles": roles,
+        "upstream_refresh": upstream_refresh,
+        "verified_email": scim.normalized(verified_email),
+        "ticket": token_id(ticket),
+    }
+    await oauth.store.save_device(signed_in_device)
     return "confirm", [previous] if previous != upstream_refresh else []
 
 
@@ -352,6 +366,8 @@ async def deny(user_code: str) -> None:
 
 @router.post("/oauth/device/approve")
 async def device_approve(request: Request) -> Response:
+    from server.auth.login import SignInUnavailable
+
     f = await oauth.form_body(request)
     ticket = f.get("ticket", "")
     approved = f.get("decision") == "approve"
@@ -364,6 +380,10 @@ async def device_approve(request: Request) -> Response:
             or not secrets.compare_digest(device["ticket"], token_id(ticket))
         ):
             return _expired_page()
+        if approved and await scim.refuses_subject(
+            device["subject"], org=device["org"], verified_email=device.get("verified_email", "")
+        ):
+            approved = False
         dropped = "" if approved else device["upstream_refresh"]
         device |= {
             "status": "approved" if approved else "denied",
@@ -372,6 +392,13 @@ async def device_approve(request: Request) -> Response:
             "upstream_refresh": device["upstream_refresh"] if approved else "",
         }
         await oauth.store.save_device(device)
+    except SignInUnavailable:
+        return oauth.html_page(
+            "Sign in to Loom",
+            "<h2>Sign-in cannot be checked</h2><p>Go back and submit your choice again.</p>",
+            503,
+            headers={"Retry-After": "5"},
+        )
     except claims.Busy:
         return _busy_page()  # a double submit (the other one decided), or Keeper is down
     await _revoke_all(dropped)

@@ -18,6 +18,7 @@ from server.core.datetimes import naive_utc_now
 from server.core.errors import AuthInsufficientError
 from server.core.naming import SENTINEL, named
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector
 from server.identity.app.conversation_logging import set_conversation_logging
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import ReadFilters
@@ -271,7 +272,7 @@ async def _embed_turn(
         with traced(
             "embed.compute.conversation", model=embedder.model_name, excerpt_len=len(excerpt)
         ):
-            vector = await embedder.embed(excerpt)
+            vector = await document_vector(embedder, excerpt)
         return EmbeddedTurn(excerpt, vector, embedder.dim, embedder.model_name, "")
     except Exception as e:  # noqa: BLE001 — a failed embed is returned to the caller, not raised
         log.warning(

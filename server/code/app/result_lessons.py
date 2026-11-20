@@ -4,14 +4,16 @@ or replayed answer never carries another caller's lessons), for this caller only
 
 An agent that looks at code through these tools gets the team's notes on that code with
 no memory call of its own. The read is bounded (`code_enrich_timeout_s`, as code.symbol's
-lessons are) and degrades to no `lessons`; a token narrowed below its namespaces reads
-none (the memory rows are not filtered by user), as code.symbol's lessons do.
+lessons are); a slow or failed file leaves completed files' lessons intact. A token
+narrowed below its namespaces reads none (the memory rows are not filtered by user),
+as code.symbol's lessons do.
 `include_lessons: false` or `code_result_lessons` off skips the read. These are
 file-level; code.symbol's own `lessons` are the memories linked to the one symbol."""
 
 from __future__ import annotations
 
 import functools
+import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
@@ -27,6 +29,7 @@ from server.settings import settings
 
 Handler = Callable[[Any], Awaitable[Any]]
 PathsOf = Callable[[Any, Any], Iterable[str]]
+logger = logging.getLogger(__name__)
 
 
 def _top_paths(paths: Iterable[str]) -> list[str]:
@@ -55,33 +58,45 @@ def _bound_s(input: Any, started: float) -> float:
 
 
 async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_lessons.Lessons:
-    """The lessons for the answer's top `paths`; none when off, narrowed, past the call's
-    deadline (from `started`, the call's monotonic start), or on any failure."""
+    """The completed lessons for the answer's top `paths`; none when off, narrowed,
+    past the call's deadline, or unable to read the scope. `started` is the call's
+    monotonic start."""
     top = _top_paths(paths)
     if not (input.include_lessons and settings.code_result_lessons and top):
         return path_lessons.Lessons([])
     if request_scope.request_narrowed():
         return path_lessons.Lessons([])  # a token that may not read every user's memories
 
-    async def read() -> path_lessons.Lessons:
+    async def scope() -> tuple[str, list[str], str]:
         org, ns = common.resolve_code_identity(input.org, _searched_namespace(input))
         trunk = memory_links.trunk_namespace(org, ns) or ns
         nss = await code_plane_reads.lesson_namespaces(org, ns, input.lesson_namespaces)
         # another repository's code namespace would bring its links to a same-named file
         nss = [n for n in nss if memory_links.trunk_namespace(org, n) in ("", trunk)]
-        return await path_lessons.lessons_for_paths(
-            org,
-            nss,
-            trunk if trunk in nss else "",
-            top,
-            token_budget=settings.code_result_lessons_tokens,
-        )
+        return org, nss, trunk if trunk in nss else ""
 
     bound = _bound_s(input, started)
     if bound <= 0:
         return path_lessons.Lessons([])
     with code_span("enrich.lessons"):
-        return await enrich.bounded(read(), path_lessons.Lessons([]), seconds=bound)
+        read_started = time.monotonic()
+        resolved = await enrich.bounded(scope(), None, seconds=bound)
+        remaining = bound - (time.monotonic() - read_started)
+        if resolved is None or remaining <= 0:
+            return path_lessons.Lessons([])
+        org, nss, trunk = resolved
+        try:
+            return await path_lessons.lessons_for_paths(
+                org,
+                nss,
+                trunk,
+                top,
+                token_budget=settings.code_result_lessons_tokens,
+                timeout_s=remaining,
+            )
+        except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
+            logger.debug("code lessons skipped: %s", e)
+            return path_lessons.Lessons([])
 
 
 class WithLessons:

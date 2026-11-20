@@ -5,6 +5,7 @@ from hashlib import sha256
 
 import pytest
 
+from scripts.i18n import chunks
 from scripts.i18n import completed_history as h
 from scripts.i18n import translate as t
 from scripts.i18n.origins import SourceOrigins
@@ -251,8 +252,11 @@ def _whole_case(current=None):
     return case, SourceOrigins(raw, now, "ko")
 
 
-def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction():
+@pytest.mark.parametrize("replacement", [False, True], ids=["insertion", "interior-replacement"])
+def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction(replacement):
     raw = "# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n"
+    if replacement:
+        raw = raw.replace("Before.", "Replaced.")
     case, origins = _whole_case(raw)
     case[-1][case[2][0].reply_ref] = False
     plan = _plan(
@@ -265,11 +269,19 @@ def test_changed_whole_preserves_origin_and_never_becomes_same_input_correction(
     assert plan.units[0].disposition == "changed"
     assert plan.units[0].original == case[2][0]
     assert plan.units[0].fault_ids == ("finding",)
+    assert plan.partitions == case[1]
+    assert plan.completions == case[2]
+    assert plan.history_manifest_sha256 == h.completion_history_sha256(case[1], case[2], case[-1])
+    assert (plan.units[0].scope.start, plan.units[0].scope.end) == (0, len(case[0].english))
 
 
 @pytest.mark.parametrize("fits", [False, True])
-def test_changed_whole_uses_utf8_bound_without_splitting(fits):
-    case, origins = _whole_case("# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n")
+@pytest.mark.parametrize("replacement", [False, True], ids=["insertion", "interior-replacement"])
+def test_changed_whole_uses_utf8_bound_without_splitting(fits, replacement):
+    raw = "# Guide\n\nBefore.\nAdded 界.\n\nAfter.\n"
+    if replacement:
+        raw = raw.replace("Before.", "Replaced.")
+    case, origins = _whole_case(raw)
     plan = _plan(
         case,
         faults=(),
@@ -310,12 +322,12 @@ def test_completed_current_input_cannot_be_repaid_as_changed_old_input(eligible)
 
 
 @pytest.mark.parametrize(
-    "bad", ["absent", "forged", "noninsertion", "ambiguous", "boundary", "language"]
+    "bad", ["absent", "forged", "endpoint", "ambiguous", "boundary", "language"]
 )
 def test_changed_whole_requires_valid_raw_proof(bad):
     raw = "# Guide\n\nBefore.\nAdded.\n\nAfter.\n"
-    if bad == "noninsertion":
-        raw = raw.replace("Before.", "Replaced.")
+    if bad == "endpoint":
+        raw = raw.replace("# Guide\n", "# Changed\n", 1)
     elif bad == "ambiguous":
         raw = raw.replace("Before.", "# Guide\n\nBefore.")
     elif bad == "boundary":
@@ -369,3 +381,92 @@ def test_unchanged_reuse_may_exceed_the_request_bound_but_refusal_still_wins():
     assert _plan(case, faults=(), bounded_new_request_bytes=1).units[0].disposition == "reuse"
     refusal = _plan(case, pair_refused=True)
     assert refusal.conflicts[0].kind == "refusal" and not refusal.units
+
+
+def _terminal_case():
+    raw = "# Intro\n\nOpening.\n" + "".join(
+        f"\n## Section {i}\n\nOriginal paragraph {i}.\n" for i in range(6)
+    )
+    current_raw = raw + (
+        "\nDefinition drafts from knowledge gaps and query history are visible only to namespace\n"
+        "admins, including their queue counts and lineage. Approving one publishes its complete\n"
+        "value, including supporting SQL, to namespace readers.\n"
+    )
+    old = _partition(chunks.heading_sections(t.anchor_headings(raw, t.Counter())))
+    current = _partition(chunks.heading_sections(t.anchor_headings(current_raw, t.Counter())))
+    catalog = tuple(h.CompletionOrigin(old.manifest_sha256, i, f"reply-{i}") for i in range(7))
+    selected = tuple(origin.reply_ref for origin in catalog)
+    case = current.source, (old,), catalog, selected, {key: True for key in selected}
+    return case, SourceOrigins(raw, current_raw, "ja"), current
+
+
+def test_terminal_append_retains_seven_genuine_slots_with_six_free_neighbors():
+    case, origins, _ = _terminal_case()
+    plan = _plan(case, faults=(), source_origins={case[1][0].manifest_sha256: origins})
+    assert not plan.conflicts
+    assert [u.disposition for u in plan.units] == ["reuse"] * 6 + ["changed"]
+    assert tuple(u.original for u in plan.units) == case[2]
+    assert plan.completions == case[2] and plan.partitions == case[1]
+    changed = plan.units[-1].scope.english[plan.units[-1].scope.start :]
+    assert "only to namespace\nadmins" in changed
+    assert "queue counts and lineage" in changed
+    assert (
+        "publishes its complete\nvalue, including supporting SQL, to namespace readers" in changed
+    )
+    assert (
+        "".join(
+            u.separator_before + u.scope.english[u.scope.start : u.scope.end] for u in plan.units
+        )
+        == case[0].english
+    )
+
+
+def test_terminal_append_needs_raw_evidence_even_when_every_old_whole_still_matches():
+    case, _, _ = _terminal_case()
+    plan = _plan(case, faults=())
+    assert plan.conflicts and not plan.units
+
+
+def test_terminal_changed_input_keeps_already_completed_current_input_priority():
+    case, origins, current_partition = _terminal_case()
+    current, partitions, catalog, selected, eligible = case
+    complete = h.CompletionOrigin(current_partition.manifest_sha256, 6, "current-final")
+    catalog += (complete,)
+    partitions += (current_partition,)
+    eligible[complete.reply_ref] = True
+    evidence = {partitions[0].manifest_sha256: origins}
+    refused = _plan(
+        (current, partitions, catalog, selected, eligible), faults=(), source_origins=evidence
+    )
+    assert refused.conflicts and "already completed" in refused.conflicts[0].message
+    assert not refused.units
+    selected = (*selected[:-1], complete.reply_ref)
+    reused = _plan(
+        (current, partitions, catalog, selected, eligible), faults=(), source_origins=evidence
+    )
+    assert not reused.conflicts
+    assert all(u.disposition == "reuse" for u in reused.units)
+    assert reused.units[-1].original == complete
+
+
+@pytest.mark.parametrize("problem", ["refused", "incomplete", "oversized"])
+def test_terminal_history_keeps_refusal_coverage_and_byte_bound(problem):
+    case, origins, _ = _terminal_case()
+    current, partitions, catalog, selected, eligible = case
+    kwargs = {"pair_refused": True} if problem == "refused" else {}
+    if problem == "incomplete":
+        old = partitions[0]
+        ranges = old.ranges[:-1]
+        incomplete = replace(
+            old, ranges=ranges, manifest_sha256=h.partition_manifest_sha256(old.source, ranges)
+        )
+        partitions = (incomplete,)
+    elif problem == "oversized":
+        kwargs["bounded_new_request_bytes"] = 1
+    plan = _plan(
+        (current, partitions, catalog, selected, eligible),
+        faults=(),
+        source_origins={partitions[0].manifest_sha256: origins},
+        **kwargs,
+    )
+    assert plan.conflicts and not plan.units

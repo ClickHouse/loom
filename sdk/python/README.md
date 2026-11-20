@@ -51,7 +51,10 @@ services.
 
 The `Agent` exposes 28 client modules: `client`, `account`, `deployment`, `assistant`, `memory`, `working_memory`, `knowledge`, `conversations`, `profile`, `context`, `facts`, `learnings`, `conflicts`, `blacklist`, `grants`, `erasure`, `cost`, `audit`, `namespaces`, `procedure`, `run`, `tasks`, `policy`, `decision`, `calibration`, `briefs`, `code`, `tracker`. Each of the named ones is the hand-written layer over a wire-op group on the Loom server (`account`, `deployment` and `assistant` cover the routes outside the op registry: service accounts, MCP setup, model settings, worker health, the assistant's streamed chat); `client` holds every served op as a generated method (below).
 
-Framework adapters live under `loom.integrations`: LangChain retrievers (`pip install 'clickhouse-loom[langchain]'`), a LlamaIndex retriever and memory block (`[llamaindex]`), a Haystack document store and retriever (`[haystack]`), OpenAI Agents SDK tools and sessions (`[openai-agents]`), CrewAI crew memory (`[crewai]`), an AutoGen memory (`[autogen]`), an AG2 recall policy and tools (`[ag2]`), a Microsoft Agent Framework context provider (`[agent-framework]`), a Claude API memory tool backend (`[claude-memory]`), a Google ADK memory service (`[google-adk]`), an Agno user-memory database (`[agno]`), a Pydantic AI toolset (`[pydantic-ai]`), a Pipecat memory service (`[pipecat]`), a LangGraph store and a Strands Agents memory store ([frameworks](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)).
+Framework adapters live under `loom.integrations`: LangChain retrievers (`pip install 'clickhouse-loom[langchain]'`), a LlamaIndex retriever and memory block (`[llamaindex]`), a Haystack document store and retriever (`[haystack]`), OpenAI Agents SDK tools and sessions (`[openai-agents]`), CrewAI crew memory (`[crewai]`), an AutoGen memory (`[autogen]`), an AG2 recall policy and tools (`[ag2]`), a Microsoft Agent Framework context provider (`[agent-framework]`), a Claude API memory tool backend (`[claude-memory]`), a Google ADK memory service (`[google-adk]`), an Agno user-memory database (`[agno]`), a Pydantic AI toolset (`[pydantic-ai]`), a Pipecat memory service (`[pipecat]`), DSPy retrievers (`[dspy]`), a LangGraph store and a Strands Agents memory store ([frameworks](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md)).
+
+For Pipecat installation, pipeline placement, the single-file text example and its
+checked scope, see the [Pipecat integration README](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/pipecat/README.md).
 
 Full guide: [docs/reference/python-sdk.md](https://github.com/ClickHouse/loom/blob/main/docs/reference/python-sdk.md). Deployment paths (how an operator stands up the server): [docs/operations/deployment.md](https://github.com/ClickHouse/loom/blob/main/docs/operations/deployment.md).
 
@@ -151,6 +154,42 @@ async with agent.session("thread-42", user_id="u1") as s:
 ```
 
 `agent.tools(user_id=..., session_id=...)` gives a model six loom verbs — `loom_remember`, `loom_recall`, `loom_ask`, `loom_offload`, `loom_fetch`, `loom_note` — as `definitions("openai" | "anthropic" | "generic")` and one `await execute(name, arguments)` that returns the string the model reads. The schemas are the same as the TypeScript SDK's.
+
+An explicit code namespace offers a read-only code lookup before the memory tools.
+The model chooses `symbol`, `search`, `callers` or `impact`; tenant scope and request
+budgets stay in the application. Use `only` for a code-only tool loop:
+
+```python
+tools = agent.tools(code_namespace="code-repo", only=["loom_code_lookup"], max_result_chars=12_000)
+definitions = tools.definitions("anthropic")
+result = await tools.execute("loom_code_lookup", {"kind": "symbol", "target": "pkg.Reader.read"})
+```
+
+Code results preserve valid JSON within the character cap and disclose whole-body or
+row omissions. Honor abstention, ambiguity, source citations and graph lower bounds.
+See the [code tools guide](https://clickhouse.github.io/loom/guides/code-tools/) and
+[`examples/code_lookup.py`](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/code_lookup.py).
+
+`loom_remember` returns the server's receipt: `stored` confirms a persisted row, while
+`noop` and `merged_into_key` distinguish reuse of an existing fact. Conflicts retain their
+peers and next action. `loom_recall` preserves abstention, code freshness, row status,
+provenance and verification fields when the server supplies them. `retrieval_risk` and
+`retrieval_confidence` score non-governed hits; `governed` identifies authoritative
+definitions and `term_leg` reports the definition lookup status. A missing attestation
+is not verification. Memory results remain valid JSON: whole memories that do not fit are
+counted in `omitted`; metadata that cannot fit returns `insufficient` and
+`metadata_omitted`. A budget too small for that marker is rejected before the call.
+
+For a durable fact about code, the application can use `agent.memory.set(...,
+files=["src/reader.py"], tags=[repo_tag])`, where `repo_tag` is the matching `repo:<id>`
+tag established by the integration. It is not an arbitrary repository name. A configured
+code namespace also identifies the repository; `code.repos` reports its
+`primary_namespace` for shared file rules.
+`files=None` detects references from the value; `files=[]` clears prior references.
+The compact `loom_remember` schema does not expose these fields: use the direct SDK call
+when file or repository association matters. Linking is asynchronous, so a saved receipt
+does not confirm a resolved link. Read the link state before relying on the claim; see
+[memories linked to code](https://github.com/ClickHouse/loom/blob/main/docs/concepts/memory.md#memories-linked-to-code).
 
 ## Retries and logging
 

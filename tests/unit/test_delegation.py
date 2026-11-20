@@ -640,7 +640,7 @@ async def test_another_orgs_request_is_refused_before_any_account_read(
     child = await _child(_login(), {"*": None})
     monkeypatch.setattr(delegation, "creator_account_active", account_active)
     for org in ("evil-1", "evil-2"):
-        with pytest.raises(PermissionError, match="cannot act in org"):
+        with pytest.raises(PermissionError, match="^token is for another org$"):
             await authz.check_authorized(child, Role.VIEWER, org, "a")
     assert reads == []
 
@@ -899,10 +899,10 @@ async def test_a_primary_scoped_token_writes_by_its_role_map(world) -> None:
     assert not await _reaches(bound, "a", Role.WRITER)
 
 
-def test_the_dev_mode_parent_is_a_flat_writer() -> None:
+async def test_the_dev_mode_parent_is_a_flat_writer() -> None:
     from server.identity.app import me_service_accounts
 
-    parent = me_service_accounts.dev_parent(
+    parent = await me_service_accounts.dev_parent(
         SimpleNamespace(headers={}), {"subject": "d", "org": "g"}
     )
     assert (parent.subject, parent.org, parent.roles, parent.creator) == (

@@ -3,14 +3,21 @@ server/memory/api/models_loom_search.py; the legs and assembly in memory/app/loo
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
 from typing import Any
 
 from server.code.app.repo_scope import repo_namespace_in_scope
 from server.core.diagnostics import private_work
 from server.core.request_work import mirror_marked
-from server.memory.api.models_loom_search import SearchInput, SearchOutput
+from server.knowledge.app import live_search
+from server.memory.api.models_loom_search import (
+    LiveSearchHit,
+    LiveSearchResults,
+    SearchInput,
+    SearchOutput,
+)
 from server.memory.app.loom_search.fanout import search_sections
 from server.memory.app.loom_search.tracker_leg import prepare_tracker_search
 
@@ -47,24 +54,56 @@ async def handle_search(input: SearchInput) -> SearchOutput:
     await narrow_to(input.org, consent_namespaces)
     if tracker_plan and tracker_plan.org != input.org:
         await narrow_to(tracker_plan.org, list(tracker_plan.namespaces))
-    payload = await search_sections(
-        org=input.org,
-        namespace=input.namespace,
-        agent=input.agent,
-        query=input.query,
-        top_k=input.top_k,
-        tags=[t for t in input.tags if t],
-        namespace_scope=namespace_scope,
-        recipe=input.recipe,
-        bodies=input.bodies,
-        page=input.page.strip(),
-        explain=input.explain,
-        repo_namespace=repo_namespace,
-        tracker_plan=tracker_plan,
-    )
-    with private_work() if mirror_marked() else nullcontext():
-        _record_gap_miss(input, payload, repo_namespace or "")
-        return SearchOutput.model_validate(payload)
+    live_task = None
+    if input.live and not input.page.strip() and not input.tags:
+        live_task = asyncio.create_task(
+            live_search.search(
+                input.org,
+                [*read, repo_namespace] if repo_namespace else list(read),
+                input.query,
+                top_k=input.top_k,
+            ),
+            name="search.query.live",
+        )
+    try:
+        payload = await search_sections(
+            org=input.org,
+            namespace=input.namespace,
+            agent=input.agent,
+            query=input.query,
+            top_k=input.top_k,
+            tags=[t for t in input.tags if t],
+            namespace_scope=namespace_scope,
+            recipe=input.recipe,
+            bodies=input.bodies,
+            page=input.page.strip(),
+            explain=input.explain,
+            repo_namespace=repo_namespace,
+            tracker_plan=tracker_plan,
+        )
+        result = await live_task if live_task is not None else None
+        with private_work() if mirror_marked() else nullcontext():
+            result = await live_search.publish(result) if result is not None else None
+            if result is not None:
+                payload["live"] = LiveSearchResults(
+                    results=[
+                        LiveSearchHit(
+                            id=hit.id,
+                            title=hit.title,
+                            url=hit.url,
+                            provider=hit.provider,
+                            content=hit.content if input.bodies != "none" else "",
+                        )
+                        for hit in result.hits
+                    ]
+                )
+            _record_gap_miss(input, payload, repo_namespace or "")
+            return SearchOutput.model_validate(payload)
+    finally:
+        if live_task is not None and not live_task.done():
+            live_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await live_task
 
 
 # The `withheld` reasons that mean an answer led and the rest was set aside.
@@ -81,6 +120,8 @@ def _record_gap_miss(input: SearchInput, payload: dict[str, Any], repo_namespace
 
     if not settings.knowledge_gaps_enabled:
         return
+    if payload.get("live"):
+        return  # a live answer must not become a persisted unanswered-query contribution
     if input.page.strip() or input.tags:
         return  # a later page was judged with the first; tags narrow the search
     withheld = payload.get("withheld") or {}

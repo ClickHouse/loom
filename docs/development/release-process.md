@@ -29,6 +29,28 @@ The server reads its version from `server/__init__.py` only; the OpenAPI documen
 
 Two plugin pull requests that bump to the same number merge without a conflict, and the second ships nothing to clients the first already updated. Check the plugin version on `main` before bumping.
 
+## Branches and tags
+
+Every release uses `prep/release-X.Y.Z` for its preparation pull request. Keep all three version
+components in the branch name. The pull request's base depends on the release:
+
+| Purpose                            | Branch or tag           | Starts from                                                        | Pull request base                                     |
+| ---------------------------------- | ----------------------- | ------------------------------------------------------------------ | ----------------------------------------------------- |
+| Major or minor release preparation | `prep/release-X.Y.Z`    | `origin/main`                                                      | `main`                                                |
+| Patch release preparation          | `prep/release-X.Y.Z`    | `origin/release/X.Y`                                               | `release/X.Y`                                         |
+| Backport of a fix merged on `main` | `fix/X.Y-<description>` | `origin/release/X.Y`                                               | `release/X.Y`                                         |
+| Maintained release line            | `release/X.Y`           | Final `vX.Y.0` commit                                              | Receives backport and patch preparation pull requests |
+| Release candidate tag              | `vX.Y.Z-rc.N`           | Release pull request's merge commit, or a subsequent candidate fix | —                                                     |
+| Final release tag                  | `vX.Y.Z`                | Highest-numbered candidate's commit after its soak                 | —                                                     |
+
+Reserve `release/` for maintained `release/X.Y` lines. Check the repository's branch rules before
+creating a preparation branch. A refused update requires resolution under those rules; renaming a
+branch or changing its target does not resolve the refusal.
+
+Create the maintained line after publishing its first final release. Preparation branches carry
+the version bump and notes through their pull request; they do not become maintained lines. Keep
+published tags fixed. Select backports according to the [supported release lines](../operations/supported-versions.md#release-lines).
+
 ## Release notes
 
 The run that creates the GitHub Release generates its notes from the commits since the previous final
@@ -77,7 +99,7 @@ pull request the tag ships.
    or a lock file) on `main` first. The base image's own packages move only with a new base-image
    digest; a package an `apt-get install` layer adds moves with any uncached build.
 
-2. On a branch from `main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
+2. On `prep/release-X.Y.Z` from `origin/main`, run `.venv/bin/python scripts/release/prepare.py bump X.Y.Z`, and open a
    pull request with its changes and `release-notes.md` as the [release notes](#release-notes)
    section of its description; edit the notes where an entry needs it. CI must pass, including
    `make schema-check` and the strict migration dry run.

@@ -490,6 +490,7 @@ class Agent:
         run_id: str | None = None,
         only: list[str] | None = None,
         max_result_chars: int = 8_000,
+        code_namespace: str | None = None,
     ) -> AgentTools:
         """Loom's verbs as the model's tools, bound to a scope: see `AgentTools`."""
         return AgentTools(
@@ -499,6 +500,7 @@ class Agent:
             run_id=run_id,
             only=only,
             max_result_chars=max_result_chars,
+            code_namespace=code_namespace,
         )
 
     async def probe(

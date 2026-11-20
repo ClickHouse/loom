@@ -101,14 +101,22 @@ it.
 
 ## Stopping a replica
 
-Stop it gracefully (`docker stop`, SIGTERM): it marks its heartbeat row stopped
-and retires its provider participant row. A forced kill leaves both; the
-heartbeat row stops counting after three intervals. A process that restarts in
-the same container retires the dead one's participant row itself. If a provider
-reconfiguration waits on a dead process's row from elsewhere, retire it with the
-`participant_id` its `/v1/health` reported, once you have confirmed it is gone
-(the command refuses one whose heartbeat is fresh or whose queries still run):
+Stop it gracefully (`docker stop`, SIGTERM). It first closes admission permanently,
+stops its producers, and waits for actual request, worker and registered descendant
+completion. It retires only after buffered, carried and server-side writes settle.
+A canceled task that keeps executing or an exhausted shutdown budget leaves the
+participant nonretired. A stopped or expired instance heartbeat is diagnostic.
+
+A trusted process on the same host and pid namespace can prove the exact old PID
+exited or was reused, then retire it after all cross-replica queries settle:
 
 ```bash
-loom participant retire --participant <participant_id> --yes
+loom participant retire --participant <participant_id>
 ```
+
+The command verifies retained boot, PID namespace and process-start identity; it
+refuses remote or unknown identity evidence and live/uncountable queries. A
+changed container namespace or Kubernetes API object is insufficient. An operator
+assertion does not override these checks. For an inaccessible host, positively
+terminate or fence the exact runtime before the documented
+[quiescent lifecycle recovery](../architecture/cells.md#participant-lifecycle-baseline).

@@ -15,10 +15,15 @@ from server.embedding.normalize import query_text
 from server.llm import customer
 
 
+def fake_model_name(dim: int) -> str:
+    """The stored label of the deterministic embedder at this width."""
+    return f"fake-ngram-{dim}"
+
+
 class FakeNGramEmbedder:
     def __init__(self, *, dim: int = 1024) -> None:
         self.dim = dim
-        self.model_name = f"fake-ngram-{dim}"
+        self.model_name = fake_model_name(dim)
 
     async def embed(self, text: str) -> list[float]:
         # Queries are whitespace-normalised like the real providers';

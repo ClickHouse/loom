@@ -1,6 +1,7 @@
 """Postgres migrations: numbered SQL files in `schemas/pg_migrations/`, applied in
-order at boot under a session advisory lock, each file in one transaction with
-its ledger row (`loom.pg_migrations`, the file's SHA-256). The router's directory
+order at boot under a session advisory lock, each ordinary file in a transaction
+with its ledger row (`loom.pg_migrations`, the file's SHA-256). Declared online indexes
+run concurrently outside transactions under a separate session key. The router's directory
 (`schemas/router_migrations/`, `server/router/directory.py`) migrates the same way,
 on its own database, ledger schema and lock. For schema `loom`, `migrate` also marks
 its session as one that ran the tenancy check and, after the files and before the lock
@@ -8,23 +9,27 @@ goes, runs `cell_triggers.ensure` (docs/architecture/cells.md).
 
 The rules are the ClickHouse journal's (docs/development/migrations.md): additive
 only, never edit a merged file. A ledger row whose checksum no longer matches its
-file refuses the boot, as does a ledger row for a file this build does not carry
-when that file's number is above the build's last one (a newer build's schema is
-served, as ClickHouse's is; an unknown lower number means the journal was edited).
+file refuses the boot, as does an unknown file numbered at or below this build's
+last migration. A build serves a newer schema, warning about unknown files numbered
+above its last migration.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import time
 from asyncio import sleep
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
 
 from server.core import pg
+from server.core.ch import set_query_tag
 from server.core.paths import PG_MIGRATIONS_DIR
+from server.core.schema import pg_online_index
 from server.core.schema.journal import migration_number, sorted_migrations
 
 log = logging.getLogger(__name__)
@@ -104,33 +109,201 @@ async def migrate(
     bounded (`lock_timeout`), so an `ALTER` queued behind a long transaction never
     holds every read and write of the table behind it; the file is retried. For schema
     `loom` it marks the session and runs `cell_triggers.ensure` before the lock goes."""
+    files, indexes = _validated(mig_dir, schema)
+    cm = (connect or pg.dedicated)()
+    conn = await cm.__aenter__()
+    task = asyncio.create_task(
+        _owned_result(lambda: _migrate(conn, files, indexes, schema, lock_key))
+    )
+    try:
+        result = await asyncio.shield(task)
+        if isinstance(result, (SystemExit, KeyboardInterrupt)):
+            raise result
+    except BaseException as error:  # Keep the migration failure through owned cleanup.
+        end = time.monotonic() + pg._RELEASE_TIMEOUT_S
+        await _failed_migration(cm, conn, task, error, end)
+        raise
+    await cm.__aexit__(None, None, None)
+    return result
+
+
+async def _owned_result[T](work: Callable[[], Awaitable[T]]) -> T | SystemExit | KeyboardInterrupt:
+    try:
+        return await work()
+    except (SystemExit, KeyboardInterrupt) as error:
+        # Transport native failures through child Tasks without stopping their supervisor.
+        return error
+
+
+async def _failed_migration(
+    cm: AbstractAsyncContextManager[Any],
+    conn: Any,
+    task: asyncio.Task[Any],
+    error: BaseException,
+    end: float,
+) -> None:
+    try:
+        await pg.close_owned(conn, end=end)
+    except BaseException:  # noqa: BLE001 — preserve the migration failure/cancellation.
+        pass
+    if not task.done():
+        task.cancel()
+    task.add_done_callback(pg._retrieve_task)
+    try:
+        await asyncio.wait({task}, timeout=max(0, end - time.monotonic()))
+    except BaseException:  # noqa: BLE001 — preserve the first failure on repeated cancellation.
+        try:
+            pg._terminate(conn)
+        except BaseException:  # noqa: BLE001 — fallback abort cannot replace the migration failure.
+            pass
+    release = asyncio.create_task(
+        _owned_result(lambda: cm.__aexit__(type(error), error, error.__traceback__))
+    )
+    try:
+        done, _ = await asyncio.wait({release}, timeout=max(0, end - time.monotonic()))
+        if not done:
+            raise TimeoutError("migration context cleanup deadline expired")
+        release.result()
+    except BaseException:  # noqa: BLE001 — a context exit cannot replace the migration failure.
+        try:
+            pg._terminate(conn)
+        except BaseException:  # noqa: BLE001 — fallback abort cannot replace the migration failure.
+            pass
+    finally:
+        if not release.done():
+            release.cancel()
+        release.add_done_callback(pg._retrieve_task)
+
+
+def _validated(
+    mig_dir: Path, schema: str
+) -> tuple[list[Path], dict[str, pg_online_index.OnlineIndex | None]]:
     files = migration_files(mig_dir)
+    # Validate every online declaration before even creating the ledger.
+    indexes = {f.name: pg_online_index.parse(f.read_text()) for f in files}
+    if any(index is not None and index.schema != schema for index in indexes.values()):
+        raise ValueError("online-index target differs from its ledger schema")
+    return files, indexes
+
+
+async def migrate_borrowed(
+    conn: Any,
+    mig_dir: Path = PG_MIGRATIONS_DIR,
+    *,
+    schema: str = "loom",
+    lock_key: int = _LOCK_KEY,
+) -> list[str]:
+    """Apply on the owner's session; its supervisor owns all failure cleanup.
+
+    The caller retains its operation deadline and must close the session before
+    cancelling this work. Normal completion releases only the migration key.
+    """
+    files, indexes = _validated(mig_dir, schema)
+    return await _migrate(conn, files, indexes, schema, lock_key)
+
+
+async def _lock(conn: Any, key: int) -> None:
+    while True:
+        set_query_tag("migrate.postgres.lock")
+        if await conn.fetchval("SELECT pg_try_advisory_lock($1)", key):
+            return
+        # Each try ends its statement/snapshot before another attempt.
+        await sleep(0.1)
+
+
+async def _unlock(conn: Any, key: int) -> None:
+    if not await conn.fetchval("SELECT pg_advisory_unlock($1)", key):
+        raise RuntimeError("Postgres migration advisory lock was lost")
+
+
+def _online_key(schema: str, lock_key: int) -> int:
+    value = hashlib.sha256(f"loom.online-index:{schema}:{lock_key}".encode()).digest()
+    key = int.from_bytes(value[:8], "big") & (2**63 - 1)
+    if key == lock_key:
+        raise ValueError("Postgres migration lock keys collide")
+    return key
+
+
+async def _applied(conn: Any, schema: str, files: list[Path]) -> dict[str, str]:
+    rows = await conn.fetch(f"SELECT filename, checksum FROM {schema}.pg_migrations")
+    applied = {r["filename"]: r["checksum"] for r in rows}
+    plan(applied, files)
+    return applied
+
+
+async def _record_online(conn: Any, path: Path, schema: str, *, pending: bool) -> None:
+    async with conn.transaction():
+        if pending:
+            await conn.execute(
+                f"INSERT INTO {schema}.pg_migrations (filename, checksum) VALUES ($1, $2)",
+                path.name,
+                checksum(path),
+            )
+        # A visible ledger from a cancelled synchronous commit needs a fresh flush.
+        await conn.execute(pg._DURABLE_MESSAGE)
+
+
+async def _online(
+    conn: Any,
+    path: Path,
+    index: pg_online_index.OnlineIndex,
+    schema: str,
+    lock_key: int,
+    files: list[Path],
+) -> bool:
+    await _unlock(conn, lock_key)
+    online_key = _online_key(schema, lock_key)
+    await _lock(conn, online_key)
+    applied = await _applied(conn, schema, files)
+    await pg_online_index.build(conn, index, recorded=path.name in applied)
+    # A shipped blocking migrator may wait here; the concurrent build is over.
+    await _lock(conn, lock_key)
+    applied = await _applied(conn, schema, files)
+    pending = path.name not in applied
+    await _record_online(conn, path, schema, pending=pending)
+    await _unlock(conn, online_key)
+    return pending
+
+
+async def _migrate(
+    conn: Any,
+    files: list[Path],
+    indexes: dict[str, pg_online_index.OnlineIndex | None],
+    schema: str,
+    lock_key: int,
+) -> list[str]:
     done: list[str] = []
-    # Closing the connection ends the session, and with it the advisory lock.
-    async with (connect or pg.dedicated)() as conn:
-        # Another boot migrating holds the lock for as long as its files take.
-        await conn.execute("SELECT pg_advisory_lock($1)", lock_key)
-        if schema == "loom":
-            # A migration's data steps only copy or rewrite rows already stored here: the
-            # org triggers pass them (server/core/cell_triggers.py).
-            await conn.execute(f"SET {pg.TENANCY_MARKER} = 'on'")
-        await conn.execute("SET lock_timeout = '5s'")
-        await conn.execute(_ledger(schema))
-        rows = await conn.fetch(f"SELECT filename, checksum FROM {schema}.pg_migrations")
-        for name, sql, digest in _read(plan({r["filename"]: r["checksum"] for r in rows}, files)):
-            await _apply(conn, name, sql, digest, schema=schema)
-            log.info("applied Postgres migration %s", name)
-            done.append(name)
-        if schema == "loom":
-            # On every migrating boot, after the pending files and before the lock goes.
-            from server.core import cell_triggers
+    await _lock(conn, lock_key)
+    if schema == "loom":
+        await conn.execute(f"SET {pg.TENANCY_MARKER} = 'on'")
+    await conn.execute("SET lock_timeout = '5s'")
+    await conn.execute("SET synchronous_commit = 'on'")
+    await conn.execute(_ledger(schema))
+    applied = await _applied(conn, schema, files)
+    for path in files:
+        set_query_tag("migrate.postgres.apply")
+        index = indexes[path.name]
+        if index is not None:
+            changed = await _online(conn, path, index, schema, lock_key, files)
+            applied = await _applied(conn, schema, files)
+        else:
+            changed = path.name not in applied
+            if changed:
+                await _apply(conn, path.name, path.read_text(), checksum(path), schema=schema)
+        if changed:
+            log.info("applied Postgres migration %s", path.name)
+            done.append(path.name)
+    for index in indexes.values():
+        set_query_tag("migrate.postgres.verify")
+        if index is not None and await pg_online_index.ready(conn, index) is not True:
+            raise ValueError(f"recorded online-index {index.qualified} is absent or invalid")
+    if schema == "loom":
+        from server.core import cell_triggers
 
-            await cell_triggers.ensure(conn)
+        await cell_triggers.ensure(conn)
+    # A caller may lend its marked session and retain unrelated session keys.
+    await _unlock(conn, lock_key)
     return done
-
-
-def _read(files: list[Path]) -> list[tuple[str, str, str]]:
-    return [(f.name, f.read_text(), checksum(f)) for f in files]
 
 
 async def _apply(conn: Any, name: str, sql: str, digest: str, *, schema: str = "loom") -> None:

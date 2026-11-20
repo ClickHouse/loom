@@ -100,7 +100,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 8. **Non-embedded rows stop here.** A type in `NON_SEARCHABLE_TYPES` (`episodic`,
    `profile`) or a `high`-sensitivity row gets one insert and no embedding row
    (`server/memory/domain/memory_types.py`, `is_embedded`). No embedding row means no search leg sees
-   it.
+   it. A confirmed ClickHouse insert attempts the same hash-only audit receipt as an
+   embedded write; audit failures do not fail the write. Under Postgres, the commit
+   already includes the audit row.
 9. **Embed** (`_set_embed`) the value and, when the key carries words, the key, in one
    batched call where the embedder supports it.
 10. **Conflict verdict** (`_set_conflict_verdict`, `memory/app/conflicts.py`
@@ -160,6 +162,14 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     projection is scheduled beside the response (`memory/app/after_write.py`) and repaired
     by `entity_extractor` if lost. A long value is also split into `memory_chunks`,
     fail-open.
+
+**Embedding purpose.** Stored values, key axes, conversation excerpts, summaries and
+chunks use document embeddings, including single-item writes and serial recovery after
+a batch failure. Queries use query embeddings. Write retries cache each purpose
+separately: one text can have different query and document vectors. The shared document
+helper checks batch cardinality, width and finite values before a write consumes them.
+An embedding provider implements both methods in the `Embedder` protocol; writes never
+substitute a query vector when a document batch is malformed or unavailable.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
 the call and writes nothing. Writers that can wait for a vector (such as
@@ -994,6 +1004,14 @@ fallbacks. A search joins its cancelled local children before returning a refusa
 the repository decision pass also joins its sibling when either search fails.
 Local coroutine completion does not prove remote query retirement.
 
+Main namespace reads, entity-boost inputs, summary and observation namespace reads,
+anchor and key-match namespace reads, and digest-descent targets run in ordered
+windows of at most four child jobs per producer. A producer creates only the
+current window's awaitables and joins its children before returning a failure or
+cancellation. This bounds local fanout per producer, not the request's aggregate
+work. Supplemental query and set-expansion phrases retain their namespace fanout
+and shared duplicate selection by phrase completion.
+
 1. **Settle the request** (`request.py`): recipe and namespace `retrieval_defaults`, read
    scope, the `top_k` ceiling. A parked `page` handle is served directly.
 2. **Read-your-writes** (`consistency.py`): a namespace this process just wrote re-reads
@@ -1015,6 +1033,14 @@ Local coroutine completion does not prove remote query retirement.
    | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                                                                                                                      |
    | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                                                                                                                      |
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                                                                                                                              |
+
+   Every chunk statement excludes a known parent that the read would not serve, using
+   the canonical memory row's status and time predicates. The parent match includes
+   agent, user, session and key within the org and namespace, so another writer's row
+   cannot hide a passage. Anonymous user and session spellings compare as the same
+   sentinel. Blank-session ingests retain independent generated session ids. A chunk
+   with no matching canonical parent, including such a generated session, stays
+   eligible. Hard tags also require a matching searchable parent.
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
    it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
@@ -1290,6 +1316,14 @@ Table-level retention and tiering are operator TTLs, off by default
 | `namespace.snapshot` | Live `memory` rows, type configs, curated rows                                                                                                                                        | A portable payload with `version`, `content_sha256` and the attestation columns, plus a `loom.namespace_snapshots` audit row.                                                                                                                                                                                                               |
 | `namespace.restore`  | A snapshot payload                                                                                                                                                                    | Rows into a target namespace (created if missing; the caller becomes admin). Idempotent per `snapshot_id`. Never strips `verified_by`.                                                                                                                                                                                                      |
 | `namespace.rollback` | `memory` heads and `memory_versions` at `as_of`                                                                                                                                       | Each changed key's older version as a new head; keys absent at `as_of` tombstoned; embedding stubs for the worker. Dry run by default.                                                                                                                                                                                                      |
+
+Restores, rollback reinstatements and consolidated summaries run the current target
+blacklist before writing. A namespace restore checks its payload before creating the
+target or its grants, then rechecks the values after its own grant writes. A rollback
+checks all planned live reinstatements in bounded slices before its first batch, then
+reads each batch's heads afresh. Under Postgres each commit holds the
+policy generations captured before the guard; a changed policy refuses the commit.
+An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
 at T is the largest version at or before T. Triples, records, summaries and aggregates

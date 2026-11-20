@@ -214,7 +214,7 @@ test("shunt: a server that never answers holds the call no longer than the looku
 
 test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs keeps the plain redirect", async () => {
   const dir = checkout();
-  await withServer(null, async (url) => {
+  await withServer(null, async (url, seen, arrived) => {
     const tmp = freshTmp();
     seedIndexed(dir, tmp);
     const r = await run(
@@ -230,7 +230,21 @@ test("shunt: an indexed entry decides locally; a symbol grep whose answer hangs 
     assert.equal(r.code, 0);
     const reason = JSON.parse(r.out).hookSpecificOutput.permissionDecisionReason;
     assert.match(reason, /names a symbol — call loom_code_symbol/);
-    assert.ok(r.ms < 5000, `took ${r.ms} ms`);
+    assert.ok(
+      r.ms < 5000,
+      r.ms < 5000
+        ? undefined
+        : (() => {
+            const symbolAt = arrived.get("/v1/code.symbol");
+            const afterSymbol = symbolAt === undefined ? null : r.closedAt - symbolAt;
+            return `took ${r.ms} ms; ${JSON.stringify({
+              server_seen_requests: seen.length,
+              symbol_seen: symbolAt !== undefined,
+              estimated_start_to_last_symbol_ms: afterSymbol === null ? null : r.ms - afterSymbol,
+              last_symbol_to_close_ms: afterSymbol,
+            })}`;
+          })(),
+    );
   });
 });
 

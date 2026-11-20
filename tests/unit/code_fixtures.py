@@ -39,6 +39,21 @@ def repo_config(**overrides: Any) -> RepoConfig:
     return RepoConfig(**fields)
 
 
+def _linear_failure_context() -> dict[str, Any]:
+    """Cumulative worker state after failure, separate from individual sample costs."""
+    return {
+        "process_cpu_ns_at_failure": time.process_time_ns(),
+        "monotonic_ns_at_failure": time.monotonic_ns(),
+        "allocated_blocks_at_failure": sys.getallocatedblocks(),
+        "gc_enabled_at_failure": gc.isenabled(),
+        "gc_threshold_at_failure": gc.get_threshold(),
+        "gc_count_at_failure": gc.get_count(),
+        "gc_stats_at_failure": gc.get_stats(),
+        "trace_active_at_failure": sys.gettrace() is not None,
+        "profile_active_at_failure": sys.getprofile() is not None,
+    }
+
+
 def assert_linear(
     cost: Callable[[Any], float],
     small: Any,
@@ -54,7 +69,19 @@ def assert_linear(
     a, b = cost(small), cost(big)
     if b > ratio * a:
         a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
-    assert b < ratio * a or b < floor, (a, b)
+    try:
+        assert b < ratio * a or b < floor, (a, b)
+    except AssertionError as error:
+        try:
+            # Diagnostic imports and allocations must follow the failed judge.
+            import json
+
+            note = "linear_cost_context=" + json.dumps(_linear_failure_context(), sort_keys=True)
+        except Exception as context_error:  # Preserve the failed judge.
+            error.add_note("linear_cost_context_error=" + type(context_error).__name__)
+            raise error from context_error
+        error.add_note(note)
+        raise
 
 
 @contextmanager

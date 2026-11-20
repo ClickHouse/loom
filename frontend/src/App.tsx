@@ -90,6 +90,9 @@ const Sharing = lazy(() => import("./views/Sharing").then((m) => ({ default: m.S
 const Browse = lazy(() => import("./views/Browse").then((m) => ({ default: m.Browse })));
 const CodeView = lazy(() => import("./views/Code").then((m) => ({ default: m.CodeView })));
 const Setup = lazy(() => import("./views/Setup").then((m) => ({ default: m.Setup })));
+const ConnectedAccounts = lazy(() =>
+  import("./views/ConnectedAccounts").then((m) => ({ default: m.ConnectedAccounts })),
+);
 const Tasks = lazy(() => import("./views/Tasks").then((m) => ({ default: m.Tasks })));
 const ReviewQueue = lazy(() => import("./views/admin/ReviewQueue").then((m) => ({ default: m.ReviewQueue })));
 const Health = lazy(() => import("./views/admin/Health").then((m) => ({ default: m.Health })));
@@ -707,7 +710,7 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
   const denied = useStore((s) => s.deniedNamespace);
   // A link to a namespace the account cannot read shows that, never the view: on the
   // namespace under it the view would read data the link did not ask for.
-  if (denied) return <NamespaceNoAccess namespace={denied} />;
+  if (denied && view !== "connected-accounts") return <NamespaceNoAccess namespace={denied} />;
   // A view that reads the memory plane never mounts on a code or tracker namespace, or on
   // no namespace — it would fire memory.* reads the token cannot make against a namespace
   // that holds no memories. One empty state, one place, says what the namespace is and
@@ -739,6 +742,8 @@ function ViewSwitch({ view }: { view: ReturnType<typeof useStore.getState>["view
       return <CodeView />;
     case "setup":
       return <Setup />;
+    case "connected-accounts":
+      return <ConnectedAccounts />;
     case "tasks":
       return <Tasks />; // task inbox board
     case "admin:review_queue":

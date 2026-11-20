@@ -406,7 +406,7 @@ def test_stored_page_check_uses_the_same_source_preservation_guard(monkeypatch, 
     monkeypatch.setattr(t, "ROOT", tmp_path)
     monkeypatch.setattr(t, "sources", lambda: (source_path,))
     monkeypatch.setattr(t, "LANGUAGES", (lang,))
-    monkeypatch.setattr(t, "prepare", lambda source_path, lang: (source, ""))
+    monkeypatch.setattr(t, "prepare", lambda source_path, lang, *, inventory=None: (source, ""))
     output = tmp_path / t.target_path(lang.code, source_path)
     output.parent.mkdir(parents=True)
     output.write_text(source)

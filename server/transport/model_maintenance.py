@@ -6,7 +6,7 @@ on a process its deployment's cell state gates."""
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from server.core import cell, deployment_config
+from server.core import cell, deployment_config, retirement
 from server.core.errors import classified
 from server.core.model_work_gate import ModelChangeInProgress, ModelWorkGate, get_model_work_gate
 from server.settings import settings
@@ -111,6 +111,20 @@ class ModelMaintenanceMiddleware:
         if scope["type"] not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
+        try:
+            async with retirement.get_gate().admit():
+                await self._dispatch(scope, receive, send)
+        except retirement.ProcessStopping:
+            await _refuse(
+                scope,
+                receive,
+                send,
+                code="PROCESS_STOPPING",
+                message="This server is stopping. Retry another server.",
+                retry_after="1",
+            )
+
+    async def _dispatch(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (reason := cell.gate_reason()) and not _health_probe(scope):
             await _refuse_cell(scope, receive, send, reason)
             return

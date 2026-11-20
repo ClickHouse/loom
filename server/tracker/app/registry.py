@@ -31,6 +31,8 @@ async def ensure_tracker_registered(
     join_policy: str = "",
 ) -> bool:
     """The caller holds the namespace's account claim."""
+    from server.auth.authz import identity_write
+
     key = (org, namespace)
     if key in _DONE:
         return False
@@ -46,38 +48,40 @@ async def ensure_tracker_registered(
         if restricted and str(row.get("classification") or "standard") != "restricted":
             narrowed = dict(row)
             narrowed.update(classification="restricted", visibility="private", updated_at=now)
-            await client.insert("loom.namespaces", [narrowed])
+            with identity_write():
+                await client.insert("loom.namespaces", [narrowed])
             from server.identity.app.namespace_classification import note_restricted
 
             note_restricted(org, namespace)
             logger.warning("qa namespace %s/%s narrowed to restricted", org, namespace)
         _DONE.add(key)
         return False
-    await client.insert(
-        "loom.namespaces",
-        [
-            {
-                "org": org,
-                "namespace": namespace,
-                "owner_email": "",
-                "description": (
-                    "tracker record, read live (issues, PRs, triage, risk; "
-                    "read-only reference data)"
-                ),
-                "tags": ["tracker"],
-                "active": True,
-                "kind": "tracker",
-                "visibility": "private",
-                "classification": "restricted" if restricted else "standard",
-                # A public tracker namespace is joined, not granted — any
-                # principal in the org joins it directly; a restricted one asks
-                # (a registrant may choose `approval` for a public one)
-                "join_policy": "approval" if restricted else (join_policy or "open"),
-                "created_at": now,
-                "updated_at": now,
-            }
-        ],
-    )
+    with identity_write():
+        await client.insert(
+            "loom.namespaces",
+            [
+                {
+                    "org": org,
+                    "namespace": namespace,
+                    "owner_email": "",
+                    "description": (
+                        "tracker record, read live (issues, PRs, triage, risk; "
+                        "read-only reference data)"
+                    ),
+                    "tags": ["tracker"],
+                    "active": True,
+                    "kind": "tracker",
+                    "visibility": "private",
+                    "classification": "restricted" if restricted else "standard",
+                    # A public tracker namespace is joined, not granted — any
+                    # principal in the org joins it directly; a restricted one asks
+                    # (a registrant may choose `approval` for a public one)
+                    "join_policy": "approval" if restricted else (join_policy or "open"),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+        )
     if restricted:
         from server.identity.app.namespace_classification import note_restricted
 

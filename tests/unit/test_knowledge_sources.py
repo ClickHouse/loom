@@ -1626,6 +1626,23 @@ def test_update_refuses_what_it_cannot_do_before_any_probe(
     assert fake.probes == [] and _stored(fake) == stored
 
 
+def test_meet_recording_registration_refuses_before_probe(
+    fake: _Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    before = dict(fake.rows)
+
+    async def _must_not_probe(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("rejected Meet registration reached a provider probe")
+
+    monkeypatch.setattr(source_probes, "probe", _must_not_probe)
+    config = {"provider": "meet", "ids": ["spaces/old-space"]}
+    assert (
+        _code(app.handle_knowledge_source_add(_add(kind="recording", config=config)))
+        == "BAD_CONFIG"
+    )
+    assert fake.rows == before
+
+
 def test_update_of_a_recording_source_is_refused(fake: _Store) -> None:
     config = {"provider": "zoom", "ids": ["123456789"]}
     asyncio.run(app.handle_knowledge_source_add(_add(kind="recording", config=config)))

@@ -266,6 +266,11 @@ the redirect URI registered with the store is built from it, never from a reques
   dashboard's Connected accounts page for the kind, where the person signs in if they
   have not. PKCE where the store takes it; `include_granted_scopes=false`, so an earlier
   grant of the same client is not folded in.
+  After consent succeeds, a callback whose HTTP `Accept` header prefers HTML returns
+  a redirect to the fixed same-origin `/settings/connected-accounts` path. Other clients
+  receive `{"connected": true}` as JSON. Both responses disable caching, carry
+  `Referrer-Policy: no-referrer`, vary on `Accept`, and clear the browser binding cookie.
+  The dashboard URL carries no code, state, token or caller-supplied return address.
 - Scopes, the narrowest each store has:
   - `gdrive`: `https://www.googleapis.com/auth/drive.readonly`, `openid` and `email`
     (which the token answer spells `https://www.googleapis.com/auth/userinfo.email`).
@@ -1045,30 +1050,32 @@ list.
 
 ## Meetings through the shared-folder store
 
-The meeting store saves a meeting's transcript and its notes as Docs in the organiser's
-recordings folder of the shared-folder store, and shares them with the participants. A
-`gdrive` source reads them like any file: a `meet_recordings` item, or a `folder` item
-for that folder. `meet_recordings` finds the folder the meeting store made in each
-account's own drive by its name, from a fixed table of the names the store gives it in
-each language; when none is found, the turn reports `meet_recordings: not found`, naming
-no account, and a `folder` item with the folder's link reads it instead.
+Meet transcripts and notes are documents in Drive. A `gdrive` source reads them as
+files: a `meet_recordings` item finds the recordings folder in an account's own
+Drive, and a `folder` item reads a supplied folder. Folder discovery uses the fixed
+table of localized names. When no folder is found, the turn reports
+`meet_recordings: not found` without naming an account; a `folder` item with the
+folder's link reads it instead. Individual document links use the same source.
 
-The sync recognises a transcript Doc (one in a recordings folder whose exported text has
-the store's transcript shape: a title line, then speaker turns under time stamps) and
-writes it with `server/knowledge/domain/transcripts.py`'s timed sections,
-`ingested_format: transcript`, as a `recording` source writes one, so a citation names
-the minute. A meeting-notes Doc is written as any Doc. When the listing account can read
-its permission list (the organiser's account, or a crawl listing as the organiser), the
-list (the organiser and the invited participants) makes a mirrored source show each
-meeting to the people invited; a participant's connected source cannot read it, so its
-copy shows to that participant alone.
+A transcript Doc in the recognized English export layout is tagged
+`ingested_format: transcript`. Its elapsed-time headings and speaker paragraphs
+are retained unchanged; the document chunker uses those headings for timed
+sections and citation context. The export supplies coarse elapsed points, rather
+than a start and end time for each speaker turn. Loom does not infer missing
+intervals or use the meeting-ended footer as an utterance endpoint. Edited,
+untimed or unrecognized layouts, including meeting notes, remain ordinary Docs
+with their content preserved.
 
-The `meet` provider of the `recording` kind is removed; `recording` keeps `zoom`, whose
-cloud recordings do not land in the shared-folder store. This is a break: a stored
-`meet` source is listed and inspected, refused by `check`, `rotate`, `sync_now` and
-`update` (`BAD_CONFIG`, naming the `gdrive` route), and skipped by the sync with
-`status: provider_removed`, which counts as no failure of the pass; its documents stay
-until it is removed.
+The source keeps its existing connected-account and mirrored-access checks. A
+folder name, transcript shape or attendee paragraph does not grant access.
+
+The `recording` source accepts Zoom only. A stored Meet source remains listed and
+inspectable, and keeps its configuration and documents. Its `check`, `rotate`,
+`sync_now` and `update` operations refuse with `BAD_CONFIG` and direct the caller
+to `gdrive`. Its worker turn records `provider_removed`, contributes no pass
+failure and preserves the cursor, pending full request and file waits. Removing
+the source deletes documents only when requested. No stored configuration is
+rewritten to a sentinel, and no native Meet API fallback remains.
 
 ## Project-tracker issues
 

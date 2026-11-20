@@ -255,6 +255,7 @@ export function classifyGrep(ctx) {
   const pass = (reason) => ({ deny: null, reason });
   if (rel == null) return pass("not_indexed"); // outside the repo
   if (isFile) {
+    if (ctx.modified) return pass(ctx.modified === "untracked" ? "untracked" : "modified");
     // A single-file grep for one symbol is a symbol lookup.
     if (ctx.symbol && underPrefixes(rel, prefixes)) {
       if (ctx.symbolBudgetSpent) return pass("symbol_grep_spent");

@@ -24,9 +24,13 @@ class _LLM:
 
 class _Emb:
     model_name = "fake-embed"
+    dim = 2
 
     async def embed(self, text: str) -> list[float]:
         return [0.1, 0.2]
+
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
 
 
 @pytest.fixture

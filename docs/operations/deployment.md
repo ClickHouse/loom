@@ -1257,8 +1257,8 @@ as the balancer for the sign-in limits.
 ## Zero-downtime pair
 
 `redeploy.sh` runs two copies ("colours") of the stack and switches traffic between them
-at a proxy. It deploys the tip of `origin/main`, so an install that pins a release adapts
-step 1.
+at a proxy. It deploys the tip of `origin/main` by default. To deploy a qualified
+source commit, use `--target-commit <full-sha>` from a clean checkout at that commit.
 
 ```mermaid
 flowchart LR
@@ -1297,7 +1297,7 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 
 [`redeploy.sh`](../../redeploy.sh), run from the deploy checkout:
 
-1. fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
+1. in ordinary mode, fetches `origin/main` and rebases onto it, refusing a dirty tree that is behind and
    asking before it ships changes to migrations, compose files, the proxy, the
    `Dockerfile`, `.env.example`, the dependency manifests or itself;
 2. runs [`dev/apparmor_check.sh`](../../dev/apparmor_check.sh): the colour compose
@@ -1327,6 +1327,33 @@ sudo apparmor_parser -r -W /etc/apparmor.d/loom-repo-sandbox
 | `./redeploy.sh --rollback` | start the stopped previous colour, health-check it, swap the proxy back (no schema step) |
 | `./redeploy.sh --status`   | which colour serves, each colour's build, container state and workers lease              |
 | `loom deploy-delta`        | after about 30 minutes: ledger and ClickHouse statement shapes on each side of the swap  |
+
+To deploy a qualified commit independently of later changes on main, prepare a clean
+deployment checkout at its full commit SHA and run:
+
+```sh
+./redeploy.sh --target-commit <full-commit-sha>
+```
+
+This mode fetches main without rebasing or changing HEAD. Tracked edits and untracked
+files refuse deployment. Keep staged configuration files outside that checkout; the
+ignored deployment `.env` and `var` remain its normal configuration and state bindings.
+The build and health identity use the full commit, and a mismatched idle build cannot
+take traffic. Source identity is checked again after building and before booting.
+
+To apply another configuration at the same source commit, update the deployment's
+`.env` through the normal configuration procedure and run:
+
+```sh
+./redeploy.sh --target-commit <same-full-commit-sha> --reapply-config
+```
+
+This is another ordinary blue/green deployment, with all migration, readiness,
+provider, sandbox, proxy, worker and rollback checks. It admits an intentional
+same-build deployment; it does not permit an unhealthy swap. Keep the same full
+commit for every stage and start final observation after the final configuration.
+Each invocation builds an image: equal source commits do not prove equal image digests.
+The selector does not fetch a release image or select an image digest.
 
 `LOOM_PREFLIGHT_STRICT=0` turns ledger-only rows and checksum drift into a report instead
 of a stop. `LOOM_PUBLIC_HEALTH_URL`, when set, is probed last.

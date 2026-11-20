@@ -230,6 +230,10 @@ export interface CodeAskInput {
 
 export interface CodeAskOutput {
   answer?: string;
+  partial?: boolean;
+  partial_reason?: string;
+  note?: string;
+  coverage?: "" | "full" | "partial" | "none";
   citations?: Array<Record<string, unknown>>;
   source: "cached" | "synthesized" | "abstained";
   cache_similarity?: number;
@@ -1281,6 +1285,8 @@ export interface CodeRepoAddInput {
   classification?: "standard" | "restricted";
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
+  /** The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   path_prefixes?: string[];
   exclude?: string[];
   exclude_generated?: boolean;
@@ -1317,6 +1323,8 @@ export interface CodeRepoRemoteBranchesInput {
   repo: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
+  /** The user name this read presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   /** Case-insensitive substring of the branch name to match. */
   query?: string;
   /** How many matching branches to return (default 60). */
@@ -9353,11 +9361,27 @@ export interface SearchQueryInput {
   recipe?: "" | "fast" | "balanced" | "quality" | "verbatim" | "code" | "temporal" | "graph";
   bodies?: "full" | "excerpt" | "none" | "unit";
   explain?: boolean;
+  live?: boolean;
   page?: string;
+}
+
+export interface LiveSearchResults {
+  live?: true;
+  results?: LiveSearchHit[];
+}
+
+export interface LiveSearchHit {
+  id: string;
+  title: string;
+  url: string;
+  provider: "gdrive" | "notion" | "linear";
+  content?: string;
+  live?: true;
 }
 
 export interface SearchQueryOutput {
   tracker?: Record<string, unknown> | null;
+  live?: LiveSearchResults | null;
   memory?: Record<string, unknown>;
   knowledge?: Record<string, unknown>;
   profile?: Record<string, unknown>;

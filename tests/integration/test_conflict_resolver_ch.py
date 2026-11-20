@@ -384,6 +384,9 @@ async def test_a_write_with_a_peer_past_the_floor_is_owed_a_judgement(ch, wired)
                 return _vec((10, 0.55), (13, 0.835))
             return _vec((12, 1.0))
 
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(text) for text in texts]
+
     with pytest.MonkeyPatch.context() as m:
         m.setattr(set_commit, "get_embedder", lambda: Placed())
         await _set(org, "s2", "pet_new", "The user also has a cat named Tom")
@@ -846,6 +849,9 @@ async def test_a_point_write_of_a_key_another_session_holds_is_owed(ch, wired, m
         async def embed(self, text: str) -> list[float]:
             Apart.n += 1
             return _vec((Apart.n, 1.0))
+
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [await self.embed(text) for text in texts]
 
     monkeypatch.setattr(set_commit, "get_embedder", lambda: Apart())
     monkeypatch.setattr(update, "get_embedder", lambda: Apart(), raising=False)

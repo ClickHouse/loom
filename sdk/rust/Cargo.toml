@@ -1,0 +1,26 @@
+[package]
+name = "clickhouse-loom"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84"
+description = "Rust SDK for ClickHouse Loom, a self-hosted service for shared long-term AI agent memory, document search and code indexing."
+license = "Apache-2.0"
+repository = "https://github.com/ClickHouse/loom"
+readme = "README.md"
+
+[dependencies]
+reqwest = { version = "0.12.28", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+rand = "0.8"
+uuid = { version = "1", features = ["v4"] }
+derive_more = { version = "2", features = ["display"] }
+log = "0.4"
+httpdate = "1"
+tokio = { version = "1", features = ["sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "process"] }

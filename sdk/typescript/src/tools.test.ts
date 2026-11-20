@@ -54,7 +54,13 @@ describe("tool definitions", () => {
 describe("AgentTools.execute", () => {
   it("runs each tool under the scope and returns the string the model reads", async () => {
     const { bot, calls } = harness({
-      "memory.set": { memory_key: "seat", version: 3, conflict_verdict: "new" },
+      "memory.set": {
+        memory_key: "seat",
+        version: 3,
+        memory_id: "m1",
+        content_sha256: "abc",
+        conflict_verdict: "clear",
+      },
       "memory.search": {
         results: [
           {
@@ -86,7 +92,10 @@ describe("AgentTools.execute", () => {
       stored: true,
       memory_key: "seat",
       version: 3,
-      verdict: "new",
+      memory_id: "m1",
+      content_sha256: "abc",
+      conflict_verdict: "clear",
+      verdict: "clear",
     });
     expect(calls[0].body).toMatchObject({
       memory_key: "seat",
@@ -96,7 +105,9 @@ describe("AgentTools.execute", () => {
     });
 
     expect(JSON.parse(await tools.execute("loom_recall", '{"query":"seat","top_k":3}'))).toEqual({
-      memories: [{ memory_key: "seat", content: "Prefers an aisle seat", similarity: 0.512 }],
+      memories: [
+        { memory_key: "seat", memory_type: "preference", content: "Prefers an aisle seat", similarity: 0.512 },
+      ],
     });
     expect(calls[1].body).toMatchObject({ query: "seat", top_k: 3, bodies: "full", explain: false });
 
@@ -174,12 +185,11 @@ describe("AgentTools argument checks", () => {
     expect(out.omitted).toBe(3);
   });
 
-  it("keeps the best recalled memory when it alone is over the cap, and cuts it", async () => {
+  it("omits the best recalled memory when it alone is over the cap", async () => {
     const results = [0, 1].map((i) => ({ memory_key: `m${i}`, content_excerpt: "x".repeat(900), similarity: 0.9 }));
     const { bot } = harness({ "memory.search": { results } });
     const tools = bot.tools({}, { only: ["loom_recall"], maxResultChars: 500 });
     const out = await tools.execute("loom_recall", { query: "seat" });
-    expect(out.endsWith("…[truncated]")).toBe(true);
-    expect(out.startsWith('{"memories":[{"memory_key":"m0"')).toBe(true);
+    expect(JSON.parse(out)).toEqual({ memories: [], omitted: 2 });
   });
 });

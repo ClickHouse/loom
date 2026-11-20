@@ -167,6 +167,8 @@ def test_the_journal_files() -> None:
         "109_knowledge_source_push.sql",
         "110_private_event_storage.sql",
         "111_connected_accounts.sql",
+        "112_code_repo_git_proxy_identity.sql",
+        "113_oauth_verified_email.sql",
     ]
 
 

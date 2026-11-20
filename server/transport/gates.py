@@ -17,13 +17,14 @@ here, once:
   them out; the HTTP body every later phase reads.
 - `with_resolved_org` / `with_target`: before validation a blank or "-"
   org is set to the org the call acts in and a padded org or namespace is
-  stripped; after authorization an absent code namespace is set to the
-  authorized one, so the handler reads and writes where the call was
+  stripped; after authorization an absent optional namespace is set to the
+  authorized one, and read-only operations take its absent optional org too.
+  The handler therefore reads and writes where the call was
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
 - `authorize`: the refusal of `@me` and of a mirror's name first, then the cell's
-  tenancy check (`tenancy.ensure_held`), then the refusal of a revoked subject a
-  trusted caller acts for (`authz.check_acted_for`), first-contact provisioning, the
+  complete person and acted-for check (`authz.check_acted_for`), then the tenancy
+  check (`tenancy.ensure_held`), first-contact provisioning, the
   role + namespace gate (`authorize_op`, raising PermissionError /
   IdentityIncompleteError; a scoped token in its own org gets a refused default's own
   refusal instead), then the restricted-access audit row and the first-write
@@ -258,21 +259,33 @@ def _absent(name: str, value: Any) -> bool:
     return value is None or (isinstance(value, str) and present(value) is None)
 
 
-def with_target(input_obj: Any, target: Target) -> Any:
-    """The input with an absent namespace set to the one the gate authorized
-    (a code op's plane namespace). A namespace the op requires (the code.repo.*
-    writes) is never filled: "-" must not become the plane's default index.
-    Copied, not validated again, so an absent namespace leads no code fan-out
-    list."""
-    ns_field = type(input_obj).model_fields.get("namespace")
+def with_target(op: Operation, input_obj: Any, target: Target) -> Any:
+    """Fill an absent optional namespace and a read's org from its target.
+
+    Required fields stay subject to validation. The namespace never becomes a
+    code fan-out list. Writes keep their org for stable replay hashes across
+    builds, and an explicit identity is never replaced.
+    """
+    fields = type(input_obj).model_fields
+    update: dict[str, str] = {}
+    org_field = fields.get("org")
+    if (
+        op.read_only
+        and target.org
+        and org_field is not None
+        and not org_field.is_required()
+        and present(input_obj.org) is None
+    ):
+        update["org"] = target.org
+    ns_field = fields.get("namespace")
     if (
         target.register_namespace
         and ns_field is not None
         and not ns_field.is_required()
         and present(input_obj.namespace) is None
     ):
-        return input_obj.model_copy(update={"namespace": target.register_namespace})
-    return input_obj
+        update["namespace"] = target.register_namespace
+    return input_obj.model_copy(update=update) if update else input_obj
 
 
 async def authorize(
@@ -295,11 +308,14 @@ async def authorize(
         raise PermissionError(MIRROR_REFUSED)
     # A cell serves only the orgs it holds: checked before anything below provisions
     # or writes for the call (docs/architecture/cells.md).
+    from server.auth.authz import check_acted_for
+
+    await check_acted_for(auth, target.org)
     await tenancy.ensure_held(target.org, auth)
     if auth is None:
         _note_admitted(target)
         return
-    from server.auth.authz import check_acted_for, scope_flags
+    from server.auth.authz import scope_flags
     from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
@@ -318,7 +334,6 @@ async def authorize(
         # A subject a trusted caller may not act for (revoked, deprovisioned, or an `sa:`
         # subject naming no active bot) is refused before anything is provisioned for it
         # (`check_acted_for` admits every other call).
-        await check_acted_for(auth, target.org)
         # The personal namespace is the token's own org's: on a cell, written only
         # where that org is held (a platform admin of another org acting here is not).
         if auth.org == target.org or await tenancy.is_held(auth.org):

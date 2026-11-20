@@ -52,6 +52,7 @@ class Grant(TypedDict):
     exp: int
     family: str
     upstream_refresh: str
+    verified_email: NotRequired[str]
     # A refresh token's place in its session's rotations (0 for the first).
     generation: NotRequired[int]
     # A code's: when its identity was resolved, the cutoff for revocations.
@@ -74,6 +75,7 @@ class Device(TypedDict):
     exp: int
     family: str
     upstream_refresh: str
+    verified_email: NotRequired[str]
     user_code: str
     status: DeviceStatus
     address: str
@@ -166,18 +168,33 @@ def _record(g: Grant | Device, fields: tuple[str, ...], spent: bool) -> dict[str
     """A grant as kept in Keeper: its IdP token sealed, and a nonce so no two
     versions are equal (claims.swap relies on it)."""
     record: dict[str, Any] = {f: g[f] for f in fields}  # type: ignore[literal-required]
+    record["verified_email"] = g.get("verified_email", "")
     record["upstream_refresh"] = seal(UPSTREAM_PURPOSE, g["upstream_refresh"])
     return record | {"spent": spent, "nonce": claims.nonce()}
 
 
 def _code(r: dict[str, Any]) -> Grant:
     g = {f: r[f] for f in _CODE_FIELDS}
-    return cast(Grant, g | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
+    return cast(
+        Grant,
+        g
+        | {
+            "verified_email": r.get("verified_email", ""),
+            "upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"]),
+        },
+    )
 
 
 def _device(r: dict[str, Any]) -> Device:
     d = {f: r[f] for f in _DEVICE_FIELDS}
-    return cast(Device, d | {"upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"])})
+    return cast(
+        Device,
+        d
+        | {
+            "verified_email": r.get("verified_email", ""),
+            "upstream_refresh": unseal(UPSTREAM_PURPOSE, r["upstream_refresh"]),
+        },
+    )
 
 
 # Not `refresh`, the type a build without sign-in sessions keeps its refresh
@@ -197,6 +214,7 @@ def _refresh_row(rid: str, g: Grant, version: int) -> dict[str, Any]:
         "expires_at": int(g["exp"]),
         "family": g["family"],
         "generation": g.get("generation", 0),
+        "verified_email": g.get("verified_email", ""),
         "upstream_refresh": seal(UPSTREAM_PURPOSE, g["upstream_refresh"]),
         "version": version,
     }
@@ -353,7 +371,7 @@ class ClickHouseStore:
         with own_write_reads():  # handed out a moment ago, maybe through another replica
             row = await self._ch().query_one(
                 f"""SELECT client_id, subject, org, namespaces, roles, expires_at, family,
-                           generation, upstream_refresh
+                           generation, upstream_refresh, verified_email
                     FROM {_T} FINAL
                     WHERE record_type = {{t:String}} AND id = {{id:String}} LIMIT 1""",
                 params={"t": _REFRESH_TYPE, "id": rid},
@@ -371,6 +389,7 @@ class ClickHouseStore:
             "exp": int(row["expires_at"]),
             "family": row["family"],
             "generation": int(row["generation"]),
+            "verified_email": row.get("verified_email", ""),
             "upstream_refresh": unseal(UPSTREAM_PURPOSE, row["upstream_refresh"]),
         }
 

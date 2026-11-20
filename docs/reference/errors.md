@@ -254,7 +254,7 @@ HTTP 403, raised as `server.core.errors.AuthInsufficientError`. A public 403 tha
 
 #### `AUTH_INVALID`
 
-Raised in `server/auth/bearer.py`, `server/auth/delegation.py`, `server/auth/login.py`. Category `auth`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+Raised in `server/auth/bearer.py`, `server/auth/delegation.py`, `server/auth/login.py`, `server/transport/tenancy_gate.py`. Category `auth`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
 #### `AUTH_UNAVAILABLE`
 
@@ -435,6 +435,10 @@ Raised in `server/memory/domain/record_values.py`.
 #### `CONTRACT_FAILED`
 
 Raised in `server/tracker/app/sources.py`.
+
+#### `CONTROL_UPGRADE_REQUIRED`
+
+Raised in `server/router/app.py`.
 
 #### `CREDENTIAL_NOT_READONLY`
 
@@ -755,6 +759,10 @@ Raised in `server/router/app.py`. Category `capacity`, retryable: yes.
 #### `PROBE_UNREACHABLE`
 
 Raised in `server/router/app.py`. Category `dependency`, retryable: yes.
+
+#### `PROCESS_STOPPING`
+
+Raised in `server/transport/model_maintenance.py`, `server/transport/retirement.py`.
 
 #### `PROJECTION_BEHIND`
 

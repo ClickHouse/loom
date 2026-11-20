@@ -5,22 +5,25 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.embedding.documents import document_vectors
+
 
 class ReusedVectors:
     def __init__(self, embedder: Any) -> None:
         self._embedder = embedder
-        self._known: dict[str, list[float]] = {}
+        self._queries: dict[str, list[float]] = {}
+        self._documents: dict[str, list[float]] = {}
         self.model_name = embedder.model_name
         self.dim = embedder.dim
 
     async def embed(self, text: str) -> list[float]:
-        if text not in self._known:
-            self._known[text] = await self._embedder.embed(text)
-        return self._known[text]
+        if text not in self._queries:
+            self._queries[text] = await self._embedder.embed(text)
+        return self._queries[text]
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        missing = list(dict.fromkeys(t for t in texts if t not in self._known))
+        missing = list(dict.fromkeys(t for t in texts if t not in self._documents))
         if missing:
-            vectors = await self._embedder.embed_many(missing)
-            self._known.update(zip(missing, vectors, strict=True))
-        return [self._known[t] for t in texts]
+            vectors = await document_vectors(self._embedder, missing)
+            self._documents.update(zip(missing, vectors, strict=True))
+        return [self._documents[t] for t in texts]

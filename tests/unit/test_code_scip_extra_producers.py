@@ -68,7 +68,7 @@ def test_the_entry_json_carries_the_extra_producers_and_the_projects(monkeypatch
         "scip_ts_projects": "frontend, sdk/typescript",
     }
     monkeypatch.setattr(settings, "code_repos_json", json.dumps([entry]))
-    (cfg,) = repos._configured_from_env()
+    (cfg,) = repos._configured_from_env(settings, {})
     assert cfg.scip_extra_producers == ("typescript",)
     assert cfg.scip_ts_projects == ("frontend", "sdk/typescript")
 

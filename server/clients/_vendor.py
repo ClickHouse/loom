@@ -119,6 +119,7 @@ async def request_json(
     what: str,
     *,
     checked: CheckedAccess | None = None,
+    max_bytes: int | None = None,
     **kw: Any,
 ) -> dict[str, Any]:
     """One request (`kw` goes to `client.request`) and its JSON object answer."""
@@ -132,7 +133,12 @@ async def request_json(
                 async with client.stream(
                     method, url, headers=headers, follow_redirects=False, **kw
                 ) as resp:
-                    body = await read_capped(resp, settings.knowledge_source_sync_max_file_bytes)
+                    body = await read_capped(
+                        resp,
+                        min(max_bytes, settings.knowledge_source_sync_max_file_bytes)
+                        if max_bytes is not None
+                        else settings.knowledge_source_sync_max_file_bytes,
+                    )
                 await checked.check()
             if body is None:
                 raise TooLarge(f"{what}: body exceeds the source size bound")

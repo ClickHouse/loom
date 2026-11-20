@@ -1,6 +1,6 @@
 {
   "name": "clickhouse-loom",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "displayName": "ClickHouse Loom",
   "description": "Shared long-term memory, document search and a code index for Cursor from a self-hosted ClickHouse Loom server, over MCP, with the loom and loom-code skills that say when to recall, save and ask the code index.",
   "author": { "name": "ClickHouse" },

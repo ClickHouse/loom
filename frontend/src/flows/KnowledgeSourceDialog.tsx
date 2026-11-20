@@ -7,7 +7,7 @@
  * `knowledge.source.add` with `dry_run` (the credential is tried, nothing is stored) and
  * shows what the source holds; Add stays off until the form it would send is the one
  * that passed. A credential is typed into a password field, held in the dialog's state
- * only, sent once and never shown back. Changing the kind or the provider clears it, so
+ * only, sent once and never shown back. Changing the kind clears it, so
  * a credential is only ever sent to the store it was typed for.
  */
 import { useState } from "react";
@@ -33,7 +33,6 @@ import {
   KIND_OPTIONS,
   normalisedName,
   probeCount,
-  RECORDING_PROVIDERS,
   retiredMessage,
   sourceFormFingerprint,
   sourceFormProblems,
@@ -80,7 +79,7 @@ function ProbeResult({ probe, lead }: { probe: KnowledgeSourceProbe; lead: strin
 type SetField = <K extends keyof SourceForm>(key: K, value: SourceForm[K]) => void;
 
 /** The chosen kind's ids and filters, as the server's config for that kind takes them. */
-function SourceFields({ form, set, busy }: { form: SourceForm; set: SetField; busy: boolean }) {
+function SourceFields({ form, set }: { form: SourceForm; set: SetField }) {
   switch (form.kind) {
     case "gdrive":
       return (
@@ -142,27 +141,14 @@ function SourceFields({ form, set, busy }: { form: SourceForm; set: SetField; bu
       );
     case "recording":
       return (
-        <>
-          <ChoiceGroup
-            label="Provider"
-            disabled={busy}
-            value={form.provider}
-            onChange={(v) => set("provider", v)}
-            options={RECORDING_PROVIDERS}
-          />
-          <TextAreaField
-            id="ksrc-meetings"
-            label={
-              form.provider === "meet"
-                ? "Meeting spaces (space ids, one per line)"
-                : "Meetings (meeting ids, one per line)"
-            }
-            rows={3}
-            className="font-mono"
-            value={form.meetings}
-            onChange={(v) => set("meetings", v)}
-          />
-        </>
+        <TextAreaField
+          id="ksrc-meetings"
+          label="Meetings (meeting ids, one per line)"
+          rows={3}
+          className="font-mono"
+          value={form.meetings}
+          onChange={(v) => set("meetings", v)}
+        />
       );
   }
 }
@@ -180,15 +166,13 @@ export function AddSourceDialog({
   const [busy, setBusy] = useState<"check" | "add" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const set: SetField = (key, value) => {
-    // Another kind or provider: its credential and the last error were the old one's,
-    // and so were the ids typed for the old provider (its rule reads them differently).
-    const switched = (key === "kind" || key === "provider") && value !== form[key];
+    // The credential and last error belong to the kind they were entered for.
+    const switched = key === "kind" && value !== form.kind;
     if (switched) setError(null);
     setForm((f) => ({
       ...f,
       [key]: value,
       ...(switched ? { credential: "" } : {}),
-      ...(switched && key === "provider" ? { meetings: "" } : {}),
     }));
   };
   const problems = sourceFormProblems(form);
@@ -262,7 +246,7 @@ export function AddSourceDialog({
         onChange={(v) => set("kind", v)}
         options={KIND_OPTIONS}
       />
-      <SourceFields form={form} set={set} busy={busy !== null} />
+      <SourceFields form={form} set={set} />
       <PasswordField
         label={credentialLabel(form.kind)}
         value={form.credential}

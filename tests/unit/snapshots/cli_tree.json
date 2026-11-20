@@ -5707,8 +5707,7 @@
            "description": null,
            "dests": [
             "help",
-            "participant",
-            "yes"
+            "participant"
            ]
           }
          ],
@@ -5744,21 +5743,6 @@
            "required": true,
            "help": "The participant id to retire",
            "metavar": null
-          },
-          {
-           "option_strings": [
-            "--yes"
-           ],
-           "dest": "yes",
-           "action": "_StoreTrueAction",
-           "default": false,
-           "const": true,
-           "choices": null,
-           "nargs": 0,
-           "type": null,
-           "required": false,
-           "help": "Its process is confirmed stopped",
-           "metavar": null
           }
          ]
         }
@@ -5769,7 +5753,7 @@
        "choices_help": [
         {
          "dest": "retire",
-         "help": "Retire the provider participant of a process that died without shutting down (its id is `participant_id` in that process's /v1/health).",
+         "help": "Verify exact physical death on this trusted host and retire its participant after all queries settle (the id is participant_id in /v1/health).",
          "metavar": "retire"
         }
        ]
@@ -11238,6 +11222,9 @@
         "json",
         "client",
         "server_url",
+        "pg_allow_role",
+        "stray_orgs",
+        "stray_orgs_budget",
         "token"
        ]
       }
@@ -11303,6 +11290,51 @@
        "type": null,
        "required": false,
        "help": "Override the client's server URL.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--pg-allow-role"
+       ],
+       "dest": "pg_allow_role",
+       "action": "_AppendAction",
+       "default": [],
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "On a cell: a Postgres role that may make an org held (the servers' role).",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--stray-orgs"
+       ],
+       "dest": "stray_orgs",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "On a cell: also read the orgs its stores hold without a tenancy row.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--stray-orgs-budget"
+       ],
+       "dest": "stray_orgs_budget",
+       "action": "_StoreAction",
+       "default": 60.0,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": "builtins:float",
+       "required": false,
+       "help": "Seconds --stray-orgs may read for, smallest tables first (default 60).",
        "metavar": null
       },
       {
@@ -12343,6 +12375,137 @@
        "help": null,
        "metavar": null,
        "subcommands": {
+        "scim-token": {
+         "prog": "loom cell scim-token",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {},
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "action"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "action",
+           "action": "_SubParsersAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "A...",
+           "type": null,
+           "required": true,
+           "help": null,
+           "metavar": null,
+           "subcommands": {
+            "new": {
+             "prog": "loom cell scim-token new",
+             "usage": null,
+             "description": null,
+             "epilog": null,
+             "formatter_class": "argparse:HelpFormatter",
+             "add_help": true,
+             "allow_abbrev": true,
+             "defaults": {
+              "func": "server.cli.cell:_cmd_scim_token"
+             },
+             "groups": [
+              {
+               "title": "positional arguments",
+               "description": null,
+               "dests": []
+              },
+              {
+               "title": "options",
+               "description": null,
+               "dests": [
+                "help",
+                "cell"
+               ]
+              }
+             ],
+             "mutually_exclusive": [],
+             "arguments": [
+              {
+               "option_strings": [
+                "-h",
+                "--help"
+               ],
+               "dest": "help",
+               "action": "_HelpAction",
+               "default": "==SUPPRESS==",
+               "const": null,
+               "choices": null,
+               "nargs": 0,
+               "type": null,
+               "required": false,
+               "help": "show this help message and exit",
+               "metavar": null
+              },
+              {
+               "option_strings": [
+                "--cell"
+               ],
+               "dest": "cell",
+               "action": "_StoreAction",
+               "default": null,
+               "const": null,
+               "choices": null,
+               "nargs": null,
+               "type": null,
+               "required": true,
+               "help": "The cell's exact LOOM_CELL name",
+               "metavar": null
+              }
+             ]
+            }
+           },
+           "aliases_of": {
+            "new": "loom cell scim-token new"
+           },
+           "choices_help": [
+            {
+             "dest": "new",
+             "help": "Print a random token for the named cell.",
+             "metavar": "new"
+            }
+           ]
+          }
+         ]
+        },
         "credential": {
          "prog": "loom cell credential",
          "usage": null,
@@ -12599,7 +12762,7 @@
            "nargs": 0,
            "type": null,
            "required": false,
-           "help": "Take new orgs again",
+           "help": "Take new orgs again once serving",
            "metavar": null
           },
           {
@@ -12788,6 +12951,99 @@
           }
          ]
         },
+        "place": {
+         "prog": "loom cell place",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_place:cmd_place"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "org",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The org to place",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
         "prepare": {
          "prog": "loom cell prepare",
          "usage": null,
@@ -12928,16 +13184,429 @@
            "metavar": null
           }
          ]
+        },
+        "attach": {
+         "prog": "loom cell attach",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_attach:cmd_attach"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "wait",
+            "scan_budget",
+            "dry_run",
+            "ch_allow_user",
+            "ch_allow_user_directory",
+            "ch_allow_object",
+            "ch_allow_replica",
+            "pg_allow_role",
+            "revoke_unprovisioned",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds of wall time the waits share; 0 runs one try of each, with no retry",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--scan-budget"
+           ],
+           "dest": "scan_budget",
+           "action": "_StoreAction",
+           "default": 7200,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:int",
+           "required": false,
+           "help": "Seconds one full org scan may take",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--dry-run"
+           ],
+           "dest": "dry_run",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Run the refusals and the scan and print what would be placed; keep cell state, tenancy triggers and placements unchanged. Command participation is still recorded (the router's own begin refusals do not run)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-user"
+           ],
+           "dest": "ch_allow_user",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse user that may write the configured databases",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-user-directory"
+           ],
+           "dest": "ch_allow_user_directory",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse user directory the check cannot read",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-object"
+           ],
+           "dest": "ch_allow_object",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A ClickHouse object (db.name) that writes the databases",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ch-allow-replica"
+           ],
+           "dest": "ch_allow_replica",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A replica outside the cluster (db.table:replica)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--pg-allow-role"
+           ],
+           "dest": "pg_allow_role",
+           "action": "_AppendAction",
+           "default": [],
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A Postgres role that may make an org held (the servers' role)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-attach tokens of unprovisioned subjects; dry-run never revokes",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
+        "update": {
+         "prog": "loom cell update",
+         "usage": null,
+         "description": null,
+         "epilog": "Finish/revert require foundation-capable runtimes and completed positive legacy-process turnover. A census cannot verify that external inventory. Address refresh requires every router updated first; retain old endpoints until every router refreshes or restarts after the directory change.",
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_update:cmd_update"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "config",
+            "finish",
+            "revert",
+            "probe_url",
+            "revoke_unprovisioned",
+            "router",
+            "wait"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "config",
+            "finish",
+            "revert",
+            "probe_url"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--config"
+           ],
+           "dest": "config",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Nonsecret version: 1 settings YAML overlaid on this CLI's effective settings; does not install the file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--finish"
+           ],
+           "dest": "finish",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Promote next after durable local narrowing and permanent participant turnover",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revert"
+           ],
+           "dest": "revert",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Retain current after durable local narrowing and permanent participant turnover; keep placements",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--probe-url"
+           ],
+           "dest": "probe_url",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Later cell's verified probe listener URL; no flag refreshes the first cell's router-configured addresses",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-update tokens of subjects that cannot satisfy the target SCIM policy",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "Seconds to wait for probe readiness or participant turnover (0 to 86400, default: 600)",
+           "metavar": null
+          }
+         ]
         }
        },
        "aliases_of": {
+        "scim-token": "loom cell scim-token",
         "credential": "loom cell credential",
         "limit": "loom cell limit",
         "which": "loom cell which",
         "remove": "loom cell remove",
-        "prepare": "loom cell prepare"
+        "place": "loom cell place",
+        "prepare": "loom cell prepare",
+        "attach": "loom cell attach",
+        "update": "loom cell update"
        },
        "choices_help": [
+        {
+         "dest": "scim-token",
+         "help": "Generate a cell's SCIM token offline.",
+         "metavar": "scim-token"
+        },
         {
          "dest": "credential",
          "help": "Make a router credential, or rotate a cell's.",
@@ -12959,9 +13628,24 @@
          "metavar": "remove"
         },
         {
+         "dest": "place",
+         "help": "Place an org in this cell and record its tenancy.",
+         "metavar": "place"
+        },
+        {
          "dest": "prepare",
          "help": "Register this cell in the router's directory and write its rows.",
          "metavar": "prepare"
+        },
+        {
+         "dest": "attach",
+         "help": "Attach the prepared first cell: place its orgs, serve.",
+         "metavar": "attach"
+        },
+        {
+         "dest": "update",
+         "help": "Reserve configuration, finish or revert its rollout, or refresh verified addresses.",
+         "metavar": "update"
         }
        ]
       }
@@ -14847,7 +15531,8 @@
         "vscode",
         "cline",
         "windsurf",
-        "zed"
+        "zed",
+        "gemini"
        ],
        "nargs": "+",
        "type": null,
@@ -14912,7 +15597,7 @@
        "nargs": null,
        "type": "server.cli.install:_toolset_arg",
        "required": false,
-       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, else the server default (LOOM_MCP_TOOLSET).",
+       "help": "MCP toolset the client lists, as `?toolset=` on the URL; when omitted, `coding` for claude-code, codex, cursor, gemini, else the server default (LOOM_MCP_TOOLSET).",
        "metavar": null
       },
       {
@@ -15930,6 +16615,30 @@
      ],
      "mutually_exclusive": [],
      "arguments": []
+    },
+    "connect": {
+     "prog": "loom connect",
+     "usage": null,
+     "description": null,
+     "epilog": null,
+     "formatter_class": "argparse:HelpFormatter",
+     "add_help": false,
+     "allow_abbrev": true,
+     "defaults": {},
+     "groups": [
+      {
+       "title": "positional arguments",
+       "description": null,
+       "dests": []
+      },
+      {
+       "title": "options",
+       "description": null,
+       "dests": []
+      }
+     ],
+     "mutually_exclusive": [],
+     "arguments": []
     }
    },
    "aliases_of": {
@@ -16000,7 +16709,8 @@
     "logout": "loom logout",
     "whoami": "loom whoami",
     "call": "loom call",
-    "token": "loom token"
+    "token": "loom token",
+    "connect": "loom connect"
    },
    "choices_help": [
     {
@@ -16170,7 +16880,7 @@
     },
     {
      "dest": "mint-token",
-     "help": "Mint a JWT locally (requires LOOM_JWT_SECRET).",
+     "help": "Mint a JWT locally (requires LOOM_JWT_SECRET and verified stores).",
      "metavar": "mint-token"
     },
     {
@@ -16342,6 +17052,11 @@
      "dest": "token",
      "help": "Make, list and revoke your own tokens for CI and agents (`loom token --help`).",
      "metavar": "token"
+    },
+    {
+     "dest": "connect",
+     "help": "Print the dashboard link to connect your own Google, Notion or Linear account.",
+     "metavar": "connect"
     }
    ]
   }

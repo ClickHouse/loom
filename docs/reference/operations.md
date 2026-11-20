@@ -738,7 +738,7 @@ Fields for every `task` op: [operations/task.md](operations/task.md).
 | [`task.heartbeat`](operations/task.md#taskheartbeat) | WHAT: Renew the lease on a task you claimed (fence from task.pull) and optionally leave a progress note. | writer | idempotent | no |  |
 | [`task.history`](operations/task.md#taskhistory) | Return a task's event history (posted, accepted, claimed, progress, finished, ...). | viewer | read | no |  |
 | [`task.list`](operations/task.md#tasklist) | Tasks in ``inbox`` (owner side) or, with ``posted_by_me``, the tasks the caller posted anywhere in the org. | viewer | read | no |  |
-| [`task.progress`](operations/task.md#taskprogress) | Record a progress note on a claimed task and extend its lease. | writer | write | no |  |
+| [`task.progress`](operations/task.md#taskprogress) | Record a progress note on a claimed task without extending its lease. | writer | write | no |  |
 | [`task.pull`](operations/task.md#taskpull) | ``namespace`` is the inbox's owner namespace; the caller must be a writer there. | writer | write | no |  |
 | [`task.reassign`](operations/task.md#taskreassign) | Owner side: cancel here, re-post into another inbox as a child task (the destination's trust policy applies to the original poster). | writer | write | no |  |
 | [`task.reopen`](operations/task.md#taskreopen) | A transition anyone entitled may make, with a reason; ``fence`` is required only when the caller is the current owner of an in_progress task. | writer | write | no |  |
