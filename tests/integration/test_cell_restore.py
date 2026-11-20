@@ -478,7 +478,8 @@ async def test_late_raw_connection_stays_with_closed_budget_owner(cell_db, monke
         finally:
             if "pid" in owned:
                 await observer.execute(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1", owned["pid"]
+                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid=$1",
+                    owned["pid"],
                 )
             await observer.close(timeout=1)
 
