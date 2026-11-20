@@ -342,7 +342,7 @@ async def test_self_service_registry_snapshot_decides_repository_authority(monke
     from server.settings import settings
 
     monkeypatch.setattr(settings, "code_self_service_enabled", True)
-    monkeypatch.setattr(repos, "_configured_from_env", lambda: [])
+    monkeypatch.setattr(repos, "_configured_from_env", lambda _config, _errors: [])
     for name in ("_registry_repos", "_registry_namespaces", "_page_namespaces", "_registry_loaded"):
         monkeypatch.setattr(repos, name, getattr(repos, name))
     monkeypatch.setattr(classification, "restricted_set", AsyncMock(return_value=frozenset()))
