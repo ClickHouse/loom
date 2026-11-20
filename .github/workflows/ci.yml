@@ -962,6 +962,8 @@ jobs:
           tail -100 server.log
           exit 1
       - name: pytest (Postgres authority, memory, knowledge, isolation and the SQL surface)
+        env:
+          NATIVE_BOT_BOOTSTRAP_CENSUS: ${{ runner.temp }}/native-bot-bootstrap-census.json
         run: >-
           pytest -q
           tests/integration/test_pg_authority.py
@@ -1009,6 +1011,7 @@ jobs:
           tests/integration/test_pg_owned_cleanup.py
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
+          tests/integration/test_cell_bot_bootstrap_native.py
           tests/integration/test_cell_attach.py
           tests/integration/test_cell_place.py
           tests/integration/test_cell_update_directory.py
@@ -1041,6 +1044,13 @@ jobs:
           tests/integration/test_marked_rollup_migration_native.py
           tests/integration/test_marked_durable_folds_native.py
           tests/integration/test_marked_sql_surface_native.py
+      - name: Upload native bot bootstrap census
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-bot-bootstrap-postgres-${{ matrix.postgres }}
+          path: ${{ runner.temp }}/native-bot-bootstrap-census.json
+          if-no-files-found: ignore
       - name: pytest online-index durability on a private physical standby
         timeout-minutes: 8
         env:
