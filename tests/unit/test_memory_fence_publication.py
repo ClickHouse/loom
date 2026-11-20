@@ -333,3 +333,68 @@ async def test_acknowledged_point_write_records_after_release_cancellation(monke
     else:
         receipt.assert_awaited_once()
         announce.assert_awaited_once_with(w)
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_restore_leaves_its_mirror_for_retry(monkeypatch):
+    from unittest.mock import Mock
+
+    from server.core.errors import BackendUnavailableError
+    from server.memory.api.models_crud import MemoryRestoreInput
+    from server.memory.app import restore
+    from server.memory.store.rows import _hydrate
+
+    source = _row()
+    restored = store.build_memory_version_row(source, version=200)
+    rows = []
+
+    class LostAnswer:
+        search_deleted = True
+
+        async def insert(self, table, batch, **kw):
+            rows.extend(batch)
+            raise RuntimeError("the server's insert answer was lost")
+
+        async def query_all(self, sql, params):
+            assert "AS search_deleted" in sql
+            return [{"history": [(200, False), (100, True)], "search_deleted": self.search_deleted}]
+
+    ch = LostAnswer()
+    mirror_calls = []
+
+    async def mirror(*args, **kw):
+        mirror_calls.append(True)
+        ch.search_deleted = False
+
+    committed, announced = Mock(), AsyncMock()
+    monkeypatch.setattr(restore, "_restore_landed", AsyncMock(return_value=None))
+    monkeypatch.setattr(restore, "_read_restorable", AsyncMock(return_value=_hydrate(restored)))
+    monkeypatch.setattr(restore, "_restore_embedding_mirror", mirror)
+    monkeypatch.setattr(restore.blacklist_guard, "enforce_rows", AsyncMock(return_value={}))
+    request = MemoryRestoreInput(
+        org=source.org,
+        namespace=source.namespace,
+        agent=source.agent,
+        memory_key=source.memory_key,
+    )
+    with pytest.raises(BackendUnavailableError) as unknown:
+        await restore._insert_restore(
+            request,
+            restored,
+            source,
+            ch=ch,
+            what="the restore",
+            mirror=mirror,
+            landed=announced,
+            on_commit=committed,
+            policy={},
+        )
+    assert unknown.value.extra["outcome_unknown"]
+    assert rows == [restored]
+    committed.assert_not_called()
+    announced.assert_not_awaited()
+    assert mirror_calls == []
+    retry = await restore._restore_live(request, restored, ch=ch)
+    assert retry.restored and retry.from_status == "tombstoned"
+    assert mirror_calls == [True]
+    assert not (await restore._restore_live(request, restored, ch=ch)).restored
