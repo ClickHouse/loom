@@ -72,8 +72,6 @@ def prepare_historical(
         source,
         public["dependency_image"],
         visible,
-        selected,
-        private["test_patch"],
         output / "grading",
     )
     if task.source_sha256 != controls["source_sha256"] or any(

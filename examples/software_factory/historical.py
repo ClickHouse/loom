@@ -19,7 +19,7 @@ from pathlib import Path, PurePosixPath
 
 from .cleanup import remove_owned
 from .model import Task, digest
-from .workspace import Checkout, GradingBudgetExceeded, require_independent_grader
+from .workspace import Checkout, GradingBudgetExceeded
 
 
 def controller_hashes() -> dict[str, str]:
@@ -362,14 +362,11 @@ class HistoricalGrader:
         source: FrozenSource,
         image: str,
         visible: list[str],
-        hidden: list[str],
-        hidden_test_patch: str,
         output: Path,
         *,
         max_visible_calls: int = 3,
     ):
-        self.source, self.image, self.visible, self.hidden = source, image, visible, hidden
-        self.hidden_test_patch, self.output = hidden_test_patch, output
+        self.source, self.image, self.visible, self.output = source, image, visible, output
         self.base = source.files()
         self.max_visible_calls, self.calls = max_visible_calls, 0
         self.sha256 = digest(
@@ -378,58 +375,24 @@ class HistoricalGrader:
                 "files": digest(self.base),
                 "image": image,
                 "visible": visible,
-                "hidden": hidden,
-                "patch": hidden_test_patch,
                 "max_visible_calls": max_visible_calls,
             }
         )
 
     def run(self, checkout: Checkout, *, hidden: bool = False) -> dict:
         if hidden:
-            require_independent_grader(self)
+            raise PermissionError("Historical reports cannot provide candidate-independent grading")
         if checkout.original != {k: v for k, v in self.base.items() if k.startswith("src/flask/")}:
             raise PermissionError("Candidate base differs from the frozen implementation")
-        if not hidden and self.calls >= self.max_visible_calls:
+        if self.calls >= self.max_visible_calls:
             raise GradingBudgetExceeded("Visible test budget exhausted")
-        if not hidden:
-            self.calls += 1
-        out = self.output / ("hidden" if hidden else f"visible-{self.calls}")
+        self.calls += 1
+        out = self.output / f"visible-{self.calls}"
         workspace = out / "workspace"
         workspace.mkdir(parents=True, exist_ok=False)
         for name, content in {**self.base, **checkout.files()}.items():
             target = workspace / name
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content)
-        if hidden:
-            headers = [
-                line.split()
-                for line in self.hidden_test_patch.splitlines()
-                if line.startswith("diff --git ")
-            ]
-            if not headers or any(
-                len(parts) != 4
-                or not all(
-                    p[:2] in {"a/", "b/"} and ordinary(p[2:]) and p[2:].startswith("tests/")
-                    for p in parts[2:]
-                )
-                for parts in headers
-            ):
-                raise PermissionError("Hidden patch may only change fixed test files")
-            for record in git(
-                workspace, "apply", "--numstat", "-z", "-", data=self.hidden_test_patch.encode()
-            ).split(b"\0"):
-                if record:
-                    fields = record.decode().split("\t")
-                    if (
-                        len(fields) != 3
-                        or not ordinary(fields[2])
-                        or not fields[2].startswith("tests/")
-                    ):
-                        raise PermissionError("Hidden patch changes an evaluation-external file")
-            git(workspace, "apply", "-", data=self.hidden_test_patch.encode())
-        result = DockerTests(self.image, self.hidden if hidden else self.visible, out / "test").run(
-            workspace
-        )
-        if hidden:
-            result = {k: v for k, v in result.items() if k != "selected"}
+        result = DockerTests(self.image, self.visible, out / "test").run(workspace)
         return {**result, "state": checkout.state(), "grader_sha256": self.sha256}

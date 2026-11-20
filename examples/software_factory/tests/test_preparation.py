@@ -95,9 +95,7 @@ class HistoricalPreparationContracts(unittest.TestCase):
         }
         source = FrozenSource(mirror, base)
         task = source.task(self.public, "unqualified-fixture", "value")
-        grader = HistoricalGrader(
-            source, image, [selected[1]], selected, private["test_patch"], self.root / "grade"
-        )
+        grader = HistoricalGrader(source, image, [selected[1]], self.root / "grade")
         self.receipt = {
             "kind": "focused-historical-controls",
             "task_id": task.task_id,
@@ -148,7 +146,6 @@ class HistoricalPreparationContracts(unittest.TestCase):
         self.assertFalse((checkout.root / ".git").exists())
         with self.assertRaises(PermissionError):
             checkout.read("../private.json")
-        self.assertEqual(grader.hidden_test_patch, "HIDDEN_GRADER_SENTINEL")
         self.assertTrue(grader.output.is_relative_to(self.root / "worker"))
 
     def test_passing_hidden_base_is_invalid_even_when_receipt_says_qualified(self):

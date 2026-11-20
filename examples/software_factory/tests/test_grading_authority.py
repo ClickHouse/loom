@@ -15,6 +15,7 @@ from examples.software_factory.historical import HistoricalGrader
 from examples.software_factory.qualify import qualify
 from examples.software_factory.tests.controller_worker import prepare
 from examples.software_factory.tests.test_controller import protocol
+from examples.software_factory.workspace import GradingBudgetExceeded
 
 
 class GradingAuthorityContracts(unittest.TestCase):
@@ -69,19 +70,12 @@ class GradingAuthorityContracts(unittest.TestCase):
         checkout = SimpleNamespace(
             original=implementation, files=lambda: implementation, state=lambda: "fixture-state"
         )
-        hidden_patch = (
-            "diff --git a/tests/test_case.py b/tests/test_case.py\n"
-            "--- a/tests/test_case.py\n+++ b/tests/test_case.py\n@@ -1 +1 @@\n"
-            "-def test_case(): assert False\n+def test_case(): assert True\n"
-        )
         for statuses in ({"tests/test_case.py::test_case": "PASSED"}, {"uncollected": "PASSED"}):
             with self.subTest(statuses=statuses), tempfile.TemporaryDirectory() as directory:
                 grader = HistoricalGrader(
                     source,
                     "sha256:" + "a" * 64,
                     ["tests/test_case.py::test_case"],
-                    ["tests/test_case.py::test_case"],
-                    hidden_patch,
                     Path(directory) / "evaluation",
                 )
                 forged = {"passed": True, "selected": statuses, "exit_code": 0}
@@ -91,6 +85,46 @@ class GradingAuthorityContracts(unittest.TestCase):
                     with self.assertRaisesRegex(PermissionError, "candidate-independent"):
                         grader.run(checkout, hidden=True)
                     runner.assert_not_called()
+                self.assertFalse(grader.output.exists())
+
+    def test_historical_visible_diagnostics_keep_base_tests_and_bound_calls(self):
+        base = {
+            "src/flask/app.py": "value = 0\n",
+            "tests/test_case.py": "def test_case(): assert False\n",
+        }
+        source = SimpleNamespace(commit="a" * 40, files=lambda: dict(base))
+        checkout = SimpleNamespace(
+            original={"src/flask/app.py": base["src/flask/app.py"]},
+            files=lambda: {"src/flask/app.py": "value = 1\n"},
+            state=lambda: "edited-state",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            grader = HistoricalGrader(
+                source,
+                "sha256:" + "a" * 64,
+                ["tests/test_case.py::test_case"],
+                Path(directory) / "grade",
+            )
+
+            def observe(_runner, workspace):
+                self.assertEqual((workspace / "src/flask/app.py").read_text(), "value = 1\n")
+                self.assertEqual(
+                    (workspace / "tests/test_case.py").read_text(),
+                    "def test_case(): assert False\n",
+                )
+                return {"passed": False, "exit_code": 1}
+
+            with patch(
+                "examples.software_factory.historical.DockerTests.run",
+                autospec=True,
+                side_effect=observe,
+            ) as runner:
+                for _ in range(3):
+                    self.assertFalse(grader.run(checkout)["passed"])
+                with self.assertRaises(GradingBudgetExceeded):
+                    grader.run(checkout)
+                self.assertEqual(runner.call_count, 3)
+            self.assertEqual(grader.result_authority, "candidate")
 
 
 if __name__ == "__main__":
