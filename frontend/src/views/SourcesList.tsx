@@ -14,6 +14,8 @@ import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listKnowledgeSources } from "../api/knowledgeSources";
+import { useStore } from "../lib/state";
+import { ExternalLink } from "../components/ui/ExternalLink";
 import { ApiError } from "../lib/errors";
 import { useAbortableEffect } from "../lib/hooks";
 import {
@@ -65,6 +67,8 @@ type Verb = "check" | "sync" | "rotate" | "retire" | "push";
 
 function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
   const badge = syncBadge(s.sync);
+  if (s.credential_mode === "connected" && s.sync.status === "credential_invalid")
+    badge.tip = "Reconnect your account in Connected accounts, then check this source again.";
   const counts = syncCounts(s.sync);
   const reasons = unconvertedDetail(s.sync.unconverted_reasons);
   return (
@@ -118,6 +122,7 @@ export function SourcesList({
   namespace,
   place,
   manageable,
+  connectedManageable = false,
   busy = false,
   section,
   panel,
@@ -128,6 +133,7 @@ export function SourcesList({
   place: SourcesPlace;
   /** The caller may call the source ops on the namespace: every verb. */
   manageable: boolean;
+  connectedManageable?: boolean;
   /** Another change on the page is running: Add waits for it. */
   busy?: boolean;
   /** Render as the Library's own section under this heading: a button named for it, in
@@ -138,6 +144,8 @@ export function SourcesList({
   /** Where the open section goes (below the page header). */
   panel?: HTMLElement | null;
 }) {
+  const subject = useStore((s) => s.whoami?.subject);
+  const canAdd = manageable || connectedManageable;
   const [state, setState] = useState<State>({ kind: "loading" });
   const headingId = useId();
   const panelId = useId();
@@ -153,6 +161,7 @@ export function SourcesList({
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
   // Details is a read: any reader may open it.
+  const [connectionKind, setConnectionKind] = useState<string | null>(null);
   const [details, setDetails] = useState<string | null>(null);
   const id = { org, namespace };
   const reload = () => setNonce((n) => n + 1);
@@ -174,7 +183,8 @@ export function SourcesList({
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
-    if (!manageable) return [];
+    const owned = !!subject && s.credential_mode === "connected" && s.owner_subject === subject;
+    if (!manageable && !(connectedManageable && owned)) return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
     const check: RowMenuItem = { label: "Check", icon: "check", onSelect: act("check") };
     const sync: RowMenuItem = { label: "Sync now", icon: "refresh", onSelect: act("sync") };
@@ -182,8 +192,16 @@ export function SourcesList({
     const retire: RowMenuItem = { label: "Retire", icon: "trash", danger: true, onSelect: act("retire") };
     // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
     const closed = state.kind === "ready" && !state.accepts;
-    const items = closed ? [check, retire] : [check, sync, rotate, retire];
-    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind)) {
+    const items = closed
+      ? [check, retire]
+      : [check, sync, ...(s.credential_mode === "connected" ? [] : [rotate]), retire];
+    if (!closed && owned)
+      items.splice(2, 0, {
+        label: "Manage connection",
+        icon: "connect",
+        onSelect: () => setConnectionKind(s.kind),
+      });
+    if (!closed && manageable && ["gdrive", "notion", "linear"].includes(s.kind)) {
       items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
     }
     return items.map((item) => ({ ...item, disabled: busy }));
@@ -196,9 +214,9 @@ export function SourcesList({
   // no source or that this caller cannot add to, and from a non-admin when the list failed.
   const empty = state.kind === "ready" && state.sources.length === 0;
   const closedAndEmpty = empty && !state.accepts;
-  const nothingForReader = empty && !manageable;
+  const nothingForReader = empty && !canAdd;
   const loading = state.kind === "loading";
-  const failedForReader = state.kind !== "ready" && !loading && !manageable;
+  const failedForReader = state.kind !== "ready" && !loading && !canAdd;
   if (section && (closedAndEmpty || nothingForReader || loading || failedForReader)) return null;
   const list = (
     <div className="space-y-1.5">
@@ -226,7 +244,7 @@ export function SourcesList({
       {state.kind === "ready" && state.accepts && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
-          {manageable
+          {canAdd
             ? `Add a source and Loom keeps the ${place.noun}'s documents in step with it.`
             : `Anyone with admin on the ${place.noun} adds them.`}
         </p>
@@ -238,7 +256,7 @@ export function SourcesList({
           ))}
         </ul>
       )}
-      {manageable && state.kind === "ready" && state.accepts && (
+      {canAdd && state.kind === "ready" && state.accepts && (
         <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
           Add a source
         </Button>
@@ -255,6 +273,7 @@ export function SourcesList({
             org={org}
             namespace={namespace}
             label={place.label}
+            allowShared={manageable}
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
@@ -264,6 +283,19 @@ export function SourcesList({
             }}
           />
         </Suspense>
+      )}
+      {connectionKind && (
+        <div role="status" className="text-sm">
+          <ExternalLink href={`/settings/connected-accounts?kind=${connectionKind}&from=source`}>
+            Manage your connection
+          </ExternalLink>{" "}
+          Return here after connecting, then check the source again.
+        </div>
+      )}
+      {state.kind === "ready" && (
+        <Button type="secondary" htmlType="button" disabled={busy} onClick={reload}>
+          Refresh sources
+        </Button>
       )}
       {acting && (
         <Suspense fallback={null}>
@@ -277,7 +309,14 @@ export function SourcesList({
             />
           )}
           {acting.verb === "check" && (
-            <CheckSourceDialog open org={org} namespace={namespace} name={acting.source.name} onOpenChange={close} />
+            <CheckSourceDialog
+              open
+              org={org}
+              namespace={namespace}
+              name={acting.source.name}
+              connected={acting.source.credential_mode === "connected"}
+              onOpenChange={close}
+            />
           )}
           {acting.verb === "sync" && (
             <SyncNowDialog

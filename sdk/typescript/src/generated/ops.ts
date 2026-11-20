@@ -2098,6 +2098,8 @@ export interface ConnectionListInput {
 export interface ConnectionEntry {
   kind: "gdrive" | "notion" | "linear";
   connected: boolean;
+  /** Whether this deployment is configured to start consent for the provider. */
+  connect_available: boolean;
   account_email?: string | null;
   scopes?: string[];
   connect_url: string;

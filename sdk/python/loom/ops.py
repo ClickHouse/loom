@@ -8423,6 +8423,7 @@ class ConnectionListOutput(TypedDict, total=False):
 class ConnectionEntry(TypedDict, total=False):
     kind: Required[Literal["gdrive", "notion", "linear"]]
     connected: Required[bool]
+    connect_available: Required[bool]
     account_email: NotRequired[Optional[str]]
     scopes: NotRequired[list[str]]
     connect_url: Required[str]

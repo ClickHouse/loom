@@ -42,7 +42,7 @@ import {
 import { setViewParam, useStore, useIdentity } from "../lib/state";
 import { invalidateSharedCollections } from "../lib/collectionPlaces";
 import { isCollectionName, isMemoryNamespace, kindOf } from "../lib/namespace";
-import { canCall } from "../lib/canCall";
+import { canCall, canCallOwnConnections } from "../lib/canCall";
 import { AskAboutThis, exact, quoted } from "../components/AskAboutThis";
 import { RowSkeleton } from "../components/Skeleton";
 import { toast, toastError, toastWithId } from "../components/Toast";
@@ -334,6 +334,12 @@ export function Documents() {
   // Shared sources require the same admin standing as credential rotation. An admin claim
   // reaches no collection, so only the collection's own role decides.
   const sourcesAdmin = shown ? shown.role === "admin" : canCall("knowledge.source.rotate", roleRead.role, whoami);
+  const sourcesConnected =
+    canCallOwnConnections(whoami) &&
+    whoami?.org === identity.org &&
+    (shown
+      ? shown.role === "writer" || shown.role === "admin"
+      : canCall("knowledge.source.add", roleRead.role, whoami));
   const [sourcesPanel, setSourcesPanel] = useState<HTMLDivElement | null>(null);
   // The gaps tile lists other people's questions: an admin of the place shown sees it.
   const seesGaps = shown ? shown.role === "admin" : canCall("knowledge.gaps.list", roleRead.role, whoami);
@@ -1505,6 +1511,7 @@ export function Documents() {
                       : { label: identity.namespace, noun: "namespace" }
                   }
                   manageable={sourcesAdmin}
+                  connectedManageable={sourcesConnected}
                   section="Sources"
                   panel={sourcesPanel}
                 />

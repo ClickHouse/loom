@@ -18,6 +18,7 @@ import {
   toggleInclude,
   unconvertedDetail,
   type KnowledgeSourceSync,
+  type SourceForm,
 } from "./knowledgeSources";
 
 function sync(over: Partial<KnowledgeSourceSync> = {}): KnowledgeSourceSync {
@@ -36,6 +37,12 @@ function sync(over: Partial<KnowledgeSourceSync> = {}): KnowledgeSourceSync {
   };
 }
 
+function idConfig(form: SourceForm) {
+  const body = sourceAddBody("o", "code-x", form, true);
+  if (!("config" in body)) throw new Error("Expected the ID form to send config");
+  return body.config;
+}
+
 const FOLDER = "1AbCdEfGhIjKlMnOp";
 
 describe("syncBadge", () => {
@@ -47,11 +54,11 @@ describe("syncBadge", () => {
     expect(syncBadge(sync({ status: "failed", error: "http_403" })).tip).toContain("http_403");
   });
 
-  it("directs retired Meet sources to Shared folder without suggesting credential rotation", () => {
+  it("directs retired Meet sources to Google Drive without suggesting credential rotation", () => {
     expect(syncBadge(sync({ status: "provider_removed" }))).toEqual({
       text: "Meet sync retired",
       tone: "warn",
-      tip: "Add a Shared folder source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
+      tip: "Add a Google Drive source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
     });
   });
 
@@ -182,9 +189,10 @@ describe("the add form's other kinds", () => {
     expect(pageIds(badPeek)).toEqual([badPeek]);
     // In the databases field the same link is its database.
     expect(databaseIds(peekLink)).toEqual([DATABASE]);
-    expect(sourceAddBody("o", "x", { ...emptySourceForm(), kind: "notion", databases: peekLink }, true).config).toEqual(
-      { page_ids: [], database_ids: [DATABASE] },
-    );
+    expect(idConfig({ ...emptySourceForm(), kind: "notion", databases: peekLink })).toEqual({
+      page_ids: [],
+      database_ids: [DATABASE],
+    });
     // Kept as typed, so the problem names it: an id one digit long is not cut to 32.
     expect(pageIds(`${PAGE}0`)).toEqual([`${PAGE}0`]);
     // A link whose id is mistyped one digit long is not cut to another id.
@@ -192,8 +200,8 @@ describe("the add form's other kinds", () => {
     expect(pageIds(`https://pages.example/team/${PAGE}0`)).toEqual([`https://pages.example/team/${PAGE}0`]);
     const f = { ...named, kind: "notion" as const, pages: PAGE, databases: DATABASE.toUpperCase() };
     expect(sourceFormProblems(f)).toEqual([]);
-    expect(sourceAddBody("o", "code-x", f, true).config).toEqual({ page_ids: [PAGE], database_ids: [DATABASE] });
-    expect(sourceAddBody("o", "code-x", { ...f, databases: "" }, true).config).toEqual({
+    expect(idConfig(f)).toEqual({ page_ids: [PAGE], database_ids: [DATABASE] });
+    expect(idConfig({ ...f, databases: "" })).toEqual({
       page_ids: [PAGE],
       database_ids: [],
     });
@@ -212,7 +220,7 @@ describe("the add form's other kinds", () => {
   it("sends Zoom meeting ids and rejects space ids and meeting links", () => {
     const zoom = { ...named, kind: "recording" as const, meetings: "81234567890" };
     expect(sourceFormProblems(zoom)).toEqual([]);
-    expect(sourceAddBody("o", "code-x", zoom, true).config).toEqual({ provider: "zoom", ids: ["81234567890"] });
+    expect(idConfig(zoom)).toEqual({ provider: "zoom", ids: ["81234567890"] });
     expect(sourceFormProblems({ ...zoom, meetings: "abc-DEF_1" })).toEqual([
       "Not a meeting id (9-12 digits): abc-DEF_1.",
     ]);
@@ -248,11 +256,11 @@ describe("the add form's other kinds", () => {
 
   it("sends only the chosen kind's config, so switching kinds keeps the other kinds' ids out of the body", () => {
     const f = { ...named, folders: FOLDER, projects: PROJECT };
-    expect(sourceAddBody("o", "x", f, true).config).toEqual({
+    expect(idConfig(f)).toEqual({
       folder_ids: [FOLDER],
       include: ["docs", "slides", "pdf", "pptx"],
     });
-    expect(sourceAddBody("o", "x", { ...f, kind: "linear" }, true).config).toEqual({ project_ids: [PROJECT] });
+    expect(idConfig({ ...f, kind: "linear" })).toEqual({ project_ids: [PROJECT] });
     expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, kind: "linear" }));
   });
 });
@@ -282,7 +290,7 @@ describe("retiredMessage", () => {
 
 describe("kind words", () => {
   it("names each served kind and its credential, and an unknown one by its wire name", () => {
-    expect(kindLabel("gdrive")).toBe("shared folder");
+    expect(kindLabel("gdrive")).toBe("Google Drive");
     expect(kindLabel("linear")).toBe("project documents");
     expect(kindLabel("notion")).toBe("pages");
     expect(kindLabel("recording")).toBe("meeting transcripts");
@@ -291,5 +299,58 @@ describe("kind words", () => {
     expect(credentialLabel("notion")).toMatch(/^Integration token/);
     expect(credentialLabel("recording")).toMatch(/^Read-only credential/);
     expect(credentialLabel("other")).toMatch(/^Credential/);
+  });
+});
+
+describe("connected source requests", () => {
+  it("sends the selected links and own-account mode, without any credential or unrelated ID config", () => {
+    const first = "https://drive.google.com/file/d/selected-file/view";
+    const second = "https://docs.google.com/document/d/selected-doc/edit";
+    const f: SourceForm = {
+      ...emptySourceForm(),
+      name: "selected",
+      credentialMode: "connected",
+      inputMode: "links",
+      links: `${first}\n${second}\n${first}`,
+      credential: "must-never-leave",
+      folders: "unselected-folder",
+    };
+    expect(sourceFormProblems(f)).toEqual([]);
+    const body = sourceAddBody("o", "col-library", f, true);
+    expect(body).toEqual({
+      org: "o",
+      namespace: "col-library",
+      name: "selected",
+      kind: "gdrive",
+      credential_mode: "connected",
+      links: [first, second],
+      include: ["docs", "slides", "pdf", "pptx"],
+      dry_run: true,
+    });
+    expect(body).not.toHaveProperty("credential");
+    expect(body).not.toHaveProperty("config");
+    expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, links: second }));
+    expect(sourceFormFingerprint(f)).not.toBe(sourceFormFingerprint({ ...f, credentialMode: "shared" }));
+  });
+
+  it("bounds content selection and leaves unsupported link resolution to Check", () => {
+    const f: SourceForm = {
+      ...emptySourceForm(),
+      name: "selected",
+      kind: "linear",
+      credentialMode: "connected",
+      inputMode: "links",
+      links: "",
+    };
+    expect(sourceFormProblems(f)).toContain("Paste at least one content link.");
+    expect(sourceFormProblems({ ...f, links: "http://linear.app/project" })).toContain(
+      "Use complete https links, one per line.",
+    );
+    expect(
+      sourceFormProblems({
+        ...f,
+        links: Array.from({ length: 21 }, (_, n) => `https://linear.app/project/${n}`).join("\n"),
+      }),
+    ).toContain("Use at most 20 links.");
   });
 });

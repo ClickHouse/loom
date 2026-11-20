@@ -5,7 +5,7 @@
  * carries it. Check probes on open and stops when the dialog closes; Sync now records a
  * request; Retire needs the typed name and keeps the documents unless asked.
  */
-import { act, cleanup, fireEvent, render, screen, waitFor } from "../test/rtl";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -188,14 +188,16 @@ describe("AddSourceDialog's kinds", () => {
 
   it("offers each kind, the shared folder first", () => {
     renderAdd();
-    const kinds = screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
-    expect(kinds).toEqual(["Shared folder", "Project documents", "Pages", "Zoom transcripts"]);
-    expect(screen.getByRole("radio", { name: "Shared folder" })).toHaveAttribute("aria-checked", "true");
+    const kinds = within(screen.getByRole("radiogroup", { name: "Kind" }))
+      .getAllByRole("radio")
+      .map((r) => r.getAttribute("aria-label"));
+    expect(kinds).toEqual(["Google Drive", "Linear", "Notion", "Zoom transcripts"]);
+    expect(screen.getByRole("radio", { name: "Google Drive" })).toHaveAttribute("aria-checked", "true");
   });
 
   it("adds a project tracker's projects with a read-only API key", async () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Linear" }));
     expect(screen.queryByLabelText(/^Folders/)).toBeNull();
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
     await typeInto(/^Projects/, PROJECT);
@@ -219,7 +221,7 @@ describe("AddSourceDialog's kinds", () => {
 
   it("adds a page store's pages and databases with an integration token", async () => {
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Notion" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "wiki" } });
     await typeInto(/^Pages/, `https://pages.example/team/Home-${PAGE}`);
     await typeInto(/^Databases/, DATABASE);
@@ -267,9 +269,9 @@ describe("AddSourceDialog's kinds", () => {
   it("routes Meet notes and transcripts through the shared folder form", async () => {
     renderAdd();
     fireEvent.click(screen.getByRole("radio", { name: "Zoom transcripts" }));
-    expect(screen.getByText(/For Meet notes and transcripts, choose Shared folder/)).toBeInTheDocument();
+    expect(screen.getByText(/For Meet notes and transcripts, choose Google Drive/)).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
-    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Google Drive" }));
     expect(screen.getByText(/including Meet notes and transcripts saved as documents/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
     expect(screen.getByRole("checkbox", { name: "Documents" })).toBeChecked();
@@ -291,13 +293,13 @@ describe("AddSourceDialog's kinds", () => {
     await screen.findByText(/lists 12 documents/);
     const add = screen.getByRole("button", { name: "Add source" });
     expect(add).toBeEnabled();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Linear" }));
     expect(add).toBeDisabled();
     // The key was typed for the shared folder: another kind never sends it.
     expect(screen.getByLabelText(/^Read-only API key/)).toHaveValue("");
     // Back to the shared folder: the folders typed are still there; the key is asked
     // for again, and the same key gives the form that passed.
-    fireEvent.click(screen.getByRole("radio", { name: "Shared folder" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Google Drive" }));
     expect(screen.getByLabelText(/^Folders/)).toHaveValue(FOLDER);
     expect(screen.getByLabelText(/^Service account key/)).toHaveValue("");
     fireEvent.change(screen.getByLabelText(/^Service account key/), { target: { value: KEY } });
@@ -313,10 +315,10 @@ describe("AddSourceDialog's kinds", () => {
     await typeInto(/^Meetings/, "81234567890");
     fireEvent.change(screen.getByLabelText(/^Read-only credential/), { target: { value: ZOOM_KEY } });
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
-    expect(screen.getByRole("radio", { name: "Pages" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Notion" })).toBeDisabled();
     expect(screen.queryByRole("radio", { name: "meet" })).toBeNull();
     await act(async () => answer(addResult(true)));
-    expect(screen.getByRole("radio", { name: "Pages" })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: "Notion" })).toBeEnabled();
     expect(screen.queryByRole("radio", { name: "zoom" })).toBeNull();
   });
 
@@ -324,7 +326,7 @@ describe("AddSourceDialog's kinds", () => {
     const message = "config.project_ids: at most 20 projects";
     vi.mocked(addKnowledgeSource).mockRejectedValue(new ApiError({ status: 400, code: "BAD_CONFIG", message }));
     renderAdd();
-    fireEvent.click(screen.getByRole("radio", { name: "Project documents" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Linear" }));
     fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: "roadmap" } });
     await typeInto(/^Projects/, PROJECT);
     fireEvent.change(screen.getByLabelText(/^Read-only API key/), { target: { value: SECRET } });
@@ -347,7 +349,7 @@ describe("AddSourceDialog's kinds", () => {
     fireEvent.click(screen.getByRole("button", { name: "Check" }));
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     // The error was the meeting store's: another kind does not show it.
-    fireEvent.click(screen.getByRole("radio", { name: "Pages" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Notion" }));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Add source" })).toBeDisabled();
     expectKeyNowhere();

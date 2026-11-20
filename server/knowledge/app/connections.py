@@ -3,6 +3,7 @@
 from typing import Literal, cast
 
 from server.auth.context import current_auth
+from server.core.errors import ValidationError
 from server.core.secrets_at_rest import unseal
 from server.knowledge.api.models_connections import (
     ConnectionDisconnectInput,
@@ -15,6 +16,16 @@ from server.knowledge.app import connected_accounts as accounts
 from server.knowledge.domain.connected_accounts import EMAIL_PURPOSE, KINDS
 from server.knowledge.store import connected_accounts as store
 from server.settings import settings
+
+
+def _connect_available(kind: str) -> bool:
+    try:
+        accounts.client(kind)
+    except ValidationError as exc:
+        if exc.extra.get("code") != "CONNECTION_UNAVAILABLE":
+            raise
+        return False
+    return True
 
 
 async def handle_connection_list(input: ConnectionListInput) -> ConnectionListOutput:
@@ -30,6 +41,7 @@ async def handle_connection_list(input: ConnectionListInput) -> ConnectionListOu
             ConnectionEntry(
                 kind=cast(Literal["gdrive", "notion", "linear"], kind),
                 connected=connected,
+                connect_available=_connect_available(kind),
                 account_email=(unseal(EMAIL_PURPOSE, account.account_email_enc, warn=False) or None)
                 if connected and account is not None
                 else None,

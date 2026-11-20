@@ -1,5 +1,5 @@
 /**
- * The document sources a namespace's admins register for Loom to pull its documents from
+ * The document sources registered in a namespace for Loom to pull its documents from
  * (`knowledge.source.*`), as the repository card and the Library show them: the wire
  * shapes, the last sync in plain words, and the add form. Pure: no I/O, no React.
  */
@@ -28,6 +28,8 @@ export interface KnowledgeSourceSync {
 export interface KnowledgeSource {
   name: string;
   kind: string;
+  credential_mode?: "shared" | "connected";
+  owner_subject?: string;
   /** The ids and filters the source reads, in the form that names ids per kind; {} when
    *  an item has no place in it. Never a credential. */
   config: Record<string, unknown>;
@@ -67,6 +69,8 @@ export interface KnowledgeSourceProbe {
   /** More than `documents` match: the count is a lower bound. */
   more: boolean;
   sample: string[];
+  checked?: number;
+  sampled?: boolean;
 }
 
 export interface KnowledgeSourceAddResult {
@@ -106,7 +110,7 @@ export const SYNC_OFF = "Sync is off on this deployment: sources are stored and 
 
 /** What each kind reads, in the words the card uses. */
 const KIND_LABEL: Record<string, string> = {
-  gdrive: "shared folder",
+  gdrive: "Google Drive",
   linear: "project documents",
   notion: "pages",
   recording: "meeting transcripts",
@@ -162,7 +166,7 @@ export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
       return {
         text: "Meet sync retired",
         tone: "warn",
-        tip: "Add a Shared folder source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
+        tip: "Add a Google Drive source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
       };
     case "rate_limited":
       return { text: "Rate limited", tone: "warn", tip: "The source limited the last sync; the next one retries." };
@@ -242,7 +246,7 @@ export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCre
   },
   recording: {
     about:
-      "Zoom cloud recording transcripts. Paste a server-to-server app's JSON credential (account_id, client_id, client_secret) with read-only scopes; Loom checks it and every meeting id before anything is stored. For Meet notes and transcripts, choose Shared folder.",
+      "Zoom cloud recording transcripts. Paste a server-to-server app's JSON credential (account_id, client_id, client_secret) with read-only scopes; Loom checks it and every meeting id before anything is stored. For Meet notes and transcripts, choose Google Drive.",
     reads: "The credential reads the meetings",
     noCredential: "Paste the read-only credential.",
   },
@@ -250,7 +254,7 @@ export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCre
 
 /** Add choices name the active stores; stored recordings keep their generic kind label. */
 export const KIND_OPTIONS = SOURCE_KINDS.map((k) => {
-  const label = k === "recording" ? "Zoom transcripts" : kindLabel(k);
+  const label = { gdrive: "Google Drive", notion: "Notion", linear: "Linear", recording: "Zoom transcripts" }[k];
   return { value: k, label: label.charAt(0).toUpperCase() + label.slice(1) };
 });
 
@@ -272,6 +276,9 @@ export const DEFAULT_INCLUDE = ["docs", "slides", "pdf", "pptx"] as const;
 export interface SourceForm {
   name: string;
   kind: SourceKind;
+  credentialMode: "shared" | "connected";
+  inputMode: "ids" | "links";
+  links: string;
   /** gdrive: folder ids or folder links, one per line or comma-separated. */
   folders: string;
   include: string[];
@@ -297,6 +304,9 @@ export function emptySourceForm(): SourceForm {
   return {
     name: "",
     kind: "gdrive",
+    credentialMode: "shared",
+    inputMode: "ids",
+    links: "",
     folders: "",
     include: [...DEFAULT_INCLUDE],
     projects: "",
@@ -420,6 +430,15 @@ function idProblems(ids: string[], re: RegExp, what: string, notOne: string): st
 }
 
 function configProblems(f: SourceForm): string[] {
+  if (f.inputMode === "links" && f.kind !== "recording") {
+    const links = sourceLinks(f.links);
+    const max = f.kind === "gdrive" ? 300 : MAX_IDS;
+    const problems = links.length ? [] : ["Paste at least one content link."];
+    if (links.length > max) problems.push(`Use at most ${max} links.`);
+    if (links.some((link) => !/^https:\/\//i.test(link))) problems.push("Use complete https links, one per line.");
+    if (f.kind === "gdrive" && !f.include.length) problems.push("Pick at least one file kind.");
+    return problems;
+  }
   switch (f.kind) {
     case "gdrive": {
       const problems = idProblems(folderIds(f.folders), FOLDER_ID_RE, "folder", "a folder id");
@@ -453,7 +472,9 @@ export function sourceFormProblems(f: SourceForm): string[] {
   if (!NAME_RE.test(normalisedName(f.name)))
     problems.push("Name: 2-32 lower-case letters, digits, - or _, starting with a letter.");
   problems.push(...configProblems(f));
-  if (!f.credential.trim()) problems.push(KIND_FORM[f.kind].noCredential);
+  if (f.credentialMode === "shared" && !f.credential.trim()) problems.push(KIND_FORM[f.kind].noCredential);
+  if (f.credentialMode === "connected" && f.kind === "recording")
+    problems.push("Use a shared credential for Zoom transcripts.");
   return problems;
 }
 
@@ -473,7 +494,12 @@ function sourceConfig(f: SourceForm): Record<string, unknown> {
 
 /** Whether anything but the kind was typed, so the problems list can wait. */
 export function sourceFormTouched(f: SourceForm): boolean {
-  return [f.name, f.folders, f.projects, f.pages, f.databases, f.meetings, f.credential].some((v) => v !== "");
+  return [f.name, f.links, f.folders, f.projects, f.pages, f.databases, f.meetings, f.credential].some((v) => v !== "");
+}
+
+/** Preserve each selected address; the server resolves and checks its provider and type. */
+export function sourceLinks(text: string): string[] {
+  return [...new Set(text.split(/\s+/).filter(Boolean))];
 }
 
 export function sourceAddBody(org: string, namespace: string, f: SourceForm, dryRun: boolean) {
@@ -482,8 +508,12 @@ export function sourceAddBody(org: string, namespace: string, f: SourceForm, dry
     namespace,
     name: normalisedName(f.name),
     kind: f.kind,
-    config: sourceConfig(f),
-    credential: f.credential.trim(),
+    ...(f.inputMode === "links" && f.kind !== "recording"
+      ? { links: sourceLinks(f.links), ...(f.kind === "gdrive" ? { include: [...f.include] } : {}) }
+      : { config: sourceConfig(f) }),
+    ...(f.credentialMode === "connected"
+      ? { credential_mode: "connected" as const }
+      : { credential: f.credential.trim() }),
     dry_run: dryRun,
   };
 }

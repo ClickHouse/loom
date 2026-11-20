@@ -7,6 +7,7 @@ export type ConnectionKind = (typeof CONNECTION_KINDS)[number];
 export interface ConnectionEntry {
   kind: ConnectionKind;
   connected: boolean;
+  connect_available?: boolean;
   account_email: string | null;
   scopes: string[];
   connect_url: string;
