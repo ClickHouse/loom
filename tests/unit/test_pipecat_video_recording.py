@@ -1043,3 +1043,226 @@ def test_cancelled_main_does_not_touch_a_preexisting_output_directory(recorder):
     start.assert_not_called()
     assert sentinel.read_bytes() == b"pre-existing, not owned by this invocation"
     assert not (output / "recording-status.json").exists()
+
+
+@pytest.mark.parametrize(
+    "boundary,error,stage,code,kind,number",
+    [
+        (
+            "admit_workload",
+            ValueError("frozen_source_changed"),
+            1,
+            "frozen_source_changed",
+            "value",
+            0,
+        ),
+        ("subreaper", OSError(1, "PRIVATE startup context"), 2, "unavailable", "io", 1),
+        ("start_server", ValueError("PRIVATE startup context"), 3, "unavailable", "value", 0),
+    ],
+)
+def test_early_refusal_exports_fixed_diagnostic_without_starting_work(
+    recorder, monkeypatch, capsys, boundary, error, stage, code, kind, number
+):
+    module, _ = recorder
+    monkeypatch.setattr(module.sys, "argv", ["recorder", "--with-server"])
+    with (
+        mock.patch.object(module, boundary, side_effect=error),
+        mock.patch.object(module, "start_capture") as capture,
+        mock.patch.object(module, "run_native") as native,
+    ):
+        assert module.main() == 2
+    raw = capsys.readouterr().err
+    diagnostic = json.loads(raw)["admission_failure"]
+    assert diagnostic["stage"] == stage
+    assert diagnostic["code"] == code and diagnostic["kind"] == kind
+    assert diagnostic["io"]["errno"] == number
+    assert "PRIVATE" not in raw and "context" not in raw
+    assert not (Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public").exists()
+    capture.assert_not_called()
+    native.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "error", [ValueError("PRIVATE"), ValueError("owned_server_exited", "PRIVATE")]
+)
+def test_admission_diagnostic_never_exports_unapproved_exception_args(recorder, error):
+    module, _ = recorder
+    result = module.admission_failure({"admission_stage": "PRIVATE"}, error)
+    assert result["stage"] == 0 and result["code"] == "unavailable"
+    assert "PRIVATE" not in json.dumps(result)
+
+
+def test_server_uses_locked_environment_without_mutating_native_overlay(
+    recorder, monkeypatch, tmp_path
+):
+    module, _ = recorder
+    monkeypatch.setenv("PYTHONPATH", "PRIVATE recording target")
+    child = object()
+    with (
+        mock.patch.object(module, "refuse_occupied_server_port"),
+        mock.patch.object(module, "start_owned", return_value=child) as launch,
+        mock.patch.object(module, "owned_listener", return_value=True),
+        mock.patch.object(module, "urlopen") as health,
+    ):
+        health.return_value.__enter__.return_value.status = 200
+        state = {}
+        try:
+            module.start_server(state, tmp_path)
+            assert "PYTHONPATH" not in launch.call_args.kwargs["env"]
+            assert os.environ["PYTHONPATH"] == "PRIVATE recording target"
+            state["server_log"].write(b"owned diagnostic log")
+            state["server_log"].flush()
+            assert os.pread(state["server_log"].fileno(), 20, 0) == b"owned diagnostic log"
+            assert (tmp_path / "pipecat-server.log").stat().st_mode & 0o777 == 0o600
+        finally:
+            state["server_log"].close()
+
+
+@pytest.mark.parametrize(
+    "status,expected",
+    [
+        (None, {"state": "running"}),
+        ((os.CLD_EXITED, 7), {"state": "exited", "code": 7}),
+        ((os.CLD_KILLED, 15), {"state": "signaled", "signal": 15}),
+    ],
+)
+def test_server_exit_diagnostic_retains_owned_pid_until_cleanup(recorder, status, expected):
+    module, _ = recorder
+    child = mock.Mock(pid=123)
+    outcome = None if status is None else mock.Mock(si_code=status[0], si_status=status[1])
+    with (
+        mock.patch.object(module, "anchor_identity") as anchor,
+        mock.patch.object(module.os, "waitid", return_value=outcome) as wait,
+    ):
+        assert module.server_exit_diagnostic(child) == expected
+    anchor.assert_called_once_with(child)
+    wait.assert_called_once_with(os.P_PID, 123, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    child.wait.assert_not_called()
+    child.poll.assert_not_called()
+
+
+def test_server_exit_diagnostic_does_not_observe_a_changed_owner(recorder):
+    module, _ = recorder
+    with (
+        mock.patch.object(module, "anchor_identity", side_effect=ValueError("PRIVATE")),
+        mock.patch.object(module.os, "waitid") as wait,
+    ):
+        assert module.server_exit_diagnostic(mock.Mock()) == {"state": "unavailable"}
+    wait.assert_not_called()
+
+
+def test_server_log_diagnostic_reads_only_held_owned_prefix(recorder, tmp_path):
+    module, _ = recorder
+    path = tmp_path / "private-log"
+    with path.open("w+b") as log:
+        log.write(b"ImportError PRIVATE context\n" + b"x" * 65536 + b"ValidationError")
+        log.flush()
+        with mock.patch.object(module.os, "pread", wraps=os.pread) as read:
+            diagnostic = module.server_log_diagnostic(log)
+        read.assert_called_once_with(log.fileno(), 65536, 0)
+    assert diagnostic == {
+        "state": "observed",
+        "bytes": 65536,
+        "truncated": True,
+        "module_not_found": False,
+        "import_error": True,
+        "validation_error": False,
+        "address_in_use": False,
+    }
+    assert "PRIVATE" not in json.dumps(diagnostic)
+
+
+def test_server_log_diagnostic_refuses_foreign_fd(recorder):
+    module, _ = recorder
+    with (
+        mock.patch.object(module.os, "fstat", return_value=mock.Mock(st_uid=os.getuid() + 1)),
+        mock.patch.object(module.os, "pread") as read,
+    ):
+        assert module.server_log_diagnostic(mock.Mock()) == {"state": "unavailable"}
+    read.assert_not_called()
+
+
+def test_startup_diagnostic_precedes_cleanup_and_cannot_replace_refusal(
+    recorder, monkeypatch, capsys
+):
+    module, _ = recorder
+    monkeypatch.setattr(module.sys, "argv", ["recorder", "--with-server"])
+    events = []
+    child = object()
+
+    def fail(state, _temp):
+        state["server"] = child
+        raise ValueError("owned_server_exited")
+
+    def observe(process):
+        assert process is child
+        events.append("observe")
+        return {"state": "exited", "code": 7}
+
+    def stop(process):
+        if process is child:
+            events.append("cleanup")
+
+    with (
+        mock.patch.object(module, "start_server", side_effect=fail),
+        mock.patch.object(module, "server_exit_diagnostic", side_effect=observe),
+        mock.patch.object(module, "stop_owned", side_effect=stop),
+        mock.patch.object(module, "run_native") as native,
+    ):
+        assert module.main() == 2
+    assert events == ["observe", "cleanup"]
+    assert json.loads(capsys.readouterr().err)["admission_failure"]["server"] == {
+        "state": "exited",
+        "code": 7,
+    }
+    native.assert_not_called()
+
+
+def test_diagnostic_io_failure_preserves_refusal_and_cleanup(recorder, monkeypatch):
+    module, _ = recorder
+    monkeypatch.setattr(module.sys, "argv", ["recorder", "--with-server"])
+    with (
+        mock.patch.object(module, "start_server", side_effect=OSError(98, "PRIVATE")),
+        mock.patch.object(module, "admission_failure", side_effect=OSError("PRIVATE")),
+        mock.patch.object(module, "stop_owned") as cleanup,
+        mock.patch.object(module, "run_native") as native,
+    ):
+        assert module.main() == 2
+    assert cleanup.call_count == 4
+    native.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "boundary,stage",
+    [
+        ("refuse_occupied_server_port", 4),
+        ("log_open", 5),
+        ("start_owned", 6),
+        ("owned_listener", 7),
+        ("urlopen", 8),
+    ],
+)
+def test_server_startup_diagnostic_identifies_each_existing_boundary(
+    recorder, tmp_path, boundary, stage
+):
+    module, _ = recorder
+    state = {}
+    with (
+        mock.patch.object(module, "refuse_occupied_server_port"),
+        mock.patch.object(module, "start_owned", return_value=object()),
+        mock.patch.object(module, "owned_listener", return_value=True),
+        mock.patch.object(module, "urlopen"),
+    ):
+        target = module.os if boundary == "log_open" else module
+        name = "open" if boundary == "log_open" else boundary
+        try:
+            with mock.patch.object(target, name, side_effect=ValueError("PRIVATE")):
+                with pytest.raises(ValueError, match="PRIVATE") as failure:
+                    module.start_server(state, tmp_path)
+            diagnostic = module.admission_failure(state, failure.value)
+            assert diagnostic["stage"] == stage
+            assert diagnostic["code"] == "unavailable"
+            assert "PRIVATE" not in json.dumps(diagnostic)
+        finally:
+            if state.get("server_log"):
+                state["server_log"].close()

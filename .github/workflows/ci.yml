@@ -963,7 +963,7 @@ jobs:
           exit 1
       - name: pytest (Postgres authority, memory, knowledge, isolation and the SQL surface)
         run: >-
-          pytest -q
+          pytest -vv
           tests/integration/test_pg_authority.py
           tests/integration/test_pg_durable_publish.py
           tests/integration/test_pg_pipeline_metrics.py
