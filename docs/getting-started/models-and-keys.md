@@ -267,10 +267,22 @@ profile schema is set up.
 
 For llama.cpp, point `LOOM_LOCAL_LLM_BASE_URL` at its `/v1` root
 (`http://host.docker.internal:8080/v1`) and set `LOOM_LLM_MODEL` to the name it serves.
-For the assistant, configure its native provider and a verified price reference
-separately; see [assistant setup](../operations/assistant.md). A missing price refuses
-model calls rather than recording an unknown cost as zero.
+A server run from a checkout reaches the model at `localhost`, the setting's default
+(`http://localhost:11434/v1`).
 
+A per-job model whose name starts with `gpt`, `o1`, `o3`, `o4`, `chatgpt` or `claude` goes
+to that hosted provider whatever `LOOM_LLM_PROVIDER` says; a local model named that way
+(`gpt-oss`) runs locally as `LOOM_LLM_MODEL`, and in a per-job setting only when that
+setting names the same model.
+
+- **Reaching the host.** The containers reach the machine as `host.docker.internal`. Docker
+  Desktop forwards that to services on loopback; with Docker Engine on Linux, Ollama must
+  listen beyond loopback (`OLLAMA_HOST=0.0.0.0`, with port 11434 closed to the network).
+  Under the Helm chart with `networkPolicy.enabled`, add the server's port to
+  `networkPolicy.extraEgress`.
+- **The assistant.** Configure its native provider and a verified price reference
+  separately; see [assistant setup](../operations/assistant.md). A missing price refuses
+  model calls rather than recording an unknown cost as zero.
 - **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
   published benchmark covers a local one, so treat a small model as a way to try Loom
   with no key or to keep everything on the machine, not as an equal: expect extraction,

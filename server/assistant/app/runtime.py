@@ -17,7 +17,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 import httpx
@@ -25,8 +25,8 @@ import httpx
 from server.assistant.api.models import AssistantCitation
 from server.assistant.app import agent, citations, evidence, service
 from server.assistant.domain.limits import MAX_HISTORY, MAX_MESSAGE_CHARS
-from server.assistant.domain.steps import STEP_TEXT
-from server.assistant.domain.support import UNCHECKED
+from server.assistant.domain.steps import steps_of
+from server.assistant.domain.support import UNCHECKED, CallRow
 from server.auth import fail_closed, sharing
 from server.auth.answer_tokens import ANSWER_JTI_PREFIX, is_answer_token
 from server.auth.authz import CachedGate, check_authorized
@@ -361,10 +361,8 @@ def _event(obj: str, run_id: str, **fields: Any) -> bytes:
 
 def _steps(answer: Answer) -> list[dict[str, Any]]:
     receipts = answer.state.receipts if answer.state else []
-    return [
-        {"op": r.op, "text": STEP_TEXT.get(r.op, ("Read context", "Read failed"))[0], "ok": True}
-        for r in receipts
-    ]
+    steps, _ = steps_of([CallRow(receipt.op, True) for receipt in receipts])
+    return [asdict(step) for step in steps]
 
 
 async def stream(
