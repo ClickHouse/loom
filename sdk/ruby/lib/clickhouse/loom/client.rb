@@ -2,6 +2,7 @@
 
 require "json"
 require "net/http"
+require "openssl"
 require "uri"
 
 require_relative "errors"
@@ -119,8 +120,9 @@ module ClickHouse
                                                 open_timeout: @open_timeout, read_timeout: @read_timeout) do |http|
           http.request(request)
         end
-      rescue SystemCallError, SocketError, IOError, Timeout::Error, Net::ProtocolError => e
-        # No complete answer: the call may have run, so it is not marked retryable.
+      rescue SystemCallError, SocketError, IOError, Timeout::Error, Net::ProtocolError, OpenSSL::SSL::SSLError => e
+        # No complete answer, or a TLS handshake that failed: the call may have run, so it is not
+        # marked retryable. Certificate verification stays on.
         raise Error.network(op, e)
       end
 

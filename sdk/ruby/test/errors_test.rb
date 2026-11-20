@@ -109,4 +109,46 @@ class ErrorsTest < LoomTest
     refute error.retryable?
     assert_equal 0, error.status
   end
+
+  def test_a_tls_server_whose_certificate_cannot_be_verified_is_a_network_error
+    server = untrusted_tls_server
+
+    error = assert_raises(Loom::Error) do
+      Loom::Client.new(base_url: "https://127.0.0.1:#{server.addr[1]}", open_timeout: 2).get("k")
+    end
+
+    assert_equal Loom::CODE_NETWORK, error.code
+    assert_equal "dependency", error.category
+    refute error.retryable?
+    assert_equal 0, error.status
+  ensure
+    server&.close
+  end
+
+  private
+
+  # A TLS listener with a self-signed certificate no client trusts.
+  def untrusted_tls_server
+    key = OpenSSL::PKey::RSA.new(2048)
+    cert = OpenSSL::X509::Certificate.new
+    cert.version = 2
+    cert.serial = 1
+    cert.subject = cert.issuer = OpenSSL::X509::Name.parse("/CN=localhost")
+    cert.public_key = key.public_key
+    cert.not_before = Time.now - 60
+    cert.not_after = Time.now + 3600
+    cert.sign(key, OpenSSL::Digest.new("SHA256"))
+
+    context = OpenSSL::SSL::SSLContext.new
+    context.cert = cert
+    context.key = key
+    tcp = TCPServer.new("127.0.0.1", 0)
+    server = OpenSSL::SSL::SSLServer.new(tcp, context)
+    Thread.new do
+      loop { server.accept.close }
+    rescue StandardError
+      retry unless tcp.closed?
+    end
+    server
+  end
 end
