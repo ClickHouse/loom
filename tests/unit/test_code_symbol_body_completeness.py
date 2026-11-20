@@ -39,16 +39,9 @@ def _row(text: str, start: int, end: int, **extra: Any) -> dict[str, Any]:
 
 
 class _Repo:
-    def __init__(self, rows: list[dict[str, Any]], *, by_id: bool = True) -> None:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
         self.rows = rows
-        self.by_id = by_id
         self.reads = 0
-
-    async def chunk_bodies_with_symbol(self, *args: Any) -> list[str]:
-        return [self.rows[0]["content"]] if self.by_id and self.rows else []
-
-    async def innermost_chunk_at(self, *args: Any) -> str | None:
-        return self.rows[0]["content"] if self.rows else None
 
     async def source_chunks_for_span(self, *args: Any) -> list[dict[str, Any]]:
         self.reads += 1
@@ -63,9 +56,18 @@ async def _unit(repo: _Repo, *, row: dict[str, Any] | None = None, include_body:
     return _unit_with_body(symbol, parts[0], {})
 
 
-@pytest.mark.parametrize("by_id", [True, False], ids=["id-chunk", "fallback-chunk"])
-async def test_a_partial_chunk_cannot_claim_the_whole_definition(by_id: bool) -> None:
-    unit = await _unit(_Repo([_row(PREFIX, 10, 13)], by_id=by_id))
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_row(PREFIX, 10, 13)],
+        [_row("".join(FULL.splitlines(keepends=True)[4:]), 14, 18)],
+    ],
+    ids=["missing-tail", "missing-start"],
+)
+async def test_a_partial_chunk_cannot_claim_the_whole_definition(
+    rows: list[dict[str, Any]],
+) -> None:
+    unit = await _unit(_Repo(rows))
     assert unit.body == ""
     assert unit.elided and unit.granularity == "card" and unit.next
     wire = unit.model_dump()
