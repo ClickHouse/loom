@@ -15,10 +15,12 @@ from typing import Any
 
 import pytest
 
-from server.cli import cell_ch, cell_scan, cell_writers
-from server.cli.cell_ch import Refused, Topology
-from server.cli.cell_scan import Budget, ScanResult, Table, TableList
-from server.core import cell, pg
+from server.cli import cell_scan
+from server.cli.cell_scan import ScanResult, Table, TableList
+from server.core import cell, cell_ch, pg
+from server.core.cell_ch import Refused, Topology
+from server.core.cell_sync import Budget
+from server.insights.store import cell_catalog
 
 ONE = Topology("default", 1, (("localhost", 9000),))
 TWO = Topology("main", 1, (("ch-0", 9000), ("ch-1", 9000)))
@@ -178,7 +180,7 @@ async def test_each_host_answers_for_exactly_one_listed_name() -> None:
             [{"h": "os-0", "names": ["ch-0"]}, {"h": "os-1", "names": ["ch-1"]}],
         )
     )
-    assert await cell_writers.host_names(ch, TWO) == NAMES
+    assert await cell_catalog.host_names(ch, TWO) == NAMES
     # Every clusterAllReplicas read waits for every replica and reads its own host locally.
     reads = [s for s in ch.sql("query_all") if "clusterAllReplicas" in s]
     assert "skip_unavailable_shards = 0, prefer_localhost_replica = 1" in reads[0]
@@ -190,7 +192,7 @@ async def test_a_user_without_read_on_remote_is_named_before_any_cluster_read() 
     ]
     ch = _granted(FakeCH(), narrow)
     with pytest.raises(Refused, match="attach's own user lacks READ ON REMOTE"):
-        await cell_writers.host_names(ch, TWO)
+        await cell_catalog.host_names(ch, TWO)
     assert not [s for s in ch.sql("query_all") if "clusterAllReplicas" in s]
 
 
@@ -208,7 +210,7 @@ async def test_a_host_without_one_configured_name_refuses(
     rows: list[dict[str, Any]], reason: str
 ) -> None:
     with pytest.raises(Refused, match=reason):
-        await cell_writers.host_names(_granted(FakeCH().on("clusterAllReplicas", rows)), TWO)
+        await cell_catalog.host_names(_granted(FakeCH().on("clusterAllReplicas", rows)), TWO)
 
 
 # -- the table list ----------------------------------------------------------------------
@@ -737,7 +739,7 @@ async def test_two_servers_under_one_host_name_refuse_before_any_read() -> None:
     same = Topology("main", 1, (("ch-0", 9000), ("ch-0", 9001)))
     ch = FakeCH()
     with pytest.raises(Refused, match="lists host ch-0 2 times"):
-        await cell_writers.host_names(ch, same)
+        await cell_catalog.host_names(ch, same)
     listed = await cell_scan.list_tables(ch, None, same, {})
     assert [r.reason for r in listed.refusals] == [
         "lists host ch-0 2 times (ports 9000, 9001): give each server its own host name"

@@ -255,9 +255,14 @@ async def test_local_noop_insert_still_commits_durability_message(local):
         {"row": None},
     ],
 )
-async def test_local_invalid_identity_refuses_before_directory(local, change):
-    from server.cli import cell_place
+async def test_local_invalid_identity_refuses_before_directory(local, monkeypatch, change):
+    from server.cli import cell_control, cell_place
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
 
+    phase_clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", phase_clock)
+    monkeypatch.setattr(pg, "time", phase_clock)
     conn, state = local
     state.update(change)
     with pytest.raises(cell_place.PlacementRefused):

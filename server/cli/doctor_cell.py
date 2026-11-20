@@ -20,6 +20,7 @@ from typing import Any
 
 from server.cli._ch import reads
 from server.cli.doctor import FAIL, PASS, WARN
+from server.core import cell_sync
 
 # A doctor run never hangs on a cell's stores: each statement, and each session's connect
 # and reads together.
@@ -263,13 +264,13 @@ async def _table_sizes(ch: Any, tables: list[Any]) -> dict[str, int]:
 
 async def _stray_reads(ch: Any, budget_s: float) -> list[tuple[str, str, str]]:
     from server.cli import cell_scan
-    from server.cli.cell_ch import Refused, databases, read_topology
     from server.core import pg
+    from server.core.cell_ch import Refused, databases, read_topology
     from server.core.cell_triggers import ORG_TABLES
 
     topology = await read_topology(ch)
     if topology.multi:
-        from server.cli.cell_writers import host_names
+        from server.insights.store.cell_catalog import host_names
 
         names = await host_names(ch, topology)
     else:
@@ -289,7 +290,7 @@ async def _stray_reads(ch: Any, budget_s: float) -> list[tuple[str, str, str]]:
     work: list[tuple[int, str, Any]] = [(int(r["n"]), "postgres", str(r["name"])) for r in pg_rows]
     work += [(sizes.get(t.canonical, 0), "clickhouse", t) for t in ch_tables]
     work.sort(key=lambda w: (w[0], str(w[2])))
-    budget = cell_scan.Budget(budget_s)
+    budget = cell_sync.Budget(budget_s)
     stray: dict[str, list[str]] = {}
     unchecked: list[str] = []
     refused: list[str] = []

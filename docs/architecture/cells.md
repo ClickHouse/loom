@@ -1715,7 +1715,7 @@ from its cache ([upgrades](../operations/upgrades.md#upgrade-procedure)).
   cluster listing the same, and the distinct orgs of each table outside `LOG_TABLES`;
   `server/cli/cell_writers.py`: the ClickHouse writer check (the users, user directories,
   objects and replicas outside the operator's allow lists);
-  `server/cli/cell_ch.py`: what both share (the cluster's hosts, the per-host reads);
+  `server/core/cell_ch.py`: what both share (the cluster's hosts, the per-host reads);
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
