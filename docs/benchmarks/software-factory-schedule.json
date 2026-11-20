@@ -1,0 +1,238 @@
+{
+  "status": "PROPOSED_NOT_APPROVED",
+  "seed": 741,
+  "attempts": [
+    {
+      "order": 0,
+      "task_id": "pallets__flask-4575",
+      "repeat": 1,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 1,
+      "task_id": "pallets__flask-4575",
+      "repeat": 1,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 2,
+      "task_id": "pallets__flask-4575",
+      "repeat": 1,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 3,
+      "task_id": "pallets__flask-4935",
+      "repeat": "aa",
+      "arm": "baseline-a",
+      "mode": "baseline"
+    },
+    {
+      "order": 4,
+      "task_id": "pallets__flask-4935",
+      "repeat": "aa",
+      "arm": "baseline-b",
+      "mode": "baseline"
+    },
+    {
+      "order": 5,
+      "task_id": "pallets__flask-4575",
+      "repeat": "aa",
+      "arm": "baseline-b",
+      "mode": "baseline"
+    },
+    {
+      "order": 6,
+      "task_id": "pallets__flask-4575",
+      "repeat": "aa",
+      "arm": "baseline-a",
+      "mode": "baseline"
+    },
+    {
+      "order": 7,
+      "task_id": "pallets__flask-4045",
+      "repeat": 1,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 8,
+      "task_id": "pallets__flask-4045",
+      "repeat": 1,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 9,
+      "task_id": "pallets__flask-4045",
+      "repeat": 1,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 10,
+      "task_id": "pallets__flask-4575",
+      "repeat": 2,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 11,
+      "task_id": "pallets__flask-4575",
+      "repeat": 2,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 12,
+      "task_id": "pallets__flask-4575",
+      "repeat": 2,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 13,
+      "task_id": "pallets__flask-4045",
+      "repeat": "aa",
+      "arm": "baseline-a",
+      "mode": "baseline"
+    },
+    {
+      "order": 14,
+      "task_id": "pallets__flask-4045",
+      "repeat": "aa",
+      "arm": "baseline-b",
+      "mode": "baseline"
+    },
+    {
+      "order": 15,
+      "task_id": "pallets__flask-4045",
+      "repeat": 2,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 16,
+      "task_id": "pallets__flask-4045",
+      "repeat": 2,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 17,
+      "task_id": "pallets__flask-4045",
+      "repeat": 2,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 18,
+      "task_id": "pallets__flask-4935",
+      "repeat": 1,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 19,
+      "task_id": "pallets__flask-4935",
+      "repeat": 1,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 20,
+      "task_id": "pallets__flask-4935",
+      "repeat": 1,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 21,
+      "task_id": "pallets__flask-4935",
+      "repeat": 0,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 22,
+      "task_id": "pallets__flask-4935",
+      "repeat": 0,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 23,
+      "task_id": "pallets__flask-4935",
+      "repeat": 0,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 24,
+      "task_id": "pallets__flask-4045",
+      "repeat": 0,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 25,
+      "task_id": "pallets__flask-4045",
+      "repeat": 0,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 26,
+      "task_id": "pallets__flask-4045",
+      "repeat": 0,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 27,
+      "task_id": "pallets__flask-4935",
+      "repeat": 2,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 28,
+      "task_id": "pallets__flask-4935",
+      "repeat": 2,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 29,
+      "task_id": "pallets__flask-4935",
+      "repeat": 2,
+      "arm": "baseline",
+      "mode": "baseline"
+    },
+    {
+      "order": 30,
+      "task_id": "pallets__flask-4575",
+      "repeat": 0,
+      "arm": "natural",
+      "mode": "natural"
+    },
+    {
+      "order": 31,
+      "task_id": "pallets__flask-4575",
+      "repeat": 0,
+      "arm": "orchestrated",
+      "mode": "orchestrated"
+    },
+    {
+      "order": 32,
+      "task_id": "pallets__flask-4575",
+      "repeat": 0,
+      "arm": "baseline",
+      "mode": "baseline"
+    }
+  ],
+  "schedule_sha256": "83f5ba7bc0fd54fc6c5cd75326cbd91e5b2755d7cb8537d3268220496e8910e3"
+}
