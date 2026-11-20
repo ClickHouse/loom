@@ -1101,6 +1101,7 @@ async def list_by_namespace(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
+        "status != 'rejected'",
     ]
     if not include_tombstoned:
         where.append("tombstoned_at IS NULL")
@@ -1377,6 +1378,7 @@ async def count_by_namespace(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
+        "status != 'rejected'",
     ]
     if not include_tombstoned:
         where.append("tombstoned_at IS NULL")

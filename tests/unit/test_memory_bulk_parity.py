@@ -291,7 +291,11 @@ async def test_bulk_insert_decides_a_keys_vectors_by_the_row_that_wins(
     inserted: list[dict[str, Any]] = []
     retire_calls: list[Any] = []
 
-    async def _noop(rows: Any, *, ch: Any = None) -> None:
+    async def _noop(rows: Any, *, ch: Any = None, **callbacks: Any) -> None:
+        if on_send := callbacks.get("on_send"):
+            on_send()
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _emb(rows: list[dict[str, Any]], *, ch: Any = None) -> None:

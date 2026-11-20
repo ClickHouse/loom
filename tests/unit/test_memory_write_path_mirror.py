@@ -120,6 +120,9 @@ class _RecordingEmbedder:
         self.calls.append(text)
         return [float(len(self.calls))] * 3
 
+    async def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [await self.embed(text) for text in texts]
+
 
 _EMB_TABLE_ROW = {
     "embedding_model": "fake-test",

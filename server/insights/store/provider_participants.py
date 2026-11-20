@@ -6,20 +6,38 @@ from uuid import UUID
 
 from server.core.ch import sequential_reads
 from server.core.ch_errors import error_code
-from server.core.provider_process import host_proof, participant_tag, process_identity
+from server.core.provider_process import (
+    has_certificate,
+    participant_proof,
+    participant_tag,
+    process_identity,
+)
 from server.core.repo_base import _CHClient, _default_client
+from server.core.retirement import RetirementProof, get_gate
 from server.settings import settings
 
 TABLE = "loom._provider_participants"
-# A participant whose last heartbeat is older than this may count as stopped.
+# Heartbeat age is diagnostic; it never establishes permanent retirement.
 STALE_AFTER_S = 60
+
+# This conservative certificate subset never hides unknown retirement evidence.
+# Bounded ASCII PIDs also exclude proofs the Python integer parser must refuse.
+_CERTIFIED_RETIRED = (
+    "state = 'retired' AND isValidUTF8(host_proof) "
+    "AND length(splitByChar('|', host_proof)) = 9 "
+    "AND arrayElement(splitByChar('|', host_proof), 9) = 'cell-retirement-v1' "
+    "AND arrayAll(i -> notEmpty(arrayElement(splitByChar('|', host_proof), i)), [1,2,4,5,6]) "
+    "AND length(arrayElement(splitByChar('|', host_proof), 5)) <= 20 "
+    "AND match(arrayElement(splitByChar('|', host_proof), 5), '^[1-9][0-9]*$') "
+    "AND match(arrayElement(splitByChar('|', host_proof), 6), '^[0-9]+$')"
+)
 
 # `expired` is decided on the server's clock, like the leases.
 PARTICIPANTS_SQL = (
     "SELECT participant_id, transition_id, state, version, heartbeat_at, "
     "host_proof, "
     "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
-    f"FROM {TABLE} FINAL WHERE state != 'retired'"
+    f"FROM {TABLE} FINAL WHERE NOT ({_CERTIFIED_RETIRED})"
 )
 ONE_SQL = (
     "SELECT state, version, "
@@ -58,15 +76,29 @@ def running_sql(*, inserts: bool = False) -> str:
 # Retired participants whose last row is older than this are deleted.
 PRUNE_AFTER_H = 24
 _PRUNE_IDS_SQL = (
-    f"SELECT participant_id FROM {TABLE} FINAL WHERE state = 'retired' "
+    f"SELECT participant_id, state, version, host_proof FROM {TABLE} FINAL "
+    f"WHERE {_CERTIFIED_RETIRED} "
     "AND heartbeat_at < now64(3) - toIntervalHour({hours:UInt32}) LIMIT 1000"
 )
 _PRUNE_SQL = f"ALTER TABLE {TABLE} DELETE WHERE participant_id IN {{ids:Array(UUID)}}"
 
 
-async def participants(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+async def participants(
+    *, ch: _CHClient | None = None, host_proof: str | None = None
+) -> list[dict[str, Any]]:
     with sequential_reads():
-        return await (ch or _default_client()).query_all(PARTICIPANTS_SQL)
+        if host_proof is None:
+            rows = await (ch or _default_client()).query_all(PARTICIPANTS_SQL)
+        else:
+            rows = await (ch or _default_client()).query_all(
+                PARTICIPANTS_SQL + " AND host_proof = {proof:String} LIMIT 2",
+                {"proof": host_proof},
+            )
+    return [
+        r
+        for r in rows
+        if r["state"] != "retired" or not has_certificate(str(r.get("host_proof") or ""))
+    ]
 
 
 async def record_participant(
@@ -80,9 +112,13 @@ async def record_participant(
 ) -> None:
     """`heartbeat_at` takes the server's clock (its column default); this process's
     own row carries its `host_proof`."""
-    if state not in ("running", "drained", "retired"):
+    if state not in ("running", "drained"):
         raise ValueError("Unknown participant state")
     own = str(identity) == str(process_identity())
+    if not own:
+        raise ValueError("A process writes only its own running/drained registration")
+    if get_gate().closed:
+        raise ValueError("A permanently closed participant cannot re-enroll")
     await (ch or _default_client()).insert(
         TABLE,
         [
@@ -91,24 +127,59 @@ async def record_participant(
                 "transition_id": transition,
                 "state": state,
                 "version": version if version is not None else max(time_ns(), after + 1),
-                # A retired row is stopped at once, so every build's `provider-lock clear`
-                # frees its holder without waiting out the heartbeat window.
-                "stale_after_s": 0 if state == "retired" else STALE_AFTER_S,
-                "host_proof": host_proof() if own else "",
+                "stale_after_s": STALE_AFTER_S,
+                "host_proof": participant_proof(),
+            }
+        ],
+    )
+
+
+async def record_retirement(proof: RetirementProof, *, ch: _CHClient | None = None) -> None:
+    """The sole retired-row writer, passed evidence from the guarded lifecycle."""
+    if not isinstance(proof, RetirementProof) or not has_certificate(proof.host_proof):
+        raise ValueError("Retirement requires verified process evidence")
+    await (ch or _default_client()).insert(
+        TABLE,
+        [
+            {
+                "participant_id": proof.participant,
+                "transition_id": UUID(int=0),
+                "state": "retired",
+                "version": max(time_ns(), proof.after + 1, proof.version or 0),
+                "stale_after_s": 0,
+                "host_proof": proof.host_proof,
             }
         ],
     )
 
 
 async def prune_retired(*, ch: _CHClient | None = None) -> int:
-    """Delete every row of the participants retired `PRUNE_AFTER_H` ago (each
-    process start leaves one); a process that was only paused enrolls again
-    with its next beat. Returns how many."""
+    """Age selects already certified permanent retirements, never unknown rows.
+
+    Retired UUIDs cannot re-enroll. An earlier in-flight beat is below the final
+    version; removing every version cannot resurrect that beat.
+    """
     client = ch or _default_client()
-    rows = await client.query_all(_PRUNE_IDS_SQL, {"hours": PRUNE_AFTER_H})
-    ids = [r["participant_id"] for r in rows]
-    if ids:
-        await client.execute(_PRUNE_SQL, {"ids": ids})
+    with sequential_reads():
+        rows = await client.query_all(_PRUNE_IDS_SQL, {"hours": PRUNE_AFTER_H})
+        ids = [r["participant_id"] for r in rows if has_certificate(str(r.get("host_proof") or ""))]
+        if not ids:
+            return 0
+        latest = await client.query_all(
+            f"SELECT participant_id, state, version, host_proof FROM {TABLE} FINAL "
+            "WHERE participant_id IN {ids:Array(UUID)}",
+            {"ids": ids},
+        )
+        expected = {str(r["participant_id"]): int(r["version"]) for r in rows}
+        ids = [
+            r["participant_id"]
+            for r in latest
+            if r["state"] == "retired"
+            and int(r["version"]) == expected.get(str(r["participant_id"]))
+            and has_certificate(str(r.get("host_proof") or ""))
+        ]
+        if ids:
+            await client.execute(_PRUNE_SQL, {"ids": ids})
     return len(ids)
 
 

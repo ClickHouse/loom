@@ -5,11 +5,9 @@ so `system.processes` says whether a participant that stopped heartbeating
 still has a query running.
 """
 
-import asyncio
 import os
 import re
 import socket
-from pathlib import Path
 from uuid import UUID, uuid4
 
 _identity: tuple[int, UUID] | None = None
@@ -98,12 +96,15 @@ def host_proof() -> str:
 
 def proves_stopped(proof: str) -> bool:
     """Whether the process `proof` names has stopped, judged from this one: same host
-    name and kernel boot, and either its pid is free or runs another process than
-    the one that started then (same pid namespace), or it ran in this container
-    before the container restarted into a new pid namespace (which kills every
-    process of the old one). Two containers that share a host name never prove
-    each other stopped; a process that cannot be inspected is not proven stopped."""
+    name and kernel boot, and its pid is free, runs a different birth, or is a
+    single-thread zombie of that birth (same pid namespace). Another namespace or API
+    object proves nothing. Sharing a host name or container identity alone does
+    not prove death; an uninspectable process is not proven stopped."""
     parts = proof.split("|")
+    if len(parts) == 9:
+        if parts[8] != LIFECYCLE:
+            return False
+        parts = parts[:8]
     if len(parts) not in (6, 7, 8):
         return False
     host, boot, container, pidns, pid, start = parts[:6]
@@ -114,8 +115,8 @@ def proves_stopped(proof: str) -> bool:
     if host != socket.gethostname() or boot != my_boot:
         return False
     if pidns != my_pidns:
-        return bool(container) and container == _container()
-    # Only positive evidence: no such process, or another one under its pid.
+        return False  # namespace identity alone says nothing about old processes
+    # Only positive evidence: absence, a different birth, or a fully exited group.
     # A pid this process may not inspect (hidepid, a permission error) proves nothing.
     try:
         os.kill(int(pid), 0)
@@ -124,50 +125,47 @@ def proves_stopped(proof: str) -> bool:
     except (OSError, ValueError):
         return False
     try:
-        return _start_ticks(pid) != start
-    except (OSError, IndexError):
+        if _start_ticks(pid) != start:
+            return True
+        with open(f"/proc/{pid}/stat", encoding="ascii") as f:
+            stat = f.read().rsplit(")", 1)[1].split()
+        # A zombie leader can still have live siblings. Bind all three fields to
+        # one fresh record: only a single-thread zombie cannot resume this birth.
+        return stat[19] == start and stat[0] == "Z" and stat[17] == "1"
+    except (OSError, IndexError, ValueError):
         return False
 
 
-_SA = "/var/run/secrets/kubernetes.io/serviceaccount"
-_POD_CONTAINER = re.compile(r"^([0-9a-f-]{36})/")
+LIFECYCLE = "cell-retirement-v1"
 
 
-async def pod_gone(proof: str, *, timeout_s: float = 5.0) -> bool:
-    """Whether Kubernetes says the pod `proof` names is gone: no pod of that name
-    in its namespace, one with another UID, or this one in phase Failed or
-    Succeeded (an evicted pod keeps its object; a pod that restarts its
-    containers reaches those phases only once every one stopped for good). The
-    kubelet removes a pod's object once its containers stopped (or an operator
-    force-deleted it), so each is positive evidence a lost pod's process ended.
-    Asked only of this pod's own namespace, with its service-account token;
-    False wherever the API or the proof does not say."""
+def certified(proof: str) -> str:
+    """Preserve the exact captured identity and stamp the installed protocol."""
     parts = proof.split("|")
-    found = _POD_CONTAINER.match(parts[2]) if len(parts) == 8 else None
-    namespace = os.environ.get("POD_NAMESPACE", "")
-    if not found or not namespace or parts[6] != namespace or not parts[7]:
-        return False
-    host = os.environ.get("KUBERNETES_SERVICE_HOST", "")
-    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
-    try:
-        token = (await asyncio.to_thread(Path(f"{_SA}/token").read_text, "ascii")).strip()
-    except OSError:
-        return False
-    if not host or not token:
-        return False
-    import httpx
+    if len(parts) == 9 and parts[8] == LIFECYCLE:
+        parts = parts[:8]
+    if len(parts) not in (6, 7, 8):
+        raise ValueError("Unrecognized participant identity proof")
+    parts += [""] * (8 - len(parts))
+    if not all(parts[i] for i in (0, 1, 3, 4, 5)):
+        raise ValueError("Incomplete participant identity proof")
+    if not parts[4].isdecimal() or int(parts[4]) <= 0 or not parts[5].isdecimal():
+        raise ValueError("Invalid participant process identity")
+    return "|".join((*parts, LIFECYCLE))
 
-    url = f"https://{host}:{port}/api/v1/namespaces/{namespace}/pods/{parts[7]}"
+
+def has_certificate(proof: str) -> bool:
+    if len(proof.split("|")) != 9:
+        return False
     try:
-        async with httpx.AsyncClient(verify=f"{_SA}/ca.crt", timeout=timeout_s) as client:
-            r = await client.get(url, headers={"Authorization": f"Bearer {token}"})
-    except (httpx.HTTPError, OSError):
+        return certified(proof) == proof
+    except ValueError:
         return False
-    if r.status_code == 404:
-        return True
-    if r.status_code != 200:
-        return False
-    pod = r.json()
-    if str(pod.get("metadata", {}).get("uid", "")) != found.group(1):
-        return True
-    return str(pod.get("status", {}).get("phase", "")) in ("Failed", "Succeeded")
+
+
+def participant_proof() -> str:
+    """Advertise capability only in a composition with installed lifecycle guards."""
+    from server.core.retirement import get_gate
+
+    proof = host_proof()
+    return certified(proof) if proof and get_gate().role else proof

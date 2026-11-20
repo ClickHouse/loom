@@ -731,7 +731,11 @@ def _cmd_import_recall(args: argparse.Namespace) -> int:
                         f"  ! write failed ({w['op']} {ident}): {e}",
                         file=sys.stderr,
                     )
-        finally:
+        except BaseException:  # an importer failure must survive its writer close
+            with contextlib.suppress(BaseException):
+                await closer()
+            raise
+        else:
             await closer()
 
         print(f"✓ import complete: {ok} writes ok, {failed} failed")
@@ -755,6 +759,27 @@ def _publication_pending(r: Any) -> bool:
     return isinstance(detail, dict) and detail.get("code") == PublicationPending.code
 
 
+def _make_http_writer(
+    args: argparse.Namespace, base_url: str, *, timeout_s: float
+) -> tuple[Any, Any]:
+    import httpx
+
+    token, source = resolve_token(args.token)
+    if refused_for_agent(source):
+        raise SystemExit(2)
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    client = httpx.AsyncClient(timeout=timeout_s, headers=headers)
+    base = base_url.rstrip("/")
+
+    async def _http_writer(op: str, payload: dict[str, Any]) -> None:
+        r = await client.post(f"{base}/v1/{op}", json=_recall_jsonable(payload))
+        if _publication_pending(r):
+            return  # committed; the server's delivery worker publishes it
+        r.raise_for_status()
+
+    return _http_writer, client.aclose
+
+
 async def _make_writer(
     args: argparse.Namespace, inproc_ops: Callable[[], _OpHandlers], *, timeout_s: float
 ) -> tuple[Any, Any]:
@@ -764,39 +789,31 @@ async def _make_writer(
     its handler) on a connected ClickHouse client."""
     base_url = getattr(args, "base_url", None)
     if base_url:
-        import httpx
+        return _make_http_writer(args, base_url, timeout_s=timeout_s)
 
-        token, source = resolve_token(args.token)
-        if refused_for_agent(source):
-            raise SystemExit(2)
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        client = httpx.AsyncClient(timeout=timeout_s, headers=headers)
-        base = base_url.rstrip("/")
-
-        async def _http_writer(op: str, payload: dict[str, Any]) -> None:
-            r = await client.post(f"{base}/v1/{op}", json=_recall_jsonable(payload))
-            if _publication_pending(r):
-                return  # committed; the server's delivery worker publishes it
-            r.raise_for_status()
-
-        return _http_writer, client.aclose
-
-    from server.cli._ch import connect_checked, disconnect
+    from server.cli._ch import check_acceptance, connect_verified, disconnect
     from server.core.ch import get_client
 
     handlers = inproc_ops()
     ch = get_client()
-    await connect_checked(ch, orgs=(args.org,))
+    await connect_verified(ch)
     from server import boot
     from server.core.background import register_buffer_drainer
     from server.insights.app.provider_command import model_command
 
     register_buffer_drainer("boot-writes", boot.drain_writes)
     command = model_command()
+    entered = False
     try:
         await command.__aenter__()
-    except BaseException:
-        await disconnect(ch)
+        entered = True
+        await check_acceptance(orgs=(args.org,))
+    except BaseException:  # entry failure must survive participant and connection cleanup
+        if entered:
+            with contextlib.suppress(BaseException):
+                await command.__aexit__(None, None, None)
+        with contextlib.suppress(BaseException):
+            await disconnect(ch)
         raise
 
     async def _inproc_writer(op: str, payload: dict[str, Any]) -> None:
@@ -809,7 +826,11 @@ async def _make_writer(
     async def close() -> None:
         try:
             await command.__aexit__(None, None, None)
-        finally:
+        except BaseException:  # participant exit failure must survive connection cleanup
+            with contextlib.suppress(BaseException):
+                await disconnect(ch)
+            raise
+        else:
             await disconnect(ch)
 
     return _inproc_writer, close

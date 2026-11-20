@@ -24,14 +24,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from clickhouse_connect.driver.exceptions import DatabaseError
-
-from server.cli.cell_ch import (
+from server.core import cell_sync, ch_errors, ch_names, pg
+from server.core.cell import ORG_FREE, named_org, org_name_refusal
+from server.core.cell_ch import (
     TAG,
     WHOLE,
     WHOLE_SQL,
@@ -42,14 +41,12 @@ from server.cli.cell_ch import (
     per_host,
     quote,
 )
-from server.cli.cell_writers import own_refusals
-from server.core import ch_errors, ch_names, pg
-from server.core.cell import ORG_FREE, named_org, org_name_refusal
 from server.core.cell_triggers import ORG_TABLES
 from server.core.ch import query_tag
 from server.core.ch_errors import error_code, error_line
 from server.erasure.store.census import classified_tables
 from server.erasure.store.steps_pg import PG_CENSUS, PG_NO_MEMORY_CONTENT
+from server.insights.store.cell_catalog import own_refusals
 
 # Tables whose orgs are never placed: rows written before any check (a refused or
 # unauthenticated request's log row keeps the org it named), and tables a view fills from
@@ -68,6 +65,19 @@ LOG_TABLES = frozenset(
     }
 )
 
+# Tables a worker drains into another table, deleting what it moved: each is scanned
+# before every table that is not one, so a row moved mid-scan is read where it was or where
+# it went. A table a materialized view reads is ordered the same way, from
+# `system.tables` dependencies (`order_sources`).
+MOVE_SOURCES = frozenset(
+    {
+        "loom.learnings_queue",
+        "loom.memory_code_link_queue",
+        "loom.memory_extraction_queue",
+        "loom.memory_webhook_outbox",
+    }
+)
+
 # A refreshable view's temporary table while a refresh exchanges its target.
 _EXCHANGE = re.compile(r"^\.tmp\.inner(_id)?\.")
 # A provider transition's copies (server/erasure/store/provider_copies.py).
@@ -78,36 +88,9 @@ _RETRY_PAUSE_S = 1.0  # not a setting: the pause before a transient failure's re
 # How long past the budget a Postgres try may take before this side gives it up, so the
 # server's own statement timeout fires first when the server answers.
 _PG_MARGIN_S = 5.0  # not a setting: a margin over --scan-budget
-_TIMEOUT_CODES = frozenset({159})  # TIMEOUT_EXCEEDED
 _UNKNOWN_TABLE_CODES = frozenset({60, 81})  # UNKNOWN_TABLE, UNKNOWN_DATABASE
 
 _sleep = asyncio.sleep  # the seam the retry tests replace
-
-
-class Budget:
-    """`--scan-budget`: the seconds one full scan may take, shared by its statements."""
-
-    def __init__(self, seconds: float, clock: Callable[[], float] = time.monotonic) -> None:
-        self.seconds = float(seconds)
-        self._clock = clock
-        self._start = clock()
-
-    def elapsed(self) -> float:
-        return self._clock() - self._start
-
-    def left(self) -> float:
-        return self.seconds - self.elapsed()
-
-    def require(self, subject: str) -> float:
-        """The seconds left, or Refused naming `subject` once none are."""
-        left = self.left()
-        if left <= 0:
-            raise Refused([_out_of_budget(subject, self.seconds)])
-        return left
-
-
-def _out_of_budget(subject: str, seconds: float) -> Refusal:
-    return Refusal(subject, f"the scan ran out of --scan-budget ({seconds:g} s): raise it")
 
 
 def pg_quote(name: str) -> str:
@@ -339,12 +322,38 @@ async def list_postgres(conn: Any) -> tuple[list[str], list[Refusal]]:
     return names, refusals
 
 
+def order_sources(tables: list[Table], view_sources: Iterable[str]) -> list[Table]:
+    """`tables` with the move sources (`MOVE_SOURCES`, and every table a view reads,
+    `view_sources`, canonical names) first, each group by name."""
+    first = MOVE_SOURCES | set(view_sources)
+    return sorted(tables, key=lambda t: (t.canonical not in first, t.canonical))
+
+
+async def view_sources(
+    ch: Any, topology: Topology, names: Mapping[str, str], dbs: list[str]
+) -> set[str]:
+    """The tables of `dbs` a view depends on, as canonical names."""
+    rows = await per_host(
+        ch,
+        topology,
+        names,
+        "SELECT hostName() AS h, database, name FROM {source:tables} "
+        "WHERE database IN {dbs:Array(String)} AND notEmpty(dependencies_table)",
+        {"dbs": dbs},
+    )
+    return {
+        f"{ch_names.logical(str(r['database']))}.{r['name']}"
+        for found in rows.values()
+        for r in found
+    }
+
+
 async def list_tables(
     ch: Any, pg_conn: Any, topology: Topology, names: Mapping[str, str]
 ) -> TableList:
     """The scan's table list in both stores, with every refusal it found, attach's own
     ClickHouse grants checked first; raises `Refused` when a host answers outside the
-    cluster's names. `names` is `cell_writers.host_names()` on a cluster of several hosts,
+    cluster's names. `names` is `cell_catalog.host_names()` on a cluster of several hosts,
     else empty."""
     with query_tag(TAG):
         return await _list_tables(ch, pg_conn, topology, names)
@@ -371,7 +380,8 @@ async def _list_tables(
     if copies := provider_copies(tables):
         out.refusals += copies
         return out
-    out.clickhouse, problems = judge_clickhouse(tables, classified, topology)
+    scanned, problems = judge_clickhouse(tables, classified, topology)
+    out.clickhouse = order_sources(scanned, await view_sources(ch, topology, names, databases()))
     out.refusals += problems
     out.refusals += await reverse_clickhouse(ch, tables, classified)
     out.postgres, problems = await list_postgres(pg_conn)
@@ -461,7 +471,7 @@ def pg_skip_scan_sql(table: str) -> str:
     return _PG_SKIP_SCAN.format(table=f"{pg_quote(schema)}.{pg_quote(name)}")
 
 
-async def _pg_orgs(table: str, budget: Budget) -> list[str]:
+async def pg_orgs(table: str, budget: cell_sync.Budget) -> list[str]:
     subject = f"postgres {table}"
     while True:
         left = budget.require(subject)
@@ -489,7 +499,7 @@ async def _pg_orgs(table: str, budget: Budget) -> list[str]:
         # budget ran out only when there is none left, since the timeout is what was left.
         timed_out = getattr(failure, "sqlstate", None) == "57014" and budget.left() <= 1
         if bound.expired() or timed_out:
-            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
+            raise Refused([cell_sync._out_of_budget(subject, budget.seconds)]) from None
         # A connect that finds Postgres down comes as PostgresUnavailableError.
         if not (pg.is_outage(failure) or isinstance(failure, pg.PostgresUnavailableError)):
             raise Refused([Refusal(subject, f"the scan failed: {failure}")]) from failure
@@ -503,63 +513,6 @@ def _ch_transient(e: BaseException) -> bool:
         or ch_errors.is_passing_state(e)
         or ch_errors.is_replica_bound_error(e)
     )
-
-
-def _on_cluster(topology: Topology) -> str:
-    return f" ON CLUSTER {quote(topology.cluster)}" if topology.multi else ""
-
-
-async def _system(ch: Any, sql: str, topology: Topology, budget: Budget, subject: str) -> None:
-    """A SYSTEM statement bounded by what is left of `budget`. On several hosts it carries
-    `ON CLUSTER` (`_on_cluster`) and each host's status is read back: every listed host must
-    answer, each with status 0 (pinned with `distributed_ddl_output_mode = 'throw'`, so a
-    profile's `never_throw` hides none). One that does not finish in time refuses as the
-    budget when the budget is spent, else with the server's error and the hosts it did not
-    finish on: a replica that cannot sync."""
-    seconds = max(1, int(budget.require(subject)))
-    # `receive_timeout` bounds SYNC REPLICA's own wait.
-    bounds = {"max_execution_time": seconds, "receive_timeout": seconds}
-    what = sql.split(" ON CLUSTER ")[0].split(" `")[0]
-    try:
-        if not topology.multi:
-            await ch.execute(sql, settings=bounds)
-            return
-        body = await ch.raw_bytes(
-            sql,
-            settings={
-                **bounds,
-                "distributed_ddl_output_mode": "throw",
-                "distributed_ddl_task_timeout": seconds,
-                "default_format": "JSONEachRow",
-            },
-        )
-        rows = _body_rows(body.decode("utf-8", "replace").splitlines(), "status")
-    except Exception as e:  # only a timeout is judged here; the rest pass to the caller
-        if error_code(e) not in _TIMEOUT_CODES:
-            raise
-        # The statement was given the budget's whole seconds, so up to one is left over.
-        if budget.left() <= 1:
-            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        done = {str(r.get("host")) for r in getattr(e, "rows", ()) if str(r.get("status")) == "0"}
-        unfinished = ", ".join(sorted(topology.hosts - done)) or "this server"
-        raise Refused(
-            [Refusal(subject, f"{what} did not finish on {unfinished}: {error_line(e)}")]
-        ) from e
-    failed = [r for r in rows if int(r["status"]) != 0]
-    if failed:
-        raise Refused(
-            [Refusal(f"replica {r.get('host')}", f"{subject}: {r.get('error')}") for r in failed]
-        )
-    answered = {str(r.get("host")) for r in rows}
-    if answered != topology.hosts:
-        missing = ", ".join(sorted(topology.hosts - answered)) or "none"
-        raise Refused(
-            [
-                Refusal(
-                    subject, f"the hosts that answered are not the listed ones (missing: {missing})"
-                )
-            ]
-        )
 
 
 def ch_scan_sql(table: Table, topology: Topology) -> str:
@@ -576,36 +529,6 @@ def ch_scan_sql(table: Table, topology: Topology) -> str:
     return f"{host} UNION ALL {orgs} FORMAT JSONEachRow"
 
 
-class BodyError(DatabaseError):
-    """An error ClickHouse wrote into a response body after it began streaming rows: a
-    server error as the driver raises one, its text keeping the server's `Code: <n>.`, so it
-    is judged transient or not, and by code, as any other. `rows` are the rows before it."""
-
-    def __init__(self, text: str, rows: list[dict[str, Any]] | None = None) -> None:
-        super().__init__(text)
-        self.rows = list(rows or [])
-
-
-def _body_rows(lines: Iterable[str], key: str) -> list[dict[str, Any]]:
-    """The JSONEachRow rows of a body, each holding `key`; BodyError at the first line that
-    is not one (an `{"exception": …}` row, or the text tail a server appends once a
-    statement fails after its first block), with the rest of the body as its text."""
-    lines = list(lines)
-    rows: list[dict[str, Any]] = []
-    for i, line in enumerate(lines):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            row = None
-        if not isinstance(row, dict) or key not in row:
-            exception = row.get("exception") if isinstance(row, dict) else None
-            raise BodyError(str(exception or "\n".join(lines[i:]))[:2000], rows)
-        rows.append(row)
-    return rows
-
-
 async def _read_scan(
     ch: Any, sql: str, params: dict[str, Any], extra: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -613,23 +536,25 @@ async def _read_scan(
     async with ch.raw_stream(sql, params, settings=extra) as stream:
         async for chunk in stream:
             chunks.append(chunk)
-    return _body_rows(b"".join(chunks).decode("utf-8", "replace").splitlines(), "k")
+    return cell_sync._body_rows(b"".join(chunks).decode("utf-8", "replace").splitlines(), "k")
 
 
-async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) -> list[bytes | None]:
+async def ch_orgs(
+    ch: Any, table: Table, topology: Topology, budget: cell_sync.Budget
+) -> list[bytes | None]:
     subject = f"clickhouse {table.canonical}"
     while True:
         budget.require(subject)
         try:
             # Rows buffered on any replica land before the table is read.
-            flush = f"SYSTEM FLUSH ASYNC INSERT QUEUE{_on_cluster(topology)}"
-            await _system(ch, flush, topology, budget, subject)
+            flush = f"SYSTEM FLUSH ASYNC INSERT QUEUE{cell_sync._on_cluster(topology)}"
+            await cell_sync._system(ch, flush, topology, budget, subject)
             if table.engine.startswith("Replicated"):
                 # Every replica pulls every part acknowledged before now, so the read
                 # through any one of them sees them all.
-                await _system(
+                await cell_sync._system(
                     ch,
-                    f"SYSTEM SYNC REPLICA{_on_cluster(topology)} {table.sql} LIGHTWEIGHT",
+                    f"SYSTEM SYNC REPLICA{cell_sync._on_cluster(topology)} {table.sql} LIGHTWEIGHT",
                     topology,
                     budget,
                     subject,
@@ -655,9 +580,9 @@ async def _ch_orgs(ch: Any, table: Table, topology: Topology, budget: Budget) ->
                 if r["k"] == "o"
             ]
         # A timeout is the budget only when none is left: a profile's estimate throws early.
-        if error_code(failure) in _TIMEOUT_CODES and budget.left() <= 1:
-            raise Refused([_out_of_budget(subject, budget.seconds)]) from None
-        if error_code(failure) in _TIMEOUT_CODES or not _ch_transient(failure):
+        if error_code(failure) in cell_sync._TIMEOUT_CODES and budget.left() <= 1:
+            raise Refused([cell_sync._out_of_budget(subject, budget.seconds)]) from None
+        if error_code(failure) in cell_sync._TIMEOUT_CODES or not _ch_transient(failure):
             raise Refused(
                 [Refusal(subject, f"the scan failed: {error_line(failure)}")]
             ) from failure
@@ -682,7 +607,7 @@ async def scan(
     ch: Any,
     tables: TableList,
     topology: Topology,
-    budget: Budget,
+    budget: cell_sync.Budget,
     configured: Iterable[str] = (),
 ) -> ScanResult:
     """The distinct orgs of every table of `tables` and the `configured` orgs; Refused, with
@@ -698,10 +623,10 @@ async def scan(
         result.add("configured", org)
     with query_tag(TAG):
         for name in tables.postgres:
-            for org in await _pg_orgs(name, budget):
+            for org in await pg_orgs(name, budget):
                 result.add(f"postgres {name}", org)
         for table in tables.clickhouse:
-            for raw in await _ch_orgs(ch, table, topology, budget):
+            for raw in await ch_orgs(ch, table, topology, budget):
                 result.add(f"clickhouse {table.canonical}", raw)
     result.elapsed_s = budget.elapsed()
     return result

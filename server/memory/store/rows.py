@@ -226,6 +226,26 @@ class MemoryRow(BaseModel):
         return cls(**data)
 
 
+def memory_head_state(row: MemoryRow | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    # Usage totals can be overlaid by the read and change without a version insert.
+    # Compare served values, not the projection's JSON encoding or preview metadata.
+    state = row.model_dump(
+        exclude={
+            "recall_count",
+            "last_recalled_at",
+            "evidence_count",
+            "value_text",
+            "value_json",
+            "value_truncated",
+        }
+    )
+    state["value"] = json.dumps(row.value, sort_keys=True, separators=(",", ":"), default=str)
+    state["updated_at"] = row.updated_at or row.created_at
+    return state
+
+
 # Canonical column list for loom.memory — single source of truth for
 # build_memory_version_row. Omitting a column on a follow-up version row
 # silently zeros it under FINAL.

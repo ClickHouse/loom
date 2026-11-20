@@ -36,20 +36,37 @@ stopped only once it retired itself (a graceful shutdown), a later process on it
 host proved it gone, or an operator retired it. An expired heartbeat is no proof: a
 paused process can hold admitted work outside ClickHouse and write it with the old
 configuration once it resumes, so the transition waits for it to beat again and
-drain. Each row carries its host name, kernel boot, container id (Docker's, or a
-Kubernetes pod's and container name), pid namespace, pid and start time; every 10 s
-each process retires the participants of its own host and boot whose pid no longer
-runs that process, or that ran in its own container before the container restarted
-into a new pid namespace, once no query of theirs runs. That covers a killed process
-whose container or worker restarts in place; two containers that share a host name
-(host networking, two containers of one pod) never retire each other. An operator who confirmed its
-process is gone retires it with `loom participant retire --participant <id> --yes`,
-which refuses one whose heartbeat is fresh or whose queries still run. The workers
+drain. Each row carries its host name, kernel boot, container identity, pid namespace,
+pid and start time. A later process on the same trusted host and pid namespace can
+prove that the exact PID exited or was reused. A changed namespace, a missing pod
+object, another pod UID or a terminal API phase does not prove physical termination.
+`loom participant retire --participant <id>` performs that exact local verification
+and refuses when evidence is unavailable or any cross-replica query remains.
+The workers
 leader's `/v1/health` lists every participant a transition would wait on as
 `provider_participants_stale` (`heartbeat_expired` or `queries_running`).
 `system.processes` is read over `clusterAllReplicas(LOOM_CH_CLUSTER)`; a server
 without that cluster answers for itself, and any other failure of the read
 counts the participant as running.
+
+Permanent retirement uses a separate process gate that never reopens. The outer
+HTTP/WebSocket scope covers request-tail settlement; an inner scope covers actual
+application tasks across middleware child-task boundaries, including OAuth and
+control handlers. Worker passes and native command bodies use the same counter.
+Shutdown closes admission, stops producers, waits for actual scope and registered
+descendant completion, flushes buffers and checks carried and server-side writes.
+Canceling a coroutine or exhausting the shutdown budget leaves its row nonretired.
+A failed startup likewise cannot certify unfinished producers. Model-transition
+`drained` is reversible and does not certify permanent retirement.
+
+The ninth `host_proof` field, `cell-retirement-v1`, identifies this lifecycle.
+Only the guarded shutdown or verified-death writer publishes certified retirement.
+The generic heartbeat writer cannot retire or reopen a retired identity; a
+replacement process draws a fresh UUID. Pruning checks the latest certified row
+before deleting all versions. Uncertified legacy retired rows stay visible and
+cannot disappear through an age-based prune. Old reapers fail closed on the ninth
+field, but old manual/pruning binaries must be stopped before the
+[cells lifecycle baseline](cells.md#participant-lifecycle-baseline) is eligible.
 
 Each bounded rebuild step holds the shared configuration Keeper key, renewed every
 20 s (TTL 60 s). A contender takes over an expired key only when its holder's

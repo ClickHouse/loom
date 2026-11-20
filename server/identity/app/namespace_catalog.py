@@ -371,6 +371,8 @@ async def handle_namespace_search_categories(
         WHERE org = {org:String}
           AND namespace = {ns:String}
           AND embedding_dim > 0
+          AND embedding_model = {model:String}
+          AND embedding_dim = {dim:UInt32}
           AND tombstoned_at IS NULL
         ORDER BY distance ASC
         LIMIT {top_k:UInt32}
@@ -379,6 +381,8 @@ async def handle_namespace_search_categories(
             "org": input.org,
             "ns": input.namespace,
             "q": q_vec,
+            "model": embedder.model_name,
+            "dim": len(q_vec),
             "top_k": int(input.top_k),
         },
     )

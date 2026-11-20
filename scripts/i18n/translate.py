@@ -277,9 +277,13 @@ def link_routes(link: str, image: bool, source: str, lang: str) -> tuple[str, ..
     return (english, native)
 
 
-def rewrite_links(text: str, source: str, lang: str) -> str:
-    """Point every relative link of `source` at its target as seen from the translation."""
-    inventory = frozenset(sources())
+def rewrite_links(
+    text: str, source: str, lang: str, *, inventory: frozenset[str] | None = None
+) -> str:
+    """Point relative links at their translation targets, checking live paths and anchors
+    even when tracked-name membership comes from the caller's pass."""
+    if inventory is None:
+        inventory = frozenset(sources())
     edits = []
     for start, end, link, image in link_targets(text):
         routes = link_routes(link, image, source, lang)
@@ -287,14 +291,15 @@ def rewrite_links(text: str, source: str, lang: str) -> str:
         if len(routes) == 2:
             path, _, anchor = link.partition("#")
             resolved = posixpath.normpath(posixpath.join(posixpath.dirname(source), unquote(path)))
-            translated = ROOT / target_path(lang, resolved)
-            if (
-                resolved in inventory
-                and translated.is_file()
-                and not translated.is_symlink()
-                and (not anchor or f'<a id="{unquote(anchor)}"></a>' in translated.read_text())
-            ):
-                target = routes[1]
+            translated_path = target_path(lang, resolved)
+            translated = ROOT / translated_path
+            if resolved in inventory:
+                if not lifecycle.regular(resolved):
+                    raise SystemExit(f"English source is not a regular file: {resolved}")
+                if lifecycle.regular(translated_path) and (
+                    not anchor or f'<a id="{unquote(anchor)}"></a>' in translated.read_text()
+                ):
+                    target = routes[1]
         edits.append((start, end, target))
     return replace_spans(text, edits)
 
@@ -611,19 +616,23 @@ def link_problems() -> list[str]:
 def untranslated_pages() -> list[str]:
     """Translations that kept a heading, link text, alt text or table cell in English."""
     problems = []
-    for source in sources():
+    discovered = sources()
+    inventory = frozenset(discovered)
+    for source in discovered:
         for lang in LANGUAGES:
-            path = ROOT / target_path(lang.code, source)
+            rel = target_path(lang.code, source)
+            path = ROOT / rel
             if not path.is_file():
                 continue
-            english = "\n".join(english_requests(prepare(source, lang)[0]))
+            if not lifecycle.regular(rel):
+                raise SystemExit(f"{rel}: not a regular generated Markdown page")
+            english = "\n".join(english_requests(prepare(source, lang, inventory=inventory)[0]))
             text = path.read_text()
             # Generated banner links must not shift the source body's node identities.
             if (stamp := STAMP.match(text)) and stamp[1] == source:
                 prefix = header(source, lang, stamp[3], stamp[2])
                 if text.startswith(prefix):
                     text = text[len(prefix) :]
-            rel = path.relative_to(ROOT).as_posix()
             english = lifecycle.canonical_links(english, rel)
             text = lifecycle.canonical_links(text, rel)
             problems.extend(
@@ -828,15 +837,21 @@ def language_placeholder(text: str) -> list[tuple[int, int, str]]:
     return [(match.start(), match.end(), "<!-- languages -->")] if match else []
 
 
-def prepare(source: str, lang: Language) -> tuple[str, str]:
+def prepare(
+    source: str, lang: Language, *, inventory: frozenset[str] | None = None
+) -> tuple[str, str]:
     """The English text to translate and the language line to put back afterwards ('' when
     the page has none)."""
+    if inventory is None:
+        inventory = frozenset(sources())
+    if not lifecycle.regular(source):
+        raise SystemExit(f"English source is not a regular file: {source}")
     text = (ROOT / source).read_text()
     target = target_path(lang.code, source)
     edits = language_placeholder(text)
     line = language_line(target) if edits else ""
     text = replace_spans(text, edits)
-    return rewrite_links(text, source, lang.code), line
+    return rewrite_links(text, source, lang.code, inventory=inventory), line
 
 
 def render(source: str, lang: Language, body: str, line: str, model: str) -> str:

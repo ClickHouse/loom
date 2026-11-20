@@ -26,7 +26,7 @@ def _cookie(state: str) -> str:
 
 @router.post("/v1/connect/{kind}/start")
 async def start(kind: str, request: Request) -> JSONResponse:
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    auth = await verify_bearer_header(request.headers.get("Authorization"))
     if auth is None:
         raise missing_bearer()
     # This route never applies an on-behalf header, including from a trusted caller.

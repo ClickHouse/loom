@@ -228,17 +228,19 @@ graceful stop, and within the 30 s lease TTL when a pod or node dies. Every pod 
 labelled `deploy:k8s:<pod>`, so a new leader runs the workers whose last pass is
 overdue rather than waiting out their interval again.
 
-A pod that dies without stopping (node loss, eviction past the grace period) leaves its
-provider participant row, which would hold the next embedding or model change from the
-dashboard. With `retireLostPods` (the default) the workers leader retires it once its
-heartbeat expired, no query of it runs and Kubernetes says the pod is gone: its object
-deleted or replaced, or the pod `Failed` (evicted). That is a minute or two after a
-deletion or an eviction, and after a node loss once Kubernetes deletes the node's pods
-(five minutes of `NotReady` by default). It needs `get` on pods in the namespace (a Role
-the chart creates for the release's service account) and that account's token, which only
-the pods that may hold the workers lease mount. Without it, `/v1/health` names the row;
-once the pod is gone, retire it with
-`loom participant retire --participant <id> --yes` ([replicas](./replicas.md#stopping-a-replica)).
+A pod that dies without stopping leaves its provider participant row. A missing
+or replaced pod object, a Failed/Succeeded API phase and a completed rollout do
+not prove that an old process on a partitioned node stopped. Such rows remain
+blockers until guarded shutdown or verified exact physical death with settled
+queries. Loom requests no pod-read permission or service-account token for
+participant retirement. The explicit `serviceAccount.automountToken` value stays
+available for workloads that need a token for another integration.
+
+Use `loom participant retire --participant <id>` on the trusted host where its
+exact PID/namespace/start identity is verifiable. If that evidence is unavailable,
+use the [quiescent lifecycle recovery](../architecture/cells.md#participant-lifecycle-baseline)
+after positively terminating or fencing every relevant runtime. API object
+cleanup alone cannot authorize retirement.
 
 There is no migration Job. Every pod migrates at boot under a ClickHouse lease, so a
 Job would only repeat that step, and a pre-upgrade hook would run the new schema while
@@ -432,7 +434,7 @@ NetworkPolicy whose one rule allows every pod and every address but those (none 
   release: Helm refuses to take over an object it does not own, so the upgrade fails.
 - An engine that keeps address ranges off node IPs (Cilium's default) blocks host-network
   endpoints and the nodes' own addresses: NodeLocal DNSCache (so DNS), the EKS Pod
-  Identity agent, and the API server (which `retireLostPods` calls) where the engine
+  Identity agent, where the engine
   gives it an identity of its own. Turn on the engine's node matching, or set
   `guardMetadata: false` and allow them in your own policy.
 
@@ -665,7 +667,21 @@ other than 443 needs a `networkPolicy.extraEgress` rule.
 
 An `http://` proxy URL, as above, sends the identity and the token to the proxy in clear
 on every job: keep that path inside a network you trust, or give the proxy an `https://`
-URL.
+URL. Git then verifies the proxy's certificate before it sends them, against its default
+roots. For a certificate under an authority of your own, mount that authority's bundle
+and name it:
+
+```yaml
+env:
+  LOOM_CODE_GIT_PROXY_URL: https://git-proxy.example:8443
+  LOOM_CODE_GIT_PROXY_TLS_CA_FILE: /etc/git-proxy/proxy-ca.crt
+```
+
+`proxy-ca.crt` is one more key of the `git-proxy-ca` config map here. It is not
+`LOOM_CODE_GIT_PROXY_CA_FILE`, which verifies the remotes behind a proxy that terminates
+their TLS: a proxy that does both under one authority gets the same file in both
+settings. The proxy's certificate must name `git-proxy.example`, the host the URL
+spells.
 
 The proxy and the [repository-job sandbox](#repository-job-sandbox) are not used
 together. `sandbox.required: false` alone does not keep the sandbox off: a pod whose

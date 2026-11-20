@@ -9,6 +9,7 @@ import contextvars
 import json
 import time
 from typing import Any
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -463,7 +464,9 @@ def client(world: _World, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list[di
 
     limiter = ratelimit.Limiter()
     monkeypatch.setattr(ratelimit, "get_limiter", lambda: limiter)
-    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller())
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: _caller())
+    )
     monkeypatch.setattr(routes, "check_acted_for", nothing)
     monkeypatch.setattr(routes, "note_restricted_access", nothing)
     monkeypatch.setattr(routes, "emit_agent_event", emit)
@@ -709,7 +712,9 @@ def test_the_answers_row_names_who_acted_and_its_budget(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(impersonated_by="trusted-ui")
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(impersonated_by="trusted-ui")),
     )
     http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     (row,) = rows
@@ -979,7 +984,9 @@ def test_a_refusal_after_the_token_is_read_carries_its_class_claim(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(traffic_class="bench")
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(traffic_class="bench")),
     )
     world.denied = True  # no viewer: refused after the claim is bound, before classifying
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
@@ -1121,7 +1128,9 @@ def test_an_org_wide_token_is_refused_with_a_row_naming_no_org(
 
     http, rows = client
     monkeypatch.setattr(
-        routes, "verify_bearer_header", lambda *_a, **_k: _caller(org="*", namespaces=("*",))
+        routes,
+        "verify_bearer_header",
+        AsyncMock(side_effect=lambda *_a, **_k: _caller(org="*", namespaces=("*",))),
     )
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 403 and r.json()["detail"]["code"] == "AUTH_INSUFFICIENT"
@@ -1258,7 +1267,9 @@ def test_an_answer_token_or_its_child_cannot_ask_the_chat_route(
 ) -> None:
     from server.assistant.app import routes
 
-    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: _caller(**token))
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: _caller(**token))
+    )
     http, rows = client
     r = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION})
     assert r.status_code == 403
@@ -1339,7 +1350,9 @@ def test_an_answer_token_acting_for_someone_is_still_refused(
 
     # A trusted caller's answer token naming another subject keeps its consumer.
     bearer = _caller(subject="trusted-ui", consumer=ASSISTANT_CONSUMER)
-    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: bearer)
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: bearer)
+    )
     monkeypatch.setattr(settings, "trusted_callers", "trusted-ui")
     http, rows = client
     headers = {**HEADERS, "X-Loom-On-Behalf-Of": "bob"}
@@ -1383,7 +1396,9 @@ def test_a_process_set_up_with_auth_off_is_not_ready(monkeypatch: pytest.MonkeyP
 def test_the_chat_route_with_auth_off_says_so(client: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from server.assistant.app import routes
 
-    monkeypatch.setattr(routes, "verify_bearer_header", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        routes, "verify_bearer_header", AsyncMock(side_effect=lambda *_a, **_k: None)
+    )
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: False)
     http, _rows = client
     r = http.post(ROUTE, headers={"X-Loom-Namespace": NS}, json={"messages": QUESTION})

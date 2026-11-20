@@ -9,6 +9,32 @@ from server.cli import tracker_feed as cli
 from server.core.github_values import FeedInputError
 
 
+@pytest.fixture
+def native_lifetime(monkeypatch):
+    from server.core import retirement
+    from server.core.model_work_gate import ModelWorkGate
+    from server.insights.app import provider_command
+
+    gate = retirement.get_gate()
+    model_gate = ModelWorkGate()
+    finishes = []
+
+    async def enroll():
+        gate.enrolled = True
+
+    async def finish():
+        finishes.append(gate.enrolled)
+        gate.stopped()
+
+    # These store-admission cases keep the real owner contexts with fake native I/O.
+    monkeypatch.setattr(provider_command, "register_process", enroll)
+    monkeypatch.setattr(provider_command, "load_active_configuration", AsyncMock())
+    monkeypatch.setattr(provider_command, "_adopt_overrides", AsyncMock(return_value=True))
+    monkeypatch.setattr(provider_command, "_finish_participant", finish)
+    monkeypatch.setattr(provider_command, "get_model_work_gate", lambda: model_gate)
+    return SimpleNamespace(gate=gate, finishes=finishes)
+
+
 def test_missing_credential_names_only_the_environment_variable(monkeypatch):
     monkeypatch.delenv("FEED_TEST_MISSING_SECRET", raising=False)
     with pytest.raises(FeedInputError, match="FEED_TEST_MISSING_SECRET"):
@@ -140,7 +166,9 @@ async def test_writer_refuses_record_engines_without_acknowledged_read_consisten
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("refusal", ["authority", "cell"])
-async def test_init_refuses_deployment_admission_before_record_or_write(monkeypatch, refusal):
+async def test_init_refuses_deployment_admission_before_record_or_write(
+    monkeypatch, refusal, native_lifetime
+):
     from server.cli import _ch
     from server.core import ch, pg, pg_profile
     from server.settings import settings
@@ -189,7 +217,9 @@ async def test_init_refuses_deployment_admission_before_record_or_write(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_init_checks_actual_deployment_before_external_record_and_closes_both(monkeypatch):
+async def test_init_checks_actual_deployment_before_external_record_and_closes_both(
+    monkeypatch, native_lifetime
+):
     from server.cli import _ch
     from server.core import ch, hosts, pg, pg_profile
     from server.settings import settings
@@ -272,7 +302,10 @@ async def test_init_checks_actual_deployment_before_external_record_and_closes_b
     record.connect.assert_awaited_once()
     record.disconnect.assert_awaited_once()
     deployment.disconnect.assert_awaited_once()
-    close_pool.assert_awaited_once()
+    assert native_lifetime.finishes == [True]
+    assert native_lifetime.gate.closed
+    # The participant teardown owns terminal PG closure; the outer wrapper must not wait again.
+    close_pool.assert_not_awaited()
     assert events[-2:] == ["record disconnect", "deployment disconnect"]
 
 

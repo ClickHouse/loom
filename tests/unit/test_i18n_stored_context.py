@@ -51,7 +51,7 @@ def _stored_page(monkeypatch, source):
     read_text = Path.read_text
     monkeypatch.setattr(t, "sources", lambda: ("README.md",))
     monkeypatch.setattr(t, "LANGUAGES", (lang,))
-    monkeypatch.setattr(t, "prepare", lambda source_path, language: (source, ""))
+    monkeypatch.setattr(t, "prepare", lambda source_path, language, *, inventory=None: (source, ""))
     monkeypatch.setattr(
         Path,
         "read_text",

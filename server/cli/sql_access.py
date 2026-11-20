@@ -70,16 +70,24 @@ def _connected(
 ) -> Any:
     """Run `work(ch)` on one plain connection: the command calls no model. `orgs` or
     `org_free` as `server.cli._ch.connect_declared` takes them."""
-    from server.cli._ch import connect_declared, disconnect
+    from server.cli._ch import check_acceptance, connect_verified, disconnect
     from server.core.ch import get_client
+    from server.insights.app.provider_command import participant_command
 
     async def _go() -> Any:
         ch = get_client()
-        await connect_declared(ch, orgs=orgs, org_free=org_free)
+        await connect_verified(ch)
         try:
-            return await work(ch)
+            async with participant_command():
+                await check_acceptance(orgs=orgs, org_free=org_free)
+                return await work(ch)
         finally:
-            await disconnect(ch)
+            first = sys.exception()
+            try:
+                await disconnect(ch)
+            except BaseException:  # a disconnect failure must not replace the command failure
+                if first is None:
+                    raise
 
     return asyncio.run(_go())
 

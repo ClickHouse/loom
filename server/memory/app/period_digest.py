@@ -41,6 +41,7 @@ from typing import Any
 from server.core import pg
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
+from server.embedding.documents import document_vector
 from server.llm import customer
 from server.llm.identity import reads_writer
 from server.memory.app.provenance import writer_actor
@@ -529,7 +530,7 @@ async def _write_period(
         return False
     try:
         with customer.for_org(period.org, **whose):
-            embedding = await embedder.embed(text)
+            embedding = await document_vector(embedder, text)
     except customer.HOLDS:
         raise  # as for the model call: the identity waits for the org
     except Exception as e:  # noqa: BLE001 — recorded in failures; the pass continues

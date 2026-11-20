@@ -23,8 +23,8 @@ here, once:
   authorized. A refused default (a member's namespace, or the registry unread)
   sets none and is kept for the request, so the handler refuses too.
 - `authorize`: the refusal of `@me` and of a mirror's name first, then the cell's
-  tenancy check (`tenancy.ensure_held`), then the refusal of a revoked subject a
-  trusted caller acts for (`authz.check_acted_for`), first-contact provisioning, the
+  complete person and acted-for check (`authz.check_acted_for`), then the tenancy
+  check (`tenancy.ensure_held`), first-contact provisioning, the
   role + namespace gate (`authorize_op`, raising PermissionError /
   IdentityIncompleteError; a scoped token in its own org gets a refused default's own
   refusal instead), then the restricted-access audit row and the first-write
@@ -308,11 +308,14 @@ async def authorize(
         raise PermissionError(MIRROR_REFUSED)
     # A cell serves only the orgs it holds: checked before anything below provisions
     # or writes for the call (docs/architecture/cells.md).
+    from server.auth.authz import check_acted_for
+
+    await check_acted_for(auth, target.org)
     await tenancy.ensure_held(target.org, auth)
     if auth is None:
         _note_admitted(target)
         return
-    from server.auth.authz import check_acted_for, scope_flags
+    from server.auth.authz import scope_flags
     from server.auth.gateway import is_end_user
     from server.auth.personal_namespace import ensure_personal_namespace_cached
     from server.code.app.member_writes import authorize_op
@@ -331,7 +334,6 @@ async def authorize(
         # A subject a trusted caller may not act for (revoked, deprovisioned, or an `sa:`
         # subject naming no active bot) is refused before anything is provisioned for it
         # (`check_acted_for` admits every other call).
-        await check_acted_for(auth, target.org)
         # The personal namespace is the token's own org's: on a cell, written only
         # where that org is held (a platform admin of another org acting here is not).
         if auth.org == target.org or await tenancy.is_held(auth.org):

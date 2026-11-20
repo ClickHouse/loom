@@ -10,7 +10,7 @@ export interface KnowledgeSourceSync {
   requested_at: string;
   /** When the worker last finished a turn on the source; "" = never. */
   last_synced_at: string;
-  /** ok · failed · rate_limited · credential_invalid; "" = never run. */
+  /** ok · failed · rate_limited · credential_invalid · provider_removed; "" = never run. */
   status: string;
   documents_seen: number;
   changed: number;
@@ -158,6 +158,12 @@ export function syncBadge(sync: KnowledgeSourceSync): SyncBadge {
         };
       }
       return { text: "Synced with a note", tone: "warn", tip: `The last sync noted: ${sync.error}.` };
+    case "provider_removed":
+      return {
+        text: "Meet sync retired",
+        tone: "warn",
+        tip: "Add a Shared folder source for Meet transcripts and notes. Existing documents stay unless you ask to delete them.",
+      };
     case "rate_limited":
       return { text: "Rate limited", tone: "warn", tip: "The source limited the last sync; the next one retries." };
     case "credential_invalid":
@@ -218,7 +224,7 @@ type SourceKind = (typeof SOURCE_KINDS)[number];
 export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCredential: string }> = {
   gdrive: {
     about:
-      "A shared folder of documents, presentations, PDFs, .pptx decks and .docx documents. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
+      "A shared folder of documents, presentations, PDFs, .pptx decks and .docx documents, including Meet notes and transcripts saved as documents. Share it read-only with a service account and paste the account's key; Loom checks the key and the folders before anything is stored.",
     reads: "The key reads the folders",
     noCredential: "Paste the service account's key.",
   },
@@ -236,15 +242,15 @@ export const KIND_FORM: Record<SourceKind, { about: string; reads: string; noCre
   },
   recording: {
     about:
-      "The transcripts of a meeting store's recordings. Paste a credential that grants read-only scopes only; Loom checks it and every id before anything is stored.",
+      "Zoom cloud recording transcripts. Paste a server-to-server app's JSON credential (account_id, client_id, client_secret) with read-only scopes; Loom checks it and every meeting id before anything is stored. For Meet notes and transcripts, choose Shared folder.",
     reads: "The credential reads the meetings",
     noCredential: "Paste the read-only credential.",
   },
 };
 
-/** The kind choice, in the card's words for each kind: "Shared folder", "Pages". */
+/** Add choices name the active stores; stored recordings keep their generic kind label. */
 export const KIND_OPTIONS = SOURCE_KINDS.map((k) => {
-  const label = kindLabel(k);
+  const label = k === "recording" ? "Zoom transcripts" : kindLabel(k);
   return { value: k, label: label.charAt(0).toUpperCase() + label.slice(1) };
 });
 
@@ -261,17 +267,6 @@ export const INCLUDE_OPTIONS = [
  *  `include` (GDRIVE_DEFAULT_INCLUDE), which leaves .docx out. */
 export const DEFAULT_INCLUDE = ["docs", "slides", "pdf", "pptx"] as const;
 
-/** A meeting store's providers, with the credential each takes. */
-export const RECORDING_PROVIDERS = [
-  { value: "meet", label: "meet", hint: "An authorized_user JSON file with the meetings.space.readonly scope only" },
-  {
-    value: "zoom",
-    label: "zoom",
-    hint: "A server-to-server app's JSON (account_id, client_id, client_secret) with read-only scopes",
-  },
-] as const;
-type RecordingProvider = (typeof RECORDING_PROVIDERS)[number]["value"];
-
 /** Each kind's id fields live side by side, so switching the kind keeps them; only the
  *  chosen kind's are sent, and the credential is cleared. */
 export interface SourceForm {
@@ -285,8 +280,7 @@ export interface SourceForm {
   /** notion: page ids and database ids, or their links. */
   pages: string;
   databases: string;
-  /** recording: the provider, and its space ids (meet) or meeting ids (zoom). */
-  provider: RecordingProvider;
+  /** recording: Zoom meeting ids. */
   meetings: string;
   /** Held in the dialog only: sent with add, never shown back. */
   credential: string;
@@ -308,7 +302,6 @@ export function emptySourceForm(): SourceForm {
     projects: "",
     pages: "",
     databases: "",
-    provider: "meet",
     meetings: "",
     credential: "",
   };
@@ -320,10 +313,7 @@ const NAME_RE = /^[a-z][a-z0-9_-]{1,31}$/;
 const FOLDER_ID_RE = /^[A-Za-z0-9_-]{10,128}$/;
 const PROJECT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PAGE_ID_RE = /^[0-9a-f]{32}$/;
-const MEETING_ID_RE: Record<RecordingProvider, RegExp> = {
-  meet: /^[A-Za-z0-9_-]{1,128}$/,
-  zoom: /^[0-9]{9,12}$/,
-};
+const MEETING_ID_RE = /^[0-9]{9,12}$/;
 // Each kind takes 1 to 20 ids; a page store's pages and databases count together.
 const MAX_IDS = 20;
 
@@ -393,11 +383,9 @@ export function databaseIds(text: string): string[] {
   return pieces(text, ANY_SPACE, (p) => pageStoreId(p, false));
 }
 
-/** Meeting space ids (a `spaces/` prefix dropped), or meeting ids with the spaces they
- *  are shown with dropped (`812 3456 7890`). Any other piece is kept as typed, so the
- *  form can name it. */
-export function meetingIds(text: string, provider: RecordingProvider): string[] {
-  if (provider === "meet") return pieces(text, ANY_SPACE, (p) => p.replace(/^spaces\//, ""));
+/** Zoom meeting ids with the spaces they are shown with dropped (`812 3456 7890`).
+ *  Any other piece is kept as typed, so the form can name it. */
+export function meetingIds(text: string): string[] {
   return pieces(text, LINES, (p) => {
     const digits = p.replace(/\s+/g, "");
     return /^[0-9]{1,12}$/.test(digits) ? digits : p.trim();
@@ -413,7 +401,7 @@ function zoomProblems(ids: string[]): string[] {
   const problems =
     joined.length > 0 && rest.length === 0
       ? []
-      : idProblems(rest, MEETING_ID_RE.zoom, "meeting id", "a meeting id (9-12 digits)");
+      : idProblems(rest, MEETING_ID_RE, "meeting id", "a meeting id (9-12 digits)");
   if (joined.length > 0) problems.push(`Put one meeting id per line, or comma-separated: ${joined.join("; ")}.`);
   return problems;
 }
@@ -455,9 +443,7 @@ function configProblems(f: SourceForm): string[] {
       return problems;
     }
     case "recording":
-      return f.provider === "meet"
-        ? idProblems(meetingIds(f.meetings, "meet"), MEETING_ID_RE.meet, "space id", "a space id")
-        : zoomProblems(meetingIds(f.meetings, "zoom"));
+      return zoomProblems(meetingIds(f.meetings));
   }
 }
 
@@ -481,7 +467,7 @@ function sourceConfig(f: SourceForm): Record<string, unknown> {
     case "notion":
       return { page_ids: pageIds(f.pages), database_ids: databaseIds(f.databases) };
     case "recording":
-      return { provider: f.provider, ids: meetingIds(f.meetings, f.provider) };
+      return { provider: "zoom", ids: meetingIds(f.meetings) };
   }
 }
 

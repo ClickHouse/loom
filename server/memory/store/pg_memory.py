@@ -47,6 +47,7 @@ from server.memory.store.rows import (
     MemoryRow,
     _hydrate,
     identity_key,
+    memory_head_state,
     parse_memory_value,
 )
 from server.observability import pg_pipeline
@@ -190,7 +191,7 @@ def heads_unchanged(
     (`read[key]`, or None). By default the head may carry a value committed since (the
     newer version wins, as in ClickHouse) but not another protection (a delete, a pin, a
     lock, a status or a redaction since). `exact` (compare-and-set, a copy) also requires
-    the same version, in the same redaction state, as the row read; a write that read no
+    the same value and metadata as the row read, even when versions tie; a write that read no
     row is checked by protection alone. Raises HeadMoved."""
 
     def recheck(key: IdentityKey, head: dict[str, Any] | None) -> None:
@@ -206,15 +207,9 @@ def heads_unchanged(
 
 def unchanged(read: Any, head: Any) -> bool:
     """Whether `head` is still the very row `read` (`heads_unchanged(exact=True)`)."""
-    return protection(head) == protection(read) and _version_seen(head) == _version_seen(read)
-
-
-def _version_seen(row: Any) -> tuple[int, bool] | None:
-    """A row's version and whether it is redacted: a redaction scrubs in place, a
-    deleted head included."""
-    if row is None:
-        return None
-    return int(_field(row, "version")), _field(row, "redacted_at") is not None
+    read_row = _hydrate(read) if isinstance(read, dict) else read
+    head_row = _hydrate(head) if isinstance(head, dict) else head
+    return memory_head_state(read_row) == memory_head_state(head_row)
 
 
 class AdmissionContendedError(LoomServerError):
@@ -489,11 +484,26 @@ LEFT JOIN loom.memory_deliveries d
   ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
 """
 
+# Lock each exact head only after its six-column key has been sorted.
+# FOR UPDATE keeps the lateral probe separate from the batch's join planning.
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
-{_EXACT_KEYS}
+FROM (
+    SELECT *
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+      AS k(org, namespace, agent, user_id, session_id, memory_key)
+    ORDER BY k.org COLLATE "C", k.namespace COLLATE "C", k.agent COLLATE "C",
+             k.user_id COLLATE "C", k.session_id COLLATE "C", k.memory_key COLLATE "C"
+) k
+CROSS JOIN LATERAL (
+    SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
+    FROM loom.memory_current c
+    WHERE c.org = k.org AND c.namespace = k.namespace AND c.agent = k.agent
+      AND c.user_id = k.user_id AND c.session_id = k.session_id
+      AND c.memory_key = k.memory_key
+    FOR UPDATE OF c
+) c
 {_KEY_ORDER}
-FOR UPDATE OF c
 """
 
 _UPSERT_HEADS = """

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from server.core.model_work_gate import get_model_work_gate
+from server.core.retirement import ProcessStopping, get_gate
 from server.observability.traffic_class import bind_background
 from server.settings import settings
 from server.workers import leader, pass_context, status_store
@@ -162,6 +163,7 @@ class WorkerSupervisor:
         _publish_streak(spec.name, 0)
         _publish_partial(spec.name, 0)
         task = asyncio.create_task(self._supervise_as_background(spec), name=_task_name(spec))
+        get_gate().track(task)
         self._tasks.append(task)
 
     def _restart(self, spec: WorkerSpec, _ended: asyncio.Task[None]) -> None:
@@ -280,7 +282,7 @@ class WorkerSupervisor:
             try:
                 # A pass past its deadline is cancelled and counted as a
                 # failure (TimeoutError).
-                async with get_model_work_gate().admit(wait=True):
+                async with get_gate().admit(), get_model_work_gate().admit(wait=True):
                     # Maintenance waiting consumes neither the pass deadline
                     # nor its duration/accounting. An admitted pass finishes
                     # normally; changing models never cancels it mid-write.
@@ -305,6 +307,8 @@ class WorkerSupervisor:
                         streak=retry_streak,
                     )
                 )
+            except ProcessStopping:
+                return
             except pass_context.PassStopped:
                 # The pass saw a stop or a stale lease between batches. Recorded
                 # like a cancel; the loop top waits until the lease is fresh.

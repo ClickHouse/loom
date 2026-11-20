@@ -101,6 +101,20 @@ LOOM_TOOL_SPECS: tuple[dict[str, Any], ...] = (
                     "description": "semantic (default): a fact; preference: what the user likes; procedural: how to do something",
                     "enum": ["semantic", "preference", "procedural"],
                 },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Repository-relative files this fact concerns; [] clears references. A file reference alone does not prove a resolved code link.",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Classification and repository tags for this fact.",
+                },
+                "source_resource_id": {
+                    "type": "string",
+                    "description": "Supporting source path, document identifier or URL.",
+                },
             },
             "required": ["memory_key", "value"],
             "additionalProperties": False,
@@ -213,13 +227,43 @@ LOOM_TOOL_SPECS: tuple[dict[str, Any], ...] = (
 
 TOOL_NAMES: tuple[str, ...] = tuple(s["name"] for s in LOOM_TOOL_SPECS)
 
+UPDATE_TOOL_SPEC: dict[str, Any] = {
+    "name": "loom_update",
+    "description": (
+        "Correct one existing fact by its saved key in the configured memory scope. "
+        "Use this for a changed fact instead of writing another key. The server refuses an "
+        "ambiguous key; do not choose a row or create a replacement silently. Check updated, "
+        "new_version and the returned content hash before claiming the correction persisted."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "memory_key": {
+                "type": "string",
+                "description": "Existing stable key returned by recall or a write.",
+            },
+            "value": {"type": "string", "description": "The corrected fact."},
+            "if_match_sha256": {
+                "type": "string",
+                "description": "Known current content hash; a changed row refuses the update.",
+            },
+        },
+        "required": ["memory_key", "value"],
+        "additionalProperties": False,
+    },
+}
+
 
 def tool_definitions(
     fmt: ToolFormat = "generic", only: Iterable[str] | None = None
 ) -> list[dict[str, Any]]:
     """Tool definitions in a provider's shape."""
     keep = set(only) if only is not None else None
-    available = (CODE_TOOL_SPEC, *LOOM_TOOL_SPECS) if keep is not None else LOOM_TOOL_SPECS
+    available = (
+        (CODE_TOOL_SPEC, UPDATE_TOOL_SPEC, *LOOM_TOOL_SPECS)
+        if keep is not None
+        else LOOM_TOOL_SPECS
+    )
     specs = [s for s in available if keep is None or s["name"] in keep]
     if fmt == "anthropic":
         return [
@@ -263,6 +307,17 @@ class AgentTools:
             "run_id": run_id,
         }
         keep = set(only) if only is not None else None
+        if (
+            keep
+            and "loom_update" in keep
+            and (
+                not isinstance(user_id, str)
+                or not user_id
+                or user_id == "-"
+                or user_id != user_id.strip()
+            )
+        ):
+            raise LoomError("loom_update requires an application-bound named user_id")
         if keep and "loom_code_lookup" in keep and code_namespace is None:
             raise LoomError("loom_code_lookup requires code_namespace")
         if code_namespace is not None:
@@ -276,6 +331,8 @@ class AgentTools:
                 raise LoomError("code tools require max_result_chars of at least 256")
         self.code_namespace = code_namespace.strip() if code_namespace is not None else None
         available = ("loom_code_lookup", *TOOL_NAMES) if self.code_namespace else TOOL_NAMES
+        if keep is not None:
+            available = (*available, "loom_update")
         self.names: tuple[str, ...] = tuple(n for n in available if keep is None or n in keep)
         self.max_result_chars = max_result_chars
 
@@ -289,7 +346,7 @@ class AgentTools:
         """Run one tool call; the result is the string to hand back to the model."""
         if not self.has(name):
             raise LoomError(f"unknown tool {name}; this agent offers {', '.join(self.names)}")
-        if name in ("loom_remember", "loom_recall") and self.max_result_chars < len(
+        if name in ("loom_remember", "loom_recall", "loom_update") and self.max_result_chars < len(
             _MEMORY_INSUFFICIENT
         ):
             raise LoomError("max_result_chars is too small to report memory result omissions")
@@ -318,7 +375,7 @@ class AgentTools:
                 self.max_result_chars,
             )
         out = await self._run(name, a)
-        if name in ("loom_remember", "loom_recall"):
+        if name in ("loom_remember", "loom_recall", "loom_update"):
             return self._fit_memory_result(out)
         text = out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, default=str)
         if len(text) > self.max_result_chars:
@@ -353,6 +410,11 @@ class AgentTools:
             body: dict[str, Any] = {"memory_key": _str(a, "memory_key"), "value": _str(a, "value")}
             if a.get("memory_type"):
                 body["memory_type"] = str(a["memory_type"])
+            for field in ("files", "tags"):
+                if field in a and a[field] is not None:
+                    body[field] = _strings(a, field)
+            if a.get("source_resource_id") not in (None, ""):
+                body["source_resource_id"] = _str(a, "source_resource_id")
             r = await call("memory.set", body)
             return {
                 **r,
@@ -365,6 +427,16 @@ class AgentTools:
                 "memory_key": r.get("memory_key") or body["memory_key"],
                 "verdict": r.get("conflict_verdict") or "",
             }
+        if name == "loom_update":
+            body = {
+                "memory_key": _str(a, "memory_key"),
+                "value": _str(a, "value"),
+                "agent": "*",
+                "session_id": "-",
+            }
+            if a.get("if_match_sha256") not in (None, ""):
+                body["if_match_sha256"] = _str(a, "if_match_sha256")
+            return await call("memory.update", body)
         if name == "loom_recall":
             # Unpinned, a large top_k serves excerpts (above 15 by default)
             # and drops each hit's explanation.
@@ -462,3 +534,10 @@ def _str(a: Mapping[str, Any], key: str) -> str:
     if not isinstance(v, str) or not v:
         raise LoomError(f"tool argument {key} is required and must be a non-empty string")
     return v
+
+
+def _strings(a: Mapping[str, Any], key: str) -> list[str]:
+    value = a.get(key)
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise LoomError(f"tool argument {key} must be an array of strings")
+    return value

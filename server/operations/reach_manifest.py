@@ -587,6 +587,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "namespace.mark_seen": ("dashboard",),
     "namespace.register": (
         "sdk_method",
+        "sdk_example",
         "dashboard",
     ),
     "namespace.register_category": (

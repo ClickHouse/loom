@@ -111,7 +111,7 @@ async def event_stream(
         await wait(key, min(beat_in, deadline - now))
 
 
-def _bearer_auth(request: Request) -> Any:
+async def _bearer_auth(request: Request) -> Any:
     """The verified principal — the HTTP transport's rule: a bearer that is
     present is verified whether or not the deployment requires one (a CI
     server runs with LOOM_AUTH_REQUIRED=false and its tests still mint
@@ -119,7 +119,7 @@ def _bearer_auth(request: Request) -> Any:
     and None (no principal, every scope check answers yes) otherwise."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
-    auth = verify_bearer_header(request.headers.get("Authorization"))
+    auth = await verify_bearer_header(request.headers.get("Authorization"))
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     return auth
@@ -198,7 +198,7 @@ async def task_watch(
     # Not a registry op, so no transport tags this route's reads; the stream's
     # iteration inherits the tag.
     set_query_tag("task.watch")
-    auth = _bearer_auth(request)
+    auth = await _bearer_auth(request)
     set_current_auth(auth)
     key, inbox_filter, subject = await _resolve_key(
         org, inbox, bool(posted_by_me), from_subject, auth

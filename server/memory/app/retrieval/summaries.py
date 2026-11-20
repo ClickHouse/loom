@@ -23,12 +23,8 @@ _SESSION_SUMMARY_TOP_N = 5
 # Characters of a digest a hit shows; the whole text is read, so it can be checked first.
 _SUMMARY_EXCERPT_CHARS = 1200  # not a setting: wire bound on a hit's excerpt
 
-# Under agent='*' the digest leg fetches this many times its N and dedups per
-# session in Python: a session can carry one row per agent,
-# and the statement carries no `LIMIT 1 BY session_id` so the codes-first
-# shortlist and the lazy column read apply. A namespace with more than four
-# agents per session in the top rows would serve fewer than N digests under
-# the wildcard.
+# Extra candidates leave room for source-state exclusions and duplicate sessions.
+# Deduplication in Python keeps LIMIT BY out of the codes-first vector shortlist.
 _SESSION_SUMMARY_OVERFETCH = 4
 
 
@@ -42,7 +38,7 @@ def dedup_summary_rows(rows: list[dict[str, Any]], *, n: int) -> list[dict[str, 
     seen: set[str] = set()
     out: list[dict[str, Any]] = []
     ordered = sorted(
-        rows, key=lambda r: (float(r.get("distance") or 1.0), str(r.get("session_id") or ""))
+        rows, key=lambda r: (float(r.get("distance", 1.0)), str(r.get("session_id") or ""))
     )
     for r in ordered:
         sid = str(r.get("session_id") or "")
@@ -161,7 +157,7 @@ async def fetch_session_summaries(
         where.append(_aoc)
     where_sql = " AND ".join(where)
     sql = f"""
-        SELECT session_id,
+        SELECT agent, user_id, session_id, version,
                summary_text,
                cosineDistance(summary_embedding, {{q:Array(Float32)}}) AS distance,
                -- NB: alias must NOT be `valid_at` — under the analyzer a
@@ -187,29 +183,26 @@ async def fetch_session_summaries(
         LIMIT {{lim:UInt32}}
         {vector_search_settings(table="loom.session_summaries", column="summary_embedding")}
     """
-    # With an explicit agent the table key (org, namespace, agent, user_id,
-    # session_id, embedding_model) is one row per session under FINAL, so
-    # there is nothing to dedup and the shortlist is exactly n rows. Only the
-    # wildcard can fold several agents' digests of one session — over-fetch
-    # there. The shortlist's exact re-read is per granule, so a larger LIMIT
-    # costs whole granules of vectors: measured 7.2 MiB at 5 rows, 13.3 MiB at
-    # 20 on a 1,564-row namespace.
-    wildcard = not agent or agent in ("*", "-")
-    params["lim"] = int(n) * (_SESSION_SUMMARY_OVERFETCH if wildcard else 1)
+    # Leave room for source-state exclusions and, across agents, duplicate sessions.
+    # The shortlist stays bounded; source checks precede deduplication and top-n.
+    params["lim"] = int(n) * _SESSION_SUMMARY_OVERFETCH
     try:
         rows = await ch.query_all(sql, params=params)
+        from server.memory.store.summary_sources import current_summary_sources
+
+        rows = await current_summary_sources(
+            ch, rows, org=org, namespace=namespace, as_of=as_of, as_of_basis=as_of_basis
+        )
     except Exception as e:  # noqa: BLE001 — the session-summary leg is additive; fail open
         log.warning("fetch_session_summaries failed (fail-open): %s", e)
         return []
-    # A digest that reads as high is written without a vector; this holds back
-    # one an earlier build embedded. No spare row backfills it: such a digest is rare,
-    # and a spare row costs a granule of vectors on every search.
+    # A stored vector does not establish that the digest passes the sensitivity check.
     rows = without_high(rows, lambda r: str(r.get("summary_text") or ""))
     rows = dedup_summary_rows(rows, n=int(n))
     out: list[SearchHit] = []
     for r in rows:
         session_id = str(r.get("session_id") or "")
-        distance = float(r.get("distance") or 1.0)
+        distance = float(r.get("distance", 1.0))
         sim = 1.0 - distance
         out.append(
             SearchHit(

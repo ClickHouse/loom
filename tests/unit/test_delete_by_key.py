@@ -119,8 +119,11 @@ def world(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         memory_repo,
         "build_memory_version_row",
         lambda existing, **kw: {
+            "org": existing.org,
+            "namespace": existing.namespace,
             "memory_key": existing.memory_key,
             "agent": existing.agent,
+            "user_id": existing.user_id,
             "session_id": existing.session_id,
             **kw,
         },

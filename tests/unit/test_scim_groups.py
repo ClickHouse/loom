@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import functools
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -65,7 +66,11 @@ def store(monkeypatch: pytest.MonkeyPatch) -> _Store:
         return "h"
 
     monkeypatch.setattr(scim_groups.audit, "emit", _emit)
-    monkeypatch.setattr(scim_groups, "verify_token", functools.partial(verify_token, secret=SECRET))
+    monkeypatch.setattr(
+        scim_groups,
+        "authenticate_token",
+        AsyncMock(side_effect=functools.partial(verify_token, secret=SECRET)),
+    )
     return s
 
 

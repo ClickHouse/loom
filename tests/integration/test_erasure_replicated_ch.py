@@ -18,6 +18,7 @@ USER = "u1"
 # The tables the steps below read and mutate: a step that reads one outside this list
 # fails here with an unknown table.
 _TABLES = (
+    "carry_acks",
     "memory",
     "memory_embeddings",
     "memory_chunks",
