@@ -579,11 +579,12 @@ without one included, and moving a cell's data to other stores, or adding one, i
 design of its own (Operations). Bots are not in it: `loom bot create` adds them at run
 time, each with one org, and placement already bounds them. The cell's own row in
 `loom.cell_self` holds an accepted fingerprint, `current`, and during a change a second,
-`next`. Its rows, and the cell heartbeat (`loom.cell_heartbeats`, keyed by the process's
-`loom.instances` row and written with it, since a KeeperMap table takes no new column:
-the `LOOM_CELL` it runs with, the state its last read makes, its fingerprint and
-[the keys beside it](#the-heartbeats-keys)), hold no memory
-content and are classified so for erasure. A process matches a value when every field
+`next`. These rows and the cell heartbeat (`loom.cell_heartbeats`) hold no memory content
+and are classified so for erasure. The heartbeat is keyed by the process's `instance_id`.
+A server writes it alongside its `loom.instances` row; a worker writes only the cell
+heartbeat. Since a KeeperMap table takes no new column, the heartbeat records the
+`LOOM_CELL` it runs with, the state its last read makes, its fingerprint and
+[the keys beside it](#the-heartbeats-keys). A process matches a value when every field
 both know is equal, a field the value lacks counting as equal only at its default, so
 builds N and N+1 with the same configuration match one row. With `LOOM_CELL` set, while
 its cell's own row, `first` row or mode row is unread, the state rows are in a `partial`
@@ -686,9 +687,21 @@ version and fields, and beside them keys that no fingerprint compares: they are 
 needs no column for them (`server.core.instances.cell_row`). Their presence proves the build
 that reports them; there is no generation key.
 
-- `participant_id`: this server's provider participant UUID, for joining its actual
-  process lifecycle to the serving instance row. A workers child publishes no instance row.
-- `serves`: `LOOM_SERVES_TRAFFIC`.
+- `participant_id`: this process's provider participant UUID, for joining its actual
+  process lifecycle. A workers child publishes a cell heartbeat but no instance row.
+- `serves`: `LOOM_SERVES_TRAFFIC` on a server, false on a workers child.
+- `attach_observation`: protocol `1`, the permanent lifecycle role (`server` or `worker`),
+  the same canonical participant UUID, its certified host/birth proof, the actual
+  deployment root-key fingerprint, whether the cell gate currently accepts this process,
+  and the configured heartbeat period in integer milliseconds. The period must be finite,
+  positive and exactly representable in milliseconds; an unsupported cadence, role or
+  uncertified birth reports `null`. This object carries no private key material and sits
+  outside the comparable fingerprint's unchanged `v` and `fields`. These observations
+  alone do not activate later-cell attach or prove freshness, peer separation or retirement.
+  After reading its cell state, a workers child with `LOOM_CELL` set acknowledges its
+  first cell heartbeat before starting supervised work, then refreshes it at the existing
+  instance interval. A failed first write refuses boot; a missed later write is logged
+  and retried on the next interval. Its tracked loop stops before guarded retirement.
 - `marked`: whether this process's pooled Postgres sessions keep the tenancy marker
   (`loom.tenancy_checked`). The cell refresh reads it with the state rows, after `RESET ALL`
   in the same transaction: a startup value survives the reset, a `SET` does not, so a
@@ -729,7 +742,7 @@ so a thousand pods of eight workers ask up to 1,600 times a second. Each router 
 answers the route from its own read of the cell's row, made at most once per
 `LOOM_ROUTER_DIRECTORY_CACHE_S`, so the directory sees one read per replica per window; a
 failed read answers 503 for its window, so a down directory is asked no more often and still
-answers 503. A process with no heartbeat (a CLI, the workers child) asks on demand instead,
+answers 503. A process without the background router reader (a CLI, the workers child) asks on demand instead,
 at most once every `LOOM_TENANCY_MODE_CACHE_S`.
 
 The reader keeps the directory's last answer for the tenancy check too, as one of four:

@@ -36,6 +36,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from functools import cache
 from typing import Any
 
@@ -145,20 +146,54 @@ async def beat(ch: Any, *, stopped: bool = False) -> None:
     await ch.insert(TABLE, [row(stopped=stopped)])
 
 
+def _attach_observation(participant_id: str) -> dict[str, Any] | None:
+    """Unsupported lifecycle or sub-millisecond cadence reports no attach capability."""
+    from server.core.provider_process import has_certificate, participant_proof
+    from server.core.retirement import get_gate
+
+    role = get_gate().role
+    if role not in ("server", "worker"):
+        return None
+    try:
+        proof = participant_proof()
+    except ValueError:
+        return None
+    period = Decimal(str(settings.instance_heartbeat_seconds))
+    if not has_certificate(proof) or not period.is_finite():
+        return None
+    numerator, denominator = period.as_integer_ratio()
+    period_ms, remainder = divmod(numerator * 1000, denominator)
+    if period_ms <= 0 or remainder:
+        return None
+    return {
+        "protocol": 1,
+        "role": role,
+        "participant_id": participant_id,
+        "host_proof": proof,
+        "keys_fp": deployment_config.fingerprints(settings)["keys_fp"],
+        "accepting": not cell.gate_reason(),
+        "period_ms": period_ms,
+    }
+
+
 def cell_row() -> dict[str, Any]:
     """What this process reports about its cell (`loom.cell_heartbeats`). Beside the
     fingerprint's version and fields, its JSON carries keys no fingerprint compares
-    (docs/architecture/cells.md, "The heartbeat's keys"): `serves` (LOOM_SERVES_TRAFFIC),
+    (docs/architecture/cells.md, "The heartbeat's keys"): `serves` (LOOM_SERVES_TRAFFIC
+    on a server, false on a worker), `attach_observation` (this process's guarded birth),
     `participant_id` (this process's registered provider identity), `marked`
     (whether this process's pooled sessions keep the tenancy marker, null until a
     cell-state read lands), and with LOOM_CELL set, until the `first` row is read and then
     on a first cell only, `router` and `router_why` (`cell_router.router_key`)."""
     from server.core.provider_process import process_identity
+    from server.core.retirement import get_gate
 
+    participant_id = str(process_identity())
     reported = {
         **cell.as_value(cell.mine()),
-        "serves": bool(settings.serves_traffic),
-        "participant_id": str(process_identity()),
+        "serves": bool(settings.serves_traffic) and get_gate().role != "worker",
+        "participant_id": participant_id,
+        "attach_observation": _attach_observation(participant_id),
         "marked": cell.marked(),
         **cell_router.router_key(),
     }
@@ -172,6 +207,23 @@ def cell_row() -> dict[str, Any]:
 
 async def cell_beat(ch: Any) -> None:
     await ch.insert(CELL_TABLE, [cell_row()])
+
+
+async def _cell_loop(ch: Any) -> None:
+    set_query_tag(QUERY_TAG)
+    while True:
+        await asyncio.sleep(float(settings.instance_heartbeat_seconds))
+        try:
+            await cell_beat(ch)
+        except Exception as error:  # noqa: BLE001 — the next tick retries a missed observation.
+            log.warning("cell heartbeat failed: %s: %s", type(error).__name__, error)
+
+
+async def start_cell_heartbeat(ch: Any) -> asyncio.Task[None]:
+    """Acknowledge the child's first cell row before its supervised work starts."""
+    with query_tag(QUERY_TAG):
+        await cell_beat(ch)
+    return asyncio.create_task(_cell_loop(ch), name="loom-worker-cell-heartbeat")
 
 
 async def read_live(ch: Any, *, all_deployments: bool = False) -> list[dict[str, Any]]:
@@ -391,6 +443,7 @@ __all__ = [
     "read_recent",
     "schema_version",
     "start",
+    "start_cell_heartbeat",
     "stop",
     "tick",
 ]

@@ -20,7 +20,7 @@ import threading
 from typing import Any
 
 from server import boot
-from server.core import retirement
+from server.core import instances, retirement
 from server.settings import settings
 from server.workers import child, leader
 from server.workers.supervisor import get_supervisor
@@ -84,10 +84,52 @@ async def _drain() -> None:
     await _http_clients.aclose()
 
 
+async def _finish_child(
+    ch: Any,
+    services: list[asyncio.Task[None]],
+    beat: asyncio.Task[None],
+    original: BaseException | None,
+) -> None:
+    """Stop owned producers and attempt both store closings without replacing failure."""
+    failures: list[tuple[str, BaseException]] = []
+    try:
+        retirement.get_gate().close()
+        for producer in tuple(retirement.get_gate().producers):
+            producer.cancel()
+        for task in services:
+            task.cancel()
+        await asyncio.gather(*services, return_exceptions=True)
+    except BaseException as error:  # noqa: BLE001 — retain failure while closing both stores.
+        failures.append(("services", error))
+    beat.cancel()
+    try:
+        from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S
+
+        await boot.leave_deployment(ch, budget_s=SHUTDOWN_RETIRE_S)
+    except BaseException as error:  # noqa: BLE001 — retain failure while closing both stores.
+        failures.append(("deployment leave", error))
+    try:
+        await boot.close_storage_authority()
+    except BaseException as error:  # noqa: BLE001 — retain failure while closing both stores.
+        failures.append(("storage close", error))
+    failure = original
+    if failure is None and failures:
+        _, failure = failures.pop(0)
+    if failure is not None:
+        for phase, error in failures:
+            try:
+                BaseException.add_note(
+                    failure, f"workers child {phase} cleanup also failed: {type(error).__name__}"
+                )
+            except BaseException:  # noqa: BLE001 — diagnostics cannot replace the failure.
+                pass
+        if original is None:
+            raise failure
+
+
 async def _serve(fd: int, alive_fd: int) -> None:
     from server import boot
     from server.core.ch import get_client
-    from server.insights.app.provider_barrier import SHUTDOWN_RETIRE_S
     from server.memory.app import embedder_calibration
 
     loop = asyncio.get_running_loop()
@@ -113,12 +155,14 @@ async def _serve(fd: int, alive_fd: int) -> None:
     await ch.connect()
     await boot.open_storage_authority()
     services = []
+    original: BaseException | None = None
     try:
         await _enroll()
         if settings.cell:
             # The passes verify tokens and judge the gate as the parent does: the child
             # reads the cell's rows itself.
             services += await boot.start_cell_state()
+            services.append(retirement.get_gate().track(await instances.start_cell_heartbeat(ch)))
         services += await _start_services(ch)
         supervisor = get_supervisor()
         supervisor.start_all()
@@ -132,16 +176,11 @@ async def _serve(fd: int, alive_fd: int) -> None:
         await supervisor.stop_all(drain_timeout_s=leader.drain_timeout_s())
         await _drain()
         retirement.get_gate().stopped()
+    except BaseException as error:
+        original = error
+        raise
     finally:
-        retirement.get_gate().close()
-        for producer in tuple(retirement.get_gate().producers):
-            producer.cancel()
-        for task in services:
-            task.cancel()
-        await asyncio.gather(*services, return_exceptions=True)
-        beat.cancel()
-        await boot.leave_deployment(ch, budget_s=SHUTDOWN_RETIRE_S)
-        await boot.close_storage_authority()
+        await _finish_child(ch, services, beat, original)
 
 
 def main(argv: list[str] | None = None) -> None:
