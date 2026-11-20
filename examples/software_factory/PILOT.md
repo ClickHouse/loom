@@ -102,3 +102,13 @@ Each attempt starts cold. There is no cross-issue memory write path or warm
 learning arm. A future chronological study needs a separate freeze and may save
 only independently verified facts. Workflow determinism means event routing;
 model trajectories and patches remain stochastic.
+
+## Authored oracle proposal
+
+The optional host behavioral oracle covers the three public bug surfaces with
+parameterized API observations. Assertions and final grades remain outside the
+candidate container. It requires fresh base/reference controls and independent
+review. Its narrower authored coverage is not the official pytest selector
+coverage described by the diagnostic artifacts. A pilot using this oracle must
+freeze that change explicitly, including probe seeds and grader/receipt hashes,
+before approval; no existing draft or diagnostic control authorizes substitution.

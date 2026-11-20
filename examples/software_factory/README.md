@@ -325,8 +325,9 @@ PYTHONPATH="$PWD/sdk/python:$PWD" .venv/bin/python -m examples.software_factory.
 The protocol pins `driver_sha256`. The driver defines `verify_eligibility(protocol)`,
 `prepare(task_id, output)` and `provider_factory(output, audit)`, plus
 `context_factory(task, output, audit)` for context arms. It composes
-`preparation.prepare_historical`, dedicated client bindings and the actual external
-eligibility evidence. Driver module code must have no client construction or
+`preparation.prepare_behavioral`, dedicated client bindings and the actual external
+eligibility evidence. Historical pytest diagnostics remain inadmissible as grades.
+Driver module code must have no client construction or
 network side effects: eligibility runs before the client factories. The driver
 and protocol stay evaluator-private, outside the agent's source tools. They are
 trusted host code; a driver digest alone proves no permission or billing bound.
@@ -376,3 +377,46 @@ names and missing cache counts stay unknown. `attempt_duration_s` comes from the
 factory manifest; complete elapsed time requires a separate controller-supplied
 `end_to_end_s` including setup, hidden grading and cleanup. It is unknown when
 absent. Authored contract inputs exercise the analysis but measure no live effect.
+
+## Authored historical behavioral checks
+
+`behavioral.BehavioralGrader` keeps assertions and its final grade on the host.
+A fixed bridge in the isolated candidate container returns primitive API
+observations. It exposes blueprint construction, redirects and blueprint route
+registration; it accepts no Python program, file path, shell command or verdict.
+The candidate sees API inputs, never the host expectations or grading program.
+Candidate exit status, JUnit and `passed: true` cannot supply a passing grade.
+Missing, extra, replayed, duplicate or malformed observations fail the checks.
+Candidate crashes, syntax errors and time limits return failed checks so the
+agent can revise; Docker transport, state and cleanup failures halt evaluation.
+
+Coverage is deliberately narrow: dotted blueprint names, app redirect methods
+and delegation, and nested blueprint subdomains, with passing neighbors. These
+are authored probes derived from the public requirements. They do not execute
+or replace the official pytest selectors as evidence of equivalent coverage.
+The original diagnostic controls remain separate.
+
+Qualify each case with a frozen private seed and the pinned dependency image:
+
+```bash
+python -m examples.software_factory.qualify_behavioral \
+  --task pallets__flask-4045 --private-config /private/frozen-case.json \
+  --seed "$FACTORY_PROBE_SEED" --output /private/new-behavioral-controls
+```
+
+Set `FACTORY_PROBE_SEED` to 64 lowercase hexadecimal digits. The qualifier
+requires passing visible base behavior, a failing hidden base and
+passing reference behavior. Only the trusted reference control reads the private
+patch. The resulting receipt pins source, image, seed and grading code.
+`prepare_behavioral` verifies that receipt and reads exact-base implementation
+blobs; it does not read the private task file, reference patch or hidden tests.
+Freeze its receipt hash in the application protocol. Use the same seed for
+paired arms; keep seeds and receipts outside agent file access.
+
+The observation container has no network or writable host mount. Source and
+bridge are read-only, and stdout/stderr, runtime, memory and process counts are
+bounded. Exact-name, label-verified cleanup runs before the result returns.
+Assertions and the host grade are outside the container. Independent review,
+fresh actual controls and a protocol that names this narrower coverage are
+required before admitting historical model attempts. This adapter supplies no
+index authorization, provider token bound, billing evidence or spend approval.

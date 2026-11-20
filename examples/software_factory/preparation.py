@@ -6,8 +6,9 @@ import hashlib
 import json
 from pathlib import Path
 
+from .behavioral import BehavioralGrader
 from .historical import FrozenSource, HistoricalGrader, controller_hashes
-from .qualify import load_inputs
+from .qualify import load_inputs, public_task
 
 
 def prepare_historical(
@@ -80,3 +81,73 @@ def prepare_historical(
     ):
         raise PermissionError("Prepared source or grader differs from independent controls")
     return task, grader
+
+
+def prepare_behavioral(
+    task_id: str,
+    output: Path,
+    *,
+    private_config: Path,
+    qualification: Path,
+    qualification_sha256: str,
+    namespace: str,
+    symbol: str,
+):
+    """Prepare only exact-base source after fresh authored behavioral controls.
+
+    The frozen config supplies a mirror path. The private task file, reference
+    patch and official hidden tests are not read during attempt preparation.
+    """
+    if not namespace or not symbol:
+        raise ValueError("Freeze the exact index namespace and named intake symbol")
+    raw = qualification.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != qualification_sha256:
+        raise PermissionError("Behavioral control receipt differs from the protocol")
+    controls, public = json.loads(raw), public_task(task_id)
+    config_raw = private_config.read_bytes()
+    if hashlib.sha256(config_raw).hexdigest() != public["grader_config_sha256"]:
+        raise PermissionError("Independent grader config differs from the audited receipt")
+    source = FrozenSource(Path(json.loads(config_raw)["source_git"]), public["base_commit"])
+    task = source.task(public, namespace, symbol)
+    expected = {
+        "kind": "authored-host-behavioral-controls",
+        "task_id": task_id,
+        "base_commit": task.base_commit,
+        "source_sha256": task.source_sha256,
+        "dependency_image": public["dependency_image"],
+        "config_sha256": public["grader_config_sha256"],
+        "qualified": True,
+        "coverage": "authored-public-behavior-not-official-pytest",
+    }
+    if any(controls.get(k) != v for k, v in expected.items()):
+        raise PermissionError("Behavioral controls do not match this task")
+    grader = BehavioralGrader(
+        source,
+        task_id,
+        public["dependency_image"],
+        controls["seed"],
+        output / "grading",
+    )
+    if controls.get("grader_sha256") != grader.sha256:
+        raise PermissionError("Behavioral grading implementation requires new controls")
+    verify_behavioral_controls(controls, grader)
+    return task, grader
+
+
+def verify_behavioral_controls(controls: dict, grader: BehavioralGrader) -> None:
+    visible = {p.key for p in grader.probes if p.visible}
+    for name in ("visible-base", "base", "reference"):
+        row = controls.get("controls", {}).get(name, {})
+        statuses = row.get("selected", {})
+        expected = visible if name == "visible-base" else {p.key for p in grader.probes}
+        if (
+            row.get("valid") is not True
+            or row.get("result_authority") != "host"
+            or row.get("passed") is not (name != "base")
+            or row.get("grader_sha256") != grader.sha256
+            or set(statuses) != expected
+            or any(type(v) is not bool for v in statuses.values())
+            or any(not statuses[k] for k in visible)
+            or all(statuses.values()) is not (name != "base")
+        ):
+            raise PermissionError("Behavioral base/reference controls are invalid")

@@ -9,13 +9,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from examples.software_factory.behavioral import BehavioralGrader
 from examples.software_factory.historical import (
     FrozenSource,
     HistoricalGrader,
     controller_hashes,
     git,
 )
-from examples.software_factory.preparation import prepare_historical
+from examples.software_factory.preparation import prepare_behavioral, prepare_historical
 from examples.software_factory.workspace import Checkout
 
 
@@ -169,6 +170,92 @@ class HistoricalPreparationContracts(unittest.TestCase):
         self.controls.write_text(self.controls.read_text() + " ")
         with self.assertRaisesRegex(PermissionError, "receipt differs"):
             self.prepare()
+
+
+class BehavioralPreparationContracts(unittest.TestCase):
+    def setUp(self):
+        HistoricalPreparationContracts.setUp(self)
+        self.public["task_id"] = "pallets__flask-4045"
+        config = json.loads(self.config.read_text())
+        source = FrozenSource(Path(config["source_git"]), self.public["base_commit"])
+        self.grader = BehavioralGrader(
+            source,
+            self.public["task_id"],
+            self.public["dependency_image"],
+            "a" * 64,
+            self.root / "behavioral",
+        )
+        task = source.task(self.public, "unqualified-fixture", "value")
+        controls = {}
+        for name in ("visible-base", "base", "reference"):
+            probes = [p for p in self.grader.probes if name != "visible-base" or p.visible]
+            statuses = {p.key: name != "base" or p.visible for p in probes}
+            controls[name] = {
+                "passed": name != "base",
+                "valid": True,
+                "result_authority": "host",
+                "grader_sha256": self.grader.sha256,
+                "selected": statuses,
+            }
+        self.receipt = {
+            "kind": "authored-host-behavioral-controls",
+            "task_id": task.task_id,
+            "base_commit": task.base_commit,
+            "source_sha256": task.source_sha256,
+            "dependency_image": self.public["dependency_image"],
+            "config_sha256": self.public["grader_config_sha256"],
+            "qualified": True,
+            "coverage": "authored-public-behavior-not-official-pytest",
+            "seed": "a" * 64,
+            "grader_sha256": self.grader.sha256,
+            "controls": controls,
+        }
+        self.sha = save(self.controls, self.receipt)
+
+    def prepare(self, sha=None):
+        with patch("examples.software_factory.preparation.public_task", return_value=self.public):
+            return prepare_behavioral(
+                self.public["task_id"],
+                self.root / "worker",
+                private_config=self.config,
+                qualification=self.controls,
+                qualification_sha256=sha or self.sha,
+                namespace="unqualified-fixture",
+                symbol="value",
+            )
+
+    def test_preparation_reads_no_private_task_and_exports_only_exact_base(self):
+        (self.root / "private.json").unlink()
+        task, grader = self.prepare()
+        self.assertEqual(task.files, {"src/flask/app.py": "value = 'base'\n"})
+        self.assertNotIn("seed", vars(task))
+        self.assertEqual(grader.result_authority, "host")
+        self.assertEqual(grader.sha256, self.grader.sha256)
+        checkout = Checkout(self.root / "agent", task)
+        self.assertFalse((checkout.root / ".git").exists())
+        with self.assertRaises(PermissionError):
+            checkout.read("../private.json")
+
+    def test_forged_qualified_flag_does_not_accept_all_passing_base(self):
+        row = self.receipt["controls"]["base"]
+        row["selected"] = {k: True for k in row["selected"]}
+        with self.assertRaisesRegex(PermissionError, "controls are invalid"):
+            self.prepare(save(self.controls, self.receipt))
+
+    def test_missing_observation_and_nonboolean_status_refuse(self):
+        statuses = self.receipt["controls"]["reference"]["selected"]
+        key = next(iter(statuses))
+        statuses[key] = "true"
+        with self.assertRaisesRegex(PermissionError, "controls are invalid"):
+            self.prepare(save(self.controls, self.receipt))
+        del statuses[key]
+        with self.assertRaisesRegex(PermissionError, "controls are invalid"):
+            self.prepare(save(self.controls, self.receipt))
+
+    def test_changed_code_or_probe_seed_requires_new_controls(self):
+        self.receipt["seed"] = "b" * 64
+        with self.assertRaisesRegex(PermissionError, "requires new controls"):
+            self.prepare(save(self.controls, self.receipt))
 
 
 if __name__ == "__main__":

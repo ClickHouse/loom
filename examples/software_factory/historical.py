@@ -70,6 +70,40 @@ def bound_output() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
 
 
+def container_prefix(image: str, workspace: Path, name: str, owner: str) -> list[str]:
+    """Common candidate limits; callers add only their observation transport."""
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
+        raise ValueError("An already local immutable dependency image is required")
+    return [
+        "docker",
+        "create",
+        "--pull=never",
+        "--name",
+        name,
+        "--label",
+        "loom.factory.run=" + owner,
+        "--log-driver=none",
+        "--network=none",
+        "--read-only",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--pids-limit=64",
+        "--memory=512m",
+        "--cpus=1",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--tmpfs",
+        "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
+        "--mount",
+        f"type=bind,source={workspace},target=/workspace,readonly",
+        "--workdir=/workspace",
+        "--env=HOME=/tmp",
+        "--env=PYTHONDONTWRITEBYTECODE=1",
+        "--env=PYTEST_ADDOPTS=",
+        "--env=PYTHONPATH=/workspace/src",
+    ]
+
+
 class FrozenSource:
     """Read only exact-base blobs; the agent never receives the object database."""
 
@@ -218,35 +252,9 @@ class DockerTests:
         )
 
     def command(self, workspace: Path, results: Path, name: str, owner: str) -> list[str]:
-        return [
-            "docker",
-            "create",
-            "--pull=never",
-            "--name",
-            name,
-            "--label",
-            "loom.factory.run=" + owner,
-            "--log-driver=none",
-            "--network=none",
-            "--read-only",
-            "--cap-drop=ALL",
-            "--security-opt=no-new-privileges",
-            "--pids-limit=64",
-            "--memory=512m",
-            "--cpus=1",
-            "--user",
-            f"{os.getuid()}:{os.getgid()}",
-            "--tmpfs",
-            "/tmp:rw,nosuid,nodev,size=64m,mode=1777",
-            "--mount",
-            f"type=bind,source={workspace},target=/workspace,readonly",
+        return container_prefix(self.image, workspace, name, owner) + [
             "--mount",
             f"type=bind,source={results},target=/results",
-            "--workdir=/workspace",
-            "--env=HOME=/tmp",
-            "--env=PYTHONDONTWRITEBYTECODE=1",
-            "--env=PYTEST_ADDOPTS=",
-            "--env=PYTHONPATH=/workspace/src",
             self.image,
             "python",
             "-m",
