@@ -265,6 +265,7 @@ def test_capture_failure_reports_fixed_diagnostics_without_exception_text(record
     assert status["capture_failure"] == {
         "stage": 5,
         "kind": "value",
+        "code": "unavailable",
         "http_status": 0,
         "driver_error": "unavailable",
     }
@@ -332,3 +333,175 @@ def test_capture_stage_identifies_session_creation_failure(recorder, tmp_path):
         finally:
             state["driver_log"].close()
     assert state["capture_stage"] == 5
+
+
+@pytest.mark.parametrize(
+    "failure,stage,kind,code",
+    [
+        ("receipt", 11, "value", "unavailable"),
+        ("stop", 14, "value", "unavailable"),
+        ("export", 16, "value", "browser_export_invalid"),
+        ("probe", 19, "io", "unavailable"),
+        ("metadata", 20, "key", "unavailable"),
+        ("duration", 21, "value", "encoded_video_duration_or_audio_invalid"),
+    ],
+)
+def test_finalization_failure_keeps_fixed_stage_and_kind(
+    recorder, tmp_path, failure, stage, kind, code
+):
+    module, _ = recorder
+    receipt = tmp_path / "synthetic.json"
+    receipt.write_text(json.dumps(module.EXPECTED_RECEIPT))
+    if failure == "receipt":
+        receipt.write_text("not-json private-value")
+    state = {"receipt": receipt, "active": True, "started": 0.0}
+
+    def javascript(_state, script, *_args):
+        if script == "window.finishCapture();" and failure == "stop":
+            raise ValueError("private-browser-error")
+        if "captureReady" in script:
+            return True
+        if "captureBase64" in script:
+            return None if failure == "export" else "YQ=="
+
+    tracks = (
+        [{"@type": "General"}]
+        if failure == "metadata"
+        else [{"@type": "General", "Duration": "10" if failure == "duration" else "35"}]
+    )
+    probe = (
+        OSError("private-probe-error")
+        if failure == "probe"
+        else json.dumps({"media": {"track": tracks}}).encode()
+    )
+    with (
+        mock.patch.object(module, "display"),
+        mock.patch.object(module, "javascript", side_effect=javascript),
+        mock.patch.object(
+            module,
+            "probe_metadata",
+            side_effect=probe if isinstance(probe, Exception) else None,
+            return_value=probe,
+        ),
+        mock.patch.object(module.time, "monotonic", side_effect=[0.0, 40.0, 40.0]),
+    ):
+        with pytest.raises(Exception) as raised:
+            module.finish_capture(state, tmp_path, 0)
+    diagnostic = module.capture_failure(state, raised.value)
+    assert diagnostic == {
+        "stage": stage,
+        "kind": kind,
+        "code": code,
+        "http_status": 0,
+        "driver_error": "unavailable",
+    }
+    assert "private" not in json.dumps(diagnostic)
+
+
+def test_finalization_exception_is_in_the_public_status(recorder):
+    module, _ = recorder
+
+    def start(state, _private):
+        state["capture_stage"] = 8
+
+    def finish(state, *_args):
+        state["capture_stage"] = 19
+        raise ValueError("media_probe_timeout")
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=start),
+        mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(module, "finish_capture", side_effect=finish),
+    ):
+        assert module.main() == 0
+    status = json.loads(
+        (Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json").read_text()
+    )
+    assert status["capture_failure"] == {
+        "stage": 19,
+        "kind": "value",
+        "code": "media_probe_timeout",
+        "http_status": 0,
+        "driver_error": "unavailable",
+    }
+    assert status["video"] is None
+
+
+@pytest.mark.parametrize(
+    "children,changed,expected",
+    [
+        (b"", False, "empty"),
+        (b"123", False, "remaining"),
+        (b"123", True, "unavailable"),
+        (b"1 " * 2049, False, "unavailable"),
+    ],
+)
+def test_post_cleanup_child_census_checks_births_and_bounds(recorder, children, changed, expected):
+    module, _ = recorder
+    calls = 0
+
+    def identity(pid):
+        nonlocal calls
+        if pid == os.getpid():
+            return (0, 0, 0, "self-birth", "S")
+        calls += 1
+        return (os.getpid(), 123, 123, "changed" if changed and calls > 1 else "child-birth", "S")
+
+    with (
+        mock.patch.object(module.Path, "open", side_effect=lambda *_a, **_k: io.BytesIO(children)),
+        mock.patch.object(module, "process_identity", side_effect=identity),
+    ):
+        assert module.post_cleanup_children(True) == expected
+
+
+def test_child_census_requires_subreaper_and_never_exports_ids(recorder):
+    module, _ = recorder
+    with mock.patch.object(module.Path, "open") as read:
+        assert module.post_cleanup_children(False) == "unavailable"
+    read.assert_not_called()
+
+
+def test_event_failure_survives_later_diagnostics_and_cleanup(recorder):
+    module, _ = recorder
+
+    def start(state, _private):
+        state["capture_stage"] = 8
+
+    def javascript(state, *_args):
+        state["driver_http_status"] = 500
+        state["driver_error"] = "unknown error"
+        raise HTTPError("http://private.invalid", 500, "private-message", {}, None)
+
+    def finish(state, *_args):
+        module.capture_phase(state, 12)
+        module.display(state, "synthetic event")
+        module.capture_phase(state, 13)
+        raise ValueError("capture_event_stream_incomplete")
+
+    with (
+        mock.patch.object(module, "start_capture", side_effect=start),
+        mock.patch.object(module, "run_native", return_value=0),
+        mock.patch.object(module, "javascript", side_effect=javascript),
+        mock.patch.object(module, "finish_capture", side_effect=finish),
+    ):
+        assert module.main() == 0
+    raw = (
+        Path(os.environ["RUNNER_TEMP"]) / "pipecat-video-public/recording-status.json"
+    ).read_text()
+    assert json.loads(raw)["capture_failure"] == {
+        "stage": 12,
+        "kind": "http",
+        "code": "unavailable",
+        "http_status": 500,
+        "driver_error": "unknown error",
+    }
+    assert "private" not in raw
+
+
+@pytest.mark.parametrize(
+    "failure", [PermissionError("private-path"), RuntimeError("private-state")]
+)
+def test_child_census_read_refusal_is_unavailable(recorder, failure):
+    module, _ = recorder
+    with mock.patch.object(module.Path, "open", side_effect=failure):
+        assert module.post_cleanup_children(True) == "unavailable"
