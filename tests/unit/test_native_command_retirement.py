@@ -242,18 +242,18 @@ def _claim_prompt_subprocess(result_path):
         monkeypatch.setattr(claim_release, "release_claim", release)
         blocking = os.get_blocking(sys.stdin.fileno())
         trace_path = Path(result_path).with_suffix(".trace")
-        trace = os.fdopen(os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w")
-        trace.write(f"sigint_ignored={signal.getsignal(signal.SIGINT) == signal.SIG_IGN}\n")
-        trace.flush()
+        # The owned child keeps this descriptor open through interpreter shutdown.
+        trace_fd = os.open(trace_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.write(
+            trace_fd, f"sigint_ignored={signal.getsignal(signal.SIGINT) == signal.SIG_IGN}\n".encode()
+        )
         outcome = None
         try:
-            faulthandler.register(signal.SIGUSR1, file=trace, all_threads=True)
+            faulthandler.register(signal.SIGUSR1, file=trace_fd, all_threads=True)
             outcome = access._cmd_claim_release(SimpleNamespace(org="o", namespace="n", yes=False))
         except KeyboardInterrupt:
             outcome = "interrupted"
         finally:
-            faulthandler.unregister(signal.SIGUSR1)
-            trace.close()
             Path(result_path).write_text(
                 json.dumps(
                     {
