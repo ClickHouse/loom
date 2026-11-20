@@ -81,27 +81,27 @@ async def caller_role_on(org: str, namespace: str, subject: str) -> str | None:
     return r if grant_rank(r) else None
 
 
-def require_authed_caller(request: Request) -> tuple[str, str]:
+async def require_authed_caller(request: Request) -> tuple[str, str]:
     """Return (subject, org) for the authenticated caller. Raises 401
     if no valid bearer. In dev mode (auth_required=false, no bearer),
     falls back to a body-supplied identity via the calling endpoint."""
-    info = _authed(request)
+    info = await _authed(request)
     remember_caller(request, info.subject, info.org)
     return info.subject, info.org
 
 
-def require_authed_info(request: Request) -> AuthInfo:
+async def require_authed_info(request: Request) -> AuthInfo:
     """`require_authed_caller`, returning the verified token itself."""
-    info = _authed(request)
+    info = await _authed(request)
     remember_caller(request, info.subject, info.org)
     return info
 
 
-def _authed(request: Request) -> AuthInfo:
+async def _authed(request: Request) -> AuthInfo:
     """The verified bearer's principal; 401 when the request carries none."""
     from server.auth.bearer import missing_bearer, verify_bearer_header
 
-    info = verify_bearer_header(request.headers.get("Authorization"))
+    info = await verify_bearer_header(request.headers.get("Authorization"))
     if info is None:
         raise missing_bearer()
     return info
@@ -134,36 +134,20 @@ async def lowered_aliases(org: str, subject: str) -> list[str]:
     return lowered(await subject_aliases_of(org, subject))
 
 
-def caller_identity(request: Request, *, prefer_bearer_in_dev: bool = False) -> tuple[str, str]:
-    """(subject, org) for a caller-API caller, tolerant of dev mode.
+async def caller_identity(request: Request) -> tuple[str, str]:
+    """The supplied bearer's identity, or the deliberate no-bearer dev identity."""
+    from server.auth.bearer import missing_bearer, verify_bearer_header
 
-    Auth-on: verify the bearer (401 if missing/invalid). Auth-off: a synthetic
-    single-user identity, unless a self-minted bearer is present and
-    `prefer_bearer_in_dev` (so per-subject role lookups stay accurate on
-    multi-member namespaces). A wildcard org falls back to self_signup_org.
-    """
-    from server.auth.bearer import bearer_token, gateway_refused
-    from server.auth.gateway import is_end_user
-    from server.auth.jwt import TokenError, verify_token
-
-    if settings.auth_actually_required():
-        info = _authed(request)
-        org = info.org if info.org and info.org != "*" else settings.self_signup_org
-        remember_caller(request, info.subject, org)
-        return info.subject, org
-    if prefer_bearer_in_dev:
-        try:
-            token = bearer_token(request.headers.get("Authorization"))
-            if token is not None:
-                info = verify_token(token)
-                if is_end_user(info):
-                    raise gateway_refused()
-                org = info.org if info.org and info.org != "*" else settings.self_signup_org
-                remember_caller(request, info.subject, org)
-                return info.subject, org
-        except TokenError:
-            pass
-    return "you", settings.self_signup_org
+    info = await verify_bearer_header(
+        request.headers.get("Authorization"), fallback_org=settings.self_signup_org
+    )
+    if info is None:
+        if settings.auth_actually_required():
+            raise missing_bearer()
+        return "you", settings.self_signup_org
+    org = info.org if info.org and info.org != "*" else settings.self_signup_org
+    remember_caller(request, info.subject, org)
+    return info.subject, org
 
 
 __all__ = [

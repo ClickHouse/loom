@@ -402,12 +402,22 @@ async def test_a_restatement_does_not_take_a_rejected_siblings_verdict(agent: Ag
     assert isinstance(changed, PreconditionFailed) and changed.code == "PINNED_CONFLICT"
 
 
-async def test_a_missing_result_row_shifts_no_other_sets_result(agent: Agent) -> None:
+async def test_a_missing_result_row_shifts_no_other_sets_result(
+    agent: Agent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tests.unit.clock_fake import ManualClock
+
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
     # An N-1 server leaves a blacklisted entry out of `written`: the sets after it still
     # get their own rows, and the one left out gets the version-0 placeholder.
     t: Any = agent.transport
     t.dropped_values = {"D"}
-    results = await asyncio.gather(*[agent.memory.set(k, k.upper()) for k in "abcde"])
+    pending = asyncio.gather(*[agent.memory.set(k, k.upper()) for k in "abcde"])
+    await asyncio.sleep(0)
+    await agent.memory.flush_sets()
+    results = await pending
     by_key = {r["memory_key"]: r for r in results if r.get("coalesced")}
     assert by_key["c"]["version"] == 100
     assert by_key["d"]["version"] == 0 and by_key["d"]["noop"] is True

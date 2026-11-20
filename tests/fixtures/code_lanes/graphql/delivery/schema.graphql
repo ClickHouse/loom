@@ -1,0 +1,54 @@
+# The delivery API: the types every service shares.
+
+"""
+Anything the API can look up by id.
+"""
+interface Locatable {
+  id: ID!
+  depot: Depot
+}
+
+"A courier who carries parcels."
+type Courier implements Locatable {
+  id: ID!
+  name: String!
+  depot: Depot
+  "Parcels on the van, oldest first."
+  parcels(first: Int = 20): [Parcel!]!
+}
+
+type Depot {
+  id: ID!
+  city: String!
+}
+
+enum ParcelState {
+  WAITING
+  OUT_FOR_DELIVERY
+  DELIVERED @deprecated(reason: "Read deliveredAt instead.")
+}
+
+scalar Moment
+
+type Parcel implements Locatable {
+  id: ID!
+  depot: Depot
+  state: ParcelState!
+  deliveredAt: Moment
+}
+
+union Tracked = Courier | Parcel
+
+input ParcelFilter {
+  state: ParcelState = WAITING
+  since: Moment
+}
+
+type Query {
+  parcel(id: ID!): Parcel
+  track(term: String!, filter: ParcelFilter): [Tracked!]!
+}
+
+type Mutation {
+  assign(parcel: ID!, courier: ID!): Courier
+}

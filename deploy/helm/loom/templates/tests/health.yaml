@@ -10,7 +10,7 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation
 spec:
   restartPolicy: Never
-  {{- include "loom.podCommon" (dict "root" . "leads" false) | nindent 2 }}
+  {{- include "loom.podCommon" (dict "root" .) | nindent 2 }}
   containers:
     - name: health
       image: {{ include "loom.image" . }}

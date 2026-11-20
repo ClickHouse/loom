@@ -27,7 +27,9 @@ FIELDS = (
 
 
 def inferred_provider(model: str) -> str:
-    """The provider a served model name implies: fake, local, openai or gemini."""
+    """The provider a served model name implies, including native bedrock: labels."""
+    if model.startswith("bedrock:"):
+        return "bedrock"
     if model.startswith("fake-ngram"):
         return "fake"
     if model == "local" or model.startswith("local:"):

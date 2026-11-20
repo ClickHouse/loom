@@ -517,7 +517,8 @@ async def test_doctors_sessions_read_the_marker_as_the_pool_sends_it() -> None:
         saved = (settings.pg_dsn, settings.cell, pg._expected)
         settings.pg_dsn, settings.cell, pg._expected = dsn, "eu-1", None
         try:
-            state, marked, defects = await doctor_cell._marked_session()
+            state, first, marked, defects = await doctor_cell._marked_session()
+            assert first == (True, "eu-1")
             assert (state, marked) == ("enforced", True) and defects == []
             assert await doctor_cell._unmarked_session() is False
             # A database setting marks every session: doctor names it.
@@ -672,7 +673,8 @@ async def test_a_dropped_guard_function_is_named_in_any_state_and_fails_an_enfor
         await conn.execute(f"DROP FUNCTION {cell_triggers.TENANCY_FUNCTION}()")
         if state == "enforced":
             with pytest.raises(asyncpg.exceptions.UndefinedFunctionError):
-                await cell_triggers.ensure(conn)
+                async with conn.transaction():
+                    await cell_triggers.ensure(conn)
         defects = {(d.kind, d.text) for d in await cell_triggers.missing(conn)}
         assert ("function", "loom.tenancy_refuse_unmarked() is absent") in defects
         if state == "enforced":  # the failed boot created no guard
@@ -712,6 +714,33 @@ async def test_missing_names_a_guard_disabled_narrowed_or_calling_another_functi
         )
         texts = {d.text for d in await cell_triggers.missing(conn)}
         assert "loom.tenancy_refuse_unmarked() has a body or settings no migration writes" in texts
+
+
+@pytest.mark.asyncio
+async def test_ensure_table_creates_a_recording_first_cells_triggers_only_when_asked() -> None:
+    """Attach creates a first cell's triggers in `recording`, one table at a time; a boot's
+    `ensure` never does, and the function passes every row there."""
+    async with _cell("recording") as (dsn, conn):
+        with pytest.raises(RuntimeError, match="recording"):
+            await cell_triggers.ensure_table(conn, "scope_generations")
+        ensure = cell_triggers.ensure_table
+        assert (await ensure(conn, "scope_generations", recording_first=True)).answer == "applied"
+        assert (await ensure(conn, "tenancy", recording_first=True)).answer == "applied"
+        assert await _cell_triggers(conn) == {
+            ("scope_generations", "tenancy_insert", "O"),
+            ("scope_generations", "tenancy_update", "O"),
+            ("tenancy", "tenancy_record", "O"),
+        }
+        # Again: nothing to do.
+        assert (await ensure(conn, "scope_generations", recording_first=True)).answer == "applied"
+        with pytest.raises(ValueError, match="no cell triggers"):
+            await cell_triggers.ensure_table(conn, "idempotency", recording_first=True)
+        plain = await _unmarked(dsn)
+        try:
+            await plain.execute(_INSERT, "unheld-org", "s")  # recording passes every row
+            await plain.execute(_HOLD, "new-org")  # a first cell still recording records
+        finally:
+            await plain.close()
 
 
 @pytest.mark.asyncio

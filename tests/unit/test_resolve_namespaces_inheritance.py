@@ -37,7 +37,20 @@ class _FakeCH:
             grants = [(ns, 2) for ns in self._creator_grants] if "alice" in subs else []
             return [{"grants": grants, "spellings": subs}]
         if "service_accounts" in sql:
-            return [self._sa_row] if self._sa_row else []
+            if self._sa_row is None:
+                return []
+            return [
+                {
+                    "bounded_creator": self._sa_row["created_by"],
+                    "bounded_lineage": [],
+                    "lineage_count": 0,
+                    "subject_bytes": len(self._sa_row["created_by"].encode()),
+                    "revoked_at": None,
+                    "expires_at": None,
+                    "inherit_creator_grants": self._sa_row["inherit_creator_grants"],
+                    "kind": "",
+                }
+            ]
         if "namespace_grants" in sql:
             # Grants belong only to creator 'alice'; every other subject (the
             # sa: token itself, or an unrelated user) has none of their own.

@@ -48,19 +48,19 @@ async def _otel_unindexed_for_health(ch_ok: bool) -> tuple[str, ...] | None:
         return None
 
 
-def _is_platform_admin(request: Request) -> bool:
+async def _is_platform_admin(request: Request) -> bool:
     """Whether the caller's bearer token verifies as a platform admin's, who reads
     each code-index entry that is not restricted. No token, or one that does not
     verify, is an anonymous caller: `/v1/health` refuses no one."""
     from server.auth.bearer import bearer_token
-    from server.auth.jwt import TokenError, verify_token
+    from server.auth.jwt import TokenError, authenticate_token
     from server.operations.base import Role
 
     try:
         token = bearer_token(request.headers.get("Authorization"))
         if token is None:
             return False
-        info = verify_token(token)
+        info = await authenticate_token(token)
     except TokenError:
         return False
     # the admin routes' rule: a scoped token's `ns_roles` is no deployment authority
@@ -394,7 +394,7 @@ async def health(request: Request, response: Response, include: str = "") -> dic
 
     requested = {s.strip() for s in include.split(",") if s.strip()}
     ch_ok, ch_error = await _ping_clickhouse()
-    platform_admin = _is_platform_admin(request)
+    platform_admin = await _is_platform_admin(request)
     prov = _health_provider_fields(
         ch_ok, await _otel_unindexed_for_health(ch_ok), platform_admin=platform_admin
     )

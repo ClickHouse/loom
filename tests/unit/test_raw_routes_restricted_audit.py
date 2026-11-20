@@ -21,6 +21,7 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -66,7 +67,9 @@ def audit_rows(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict
         is_service_account=False,
         token_id="tok-alice",
     )
-    monkeypatch.setattr("server.auth.bearer.verify_token", lambda token: alice)
+    monkeypatch.setattr(
+        "server.auth.bearer.authenticate_token", AsyncMock(side_effect=lambda token: alice)
+    )
     yield rows
 
 

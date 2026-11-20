@@ -222,14 +222,8 @@ serviceAccount:
   name: ""
   # IRSA (eks.amazonaws.com/role-arn) or other cloud identity annotations.
   annotations: {}
-  # Mount the service-account token (retireLostPods mounts it too).
+  # Mount the service-account token for workloads that explicitly need it.
   automountToken: false
-
-# The workers leader retires the provider participant of a pod Kubernetes has
-# deleted (lost with its node, evicted past its grace period), which would
-# otherwise hold the next model change until `loom participant retire`. Grants
-# the service account `get` on pods in this namespace and mounts its token.
-retireLostPods: true
 
 podAnnotations: {}
 podLabels: {}
@@ -428,8 +422,8 @@ assistant:
 # Ingress to the Loom port from `ingressFrom` only. Egress to DNS, the
 # release's web pods, the extractor's pods (with extractor.enabled), the dev
 # ClickHouse (with devClickhouse.enabled), the EKS Pod Identity agent, and TCP
-# 443, the ClickHouse port, postgres.port (with postgres.host) and 6443 (with
-# retireLostPods) anywhere except `egressExcept` (providers, the IdP and git remotes
+# 443, the ClickHouse port and postgres.port (with postgres.host) anywhere except
+# `egressExcept` (providers, the IdP and git remotes
 # have no fixed range); a ClickHouse or Postgres inside the cluster needs an
 # extraEgress rule. Off, `guardMetadata` gives the Loom pods an egress-only policy
 # that allows every pod and every address but `egressExcept`.

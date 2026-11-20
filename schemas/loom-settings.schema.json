@@ -176,6 +176,11 @@
           "type": "string",
           "description": "Which processes run the WorkerSupervisor: auto = the one process of the deployment holding the `workers_supervisor` lease in ClickHouse (server/workers/leader.py), and none outside the deployment (no LOOM_DEPLOYMENT); on = always (under the Postgres authority, only while the cell gate lets the process serve); off = never (a pure web replica)."
         },
+        "bedrock_region": {
+          "default": "",
+          "type": "string",
+          "description": "Region for native Bedrock model requests; empty uses the AWS SDK's region chain. AWS credentials use the SDK's role, profile or environment credential chain."
+        },
         "bind_host": {
           "default": "127.0.0.1",
           "type": "string",
@@ -481,7 +486,7 @@
         "ch_timeout_read_s": {
           "default": 30.0,
           "type": "number",
-          "description": "Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no bound for reads."
+          "description": "Deadline, seconds, for read statements, applied as `max_execution_time` and as a client-side bound that frees the pool slot. 0 = no general read bound. Enforced-cell SCIM decisions still have a complete 30-second ceiling, reduced by a smaller positive value."
         },
         "ch_timeout_write_s": {
           "default": 60.0,
@@ -1142,6 +1147,11 @@
           "default": "",
           "type": "string",
           "description": "The proxy user of an entry that names no `git_proxy_identity`: letters, digits and `. _ ~ @ -`, at most 128. Empty = such an entry's git jobs are refused. Needs code_git_proxy_url."
+        },
+        "code_git_proxy_tls_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies the proxy's own certificate with, in place of its default roots, when code_git_proxy_url is `https://`. Not code_git_proxy_ca_file: that one is for the remote, behind a proxy that terminates TLS under its own authority; this one is for the TLS connection to the proxy. Needs an `https://` code_git_proxy_url."
         },
         "code_git_proxy_token_file": {
           "default": "",
@@ -2009,6 +2019,17 @@
           "type": "string",
           "description": "code.search HyDE: writes a hypothetical indexed passage whose embedding runs a second vector list (see code_search_hyde_*). \"\" = off."
         },
+        "code_search_kind_prior": {
+          "default": "flat",
+          "enum": [
+            "off",
+            "default",
+            "flat",
+            "structural"
+          ],
+          "type": "string",
+          "description": "Chunk-kind ranking prior when the request names none: structural boosts the kind named by the question; flat/default apply fixed tables; off disables it."
+        },
         "code_search_llm_leg_grace_ms": {
           "default": 0,
           "type": "integer",
@@ -2592,11 +2613,12 @@
             "openai",
             "gemini",
             "compatible",
+            "bedrock",
             "local",
             "fake"
           ],
           "type": "string",
-          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
+          "description": "\"\" = infer from `embedding_model` (fake-ngram-* → fake, text-embedding-* → openai, gemini* → gemini, local/local:* → local CPU embedder); or pin \"openai\", \"gemini\", \"bedrock\" (Cohere Embed v4), \"local\", \"fake\". Switching providers changes the embedding space: a full re-embed is required."
         },
         "embedding_retry_attempts": {
           "default": 3,
@@ -2867,7 +2889,7 @@
         "grant_cache_ttl_seconds": {
           "default": 10.0,
           "type": "number",
-          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. It also bounds how long a SCIM deactivation of an email, or a bot disable, takes to stop a trusted caller acting for it on another process, and how long a bot created there takes to be acted for."
+          "description": "Seconds a subject's grant rows are cached for the namespace gate, which caps a token's claim at the grant it holds there. The backstop: a grant change reaches other processes through the per-org grant watermark (acl_watermark_poll_seconds), and this bounds one whose watermark row was never written. SCIM and bot final decisions use this TTL from read start. A complete enforced-cell SCIM check has a separate 30-second ceiling, so its cross-process observation bound is the larger of this TTL and that check's budget; a smaller positive read timeout reduces the latter."
         },
         "hsts_max_age_seconds": {
           "default": 31536000,
@@ -3663,7 +3685,7 @@
         "llm_provider": {
           "default": "",
           "type": "string",
-          "description": "\"openai\" | \"anthropic\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Run `make bench-quick` before making anthropic a default."
+          "description": "\"openai\" | \"anthropic\" | \"bedrock\" | \"local\" (LOOM_LOCAL_LLM_BASE_URL, no key) | \"fake\"; \"\" = infer from LOOM_LLM_MODEL's name (gpt*/o1*/o3*/o4*/chatgpt* → openai, claude* → anthropic, fake* → fake), else from the key present (OPENAI_API_KEY, then ANTHROPIC_API_KEY), else fake. Resolved once at load; an explicit value is never overridden. Bedrock requires llm_model and the SDK credential chain. Run `make bench-quick` before making anthropic a default."
         },
         "llm_request_timeout_s": {
           "default": 300.0,
@@ -3730,9 +3752,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "code.search,code.symbol",
+          "default": "",
           "type": "string",
-          "description": "Ops whose tools/list entry carries `_meta: {\"anthropic/alwaysLoad\": true}`, so a host that defers MCP tools behind tool search lists these up front and an agent calls them on its first turn instead of spending a turn loading them. Comma-separated op names; empty = none."
+          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
         },
         "mcp_auth_mode": {
           "default": "required",
@@ -5639,6 +5661,12 @@
           "type": "number",
           "description": "loom.namespace_write_marks is an in-process max per (org, namespace, plane), flushed as one INSERT this often."
         },
+        "native_command_drain_timeout_s": {
+          "default": 15.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Seconds a native CLI command allows its producers, deferred writes and participant retirement to finish. Expiry leaves the participant unretired."
+        },
         "oauth_access_token_ttl_seconds": {
           "default": 3600,
           "maximum": 86400,
@@ -7296,6 +7324,12 @@
           "exclusiveMinimum": 0,
           "type": "number",
           "description": "A pass with a failed leg on a worker whose interval is longer than this retries after this long, doubling with each further such pass, up to the interval: a weekly pass must not leave one namespace's transient failure standing for a week."
+        },
+        "workers_child_retirement_timeout_s": {
+          "default": 1.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "At most this many seconds to certify a reaped worker child; also bounded by the remaining stop or restart delay. Expiry leaves its participant unretired."
         },
         "workers_process": {
           "default": "child",

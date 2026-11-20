@@ -861,7 +861,8 @@ async def handle_code_repo_set_access(input: Any) -> Any:
                     "updated_at": datetime.now(UTC).replace(microsecond=0, tzinfo=None),
                 }
             )
-            await ch.insert("loom.namespaces", [new_row])
+            with authz.identity_write():
+                await ch.insert("loom.namespaces", [new_row])
             directory_updated = True
         await reg.upsert_access(
             cfg,

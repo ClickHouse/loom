@@ -489,11 +489,26 @@ LEFT JOIN loom.memory_deliveries d
   ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
 """
 
+# Lock each exact head only after its six-column key has been sorted.
+# FOR UPDATE keeps the lateral probe separate from the batch's join planning.
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
-{_EXACT_KEYS}
+FROM (
+    SELECT *
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+      AS k(org, namespace, agent, user_id, session_id, memory_key)
+    ORDER BY k.org COLLATE "C", k.namespace COLLATE "C", k.agent COLLATE "C",
+             k.user_id COLLATE "C", k.session_id COLLATE "C", k.memory_key COLLATE "C"
+) k
+CROSS JOIN LATERAL (
+    SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
+    FROM loom.memory_current c
+    WHERE c.org = k.org AND c.namespace = k.namespace AND c.agent = k.agent
+      AND c.user_id = k.user_id AND c.session_id = k.session_id
+      AND c.memory_key = k.memory_key
+    FOR UPDATE OF c
+) c
 {_KEY_ORDER}
-FOR UPDATE OF c
 """
 
 _UPSERT_HEADS = """

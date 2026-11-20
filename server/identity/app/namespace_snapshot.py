@@ -190,6 +190,7 @@ async def handle_namespace_restore(
     namespace."""
     import time as _time
 
+    from server.auth.authz import identity_write
     from server.observability import audit as _audit
 
     _registry.refuse_unwritable_name(input.target_namespace)
@@ -260,30 +261,34 @@ async def handle_namespace_restore(
         # soft-deleted one, which is reactivated with every other column
         # carried forward. Reuses the probe above.
         if target_existing is not None and not bool(target_existing.get("active", False)):
-            await ch.insert(
-                "loom.namespaces", [{**target_existing, "active": True, "updated_at": now}]
-            )
+            with identity_write():
+                await ch.insert(
+                    "loom.namespaces", [{**target_existing, "active": True, "updated_at": now}]
+                )
             await grant_cache.changed(input.org)  # the claim cap reads account ties from this table
         elif target_existing is None:
-            await ch.insert(
-                "loom.namespaces",
-                [
-                    {
-                        "org": input.org,
-                        "namespace": input.target_namespace,
-                        "owner_email": caller,
-                        "description": (f"Restored from {payload.org}/{payload.source_namespace}"),
-                        "tags": [],
-                        "active": True,
-                        "conflict_threshold": None,
-                        "retention_days": 0,
-                        "warm_days": 0,
-                        "visibility": "private",
-                        "created_at": now,
-                        "updated_at": now,
-                    }
-                ],
-            )
+            with identity_write():
+                await ch.insert(
+                    "loom.namespaces",
+                    [
+                        {
+                            "org": input.org,
+                            "namespace": input.target_namespace,
+                            "owner_email": caller,
+                            "description": (
+                                f"Restored from {payload.org}/{payload.source_namespace}"
+                            ),
+                            "tags": [],
+                            "active": True,
+                            "conflict_threshold": None,
+                            "retention_days": 0,
+                            "warm_days": 0,
+                            "visibility": "private",
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    ],
+                )
     await _registry.insert_admin_grant(ch, input.org, input.target_namespace, caller)
 
     # Our namespace/grant writes move policy too: the insert rechecks all values and

@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
@@ -74,7 +75,7 @@ def app(monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, Limiter, list[str]
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", [op])
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr(http_mod, "_authorize", _authorize)
     import server.core.ratelimit as ratelimit_mod
 

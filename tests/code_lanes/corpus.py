@@ -110,6 +110,12 @@ LANES: tuple[Lane, ...] = (
         manifests=(("go.mod", _CONFIG),),
     ),
     Lane(
+        "graphql/",
+        "graphql",
+        "object, interface, input, enum, union and scalar types, root fields in a "
+        "type and in an `extend type`, and type uses across files",
+    ),
+    Lane(
         "helm/",
         "gotemplate",
         "a chart with a dependency, defines and includes, manifest documents and NOTES.txt",
@@ -553,7 +559,7 @@ def _summarize() -> dict[str, Any]:
                 ]
         if pf.lang == "prisma":
             es = [*es, *prisma_edges(pf)]
-        if pf.lang in ("proto", "gotemplate", "lua"):
+        if pf.lang in ("proto", "gotemplate", "lua", "graphql"):
             # The reference sites over the lane's table
             lane = _lane_module(pf.lang)
             es = [*es, *bind_sites(pf, lane.reference_sites(pf), gated, lane.SITE_RULES)]
@@ -596,10 +602,12 @@ def _summarize() -> dict[str, Any]:
 
 def _lane_module(lang: str) -> Any:
     """The tree-less lane modules, as `ingest._lane_module`."""
-    from server.code.domain.extract import lang_gotemplate, lang_lua, lang_proto
+    from server.code.domain.extract import lang_gotemplate, lang_graphql, lang_lua, lang_proto
 
     if lang == "lua":
         return lang_lua
+    if lang == "graphql":
+        return lang_graphql
     return lang_proto if lang == "proto" else lang_gotemplate
 
 

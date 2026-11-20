@@ -119,7 +119,8 @@ extractor = [
   "sqlglot>=30.27,<31",   # imports sqlglot.tokenizer_core, which a major may move
 ]
 # `loom export-analytics` uploads to S3 under an assumed role, and
-# LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; ships in the image.
+# LOOM_DOCUMENT_OBJECT_STORE=s3 keeps document originals in a bucket; native Bedrock
+# model calls use its credential chain and signing. Ships in the image.
 aws = [
   # 1.36: the first whose client config takes the checksum options the document
   # bucket client sets (put_object's IfNoneMatch came in 1.35.2)
@@ -286,6 +287,8 @@ module = [
   "strands.*",
   "pipecat",
   "pipecat.*",
+  "dspy",
+  "dspy.*",
 ]
 ignore_missing_imports = true
 

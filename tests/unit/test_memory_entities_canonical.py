@@ -4,8 +4,11 @@ idempotent, so a row that already holds canonical text keeps it."""
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
+from server.memory.domain import graph_quality
 from server.memory.domain.graph_quality import (
     MAX_ENTITY_CHARS,
     canonical_entities,
@@ -196,3 +199,82 @@ def test_canonical_text_is_a_fixed_point_for_any_mix_of_its_edge_pieces() -> Non
 def test_only_the_last_segment_of_a_name_is_singular(raw: str, canonical: str) -> None:
     assert canonical_entity_text(raw) == canonical
     assert canonical_entity_text(canonical) == canonical
+
+
+# Frozen examples from this module, test_graph_quality.py, and the combining-mark
+# corpus in test_entity_stopwords_and_embed_batch.py, plus coercion and cap edges.
+_TEXT_ONLY_CASES = [
+    ("api responses", "api response", "api_response", ["api responses"]),
+    ("The Ledger's", "ledger", "ledger", ["The Ledger's"]),
+    (
+        "Alice's   API responses",
+        "alice api response",
+        "alice_api_response",
+        ["Alice's   API responses"],
+    ),
+    ("  an Acme, Inc.  ", "acme inc", "acme_inc", ["an Acme, Inc."]),
+    ("I", "user", "user", ["I"]),
+    ("node.js", "node.js", "node.js", ["node.js"]),
+    ("system.databases", "system.database", "system.database", ["system.databases"]),
+    ("error:Classes", "error:classes", "error:classes", ["error:Classes"]),
+    ("दिल्ली", "दिल्ली", "दिल्ली", ["दिल्ली"]),
+    ("กรุงเทพ", "กรุงเทพ", "กรุงเทพ", ["กรุงเทพ"]),
+    ("Zu\u0308rich", "zürich", "zürich", ["Zu\u0308rich"]),
+    ("İstanbul", "istanbul", "istanbul", ["İstanbul"]),
+    ("The Straße", "straße", "straße", ["The Straße"]),
+    ("Café-Bar!", "café-bar", "café-bar", ["Café-Bar!"]),
+    ("ＴＯＫＹＯ", "tokyo", "tokyo", ["ＴＯＫＹＯ"]),
+    ("ﬁnance", "finance", "finance", ["ﬁnance"]),
+    ("x\u0130\u0301y", "x\u00edy", "x\u00edy", ["x\u0130\u0301y"]),
+    ("", "", "", []),
+    ("   ", "", "", []),
+    (None, "", "", []),
+    (False, "", "", []),
+    (0, "", "", []),
+    ([], "", "", []),
+    ({}, "", "", []),
+    ((), "", "", []),
+    ("...", "", "", ["..."]),
+    (
+        "x" * MAX_ENTITY_CHARS,
+        "x" * MAX_ENTITY_CHARS,
+        "x" * MAX_ENTITY_CHARS,
+        ["x" * MAX_ENTITY_CHARS],
+    ),
+    ("x" * (MAX_ENTITY_CHARS + 1), "", "", []),
+    (
+        "ﬁ" * (MAX_ENTITY_CHARS // 2),
+        "fi" * (MAX_ENTITY_CHARS // 2),
+        "fi" * (MAX_ENTITY_CHARS // 2),
+        ["ﬁ" * (MAX_ENTITY_CHARS // 2)],
+    ),
+    ("ﬁ" * (MAX_ENTITY_CHARS // 2 + 1), "", "", []),
+]
+
+
+@pytest.mark.parametrize(("raw", "canonical", "entity_id", "aliases"), _TEXT_ONLY_CASES)
+def test_text_only_normalization_preserves_text_and_structured_outputs(
+    raw: Any, canonical: str, entity_id: str, aliases: list[str]
+) -> None:
+    entity = graph_quality.canonical_entity(raw)
+    assert entity.text == canonical
+    assert entity.entity_id == entity_id
+    assert entity.aliases == aliases
+    assert graph_quality.canonical_entity_text(raw) == entity.text
+
+
+def test_text_only_normalization_constructs_no_discarded_entities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entity_type = graph_quality.CanonicalEntity
+    allocations = 0
+
+    def counted_entity(*args: Any, **kwargs: Any) -> Any:
+        nonlocal allocations
+        allocations += 1
+        return entity_type(*args, **kwargs)
+
+    monkeypatch.setattr(graph_quality, "CanonicalEntity", counted_entity)
+    actual = [graph_quality.canonical_entity_text(raw) for raw, _, _, _ in _TEXT_ONLY_CASES]
+    assert actual == [canonical for _, canonical, _, _ in _TEXT_ONLY_CASES]
+    assert allocations == 0

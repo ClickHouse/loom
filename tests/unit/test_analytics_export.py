@@ -257,7 +257,10 @@ class _ConnectingCh(_Ch):
 
 
 def test_an_export_of_yesterday_connects_inside_its_deadline_and_hashes_under_the_key(
-    now: datetime, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    stub_model_command,
+    now: datetime,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from server.core import ch as ch_module
     from server.insights.app import analytics_export as app

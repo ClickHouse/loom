@@ -56,6 +56,7 @@ class _Repo(CodeRepo):
 
 class _Embedder:
     model_name = "second-model"
+    dim = 2
 
     async def embed_many(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2] for _ in texts]

@@ -1040,7 +1040,7 @@ async def test_bridge_ask_uses_the_read_namespace_for_governed_conflicts(
         decompose="off",
         top_k=15,
     )
-    assert any(p["ns"] == "ns" and p["pat"] == "%alice_jones%" for p in bridges)
+    assert any(p["ns"] == "ns" and p["pat"] == r"%alice\_jones%" for p in bridges)
     assert [(h.namespace, h.memory_key) for h in result.results] == [
         ("ns", key),
         ("other", key),

@@ -82,6 +82,9 @@ async def job_env(
     add_git_config(out, "http.proxyAuthMethod", "basic")
     if settings.code_git_proxy_ca_file:
         add_git_config(out, "http.sslCAInfo", settings.code_git_proxy_ca_file)
+    if settings.code_git_proxy_tls_ca_file:
+        # For an https:// proxy's own certificate: http.sslCAInfo is for the remote's.
+        add_git_config(out, "http.proxySSLCAInfo", settings.code_git_proxy_tls_ca_file)
     # ssh has no HTTP proxy: a submodule or redirect that names it would connect directly.
     add_git_config(out, "protocol.ssh.allow", "never")
     return out, _secret_forms(identity, token)

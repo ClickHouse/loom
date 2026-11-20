@@ -292,6 +292,14 @@ chunks have vectors, `code.search` answers from its lexical legs and says so.
 | second-model tables, `code_chunks_prefix` | `LOOM_CODE_VECTOR_TABLES`; `loom code vector-twin` | The vector leg shortlists on the smaller twin and rescores on served vectors (`prefix_twin.py`).      |
 | `code_answers`                            | `code.ask`                                         | Answer cache keyed by question embedding; served only if every cited file's hash is current.          |
 
+The answer-cache policy also keys synthesis prompts, output budget and the prose and
+chunk-kind ranking settings. Failed retrieval legs, interrupted or refused synthesis,
+and unavailable synthesis never produce positive or negative cache entries. A returned
+answer discloses these limits with `partial`, `partial_reason` and `note`; `coverage`
+is a model self-assessment rather than verified correctness. See
+[repository questions](../guides/repository-questions.md) for calibration and mixed
+source/documentation retrieval.
+
 Bulk passes leave extra copies per key until a merge. `code/app/index/compaction.py`
 runs `OPTIMIZE … FINAL` on the twin tables after a bulk pass. `code_chunks` is compacted
 only by `loom code compact --table code_chunks --apply`.
@@ -470,6 +478,29 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                                           |
 | `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
 | `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
+
+### Symbol bodies
+
+A definition body covers every declared source line without conflicting overlaps,
+missing lines or skeleton substitutions. Doc-comment copies and continuation headers
+are removed from chunk prefixes when placing the retained lines. The read uses live
+rows under one served embedding label, scoped to one organization, namespace, path and
+line span, with a bounded row count. An unchanged chunk's introduction commit may
+differ from its neighbors; it does not establish the current file revision. This read
+follows live-row publication and does not provide a snapshot across an indexing pass.
+A compiler declaration alone does not establish a larger function body.
+Parser coordinates, source chunking and oversized-piece boundaries count LF lines;
+other Unicode separators inside a string remain source text. A retained prefix ending
+in an ambiguous non-LF separator cannot establish a complete physical line.
+Hydration and indexing share provider-free label canonicalization, including explicit
+local and fake provider overrides. Hydration constructs no embedder, and missing
+provider credentials do not select a fake label's source chunks.
+
+If the retained span cannot be established, exceeds 12,000 characters or needs more
+than 400 chunk rows, the definition carries `elided: true`, `granularity: card` and a
+ranged `next` read. HTTP and MCP preserve that omission. Enclosing-body lookups omit
+unavailable text, and verification cannot use an unread body as negative evidence.
+No source text is fetched from a network or fabricated to fill a gap.
 
 ## Invariants
 

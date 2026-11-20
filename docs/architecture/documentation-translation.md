@@ -3,6 +3,15 @@
 The translation generator splits prepared English text into bounded requests, then checks
 the assembled translation before writing it. English remains the source of truth.
 
+## Pending publication
+
+Selected imports validate current source stamps, model, ownership and content before
+staging. A body link to an absent same-language document uses its English destination
+only when that tracked source and its anchor exist. Native destinations present in the
+selected batch retain their links. README bodies and locales in an active prompt-refresh
+job retain exact text and refresh proofs. Publication still waits for all inbound and
+outbound links and README language dependencies to resolve.
+
 ## Request planning
 
 `english_requests` assigns heading anchors with one page-wide counter. It prefers safe

@@ -27,6 +27,34 @@ class _FakeSpan:
         self.attrs[k] = v
 
 
+def test_unpriced_embedding_cost_and_missing_usage_are_not_zero() -> None:
+    span = _FakeSpan()
+    genai._Embedding(span, "bedrock:profile").record_usage(
+        billed_tokens=0,
+        called_provider=True,
+        usage_known=False,
+    )
+    assert "gen_ai.usage.input_tokens" not in span.attrs
+    assert "gen_ai.usage.cost" not in span.attrs
+    assert span.attrs["loom.embed.cost_unknown"] is True
+    assert span.attrs["loom.embed.usage_unknown"] is True
+
+
+def test_unpriced_embedding_cache_hit_has_zero_spend_without_guessed_saving() -> None:
+    span = _FakeSpan()
+    genai._Embedding(span, "bedrock:profile").record_usage(
+        billed_tokens=0,
+        cached_tokens=12,
+        cache_hits=1,
+        called_provider=False,
+        usage_known=False,
+    )
+    assert span.attrs["gen_ai.usage.input_tokens"] == 0
+    assert span.attrs["gen_ai.usage.cost"] == 0.0
+    assert "loom.embed.cost_saved_usd" not in span.attrs
+    assert span.attrs["loom.embed.cost_saved_unknown"] is True
+
+
 def test_stage_label_is_bounded() -> None:
     """An unknown stage collapses to `other` rather than minting a series.
 

@@ -369,7 +369,9 @@ test("on a phone the card's citation number keeps its glyph's width, and each so
   await page.getByRole("button", { name: "Search", exact: true }).tap();
   const search = page.getByRole("combobox", { name: "Search Loom" });
   await search.pressSequentially("how often are invoices sent?");
-  await expect(page.getByRole("option", { name: 'Ask AI about "how often are invoices sent?"' })).toBeVisible();
+  const ask = page.getByRole("option", { name: 'Ask AI about "how often are invoices sent?"' });
+  await expect(ask).toBeVisible();
+  await expect(ask).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Enter");
   const card = page.getByTestId("search-answer");
   await expect(card.getByTestId("assistant-support")).toBeVisible();

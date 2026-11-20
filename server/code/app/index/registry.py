@@ -89,6 +89,8 @@ async def ensure_registered(
 async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_policy: str) -> None:
     """Write a code namespace's first directory row. The caller holds the namespace's
     account and admins claims, under which it found no row."""
+    from server.auth.authz import identity_write
+
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     row = {
         "org": cfg.org,
@@ -108,7 +110,8 @@ async def insert_first_row(cfg: Any, client: Any, *, restricted: bool, join_poli
         "created_at": now,
         "updated_at": now,
     }
-    await client.insert("loom.namespaces", [row])
+    with identity_write():
+        await client.insert("loom.namespaces", [row])
 
 
 async def _access_row(cfg: Any, client: Any) -> dict[str, Any] | None:
@@ -145,6 +148,7 @@ async def _register_first_row(cfg: Any, client: Any, *, restricted: bool, public
 
 async def _write_row(cfg: Any, client: Any) -> bool:
     """`ensure_registered`'s directory write; True when a row was inserted."""
+    from server.auth.authz import identity_write
     from server.identity.app.namespace_classification import note_restricted
     from server.identity.app.registration import namespace_row
 
@@ -186,7 +190,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         # readable — the row stays visibility=private; reads need the join.
         opened = dict(row)
         opened.update(join_policy="open", visibility="private", updated_at=now)
-        await client.insert("loom.namespaces", [opened])
+        with identity_write():
+            await client.insert("loom.namespaces", [opened])
         logger.info(
             "code namespace %s/%s directory row set open (%s says public)",
             cfg.org,
@@ -198,7 +203,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         narrowed["classification"] = "restricted"
         narrowed["visibility"] = "private"
         narrowed["updated_at"] = now
-        await client.insert("loom.namespaces", [narrowed])
+        with identity_write():
+            await client.insert("loom.namespaces", [narrowed])
         note_restricted(cfg.org, cfg.namespace)
         logger.warning(
             "code namespace %s/%s directory row narrowed to restricted "
@@ -214,7 +220,8 @@ async def _write_row(cfg: Any, client: Any) -> bool:
         widened["classification"] = "standard"
         widened["join_policy"] = str((access or {}).get("join_policy") or "approval")
         widened["updated_at"] = now
-        await client.insert("loom.namespaces", [widened])
+        with identity_write():
+            await client.insert("loom.namespaces", [widened])
         logger.warning(
             "code namespace %s/%s directory row widened to standard (a maintainer's "
             "access row says so; the row said restricted)",

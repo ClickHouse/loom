@@ -378,14 +378,17 @@ async def _landed(org: str, namespace: str, password_hash: str) -> bool:
 
 async def _write(row: dict[str, Any], password_hash: str) -> None:
     """Replace the code with the claimer's password and mark the account claimed."""
+    from server.auth.authz import identity_write
+
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     description = str(row["description"])
     if description == AGENT_DESCRIPTION_UNCLAIMED:
         description = AGENT_DESCRIPTION
-    await get_client().insert(
-        "loom.namespaces",
-        [namespaces.claimed_row(row, password_hash, CLAIMED_TAG, description, now)],
-    )
+    with identity_write():
+        await get_client().insert(
+            "loom.namespaces",
+            [namespaces.claimed_row(row, password_hash, CLAIMED_TAG, description, now)],
+        )
 
 
 async def _audit(org: str, namespace: str, *, confirmed: bool = True) -> None:

@@ -71,11 +71,18 @@ history. No model provider is called.
 
 ## Publishing
 
-The repository's `n8n-publish.yml` workflow checks pull requests and publishes on a stable
-Loom release tag. npm authentication uses GitHub OIDC and provenance, with no registry
-token in the repository. An npm organization administrator registers the trusted
-publisher for `@clickhouse/n8n-nodes-loom`, repository `ClickHouse/loom`, workflow filename
-`n8n-publish.yml`, environment `npm-n8n`. Initial package registration may require an
-administrator before trusted publishing is available.
+The repository's `n8n-publish.yml` workflow checks pull requests and publishes on an
+`n8n-vX.Y.Z` tag matching this package's stable version, independently of a Loom release.
+For version `0.1.0`, push `n8n-v0.1.0` on the reviewed commit after its CI checks pass.
+Stable Loom release tags also publish the current package version if it is not already
+published. Candidate tags do not publish.
+
+npm authentication uses GitHub OIDC and provenance, with no registry token in the
+repository. An npm organization administrator registers the trusted publisher for
+`@clickhouse/n8n-nodes-loom`, repository `ClickHouse/loom`, workflow filename
+`n8n-publish.yml`, environment `npm-n8n`, with direct `npm publish` allowed. npm requires
+the package to exist before configuring trust; its initial registration may require an
+administrator. Verify the published version and provenance before submitting it for a
+community listing. Publication does not establish n8n Cloud verification.
 
 Source and issues: [ClickHouse/loom](https://github.com/ClickHouse/loom).
