@@ -97,12 +97,12 @@ An issue, a conversation transcript, a reusable lesson and a test result serve d
 purposes. Keep the source revision and check results with the handoff so the next agent
 can distinguish a stored claim from a verified result.
 
-| Question | Evidence to collect |
-| --- | --- |
-| Can another agent use the handoff? | Read the saved result with the review identity; check the writer, issue, revision and unresolved work. |
-| Does the lesson still apply? | Inspect the current definition and its link state. Record the reviewer's judgment rather than treating a changed hash as an invalid lesson. |
-| Can unrelated agents read it? | Run a separate denied-access check with a token outside the shared namespace. A different agent name alone is not an access boundary. |
-| Did memory help the task? | Compare task outcomes under the same model, repository revision, tasks and review criteria. Include failed checks and the cost of storing and retrieving context. |
+| Question                           | Evidence to collect                                                                                                                                               |
+| ---------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Can another agent use the handoff? | Read the saved result with the review identity; check the writer, issue, revision and unresolved work.                                                            |
+| Does the lesson still apply?       | Inspect the current definition and its link state. Record the reviewer's judgment rather than treating a changed hash as an invalid lesson.                       |
+| Can unrelated agents read it?      | Run a separate denied-access check with a token outside the shared namespace. A different agent name alone is not an access boundary.                             |
+| Did memory help the task?          | Compare task outcomes under the same model, repository revision, tasks and review criteria. Include failed checks and the cost of storing and retrieving context. |
 
 The reference above exercises an evidence handoff; it is not a measured software-factory
 benchmark. A reported completion is not a passing test, an accepted patch or proof that
