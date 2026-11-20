@@ -185,14 +185,21 @@ def fold_db(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 async def _usage(
-    kept: KeptCH, *, mid: str = MID, recall: int = 0, evidence: int = 0, at: datetime = SEEN
+    kept: KeptCH,
+    *,
+    mid: str = MID,
+    recall: int = 0,
+    evidence: int = 0,
+    at: datetime = SEEN,
+    org: str = "o",
+    namespace: str = "a",
 ) -> None:
     await kept.insert(
         "loom.memory_usage_totals",
         [
             {
-                "org": "o",
-                "namespace": "a",
+                "org": org,
+                "namespace": namespace,
                 "memory_id": mid,
                 "recall_count": recall,
                 "evidence_count": evidence,
@@ -238,7 +245,12 @@ async def test_a_stale_winning_version_is_repaired_without_new_usage(
     expected_counts = (3, 3) if preserve_counts else (0, 1)
     assert (await _counters(kept))[("o", "a", "k")] == (*expected_counts, None)
     await usage_fold.run_pass(ch=kept)
-    [actual] = await kept.query_all("SELECT * FROM loom.memory FINAL WHERE memory_key = 'k'")
+    # A key predicate can move into PREWHERE and hide unapplied patch columns.
+    [actual] = [
+        row
+        for row in await kept.query_all("SELECT * FROM loom.memory FINAL")
+        if row["memory_key"] == "k"
+    ]
     assert actual == {
         **stale,
         "recall_count": 3,
@@ -321,5 +333,64 @@ async def test_completed_scan_persists_its_reset_before_same_second_repairs(
         usage_fold.reset_watermark()  # A restarted supervisor reads the stored reset.
         await _supervised_fold(kept)
         assert (await _counters(kept))[("o", "a", mids[0])][:2] == (2, 1)
+    finally:
+        status_store.reset_for_tests()
+
+
+@pytest.mark.parametrize(
+    "org,namespace", [("o" * 500, "a"), ("o", "n" * 500)], ids=["long-org", "long-namespace"]
+)
+async def test_long_identity_ties_resume_through_the_bounded_status_cursor(
+    fold_db: KeptCH, org: str, namespace: str
+) -> None:
+    from server.workers import status_store
+
+    kept = fold_db
+    kept.create(ddl("worker_status"))
+    mids = [f"6b47c9b7-0000-0000-0000-{i:012d}" for i in range(1, 6)]
+    await _memory(kept, *((org, namespace, mid, mid) for mid in mids))
+    for mid in mids:
+        await _usage(kept, mid=mid, recall=1, org=org, namespace=namespace)
+    cfg = usage_fold.UsageFoldConfig(max_memories_per_pass=2, pass_time_budget_seconds=0)
+    status_store.reset_for_tests(client=kept)
+    try:
+        for _ in range(3):
+            usage_fold.reset_watermark()
+            await _supervised_fold(kept, cfg)
+        assert set((await _counters(kept)).values()) == {(1, 1, SEEN.replace(tzinfo=None))}
+    finally:
+        status_store.reset_for_tests()
+
+
+@pytest.mark.parametrize("counter", ["recall", "evidence"])
+async def test_saturated_counters_do_not_keep_rewinding_a_time_limited_scan(
+    fold_db: KeptCH, counter: str
+) -> None:
+    from datetime import timedelta
+
+    from server.workers import status_store
+
+    kept = fold_db
+    kept.create(ddl("worker_status"))
+    mids = [f"6b47c9b7-0000-0000-0000-{i:012d}" for i in range(1, 4)]
+    await _memory(kept, *(("o", "a", mid, mid) for mid in mids))
+    for i, mid in enumerate(mids):
+        await _usage(
+            kept,
+            mid=mid,
+            recall=2**32 if i == 0 and counter == "recall" else 1,
+            evidence=2**32 if i == 0 and counter == "evidence" else 0,
+            at=SEEN + timedelta(hours=i),
+        )
+    cfg = usage_fold.UsageFoldConfig(max_memories_per_pass=1, pass_time_budget_seconds=0)
+    status_store.reset_for_tests(client=kept)
+    try:
+        for _ in range(3):
+            usage_fold.reset_watermark()
+            await _supervised_fold(kept, cfg)
+        counters = await _counters(kept)
+        expected = (2**32 - 1, 1) if counter == "recall" else (1, 2**32 - 1)
+        assert counters[("o", "a", mids[0])][:2] == expected
+        assert counters[("o", "a", mids[-1])][:2] == (1, 1)
     finally:
         status_store.reset_for_tests()

@@ -670,14 +670,17 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   unfinished mutations. Only "lightweight update unsupported" errors fall back to
   `ALTER TABLE … UPDATE`; a transient error is retried next pass. Every batch retains
   its boundary second because `bumped_at` has second resolution. A cursor ordered by
-  `(bumped_at, org, namespace, memory_id)` pages through ties; `worker_status` stores it
-  when a pass stops at its time budget. A completed scan stores an epoch cursor to
+  `bumped_at`, SHA-256 digests of `org` and `namespace`, and `memory_id` pages through
+  ties. Fixed-width digests fit supported identity sizes within the cursor limit.
+  `worker_status` stores the cursor when a pass stops at its time budget. A completed scan stores an epoch cursor to
   reset the scan: an empty cursor tells the supervisor to keep its previous value.
 
   A full-version insert can carry counters read before a fold and replace its result.
   Every pass therefore compares the absolute totals and last-recall time with the live
   rows, even when the usage high-water mark is unchanged, and rewinds to the earliest
-  discrepancy. This adds an aggregate join per nonempty pass. Repair is eventual once
+  discrepancy. Comparisons use the same UInt32 saturation as the counter writes, so
+  an unattainable total cannot keep rewinding the scan. This adds an aggregate join
+  per nonempty pass. Repair is eventual once
   the competing writes are visible; a read followed by an insert is not atomic. Absolute
   targets and `greatest` make counter repair idempotent across replicas. The usage events
   remain authoritative; the counters on `memory` are a derived projection.

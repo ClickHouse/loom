@@ -554,8 +554,8 @@ async def test_cold_start_watermark_is_derived_not_epoch() -> None:
     await run_pass(ch=ch)
     derive_sql, _ = ch.query_one_calls[1]
     assert "min(t.bumped) AS first_unfolded" in derive_sql
-    assert "t.recall_total > m.recall_count" in derive_sql
-    assert "(1 + t.evidence_total) > m.evidence_count" in derive_sql
+    assert "least(t.recall_total, 4294967295) > m.recall_count" in derive_sql
+    assert "(1 + least(t.evidence_total, 4294967294)) > m.evidence_count" in derive_sql
     # The totals query was bounded by the derived watermark (first_unfolded − 1 s).
     _, params = ch.query_all_calls[0]
     assert params["wm"] == (first_unfolded - timedelta(seconds=1)).replace(tzinfo=UTC)
@@ -611,7 +611,10 @@ async def test_full_batch_keeps_the_boundary_and_pages_after_its_last_identity()
     assert result.batches == 1
     assert result.candidates == 2
     assert len(ch.query_all_calls) == 3
-    assert ch.query_all_calls[2][1]["after"] == (later.replace(tzinfo=UTC), *_key(MID2))
+    assert ch.query_all_calls[2][1]["after"] == (
+        later.replace(tzinfo=UTC),
+        *usage_fold._cursor_identity(*_key(MID2)),
+    )
     assert ch.query_all_calls[2][1]["wm"] == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
     assert usage_fold.current_watermark() == (later - timedelta(seconds=1)).replace(tzinfo=UTC)
 
@@ -917,7 +920,7 @@ async def test_more_than_a_batch_of_tied_totals_all_fold() -> None:
             _totals_row(memory_id=mid)
             for mid in mids
             if T0.replace(tzinfo=UTC) > params["wm"]
-            and (T0.replace(tzinfo=UTC), "clickhouse", "ns", mid)
+            and (T0.replace(tzinfo=UTC), *usage_fold._cursor_identity("clickhouse", "ns", mid))
             > params.get("after", (datetime.min.replace(tzinfo=UTC), "", "", ""))
         ]
         return candidates[: params["lim"]]
@@ -964,7 +967,10 @@ async def test_a_time_limited_tie_scan_resumes_after_handover() -> None:
     ctx = pass_context.begin("usage_fold", resume_cursor=cursor)
     try:
         await run_pass(ch=next_ch)
-        assert next_ch.query_all_calls[0][1]["after"] == (T0.replace(tzinfo=UTC), *_key(MID))
+        assert next_ch.query_all_calls[0][1]["after"] == (
+            T0.replace(tzinfo=UTC),
+            *usage_fold._cursor_identity(*_key(MID)),
+        )
         assert ctx.cursor  # The supervisor persists a nonempty reset for a drained scan.
         ctx.resume_cursor = ctx.cursor
         assert usage_fold._resume_after(T0.replace(tzinfo=UTC)) == (UNIX_EPOCH, "", "", "")
@@ -993,7 +999,7 @@ async def test_reconciliation_rewinds_a_saved_cursor_for_an_older_stale_head() -
     from server.workers import pass_context
 
     later = T0 + timedelta(hours=1)
-    cursor = json.dumps((later.isoformat(), *_key(MID2)))
+    cursor = json.dumps((later.isoformat(), *usage_fold._cursor_identity(*_key(MID2))))
     ch = StubCH()
     _seed_active_pass(ch, totals=[_totals_row()], idents=[_ident_row()], hwm=later)
     ctx = pass_context.begin("usage_fold", resume_cursor=cursor)

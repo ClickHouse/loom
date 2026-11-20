@@ -60,8 +60,9 @@ compares totals with the destination counters: a concurrent full-version
 insert can carry counts read before a fold and must be repaired even when
 no usage timestamp changes. This is eventual reconciliation, not an atomic
 update of future versions. A cold start begins at the earliest discrepancy
-instead of the epoch. A cursor on (bumped_at, org, namespace, memory_id)
-pages through ties and is saved in worker_status when the time budget is spent.
+instead of the epoch. A cursor on bumped_at, fixed-width identity digests,
+and memory_id pages through ties and is saved in worker_status when the time
+budget is spent. Digests keep supported identity sizes within its cursor limit.
 """
 
 from __future__ import annotations
@@ -290,6 +291,16 @@ def _fold_key(org: Any, namespace: Any, memory_id: Any) -> tuple[str, str, str]:
     return str(org), str(namespace), str(memory_id)
 
 
+def _cursor_identity(org: Any, namespace: Any, memory_id: Any) -> tuple[str, str, str]:
+    """Fixed-width sort components fit the supervisor's bounded cursor."""
+    org, namespace, memory_id = _fold_key(org, namespace, memory_id)
+    return (
+        hashlib.sha256(org.encode()).hexdigest().upper(),
+        hashlib.sha256(namespace.encode()).hexdigest().upper(),
+        memory_id,
+    )
+
+
 def _scope_params(keys: list[tuple[str, str, str]]) -> dict[str, Any]:
     """`_FOLD_SCOPE`'s parameters. `keys` stays in the caller's order: the UPDATE's
     transform() pairs it with the targets by position."""
@@ -467,7 +478,7 @@ async def _derive_watermark(ch: _CHClient, hwm: datetime) -> datetime:
     and re-folds when its row is next bumped. With no discrepancy, retain the
     high water mark's second for usage that becomes visible after this read."""
     row = await ch.query_one(
-        """
+        f"""
         SELECT min(t.bumped) AS first_unfolded
         FROM (
             SELECT org, namespace, memory_id,
@@ -483,8 +494,8 @@ async def _derive_watermark(ch: _CHClient, hwm: datetime) -> datetime:
             FROM loom.memory FINAL
             WHERE tombstoned_at IS NULL
         ) AS m ON m.org = t.org AND m.namespace = t.namespace AND m.memory_id = t.memory_id
-        WHERE t.recall_total > m.recall_count
-           OR (1 + t.evidence_total) > m.evidence_count
+        WHERE least(t.recall_total, {_UINT32_MAX}) > m.recall_count
+           OR (1 + least(t.evidence_total, {_UINT32_MAX - 1})) > m.evidence_count
            OR t.last_recalled > coalesce(m.last_recalled_at, toDateTime(0))
         """
     )
@@ -554,8 +565,9 @@ async def _fold_batch(
         FROM loom.memory_usage_totals
         GROUP BY org, namespace, memory_id
         HAVING bumped > {wm:DateTime}
-           AND (bumped, org, namespace, memory_id) > {after:Tuple(DateTime, String, String, String)}
-        ORDER BY bumped ASC, org ASC, namespace ASC, memory_id ASC
+           AND (bumped, hex(SHA256(org)), hex(SHA256(namespace)), memory_id)
+               > {after:Tuple(DateTime, String, String, String)}
+        ORDER BY bumped ASC, hex(SHA256(org)) ASC, hex(SHA256(namespace)) ASC, memory_id ASC
         LIMIT {lim:UInt32}
         """,
         params={"wm": _watermark, "after": after, "lim": int(cfg.max_memories_per_pass)},
@@ -587,7 +599,8 @@ async def _fold_batch(
     # partial batch re-folds from the old watermark, which is safe because
     # targets are absolute.
     cursor = max(
-        (_utc(r["bumped"]), *_fold_key(r["org"], r["namespace"], r["memory_id"])) for r in rows
+        (_utc(r["bumped"]), *_cursor_identity(r["org"], r["namespace"], r["memory_id"]))
+        for r in rows
     )
     # Every batch retains the boundary second for the next pass. The cursor
     # makes progress within this pass without dropping ties past the LIMIT.
@@ -600,10 +613,10 @@ def _resume_after(watermark: datetime) -> _Cursor:
     try:
         saved = json.loads(pass_context.resume_cursor() or "[]")
         if isinstance(saved, list) and len(saved) == 4 and all(isinstance(v, str) for v in saved):
-            at, org, namespace, mid = saved
+            at, org_hash, namespace_hash, mid = saved
             bumped = _utc(datetime.fromisoformat(at))
             if bumped > UNIX_EPOCH and bumped - timedelta(seconds=1) <= watermark:
-                return bumped, org, namespace, mid
+                return bumped, org_hash, namespace_hash, mid
     except ValueError:
         pass  # A truncated cursor restarts from destination reconciliation.
     return UNIX_EPOCH, "", "", ""
