@@ -454,6 +454,7 @@ async def _list_by_score(
         "org = {org:String}",
         "namespace = {ns:String}",
         "tombstoned_at IS NULL",
+        "status != 'rejected'",
         *scope_where(request_scope(), params),
     ]
     # `*` on an identity axis drops that axis from WHERE, the rule the recency path

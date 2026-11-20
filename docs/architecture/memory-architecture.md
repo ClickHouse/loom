@@ -16,7 +16,7 @@ obeys are in [ClickHouse](clickhouse.md).
 | A writer reads its own point write on the next call, search included.                          | Atomic multi-row writes. `memory.bulk_set` and promotion are not transactional.                          |
 | Every write is judged against its peers (merge, duplicate, conflict, refines, rejected).       | Loom deciding truth. Verdicts flag and link rows; the owner or caller resolves.                          |
 | Derived work (entities, chunks, summaries, statistics) never fails or slows the primary write. | Derived rows current at every instant. They converge within a worker interval.                           |
-| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | Transaction-time queries. Validity (`valid_at`, `valid_to`, `invalid_at`) is valid-time only.            |
+| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | A complete reconstruction of every overwritten value at an arbitrary transaction time.                   |
 | Search explains itself: per-component scores, an abstain code, a retrieval risk.               | One ranking formula for all corpora. Modes, recipes and namespace defaults exist because corpora differ. |
 
 ## Components
@@ -991,6 +991,24 @@ and lets a client conditionally delete the exact writer/version without resolvin
 a key across authors. Namespace and end-user admission still select readable rows
 before serialization; the field grants no additional read or write access.
 
+Graph edges, degrees and typed-triple matches are namespace aggregates without a user,
+session, agent or run identity. A read bounded on one of those axes omits the aggregate
+graph signals, including hub pruning and graph paths. Its fact legs retain their scoped
+cosine and query-entity ranking. Namespace-wide reads use the graph aggregates.
+
+Session digests carry the keys they compressed in `derived_from`. Before deduplication,
+the summary leg checks those known sources under the digest's full identity. A source
+that is missing, unserved, deleted, expired, outside its validity, high-sensitivity or at a newer
+version withholds the digest. An unreadable source check withholds all unchecked digests.
+Without source revision hashes, a later source version conservatively withholds a digest
+during replay too. Lineage covers extracted facts, not every sentence of the transcript:
+a digest without a known source remains session evidence, and does not prove that its
+statements are current facts.
+
+`memory.list` excludes rejected rows from both sort orders and counts. A key lookup can
+inspect a rejected row. `memory.for_file` also checks `valid_to` before adding a fact to
+the edit context.
+
 `handle_memory_search` (`server/memory/app/search/handler.py`) runs phases, one
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.
@@ -1176,6 +1194,10 @@ supervisor counts it. A worker that declares `owned_tables` runs its first pass 
 when one of them is empty for a namespace in scope (`workers/first_pass.py`).
 
 ## Lifecycle
+
+The `invalid_at` retirement stamp uses the record clock, including supersession within
+one extraction batch. A successor's backdated `valid_at` does not backdate when the
+service learned that its predecessor was retired.
 
 Every lifecycle change is a new version built with `build_memory_version_row`:
 tombstone, restore, lock, promote, demote, supersession (`status='superseded'`,
@@ -1537,12 +1559,15 @@ a per-process copy of `loom.memory_webhooks`, read again every
 first write after each interval waits for one registry read
 (`server/core/polled_copy.py`). A failed read keeps the last copy. A write on a cold copy
 waits for the first read; if that read fails, writes announce nothing (noted as a
-degradation) until a read lands. `memory.clear` tombstones with one mutation per table
-(when a lock keeps some rows, the embeddings one names the hashes of the locked identities
-it read; past 2,500 of them the scope is split into hash buckets, one mutation each, so a
-mutation's command stays small in Keeper) and, only when a webhook of the namespace takes
-`memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
-sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
+degradation) until a read lands. `memory.clear` sets its version cutoff above every
+observed scoped head, including writers with faster clocks. Under sequential consistency
+it pages older unlocked heads in sort-key order and writes complete tombstone versions, so
+history records the clear. Each committed page
+announces `memory.tombstoned` before retiring its older vectors. A scoped embeddings
+mutation removes residual orphan vectors below the clear's version. Locked or newer heads
+are excluded by their identity hashes; past 2,500 identities the cleanup uses hash buckets to bound each
+command. A write above the cutoff keeps its memory and vectors. Counts and events include
+only tombstones confirmed as the current heads.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease

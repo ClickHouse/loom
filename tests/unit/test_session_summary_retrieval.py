@@ -122,8 +122,8 @@ async def test_default_n_overfetches_and_dedups_in_python() -> None:
         ch, org="o", namespace="ns", agent="bot", user_id="u", query_vec=[0.1], embedding_model="m"
     )
     sql, params = ch.calls[0]
-    # An explicit agent is one row per session under FINAL: exactly N rows.
-    assert params["lim"] == _SESSION_SUMMARY_TOP_N
+    # An explicit agent still needs spare candidates for source-state exclusions.
+    assert params["lim"] == _SESSION_SUMMARY_TOP_N * _SESSION_SUMMARY_OVERFETCH
     assert "n" not in params
     # The wildcard can fold several agents' digests of one session: over-fetch.
     ch_star = StubCH(returns=[])
