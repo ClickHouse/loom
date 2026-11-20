@@ -121,6 +121,62 @@ describe("SourcesList", () => {
     expect(screen.getByRole("button", { name: "Refresh sources" })).toBeEnabled();
   });
 
+  it("keeps refresh focused and rows visible while ignoring repeated presses until the read settles", async () => {
+    let finish!: (value: KnowledgeSourceList) => void;
+    sources.listKnowledgeSources
+      .mockResolvedValueOnce(LISTED)
+      .mockImplementationOnce(
+        () =>
+          new Promise<KnowledgeSourceList>((resolve) => {
+            finish = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(LISTED);
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable />);
+    const refresh = await screen.findByRole("button", { name: "Refresh sources" });
+    await userEvent.click(refresh);
+    expect(refresh).toHaveFocus();
+    expect(refresh).toHaveAttribute("aria-busy", "true");
+    expect(refresh).toBeEnabled();
+    expect(screen.getByRole("list", { name: "Document sources" })).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "design-docs" })).toBeInTheDocument();
+    await userEvent.click(refresh);
+    expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      finish(LISTED);
+    });
+    expect(refresh).not.toHaveAttribute("aria-busy");
+    expect(screen.getByRole("list", { name: "Document sources" })).not.toHaveAttribute("aria-busy");
+    expect(refresh).toHaveFocus();
+    await userEvent.click(refresh);
+    await waitFor(() => expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(3));
+  });
+
+  it("clears refresh busy state after a failed read and allows recovery", async () => {
+    let fail!: (error: unknown) => void;
+    sources.listKnowledgeSources
+      .mockResolvedValueOnce(LISTED)
+      .mockImplementationOnce(
+        () =>
+          new Promise<KnowledgeSourceList>((_resolve, reject) => {
+            fail = reject;
+          }),
+      )
+      .mockResolvedValueOnce(LISTED);
+    render(<SourcesList org="acme" namespace="docs" place={place} manageable />);
+    await userEvent.click(await screen.findByRole("button", { name: "Refresh sources" }));
+    expect(screen.getByRole("button", { name: "Refresh sources" })).toHaveAttribute("aria-busy", "true");
+    await act(async () => {
+      fail(failure());
+    });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("the store did not answer");
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry" }));
+    expect(await screen.findByRole("button", { name: "Refresh sources" })).not.toHaveAttribute("aria-busy");
+    expect(screen.getByRole("list", { name: "Document sources" })).not.toHaveAttribute("aria-busy");
+    expect(sources.listKnowledgeSources).toHaveBeenCalledTimes(3);
+  });
+
   it("uses server-proven ownership when the signed-in subject is an alias", async () => {
     useStore.setState({ whoami: { authenticated: true, subject: "alice-alias", org: "acme", roles: ["writer"] } });
     sources.listKnowledgeSources.mockResolvedValue({ enabled: true, sources: [connectedSource("own-alias", "alice")] });

@@ -31,6 +31,7 @@ import { isOpAbsent } from "../lib/trackerSources";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { Skeleton } from "../components/Skeleton";
 import { IconButton } from "../components/IconButton";
+import { BusyButton } from "../components/ui/BusyButton";
 import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
@@ -184,6 +185,7 @@ function ScopedSourcesList({
     if (open) heading.current?.focus();
   }, [open]);
   const [nonce, setNonce] = useState(0);
+  const [reading, setReading] = useState(true);
   const [reloadingItems, setReloadingItems] = useState(false);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
@@ -191,7 +193,10 @@ function ScopedSourcesList({
   const [connectionKind, setConnectionKind] = useState<string | null>(null);
   const [details, setDetails] = useState<string | null>(null);
   const id = { org, namespace };
-  const reload = () => setNonce((n) => n + 1);
+  const reload = () => {
+    setReading(true);
+    setNonce((n) => n + 1);
+  };
 
   useAbortableEffect(
     async (signal, live) => {
@@ -205,7 +210,10 @@ function ScopedSourcesList({
         else if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
         else setState({ kind: "error", error: e });
       } finally {
-        if (live()) setReloadingItems(false);
+        if (live()) {
+          setReading(false);
+          setReloadingItems(false);
+        }
       }
     },
     [org, namespace, nonce],
@@ -282,7 +290,7 @@ function ScopedSourcesList({
         </p>
       )}
       {state.kind === "ready" && state.sources.length > 0 && (
-        <ul className="space-y-1.5" aria-label="Document sources">
+        <ul className="space-y-1.5" aria-label="Document sources" aria-busy={reading || undefined}>
           {state.sources.map((s) => (
             <SourceRow key={s.name} s={s} items={menu(s)} onOpen={() => setDetails(s.name)} />
           ))}
@@ -331,9 +339,15 @@ function ScopedSourcesList({
         </div>
       )}
       {state.kind === "ready" && (
-        <Button type="secondary" htmlType="button" disabled={busy || reloadingItems} onClick={reload}>
+        <BusyButton
+          type="secondary"
+          htmlType="button"
+          busy={reading}
+          disabled={busy || reloadingItems}
+          onClick={reload}
+        >
           Refresh sources
-        </Button>
+        </BusyButton>
       )}
       {acting && (
         <Suspense fallback={null}>
