@@ -1,5 +1,8 @@
 // The place picker (a select, or the tree beside the page), the path and chips, the
 // collection's menu, New collection, and how the list is read again after a write.
+import { startTransition } from "react";
+import { flushSync } from "react-dom";
+import { announceCreated } from "../flows/CreateCollectionDialog";
 import { repeatedTitles } from "../lib/collections";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "../test/rtl";
 import { entry, matchOnly, Picker, read, ROWS, settle } from "../test/libraryCollections";
@@ -229,6 +232,28 @@ describe("useReadableCollections", () => {
     await settle();
     expect(api.listCollections).toHaveBeenCalledTimes(1);
     expect(api.listCollections.mock.calls[0][1].signal.aborted).toBe(false);
+  });
+
+  it("coalesces a lower-priority create announcement with its synchronous opening read", async () => {
+    let latest: ReadableCollections | null = null;
+    function Holder() {
+      latest = useReadableCollections("acme");
+      return null;
+    }
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a")], next_cursor: null });
+    render(<Holder />);
+    await settle();
+    const made = { namespace: "col-new", parent: "", created: true, title: "New" };
+    api.listCollections.mockResolvedValue({ collections: [entry("col-a"), entry(made.namespace)], next_cursor: null });
+    const reads = api.listCollections.mock.calls.length;
+    await act(async () => {
+      // Opening uses flushSync: the announcement must not arrive later at a lower priority.
+      startTransition(() => announceCreated(made, "New", "acme"));
+      flushSync(() => latest?.reload(made.namespace));
+      await Promise.resolve();
+    });
+    await settle();
+    expect(api.listCollections.mock.calls.length - reads).toBe(1);
   });
 
   it("requests document counts with every collection page", async () => {
