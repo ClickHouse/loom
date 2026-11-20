@@ -623,3 +623,248 @@ def test_assistant_ask_with_auth_off_says_so(monkeypatch: pytest.MonkeyPatch) ->
             ask.handle_assistant_ask(AssistantAskInput(org=ORG, namespace=NS, question="q"))
         )
     assert refused.value.to_detail()["reason"] == "auth_off"
+
+
+@pytest.fixture
+def native_model(monkeypatch):
+    from server.llm import agent as models
+
+    calls = []
+
+    class Model:
+        async def stream(self, messages, descriptors, maximum, turn):
+            calls.append("stream")
+            turn.sent = turn.usage_complete = True
+            turn.usage = models.Usage(1000, 100)
+            turn.stop, turn.text = "stop", "Nothing stored in Loom answers this."
+            yield turn.text
+
+    def model_for(provider, model):
+        calls.append("model")
+        return Model()
+
+    monkeypatch.setattr(settings, "assistant_price_model", "claude-haiku-4-5")
+    monkeypatch.setattr(models, "model_for", model_for)
+    return calls
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_marked_chat_has_a_server_owned_first_flag(client, world, native_model, streamed):
+    world.mirror_sources = [{"namespace": NS, "source_id": "source"}]
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": streamed})
+    assert response.status_code == 200
+    if streamed:
+        assert response.content.startswith(b'data: {"mirrored":true}\n\n')
+        assert b"Nothing stored in Loom answers this." in response.content
+        assert b"data: [DONE]" in response.content
+    else:
+        assert response.content.startswith(b'{"mirrored":true,')
+        assert response.json()["choices"][0]["message"]["content"] == (
+            "Nothing stored in Loom answers this."
+        )
+    assert native_model == ["model", "stream"]
+    assert len(rows) == 1 and runtime._running == {}
+    assert world.source_queries == 1
+    assert world.delegated["answer_mirrors"] is False
+
+
+def test_a_marked_pre_stream_refusal_keeps_its_first_flag(client, world, native_model):
+    world.mirror_sources = [{"namespace": NS, "source_id": "source"}]
+    world.over_cap = True
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": True})
+    assert response.status_code == 429
+    assert response.content.startswith(b'{"mirrored":true,')
+    assert native_model == [] and world.tool_requests == []
+    assert len(rows) == 1 and runtime._running == {}
+    assert world.source_queries == 1 and "minted" not in world.delegated
+
+
+def test_a_source_activated_after_an_ordinary_answer_cannot_add_a_mirror_leg(world):
+    from server.auth.context import current_auth_var
+    from server.auth.session_protection import request_declaration
+    from server.core import request_work
+    from server.knowledge.app import source_access
+
+    async def run():
+        bag = request_work.begin()
+        with request_declaration({"headers": [(b"x-loom-session-protection", b"v1")]}):
+            ticket = await runtime.open_answer(_caller(), ORG, NS)
+        try:
+            assert not ticket.mirrored and not bag.mirror_marked
+            world.mirror_sources = [{"namespace": NS, "source_id": "activated"}]
+            auth = _caller(
+                token_id=f"{runtime.ANSWER_JTI_PREFIX}ordinary",
+                session_protection=True,
+                answer_mirrors=world.delegated["answer_mirrors"],
+            )
+            token = current_auth_var.set(auth)
+            try:
+                plan = await source_access.prepare(ORG, [NS])
+            finally:
+                current_auth_var.reset(token)
+            assert not plan.marked and not plan.sources and not bag.mirror_marked
+            assert world.source_queries == 1
+        finally:
+            ticket.release()
+
+    asyncio.run(run())
+    assert runtime._running == {}
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_marked_stream_commits_real_ledger_delivery_before_done(
+    world, native_model, monkeypatch, failure
+):
+    from server.assistant.app import routes
+    from server.core import request_tail, request_work
+    from server.core.diagnostics import codes_only
+    from server.observability import events
+
+    world.mirror_sources = [{"namespace": NS, "source_id": "source"}]
+    attempted, committed, sent = [], [], []
+    expected = cost_accumulator.turn_cost_usd(
+        "claude-haiku-4-5", input_tokens=1000, output_tokens=100
+    )
+
+    async def commit(event):
+        await asyncio.sleep(0)
+        assert codes_only() and event.mirror_marked
+        assert event.operation == "assistant.ask" and event.subject == "alice"
+        assert event.input_tokens == 1000 and event.output_tokens == 100
+        assert event.llm_calls == 1 and event.upstream_cost_usd == pytest.approx(expected)
+        assert event.success and event.error_code == ""
+        attempted.append(event)
+        if failure:
+            raise ConnectionError("private cost store unavailable")
+        committed.append(event)
+
+    monkeypatch.setattr(events, "write_marked_request_event", commit)
+
+    async def run():
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await runtime.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, _org_slot(ORG))
+            response = routes._AnswerStream(
+                routes._streamed(runtime.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message):
+                body = message.get("body", b"")
+                if body == b"data: [DONE]\n\n":
+                    assert len(committed) == 1
+                if body:
+                    sent.append(body)
+
+            async def receive():
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            if failure:
+                with pytest.raises(request_tail.RequiredTailError):
+                    await response(scope, receive, send)
+            else:
+                await response(scope, receive, send)
+            assert row.written
+            assert held.answer.state.spent == pytest.approx(expected)
+
+    asyncio.run(run())
+    assert native_model == ["model", "stream"]
+    assert sent[0] == b'data: {"mirrored":true}\n\n'
+    assert (b"data: [DONE]\n\n" in sent) is (not failure)
+    assert len(attempted) == 1 and len(committed) == (0 if failure else 1)
+    assert runtime._running == {}
+
+
+def test_marked_repeated_cancellation_joins_provider_before_its_private_row(world, monkeypatch):
+    from server.assistant.app import routes
+    from server.core import request_work
+    from server.core.diagnostics import codes_only
+    from server.llm import agent as models
+    from server.observability import events
+
+    world.mirror_sources = [{"namespace": NS, "source_id": "source"}]
+    monkeypatch.setattr(settings, "assistant_price_model", "claude-haiku-4-5")
+
+    async def run():
+        text_seen, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        closed, committed, sent = [], [], []
+
+        class Response:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                closing.set()
+                await release.wait()
+                closed.append("response")
+
+        class Client:
+            def stream(self):
+                return Response()
+
+        class Model:
+            async def stream(self, messages, descriptors, maximum, turn):
+                turn.sent = True
+                async with models.model_stream(Client()):
+                    try:
+                        turn.text = "partial"
+                        yield turn.text
+                        await asyncio.Event().wait()
+                    finally:
+                        closed.append("iterator")
+
+        monkeypatch.setattr(models, "model_for", lambda *_: Model())
+
+        async def commit(event):
+            assert closed == ["iterator", "response"]
+            assert codes_only() and event.mirror_marked and not event.success
+            assert event.error_code == "HTTP_499" and event.llm_calls == 1
+            assert event.input_tokens == event.output_tokens == 0
+            assert event.args["out_cost_estimated"] == "true"
+            assert event.args["out_model_usage_status"] == "unknown"
+            assert 0 < event.upstream_cost_usd <= settings.assistant_answer_ceiling_usd
+            assert event.upstream_cost_usd == pytest.approx(held.answer.state.spent)
+            committed.append(event)
+
+        monkeypatch.setattr(events, "write_marked_request_event", commit)
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await runtime.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, _org_slot(ORG))
+            response = routes._AnswerStream(
+                routes._streamed(runtime.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message):
+                body = message.get("body", b"")
+                if body:
+                    sent.append(body)
+                if b'"content": "partial"' in body:
+                    text_seen.set()
+
+            async def receive():
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            task = asyncio.create_task(response(scope, receive, send))
+            try:
+                await asyncio.wait_for(text_seen.wait(), 3)
+                task.cancel()
+                await asyncio.wait_for(closing.wait(), 3)
+                task.cancel()
+                await asyncio.sleep(0)
+                assert not task.done() and committed == []
+            finally:
+                release.set()
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            assert task.cancelled()
+            assert len(committed) == 1 and row.written and runtime._running == {}
+            assert sent[0] == b'data: {"mirrored":true}\n\n'
+            assert b"data: [DONE]\n\n" not in sent
+            assert not (asyncio.all_tasks() - {asyncio.current_task()})
+
+    asyncio.run(run())
