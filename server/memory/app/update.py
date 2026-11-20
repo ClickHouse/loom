@@ -21,6 +21,7 @@ from server.core.hashing import sha256_value as _content_sha256
 from server.core.naming import named
 from server.core.vectors import codes_state
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector, document_vectors
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_crud import (
@@ -49,6 +50,7 @@ from server.memory.domain.excerpt import build_excerpt
 from server.memory.domain.memory_types import is_embedded
 from server.memory.store import key_write_lock, pg_memory
 from server.memory.store.inserts import insert_memory_versions
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import AdmissionContendedError
 from server.memory.store.rows import identity_key, version_over
 from server.observability.budget_shape import note_budget_shape
@@ -62,18 +64,11 @@ if TYPE_CHECKING:
 async def _embed_value_and_key(
     embedder: Any, embed_text: str, key_text: str
 ) -> tuple[list[float], list[float]]:
-    """The value and key vectors of one write in one round trip: `embed_many` when the
-    embedder has it (one API call, as memory.set), else the two calls concurrently. No key
-    text, no key vector."""
+    """Document vectors for the value and optional key in one provider request."""
     if not key_text:
-        return await embedder.embed(embed_text), []
-    embed_many = getattr(embedder, "embed_many", None)
-    if embed_many is not None:
-        vectors = await embed_many([embed_text, key_text])
-        if len(vectors) == 2:
-            return vectors[0], vectors[1]
-    value_vec, key_vec = await asyncio.gather(embedder.embed(embed_text), embedder.embed(key_text))
-    return value_vec, key_vec
+        return await document_vector(embedder, embed_text), []
+    vectors = await document_vectors(embedder, [embed_text, key_text])
+    return vectors[0], vectors[1]
 
 
 def _pinned_conflict(op: str, existing: Any, conflict_result: Any) -> HTTPException:
@@ -126,6 +121,7 @@ async def _revision_supersession(
             "memory_id": str(existing.memory_id),
             "memory_key": existing.memory_key,
             "value": serialized_value,
+            "user_id": existing.user_id,
         }
     ]
     await supersede_same_key_rows(
@@ -724,20 +720,40 @@ async def _land_inserted(
     record: Callable[[], Awaitable[None]],
 ) -> None:
     """On ClickHouse: recorded once the version row is in, the first failure raised."""
+    sent = False
+    inserted = False
+
+    def on_send() -> None:
+        nonlocal sent
+        sent = True
+
+    def on_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+
+    async def follow() -> None:
+        await record()
+
     try:
         # Every insert runs to its end, so the fence below comes after the retire.
-        done = await _insert_revision(
-            existing, memory_row, emb_rows, ch, retire_vectors=retire_vectors
-        )
-        if not isinstance(done[0], BaseException):
-            # The row is in: audit and announce it even when the rest of the write fails;
-            # a retry writes, audits and announces a new version.
-            await record()
-        for d in done:
-            if isinstance(d, BaseException):
-                raise d
+        try:
+            done = await _insert_revision(
+                existing,
+                memory_row,
+                emb_rows,
+                ch,
+                retire_vectors=retire_vectors,
+                on_send=on_send,
+                on_inserted=on_inserted,
+            )
+            for d in done:
+                if isinstance(d, BaseException):
+                    raise d
+        finally:
+            if inserted:
+                await finish_followups(follow(), name="memory.update.followups")
     finally:
-        if high:
+        if high and sent:
             # After the request's own retire, at the same version: the later insert wins the
             # tie. Even when an insert failed or the write was cancelled: the row may be in.
             await fence_high([(identity_key(existing), int(memory_row["version"]))], ch=ch)
@@ -779,19 +795,22 @@ async def _insert_revision(
     ch: Any,
     *,
     retire_vectors: bool,
+    on_send: Callable[[], None],
+    on_inserted: Callable[[], None],
 ) -> list[Any]:
     """On ClickHouse: the version row, its search document and, for a row no longer
     searchable (`retire_vectors`), its vectors retired at its version: each one's
-    outcome, gathered."""
+    outcome. A refused memory insert publishes no search document."""
     import server.memory.store as memory_repo
 
-    writes: list[Awaitable[Any]] = [insert_memory_versions([memory_row], ch=ch)]
+    await insert_memory_versions([memory_row], ch=ch, on_send=on_send, on_inserted=on_inserted)
+    writes: list[Awaitable[Any]] = []
     if emb_rows:
         writes.append(memory_repo.insert_embedding_rows(emb_rows, ch=ch))
     if retire_vectors:
         version = int(memory_row["version"])
         writes.append(memory_repo.tombstone_vectors_of(existing, version=version, ch=ch))
-    return list(await asyncio.gather(*writes, return_exceptions=True))
+    return [None, *await asyncio.gather(*writes, return_exceptions=True)]
 
 
 async def _commit_revision(
@@ -952,8 +971,8 @@ async def _write_revision(
         memory_row=memory_row,
         policy=(await cfg_task).policy,
     )
-    # If searchable, refresh the embedding row too — in the same round trip
-    # as the version row (as memory.set's dual write).
+    # If searchable, prepare the embedding row too. The authority commits the
+    # memory row before publishing its embedding, as memory.set does.
     emb_rows = (
         [
             _update_embedding_row(

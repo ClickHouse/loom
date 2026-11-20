@@ -116,6 +116,7 @@ async def test_graph_neighbor_gather_is_order_independent(
         return await handle_memory_search(
             _input(
                 search_mode="graph",
+                agent="*",
                 namespace="ns_a",
                 namespace_scope="all_mine",
                 entity_filter=["seed"],

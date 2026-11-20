@@ -258,17 +258,25 @@ _PROXY_MIN_ATTEMPTS = 20
 _LOOPBACK = ("127.0.0.1", "::1")
 
 
-def _doctor_scim_token_check(settings: Any) -> tuple[str, str, str]:
+def _doctor_scim_token_check(
+    settings: Any, first: tuple[bool, str] | None = None
+) -> tuple[str, str, str]:
     """The `scim_token` line: FAIL when the server would refuse to start with it."""
     from server.auth.scim import tokens
     from server.auth.scim_routes import scim_settings_problem
 
     problem = scim_settings_problem(
-        settings.scim_token, settings.oauth_login_provider, settings.auth_actually_required()
+        settings.scim_token,
+        settings.oauth_login_provider,
+        settings.auth_actually_required(),
+        cell_name=settings.cell,
+        first=first,
     )
     if problem:
         return ("scim_token", FAIL, problem)
     count = len(tokens(settings.scim_token))
+    if settings.cell and count and first is None:
+        return ("scim_token", FAIL, "cell first identity not read; SCIM token policy not checked")
     return ("scim_token", PASS, f"{count} token(s) set" if count else "SCIM off")
 
 
@@ -482,7 +490,12 @@ def _doctor_tier_failures() -> tuple[Any, ...] | None:
             await tier_health.refresh_failing()
             return tier_health.problem_rows()
         finally:
-            await disconnect(client)
+            first = sys.exception()
+            try:
+                await disconnect(client)
+            except BaseException:  # keep the diagnostic failure when close also fails
+                if first is None:
+                    raise
 
     _read_code_registry()  # the self-service entries too; a no-op once a read succeeded
     try:
@@ -509,7 +522,12 @@ def _read_code_registry() -> None:
             await connect_declared(client, org_free=reads("reads"))
             await repo_registry.refresh_db_repos(force=True)
         finally:
-            await disconnect(client)
+            first = sys.exception()
+            try:
+                await disconnect(client)
+            except BaseException:  # keep the diagnostic failure when close also fails
+                if first is None:
+                    raise
 
     try:
         asyncio.run(asyncio.wait_for(read(), timeout=5))
@@ -566,10 +584,15 @@ def _problem_checks(problems: list[Any]) -> list[tuple[str, str, str]]:
     return [(f"problem:{p.code}", grade(p), f"{p.message} Fix: {p.fix}") for p in problems]
 
 
-def _run_doctor_checks() -> list[tuple[str, str, str]]:
+def _run_doctor_checks(allowed_roles: tuple[str, ...] = ()) -> list[tuple[str, str, str]]:
     """The live checks (Python, settings, JWT, ClickHouse, LLM) followed
-    by the shared problem list, as (name, grade, detail)."""
-    return _run_live_checks() + _code_mirror_checks() + _problem_checks(_doctor_problems())
+    by the shared problem list, as (name, grade, detail). `allowed_roles` is
+    `--pg-allow-role`, for a cell's checks."""
+    return (
+        _run_live_checks(allowed_roles)
+        + _code_mirror_checks()
+        + _problem_checks(_doctor_problems())
+    )
 
 
 def _code_mirror_checks() -> list[tuple[str, str, str]]:
@@ -582,7 +605,7 @@ def _code_mirror_checks() -> list[tuple[str, str, str]]:
         return [("code_mirrors", WARN, f"not checked: {type(e).__name__}: {e}")]
 
 
-def _run_live_checks() -> list[tuple[str, str, str]]:
+def _run_live_checks(allowed_roles: tuple[str, ...] = ()) -> list[tuple[str, str, str]]:
     """Run the doctor's live checks and return them as (name, grade, detail)
     with grade one of PASS / WARN / FAIL.
 
@@ -640,7 +663,7 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     else:
         jwt_grade, jwt_detail = PASS, "set"
     checks.append(("jwt_secret", jwt_grade, jwt_detail))
-    if settings_ok:
+    if settings_ok and (not settings.cell or not ch_host):
         checks.append(_doctor_scim_token_check(settings))
 
     # 4. ClickHouse reachability. HTTP probe avoids spinning up asyncio.
@@ -649,6 +672,8 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     else:
         ch_ok, ch_detail = _doctor_ch_reachable(settings, ch_host)
     checks.append(("clickhouse_reachable", _grade(ch_ok), ch_detail))
+    if settings_ok and settings.cell and ch_host and not ch_ok:
+        checks.append(_doctor_scim_token_check(settings))
 
     # 4a. The checks boot runs before it migrates: version, database, grants.
     checks.append(
@@ -664,7 +689,7 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
     if settings_ok and ch_ok and settings.cell:
         from server.cli import doctor_cell
 
-        checks += doctor_cell.cell_checks()
+        checks += doctor_cell.cell_checks(allowed_roles)
 
     # 5. LLM provider resolution: what extraction runs on and
     # what decided it; WARN when the provider was inferred (or named) but its
@@ -675,6 +700,17 @@ def _run_live_checks() -> list[tuple[str, str, str]]:
         checks.append(("llm_provider", PASS, "skipped (settings did not load)"))
 
     return checks
+
+
+def _stray_org_checks(budget_s: float) -> list[tuple[str, str, str]]:
+    """`--stray-orgs`, on a cell only (LOOM_CELL set)."""
+    from server.settings import settings
+
+    if not settings.cell:
+        return [("cell_stray_orgs", WARN, "not read: LOOM_CELL is unset (no cell)")]
+    from server.cli import doctor_cell
+
+    return doctor_cell.stray_org_checks(budget_s)
 
 
 def _client_checks(args: argparse.Namespace) -> list[tuple[str, str, str]]:
@@ -722,7 +758,9 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     operator sees the full picture. Exit 0 = nothing failed (warnings are
     listed but do not fail); 1 = at least one FAIL.
     """
-    checks = _run_doctor_checks()
+    checks = _run_doctor_checks(tuple(getattr(_args, "pg_allow_role", None) or ()))
+    if getattr(_args, "stray_orgs", False):
+        checks += _stray_org_checks(_args.stray_orgs_budget)
     # The client's side of the same picture, when asked.
     client = _client_checks(_args) if getattr(_args, "client", False) else []
     checks = _client_machine_grades(checks, client) + client
@@ -841,4 +879,21 @@ def _add_doctor_flags(p_doc: argparse.ArgumentParser) -> None:
         ),
     )
     p_doc.add_argument("--server-url", default=None, help="Override the client's server URL.")
+    p_doc.add_argument(
+        "--pg-allow-role",
+        action="append",
+        default=[],
+        help="On a cell: a Postgres role that may make an org held (the servers' role).",
+    )
+    p_doc.add_argument(
+        "--stray-orgs",
+        action="store_true",
+        help="On a cell: also read the orgs its stores hold without a tenancy row.",
+    )
+    p_doc.add_argument(
+        "--stray-orgs-budget",
+        type=float,
+        default=60.0,
+        help="Seconds --stray-orgs may read for, smallest tables first (default 60).",
+    )
     p_doc.add_argument("--token", default=None, help="Override the client's token.")

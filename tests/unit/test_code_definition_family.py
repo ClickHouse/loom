@@ -223,8 +223,8 @@ def test_reading_a_namespace_is_linear_in_its_rows() -> None:
 def test_reading_many_declarators_of_one_binding_is_linear() -> None:
     from tests.unit.step_count import steps
 
-    # Parser initialization is independent of the number of declarators.
-    file_definitions("a.js", b"const warm = () => 0;\n")
+    # Load grammars and start the parser child before comparing per-file work.
+    assert file_definitions("warm.js", b"const warm = () => 0;\n")
 
     def work(n: int) -> int:
         src = "const " + ",\n  ".join(f"v{i} = () => {i} /* c */" for i in range(n)) + ";\n"

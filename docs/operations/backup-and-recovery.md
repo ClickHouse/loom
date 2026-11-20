@@ -530,11 +530,11 @@ Bounded exceptions:
 
 - The events stream (budget violations) is drained on `SIGTERM`. A `SIGKILL` or OOM loses
   at most one flush interval of that telemetry, never audit or memory rows.
-- Provider reconfiguration waits on a dead process until a process on its host proves it
-  gone, or, on Kubernetes, until the workers leader sees its pod gone. Elsewhere, one
-  whose host is gone too (a move to a new host) is retired by hand with
-  `loom participant retire --participant <id> --yes`
-  ([provider reconfiguration](../architecture/provider-reconfiguration.md)).
+- Provider reconfiguration waits on a process until guarded retirement or exact
+  physical-death proof with settled queries. On its trusted host, run
+  `loom participant retire --participant <id>`. Pod deletion and heartbeat expiry
+  are insufficient. If its identity is unknown, keep the row until the
+  [physically quiescent lifecycle recovery](../architecture/cells.md#participant-lifecycle-baseline).
 - Rate-limit bucket fill is per host. It refills in seconds, so a new host starts with
   full buckets.
 

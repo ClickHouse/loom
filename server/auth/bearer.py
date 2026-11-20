@@ -20,7 +20,7 @@ from fastapi import HTTPException
 
 from server.auth.context import quota_key_for
 from server.auth.gateway import is_end_user
-from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, verify_token
+from server.auth.jwt import AuthInfo, AuthUnavailable, TokenError, authenticate_token
 from server.core.ch import set_quota_key
 from server.observability.metrics import record_auth_refusal
 
@@ -49,8 +49,8 @@ def missing_bearer() -> HTTPException:
     )
 
 
-def verify_bearer_header(
-    authorization: str | None, *, acts_for_end_users: bool = False
+async def verify_bearer_header(
+    authorization: str | None, *, acts_for_end_users: bool = False, fallback_org: str | None = None
 ) -> AuthInfo | None:
     """The principal an `Authorization` header names, None when it carries
     no credential; HTTPException 401 / 503 as `verify_bearer`, and 403 for an
@@ -64,7 +64,13 @@ def verify_bearer_header(
             status_code=401,
             detail={"code": "AUTH_INVALID", "message": str(e)},
         ) from e
-    info = None if token is None else verify_bearer(token)
+    info = None
+    if token is not None:
+        info = (
+            await verify_bearer(token, fallback_org=fallback_org)
+            if fallback_org is not None
+            else await verify_bearer(token)
+        )
     if info is not None and not acts_for_end_users and is_end_user(info):
         raise gateway_refused()
     return info
@@ -93,12 +99,16 @@ def auth_unavailable(e: AuthUnavailable) -> HTTPException:
     )
 
 
-def verify_bearer(token: str) -> AuthInfo:
+async def verify_bearer(token: str, *, fallback_org: str | None = None) -> AuthInfo:
     """The principal `token` names; HTTPException 401 / 503 otherwise. The
     rest of the request's ClickHouse queries carry its quota key, so routes
     outside the op registry draw the caller's bucket too."""
     try:
-        info = verify_token(token)
+        info = (
+            await authenticate_token(token, fallback_org=fallback_org)
+            if fallback_org is not None
+            else await authenticate_token(token)
+        )
     except TokenError as e:
         record_auth_refusal(e, transport="http")
         if isinstance(e, AuthUnavailable):

@@ -55,11 +55,11 @@ instructions.
 
 `LOOM_MCP_AUTH_MODE` decides which methods need a bearer:
 
-| Mode                 | Bearer required on                                            |
-| -------------------- | ------------------------------------------------------------- |
-| `required` (default) | every method except notifications                             |
-| `discovery_only`     | `tools/call` only; every other method is open                 |
-| `open`               | nothing; an invalid bearer is ignored (trusted networks only) |
+| Mode                 | Bearer required on                                                             |
+| -------------------- | ------------------------------------------------------------------------------ |
+| `required` (default) | every method except notifications                                              |
+| `discovery_only`     | `tools/call` only; every other method is open                                  |
+| `open`               | nothing; a cryptographically invalid bearer is ignored (trusted networks only) |
 
 A server on a non-loopback `LOOM_BIND_HOST` refuses to start with `open` unless
 `LOOM_ALLOW_INSECURE=1`. A deployment with auth off (`LOOM_AUTH_REQUIRED=false`)
@@ -75,6 +75,10 @@ is an ordinary Loom JWT; see [Tokens and grants](../guides/tokens-and-grants.md)
 The bearer is read from the `Authorization` header only. A token passed as `?token=` on
 the `/mcp` URL is ignored and the request is unauthenticated: request lines land in proxy
 and access logs, where a URL token would be written in the clear.
+
+A bearer that verifies but fails required cell provisioning is refused in every mode;
+an unavailable provisioning read answers retryable 503. Neither becomes an anonymous
+caller. See [cell provisioning](../architecture/cells.md#scim-and-sign-in-across-cells).
 
 ### OAuth
 
@@ -128,7 +132,12 @@ connect by browser sign-in instead of a pasted token (`server/auth/oauth.py`):
   that namespace as if it had been named. `loom_search` under the header also reads
   the repository's documents and `decision` memories from its trunk code namespace,
   when the caller may read it, and runs the tracker duplicate check for a
-  defect-shaped query.
+  defect-shaped query. A `memory.set` with no `repo:` tag takes the `repo:<id>` of the
+  repository configured for the scope's namespace, when the scope's org is the write's
+  org and the caller may read that repository; with such a scope, a write into another
+  configured code namespace takes that namespace's repository tag instead. A scope that
+  names no configured, readable repository adds no tag, and an explicit `repo:` tag
+  always stays.
 - **Implicit run.** One run per (org, token subject, session), begun in the
   run ledger by the session's first run-scoped tool call and filed in the
   caller's default namespace; writes carry its `run_id` (except `run.*`, which

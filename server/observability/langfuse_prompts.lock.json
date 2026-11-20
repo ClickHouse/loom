@@ -6,10 +6,6 @@
       "name": "loom-conversation-title",
       "version": 1
     },
-    "0e233a30f817": {
-      "name": "loom-code-query-expand",
-      "version": 1
-    },
     "26429c29e0da": {
       "name": "loom-derived-intent",
       "version": 2
@@ -30,6 +26,10 @@
       "name": "loom-verb-synonyms",
       "version": 2
     },
+    "6029967c341d": {
+      "name": "loom-code-answer",
+      "version": 2
+    },
     "74a623e2342c": {
       "name": "loom-extract-relations",
       "version": 2
@@ -42,6 +42,10 @@
       "name": "loom-session-summary",
       "version": 7
     },
+    "87e36f72aac0": {
+      "name": "loom-code-query-expand",
+      "version": 2
+    },
     "a1ee05e21999": {
       "name": "loom-hyde",
       "version": 1
@@ -53,10 +57,6 @@
     "ac4ca15570d6": {
       "name": "loom-profile-fold",
       "version": 2
-    },
-    "bf5e86069c97": {
-      "name": "loom-code-answer",
-      "version": 1
     },
     "c4e2ff65cb28": {
       "name": "loom-code-describe",

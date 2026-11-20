@@ -37,6 +37,7 @@ import types
 import typing
 from collections.abc import Iterator
 from typing import Any
+from unittest.mock import AsyncMock
 
 import annotated_types
 import pytest
@@ -155,8 +156,12 @@ _TOKENS = {f"tok-{r.name.lower()}": _principal(r) for r in Role} | {"tok-rival":
 # holds it there.
 _ORG_CHECKED_IN_HANDLER = {
     "erasure.status": "test_transport_security::test_erasure_status_foreign_org_token_is_not_found",
-    "memory.cross_promote": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_cross_promote",
-    "memory.copy_to": "test_cross_promote_source_scope::test_another_orgs_admin_cannot_copy_into_or_out_of_an_org",
+    "memory.cross_promote": (
+        "test_cross_promote_source_scope::test_another_orgs_admin_cannot_cross_promote"
+    ),
+    "memory.copy_to": (
+        "test_cross_promote_source_scope::test_another_orgs_admin_cannot_copy_into_or_out_of_an_org"
+    ),
 }
 
 
@@ -220,7 +225,7 @@ def _patched_app(monkeypatch: pytest.MonkeyPatch) -> Iterator[_Env]:
     monkeypatch.setattr(settings, "tracker_org", ORG)
     monkeypatch.setattr(type(settings), "auth_actually_required", lambda self: True)
     monkeypatch.setattr(http_mod, "ALL_OPERATIONS", ops)
-    monkeypatch.setattr(bearer_mod, "verify_token", _verify)
+    monkeypatch.setattr(bearer_mod, "authenticate_token", AsyncMock(side_effect=_verify))
     monkeypatch.setattr(http_mod, "_emit_event", lambda *a, **k: None)
     for op in ops:
         monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, op.mcp_tool_name, op)
@@ -323,6 +328,20 @@ def test_every_op_refuses_a_wrong_typed_field_by_name_on_both_transports(env: _E
             if not (out.get("isError") and ["namespace"] in [e.get("loc") for e in errors]):
                 failures.append(f"{op.name} mcp: isError={out.get('isError')} {errors}")
     _report(failures)
+    assert env.ran == []
+
+
+@pytest.mark.parametrize("name", ["ops.projection_failures.list", "ops.projection_failures.retry"])
+@pytest.mark.parametrize("limit", [-1, 0, 1001, 50_000_000, 4_294_967_295])
+def test_projection_failure_limits_refuse_before_handler(env: _Env, name: str, limit: int) -> None:
+    op = next(op for op in ALL_OPERATIONS if op.name == name)
+    body = {**_body(op), "limit": limit}
+    r = _post(env, op, body, f"Bearer {_token(Role.ORG_ADMIN)}")
+    assert (r.status_code, _code(r)) == (422, "VALIDATION_FAILED"), r.text
+    assert ["limit"] in [error["loc"] for error in r.json()["detail"]["errors"]]
+    out = _mcp(op, body, Role.ORG_ADMIN)["result"]
+    assert out["isError"]
+    assert ["limit"] in [error["loc"] for error in out["structuredContent"]["errors"]]
     assert env.ran == []
 
 

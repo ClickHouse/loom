@@ -21,7 +21,7 @@ import asyncio
 import dataclasses
 import logging
 import re
-from typing import Any
+from typing import Any, Literal, NamedTuple
 
 from server.core import cell, pg, readiness
 
@@ -36,7 +36,9 @@ TENANCY_TRIGGER = "tenancy_record"
 CELL_FIRST_TRIGGERS = ("cell_first_immutable", "cell_first_no_truncate")
 # Org-keyed tables the org triggers skip: the cell's own tenancy rows (`tenancy_record`
 # guards them instead), and the idempotency rows keyed by the caller's token org (a platform
-# admin's replay row for its home org is neither refused nor placed).
+# admin's replay row for its home org is not refused). Outside the guard is not outside the
+# first attach: its org scan (`server/cli/cell_scan.py`) reads every table with an `org`
+# column, these included, and places the orgs it finds.
 EXCLUDED = frozenset({"tenancy", "idempotency", "idempotency_fences"})
 # A table's DDL waits this long for its lock a try, LOCK_ATTEMPTS tries LOCK_RETRY_S
 # apart: a boot never queues behind a long transaction (and every write of the table
@@ -77,15 +79,29 @@ FROM pg_proc p WHERE p.oid = to_regprocedure($1)
 # What a trigger's DDL (SHARE ROW EXCLUSIVE) waited behind on a table, read after the
 # wait failed (pg_blocking_pids is empty by then): the locks held in a mode it conflicts
 # with (every mode but the two readers take), and the requests queued ahead of it in
-# one, whose own blocker heads the queue.
+# one, whose own blocker heads the queue. An anti-wraparound autovacuum, which never yields
+# its lock, says so in its activity line (compared here, never returned).
 _HOLDERS = """
 SELECT DISTINCT l.pid, l.granted, a.backend_type, a.state, a.application_name,
-       a.xact_start, a.wait_event
+       a.xact_start, a.wait_event,
+       coalesce(a.backend_type = 'autovacuum worker'
+                AND a.query LIKE '%(to prevent wraparound)', false) AS wraparound
 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
 WHERE l.relation = $1::regclass AND l.pid <> pg_backend_pid()
   AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
   AND l.mode NOT IN ('AccessShareLock', 'RowShareLock')
 """
+
+# What a table's DDL came to (`ensure_table`, `_run_ddl`).
+Applied = Literal["applied", "busy", "denied"]
+
+
+class Outcome(NamedTuple):
+    """A table's DDL's answer, and with `busy` the sessions it waited behind."""
+
+    answer: Applied
+    holders: str = ""
+
 
 # pg_trigger.tgtype bits (src/include/catalog/pg_trigger.h).
 _ROW, _BEFORE, _INSERT, _UPDATE, _INSTEAD = 1, 2, 4, 16, 64
@@ -168,6 +184,11 @@ def _function_sql(function: str) -> re.Pattern[str]:
     )
 
 
+def create_statement(table: str, name: str) -> str:
+    """The CREATE TRIGGER for `name` on `loom.<table>`, as `ensure` writes it."""
+    return _create(f"loom.{_ident(table)}", name)
+
+
 def _create(qualified: str, name: str) -> str:
     """The CREATE TRIGGER for `name` on the table `qualified` names."""
     if name == TENANCY_TRIGGER:
@@ -208,79 +229,160 @@ async def ensure(conn: Any) -> None:
     tries; a table whose lock it cannot take is logged with the holders of its locks, one
     the role cannot alter is logged as such, and either is skipped (the boot serves). A
     failed read of the state or the catalog raises. Runs on the migration session, which
-    holds the migration lock."""
+    holds the migration lock. `ensure_table` runs one table's part alone."""
     state = await cell.read_state(conn)
     if state == "open":
         return
-    # A table's statements, in one transaction: one lock wait, and every statement or none.
-    statements: dict[str, list[str]] = {}
     first = await _triggers(conn, CELL_FIRST_TRIGGERS)
-    for name in CELL_FIRST_TRIGGERS:
-        row = first.get(("cell_first", name))
-        if row is not None and row["enabled"] != "A":
-            statements.setdefault("cell_first", []).append(
-                f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
+    always = [
+        f"ALTER TABLE loom.cell_first ENABLE ALWAYS TRIGGER {name}"
+        for name in CELL_FIRST_TRIGGERS
+        if (row := first.get(("cell_first", name))) is not None and row["enabled"] != "A"
+    ]
+    if always:
+        await _run_ddl(conn, "cell_first", always)
+    if state != "enforced":
+        return
+    tables = await conn.fetch(ORG_TABLES)
+    for r in tables:
+        if r["relkind"] == "p":
+            # No trigger guards it: named here as missing() names it.
+            log.warning(
+                "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
             )
-    if state == "enforced":
-        present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
-        tables = await conn.fetch(ORG_TABLES)
-        for r in tables:
-            if r["relkind"] == "p":
-                # No trigger guards it: named here as missing() names it.
-                log.warning(
-                    "cell triggers: loom.%s is partitioned: unsupported, unguarded", r["relname"]
-                )
-        for r, names in _planned(tables):
-            table = r["relname"]
-            for name in names:
-                row = present.get((table, name))
-                if row is None:
-                    statements.setdefault(table, []).append(_create(f"loom.{_ident(table)}", name))
-                elif row["enabled"] != "O":
-                    statements.setdefault(table, []).append(
-                        f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}"
-                    )
-    for table, sqls in statements.items():
-        await _run_ddl(conn, table, sqls)
+    present = await _triggers(conn, (*ORG_TRIGGERS, TENANCY_TRIGGER))
+    for r, names in _planned(tables):
+        if sqls := _table_statements(r["relname"], names, present):
+            await _run_ddl(conn, r["relname"], sqls)
 
 
-async def _run_ddl(conn: Any, table: str, sqls: list[str]) -> None:
-    """A table's DDL in one transaction, LOCK_ATTEMPTS short tries. The boot serves past
-    the two causes cells.md names (its lock not taken, a table this role cannot alter);
-    any other error fails it, as a failed read of the state does."""
+async def planned_tables(conn: Any) -> list[str]:
+    """The tables `ensure_table` gives triggers: the guarded org tables and `loom.tenancy`."""
+    return planned_names(await conn.fetch(ORG_TABLES))
+
+
+def planned_names(rows: list[Any]) -> list[str]:
+    """`planned_tables` from rows `ORG_TABLES` read."""
+    return [r["relname"] for r, _ in _planned(rows)]
+
+
+async def ensure_table(
+    conn: Any,
+    table: str,
+    *,
+    recording_first: bool = False,
+    lock_timeout: str = LOCK_TIMEOUT,
+    attempts: int = LOCK_ATTEMPTS,
+) -> Outcome:
+    """`ensure` for one table of the planned set (`loom.tenancy` its guard, any other its
+    org triggers), so one table's DDL can run alone: in `enforced`, or with
+    `recording_first` also in a first cell's `recording`, where the org triggers' function
+    passes every row and a boot never creates them. `applied` when the DDL ran or nothing
+    was needed, `busy` when its lock was not taken in `attempts` tries of `lock_timeout`,
+    `denied` when this role cannot alter the table; a `busy` answer carries the sessions it
+    waited behind and logs nothing, so the caller says it as often as it retries. Raises
+    for a table outside the planned set, or in another state."""
+    state = await cell.read_state(conn)
+    if state != "enforced" and not (recording_first and state == "recording"):
+        raise RuntimeError(f"cell triggers: not created in state {state!r}")
+    planned = [
+        (r, names) for r, names in _planned(await conn.fetch(ORG_TABLES)) if r["relname"] == table
+    ]
+    if not planned:
+        raise ValueError(f"loom.{table} carries no cell triggers")
+    ((_, names),) = planned
+    sqls = _table_statements(table, names, await _triggers(conn, names))
+    if not sqls:
+        return Outcome("applied")
+    return await _run_ddl(conn, table, sqls, lock_timeout, attempts, warn=False)
+
+
+def _table_statements(
+    table: str, names: tuple[str, ...], present: dict[tuple[str, str], Any]
+) -> list[str]:
+    """The DDL that gives `table` its named triggers, each present and enabled."""
+    out = []
+    for name in names:
+        row = present.get((table, name))
+        if row is None:
+            out.append(_create(f"loom.{_ident(table)}", name))
+        elif row["enabled"] != "O":
+            out.append(f"ALTER TABLE loom.{_ident(table)} ENABLE TRIGGER {name}")
+    return out
+
+
+async def _run_ddl(
+    conn: Any,
+    table: str,
+    sqls: list[str],
+    lock_timeout: str = LOCK_TIMEOUT,
+    attempts: int = LOCK_ATTEMPTS,
+    *,
+    warn: bool = True,
+) -> Outcome:
+    """A table's DDL in one transaction, `attempts` short tries: `applied`, or which of the
+    two causes cells.md names kept it from applying (`busy`: its lock not taken, with the
+    sessions it waited behind; `denied`: a table this role cannot alter), which a boot
+    serves past; any other error fails it, as a failed read of the state does. `warn` logs
+    a busy table once, after its last try, with its DDL and holders (a boot's `ensure`).
+    The borrowing caller owns failed-session cleanup, including cancellation/rollback."""
     import asyncpg
 
-    for attempt in range(LOCK_ATTEMPTS):
+    for attempt in range(attempts):
+        rolled_back = False
         try:
-            async with conn.transaction():
-                await conn.execute(f"SET LOCAL lock_timeout = '{LOCK_TIMEOUT}'")
+            tx = conn.transaction()
+            await tx.start()
+            try:
+                await conn.execute(f"SET LOCAL lock_timeout = '{lock_timeout}'")
                 for sql in sqls:
                     await conn.execute(sql)
-            return
+            except (
+                asyncpg.exceptions.InsufficientPrivilegeError,
+                asyncpg.exceptions.LockNotAvailableError,
+            ):
+                await tx.rollback()
+                rolled_back = True
+                raise
+            await tx.commit()
+            return Outcome("applied")
         except asyncpg.exceptions.InsufficientPrivilegeError as e:
+            if not rolled_back:
+                raise
             log.warning(
                 "cell triggers: not applied on loom.%s (%s): this role cannot alter it", table, e
             )
-            return
+            return Outcome("denied")
         except asyncpg.exceptions.LockNotAvailableError as e:
+            if not rolled_back:
+                raise
             # Short tries outlast a short transaction; an autovacuum is left to finish.
-            if attempt < LOCK_ATTEMPTS - 1:
+            if attempt < attempts - 1:
                 await asyncio.sleep(LOCK_RETRY_S)
                 continue
-            log.warning(
-                "cell triggers: not applied on loom.%s (%s): %s; %s",
-                table,
-                e,
-                "; ".join(sqls),
-                await _holders(conn, table),
-            )
+            held = await _holders(conn, table)
+            if warn:
+                log.warning(
+                    "cell triggers: not applied on loom.%s (%s): %s; %s",
+                    table,
+                    e,
+                    "; ".join(sqls),
+                    held,
+                )
+            return Outcome("busy", held)
+    return Outcome("busy")
+
+
+async def holders(conn: Any, table: str) -> list[Any]:
+    """The sessions a blocked DDL on `table` waits behind (`_HOLDERS`)."""
+    return list(await conn.fetch(_HOLDERS, f"loom.{_ident(table)}"))
 
 
 async def _holders(conn: Any, table: str) -> str:
     """The sessions a blocked DDL waited behind, never their query text (a literal in it
     may be memory content)."""
     try:
-        rows = await conn.fetch(_HOLDERS, f"loom.{_ident(table)}")
+        rows = await holders(conn, table)
     except Exception as e:  # noqa: BLE001 — naming the holders is best effort
         log.warning("cell triggers: the lock holders of loom.%s not read: %s", table, e)
         return "lock holders not read"

@@ -114,6 +114,8 @@ async def _write_new(input: CollectionCreateInput, namespace: str, caller: str) 
     """The tree row and the creator's grant first, the directory row last: a
     create cut short is finished by its creator's retry, and the name is never
     left with no admin."""
+    from server.auth.authz import identity_write
+
     org, parent = input.org, input.parent
     if parent:
         check_placement(await sharing.load_tree(org), namespace, parent)
@@ -139,13 +141,16 @@ async def _write_new(input: CollectionCreateInput, namespace: str, caller: str) 
     )
     row["kind"] = "collection"
     row["title"] = input.title
-    await ch.insert("loom.namespaces", [row])
+    with identity_write():
+        await ch.insert("loom.namespaces", [row])
 
 
 async def _give_title(org: str, namespace: str, title: str) -> str:
     """The collection's title: its own, else `title`, stored on it then when the
     caller is its admin (it was made with none, by a build without titles or by
     name alone). The caller holds the name's account claim."""
+    from server.auth.authz import identity_write
+
     with own_write_reads():
         row = await namespaces_repo.fetch_row(org, namespace)
     if row is None or row.get("title") or not title:
@@ -155,7 +160,8 @@ async def _give_title(org: str, namespace: str, title: str) -> str:
     # Never behind the row it replaces (on a tie the row inserted last wins); a delete a
     # moment later stamps the same way, so it still wins.
     stamp = max(naive_utc_now_seconds(), row["updated_at"])
-    await get_client().insert("loom.namespaces", [{**row, "title": title, "updated_at": stamp}])
+    with identity_write():
+        await get_client().insert("loom.namespaces", [{**row, "title": title, "updated_at": stamp}])
     return title
 
 

@@ -14,12 +14,14 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import httpx
 import pytest
 from starlette.testclient import TestClient
 
 from server.cli import cell as cell_cli
+from server.cli import cell_control
 from server.core import cell
 from server.router import app as router_app
 from server.router import directory
@@ -44,6 +46,7 @@ _COLUMNS = [c.strip() for c in directory._CELL_COLUMNS.split(",")]
 def _cell_row(**over: Any) -> dict[str, Any]:
     row: dict[str, Any] = {
         "cell": "eu-1",
+        "mutation_generation": UUID(int=1),
         "is_first": True,
         "host": "loom.example",
         "state": "attaching",
@@ -86,6 +89,7 @@ class _Conn:
 
     def __init__(self, store: _Store) -> None:
         self.s = store
+        self._tx = None
 
     def _count(self) -> None:
         if self.s.down:
@@ -102,7 +106,7 @@ class _Conn:
     async def execute(self, sql: str, *a: Any) -> str:
         self._count()
         cells = self.s.cells
-        if sql.startswith("SELECT pg_advisory_xact_lock"):
+        if sql.startswith(("SELECT pg_advisory_xact_lock", "SELECT pg_logical_emit_message")):
             return ""
         if "SET attach_started_at" in sql:
             row = cells[a[0]]
@@ -172,17 +176,36 @@ class _Conn:
         self.s.placements.update(dict.fromkeys(new, a[1]))
         return [{"org": o} for o in new]
 
+    async def close(self, **_kw: Any) -> None:
+        self.terminate()
+
+    def terminate(self) -> None:
+        if self._tx is not None:
+            self.s.cells, self.s.hosts, self.s.placements, self.s.audit = self._tx.saved
+            self._tx = None
+
     def transaction(self) -> Any:
         conn = self
 
         class _Tx:
+            async def start(self) -> None:
+                await self.__aenter__()
+
+            async def commit(self) -> None:
+                await self.__aexit__(None)
+
+            async def rollback(self) -> None:
+                await self.__aexit__(Exception)
+
             async def __aenter__(self) -> None:
+                conn._tx = self
                 conn._count()
                 self.saved = copy.deepcopy(
                     (conn.s.cells, conn.s.hosts, conn.s.placements, conn.s.audit)
                 )
 
             async def __aexit__(self, kind: Any, *_exc: Any) -> None:
+                conn._tx = None
                 conn.s.statements += 1  # the commit, or the rollback
                 if kind is not None:
                     conn.s.cells, conn.s.hosts, conn.s.placements, conn.s.audit = self.saved
@@ -233,7 +256,9 @@ def listener() -> _Listener:
 @pytest.fixture
 def client(store: _Store, listener: _Listener) -> TestClient:
     router = router_app.Router(probe_transport=httpx.MockTransport(listener))
-    return TestClient(router_app.build_app(router))
+    client = TestClient(router_app.build_app(router))
+    client.control_store = store
+    return client
 
 
 def _call(
@@ -241,6 +266,11 @@ def _call(
 ) -> Any:
     url = "/cells/v1/operator/cells/eu-1" + (f"/{path}" if path else "")
     headers = {"Authorization": f"Bearer {token}"}
+    if method != "GET" and (body is None or isinstance(body, dict)):
+        row = client.control_store.cells.get("eu-1", _cell_row())
+        observed = {name: row[name] for name in directory.CONTROL_FIELDS}
+        observed["mutation_generation"] = str(row["mutation_generation"])
+        body = {**(body or {}), "expected": observed}
     if body is None:
         return client.request(method, url, headers=headers)
     return client.request(method, url, json=body, headers=headers)
@@ -249,6 +279,10 @@ def _call(
 def _begin(**over: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "deployment_id": "dep-1",
+        "expected": {
+            **{name: _cell_row()[name] for name in directory.CONTROL_FIELDS},
+            "mutation_generation": str(UUID(int=1)),
+        },
         "current_fp": CURRENT,
         "next_fp": None,
         "keys_fp": "keys-1",
@@ -292,6 +326,8 @@ def test_the_operator_reads_the_cells_row(client: TestClient, store: _Store) -> 
         "current_fp": None,
         "next_fp": None,
         "other": None,
+        "mutation_generation": str(UUID(int=1)),
+        **{name: store.cells["eu-1"][name] for name in directory._REGISTERED},
     }
     # Any other row is named: every attach call refuses while it exists.
     store.cells["eu-2"] = _cell_row(cell="eu-2", is_first=False, host="eu-2.example")
@@ -322,6 +358,15 @@ def test_every_new_route_needs_the_operator_credential_and_names_an_unknown_cell
     assert store.statements == 0
     url = "/cells/v1/operator/cells/eu-9" + (f"/{path}" if path else "")
     headers = {"Authorization": f"Bearer {OPERATOR}"}
+    if method != "GET":
+        source = _cell_row()
+        body = {
+            **(body or {}),
+            "expected": {
+                **{name: source[name] for name in directory.CONTROL_FIELDS},
+                "mutation_generation": str(source["mutation_generation"]),
+            },
+        }
     r = client.request(method, url, headers=headers, json=body)
     assert (r.status_code, r.json()["code"]) == (404, "NO_SUCH_CELL")
     bad = client.request(method, url.replace("eu-9", "EU_9"), headers=headers, json=body)
@@ -613,7 +658,15 @@ def test_begin_refuses_a_fingerprint_whose_placement_body_would_pass_the_routers
     # And again under the lock.
     big = directory.Begin("dep-1", grown, None, "keys", {})
     with pytest.raises(directory.OperatorRefused, match="configured_orgs"):
-        asyncio.run(directory.attach_begin("eu-1", big))
+        asyncio.run(
+            directory.attach_begin(
+                "eu-1",
+                big,
+                expected=directory.Control(
+                    {k: store.cells["eu-1"][k] for k in directory.CONTROL_FIELDS}, UUID(int=1)
+                ),
+            )
+        )
     assert store.cells["eu-1"]["attach_started_at"] is None and store.audit == []
     # One that fits, with the longest org escaped, is taken.
     fits = cell.as_value({**FIELDS, "configured_orgs": [f"org-{i:05d}" for i in range(100)]})
@@ -884,23 +937,40 @@ def test_each_attach_calls_bound_counts_the_statements_it_sends(store: _Store) -
         asyncio.run(call)
         return store.statements - before
 
+    def observed(name: str = "eu-1") -> directory.Control:
+        row = store.cells[name]
+        return directory.Control(
+            {k: row[k] for k in directory.CONTROL_FIELDS}, row["mutation_generation"]
+        )
+
     begin = directory.Begin("dep-1", CURRENT, None, "keys", {})
     assert sent(directory.attach_read("eu-1", audited=True)) == directory.OPERATOR_READ_STATEMENTS
     assert sent(directory.attach_read("eu-1")) == directory.ATTACH_READ_STATEMENTS
-    assert sent(directory.attach_begin("eu-1", begin)) == directory.ATTACH_CHANGE_STATEMENTS
-    assert sent(directory.attach_enforced("eu-1", "dep-1")) == directory.ATTACH_CHANGE_STATEMENTS
-    batch = directory.attach_place("eu-1", "dep-1", [f"o{i}" for i in range(50)])
+    assert (
+        sent(directory.attach_begin("eu-1", begin, expected=observed()))
+        == directory.ATTACH_CHANGE_STATEMENTS
+    )
+    assert (
+        sent(directory.attach_enforced("eu-1", "dep-1", expected=observed()))
+        == directory.ATTACH_CHANGE_STATEMENTS
+    )
+    batch = directory.attach_place(
+        "eu-1", "dep-1", [f"o{i}" for i in range(50)], expected=observed()
+    )
     assert sent(batch) == directory.ATTACH_PLACE_STATEMENTS  # whatever the batch's size
-    assert sent(directory.attach_serving("eu-1", "dep-1")) == directory.ATTACH_CHANGE_STATEMENTS
+    assert (
+        sent(directory.attach_serving("eu-1", "dep-1", expected=observed()))
+        == directory.ATTACH_CHANGE_STATEMENTS
+    )
     store.cells["eu-2"] = _cell_row(cell="eu-2", is_first=False, host="eu-2.example")
-    assert sent(directory.remove("eu-2")) == directory.REMOVE_STATEMENTS
+    assert sent(directory.remove("eu-2", expected=observed("eu-2"))) == directory.REMOVE_STATEMENTS
     assert directory.REMOVE_MAX_S == directory._bound_s(directory.REMOVE_STATEMENTS)
 
 
 def test_a_live_placement_reads_the_winner_again_under_the_row_lock(store: _Store) -> None:
     """A batch holds the cell's row lock, not the org's: an org it placed between the live
     placement's first read and its row lock is answered placed, never judged on the quota,
-    counted or audited twice."""
+    counted twice. Its call still writes the durability audit."""
     store.cells["eu-1"].update(state="serving", placements_max=0)
     reads = 0
     real = _Conn.fetchrow
@@ -915,9 +985,10 @@ def test_a_live_placement_reads_the_winner_again_under_the_row_lock(store: _Stor
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_Conn, "fetchrow", _fetchrow)
-        winner = asyncio.run(directory.place("acme", "eu-1", lambda _row: ""))
+        winner = asyncio.run(directory.place("acme", "eu-1", lambda _row: "", actor="cell:eu-1"))
     assert winner == ("eu-1", "dep-1") and reads == 2
-    assert store.cells["eu-1"]["placed"] == 0 and store.audit == []
+    assert store.cells["eu-1"]["placed"] == 0
+    assert store.audit == [("cell:eu-1", "place", {"org": "acme", "cell": "eu-1"})]
 
 
 def test_a_live_insert_that_loses_to_the_primary_key_counts_nothing(store: _Store) -> None:
@@ -931,8 +1002,12 @@ def test_a_live_insert_that_loses_to_the_primary_key_counts_nothing(store: _Stor
 
     with pytest.MonkeyPatch.context() as mp:
         mp.setattr(_Conn, "fetchval", _fetchval)
-        assert asyncio.run(directory.place("acme", "eu-1", lambda _row: "")) == ("eu-1", "dep-1")
-    assert store.cells["eu-1"]["placed"] == 0 and store.audit == []
+        assert asyncio.run(directory.place("acme", "eu-1", lambda _row: "", actor="cell:eu-1")) == (
+            "eu-1",
+            "dep-1",
+        )
+    assert store.cells["eu-1"]["placed"] == 0
+    assert store.audit == [("cell:eu-1", "place", {"org": "acme", "cell": "eu-1"})]
 
 
 # The attach lock and the troubleshooting page.
@@ -990,6 +1065,8 @@ def cli_router(monkeypatch: pytest.MonkeyPatch) -> _Router:
     monkeypatch.setattr(settings, "router_operator_token", OPERATOR)
     fake = _Router(
         {
+            **_cell_row(),
+            "mutation_generation": str(UUID(int=1)),
             "cell": "eu-1",
             "is_first": True,
             "state": "attaching",
@@ -999,6 +1076,23 @@ def cli_router(monkeypatch: pytest.MonkeyPatch) -> _Router:
     )
     monkeypatch.setattr(httpx, "get", fake.get)
     monkeypatch.setattr(httpx, "delete", fake.delete)
+
+    async def request(
+        url: Any, name: str, transport: Any, path: str, body: Any = None, *, method: str = "POST"
+    ) -> Any:
+        target = f"{url}/cells/v1/operator/cells/{name}" + path
+        if path == "/claim":
+            fake.calls.append(("POST", target))
+            return dict(fake.row)
+        response = fake.get(target) if method == "GET" else fake.delete(target)
+        if response.status_code != 200:
+            if response.status_code == 404 and response.json().get("code") != "NO_SUCH_CELL":
+                raise cell_control._refused("a router replica is not upgraded")
+            raise cell_control._refused(response.json()["error"])
+        return response.json()
+
+    monkeypatch.setattr(cell_control, "request", request)
+    _stores(monkeypatch, "")
     return fake
 
 
@@ -1007,13 +1101,33 @@ def _stores(monkeypatch: pytest.MonkeyPatch, refusal: Any) -> list[str]:
     it was asked about."""
     checked: list[str] = []
 
-    async def _check(deployment_id: str) -> str:
-        checked.append(deployment_id)
+    async def paired(_conn: Any, row: dict[str, Any]) -> None:
+        checked.append(row["deployment_id"])
         if isinstance(refusal, Exception):
             raise refusal
-        return refusal
+        if refusal:
+            raise cell_control._refused(refusal)
 
-    monkeypatch.setattr(cell_cli, "_first_cell_refusal", _check)
+    async def state(_conn: Any) -> tuple[str, str]:
+        return "open", ""
+
+    async def held(_conn: Any) -> None:
+        pass
+
+    monkeypatch.setattr(cell_control, "paired", paired)
+
+    class Owner:
+        conn = object()
+
+        async def transaction(self, work):
+            return await work()
+
+    async def run(_what, work):
+        return await work(Owner())
+
+    monkeypatch.setattr(cell_control, "run", run)
+    monkeypatch.setattr(cell_control, "check_lock", held)
+    monkeypatch.setattr(cell, "read_state_if_present", state)
     return checked
 
 
@@ -1022,9 +1136,9 @@ def test_remove_checks_a_first_cells_postgres_then_deletes_its_row(
 ) -> None:
     checked = _stores(monkeypatch, "")
     assert cell_cli._cmd_remove(_remove_args()) == 0
-    assert checked == ["dep-1"]
-    assert [m for m, _url in cli_router.calls] == ["GET", "DELETE"]
-    assert cli_router.calls[1][1] == "https://router.test/cells/v1/operator/cells/eu-1"
+    assert checked == ["dep-1", "dep-1"]
+    assert [m for m, _url in cli_router.calls] == ["GET", "GET", "POST", "DELETE"]
+    assert cli_router.calls[-1][1] == "https://router.test/cells/v1/operator/cells/eu-1"
     assert json.loads(capsys.readouterr().out) == {"cell": "eu-1", "removed": True}
 
 
@@ -1040,16 +1154,16 @@ def test_remove_refuses_a_first_cell_its_postgres_does_not_clear(
 ) -> None:
     _stores(monkeypatch, refusal)
     assert cell_cli._cmd_remove(_remove_args()) == 1
-    assert "refusing" in capsys.readouterr().err
-    assert [m for m, _url in cli_router.calls] == ["GET"]
+    assert "stop and rerun" in capsys.readouterr().err
+    assert [m for m, _url in cli_router.calls] == ["GET", "GET"]
 
 
-def test_remove_reads_no_store_for_a_later_cell(
+def test_remove_checks_a_later_cells_pairing_and_claim(
     cli_router: _Router, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cli_router.row = {**cli_router.row, "is_first": False, "deployment_id": "dep-2"}
-    checked = _stores(monkeypatch, "never asked")
-    assert cell_cli._cmd_remove(_remove_args()) == 0 and checked == []
+    checked = _stores(monkeypatch, "")
+    assert cell_cli._cmd_remove(_remove_args()) == 0 and checked == ["dep-2", "dep-2"]
 
 
 @pytest.mark.parametrize(
@@ -1094,11 +1208,11 @@ def test_remove_tells_an_older_router_from_an_unknown_cell_on_the_delete(
     cli_router: _Router, capsys: Any
 ) -> None:
     """A replica of an earlier build behind the same URL answers the DELETE alone."""
-    cli_router.row = {**cli_router.row, "is_first": False}  # no Postgres read
+    cli_router.row = {**cli_router.row, "is_first": False}
     cli_router.deleted = (404, {"error": "the router answers no such path"})
     assert cell_cli._cmd_remove(_remove_args()) == 1
     assert "not upgraded" in capsys.readouterr().err
-    assert [m for m, _url in cli_router.calls] == ["GET", "DELETE"]
+    assert [m for m, _url in cli_router.calls] == ["GET", "GET", "POST", "DELETE"]
 
 
 @pytest.mark.parametrize(
@@ -1112,42 +1226,31 @@ def test_remove_tells_an_older_router_from_an_unknown_cell_on_the_delete(
     ],
 )
 def test_the_first_cell_check_needs_an_open_postgres_of_the_rows_deployment(
-    monkeypatch: pytest.MonkeyPatch, state: str, recorded: str, why: str
+    cli_router: _Router,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: Any,
+    state: str,
+    recorded: str,
+    why: str,
 ) -> None:
-    """One Postgres session of its own reads both: no pool, and no ClickHouse."""
-    from server.core import pg
+    async def paired(_conn: Any, row: dict[str, Any]) -> None:
+        if not recorded:
+            raise cell_control._refused("records no deployment id")
+        if recorded != row["deployment_id"]:
+            raise cell_control._refused(f"records deployment id {recorded!r}")
 
-    sessions: list[dict[str, Any]] = []
-
-    class _Session:
-        async def fetchval(self, sql: str) -> str:
-            assert sql == "SELECT deployment_id FROM loom.authority"
-            return recorded
-
-    @contextlib.asynccontextmanager
-    async def _dedicated(**kw: Any) -> Any:
-        sessions.append(kw)
-        yield _Session()
-
-    async def _state(conn: Any) -> tuple[str, str]:
-        assert isinstance(conn, _Session)
+    async def read(_conn: Any) -> tuple[str, str]:
         return state, ""
 
-    def _no_pool(*_a: Any, **_kw: Any) -> None:
-        raise AssertionError("the check reads no pool")
-
-    # LOOM_PG_DSN alone: the CLI's storage authority setting is not read.
-    monkeypatch.setattr(settings, "storage_authority", "clickhouse")
-    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
-    monkeypatch.setattr(pg, "dedicated", _dedicated)
-    monkeypatch.setattr(pg, "fetchrow", _no_pool)
-    monkeypatch.setattr(pg, "fetchval", _no_pool)
-    monkeypatch.setattr(cell, "read_state_if_present", _state)
-    refusal = asyncio.run(cell_cli._first_cell_refusal("dep-1"))
-    assert (why in refusal) if why else refusal == ""
-    assert sessions == [{"statement_timeout_ms": cell_cli._CHECK_STATEMENT_MS}]
-    monkeypatch.setattr(settings, "pg_dsn", "")
-    assert "LOOM_PG_DSN" in asyncio.run(cell_cli._first_cell_refusal("dep-1"))
+    monkeypatch.setattr(cell_control, "paired", paired)
+    monkeypatch.setattr(cell, "read_state_if_present", read)
+    result = cell_cli._cmd_remove(_remove_args())
+    if why:
+        assert result == 1
+        assert why.replace("`", "") in capsys.readouterr().err
+        assert not any(method in ("POST", "DELETE") for method, _url in cli_router.calls)
+    else:
+        assert result == 0
 
 
 def test_remove_never_connects_clickhouse(
@@ -1158,13 +1261,7 @@ def test_remove_never_connects_clickhouse(
     def _never(*_a: Any, **_kw: Any) -> None:
         raise AssertionError("loom cell remove connects no ClickHouse")
 
-    async def _read() -> tuple[str, str]:
-        return "open", "dep-1"
-
     monkeypatch.setattr(_ch, "run_connected", _never)
-    monkeypatch.setattr(settings, "storage_authority", "postgres")
-    monkeypatch.setattr(settings, "pg_dsn", "postgresql://cell.internal/loom")
-    monkeypatch.setattr(cell_cli, "_read_first_cell", _read)
     assert cell_cli._cmd_remove(_remove_args()) == 0
 
 
@@ -1211,7 +1308,7 @@ def test_a_rotation_drops_this_replicas_cached_state(
     store.cells["eu-1"]["state"] = "serving"
     assert _state(client).json()["state"] == "attaching"  # cached
 
-    async def _rotate(name: str, step: str, sha: str) -> directory.Cell:
+    async def _rotate(name: str, step: str, sha: str, **_kw: Any) -> directory.Cell:
         store.cells[name]["credential_next_sha256"] = sha
         return directory._cell(_Conn(store)._row(name, ""))
 
@@ -1303,13 +1400,14 @@ def test_attach_serving_waits_for_a_state_read_in_flight_and_drops_its_row(
     after attach/serving runs once that read is done, so the next read answers `serving`."""
     router = router_app.Router(probe_transport=httpx.MockTransport(listener))
     with TestClient(router_app.build_app(router)) as setup:
+        setup.control_store = store
         _enforced(setup)
     started, go = _blocked_state_read(store, monkeypatch)
     committed = asyncio.Event()
     real_serving = directory.attach_serving
 
-    async def _serving(*a: Any) -> Any:
-        found = await real_serving(*a)
+    async def _serving(*a: Any, **kw: Any) -> Any:
+        found = await real_serving(*a, **kw)
         committed.set()
         return found
 
@@ -1325,7 +1423,14 @@ def test_attach_serving_waits_for_a_state_read_in_flight_and_drops_its_row(
             serving = asyncio.create_task(
                 c.post(
                     "/cells/v1/operator/cells/eu-1/attach/serving",
-                    json={"deployment_id": "dep-1", "nonces": NONCES},
+                    json={
+                        "deployment_id": "dep-1",
+                        "nonces": NONCES,
+                        "expected": {
+                            **{k: store.cells["eu-1"][k] for k in directory.CONTROL_FIELDS},
+                            "mutation_generation": str(UUID(int=1)),
+                        },
+                    },
                     headers={"Authorization": f"Bearer {OPERATOR}"},
                 )
             )
@@ -1337,3 +1442,42 @@ def test_attach_serving_waits_for_a_state_read_in_flight_and_drops_its_row(
             assert again.json()["state"] == "serving"
 
     asyncio.run(_run())
+
+
+def test_native_compact_batch_with_control_envelope_fits_public_handler(client, store):
+    from server.cli.cell_attach import _encoded_size, batches
+
+    _enforced(client)
+    orgs = [f"{i:03d}" + "x" * 127 for i in range(500)]
+    batch = batches(orgs, "dep-1")[0]
+    body = {"deployment_id": "dep-1", "orgs": batch}
+    assert _encoded_size(body) <= MAX_BODY_BYTES < len(json.dumps(body).encode())
+    response = _call(client, "POST", "attach/place", body)
+    assert response.status_code == 200, response.text
+    assert response.json()["placed"] == len(batch)
+    assert set(store.placements) == set(batch)
+
+
+@pytest.mark.parametrize("position", ["current_fp", "next_fp"])
+def test_begin_refuses_operator_envelope_overflow_before_probe_or_writes(
+    client: TestClient, store: _Store, listener: _Listener, position: str
+) -> None:
+    deployment = str(UUID(int=1))
+    store.cells["eu-1"]["deployment_id"] = deployment
+    current = cell.as_value({**FIELDS, "deployment_id": deployment})
+    grown = cell.as_value({**FIELDS, "deployment_id": deployment, "oidc_client_id": ""})
+    live = {"org": "", "cell": "eu-1", "fingerprint": grown}
+    available = MAX_BODY_BYTES - len(json.dumps(live)) - 6 * cell.ORG_MAX_BYTES
+    grown["fields"]["oidc_client_id"] = "x" * available
+    body = (
+        _begin(deployment_id=deployment, current_fp=current, **{position: grown})
+        if position == "next_fp"
+        else _begin(deployment_id=deployment, current_fp=grown)
+    )
+    response = _call(client, "POST", "attach/begin", body)
+    assert response.status_code == 409
+    assert position in response.json()["error"]
+    assert "oidc_client_id" in response.json()["error"]
+    assert store.statements == directory.ATTACH_READ_STATEMENTS
+    assert listener.asked == [] and store.audit == []
+    assert store.cells["eu-1"]["attach_started_at"] is None

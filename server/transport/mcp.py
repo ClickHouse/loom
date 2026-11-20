@@ -384,11 +384,11 @@ def attach(app: FastAPI) -> None:
         # schema parse and surfaces as an opaque zod error.
         mode = _effective_auth_mode()
         try:
-            auth = _verify_bearer(request)
+            auth = await _verify_bearer(request)
         except PermissionError as e:
             return _not_on_mcp(response, payload, e)
         except TokenError as e:
-            if mode != "open":
+            if mode != "open" or e.reason == "provisioning":
                 return _token_refused(request, response, payload, e)
             # Open mode falls back to no-auth rather than 401 (so bridges
             # with mis-templated headers still work). Warn-log it — silent
@@ -476,11 +476,11 @@ def attach(app: FastAPI) -> None:
 
         mode = _effective_auth_mode()
         try:
-            auth = _verify_bearer(request)
+            auth = await _verify_bearer(request)
         except PermissionError as e:
             return _not_on_mcp(response, None, e)
         except TokenError as e:
-            if mode != "open":
+            if mode != "open" or e.reason == "provisioning":
                 return _token_refused(request, response, None, e)
             auth = None
         if mode != "open" and auth is None:

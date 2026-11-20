@@ -155,7 +155,7 @@ def prepare(monkeypatch, transport):
     monkeypatch.setattr(gates, "tenant_slot", lambda *a, **k: nullcontext())
     monkeypatch.setattr("server.observability.capture_consent.resolve", consent)
     monkeypatch.setattr("server.observability.otel.set_loom_attributes", lambda **kwargs: None)
-    monkeypatch.setattr(http, "_extract_auth", lambda request: auth)
+    monkeypatch.setattr(http, "_extract_auth", AsyncMock(return_value=auth))
     monkeypatch.setattr(http, "_authorize", admitted)
     monkeypatch.setattr(http, "post_handler_rows", post)
     monkeypatch.setattr(post_rows, "post_handler_rows", post)

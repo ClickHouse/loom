@@ -235,6 +235,7 @@ async def save(m: Machine, *, by: str, active: bool = True, ch: Any = None) -> N
     # FINAL a later change with a lower version would be lost.
     ch = ch or get_client()
     version = await next_version(ch, TABLE, {"name": m["name"]})
+    forget_ended("bot", m["name"])
     try:
         await ch.insert(
             TABLE,

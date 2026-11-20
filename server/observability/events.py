@@ -197,8 +197,9 @@ class EventEmitter:
         # Process-lifetime task: it must not inherit the tag, request id or
         # auth of whichever request first started it.
         from server.core.background import detached_task
+        from server.core.retirement import get_gate
 
-        self._task = detached_task(self._drain_loop(), name="loom-events-drain")
+        self._task = get_gate().track(detached_task(self._drain_loop(), name="loom-events-drain"))
 
     async def stop(self) -> None:
         self._running = False

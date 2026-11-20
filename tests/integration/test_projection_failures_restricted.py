@@ -35,6 +35,18 @@ def _status(ch_client, failure_id: str) -> str:
     ).result_rows[0][0]
 
 
+@pytest.mark.parametrize("op", ["ops.projection_failures.list", "ops.projection_failures.retry"])
+@pytest.mark.parametrize("limit", [-1, 0, 1001, 50_000_000, 4_294_967_295])
+def test_projection_failure_limits_are_validated(control_plane_url, mint_test_token, op, limit):
+    org = unique_org("pfail-limit")
+    admin = mint_test_token(org=org, namespaces=["*"], roles=["org_admin"])
+    r = _post(control_plane_url, admin, op, {"org": org, "limit": limit})
+    assert r.status_code == 422, r.text[:300]
+    detail = r.json()["detail"]
+    assert detail["code"] == "VALIDATION_FAILED"
+    assert ["limit"] in [error["loc"] for error in detail["errors"]]
+
+
 def test_an_org_admin_neither_reads_nor_resolves_a_restricted_namespaces_failures(
     control_plane_url, ch_client, mint_test_token
 ) -> None:

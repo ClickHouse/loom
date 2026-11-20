@@ -25,16 +25,45 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from server.auth import login, revocation, service_accounts
-from server.core import leases, shielded
+from server.auth.scim_people import refuses_subject as refuses_subject
+from server.auth.scim_people import requires_provisioning as requires_provisioning
+from server.core import leases, scim_tokens, shielded
 from server.core.ch import get_client, own_write_reads
 from server.core.datetimes import as_aware_utc
 from server.core.grant_sql import LIVE_GRANT
+from server.core.scim_tokens import tokens as tokens
 from server.core.versions import next_version
 from server.observability import audit
 from server.settings import settings
+
+if TYPE_CHECKING:
+    from server.auth.jwt import AuthInfo
+
+
+async def refuses_auth(auth: AuthInfo, *, org: str | None = None) -> bool:
+    """Check the effective person and every bearer, creator and parent behind it."""
+    from server.auth.gateway import is_end_user
+    from server.auth.scim_people import MAX_ITEMS
+
+    if (
+        is_end_user(auth)
+        and auth.impersonated_by
+        and auth.read_scope == "own_user"
+        and auth.read_user_id
+    ):
+        return False
+    if len(auth.parent_subjects) >= MAX_ITEMS:
+        return True
+    extra = (*auth.parent_subjects,)
+    if auth.creator:
+        extra += (auth.creator,)
+    if auth.impersonated_by:
+        extra += (auth.impersonated_by,)
+    return await refuses_subject(auth.subject, org=auth.org if org is None else org, also=extra)
+
 
 log = logging.getLogger(__name__)
 
@@ -74,9 +103,34 @@ class Busy(Exception):
     """Another request is changing this user; retry shortly."""
 
 
-def tokens(raw: str) -> list[str]:
-    """The SCIM bearer tokens a `LOOM_SCIM_TOKEN` value lists; none means SCIM is off."""
-    return [t.strip() for t in raw.split(",") if t.strip()]
+def authorized(presented: str) -> bool:
+    """Compare all configured candidates after the cell's token policy admits them."""
+    from server.auth.jwt import AuthUnavailable, TokenError
+    from server.core import cell
+
+    configured = tokens(settings.scim_token)
+    if not configured:
+        return False
+    named = None
+    if settings.cell:
+        try:
+            named = scim_tokens.token_cell(presented)
+        except ValueError:
+            raise TokenError("invalid SCIM token", reason="invalid") from None
+        if named is not None and named != settings.cell:
+            raise TokenError("SCIM token names another cell", reason="invalid")
+        problem = scim_tokens.cell_policy_problem(
+            settings.scim_token, settings.cell, cell.first_identity()
+        )
+        if problem is None:
+            raise AuthUnavailable("the cell's SCIM identity is not read yet; retry")
+        if problem:
+            raise AuthUnavailable("the cell's SCIM token configuration is not valid")
+    matches = [hmac.compare_digest(presented.encode(), token.encode()) for token in configured]
+    matched = any(matches)
+    if named is not None and not matched:
+        raise TokenError("invalid SCIM token", reason="invalid")
+    return matched
 
 
 def normalized(address: str) -> str:
@@ -463,6 +517,7 @@ async def _write_audited(row: dict[str, Any], new: dict[str, Any]) -> None:
     audit nothing: so the row is read back, and what landed is audited."""
     from server.auth.authz import forget_ended
 
+    forget_ended("scim", row["email"])
     try:
         if new != row or "version" not in row:  # a change, or a user not yet written
             await _write(new)

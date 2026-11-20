@@ -4,6 +4,7 @@ before the ClickHouse client goes."""
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Coroutine
 from typing import Any
 
@@ -45,6 +46,17 @@ async def to_its_end[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
     except BaseException as err:  # the cancel is the answer; the write's error its cause
         raise cancelled from err
     raise cancelled
+
+
+async def finish_cleanup[T](write: Coroutine[Any, Any, T], *, name: str) -> T:
+    """Finish cleanup before propagating a cancellation already being handled."""
+    original = sys.exception()
+    try:
+        return await to_its_end(write, name=name)
+    except BaseException as error:  # keep the first cancellation; attach cleanup failures
+        if isinstance(original, asyncio.CancelledError) and error is not original:
+            raise original from error
+        raise
 
 
 async def drain(timeout_s: float = 5.0) -> list[str]:

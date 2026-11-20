@@ -16,7 +16,7 @@ import jwt as pyjwt
 import pytest
 from fastapi.testclient import TestClient
 
-from server.auth import device, jit, login, oauth, oidc, revocation, scim, sso_links
+from server.auth import authz, device, jit, login, oauth, oidc, revocation, scim, sso_links
 from server.auth.jwt import mint_token
 from server.auth.passwords import hash_password
 from server.identity.app import password_link
@@ -781,7 +781,7 @@ def test_linked_accounts_that_disagree_make_no_new_one(sso, monkeypatch) -> None
     monkeypatch.setattr(jit, "jit_provision_for_email", no_jit)
     c = _client()
     page = _sso_round_trip(c, _start(c)["user_code"])
-    assert page.status_code == 403 and "linked accounts" in page.text
+    assert page.status_code == 403 and "accounts do not resolve to one account" in page.text
 
 
 def test_a_link_ticket_finishes_nothing_in_another_browser(bobs_password_account) -> None:
@@ -828,8 +828,10 @@ def test_a_link_page_open_across_a_deactivation_writes_nothing(
         return email == "bob@example.com"  # SCIM deactivated bob while the page was open
 
     monkeypatch.setattr(scim, "deactivated", deactivated)
+    # The fake row change invalidates the memo just as SCIM's writer does.
+    authz.forget_ended("scim", "bob@example.com")
     r = _link(c, page.text, "bobpw")
-    assert r.status_code == 403 and "deactivated" in r.text
+    assert r.status_code == 403 and "this account is not allowed to sign in" in r.text
     assert not bobs_password_account  # no link: it would be reachable but never revoked
 
 

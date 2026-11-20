@@ -77,6 +77,7 @@ FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
   AND tombstoned_at IS NULL
   AND (expires_at IS NULL OR expires_at > now())
+  AND (valid_to IS NULL OR valid_to > now())
   -- a high row is reachable by its key only, never pushed into an edit prompt
   AND sensitivity != 'high'
   AND status IN {{statuses:Array(String)}}

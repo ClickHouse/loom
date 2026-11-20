@@ -85,10 +85,11 @@ async def _subject_bodies(
 ) -> tuple[list[str], bool]:
     """The seeds' definition bodies and whether the chunks cover the definition span, read
     together."""
-    return await asyncio.gather(
+    bodies, covered = await asyncio.gather(
         asyncio.gather(*(symbol_body(repo, org, ns, s) for s in seeds)),
         _body_complete(repo, org, ns, seeds),
     )
+    return bodies, covered and bool(bodies) and all(bodies)
 
 
 def _name_in_body(body: str, bare: str) -> bool:

@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from unittest.mock import AsyncMock
 
 import jwt as pyjwt
 import pytest
@@ -265,10 +266,12 @@ def test_cli_mint_reports_the_jti_but_never_beside_a_saved_token(
     from server.settings import settings
 
     monkeypatch.setattr(settings, "jwt_secret", _SECRET, raising=False)
+    from server.auth import keyring
     from server.cli import access
 
-    # An empty keyring: the mint signs with the root secret, reading no ClickHouse.
-    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: None)
+    monkeypatch.setattr(access, "run_connected", lambda run, **_declared: asyncio.run(run(None)))
+    monkeypatch.setattr(keyring, "load_for_connected_mint", AsyncMock())
+    monkeypatch.setattr("server.cli._ch.check_acceptance", AsyncMock())
     rc = cli.main(
         ["mint-token", "--subject", "sa:x", "--org", "acme", "--namespaces", "shop", "--json"]
     )
@@ -539,6 +542,6 @@ def test_cli_mint_refuses_a_reserved_subject_without_a_traceback(
     def _read(**_k: Any) -> None:
         raise AssertionError("the keyring was read for a subject no token may carry")
 
-    monkeypatch.setattr(keyring, "load_for_offline_mint", _read)
+    monkeypatch.setattr(keyring, "load_for_connected_mint", _read)
     rc = cli.main(["mint-token", "--subject", subject, "--org", "acme", "--namespaces", "shop"])
     assert rc == 2 and "grant principal" in capsys.readouterr().err

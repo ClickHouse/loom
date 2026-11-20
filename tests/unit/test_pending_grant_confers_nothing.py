@@ -131,7 +131,18 @@ def test_a_service_account_inherits_only_its_creators_live_grants(
             self, sql: str, params: dict[str, Any] | None = None
         ) -> list[dict[str, Any]]:
             if "loom.service_accounts" in sql:
-                return [{"created_by": "carol", "inherit_creator_grants": True}]
+                return [
+                    {
+                        "bounded_creator": "carol",
+                        "bounded_lineage": [],
+                        "lineage_count": 0,
+                        "subject_bytes": len(b"carol"),
+                        "revoked_at": None,
+                        "expires_at": None,
+                        "inherit_creator_grants": True,
+                        "kind": "",
+                    }
+                ]
             return await real.query_all(sql, params)
 
         async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:

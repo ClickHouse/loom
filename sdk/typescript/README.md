@@ -495,7 +495,7 @@ import { loomMemoryTool } from "@clickhouse/loom/integrations/claude-memory";
 const memory = loomMemoryTool(bot, { store: "u-42" }); // client.beta.messages.toolRunner({ tools: [memory], ... })
 ```
 
-The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
+The Claude API memory tool's commands (`view`, `create`, `str_replace`, `insert`, `delete`, `rename`) over Loom documents: each file under `/memories` is the document `loom-memory://<store>/memories/<path>`, the same documents the Python `loom.integrations.claude_memory` tools read. Built with `betaMemoryTool` from `@anthropic-ai/sdk`, an optional peer dependency (1.8.x or 1.11.x). `loomMemoryHandlers(bot, { store })` returns the command handlers alone, for a loop that dispatches the calls itself.
 
 ## LangChain.js
 
