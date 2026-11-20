@@ -11,8 +11,8 @@ import pytest
 
 from server.auth import authz, revocation, scim, subject_revocation
 from server.cli import cell_attach, cell_attach_beats
-from server.cli.cell_ch import Refused
 from server.core import cell, ch
+from server.core.cell_ch import Refused
 from server.settings import settings
 from tests.unit.test_cell_attach import FIELDS, FakeConn, _args, _beat, _value
 from tests.unit.test_scim_people import People

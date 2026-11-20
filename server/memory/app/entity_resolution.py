@@ -36,10 +36,21 @@ class EntityResolutionDecision:
     strategy: str
 
 
+_ASCII_COMPACT_DELETE = str.maketrans(
+    "", "", "".join(chr(i) for i in range(128) if not chr(i).isalnum())
+)
+
+
+def _compact_canonical(text: str) -> str:
+    if text.isascii():
+        return text.translate(_ASCII_COMPACT_DELETE)
+    return "".join(char for char in text if char.isalnum())
+
+
 def compact_entity_text(text: str) -> str:
     """Normalize away separators for near-exact product/org spellings."""
 
-    return "".join(ch for ch in canonical_entity_text(text) if ch.isalnum())
+    return _compact_canonical(canonical_entity_text(text))
 
 
 def entity_similarity(a: str, b: str) -> float:
@@ -51,8 +62,8 @@ def entity_similarity(a: str, b: str) -> float:
         return 0.0
     if a_canon == b_canon:
         return 1.0
-    compact_a = "".join(char for char in a_canon if char.isalnum())
-    compact_b = "".join(char for char in b_canon if char.isalnum())
+    compact_a = _compact_canonical(a_canon)
+    compact_b = _compact_canonical(b_canon)
     return _prepared_similarity(a_canon, b_canon, compact_a, compact_b)
 
 
@@ -206,7 +217,7 @@ def _prepare_canonical_candidates(candidates: Iterable[str]) -> PreparedCandidat
     for canon in candidates:
         if not canon or canon in prepared:
             continue
-        compact = "".join(char for char in canon if char.isalnum())
+        compact = _compact_canonical(canon)
         prepared[canon] = (canon, compact, len(canon), len(compact))
     return PreparedCandidates(prepared[k] for k in sorted(prepared))
 
@@ -275,7 +286,11 @@ def _overlap_upper_bound(chars_a: Counter[str], la: int, chars_b: Counter[str], 
     2 * |a ∩ b| / (la + lb) bounds 2 * M / T from above."""
     if la <= 0 or lb <= 0:
         return 0.0
-    shared = sum(min(n, chars_b[c]) for c, n in chars_a.items() if c in chars_b)
+    shared = 0
+    for char, count in chars_a.items():
+        if char in chars_b:
+            other = chars_b[char]
+            shared += count if count <= other else other
     return 2.0 * shared / (la + lb)
 
 
@@ -314,6 +329,11 @@ def choose_canonical_candidate(
     # (see the note above), so this decides exactly what the full scan would.
     scored: list[tuple[str, float]] = []
     gap_blockers = 0
+    entropy_blockers = 0
+    # Qualifying probabilities contain at least min_score uniform mass.
+    # Reserve 64 ulps per candidate for normalization and entropy summation.
+    entropy_floor = min_score - 64.0 * math.ulp(1.0) * len(prepared)
+    two_scores_refuse = 0.0 < min_score <= 1.0 and 0.0 <= max_entropy < entropy_floor
     for i in _blocked_positions(prepared, m_len, m_clen, min_score):
         if prepared[i][0] == mention or not _overlap_admits(
             prepared, i, m_len, m_clen, m_chars, m_cchars, min_score
@@ -321,6 +341,10 @@ def choose_canonical_candidate(
             continue
         score = _prepared_similarity(mention, prepared[i][0], m_compact, prepared[i][1])
         scored.append((prepared[i][0], score))
+        if two_scores_refuse and score >= min_score:
+            entropy_blockers += 1
+            if entropy_blockers == 2:
+                return EntityResolutionDecision(mention, mention, 1.0, "self")
         if 1.0 - score < min_gap:
             gap_blockers += 1
             # Two scores this close to one leave no room for the required winner gap.

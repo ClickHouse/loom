@@ -18,9 +18,9 @@ import pytest
 from server.cli import cell_attach, cell_control, cell_scan
 from server.cli import cell_attach_beats as beats
 from server.cli import cell_attach_pg as apg
-from server.cli.cell_ch import Refusal, Refused
 from server.cli.cell_scan import Table
 from server.core import cell, instances
+from server.core.cell_ch import Refusal, Refused
 from server.router.limits import ATTACH_BATCH, MAX_BODY_BYTES
 from server.settings import settings
 from tests.unit.cell_control_owner import owner as _owner
@@ -1443,8 +1443,8 @@ async def test_the_stray_read_names_a_refused_table_and_reads_on(
 ) -> None:
     from contextlib import asynccontextmanager
 
-    from server.cli import cell_ch, doctor_cell
-    from server.core import pg
+    from server.cli import doctor_cell
+    from server.core import cell_ch, pg
 
     async def topology(_ch: Any) -> Any:
         return cell_ch.Topology("", 0)

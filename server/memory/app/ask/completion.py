@@ -55,6 +55,8 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
     returns the first hop's rows again (125 of 165 follows added nothing).
     Rows come back as wire hits; fails open to []."""
     slug = key_slug(bridge)
+    # The subject is literal text inside the LIKE pattern.
+    escaped_slug = slug.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     identity = memory_identity_where(search_input)
     if len(slug) < 4 or identity is None:
         return []
@@ -86,7 +88,7 @@ async def bridge_rows_by_key(search_input: Any, bridge: str, *, top_k: int = 6) 
             """,
             params={
                 **params,
-                "pat": f"%{slug}%",
+                "pat": f"%{escaped_slug}%",
                 "per_key": int(settings.memory_search_per_key_cap) or int(top_k),
                 "lim": int(top_k),
             },

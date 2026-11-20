@@ -517,7 +517,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.lineage`](operations/memory.md#memorylineage) | Assemble the provenance chain for a SHARED memory. | viewer | read | no |  |
 | [`memory.link`](operations/memory.md#memorylink) | Author an explicit edge between two memories (or two entities). | writer | write | yes | yes |
 | [`memory.list`](operations/memory.md#memorylist) | List memory keys under this identity, optionally filtered. | viewer | read | yes |  |
-| [`memory.lock`](operations/memory.md#memorylock) | Lock one row against a class of writes. | writer | write | yes | yes |
+| [`memory.lock`](operations/memory.md#memorylock) | Lock one row, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; read the current row before retrying. | writer | write | yes | yes |
 | [`memory.move`](operations/memory.md#memorymove) | Rename `from_key` to `to_key`, leaving the old key answering. | writer | write | yes | yes |
 | [`memory.outcome`](operations/memory.md#memoryoutcome) | External outcome signal for a memory row. | writer | write | no | yes |
 | [`memory.outcome_run`](operations/memory.md#memoryoutcome_run) | Apply one outcome to many recalled memories in a single call — the bulk form of memory.outcome, so callers skip a per-key loop. | writer | write | yes | yes |
@@ -549,11 +549,11 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.sweep_expired`](operations/memory.md#memorysweep_expired) | Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker runs on its interval, scoped to one namespace. | admin | idempotent | no | yes |
 | [`memory.timeline`](operations/memory.md#memorytimeline) | Return memories about an entity (or matching a tag filter) in strict temporal order — newest first, with optional since/until windows. | viewer | read | no |  |
 | [`memory.touch`](operations/memory.md#memorytouch) | Change only a memory's expiry: set a new TTL (`ttl_seconds`) or clear it (`clear_expiry`), for one key or up to 1,000 (`memory_keys`), without rewriting its value, entities, conflict state or… | writer | write | no |  |
-| [`memory.unlock`](operations/memory.md#memoryunlock) | Lift a lock set by memory.lock (admin). | admin | idempotent | no | yes |
+| [`memory.unlock`](operations/memory.md#memoryunlock) | Unlock one row, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; read the current row before retrying. | admin | idempotent | no | yes |
 | [`memory.unpin`](operations/memory.md#memoryunpin) | Remove the write-time pin from one live memory. | admin | idempotent | no | yes |
 | [`memory.update`](operations/memory.md#memoryupdate) | Key-addressed update: the fact changed or got more specific. | writer | write | yes |  |
 | [`memory.update_by_id`](operations/memory.md#memoryupdate_by_id) | Update a memory by UUID with an optimistic concurrency check. | writer | idempotent | yes |  |
-| [`memory.verify`](operations/memory.md#memoryverify) | Attest to (or revoke the attestation on) one memory. | writer | idempotent | yes | yes |
+| [`memory.verify`](operations/memory.md#memoryverify) | Attest or revoke, refusing a changed source with retryable 503 `ADMISSION_CONTENDED` without writing a memory version; review the current row before retrying. | writer | idempotent | yes | yes |
 
 ### memory_schema
 
