@@ -23,7 +23,7 @@ from pathlib import Path
 
 import httpx
 
-DIFY = "8e689e868b63b6dd2b449d0eb568ca5cc7127759"
+DIFY = "7bef4e1b2dc21b2c694d3243425dd3fa6288f916"
 SERVICES = {
     "agent_backend",
     "agent_ssrf_proxy",
@@ -149,16 +149,26 @@ def validate_platform_services(config):
         )
 
 
-def plugin_storage_source(service, root):
+def plugin_storage_source(services, root):
     expected = root / "docker/volumes/plugin_daemon"
-    mounts = [mount for mount in service.get("volumes", []) if mount["target"] == "/app/storage"]
+    daemon = services["plugin_daemon"]
+    for service, target in (
+        (daemon, "/app/storage"),
+        (services["init_permissions"], "/app/plugin_daemon/storage"),
+    ):
+        mounts = [mount for mount in service.get("volumes", []) if mount["target"] == target]
+        require(
+            len(mounts) == 1
+            and mounts[0]["type"] == "bind"
+            and mounts[0]["source"] == str(expected)
+            and not mounts[0].get("read_only"),
+            "Plugin storage binding differs",
+        )
     require(
-        len(mounts) == 1
-        and mounts[0]["type"] == "bind"
-        and mounts[0]["source"] == str(expected)
-        and not mounts[0].get("read_only")
-        and not service.get("user"),
-        "Plugin storage binding differs",
+        not daemon.get("user")
+        and daemon.get("depends_on", {}).get("init_permissions", {}).get("condition")
+        == "service_completed_successfully",
+        "Plugin storage initialization dependency differs",
     )
     return expected
 
@@ -695,7 +705,7 @@ class Runtime:
         self.record("platform-caps.json", override)
         self.created = True
         self.persist()
-        self.initialize_plugin_storage()
+        self.prepare_plugin_storage()
         self.phase = "official-platform-start"
         self.compose("up", "-d", "--pull", "never", timeout=300)
         self.discover()
@@ -704,8 +714,8 @@ class Runtime:
             "Missing official service container",
         )
 
-    def initialize_plugin_storage(self):
-        self.phase = "official-storage-init"
+    def prepare_plugin_storage(self):
+        self.phase = "official-storage-prepare"
         service = self.cfg["services"]["plugin_daemon"]
         (image,) = self.docker_json("image", "inspect", service["image"])
         require(
@@ -713,73 +723,50 @@ class Runtime:
             and image["Config"]["User"] == "dify",
             "Plugin storage image differs",
         )
-        storage = plugin_storage_source(service, self.path)
+        storage = plugin_storage_source(self.cfg["services"], self.path)
         require(
             not storage.exists()
             and not storage.is_symlink()
             and storage.parent.resolve() == storage.parent,
             "Plugin storage must be fresh",
         )
+        # The official init service changes ownership only after this fresh bind is checked.
         storage.mkdir(mode=0o700, parents=True)
         original = storage.stat()
         require(
             original.st_uid == os.getuid() and not any(storage.iterdir()),
             "Plugin storage owner differs",
         )
-        self.discover()
-        helper = self.project + "-storage-init"
-        # The bind hides the image's ownership; initialize only this new empty directory.
-        self.compose(
-            "run",
-            "--name",
-            helper,
-            "--no-deps",
-            "--pull",
-            "never",
-            "--user",
-            "0:0",
-            "--entrypoint",
-            "/bin/sh",
-            "plugin_daemon",
-            "-ec",
-            "test -d /app/storage && test ! -L /app/storage "
-            '&& test -z "$(ls -A /app/storage)" '
-            '&& chown "$(id -u dify):$(id -g dify)" /app/storage',
-            timeout=30,
-        )
-        current = storage.stat()
+        self.plugin_storage = storage
+        self.plugin_storage_identity = original.st_dev, original.st_ino
+
+    def verify_plugin_storage(self, checkpoint):
+        storage = self.plugin_storage
+        current = storage.lstat()
+        marker = storage / ".init_permissions"
         require(
-            (current.st_dev, current.st_ino) == (original.st_dev, original.st_ino)
-            and current.st_uid != 0,
+            not storage.is_symlink()
+            and storage.is_dir()
+            and (current.st_dev, current.st_ino) == self.plugin_storage_identity
+            and (current.st_uid, current.st_gid) == (1001, 1001)
+            and marker.is_file()
+            and not marker.is_symlink(),
             "Plugin storage initialization differs",
         )
-        self.retire_storage_helper(helper)
         self.record(
-            "plugin-storage.json",
-            {"image": image["Id"], "user": "dify", "uid": current.st_uid, "gid": current.st_gid},
+            "plugin-storage-" + checkpoint + ".json",
+            {
+                "image": self.expected_images["plugin_daemon"],
+                "user": "dify",
+                "uid": current.st_uid,
+                "gid": current.st_gid,
+                "initializer": "init_permissions",
+                "device": current.st_dev,
+                "inode": current.st_ino,
+            },
         )
 
-    def retire_storage_helper(self, name):
-        self.discover()
-        (row,) = self.docker_json("container", "inspect", name)
-        ident = row["Id"]
-        owner = self.containers.get(ident, {})
-        require(
-            row["Name"] == "/" + name
-            and owner.get("service") == "plugin_daemon"
-            and row["Created"] == owner.get("created")
-            and row["Image"] == self.expected_images["plugin_daemon"]
-            and row["State"]["Status"] == "exited"
-            and row["State"]["ExitCode"] == 0
-            and not row["State"].get("OOMKilled")
-            and not row["HostConfig"]["AutoRemove"],
-            "Storage helper completion differs",
-        )
-        self.command(["docker", "container", "rm", "-v", ident])
-        require(ident not in self.ids("container", "-a", "--no-trunc"), "Storage helper remains")
-        self.containers.pop(ident)
-
-    def platform_ready(self):
+    def platform_ready(self, checkpoint):
         end = time.monotonic() + 180
         while time.monotonic() < end:
             ready = True
@@ -797,6 +784,7 @@ class Runtime:
                         and state.get("Health", {}).get("Status", "healthy") == "healthy"
                     )
             if ready:
+                self.verify_plugin_storage(checkpoint)
                 return
             time.sleep(2)
         raise RuntimeError("Official service readiness deadline exceeded")
@@ -1416,13 +1404,13 @@ def main():
         runtime.artifact()
         runtime.platform()
         runtime.fixture()
-        runtime.platform_ready()
+        runtime.platform_ready("before-tools")
         # The scenario is ordinary tool use against this fixture, never the parent deployment.
         from dify_application_scenario import run
 
         runtime.phase = "native-application"
         run(runtime)
-        runtime.platform_ready()
+        runtime.platform_ready("after-tools")
         require(runtime.monitor_error is None, "Resource monitor failed")
     except Exception as error:  # noqa: BLE001 — Record a bounded failure before owned cleanup.
         failure = runtime.redact(error)

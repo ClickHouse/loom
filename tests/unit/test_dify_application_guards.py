@@ -85,227 +85,194 @@ class DifyApplicationGuards(unittest.TestCase):
                 smoke.validate_platform_services(config)
 
     @staticmethod
-    def plugin_storage_service():
+    def storage_services():
+        source = "/owned/dify/docker/volumes/plugin_daemon"
         return {
-            "volumes": [
-                {
-                    "type": "bind",
-                    "source": "/owned/dify/docker/volumes/plugin_daemon",
-                    "target": "/app/storage",
-                }
-            ]
+            "plugin_daemon": {
+                "image": "sha256:owned-image",
+                "volumes": [{"type": "bind", "source": source, "target": "/app/storage"}],
+                "depends_on": {"init_permissions": {"condition": "service_completed_successfully"}},
+            },
+            "init_permissions": {
+                "volumes": [
+                    {"type": "bind", "source": source, "target": "/app/plugin_daemon/storage"}
+                ],
+            },
         }
 
-    def test_plugin_storage_requires_exact_writable_official_bind_and_image_user(self):
-        service = self.plugin_storage_service()
+    def test_storage_requires_same_writable_bind_and_completed_official_init(self):
+        services = self.storage_services()
         self.assertEqual(
-            smoke.plugin_storage_source(service, Path("/owned/dify")),
+            smoke.plugin_storage_source(services, Path("/owned/dify")),
             Path("/owned/dify/docker/volumes/plugin_daemon"),
         )
-        for field, value in (
-            ("source", "/foreign/storage"),
-            ("source", "/owned/dify/docker/volumes/other"),
-            ("type", "volume"),
-            ("read_only", True),
-        ):
-            changed = self.plugin_storage_service()
-            changed["volumes"][0][field] = value
-            with (
-                self.subTest(field=field, value=value),
-                self.assertRaisesRegex(RuntimeError, "storage binding differs"),
+        for service in ("plugin_daemon", "init_permissions"):
+            for field, value in (
+                ("source", "/foreign"),
+                ("target", "/wrong"),
+                ("type", "volume"),
+                ("read_only", True),
             ):
+                changed = self.storage_services()
+                changed[service]["volumes"][0][field] = value
+                with self.subTest(service=service, field=field), self.assertRaises(RuntimeError):
+                    smoke.plugin_storage_source(changed, Path("/owned/dify"))
+        for service in ("plugin_daemon", "init_permissions"):
+            changed = self.storage_services()
+            changed[service]["volumes"] *= 2
+            with self.subTest(duplicate=service), self.assertRaises(RuntimeError):
                 smoke.plugin_storage_source(changed, Path("/owned/dify"))
-        for changed in (
-            {"volumes": []},
-            {"volumes": service["volumes"] * 2},
-            {**service, "user": "0:0"},
-        ):
-            with (
-                self.subTest(service=changed),
-                self.assertRaisesRegex(RuntimeError, "storage binding differs"),
-            ):
+        for condition in (None, "service_started"):
+            changed = self.storage_services()
+            changed["plugin_daemon"]["depends_on"]["init_permissions"]["condition"] = condition
+            with self.subTest(condition=condition), self.assertRaises(RuntimeError):
                 smoke.plugin_storage_source(changed, Path("/owned/dify"))
+        changed = self.storage_services()
+        changed["plugin_daemon"]["user"] = "0:0"
+        with self.assertRaises(RuntimeError):
+            smoke.plugin_storage_source(changed, Path("/owned/dify"))
 
     def storage_runtime(self):
         runtime = smoke.Runtime.__new__(smoke.Runtime)
-        service = {**self.plugin_storage_service(), "image": "sha256:owned-image"}
-        runtime.cfg = {"services": {"plugin_daemon": service}}
+        runtime.cfg = {"services": self.storage_services()}
         runtime.expected_images = {"plugin_daemon": "sha256:owned-image"}
         runtime.path = Path("/owned/dify")
-        runtime.project = "owned-project"
         runtime.docker_json = Mock(
             return_value=[{"Id": "sha256:owned-image", "Config": {"User": "dify"}}]
         )
-        runtime.compose, runtime.discover, runtime.record = Mock(), Mock(), Mock()
-        runtime.retire_storage_helper = Mock()
+        runtime.compose, runtime.record = Mock(), Mock()
         storage = Mock()
         storage.exists.return_value = False
         storage.is_symlink.return_value = False
         storage.parent.resolve.return_value = storage.parent
         storage.iterdir.return_value = iter(())
-        storage.stat.side_effect = [
-            SimpleNamespace(st_dev=1, st_ino=2, st_uid=1001, st_gid=1001),
-            SimpleNamespace(st_dev=1, st_ino=2, st_uid=1000, st_gid=1000),
-        ]
+        storage.stat.return_value = SimpleNamespace(st_dev=1, st_ino=2, st_uid=1000, st_gid=1000)
         return runtime, storage
 
-    def test_storage_init_checks_census_and_changes_only_empty_bind_owner(self):
+    def test_fresh_bind_uses_official_init_without_custom_root_container(self):
         runtime, storage = self.storage_runtime()
-        operations = Mock()
-        operations.attach_mock(runtime.discover, "discover")
-        operations.attach_mock(runtime.compose, "compose")
-        operations.attach_mock(runtime.retire_storage_helper, "retire")
         with (
             patch.object(smoke, "plugin_storage_source", return_value=storage),
-            patch.object(smoke.os, "getuid", return_value=1001),
+            patch.object(smoke.os, "getuid", return_value=1000),
         ):
-            runtime.initialize_plugin_storage()
+            runtime.prepare_plugin_storage()
         storage.mkdir.assert_called_once_with(mode=0o700, parents=True)
-        self.assertEqual(
-            [call[0] for call in operations.mock_calls], ["discover", "compose", "retire"]
-        )
-        args, options = runtime.compose.call_args
-        self.assertEqual(
-            args[:-1],
-            (
-                "run",
-                "--name",
-                "owned-project-storage-init",
-                "--no-deps",
-                "--pull",
-                "never",
-                "--user",
-                "0:0",
-                "--entrypoint",
-                "/bin/sh",
-                "plugin_daemon",
-                "-ec",
-            ),
-        )
-        self.assertTrue(args[-1].endswith('chown "$(id -u dify):$(id -g dify)" /app/storage'))
-        self.assertNotIn("chown -R", args[-1])
-        self.assertNotIn("chmod", args[-1])
-        self.assertEqual(options, {"timeout": 30})
-        self.assertNotIn("--rm", args)
-        self.assertNotIn("user", runtime.cfg["services"]["plugin_daemon"])
-        runtime.retire_storage_helper.assert_called_once_with("owned-project-storage-init")
+        runtime.compose.assert_not_called()
+        self.assertEqual(runtime.plugin_storage_identity, (1, 2))
 
-    @staticmethod
-    def storage_helper():
-        return {
-            "Id": "helper-id",
-            "Name": "/owned-project-storage-init",
-            "Created": "helper-birth",
-            "Image": "sha256:owned-image",
-            "State": {"Status": "exited", "ExitCode": 0, "OOMKilled": False},
-            "HostConfig": {"AutoRemove": False},
-        }
-
-    def test_successful_helper_retires_exact_id_before_platform_readiness(self):
-        runtime = smoke.Runtime.__new__(smoke.Runtime)
-        runtime.containers = {
-            "helper-id": {"service": "plugin_daemon", "created": "helper-birth"},
-            "service-id": {"service": "plugin_daemon", "created": "service-birth"},
-        }
-        runtime.expected_images = {"plugin_daemon": "sha256:owned-image"}
-        runtime.discover, runtime.command, runtime.ids = Mock(), Mock(), Mock(return_value=set())
-        runtime.docker_json = Mock(
-            side_effect=[[self.storage_helper()]],
-        )
-        runtime.retire_storage_helper("owned-project-storage-init")
-        self.assertEqual(set(runtime.containers), {"service-id"})
-        runtime.command.assert_called_once_with(["docker", "container", "rm", "-v", "helper-id"])
-        runtime.ids.assert_called_once_with("container", "-a", "--no-trunc")
-        runtime.docker_json.side_effect = None
-        runtime.docker_json.return_value = [{"State": {"Status": "running"}}]
-        runtime.platform_ready()
-        self.assertEqual(
-            runtime.docker_json.call_args, unittest.mock.call("container", "inspect", "service-id")
-        )
-
-    def test_failed_or_unverified_helper_stays_in_census(self):
-        for changed in (
-            {"State": {"Status": "running", "ExitCode": 0}},
-            {"State": {"Status": "exited", "ExitCode": 1}},
-            {"State": {"Status": "exited", "ExitCode": 0, "OOMKilled": True}},
-            {"Created": "reused-birth"},
-            {"HostConfig": {"AutoRemove": True}},
+    def test_existing_or_symlinked_storage_refuses_before_platform_start(self):
+        for exists, symlink, foreign_parent in (
+            (True, False, False),
+            (False, True, False),
+            (False, False, True),
         ):
-            runtime = smoke.Runtime.__new__(smoke.Runtime)
-            runtime.containers = {
-                "helper-id": {"service": "plugin_daemon", "created": "helper-birth"}
-            }
-            runtime.expected_images = {"plugin_daemon": "sha256:owned-image"}
-            runtime.discover, runtime.command = Mock(), Mock()
-            runtime.docker_json = Mock(return_value=[{**self.storage_helper(), **changed}])
+            runtime, storage = self.storage_runtime()
+            storage.exists.return_value = exists
+            storage.is_symlink.return_value = symlink
+            if foreign_parent:
+                storage.parent.resolve.return_value = Path("/foreign")
             with (
-                self.subTest(changed=changed),
-                self.assertRaisesRegex(RuntimeError, "completion differs"),
+                self.subTest(exists=exists, symlink=symlink, foreign_parent=foreign_parent),
+                patch.object(smoke, "plugin_storage_source", return_value=storage),
+                self.assertRaisesRegex(RuntimeError, "must be fresh"),
             ):
-                runtime.retire_storage_helper("owned-project-storage-init")
-            runtime.command.assert_not_called()
-            self.assertIn("helper-id", runtime.containers)
+                runtime.prepare_plugin_storage()
+            storage.mkdir.assert_not_called()
+            runtime.compose.assert_not_called()
 
-    def test_helper_census_retires_only_after_exact_removal_is_proven(self):
-        runtime = smoke.Runtime.__new__(smoke.Runtime)
-        runtime.containers = {"helper-id": {"service": "plugin_daemon", "created": "helper-birth"}}
-        runtime.expected_images = {"plugin_daemon": "sha256:owned-image"}
-        runtime.discover, runtime.command = Mock(), Mock()
-        runtime.ids = Mock(return_value={"helper-id"})
-        runtime.docker_json = Mock(return_value=[self.storage_helper()])
-        with self.assertRaisesRegex(RuntimeError, "helper remains"):
-            runtime.retire_storage_helper("owned-project-storage-init")
-        self.assertIn("helper-id", runtime.containers)
+    def test_nonempty_or_wrong_owner_bind_refuses_before_official_start(self):
+        for nonempty in (False, True):
+            runtime, storage = self.storage_runtime()
+            storage.iterdir.return_value = iter(("unexpected",) if nonempty else ())
+            storage.stat.return_value.st_uid = 1000 if nonempty else 999
+            with (
+                self.subTest(nonempty=nonempty),
+                patch.object(smoke, "plugin_storage_source", return_value=storage),
+                patch.object(smoke.os, "getuid", return_value=1000),
+                self.assertRaisesRegex(RuntimeError, "owner differs"),
+            ):
+                runtime.prepare_plugin_storage()
+            runtime.compose.assert_not_called()
 
-    def test_failed_helper_remains_for_normal_stop_remove_and_remaining_resource_cleanup(self):
-        runtime, storage = self.storage_runtime()
-        runtime.compose.side_effect = RuntimeError("helper failed")
-        with (
-            patch.object(smoke, "plugin_storage_source", return_value=storage),
-            patch.object(smoke.os, "getuid", return_value=1001),
-            self.assertRaisesRegex(RuntimeError, "helper failed"),
+    def test_changed_image_or_root_user_refuses_storage_preparation(self):
+        for image in (
+            {"Id": "sha256:other-image", "Config": {"User": "dify"}},
+            {"Id": "sha256:owned-image", "Config": {"User": "0:0"}},
         ):
-            runtime.initialize_plugin_storage()
-        runtime.retire_storage_helper.assert_not_called()
-        autoremove = "--rm" in runtime.compose.call_args.args
-        resources = {
-            "container": {"helper-id"},
-            "volume": {"owned-volume"},
-            "network": {"owned-network"},
+            runtime, _ = self.storage_runtime()
+            runtime.docker_json.return_value = [image]
+            with (
+                self.subTest(image=image),
+                patch.object(smoke, "plugin_storage_source") as source,
+                self.assertRaisesRegex(RuntimeError, "image differs"),
+            ):
+                runtime.prepare_plugin_storage()
+            source.assert_not_called()
+            runtime.compose.assert_not_called()
+
+    def test_ready_platform_verifies_official_init_owner_marker_and_same_inode(self):
+        runtime, storage = self.storage_runtime()
+        runtime.plugin_storage, runtime.plugin_storage_identity = storage, (1, 2)
+        runtime.containers = {
+            "init-id": {"service": "init_permissions"},
+            "daemon-id": {"service": "plugin_daemon"},
         }
-        runtime.containers = {"helper-id": {"service": "plugin_daemon", "created": "helper-birth"}}
-        runtime.volumes, runtime.networks = {"owned-volume": "birth"}, {"owned-network": "birth"}
-        runtime.created, runtime.processes, runtime.cleanup_callbacks, runtime.threads = (
-            True,
-            [],
-            [],
-            [],
-        )
-        runtime.redact = str
-        runtime.ids = Mock(side_effect=lambda kind, *_: resources[kind].copy())
-        runtime.docker_json = Mock(
-            side_effect=lambda kind, *_: [
-                {
-                    "Created": "helper-birth" if kind == "container" else "birth",
-                    "CreatedAt": "birth",
-                }
-            ]
-        )
+        states = {
+            "init-id": {"Status": "exited", "ExitCode": 0},
+            "daemon-id": {"Status": "running"},
+        }
+        runtime.docker_json = Mock(side_effect=lambda _kind, _op, ident: [{"State": states[ident]}])
+        marker = Mock()
+        storage.__truediv__ = Mock(return_value=marker)
+        marker.is_file.return_value, marker.is_symlink.return_value = True, False
+        storage.lstat.return_value = SimpleNamespace(st_dev=1, st_ino=2, st_uid=1001, st_gid=1001)
+        receipts = set()
 
-        def command(args, **_):
-            kind, action, ident = args[1], args[2], args[-1]
-            if action == "rm":
-                if ident not in resources[kind]:
-                    raise RuntimeError("missing resource")
-                resources[kind].remove(ident)
-            elif action == "stop" and autoremove:
-                resources[kind].remove(ident)
+        def record(name, _value):
+            if name in receipts:
+                raise FileExistsError(name)
+            receipts.add(name)
 
-        runtime.command = Mock(side_effect=command)
-        with patch.object(smoke, "stop_monitor"):
-            runtime.cleanup()
-        self.assertEqual(resources, {"container": set(), "volume": set(), "network": set()})
-        self.assertTrue(runtime.record.call_args.args[1]["verified"])
+        runtime.record.side_effect = record
+        runtime.platform_ready("before-tools")
+        runtime.platform_ready("after-tools")
+        self.assertEqual(
+            receipts, {"plugin-storage-before-tools.json", "plugin-storage-after-tools.json"}
+        )
+        for field, value in (("st_dev", 9), ("st_ino", 9), ("st_uid", 0), ("st_gid", 0)):
+            storage.lstat.return_value = SimpleNamespace(
+                **{**dict(st_dev=1, st_ino=2, st_uid=1001, st_gid=1001), field: value}
+            )
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(RuntimeError, "initialization differs"),
+            ):
+                runtime.platform_ready("before-tools")
+        storage.lstat.return_value = SimpleNamespace(st_dev=1, st_ino=2, st_uid=1001, st_gid=1001)
+        marker.is_symlink.return_value = True
+        with self.assertRaisesRegex(RuntimeError, "initialization differs"):
+            runtime.platform_ready("before-tools")
+        marker.is_symlink.return_value = False
+        for target, field, value in (
+            (storage, "is_symlink", True),
+            (storage, "is_dir", False),
+            (marker, "is_file", False),
+        ):
+            getattr(target, field).return_value = value
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(RuntimeError, "initialization differs"),
+            ):
+                runtime.platform_ready("before-tools")
+            getattr(target, field).return_value = not value
+        states["init-id"]["ExitCode"] = 1
+        clock = ManualClock()
+        with (
+            patch.object(smoke.time, "monotonic", clock.monotonic),
+            patch.object(smoke.time, "sleep", clock.sleep),
+            self.assertRaisesRegex(RuntimeError, "readiness deadline"),
+        ):
+            runtime.platform_ready("before-tools")
 
     def discovery_runtime(self):
         runtime = smoke.Runtime.__new__(smoke.Runtime)
@@ -315,63 +282,25 @@ class DifyApplicationGuards(unittest.TestCase):
         runtime.expected_images = {"plugin_daemon": "sha256:owned-image"}
         runtime.containers = {"previous-id": {"service": "plugin_daemon", "created": "previous"}}
         runtime.volumes, runtime.networks = {}, {}
-        resources = {
-            "container": {"helper-id"},
-            "volume": {"owned-volume"},
-            "network": {"owned-network"},
-        }
-        labels = {"com.docker.compose.project": runtime.project}
-        helper = {
-            **self.storage_helper(),
-            "Created": runtime.started,
-            "Config": {"Labels": {**labels, "com.docker.compose.service": "plugin_daemon"}},
-            "HostConfig": {"Memory": smoke.GIB, "AutoRemove": False},
-            "Mounts": [],
+        resources = {"container": {"service-id"}, "volume": set(), "network": set()}
+        labels = {
+            "com.docker.compose.project": runtime.project,
+            "com.docker.compose.service": "plugin_daemon",
         }
         rows = {
-            "container": helper,
-            "volume": {"Name": "owned-volume", "CreatedAt": runtime.started, "Labels": labels},
-            "network": {"Created": runtime.started, "Labels": labels},
+            "container": {
+                "Id": "service-id",
+                "Image": "sha256:owned-image",
+                "Created": runtime.started,
+                "Config": {"Labels": labels},
+                "HostConfig": {"Memory": smoke.GIB},
+                "Mounts": [],
+            }
         }
-
-        def inspect(kind, _operation, ident):
-            if kind == "container" and ident == "owned-project-storage-init":
-                ident = "helper-id"
-            if ident not in resources[kind]:
-                raise RuntimeError("inspected missing resource")
-            return [rows[kind]]
-
         runtime.ids = Mock(side_effect=lambda kind, *_: resources[kind].copy())
-        runtime.docker_json = Mock(side_effect=inspect)
-        runtime.command = Mock(side_effect=lambda args, **_: resources[args[1]].remove(args[-1]))
+        runtime.docker_json = Mock(side_effect=lambda kind, *_: [rows[kind]])
+        runtime.command = Mock()
         return runtime, resources, rows
-
-    def test_deleted_helper_then_census_error_still_allows_remaining_normal_cleanup(self):
-        runtime, resources, _ = self.discovery_runtime()
-        observed_ids = runtime.ids.side_effect
-
-        def ids(kind, *filters):
-            if kind == "container" and "--filter" not in filters:
-                raise RuntimeError("absence census interrupted")
-            return observed_ids(kind, *filters)
-
-        runtime.ids.side_effect = ids
-        with self.assertRaisesRegex(RuntimeError, "absence census interrupted"):
-            runtime.retire_storage_helper("owned-project-storage-init")
-        self.assertEqual(resources["container"], set())
-        self.assertIn("helper-id", runtime.containers)
-        runtime.created, runtime.processes, runtime.cleanup_callbacks, runtime.threads = (
-            True,
-            [],
-            [],
-            [],
-        )
-        runtime.redact, runtime.record = str, Mock()
-        with patch.object(smoke, "stop_monitor"):
-            runtime.cleanup()
-        self.assertEqual(runtime.containers, {})
-        self.assertEqual(resources, {"container": set(), "volume": set(), "network": set()})
-        self.assertTrue(runtime.record.call_args.args[1]["verified"])
 
     def test_failed_complete_census_keeps_previous_container_map(self):
         runtime, _, _ = self.discovery_runtime()
@@ -387,7 +316,6 @@ class DifyApplicationGuards(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "network census failed"):
             runtime.discover()
         self.assertIs(runtime.containers, previous)
-        self.assertEqual(set(runtime.containers), {"previous-id"})
         runtime.command.assert_not_called()
 
     def test_fresh_census_refuses_foreign_replacement_without_replacing_old_map(self):
@@ -399,39 +327,6 @@ class DifyApplicationGuards(unittest.TestCase):
             runtime.discover()
         self.assertIs(runtime.containers, previous)
         runtime.command.assert_not_called()
-
-    def test_existing_or_symlinked_storage_refuses_before_privileged_helper(self):
-        cases = ((True, False, False), (False, True, False), (False, False, True))
-        for exists, symlink, foreign_parent in cases:
-            runtime, storage = self.storage_runtime()
-            storage.exists.return_value = exists
-            storage.is_symlink.return_value = symlink
-            if foreign_parent:
-                storage.parent.resolve.return_value = Path("/foreign")
-            with (
-                self.subTest(exists=exists, symlink=symlink, foreign_parent=foreign_parent),
-                patch.object(smoke, "plugin_storage_source", return_value=storage),
-                self.assertRaisesRegex(RuntimeError, "must be fresh"),
-            ):
-                runtime.initialize_plugin_storage()
-            storage.mkdir.assert_not_called()
-            runtime.compose.assert_not_called()
-
-    def test_changed_image_or_root_image_user_refuses_storage_initialization(self):
-        for image in (
-            {"Id": "sha256:other-image", "Config": {"User": "dify"}},
-            {"Id": "sha256:owned-image", "Config": {"User": "0:0"}},
-        ):
-            runtime, _ = self.storage_runtime()
-            runtime.docker_json.return_value = [image]
-            with (
-                self.subTest(image=image),
-                patch.object(smoke, "plugin_storage_source") as source,
-                self.assertRaisesRegex(RuntimeError, "image differs"),
-            ):
-                runtime.initialize_plugin_storage()
-            source.assert_not_called()
-            runtime.compose.assert_not_called()
 
     def test_starting_fixture_can_reset_before_healthy_within_same_budget(self):
         client = Mock()
