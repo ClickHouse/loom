@@ -331,7 +331,7 @@ async def test_single_endpoint_keeps_response_proofs_and_discards_notification_p
 
     monkeypatch.setattr(mcp, "_effective_auth_mode", lambda: "open")
     monkeypatch.setattr(mcp, "_verify_bearer", AsyncMock(return_value=None))
-    monkeypatch.setattr(mcp, "_handle_request", dispatch)
+    monkeypatch.setattr(mcp, "_dispatch_request", dispatch)
     payload = request(1, "ping")
     if notification:
         payload.pop("id")
