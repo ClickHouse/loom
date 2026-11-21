@@ -388,17 +388,19 @@ def rank_statements(
     chunks: list[dict[str, Any]],
     *,
     error_name: str = "",
-    continued_prefix: str = "// … continued from ",
 ) -> list[Statement]:
     """Every raising/logging statement in the chunks, scored against the
     message; best first, then path/line. One entry per (path, line)."""
+    from server.code.domain.symbol_body import retained_source_lines
+
     seen: set[tuple[str, int]] = set()
     out: list[Statement] = []
     for c in chunks:
         path = str(c.get("path") or "")
-        lines = str(c.get("content") or "").splitlines()
-        if lines and lines[0].startswith(continued_prefix):
-            lines = lines[1:]
+        lines = retained_source_lines(c)
+        if lines is None:
+            continue
+        lines = [line.removesuffix("\n").removesuffix("\r") for line in lines]
         start = int(c.get("start_line") or 1)
         scope = str(c.get("scope") or "")
         for line_no, text, window in statement_windows(lines, start):

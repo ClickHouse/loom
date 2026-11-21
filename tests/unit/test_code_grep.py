@@ -68,7 +68,7 @@ def test_lines_scope_and_window_dedupe() -> None:
         "scope": "DB::A::f",
         "start_line": 10,
         "end_line": 14,
-        "content": "int x;\nthrow MAGIC_ERR;\nint y;",
+        "content": "int x;\nthrow MAGIC_ERR;\nint y;\n\n\n",
     }
     overlap = dict(chunk)  # an oversized-unit window repeating the same span
     out = _run([chunk, overlap], pattern="MAGIC_ERR")
@@ -85,6 +85,52 @@ def test_lines_scope_and_window_dedupe() -> None:
     assert out.coverage_floor is True
 
 
+def test_unmapped_skeleton_is_disclosed_without_a_guessed_line() -> None:
+    chunks = [
+        {
+            "path": "m.py",
+            "scope": "Container",
+            "kind": "class_skeleton",
+            "start_line": 1,
+            "end_line": 100,
+            "content": "class Container:\n    target = 1\n",
+        },
+        {
+            "path": "m.py",
+            "scope": "f",
+            "kind": "function",
+            "start_line": 101,
+            "end_line": 102,
+            "content": "def f():\n    return target()\n",
+        },
+    ]
+    out = _run(chunks, pattern="target")
+    assert [(hit["line"], hit["text"]) for hit in out.matches] == [(102, "return target()")]
+    assert out.partial
+    assert "no exact source line mapping" in out.partial_reason
+
+
+def test_source_coverage_validation_runs_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    from server.code.app import grep
+
+    main_thread = threading.get_ident()
+    calls = []
+    validate = grep._line_coverage_fields
+
+    def tracked(*args, **kwargs):
+        calls.append(threading.get_ident())
+        return validate(*args, **kwargs)
+
+    monkeypatch.setattr(grep, "_line_coverage_fields", tracked)
+    _run(
+        [{"path": "m.py", "scope": "", "start_line": 1, "end_line": 1, "content": "target = 1\n"}],
+        pattern="target",
+    )
+    assert calls and all(thread != main_thread for thread in calls)
+
+
 def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
     """ClickGap ask: a hit says how big the function around it is, so the
     client can decide about (or skip) code.enclosing. A chunk that IS the
@@ -97,7 +143,7 @@ def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
             "start_line": 10,
             "end_line": 40,
             "symbol_ids": ["sym-f"],
-            "content": "int x;\nhit();",
+            "content": "int x;\nhit();\n" + "\n" * 29,
         },
         # a comment block outside any unit: no scope, so no span to claim
         {
@@ -106,7 +152,7 @@ def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
             "start_line": 1,
             "end_line": 3,
             "symbol_ids": [],
-            "content": "// hit() is documented here",
+            "content": "// hit() is documented here\n\n\n",
         },
     ]
     out = _run(chunks, pattern="hit()", repo_out=repos)
@@ -156,7 +202,7 @@ def test_windowed_unit_falls_back_to_the_union_of_fetched_windows() -> None:
         "start_line": 4,
         "end_line": 6,
         "symbol_ids": ["sym-gone"],
-        "content": "// … continued from void bigFn()\n    b(); // hit",
+        "content": "// … continued from void bigFn()\n    b(); // hit\n\n\n",
     }
     w3 = {
         "path": "src/big.cpp",
@@ -164,7 +210,7 @@ def test_windowed_unit_falls_back_to_the_union_of_fetched_windows() -> None:
         "start_line": 7,
         "end_line": 9,
         "symbol_ids": ["sym-gone"],
-        "content": "// … continued from void bigFn()\n    c(); // hit",
+        "content": "// … continued from void bigFn()\n    c(); // hit\n\n\n",
     }
     out = _run([w2, w3], pattern="hit")  # symbol row tombstoned / not yet indexed
     assert [(m["line"], m["scope_start_line"], m["scope_end_line"]) for m in out.matches] == [
