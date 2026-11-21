@@ -440,15 +440,15 @@ HTTP callers can supply these headers. Each value is independently optional;
 identifiers accept at most 128 ASCII letters, digits, underscores, dots,
 colons, or hyphens. Invalid identifiers are omitted.
 
-| Header                                                                            | Meaning                                                   |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| `X-Loom-Call-Origin`                                                              | Declared invocation origin                                |
-| `X-Loom-Caller-Type`                                                              | Declared caller type                                      |
-| `X-Loom-Hook-Name`, `X-Loom-Hook-Event`                                           | Known hook entrypoint and event                           |
-| `X-Loom-Conversation-Id`, `X-Loom-Prompt-Id`                                      | Optional supplied conversation and turn                   |
-| `X-Loom-Tool-Call-Id`                                                             | Supplied stable logical call ID, including across retries |
-| `X-Loom-Benchmark-Run-Id`, `X-Loom-Benchmark-Case-Id`, `X-Loom-Benchmark-Variant` | Evaluator correlation                                     |
-| `traceparent`, `tracestate`                                                       | Optional W3C parent context                               |
+| Header                                                                            | Meaning                                                             |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `X-Loom-Call-Origin`                                                              | Declared invocation origin                                          |
+| `X-Loom-Caller-Type`                                                              | Declared caller type                                                |
+| `X-Loom-Hook-Name`, `X-Loom-Hook-Event`                                           | Known hook entrypoint and event                                     |
+| `X-Loom-Conversation-Id`, `X-Loom-Prompt-Id`                                      | Optional supplied conversation and turn                             |
+| `X-Loom-Tool-Call-Id`                                                             | Caller-supplied tool-call correlation; uniqueness is caller-defined |
+| `X-Loom-Benchmark-Run-Id`, `X-Loom-Benchmark-Case-Id`, `X-Loom-Benchmark-Variant` | Evaluator correlation                                               |
+| `traceparent`, `tracestate`                                                       | Optional W3C parent context                                         |
 
 MCP callers supply the same snake-case fields in `params._meta.loom`, with
 `origin` for the invocation origin; W3C context goes directly in `_meta`.
@@ -485,10 +485,13 @@ suppressed by the existing export boundary. Trace sampling and span filters
 still apply, so missing observations do not prove zero calls.
 
 Count only observations marked `loom.call.root`, excluding HTTP envelopes,
-batch entries and nested stages. Received retries have distinct attempt IDs;
-combine them into logical calls only with a supplied stable tool-call ID.
-Without that ID the logical count is unknown. Structured benchmark metadata
-is filterable; it does not imply arbitrary grouping or an answer-quality gain.
+batch entries and nested stages. Received retries have distinct attempt IDs.
+A host tool-call ID can correlate several separate Loom requests from hook
+fanout. Grouping attempts requires a caller guarantee that the supplied ID
+identifies one logical Loom request within the caller's scope and remains
+stable across its retries. Without that guarantee the logical count is unknown.
+Structured benchmark metadata is filterable; it does not imply arbitrary
+grouping or an answer-quality gain.
 
 Sum call durations for accumulated call time. Concurrent requests overlap,
 so this sum differs from elapsed wall time. A host prompt lifecycle is not
