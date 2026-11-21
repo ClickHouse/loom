@@ -6,6 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.clickhouse.loom.Results.ConversationAppendResult;
+import com.clickhouse.loom.Results.ConversationCreateResult;
+import com.clickhouse.loom.Results.ConversationDeleteResult;
+import com.clickhouse.loom.Results.ConversationGetResult;
+import com.clickhouse.loom.Results.ConversationThreadsResult;
 import com.clickhouse.loom.Results.DeleteResult;
 import com.clickhouse.loom.Results.GetResult;
 import com.clickhouse.loom.Results.SearchResult;
@@ -246,6 +251,158 @@ class LoomClientTest {
     assertEquals("dependency", e.category());
     assertTrue(e.retryable());
     server = HttpServer.create(); // so stop() in @AfterEach has a server
+  }
+
+  @Test
+  void conversationAppendSendsTheTurnAndReadsTheAnswer() {
+    answer(200, "{\"msg_id\":\"c1:ab:0\",\"ts\":\"2026-01-01T00:00:00.123456\",\"stored\":true,"
+        + "\"reason\":\"\"}");
+    ConversationAppendResult r =
+        client(null).conversationAppend(
+            "c1", "user", "hello", Map.of("msg_id", "c1:ab:0", "metadata", Map.of("k", 1)));
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.append", seen.get(0).path());
+    assertEquals("java-test", body.get("agent").asText());
+    assertEquals("c1", body.get("thread_id").asText());
+    assertEquals("user", body.get("role").asText());
+    assertEquals("hello", body.get("content").asText());
+    assertEquals("c1:ab:0", body.get("msg_id").asText());
+    assertEquals(1, body.get("metadata").get("k").asInt());
+    assertTrue(r.stored());
+    assertEquals("c1:ab:0", r.msgId());
+    assertEquals("", r.reason());
+    assertEquals(r, r.requireStored());
+  }
+
+  @Test
+  void aDuplicateAppendIsStored() {
+    answer(200, "{\"msg_id\":\"m\",\"ts\":\"t\",\"stored\":true,\"reason\":\"duplicate\"}");
+    ConversationAppendResult r = client(null).conversationAppend("c1", "assistant", "hi");
+    assertEquals("duplicate", r.reason());
+    assertEquals(r, r.requireStored());
+  }
+
+  @Test
+  void anAppendThatWasNotStoredThrowsOnlyWhenRequired() {
+    answer(200, "{\"msg_id\":\"m\",\"ts\":\"t\",\"stored\":false,\"reason\":\"logging_disabled\"}");
+    ConversationAppendResult r = client(null).conversationAppend("c1", "user", "hi");
+    assertFalse(r.stored());
+    LoomException e = assertThrows(LoomException.class, r::requireStored);
+    assertEquals("LOGGING_DISABLED", e.code());
+    assertEquals("configuration", e.category());
+    assertFalse(e.retryable());
+    assertEquals("conversation.append", e.op());
+    assertTrue(e.getMessage().contains("conversation.set_logging"), e.getMessage());
+
+    answer(200, "{\"msg_id\":\"m\",\"ts\":\"t\",\"stored\":false,\"reason\":\"deleted\"}");
+    LoomException deleted =
+        assertThrows(
+            LoomException.class,
+            () -> client(null).conversationAppend("c1", "user", "hi").requireStored());
+    assertEquals("DELETED", deleted.code());
+  }
+
+  @Test
+  void conversationGetPagesMessagesAndReadsTheThread() {
+    answer(200, "{\"found\":true,\"thread_id\":\"c1\",\"title\":\"Order\",\"metadata\":"
+        + "{\"loom_window_start\":2},\"run_id\":\"-\",\"user_id\":\"u-1\",\"agent\":\"java-test\","
+        + "\"msg_count\":5,\"messages\":[{\"msg_id\":\"c1:ab:2\",\"agent\":\"java-test\","
+        + "\"role\":\"tool\",\"content\":\"42\",\"reasoning\":\"\",\"user_id\":\"u-1\","
+        + "\"run_id\":\"-\",\"metadata\":{\"tool\":\"lookup\"},\"tokens\":3,"
+        + "\"ts\":\"2026-01-01T00:00:00.123000\"}],\"next_cursor\":\"abc\"}");
+    ConversationGetResult r = client(null).conversationGet("c1", 50, 2);
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.get", seen.get(0).path());
+    assertEquals("c1", body.get("thread_id").asText());
+    assertTrue(body.get("include_messages").asBoolean());
+    assertEquals(50, body.get("limit").asInt());
+    assertEquals(2, body.get("offset").asInt());
+
+    assertTrue(r.found());
+    assertEquals("Order", r.title());
+    assertEquals(2, r.metadata().get("loom_window_start").asInt());
+    assertEquals("u-1", r.userId());
+    assertEquals(5, r.msgCount());
+    assertEquals("abc", r.nextCursor());
+    Results.ConversationMessage m = r.messages().get(0);
+    assertEquals("c1:ab:2", m.msgId());
+    assertEquals("tool", m.role());
+    assertEquals("42", m.content());
+    assertEquals("lookup", m.metadata().get("tool").asText());
+    assertEquals(3, m.tokens());
+  }
+
+  @Test
+  void conversationGetWithoutMessagesAndForAMissingThread() {
+    answer(200, "{\"found\":false,\"thread_id\":\"c9\",\"title\":\"\",\"metadata\":{},"
+        + "\"run_id\":\"-\",\"user_id\":\"-\",\"agent\":\"\",\"msg_count\":0,\"messages\":[],"
+        + "\"next_cursor\":null}");
+    ConversationGetResult r = client(null).conversationGet("c9");
+    assertTrue(seen.get(0).body().path("include_messages").isMissingNode());
+    assertFalse(r.found());
+    assertEquals(List.of(), r.messages());
+    assertNull(r.nextCursor());
+  }
+
+  @Test
+  void conversationCreateSendsTitleAndMetadata() {
+    answer(200, "{\"thread_id\":\"c1\",\"created_at\":\"2026-01-01T00:00:00\"}");
+    ConversationCreateResult r =
+        client(null).conversationCreate(
+            "c1", Map.of("title", "Order", "metadata", Map.of("loom_window_start", 3)));
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.create", seen.get(0).path());
+    assertEquals("Order", body.get("title").asText());
+    assertEquals(3, body.get("metadata").get("loom_window_start").asInt());
+    assertEquals("c1", r.threadId());
+  }
+
+  @Test
+  void conversationDeleteConfirmsTheThreadId() {
+    answer(200, "{\"tombstoned_at\":\"2026-01-01T00:00:00\",\"thread_id\":\"c1\","
+        + "\"rows_affected\":{\"loom.conversations\":4,\"loom.conversation_threads\":1},\"total\":5}");
+    ConversationDeleteResult r = client(null).conversationDelete("c1");
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.delete", seen.get(0).path());
+    assertEquals("c1", body.get("thread_id").asText());
+    assertEquals("c1", body.get("confirm_thread_id").asText());
+    assertEquals(5, r.total());
+    assertEquals(4, r.raw().get("rows_affected").get("loom.conversations").asInt());
+  }
+
+  @Test
+  void conversationDeleteByAWriterIsA403() {
+    answer(403, "{\"detail\":{\"code\":\"FORBIDDEN\",\"message\":\"admin role required\"}}");
+    LoomException e = assertThrows(LoomException.class, () -> client("w").conversationDelete("c1"));
+    assertEquals(403, e.status());
+    assertEquals("auth", e.category());
+    assertEquals("conversation.delete", e.op());
+  }
+
+  @Test
+  void conversationThreadsSendsThePageAndReadsTheThreads() {
+    answer(200, "{\"threads\":[{\"thread_id\":\"c2\",\"agent\":\"java-test\",\"msg_count\":4,"
+        + "\"first_seen\":\"2026-01-01T00:00:00\",\"last_seen\":\"2026-01-02T00:00:00\","
+        + "\"last_role\":\"user\",\"last_content_excerpt\":\"hi\",\"title\":\"\"}]}");
+    ConversationThreadsResult r = client(null).conversationThreads(365, 200, 400);
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.threads", seen.get(0).path());
+    assertEquals(365, body.get("window_days").asInt());
+    assertEquals(200, body.get("limit").asInt());
+    assertEquals(400, body.get("offset").asInt());
+    assertEquals("c2", r.threads().get(0).threadId());
+    assertEquals(4, r.threads().get(0).msgCount());
+  }
+
+  @Test
+  void conversationSetLoggingSendsTheSwitchWithoutAnAgent() {
+    answer(200, "{\"namespace\":\"local\",\"enabled\":true}");
+    assertTrue(client(null).conversationSetLogging(true));
+    JsonNode body = seen.get(0).body();
+    assertEquals("/v1/conversation.set_logging", seen.get(0).path());
+    assertTrue(body.get("enabled").asBoolean());
+    assertEquals("local", body.get("namespace").asText());
+    assertTrue(body.path("agent").isMissingNode());
   }
 
   @Test
