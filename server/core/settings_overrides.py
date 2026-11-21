@@ -13,13 +13,15 @@ row once and ignores it.
 
 from __future__ import annotations
 
+import json
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from pydantic import ValidationError as PydanticValidationError
 
 from server.core import runtime_overrides as ro
+from server.core.ch_bounded import BoundedReadError
 from server.core.errors import LoomServerError, ValidationError
 from server.core.repo_base import _CHClient
 from server.settings import Settings, settings
@@ -91,6 +93,19 @@ async def change(
     overwritten unseen; two changes in the same instant can still both pass (the
     table has no conditional write)."""
     snapshot = await refresh(ch=ch)
+    return await _change(name, value, snapshot, clear=clear, expected=expected, ch=ch)
+
+
+async def _change(
+    name: str,
+    value: Any,
+    snapshot: ro.Snapshot,
+    *,
+    clear: bool,
+    expected: Any,
+    ch: _CHClient | None,
+    deadline: float | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
     known = name in Settings.model_fields
     before = row(name) if known else None
     previous = before["value"] if before else None
@@ -107,13 +122,88 @@ async def change(
     if clear:
         if (name,) not in snapshot.get(KIND, {}):
             raise ValidationError(f"{name} has no override to reset")
-        await ro.clear(KIND, (name,), ch=ch)
+        bounded: dict[str, Any] = {} if deadline is None else {"deadline": deadline}
+        await ro.clear(KIND, (name,), ch=ch, **bounded)
         _restore(name)
     else:
         checked = check(name, value)
-        await ro.put(KIND, (name,), to_json(Settings, name, checked), ch=ch)
+        if deadline is not None:
+            _finite(name, checked)
+        bounded = {} if deadline is None else {"deadline": deadline}
+        await ro.put(KIND, (name,), to_json(Settings, name, checked), ch=ch, **bounded)
         _apply(name, checked)
     return before, row(name) if known else None
+
+
+def check_selected(name: str) -> None:
+    """Only known, non-secret LIVE fields belong to cell administration."""
+    field = Settings.model_fields.get(name)
+    if (
+        len(Settings.model_fields) > 4096
+        or field is None
+        or not is_live(field)
+        or is_secret_field(name)
+    ):
+        raise BoundedReadError("Cell administration requires a non-secret LIVE setting")
+
+
+def _finite(name: str, value: Any) -> None:
+    try:
+        json.dumps(to_json(Settings, name, value), allow_nan=False)
+    except (ValueError, TypeError, OverflowError):
+        raise BoundedReadError("Setting value is not finite JSON") from None
+
+
+async def change_bounded(
+    name: str,
+    value: Any = None,
+    *,
+    clear: bool = False,
+    expected: Any = NOT_GIVEN,
+    deadline: float,
+    ch: _CHClient | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Refresh only this setting before the ordinary precondition and stored-first change."""
+    check_selected(name)
+    snapshot = await ro.load_settings(name=name, deadline=deadline, ch=ch)
+    if (name,) in snapshot[KIND]:
+        checked = check(name, snapshot[KIND][(name,)])
+        _finite(name, checked)
+        _apply(name, checked)
+    else:
+        _restore(name)
+    return await _change(
+        name,
+        value,
+        snapshot,
+        clear=clear,
+        expected=expected,
+        ch=ch,
+        deadline=deadline,
+    )
+
+
+async def refresh_bounded(*, deadline: float, ch: _CHClient | None = None) -> None:
+    """Adopt a complete bounded setting snapshot only after all selected values validate."""
+    if len(Settings.model_fields) > 4096:
+        raise BoundedReadError("Settings catalog exceeds its allowance")
+    eligible = {
+        name
+        for name, field in Settings.model_fields.items()
+        if is_live(field) and not is_secret_field(name)
+    }
+    snapshot = await ro.load_settings(deadline=deadline, ch=ch)
+    wanted = {}
+    for key, raw in snapshot[KIND].items():
+        name = key[0]
+        if name in eligible:
+            value = check(name, raw)
+            _finite(name, value)
+            wanted[name] = value
+    for name, value in wanted.items():
+        _apply(name, value)
+    for name in eligible - wanted.keys():
+        _restore(name)
 
 
 def adopted() -> bool:
@@ -204,7 +294,12 @@ def _shown(name: str, value: Any) -> Any:
     return settings._mask(name, value) if is_secret_field(name) else to_json(Settings, name, value)
 
 
-def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
+def _rows(
+    *,
+    prefix: str,
+    changed: bool,
+    selected: bool = False,
+) -> Iterator[dict[str, Any]]:
     """Every setting whose name starts with `prefix`: its value in force, its
     default, where the value came from and whether it takes an override.
     `changed` keeps the ones off their default or overridden."""
@@ -212,25 +307,46 @@ def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
 
     about = descriptions(Settings)
     sources = _sources()
-    out = []
     for name, field in Settings.model_fields.items():
         if not name.startswith(prefix):
+            continue
+        if selected and (not is_live(field) or is_secret_field(name)):
             continue
         value = getattr(settings, name)
         default = field.get_default(call_default_factory=True)
         if changed and value == default and sources[name] != "override":
             continue
-        out.append(
-            {
-                "name": name,
-                "env": f"LOOM_{name.upper()}",
-                "value": _shown(name, value),
-                "default": _shown(name, default),
-                "source": sources[name],
-                "live": is_live(field),
-                "description": about.get(name, ""),
-            }
-        )
+        yield {
+            "name": name,
+            "env": f"LOOM_{name.upper()}",
+            "value": _shown(name, value),
+            "default": _shown(name, default),
+            "source": sources[name],
+            "live": is_live(field),
+            "description": about.get(name, ""),
+        }
+
+
+def rows(*, prefix: str = "", changed: bool = False) -> list[dict[str, Any]]:
+    """The current value, source and description of every matching setting."""
+    return list(_rows(prefix=prefix, changed=changed))
+
+
+def selected_rows(*, prefix: str = "") -> list[dict[str, Any]]:
+    """Bound the non-secret LIVE listing before accumulating its output rows."""
+    if len(Settings.model_fields) > 4096:
+        raise BoundedReadError("Settings catalog exceeds its allowance")
+    out = []
+    consumed = 0
+    for item in _rows(prefix=prefix, changed=False, selected=True):
+        try:
+            encoded = json.dumps(item, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+        except (ValueError, TypeError, OverflowError):
+            raise BoundedReadError("Setting result is not finite JSON") from None
+        consumed += len(encoded.encode("utf-8"))
+        if len(encoded.encode("utf-8")) > 16384 or consumed > 2 * 1024**2:
+            raise BoundedReadError("Setting result exceeds its allowance")
+        out.append(item)
     return out
 
 

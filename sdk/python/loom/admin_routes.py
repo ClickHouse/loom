@@ -44,7 +44,7 @@ class AdminRoutes:
         )
 
     async def bots_list(self, body: dict[str, Any] | None = None) -> Any:
-        """`POST /v1/admin/bots.list` (platform_admin). Every registered bot: its namespaces and roles, key or issuer, and limits."""
+        """`POST /v1/admin/bots.list` (platform_admin). Every registered bot, or with self_only the caller's fresh bounded public identity."""
         return await self._agent.transport.request_json(
             "POST", "/v1/admin/bots.list", json=body or {}
         )
@@ -65,6 +65,78 @@ class AdminRoutes:
         """`POST /v1/admin/budget.violations` (platform_admin). Aggregate recent `budget.violated` events (loom.events) for ops alerting."""
         return await self._agent.transport.request_json(
             "POST", "/v1/admin/budget.violations", json=body or {}
+        )
+
+    async def cell_blacklist_global_add(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.blacklist_global_add` (platform_admin automation bot). Add one exact global blacklist pattern with the verified bot as its author."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.blacklist_global_add", json=body or {}
+        )
+
+    async def cell_blacklist_global_list(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.blacklist_global_list` (platform_admin automation bot). List bounded exact-global blacklist rows and report whether more rows exist."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.blacklist_global_list", json=body or {}
+        )
+
+    async def cell_budget_set(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.budget_set` (platform_admin automation bot). Change one latency budget through this verified cell's ordinary budget owner."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.budget_set", json=body or {}
+        )
+
+    async def cell_capabilities(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.capabilities` (platform_admin automation bot). Report this verified cell's supported administration actions and fixed limits."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.capabilities", json=body or {}
+        )
+
+    async def cell_ratelimit_namespace_set(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.ratelimit_namespace_set` (platform_admin automation bot). Change a namespace-label rate override through the cell's ordinary limiter."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.ratelimit_namespace_set", json=body or {}
+        )
+
+    async def cell_settings_history(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.settings_history` (platform_admin automation bot). Read the bounded change history of one live setting in this verified cell."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.settings_history", json=body or {}
+        )
+
+    async def cell_settings_list(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.settings_list` (platform_admin automation bot). List non-secret settings after fresh cell and automation authorization."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.settings_list", json=body or {}
+        )
+
+    async def cell_settings_set(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.settings_set` (platform_admin automation bot). Change one live setting and confirm its completed cell administration audits."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.settings_set", json=body or {}
+        )
+
+    async def cell_signing_keys_list(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.signing_keys_list` (platform_admin automation bot). List public signing-key metadata after fresh cell and automation authorization."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.signing_keys_list", json=body or {}
+        )
+
+    async def cell_signing_keys_retire(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.signing_keys_retire` (platform_admin automation bot). Retire one signing key through this verified cell's ordinary retirement checks."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.signing_keys_retire", json=body or {}
+        )
+
+    async def cell_signing_keys_rotate(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.signing_keys_rotate` (platform_admin automation bot). Rotate a signing key through the ordinary cell owner and return public metadata."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.signing_keys_rotate", json=body or {}
+        )
+
+    async def cell_subject_revoke(self, body: dict[str, Any] | None = None) -> Any:
+        """`POST /v1/admin/cell.subject_revoke` (platform_admin automation bot). Revoke one exact global subject through the bounded ordinary security owner."""
+        return await self._agent.transport.request_json(
+            "POST", "/v1/admin/cell.subject_revoke", json=body or {}
         )
 
     async def claim_release(self, body: dict[str, Any] | None = None) -> Any:

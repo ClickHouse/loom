@@ -129,7 +129,7 @@ Authentication, tokens and identity providers.
 | `LOOM_RESTRICTED_SERVE` | `bool` | `True` |  | Kill switch for restricted namespaces. True: served to a principal whose token names the namespace AND who holds a live direct grant. False: every read is refused while ingest continues. |
 | `LOOM_RESTRICTED_AUDIT_INLINE` | `bool` | `True` |  | Wait for the `namespace.restricted_access` audit row of each admitted restricted read before answering; false writes it beside the answer, lost if the process dies first. |
 | `LOOM_CORS_ORIGINS` | `str` | `''` |  | Comma-separated origin list. "*" allows all (acceptable when auth_required=True). Empty disables CORS entirely. |
-| `LOOM_MAX_REQUEST_BYTES` | `int` | `33554432` |  | Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables. |
+| `LOOM_MAX_REQUEST_BYTES` | `int` | `33554432` |  | Global request-body cap, bytes, enforced by ASGI middleware before parsing (413 PAYLOAD_TOO_LARGE). 0 disables the global cap; fixed cell administration caps remain. |
 | `LOOM_HSTS_MAX_AGE_SECONDS` | `int` | `31536000` |  | Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP. 0 sends no header. |
 | `LOOM_POLICY_MODE` | `'off' \| 'shadow' \| 'enforce'` | `'off'` |  | History policy over the agent trace: "off" reads/writes nothing; "shadow" records verdicts in loom.policy_decisions without blocking; "enforce" denies (403 POLICY_FORBIDDEN) and records them too. In enforce, writes fail closed on evaluation errors; reads never do. |
 | `LOOM_POLICY_MAX_WINDOW_SECONDS` | `int` | `86400` |  | Cap on any rule's look-back window, in seconds. |

@@ -373,6 +373,10 @@ _SUBCOMMAND_BUILDERS: tuple[Any, ...] = (
 
 def main(argv: list[str] | None = None) -> int:
     raw = sys.argv[1:] if argv is None else argv
+    if raw[:2] == ["cell", "each"]:
+        from server.cli.cell_each_run import main as each_main
+
+        return each_main(raw[2:])
     if raw and raw[0] in SDK_COMMANDS:
         # Before the checkout's .env, which describes the server and would
         # otherwise override the user's own session (LOOM_API_KEY, LOOM_BASE_URL).

@@ -112,11 +112,62 @@ What spans orgs becomes per cell:
   and overrides, policy rules, rate-limit and budget overrides, signing-key rotation, a
   subject's revocation. `loom cell each -- <command>` runs an org-free admin command in
   every cell with a short-lived credential per cell, records each cell's outcome,
-  resumes the cells that failed, and fails until all succeed; `loom doctor` compares the
+  resumes confirmed no-action failures, and stops on an uncertain mutation;
+  `loom doctor` compares the
   cells' settings and configuration fingerprints and names what differs;
 - the code and tracker orgs (`LOOM_CODE_ORG`, `LOOM_TRACKER_ORG`) are each cell's own:
   each cell indexes its own repositories, at the ingest cost of each;
 - an operator's platform view and the dashboard are per cell, at the cell's host.
+
+## Administration across cells
+
+`loom cell each` is a serial HTTP coordinator with a closed command list. It does not
+start a command in a cell or select a store. It supports live settings, signing keys,
+an exact subject's revocation, namespace-name rate limits, operation and consumer
+latency budgets, and global blacklist entries. Tenant policy and org-limit sweeps are
+outside this command. See [cell administration](../operations/cell-administration.md).
+
+The operator authenticates a bounded directory census once before the run, reads each
+target again before its attempt, and compares a final whole census. Every registered
+cell must be serving, enforced and supported; closing placements does not exclude a
+cell. Identity includes the deployment, public origin, control generation, complete
+configuration digests and separate automation and recovery public identities. A changed
+target refuses continuation. Fingerprint digests are SHA-256 over the complete stored
+Postgres JSONB text, rather than the shortened fingerprint printed for operators.
+
+The coordinator reads an explicitly named private key for each cell and proves that
+its public thumbprint matches the automation identity before signing an OAuth
+assertion. Each exchange requests a sixty-second access token. Credentials travel
+only to their exact HTTPS origin, with ordinary certificate verification and without
+redirects, proxy discovery or automatic retries. The recovery key is never a fallback.
+
+The cell applies its ordinary request lifecycle and authentication gates, then requires
+a current registered automation platform-admin bot. The bot has one approved public
+key and no alternate workload trust. A fresh read authenticated with that cell's own
+router credential supplies the authoritative public pair; request text cannot select
+an automation identity. Empty or malformed directory metadata refuses. This is a fresh
+admission check, not an atomic transaction with later directory changes.
+
+`loom cell automation` provisions the public pair after proving both explicit keys
+against that cell's current bot registrations. It uses the existing native cell
+control owner, registration comparison and directory generation claim. The directory
+stores only the two purposes, names and public thumbprints in `break_glass`, with an
+operator audit in the same transaction. Registration reruns preserve this pair.
+
+Each action awaits a strict started audit, its owning business helper, and a strict
+completed audit. Correlation fields do not provide idempotency. Before a mutating
+request can leave the coordinator, its private durable state records `dispatching`.
+An ambiguous response becomes `UNSETTLED` and stops later cells. Resume refuses this
+uncertainty before reading credentials or opening a network connection. Completed
+outcomes remain immutable; an explicit correlated refusal before business work may be
+retried. There is no receipt lookup or automatic replay of an uncertain mutation.
+
+The census is limited to 4,096 cells and four MiB, with one KiB per public target.
+Individual action bodies are capped at 64 KiB before JSON parsing, including when the
+global request limit is disabled. A run has a one-hour deadline and each server action
+has thirty seconds. Local state is capped at 32 MiB, protected by one lifetime file
+lock, and replaced with file and directory synchronization. These bounds refuse excess
+work rather than silently truncating a fleet, result or security read.
 
 ## The router
 
@@ -1490,6 +1541,7 @@ entry points and the named exceptions:
 | `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                                                                                                                                           |
 | `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend                                                                                                                |
 | `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend                                                                                                                     |
+| `cell_automation.provision`, `directory.set_administration`                             | Fresh claim, paired authority, two live bot proofs, fenced public metadata and operator audit                                                                                                                  |
 | `cell_update_pg.write.change`                                                           | Fresh directory claim; owner's bounded transaction on the exact ATTACH backend, paired registration and exact observed local identity/pair before tenancy repair and acceptance write                          |
 | `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                                                                                                                                 |
 | `directory.update_addresses`                                                            | Claimed generation, full registration and exact pair under directory/row locks; commit-time address check, audit and synchronous WAL acknowledgement in one bounded transaction                                |

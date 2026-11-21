@@ -100,10 +100,22 @@ the same routes), and the curated `agent.deployment` methods over them.
 | `POST /v1/admin/audit.summary` | `platform_admin` | Aggregate audit_log by event_type in a window. |
 | `POST /v1/admin/bots.create` | `platform_admin` | Register a bot. |
 | `POST /v1/admin/bots.disable` | `platform_admin` | Disable a bot: its proofs are refused and the tokens it holds revoked. |
-| `POST /v1/admin/bots.list` | `platform_admin` | Every registered bot: its namespaces and roles, key or issuer, and limits. |
+| `POST /v1/admin/bots.list` | `platform_admin` | Every registered bot, or with self_only the caller's fresh bounded public identity. |
 | `POST /v1/admin/bots.provision_agent` | `platform_admin` | Make the namespace of a trust's agent before its first exchange, as that exchange would, so grants can name the agent first. |
 | `POST /v1/admin/budget.set` | `platform_admin` | Install or clear a per-operation latency-budget override. |
 | `POST /v1/admin/budget.violations` | `platform_admin` | Aggregate recent `budget.violated` events (loom.events) for ops alerting. |
+| `POST /v1/admin/cell.blacklist_global_add` | `platform_admin automation bot` | Add one exact global blacklist pattern with the verified bot as its author. |
+| `POST /v1/admin/cell.blacklist_global_list` | `platform_admin automation bot` | List bounded exact-global blacklist rows and report whether more rows exist. |
+| `POST /v1/admin/cell.budget_set` | `platform_admin automation bot` | Change one latency budget through this verified cell's ordinary budget owner. |
+| `POST /v1/admin/cell.capabilities` | `platform_admin automation bot` | Report this verified cell's supported administration actions and fixed limits. |
+| `POST /v1/admin/cell.ratelimit_namespace_set` | `platform_admin automation bot` | Change a namespace-label rate override through the cell's ordinary limiter. |
+| `POST /v1/admin/cell.settings_history` | `platform_admin automation bot` | Read the bounded change history of one live setting in this verified cell. |
+| `POST /v1/admin/cell.settings_list` | `platform_admin automation bot` | List non-secret settings after fresh cell and automation authorization. |
+| `POST /v1/admin/cell.settings_set` | `platform_admin automation bot` | Change one live setting and confirm its completed cell administration audits. |
+| `POST /v1/admin/cell.signing_keys_list` | `platform_admin automation bot` | List public signing-key metadata after fresh cell and automation authorization. |
+| `POST /v1/admin/cell.signing_keys_retire` | `platform_admin automation bot` | Retire one signing key through this verified cell's ordinary retirement checks. |
+| `POST /v1/admin/cell.signing_keys_rotate` | `platform_admin automation bot` | Rotate a signing key through the ordinary cell owner and return public metadata. |
+| `POST /v1/admin/cell.subject_revoke` | `platform_admin automation bot` | Revoke one exact global subject through the bounded ordinary security owner. |
 | `POST /v1/admin/claim_release` | `org_admin` | Release a self-signup claim: revoke its grants, clear the owner, deactivate it; the name stays reserved. |
 | `POST /v1/admin/consumers` | `platform_admin` | Per-consumer calls, error rate, p50, spend and outcome feedback over each requested window — read-only aggregates over agent_events and code_search_outcome, joined by consumer name. |
 | `POST /v1/admin/events.tail` | `platform_admin` | Recent rows from `loom.agent_events` for live debugging. |

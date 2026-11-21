@@ -103,11 +103,40 @@ def collections_change(org: str) -> AbstractAsyncContextManager[None]:
     return _claimed("collections:" + json.dumps(org), f"the collections of {org}")
 
 
-def service_account_change(org: str, name: str) -> AbstractAsyncContextManager[None]:
+def service_account_change(
+    org: str,
+    name: str,
+    *,
+    deadline: float | None = None,
+    ch: object = None,
+) -> AbstractAsyncContextManager[None]:
     """Hold a person's service-account name in `org` from the check that it is
     free to its row: a second create with the name would replace the first
     row, and its token, still live, would be listed nowhere."""
-    return _claimed("service_account:" + json.dumps([org, name]), f"the token name {name!r}")
+    key = "service_account:" + json.dumps([org, name])
+    if deadline is not None:
+        return _bounded_service_account(key, deadline=deadline, ch=ch)
+    return _claimed(key, f"the token name {name!r}")
+
+
+@asynccontextmanager
+async def _bounded_service_account(key: str, *, deadline: float, ch: object) -> AsyncIterator[None]:
+    from server.core.leases import holding
+
+    async with holding(
+        key,
+        ttl_s=TTL_S,
+        wait_s=0,
+        ch=ch,
+        deadline=deadline,
+        confirm_release=True,
+    ) as held:
+        if not held:
+            raise GrantBusyError("another change holds the service-account name")
+        async with _bounded(
+            "a service-account name", 2.0, min(CHANGE_S, deadline - time.monotonic())
+        ):
+            yield
 
 
 def bot_change(name: str) -> AbstractAsyncContextManager[None]:

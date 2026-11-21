@@ -79,3 +79,51 @@ def test_an_op_this_build_lacks_is_logged_and_ignored(
     with caplog.at_level(logging.WARNING):
         assert BudgetOverrides().effective("memory.search", 300) == 900
     assert "memory.a_later_op" in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["invalid", "private", "none"])
+async def test_budget_change_keeps_validation_text_private_and_adopts_only_after_storage(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, failure: str
+) -> None:
+    from unittest.mock import AsyncMock, Mock
+
+    from fastapi import HTTPException
+
+    from server.insights.app import limit_changes
+
+    overrides = BudgetOverrides()
+    adopted = Mock(wraps=overrides.set)
+    put = AsyncMock()
+    monkeypatch.setattr(limit_changes, "get_overrides", lambda: overrides)
+    monkeypatch.setattr(overrides, "set", adopted)
+    monkeypatch.setattr(limit_changes.ro, "put", put)
+    private = "private-budget-backend-detail"
+    if failure == "private":
+        monkeypatch.setattr(limit_changes, "stored_ms", Mock(side_effect=ValueError(private)))
+    arguments = dict(
+        consumer=None, budget_ms=-1 if failure == "invalid" else 42, budget=None, clear=False
+    )
+    if failure != "none":
+        with caplog.at_level(logging.INFO, logger="server.insights.app.limit_changes"):
+            with pytest.raises(HTTPException) as refused:
+                await limit_changes.change_budget("memory.search", **arguments)
+        assert refused.value.status_code == 422
+        assert refused.value.detail == {
+            "code": "VALIDATION_FAILED",
+            "message": "budget_ms must be a whole number of ms >= 0",
+        }
+        assert private not in str(refused.value.detail)
+        put.assert_not_awaited()
+        adopted.assert_not_called()
+        if failure == "private":
+            assert private in caplog.text
+        return
+
+    async def stored(*_args, **_kwargs):
+        adopted.assert_not_called()
+
+    put.side_effect = stored
+    result = await limit_changes.change_budget("memory.search", **arguments)
+    assert result == {"ok": True, "op": "memory.search", "budget_ms": 42}
+    put.assert_awaited_once_with(limit_changes.ro.BUDGET_OP, ("memory.search",), 42)
+    adopted.assert_called_once_with("memory.search", 42)

@@ -2,6 +2,6 @@
 
 import sys
 
-from server.cli.app import main
+from server.cli import main
 
 sys.exit(main())
