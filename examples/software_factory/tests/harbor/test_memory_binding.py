@@ -306,6 +306,27 @@ class HistoryCertificate(unittest.TestCase):
         for key in values:
             get(key, "B")
         self.cert["final_snapshot"] = copy.deepcopy(list(latest.values()))
+        from examples.software_factory.harbor.anchors import file_hash, identity
+
+        links = [
+            link
+            for row in self.cert["events"]
+            if row["phase"] == "A" and row["operation"] == "memory.get"
+            for link in row["response"].get("code", [])
+        ]
+        self.cert["anchor_fingerprints"] = {
+            revision: {
+                identity(link): {
+                    "path": link["path"],
+                    "symbol": "",
+                    "body_hash": file_hash(
+                        self.fixture["source_revisions"][revision], link["path"]
+                    ),
+                }
+                for link in links
+            }
+            for revision in ("A", "B")
+        }
         self.save()
 
     def save(self):

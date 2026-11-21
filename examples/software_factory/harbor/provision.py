@@ -15,6 +15,10 @@ from urllib.parse import urlparse
 
 from examples.software_factory.factory.model import digest
 
+from .anchors import capture as capture_anchors
+from .anchors import changes as anchor_changes
+from .anchors import identity as anchor_identity
+from .anchors import matches as anchor_matches
 from .arms import ALL, validate_schedule
 from .index import snapshot
 from .memory import treatment_fixture, validate_history_certificate
@@ -1172,6 +1176,7 @@ class Provisioner:
         events = {slot["order"]: [] for slot in slots}
         latest = {slot["order"]: {} for slot in slots}
         source_receipts = {}
+        anchor_fingerprints = {}
         heads = {}
         phases = ("A", "B") if authored else ("B",)
         for revision in phases:
@@ -1189,24 +1194,25 @@ class Provisioner:
                     for event in fixture["history_events"]
                     if event["operation"] == "set" and event["revision"] == "A"
                 ]
-                a_files = self._source(task, fixture, "A")[1]
-                changed = {path for path in files if a_files.get(path) != files[path]}
-                anchor = {
-                    event["key"]: event["files"]
-                    for event in fixture["history_events"]
-                    if event["operation"] == "set"
-                }
+                anchor_fingerprints["B"] = capture_anchors(
+                    lambda op, body, **kw: self._api(op, body, admin, **kw),
+                    group,
+                    anchor_fingerprints["A"].values(),
+                    files,
+                    head,
+                    revision,
+                )
+                changed = anchor_changes(anchor_fingerprints)
                 for slot in history_slots:
+                    prior = latest[slot["order"]]
 
-                    def stale(key, row, head=head, anchor=anchor, changed=changed):
+                    def stale(key, row, head=head, prior=prior, changed=changed):
                         links = row.get("code", [])
-                        return row.get("found") is True and (
-                            any(
-                                link["state"] == "changed" and link.get("changed_since") == head
-                                for link in links
-                            )
-                            if set(anchor[key]) & changed
-                            else all(link["state"] == "fresh" for link in links)
+                        return (
+                            row.get("found") is True
+                            and {anchor_identity(link) for link in links}
+                            == {anchor_identity(link) for link in prior[key].get("code", [])}
+                            and all(anchor_matches(link, changed, head) for link in links)
                         )
 
                     latest[slot["order"]], worker = self._gets(
@@ -1292,6 +1298,21 @@ class Provisioner:
                     )
             else:
                 worker = self._worker(group)
+            if authored and revision == "A":
+                links = [
+                    link
+                    for slot in history_slots
+                    for row in latest[slot["order"]].values()
+                    for link in row.get("code", [])
+                ]
+                anchor_fingerprints["A"] = capture_anchors(
+                    lambda op, body, **kw: self._api(op, body, admin, **kw),
+                    group,
+                    links,
+                    files,
+                    head,
+                    revision,
+                )
             audit = self._rpc(
                 "audit",
                 {
@@ -1393,6 +1414,7 @@ class Provisioner:
                 "trunk_namespace": group["namespace"],
                 "public_history_sha256": binding["memory_history_sha256"],
                 "fixture_sha256": public_fixtures[group["task_id"]]["fixture_sha256"],
+                "anchor_fingerprints": anchor_fingerprints if history_seeded else {},
                 "source_heads": heads if history_seeded else {"B": heads["B"]},
                 "source_receipts": source_receipts
                 if history_seeded

@@ -10,6 +10,9 @@ from pathlib import Path
 from examples.software_factory.factory.memory_tools import OPS
 from examples.software_factory.factory.model import digest
 
+from .anchors import identity as anchor_identity
+from .anchors import matches as anchor_matches
+from .anchors import validate as validate_anchors
 from .arms import ALL
 
 
@@ -477,11 +480,8 @@ def _history_events(cert, fixture, binding):
     advanced = False
     anchors = {}
     allowed_paths = set(fixture["source_revisions"]["B"])
-    changed_paths = {
-        path
-        for path in allowed_paths
-        if fixture["source_revisions"]["A"].get(path) != fixture["source_revisions"]["B"][path]
-    }
+    changes = validate_anchors(cert, fixture, binding)
+    initial_links, changed_memories = {}, set()
     affected_updates = set()
     for event in cert["events"]:
         operation, phase = event["operation"], event["phase"]
@@ -552,7 +552,7 @@ def _history_events(cert, fixture, binding):
                     and request["if_match_sha256"] == _value_sha(values[key]),
                     "Native update is not a CAS revision of the same persisted row",
                 )
-                if anchors.get(key, set()) & changed_paths:
+                if key in changed_memories:
                     _require(
                         key in stale_b, "History was revised without observing actual stale code"
                     )
@@ -589,27 +589,35 @@ def _history_events(cert, fixture, binding):
                         "Initial memory was never linked fresh",
                     )
                     fresh_a.add(key)
-                elif phase == "B-stale" and anchors[key] & changed_paths:
+                    initial_links[key] = {anchor_identity(link) for link in links}
+                    if any(changes[anchor_identity(link)] == "changed" for link in links):
+                        changed_memories.add(key)
+                elif phase == "B-stale":
                     _require(
                         key in fresh_a
-                        and any(
-                            link["state"] == "changed"
-                            and link.get("changed_since") == cert["source_heads"]["B"]
+                        and {anchor_identity(link) for link in links} == initial_links[key]
+                        and all(
+                            anchor_matches(link, changes, cert["source_heads"]["B"])
                             for link in links
                         ),
-                        "Source change did not produce a native stale link",
+                        "Native link state differs from its specific code fingerprint",
                     )
-                    stale_b.add(key)
+                    if key in changed_memories:
+                        stale_b.add(key)
                 elif key in expected_b:
                     _require(
                         all(link["state"] == "fresh" for link in links),
                         "Updated memory was not relinked fresh",
                     )
                     fresh_b.add(key)
-                elif not (anchors[key] & changed_paths):
+                else:
                     _require(
-                        all(link["state"] == "fresh" for link in links),
-                        "Unchanged source has an unexpected stale link",
+                        {anchor_identity(link) for link in links} == initial_links[key]
+                        and all(
+                            anchor_matches(link, changes, cert["source_heads"]["B"])
+                            for link in links
+                        ),
+                        "Unrevised memory link state differs from its code fingerprint",
                     )
             else:
                 _require(not links, "A fixture row declared unlinked gained native code links")
@@ -621,7 +629,7 @@ def _history_events(cert, fixture, binding):
     }
     _require(
         initial_anchored <= fresh_a
-        and {key for key in initial_anchored if anchors[key] & changed_paths} <= stale_b
+        and changed_memories <= stale_b
         and expected_b <= fresh_b
         and bool(affected_updates),
         "Native fresh/stale/relink lifecycle evidence is incomplete",
