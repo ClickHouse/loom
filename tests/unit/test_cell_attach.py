@@ -8,12 +8,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 from collections.abc import Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from server.cli import cell_attach, cell_control, cell_scan
 from server.cli import cell_attach_beats as beats
@@ -1104,7 +1107,7 @@ async def test_the_ddl_lock_bound_is_taken_after_the_migration_lock(
     assert asked == [f"{apg.TRY_FLOOR_MS}ms"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 @pytest.mark.parametrize("stall", ["migration", "reset", "ddl", "commit", "rollback", "unlock"])
 async def test_a_trigger_try_deadline_covers_transaction_and_lock_cleanup(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, stall: str
@@ -1479,3 +1482,143 @@ async def test_the_stray_read_names_a_refused_table_and_reads_on(
         "not read: postgres loom.a_unindexed: has no plain btree index led by org",
     )
     assert "cell_stray_orgs_unchecked" not in lines
+
+
+@asynccontextmanager
+async def _trigger_try_idle_clock():
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    before = asyncio.all_tasks()
+    selector = loop._selector
+    real_select = selector.select
+    actual_short_phases = _short_phases
+
+    def select(timeout=None):
+        events = real_select(0)
+        if not events and timeout is not None:
+            clock.advance(max(0.0, timeout))
+        return events
+
+    with pytest.MonkeyPatch.context() as scoped:
+
+        def short_phases(_monkeypatch, bounds=None):
+            assert asyncio.get_running_loop() is loop, (
+                "trigger test and clock fixture must use the same loop"
+            )
+            actual_short_phases(scoped, bounds)
+            scoped.setattr(cell_control, "time", clock)
+            scoped.setattr(cell_control.pg, "time", clock)
+
+        # Work, close and the watchdog spend the same private loop's idle time.
+        scoped.setattr(loop, "time", clock.monotonic)
+        scoped.setattr(selector, "select", select)
+        scoped.setattr(sys.modules[__name__], "_short_phases", short_phases)
+        try:
+            yield clock
+        finally:
+            leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+            for task in leaked:
+                task.cancel()
+            await asyncio.gather(*leaked, return_exceptions=True)
+            assert not leaked, "trigger deadline leaves no task on its private loop"
+
+
+@pytest.fixture(autouse=True)
+def _trigger_try_deadline_clock(request):
+    if (
+        getattr(request.node, "originalname", "")
+        == "test_a_trigger_try_deadline_covers_transaction_and_lock_cleanup"
+    ):
+        request.getfixturevalue("_trigger_try_clock")
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def _trigger_try_clock():
+    async with _trigger_try_idle_clock():
+        yield
+
+
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.parametrize("jump", [0.0, 0.25])
+async def test_trigger_try_clock_ignores_unrelated_scheduling(monkeypatch, clock, jump):
+    loop = asyncio.get_running_loop()
+    external = ManualClock(t=loop.time())
+    real_select = loop._selector.select
+    actual_start = cell_control.Owner._start
+    calls = []
+
+    def select(timeout=None):
+        events = real_select(0)
+        if not events and timeout is not None:
+            external.advance(max(0.0, timeout))
+        return events
+
+    def start(self, work):
+        task = actual_start(self, work)
+        external.advance(jump)
+        calls.append(jump)
+        return task
+
+    with pytest.MonkeyPatch.context() as outer:
+        outer.setattr(loop, "time", external.monotonic)
+        outer.setattr(loop._selector, "select", select)
+        outer.setattr(cell_control.Owner, "_start", start)
+        async with _trigger_try_idle_clock():
+            await test_a_trigger_try_deadline_covers_transaction_and_lock_cleanup(
+                monkeypatch, clock, "reset"
+            )
+    assert calls == [jump]
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_trigger_try_clock_still_cancels_genuinely_blocked_cleanup(monkeypatch):
+    cancelled = asyncio.Event()
+
+    class BlockedClose(FakeConn):
+        async def close(self, **kwargs):
+            assert kwargs["timeout"] > 0
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+
+    async def work():
+        await asyncio.Future()
+
+    conn = BlockedClose()
+    owner = _owner(conn)
+    async with _trigger_try_idle_clock() as clock:
+        _short_phases(monkeypatch)
+        started = clock.t
+        task = asyncio.create_task(owner.call(work, total_s=1.0))
+        done, _ = await asyncio.wait([task], timeout=0.2)
+        assert task in done
+        assert isinstance(task.exception(), TimeoutError)
+        await asyncio.wait_for(cancelled.wait(), timeout=0.01)
+        assert clock.t - started == pytest.approx(0.01)
+        assert "TERMINATE" in conn.executed and "CLOSE" not in conn.executed
+        assert owner._close_task is not None and owner._close_task.done()
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_trigger_try_clock_drains_and_rejects_an_orphan_task():
+    cancelled = []
+
+    async def orphan():
+        try:
+            await asyncio.Future()
+        finally:
+            cancelled.append(True)
+
+    loop = asyncio.get_running_loop()
+    real_loop_clock = loop.time
+    real_owner_clock, real_pg_clock = cell_control.time, cell_control.pg.time
+    real_short_phases = _short_phases
+    with pytest.raises(AssertionError, match="leaves no task"):
+        async with _trigger_try_idle_clock():
+            asyncio.create_task(orphan())
+            await asyncio.sleep(0)
+    assert cancelled == [True]
+    assert loop.time == real_loop_clock
+    assert cell_control.time is real_owner_clock and cell_control.pg.time is real_pg_clock
+    assert _short_phases is real_short_phases
