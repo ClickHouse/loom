@@ -78,7 +78,6 @@ class ScopeVerifier:
                 "brief": True,
             },
             retry={"max_attempts": 1},
-            timeout_s=10,
         )
         data = result.data
         expected = {

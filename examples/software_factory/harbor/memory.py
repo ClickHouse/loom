@@ -43,9 +43,7 @@ class NativeMemoryContext:
             "Code scope is unverified before memory access",
         )
         try:
-            result = await self.agent.call_with_meta(
-                op, body, retry={"max_attempts": 1}, timeout_s=10
-            )
+            result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1})
         finally:
             after = await code.verify_scope(self.agent, code_body)
             _require(

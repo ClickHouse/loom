@@ -69,7 +69,7 @@ class NativeBinding(unittest.TestCase):
         self.assertIsNone(result["cost_usd"])
         self.assertIs(self.native.agent, self.code.agent)
         self.assertIs(self.native.runner, self.code.runner)
-        self.assertEqual(self.calls[0][2], {"retry": {"max_attempts": 1}, "timeout_s": 10})
+        self.assertEqual(self.calls[0][2], {"retry": {"max_attempts": 1}})
         self.native.close()
         self.assertEqual(self.exits, 0)
 
