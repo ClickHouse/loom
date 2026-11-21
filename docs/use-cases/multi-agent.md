@@ -3,7 +3,9 @@ title: Shared memory for a software factory and multi-agent workflows
 description: Evaluate software-factory memory for coding-agent handoffs, source-linked lessons and reported outcomes, with a runnable evidence-handoff reference.
 ---
 
-# Shared context for multi-agent workflows
+# Shared memory for a software factory and multi-agent workflows
+
+<a id="shared-context-for-multi-agent-workflows"></a>
 
 Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and
 separate read and write roles. Agents share context through memory, task inboxes and
