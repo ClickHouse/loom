@@ -366,7 +366,9 @@ Operators can add retention to `audit_log`, `agent_events`, `memory`, `memory_em
 `conversations`, `chunks` and `documents` with `LOOM_RETENTION_<TABLE>_DAYS`, and tiering
 with `LOOM_TIERING_<TABLE>_WARM_DAYS` plus `LOOM_TIERING_WARM_VOLUME_NAME`. Per-namespace
 `retention_days` or `warm_days` overrides become a `multiIf` in the same TTL expression
-(`server/storage/retention_overrides.py`). The worker leader applies them at boot and
+(`server/storage/retention_overrides.py`). Audit deletion uses only its dedicated
+`LOOM_RETENTION_AUDIT_LOG_DAYS`; namespace `warm_days` can still tier audit rows.
+The worker leader applies them at boot and
 `retention_reconcile` keeps them in step, skipping unchanged tables because each
 `MODIFY TTL` is a mutation. When the last window on a table is cleared, the same pass
 issues `ALTER TABLE … REMOVE TTL`; none of these tables has a schema TTL. Every window

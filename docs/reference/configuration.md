@@ -1872,7 +1872,7 @@ Opt-in retention, applied as idempotent ALTER TABLE MODIFY TTL by server/storage
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` |  | Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again. |
+| `LOOM_RETENTION_AUDIT_LOG_DAYS` | `int` | `0` |  | Days `loom.audit_log` rows are kept; 0 = forever, independent of namespace retention. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again. |
 | `LOOM_RETENTION_AGENT_EVENTS_DAYS` | `int` | `0` |  | Days `loom.agent_events` rows are kept; 0 = forever. |
 | `LOOM_RETENTION_MEMORY_DAYS` | `int` | `0` |  | Days `loom.memory` rows are kept; 0 = forever. The Postgres authority refuses it. |
 | `LOOM_RETENTION_MEMORY_EMBEDDINGS_DAYS` | `int` | `0` |  | Days `loom.memory_embeddings` rows are kept; 0 = forever. The Postgres authority refuses it. |
