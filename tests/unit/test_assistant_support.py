@@ -68,21 +68,22 @@ def _support(
         ),
         (
             "See [memory:a@v1] and [doc:b.md § C].",
-            [rule.VERIFIED, rule.NO_SECTION],
+            [rule.VERIFIED, rule.UNREAD],
             frozenset(),
             False,
             "supported",
         ),
-        # Checks that could not say.
-        ("See [code:server/main.py:4].", [rule.CODE], frozenset(), False, "unchecked"),
-        ("See [memory:a@v1].", [rule.NOT_RECORDED], frozenset(), False, "unchecked"),
-        ("See [memory:a@v1].", [rule.NOT_RUN], frozenset(), False, "unchecked"),
+        # Native receipts verify code citations as well as memory and document citations.
+        ("See [code:server/main.py:4].", [rule.VERIFIED], frozenset(), False, "supported"),
+        ("See [code:server/main.py:4].", [rule.UNREAD], frozenset(), False, "unsupported"),
+        ("See [memory:a@v1].", [rule.UNREAD], frozenset(), False, "unsupported"),
+        ("See [doc:b.md § C].", [rule.UNREAD], frozenset(), False, "unsupported"),
         (
             "See [memory:a@v1] and [code:x.py:1].",
-            [rule.NOT_RUN, rule.CODE],
+            [rule.UNREAD, rule.UNREAD],
             frozenset(),
             False,
-            "unchecked",
+            "unsupported",
         ),
         # Uncited after reads with no citation form, after a failed call, or unreadable calls.
         (
@@ -202,8 +203,7 @@ def test_an_answer_naming_an_unknown_name_is_unsupported_whatever_it_cites(
     [
         # Only the docs were read: they are not the namespace's data.
         (frozenset({"help.search", "help.get"}), "none"),
-        # A search of the namespace found rows the answer did not cite: the residual an
-        # uncited answer from the docs carries until help citations are checked.
+        # Namespace rows were returned but the answer cites none of them.
         (frozenset({"help.search", "help.get", "memory.search"}), "unsupported"),
     ],
 )

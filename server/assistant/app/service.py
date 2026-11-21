@@ -64,10 +64,6 @@ def assistant_state() -> tuple[bool | None, str]:
     return not error, error
 
 
-def unready_reason() -> str:
-    return configuration_error() or "failing"
-
-
 def readiness_check() -> readiness.CheckResult:
     error = configuration_error()
     return readiness.result(not error, error)

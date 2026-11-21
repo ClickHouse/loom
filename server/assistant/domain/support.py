@@ -8,23 +8,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# Why one citation ended as it did (never on the wire; the wire carries the display reason).
+# Native receipt checks record whether this answer read the cited source.
 VERIFIED = "verified"
-# The check could not establish the source evidence within the answer's bound.
-NOT_RUN = "not_run"
-PAST_CAP = "past_cap"
-# This deployment does not record what memory reads return (the exposure ledger is off).
-NOT_RECORDED = "not_recorded"
-# Code citations are not checked.
-CODE = "code"
-# The citation itself failed: its key was not returned to this answer, its document or
-# section is not there, its statement did not run in this answer.
 UNREAD = "unread"
-NO_DOCUMENT = "no_document"
-NO_SECTION = "no_section"
-SQL_NOT_RUN = "sql_not_run"
-
-CITATION_FAULTS = frozenset({UNREAD, NO_DOCUMENT, NO_SECTION, SQL_NOT_RUN})
 
 SUPPORTED = "supported"
 UNSUPPORTED = "unsupported"
@@ -136,11 +122,7 @@ def support_of(
     if unknown_names:
         return UNSUPPORTED
     if codes:
-        if VERIFIED in codes:
-            return SUPPORTED
-        if CITATION_FAULTS & set(codes):
-            return UNSUPPORTED
-        return UNCHECKED
+        return SUPPORTED if VERIFIED in codes else UNSUPPORTED
     if is_abstention(text):
         return NONE
     if calls is None:

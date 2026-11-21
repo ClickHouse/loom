@@ -60,7 +60,9 @@ for unread sections.
 A SQL block must match a successful `insights.query` statement. Unknown citations or
 operation and setting names refuse completion. Arbitrary result text cannot supply
 source identifiers for verification. A verified citation proves that evidence was
-returned, not that every sentence is entailed by it.
+returned, not that every sentence is entailed by it. Each citation check records
+whether that source was returned to this answer. Support for an uncited answer derives
+from its tool receipts.
 
 ### Steps
 

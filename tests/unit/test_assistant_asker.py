@@ -1,4 +1,4 @@
-"""The line the runtime puts after a question: the caller's kind of credential, the role
+"""Caller context in the native run's system message: the kind of credential, the role
 the gate gives it in the namespace and the kind of namespace, in fixed words."""
 
 from __future__ import annotations

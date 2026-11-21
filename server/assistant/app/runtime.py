@@ -82,8 +82,8 @@ class Ticket:
     # The delegated token stays out of logs and assertion representations.
     token: str = field(repr=False)
     slot: int
-    # Loom's line about the caller's credential (`asker_line`), the last line of the
-    # question the native runtime is sent.
+    # Caller-credential context (`asker_line`) in the native run's system message,
+    # before the supplied history.
     asker: str
     mirrored: bool = False
 
@@ -447,7 +447,7 @@ async def _ended(ticket: Ticket, answer: Answer, *, live: bool) -> AsyncGenerato
     try:
         if live:
             yield _event("loom.text_done", answer.run_id)
-        yield await _checked(ticket, answer, live=live)
+        yield await _checked(ticket, answer)
         yield b"data: [DONE]\n\n"
     finally:
         # The checks give the slot back before their event goes out, so the next question
@@ -455,7 +455,7 @@ async def _ended(ticket: Ticket, answer: Answer, *, live: bool) -> AsyncGenerato
         ticket.release()
 
 
-async def _checked(ticket: Ticket, answer: Answer, *, live: bool = False) -> bytes:
+async def _checked(ticket: Ticket, answer: Answer) -> bytes:
     """Verify request-owned receipts inside the answer's slot, then emit citations,
     support and accumulated tool steps. Release the slot after these checks."""
     try:
