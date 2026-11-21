@@ -2,7 +2,7 @@
   "id": "flask",
   "title": "Python E2E evaluation: Flask",
   "suite_lock": "suite.lock.json",
-  "scenario_manifest": "memory/cases.json",
-  "memory_catalog": "memory/project_memories.json",
+  "scenario_manifest": "memory/historical_cases.json",
+  "memory_catalog": "memory/historical_memories.json",
   "adapter": "examples.software_factory.evals.flask.profile"
 }

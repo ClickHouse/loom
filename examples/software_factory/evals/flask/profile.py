@@ -78,7 +78,7 @@ def build_dependencies(assets, *, loom_python):
 
 
 def materialize_cases(assets, output):
-    from .memory.materialize import materialize_cases as materialize
+    from .memory.historical import materialize_cases as materialize
 
     return materialize(assets, output)
 

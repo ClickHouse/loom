@@ -40,7 +40,7 @@ class NativeMemoryEvidence(unittest.TestCase):
             memory_enabled=True,
             memory_namespace="working",
             memory_history_sha256=history,
-            notes_history_sha256=history,
+            notes_history_sha256=digest({}),
             memory_rows_written=0,
             memory_rows_written_basis="Native receipts",
         )

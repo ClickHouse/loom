@@ -1,47 +1,45 @@
 # Factory comparison protocol
 
-Measure Claude-selected Loom against the same factory without Loom on pinned
-public historical tasks. Provider calls and model-backed grading require an
-approved frozen protocol. Offline scripted replays establish controller behavior;
-they do not measure Loom quality, cost savings or adoption.
+Compare five arms on the same historical Flask issue and base revision:
+`baseline`, `loom-treesitter`, `loom-treesitter-memory`, `loom-scip`, and
+`loom-scip-memory`. Claude chooses every Loom call. Baseline has no Loom client or
+schemas. Every arm has the same source tools, issue, model and test capabilities.
 
-Use five study arms: `baseline`, `loom-treesitter`, `loom-treesitter-memory`,
-`loom-scip` and `loom-scip-memory`. Claude chooses every Loom call. Baseline has
-ordinary source and project-note tools; memory arms add native linked memory.
-The public facts, issue, source, tests, model and limits match across all arms.
-There is no host prefetch or enforced call. Source scopes match; SCIP adds compiler
-declarations and references without extra repository content.
+Three issues and three repeats produce 45 primary attempts. Add one baseline A/A
+pair per issue for 51 attempts. Freeze seed 741 and retain the interleaved arm
+blocks and balanced positions. Retain nonuse, failures, invalid rewards and
+unknown costs. Analyze paired task clusters and report A/A controls separately.
 
-The primary cohort contains three real historical Flask issues. The separate
-secondary cohort contains three authored maintenance scenarios with simulated
-project history. Never pool them for a Flask headline. Each cohort uses three
-repeats across five arms, plus one baseline A/A pair per issue: 51 attempts per
-cohort, 102 total. Persist the schedule with seed 741, interleave arm blocks, and
-balance arm positions within each cohort and across the full run. Retain failures,
-nonuse and unknown costs. Report paired task-level bootstrap intervals and A/A
-controls separately for each cohort.
+These are development regression tasks whose earlier outcomes were inspected.
+Historical notes must have independent public provenance and precede the task's
+cutoff. Target discussions, fixing PRs, reference patches, hidden requirements and
+later information cannot supply memory. Freeze the corpus before inference and
+never revise it based on that run's results.
 
-The pinned dataset contains eleven Flask issues; the historical cohort retains
-the existing three-issue pilot selection. It is not a random sample. Excluded
-issues are unmeasured, rather than declared unsuitable. Three task clusters and
-repeated attempts do not establish a general Flask performance claim.
+The memory treatment adds 24 short historical notes, ten linked to code. Baseline
+and code-only arms receive no seeded notes. Memory arms expose optional native
+search, reads and writes; code tools may return the bound namespace's lessons.
+The treatment therefore measures historical knowledge plus retrieval. A claim
+about linking alone requires another control with identical facts.
 
-Before inference, freeze the source, public tasks, independent grading inputs,
-provider/model, prices, image digests, prompts, budgets, exact repository/index
-identities and reader scopes. Qualify source and evaluator sandbox boundaries,
-base/reference controls and tool behavior. Provider retries are disabled. The
-public reproduction entrypoint and complete field contract are in `REPRODUCE.md`.
+Each attempt has a private mutable memory namespace. Code-only and memory arms
+share their certified read-only source index for that case and tier. Parser and
+compiler tiers index the same source allowlist. Native memory writes, exact reads,
+current code links, source hashes and serving build must qualify before inference.
+The curated snapshot represents past knowledge, not elapsed autonomous learning.
 
-Report hidden task success, generation and retrieval cost, full attempt time,
-agent-loop time, model-selected tests, automatic final tests, selected Loom tools
-and physical dispatches separately. Agent-loop time excludes environment setup
-and the independent verifier. Count native memory persistence receipts independently from selected write tools;
-setup writes do not count as agent writes. Report independent judge outcomes and full-suite
-regressions only when those checks actually ran; otherwise retain unknown values.
-No authored regression or successful available test establishes final success.
+Freeze source, tasks, evaluator inputs, model, prices, images, schema exposure,
+prompts, provider limits and all namespace identities. Require base controls to
+fail and reference controls to pass the hidden verifier. Provider retries remain
+disabled. The ordinary source tools remain complete within the declared scope.
 
-The authored cohort seeds 100 short notes, including 40 code-linked notes. Three
-policies change between public source revisions. Native stale-link observation
-and revision receipts must qualify before inference. Every arm can search the
-same current and archived facts as ordinary notes. This measures access to
-simulated history, not autonomous learning or memory quality over elapsed months.
+Report hidden success, fixed-only blind judgments, full-suite regressions, total
+agent and Loom provider cost, agent time, full end-to-end time, tokens, agent tests,
+Loom requests and persisted memory writes. Judge and setup costs are separate.
+Setup writes are not agent writes. Missing billing evidence is unknown. All chart
+bars retain the scheduled denominator and distinguish pending cells.
+
+The targets are all nine primary attempts solved per arm and at least 20% lower
+provider cost and agent time than paired baseline. Three task clusters cannot
+establish a general win. Historical results and the current frozen run remain
+separate. Follow [REPRODUCE.md](REPRODUCE.md) for the executable route.

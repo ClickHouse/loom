@@ -14,14 +14,13 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factor
 ```
 
 The launcher builds pinned controller dependencies, mounts source read-only, and
-automates the inner setup and evaluation. The plan contains six cases, five arms,
-three repeats and twelve separate A/A controls: 102 attempts, plus 24 blind
+automates the inner setup and evaluation. The plan contains three historical issues, five arms,
+three repeats and six separate A/A controls: 51 attempts, plus 12 blind
 fixed-only judgments using the same model. Embedding uses the checked local
 `bge-small` weights. The plan reports Loom's separate native Anthropic model
 default; all provider requests contribute to the cost ledger. Runs have no dollar cap
-unless `--budget-usd` is supplied. History cases expose
-100 short project records through tools,
-with the same plain notes available to every arm; cold cases start empty.
+unless `--budget-usd` is supplied. Memory arms expose 24 short historical project records through native tools;
+ten are linked to code. Other arms receive no seeded history.
 
 Interrupted work is never retried automatically. Explicit resume preserves the
 frozen source and budget, and the inner controller refuses unsettled paid requests:
@@ -40,7 +39,7 @@ scenarios, memory catalog and adapter. Profiles supply facts, build and index
 recipes, and tests; the Harbor runner, metrics, budget gateway and reports are
 shared. Resume and cleanup retain the selected profile identity.
 
-Every arm has ordinary source tools and plain project notes. Model-selected Loom
+Every arm has ordinary source tools. Model-selected Loom
 tools add Tree-sitter or SCIP retrieval, with native memory enabled in separate
 paired arms. Harbor owns trial environments, verification, reporting and charts.
 Each repository evaluation pins its public issues, source revisions, dependencies,

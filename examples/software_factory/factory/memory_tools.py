@@ -84,7 +84,7 @@ def schemas():
     return [
         tool(
             "loom_memory_search",
-            "Search this episode’s persisted working memory. Empty results do not "
+            "Search persisted project knowledge and historical observations. Empty results do not "
             "establish that a fact is true or false.",
             {"query": string},
         ),
@@ -114,7 +114,7 @@ def schemas():
         ),
         tool(
             "loom_memory_for_file",
-            "Read working memories associated with an allowed source file, including "
+            "Read project memories associated with an allowed source file, including "
             "native code-state warnings.",
             {"path": string},
         ),
@@ -132,6 +132,7 @@ class MemoryTools:
         code_namespaces,
         allowed_paths,
         repository_tag,
+        history_sha256,
         user_id="-",
         session_id="-",
         ledger=None,
@@ -144,6 +145,9 @@ class MemoryTools:
             r"repo:[0-9a-f]{10}", repository_tag
         ):
             raise ValueError("Memory requires the certified canonical repository tag")
+        if not isinstance(history_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", history_sha256):
+            raise ValueError("Memory requires a frozen historical corpus hash")
+        self.history_sha256 = history_sha256
         self.repository_tag = repository_tag
         self.backend = backend
         self.org, self.namespace, self.agent = org, namespace, agent

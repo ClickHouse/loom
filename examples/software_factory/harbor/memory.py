@@ -193,8 +193,9 @@ def _validate_history(protocol, slot, binding):
     _require(fixture["case_id"] == slot["task_id"], "History fixture names another task")
     events = fixture["history_events"]
     cold = fixture.get("kind") == "cold"
+    snapshot = fixture.get("kind") == "historical-snapshot"
     _require(bool(events) != cold, "Cold/history fixture is inconsistent")
-    revisions = ("B",) if cold else ("A", "B")
+    revisions = ("B",) if cold or snapshot else ("A", "B")
     _require(
         set(cert["source_heads"]) == set(revisions)
         and set(cert["source_receipts"]) == set(revisions),
@@ -204,7 +205,7 @@ def _validate_history(protocol, slot, binding):
         cert["source_heads"]["B"] == binding["base_commit"],
         "History does not end at the current task commit",
     )
-    if not cold:
+    if not cold and not snapshot:
         _require(
             cert["source_heads"]["A"] != cert["source_heads"]["B"],
             "History did not advance the actual indexed revision",
@@ -317,8 +318,87 @@ def _validate_history(protocol, slot, binding):
                 == [binding["repository_tag"]],
                 "Native history anchors differ from the public fixture",
             )
-    _history_events(cert, fixture, binding)
+    if snapshot:
+        _snapshot_events(cert, fixture, binding)
+    else:
+        _history_events(cert, fixture, binding)
     return cert
+
+
+def _snapshot_events(cert, fixture, binding):
+    """Prove seeded historical facts and current native links without inventing a code history."""
+    expected = {row["key"]: row for row in fixture["history_events"]}
+    values, read_back, request_ids = {}, {}, set()
+    _require(
+        len(expected) == len(fixture["history_events"])
+        and all(row["operation"] == "set" and row["revision"] == "B" for row in expected.values())
+        and {key: row["value"] for key, row in expected.items()} == fixture["public_documents"],
+        "Snapshot does not contain the exact historical corpus",
+    )
+    for event in cert["events"]:
+        request, response = event["request"], event["response"]
+        key = request["memory_key"]
+        _require(
+            key in expected
+            and event["phase"] == "B"
+            and event["source_commit"] == binding["base_commit"]
+            and event.get("request_id")
+            and event["request_id"] not in request_ids
+            and event.get("physical_requests") == 1
+            and event.get("status_code") == 200
+            and request.get("org") == binding["org"]
+            and request.get("namespace") == binding["memory_namespace"]
+            and not request.get("as_of")
+            and not response.get("ignored_args"),
+            "Snapshot operation lacks a unique native receipt in the bound scope",
+        )
+        request_ids.add(event["request_id"])
+        _require(
+            response.get("memory_id")
+            and type(response.get("version")) is int
+            and response["version"] > 0
+            and response.get("content_sha256") == _value_sha(expected[key]["value"]),
+            "Snapshot has no persisted version/hash proof",
+        )
+        if event["operation"] == "memory.set":
+            _require(
+                key not in values
+                and response.get("status") == "active"
+                and response.get("noop") is False
+                and response.get("dry_run") is False,
+                "Historical fact was not persisted as a distinct active row",
+            )
+            values[key] = response
+        else:
+            _require(
+                event["operation"] == "memory.get"
+                and key in values
+                and response.get("found") is True
+                and response.get("value") == expected[key]["value"]
+                and all(
+                    response[field] == values[key][field]
+                    for field in ("memory_id", "version", "content_sha256")
+                ),
+                "Snapshot get does not confirm its persisted historical fact",
+            )
+            links = response.get("code", [])
+            _require(
+                isinstance(links, list)
+                and bool(links) == bool(expected[key]["files"])
+                and all(
+                    link.get("code_namespace") == binding["code_namespace"]
+                    and link.get("path") in expected[key]["files"]
+                    and link.get("state") == "fresh"
+                    for link in links
+                ),
+                "Historical code links do not match the current certified source",
+            )
+            read_back[key] = dict(response, memory_key=key)
+    _require(
+        set(values) == set(read_back) == set(expected)
+        and cert["final_snapshot"] == [read_back[key] for key in read_back],
+        "Historical snapshot is incomplete or differs from native reads",
+    )
 
 
 def _source_receipt(cert, fixture, binding, revision):

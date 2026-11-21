@@ -39,6 +39,7 @@ class EpisodeMemoryContracts(unittest.TestCase):
             agent="solver",
             session_id="session-2",
             repository_tag="repo:0123456789",
+            history_sha256=digest({"decision": "Keep source contracts stable."}),
             code_namespaces=("code",),
             allowed_paths=("src/app.py",),
             ledger=Ledger(self.root / "events.jsonl"),
@@ -297,6 +298,7 @@ class FactoryEpisodeIntegration(unittest.TestCase):
                 namespace="working",
                 agent="solver",
                 repository_tag="repo:0123456789",
+                history_sha256=digest({"decision": "Keep source contracts stable."}),
                 code_namespaces=("code",),
                 allowed_paths=("src/app.py",),
             )

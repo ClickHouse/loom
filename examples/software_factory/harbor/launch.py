@@ -124,8 +124,10 @@ def plan(root=ROOT, evaluation="flask"):
         read(descriptor["paths"][name])
         for name in ("suite_lock", "scenario_manifest", "memory_catalog")
     )
-    cold, warm = len(locked["tasks"]), len(histories["cases"])
-    cases, repeats = cold + warm, 3
+    task_ids = {row["task_id"] for row in locked["tasks"]}
+    history_ids = {row["case_id"] for row in histories["cases"]}
+    cold, warm = len(task_ids - history_ids), len(history_ids)
+    cases, repeats = len(task_ids | history_ids), 3
     records = memories["records"]
     linked = sum(bool(row["files"]) for row in records)
     if not cases or len({row["key"] for row in records}) != len(records):
@@ -156,7 +158,8 @@ def plan(root=ROOT, evaluation="flask"):
             "project_records": len(records),
             "linked": linked,
             "unlinked": len(records) - linked,
-            "equal_plain_notes_all_arms": True,
+            "equal_plain_notes_all_arms": False,
+            "historical_knowledge": "Only memory-enabled arms receive the frozen historical corpus",
             "cold_memory_records": 0,
             "delivery": "Optional tools; project records are not inserted into the prompt",
         },

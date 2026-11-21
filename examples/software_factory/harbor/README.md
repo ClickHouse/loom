@@ -13,12 +13,12 @@ The output directory contains:
   trajectory and verifier links when those artifacts exist.
 - `reports/scenarios/`: one summary per distinct task, across repeats and arms.
 - `reports/AA-CONTROLS.md` and `reports/aa-controls.json`: separate A/A controls.
-- `reports/charts.html` and `reports/charts.json`: bar charts for success, generation
-  cost in USD and full study end-to-end time, with scenario and attempt filters.
+- `reports/charts.html` and `reports/charts.json`: bar charts for hidden success, blind fixed judgments, regressions, provider cost,
+  agent time, tests, Loom calls, memory writes and tokens, with scenario and attempt filters.
 - `reporting-manifest.json`: source job, derived jobs and report locations.
 
-With three scenarios, three repeats and three arms, the primary comparison has
-nine task/repeat rows and three columns. The six A/A controls are excluded from
+With three scenarios, three repeats and five arms, the primary comparison has
+nine task/repeat rows and five columns. The six A/A controls are excluded from
 those columns. Missing attempts have null metrics and explicit pending counts.
 Observed successes are reported immediately; a final success rate is available
 only when all expected attempts in that arm have completed. Unknown cost and
@@ -37,8 +37,8 @@ is saved before adding the navigation script.
 
 ## Native views
 
-By default, the reporter creates `no-loom`, `optional-loom`, `enforced-loom` and
-`aa-controls` under the study's `jobs` directory. Each finalized trial's assets
+By default, the reporter creates `no-loom`, `loom-treesitter`, `loom-treesitter-memory`,
+`loom-scip`, `loom-scip-memory` and `aa-controls` under the study's `jobs` directory. Each finalized trial's assets
 are copied once. Subsequent exports update aggregates and add newly finalized
 trials. Temporary copies are staged outside native job directories and recovered
 after an interrupted export. JSON and Markdown writes replace files atomically.
@@ -47,7 +47,7 @@ The measured `jobs/live` directory is never modified. Copies preserve original
 trial UUIDs, configuration, metrics, costs and timestamps. Only the derived task
 display name and checksum, and the matching task lock name and digest, are
 normalized across the same task/repeat pair. This lets Harbor align each pair
-across the three arms. Each copied trial records the original identity, normalized
+across the five arms. Each copied trial records the original identity, normalized
 fields, pairing inputs and source file hashes in `presentation-provenance.json`.
 Derived jobs are presentation views, not new executions.
 

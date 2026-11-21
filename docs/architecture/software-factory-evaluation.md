@@ -24,7 +24,8 @@ concurrent trials and preserves the paired task order. No-Loom trials construct
 no Loom backend and receive no Loom tool definitions. Optional Tree-sitter and SCIP
 retrieval retain their model-selected call and dispatch counters. Read-only task tokens,
 repository and revision checks, and index fingerprints constrain retrieval.
-Only four named index-status caches are excluded from the source fingerprint;
+Four named index-status caches and the memory-link checked-head marker are
+excluded from the source fingerprint;
 unknown state keys and every source table remain covered.
 
 The study retains raw Harbor results, factory event journals, model request
@@ -60,3 +61,22 @@ source roots; a repository can span languages without splitting one task into
 separate language benchmarks. Harbor loads the frozen suite adapter explicitly.
 The Flask profile owns pytest grading and Python compiler evidence. Authored
 Python smoke fixtures live under tests and are not repository evaluations.
+
+## Historical memory treatment
+
+The Flask development regression study uses the same three real issues in five
+arms. Each optional memory arm receives 24 curated historical facts, ten linked to
+code, in a private namespace. Other arms receive no seeded history. The issue,
+source, ordinary tools, model and tests remain paired. No historical facts are
+inserted into the prompt; the model chooses memory and code tools.
+
+Historical source hashes and publication/edit cutoffs qualify before ingestion.
+Target discussions, reference fixes and hidden requirements cannot supply memory.
+Native write receipts, exact read-back values, versions, content hashes and fresh
+code links prove the snapshot actually exists in the task's certified source scope.
+It represents replayed historical knowledge, not autonomous elapsed learning.
+
+The comparison measures the combined contribution of historical information and
+its retrieval. Linking in isolation needs an additional matched-facts control.
+Earlier outcomes on these development tasks were inspected, so their results are
+reported as regression evidence rather than unseen-task generalization.

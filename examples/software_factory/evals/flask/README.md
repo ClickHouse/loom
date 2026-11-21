@@ -1,190 +1,66 @@
 # Python E2E evaluation: Flask
 
-The factory runs the same coding-agent loop with ordinary source tools alone
-or with optional Loom tools backed by Tree-sitter or SCIP, with native memory in
-separate arms. Harbor owns historical Flask trial
-scheduling, Docker environment lifecycle, independent verification and its local
-viewer. An offline replay exercises the loop without model inference.
+The factory solves the same three public historical Flask issues across five
+arms: no Loom, Tree-sitter, Tree-sitter with memory, SCIP, and SCIP with memory.
+Claude chooses every Loom call. Source revisions, issue text, model, ordinary
+source tools, resource limits and independent tests match across the arms.
 
-## Historical Flask evaluation with Harbor
+This is a development regression study: earlier outcomes on these issues were
+inspected. It does not establish performance on unseen repository tasks. The
+pinned SWE-bench test dataset contains eleven Flask issues; this pilot uses three.
+Three task clusters and repeated attempts cannot establish a general Flask win.
 
-Follow [REPRODUCE.md](REPRODUCE.md) to create the initial protocol from pinned
-public SWE-bench tasks, build dependency images, configure your own Loom endpoint
-and viewer tokens, and run free Harbor controls before paid inference. No private
-predecessor protocol or image supplied by a maintainer is required.
+## Run
 
-The study pins Harbor 0.27.0 and compares five arms: baseline, Tree-sitter,
-Tree-sitter with memory, SCIP, and SCIP with memory. Claude chooses every Loom
-call. Six cases, three repeats and twelve separate A/A controls produce 102
-attempts. The primary comparison contains three historical Flask issues at exact
-revisions, with nine attempts per arm. Three authored memory scenarios form a
-separate experiment, also with nine attempts per arm. Reports and charts keep
-these experiments separate.
-
-The pinned SWE-bench dataset contains eleven Flask issues. The three historical
-issues are the existing pilot selection, not a random or exhaustive Flask sample.
-The other eight are outside this pilot; this does not establish that they are
-unsuitable or that any arm fails them. Repeats measure run variation and do not
-increase the number of independent issues. This pilot cannot establish a general
-Flask performance claim.
-
-All arms receive the same issue, source, visible tests, ordinary tools, model,
-limits and public project notes. Only the optional Loom tools differ. The authored
-scenarios simulate project history; they do not measure months of live learning.
-Their short policy notes explicitly name the functions whose changes are tracked.
-The same names and facts are present in ordinary notes for every arm. Historical
-issues start with empty project history. Hidden tests and reference fixes stay
-outside every agent environment.
-
-The provider is direct Anthropic Messages using `claude-haiku-5-5`.
-Execution is serial with retries disabled. Reports, CSV/JSON exports and bar
-charts are generated before the first paid trial and after each completed trial;
-see [Harbor reporting](../../harbor/README.md).
-
-Preparation freezes task records, source and dependency manifests, local image
-IDs, evaluator inputs, runtime files, the schedule and the source-index snapshot.
-Both native base/reference controls must qualify against that exact protocol
-before the explicit `live` command can perform inference. A study refuses to
-replay an existing job. Preserve failures and investigate interruptions before
-creating another study.
-
-Each trial uses a fresh Docker agent environment and a separate verifier.
-The model receives the public issue and allowlisted `src/flask` source tools.
-Its tools cannot read reference solutions, evaluator inputs or Git objects.
-The final independent hidden verifier decides issue success. Full-suite results
-are separate diagnostics. Authored tests provide development feedback and never
-add another quality score or success gate.
-
-The frozen [sandbox policy](../../harbor/sandbox-compose.yaml) sets no network, 64 processes,
-one CPU and 512 MiB through the policy and task configuration. Containers drop
-all capabilities except those needed to drop the test child's identity and reap
-its process group, with privilege escalation disabled. The separate verifier
-owns the same policy in its task definition.
-
-End-to-end time includes setup, the factory loop, transfer, independent
-verification, teardown and both index audits. Agent time and native Harbor wall
-time are also retained. Generation cost uses native provider usage and the
-frozen pricing rule. Loom provider costs are included in the comparison; setup, judging and
-infrastructure are separate. Missing billing evidence is unknown. Failed and incomplete attempts remain in exports.
-A partial cohort has no final comparison.
-
-Each Loom tier is compared separately with baseline. The target is 9/9 issue
-successes with at least 20% lower aggregate
-total agent and Loom provider cost, and agent time against paired baseline attempts.
-End-to-end time, one-time setup, judge cost and infrastructure usage are separate. Report
-paired uncertainty and A/A noise alongside the point estimates. These targets
-are acceptance criteria, not claims that an unmeasured run meets them.
-
-## Modes and source tools
-
-| Mode       | Factory behavior                                                                                    | Model behavior                                   |
-| ---------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `baseline` | Ordinary source tools; no Loom backend or schema                                                    | Reads, searches, edits and tests source          |
-| `natural`  | The same tools plus five read-only Loom tools, using the slot’s certified Tree-sitter or SCIP index | Chooses whether to use Loom; zero calls is valid |
-
-There is no enforced retrieval mode or host lookup quota. All arms receive the
-same public task instructions and authored-regression capability. Cold historical attempts have no project history. Memory arms expose native
-search, reads and writes; persisted agent writes and setup writes are separate counters.
-
-`factory/workspace.py` limits source reads and edits to the task manifest. Each attempt
-has a source-only checkout. Paging preserves complete source authority while
-bounding individual read responses. `factory/context.py` and `factory/retrieval_tools.py` verify
-returned definitions and literal lines against the exact local source, preserve
-partial coverage, and reject stale bodies or navigation through edited files.
-Every real Loom call checks the repository, namespace, full commit and serving
-build before and after retrieval. Permission uncertainty fails closed.
-
-A grep/search prefix that cannot match any task source returns a local
-`outside_factory_source_scope` refusal. It reports `server_coverage: not_queried`
-and `request_dispatched: false`; this does not claim the server has no coverage.
-The selected call still counts, while logical and physical Loom requests remain
-zero. Prefixes that could match source still require all scope and authorization
-checks. Tool selections, logical operations, physical retrieval requests and
-scope-check requests remain distinct counters.
-
-The live grader exposes `regression_test(source)` equally in all arms. It
-accepts at most 16,000 UTF-8 bytes of self-contained pytest derived from public
-requirements. The test runs outside the candidate checkout as a nonroot child,
-with a 30-second process-group deadline and at most 4,000 characters of failure
-output. Collection errors, skips, empty files and timeouts never report a pass.
-Authored tests cannot change candidate source or fixed evaluator tests. Their
-results do not change fixed-test verification state or the independent grade.
-They count as ordinary tool calls; the offline finite-expression grader offers
-no arbitrary Python execution.
-
-See [the evaluation architecture](../../../../docs/architecture/software-factory-evaluation.md)
-for the external dependency and verification boundaries, and
-[the pilot protocol](PILOT.md) for the measurement policy.
-
-## Run the offline fixture
-
-From the repository root with Python 3.12:
+Follow [REPRODUCE.md](REPRODUCE.md). From the repository root with Python 3.12,
+a local Docker daemon and an Anthropic API credential:
 
 ```bash
-python -m examples.software_factory.tests.smoke run \
-  --task name-validation --mode natural --output /tmp/factory-one
-python -m examples.software_factory.tests.smoke smoke --output /tmp/factory-smoke
-python -m examples.software_factory.tests.smoke compare \
-  /tmp/factory-smoke/name-validation-baseline/result.json \
-  /tmp/factory-smoke/name-validation-natural/result.json \
-  --output /tmp/factory-comparison.json
-python -m unittest examples.software_factory.tests.factory.test_factory -v
+python3 -m examples.software_factory plan --eval flask
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --output ./factory-run
 ```
 
-Choose unused output directories. The three authored tasks cover name
-validation, path composition and HTTP method normalization. `tests/fixtures/python/suite.json` pins
-the tasks, scripted actions and independent grader inputs. The replay reads,
-edits and tests source, but its scripted patches measure no model reasoning,
-quality gain, adoption or live savings. It makes no network requests and needs
-no credentials, database or third-party packages. Adding credentials does not
-turn the offline CLI into a paid run.
+The launcher prepares isolated services, source indexes, dependency images and
+verifiers. Three repeats across five arms produce 45 primary attempts. Six
+separate baseline A/A controls produce 51 total attempts. Twelve blind fixed-only
+judgments use the same Haiku 5.5 model. Retries are disabled. Every attempt is fresh.
 
-The offline evaluator parses a finite scalar-expression subset; it performs no
-Python `exec`, imports, filesystem access or subprocess calls. Candidate Python
-for historical tasks runs only inside the qualified Docker environment. Never
-add a host subprocess executor for candidate code.
+## Historical knowledge
 
-`historical-candidates.json` retains imported control evidence for inspection;
-its receipts are not current qualifications. The public bootstrap lock and the
-actual native Harbor controls define the executable historical route.
+[historical_memories.json](memory/historical_memories.json) contains 24 short
+project notes, including ten code-linked notes. Public source URLs, content hashes,
+publication and edit times, per-task cutoffs and excluded target discussions are
+recorded beside the notes. Setup verifies source content before ingestion.
+The facts concern prior architecture, compatibility and known pitfalls. The
+corpus contains no reference fixes or hidden test requirements.
 
-## Validation and artifacts
+Only memory-enabled arms receive this historical knowledge, through native memory
+tools and code-linked lessons. It is not inserted into the prompt. Other arms have
+no seeded history or ordinary project-note tools. This comparison measures the
+combined contribution of historical knowledge and its native retrieval. It does
+not isolate linking from the extra information; that needs a matched-facts ablation.
 
-Install the pinned Harbor dependencies before the complete unit suite:
+The history is curated and replayed into fresh namespaces. This study does not
+measure autonomous learning over elapsed months. Each memory arm uses the same
+current source revision as its paired code-only arm. No authored bug or synthetic
+source revision is added to the task set.
 
-```bash
-python -m unittest discover -s examples/software_factory/tests -t . -v
-```
+## Verification and reporting
 
-The process-supervision tests require Linux `os.waitid`; run the complete suite
-on Linux. Dependency-free fixture tests can run separately with the standard
-library. Unit tests and replays do not call providers or ingest an index.
+The model sees the public issue and allowlisted implementation source. It can
+read, search, edit and run visible checks, including its own regression tests.
+Reference patches, Git objects and evaluator inputs stay outside its tools.
+The independent hidden verifier decides success. Full-suite regressions and the
+blind judge are separate measurements; authored tests do not establish success.
 
-Runtime outputs belong outside version control. Preserve the protocol,
-qualification receipts, native Harbor jobs, provider usage, retrieval events,
-index audits and automatic reports together. Keep credentials and task-scoped
-tokens private. Remove only resources whose exact ownership you recorded;
-cleanup never grants permission to delete another run's data.
+[Harbor reports](../../harbor/README.md) retain hidden success, blind fixed judgments,
+full-suite regressions, agent and end-to-end time, agent plus Loom provider cost,
+tokens, test runs, Loom selections and persisted memory writes. Setup, judging and
+unpriced infrastructure are reported separately. Failed attempts remain included;
+unknown values remain unknown. Zero optional Loom calls is valid.
 
-The repository-first suite lock declares `languages: ["python"]` and
-`source_roots: ["src/flask"]`. These describe this Flask profile. Future
-repositories can declare several languages in one suite and retain one end-to-end
-result per issue. Python/pytest and SCIP Python proof are adapter-specific here.
-See [result artifact layout](results/README.md).
-
-Test requests and executed runs are separate counters. `agent_test_requests`
-includes rejected tool choices. `agent_test_runs` counts visible verification
-receipts initiated by the agent and authored-test execution receipts, including
-failed and timed-out runs. Syntax or argument refusals count only as requests.
-An execution failure without a grader receipt leaves the run count unknown.
-Automatic final verification is recorded separately.
-
-The initial model prompt contains only the public issue plus repository, base
-revision and source paths. An operator-selected symbol is used for offline
-fixtures and index qualification, and is not supplied to the model.
-
-Code-read requests omit `token_budget`, and source search omits `top_k`. Both
-Loom tiers use the serving API defaults pinned by the frozen server source.
-Search retains its result cards, `has_more` and `next_cursor`; Claude can request
-following pages. Lexical-only search and disabled model-backed search legs are
-unchanged. Complete returned bodies still require exact local span grounding.
+The targets are 9/9 hidden successes per arm and at least 20% lower agent time and
+provider cost than the paired baseline. They are hypotheses, not measured claims.
+Read [PILOT.md](PILOT.md) for the comparison policy and
+[the architecture](../../../../docs/architecture/software-factory-evaluation.md)
+for the sandbox and source boundaries.

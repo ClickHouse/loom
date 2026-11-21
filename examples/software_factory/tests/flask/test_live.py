@@ -186,7 +186,7 @@ class LivePreparationContracts(unittest.TestCase):
 
         rows = schedule(["4045", "4575", "4935"], seed=741)
         self.assertEqual(rows, schedule(["4045", "4575", "4935"], seed=741))
-        self.assertEqual(len(rows), 33)
+        self.assertEqual(len(rows), 51)
         self.assertEqual(sum(r["mode"] == "baseline" for r in rows), 15)
         for task in ("4045", "4575", "4935"):
             for repeat in range(3):

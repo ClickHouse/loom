@@ -19,7 +19,6 @@ from examples.software_factory.factory.model import Budget, digest
 from examples.software_factory.harbor.runtime import (
     ObservedProvider,
     backend,
-    episode_notes,
     memory_backend,
     native_audit,
     read,
@@ -133,7 +132,7 @@ class FactoryAgent(BaseAgent):
         def execute():
             retrieval = audit = provider = None
             try:
-                notes = None if self.qualification else episode_notes(protocol, slot, folder)
+                notes = None
                 memory = None
                 if not self.qualification and slot["mode"] != "baseline":
                     retrieval, audit = backend(
@@ -154,6 +153,7 @@ class FactoryAgent(BaseAgent):
                             code_namespaces=(binding["code_namespace"],),
                             allowed_paths=tuple(task.files),
                             repository_tag=binding["repository_tag"],
+                            history_sha256=binding["memory_history_sha256"],
                         )
                 if self.qualification:
                     control_inputs = private

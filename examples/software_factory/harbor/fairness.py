@@ -172,7 +172,7 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
             or identity["memory_enabled"] != enabled
             or identity.get("memory_namespace") != namespace
             or identity.get("memory_history_sha256") != history
-            or identity.get("notes_history_sha256") != notes
+            or identity.get("notes_history_sha256") != digest({})
         ):
             return False
     if enabled:
@@ -317,7 +317,7 @@ def audit_fairness(protocol, entries, *, billing=None):
             billing = read(Path(protocol["output_root"]) / "provider-costs.json")
         except (OSError, ValueError):
             billing = {}
-    common = tool_schemas("baseline", regression_tests=True, project_notes=True)
+    common = tool_schemas("baseline", regression_tests=True)
     for slot in protocol["schedule"]:
         order = slot["order"]
         if len(observed.get(order, [])) != 1:
@@ -373,7 +373,7 @@ def audit_fairness(protocol, entries, *, billing=None):
             expected_tools = tool_schemas(
                 slot["mode"],
                 regression_tests=True,
-                project_notes=True,
+                project_notes=False,
                 memory=slot["memory_enabled"],
             )
             exposure = start["tools"] == expected_tools and expected_tools[: len(common)] == common

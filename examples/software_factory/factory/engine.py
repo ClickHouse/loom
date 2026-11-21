@@ -42,8 +42,8 @@ class Factory:
             raise ValueError("Mode requires an explicit context backend")
         if mode == "baseline" and backend is not None:
             raise ValueError("Baseline cannot receive a context backend")
-        if memory is not None and (mode != "natural" or project_notes is None):
-            raise ValueError("Native memory requires optional Loom and common project notes")
+        if memory is not None and mode != "natural":
+            raise ValueError("Native memory requires optional Loom")
         from examples.software_factory.factory.retrieval_tools import QualifiedContext
 
         self.task, self.provider, self.grader = task, provider, grader
@@ -382,7 +382,7 @@ class Factory:
             "memory_enabled": self.memory is not None,
             "memory_namespace": self.memory.namespace if self.memory else None,
             "notes_history_sha256": history_sha256,
-            "memory_history_sha256": history_sha256 if self.memory else None,
+            "memory_history_sha256": self.memory.history_sha256 if self.memory else None,
         }
 
     def result(self, status: str, error: str | None, grade: dict, patch: str) -> dict:

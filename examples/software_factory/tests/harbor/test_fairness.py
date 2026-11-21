@@ -171,7 +171,7 @@ class FairnessProof(unittest.TestCase):
             tools = tool_schemas(
                 slot["mode"],
                 regression_tests=True,
-                project_notes=True,
+                project_notes=False,
                 memory=slot["memory_enabled"],
             )
             self.write_generation(folder, order, prompt, tools)

@@ -1137,7 +1137,8 @@ class Provisioner:
     ):
         task = tasks[group["task_id"]]
         fixture = fixtures[group["task_id"]]["data"]
-        authored = fixture.get("kind") != "cold"
+        seeded = fixture.get("kind") != "cold"
+        authored = seeded and fixture.get("kind") != "historical-snapshot"
         slots = group["memory_slots"]
         roles = {
             group["namespace"]: "admin",
@@ -1240,7 +1241,7 @@ class Provisioner:
                     if event["revision"] in (("A",) if revision == "A" else ("A", "B"))
                 )
             )
-            if authored:
+            if seeded:
                 current = {
                     event["key"]: event
                     for event in fixture["history_events"]
@@ -1389,7 +1390,7 @@ class Provisioner:
                     dict(row, memory_key=key) for key, row in latest[slot["order"]].items()
                 ],
             }
-            if not authored:
+            if not seeded:
                 listing = {
                     "org": group["org"],
                     "namespace": binding["memory_namespace"],

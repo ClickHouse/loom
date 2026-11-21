@@ -41,7 +41,7 @@ def _run(command, *, data=None, timeout=300, env=None):
 
 
 def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
-    """Nine exact commits: three historical solver bases and six authored history states."""
+    """Each solver base and any additional chronological history revisions."""
     lock = _read(LOCK)
     source_git = _read(assets / "assets.json")["source_git"]
     images = _read(assets / "images.json")["images"]
@@ -59,7 +59,8 @@ def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
             )
         )
     dependency = "pallets__flask-4935"
-    for task_id, fixture in sorted(materialization["fixtures"].items()):
+    for task_id in sorted(materialization["tasks"]):
+        fixture = materialization["fixtures"][task_id]
         if materialization["tasks"][task_id]["image"] != images[dependency]["image"]:
             raise PermissionError("Authored compiler dependencies differ from their pinned base")
         for label in ("A", "B"):
@@ -74,8 +75,13 @@ def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
                     dependency_image=images[dependency]["image"],
                 )
             )
-    if len(revisions) != 9 or len({row["base_commit"] for row in revisions}) != 9:
-        raise PermissionError("Compiler preparation requires the nine distinct frozen revisions")
+    expected = len(lock["tasks"]) + 2 * len(materialization["tasks"])
+    if (
+        not revisions
+        or len(revisions) != expected
+        or len({row["base_commit"] for row in revisions}) != expected
+    ):
+        raise PermissionError("Compiler preparation requires every distinct frozen revision")
     for row in revisions:
         if not re.fullmatch(r"[a-f0-9]{40}", row["base_commit"]):
             raise PermissionError("Compiler revision is not a full Git commit")

@@ -162,11 +162,11 @@ class PublicLauncher(unittest.TestCase):
             check=True,
         )
         plan = json.loads(result.stdout)
-        self.assertEqual(plan["total_attempts"], 102)
+        self.assertEqual(plan["total_attempts"], 51)
         self.assertEqual(plan["evaluation"]["id"], "flask")
-        self.assertEqual(plan["primary_attempts"], 90)
-        self.assertEqual(plan["aa_attempts"], 12)
-        self.assertEqual(plan["blind_judges"]["requests"], 24)
+        self.assertEqual(plan["primary_attempts"], 45)
+        self.assertEqual(plan["aa_attempts"], 6)
+        self.assertEqual(plan["blind_judges"]["requests"], 12)
         self.assertTrue(plan["blind_judges"]["fixed_only"])
         self.assertEqual(plan["blind_judges"]["model"], plan["model"])
         self.assertEqual(plan["model"], "claude-haiku-5-5")
@@ -179,9 +179,10 @@ class PublicLauncher(unittest.TestCase):
                 plan["memory"]["linked"],
                 plan["memory"]["unlinked"],
             ),
-            (100, 40, 60),
+            (24, 10, 14),
         )
-        self.assertEqual(plan["memory"]["cold_cases"], 3)
+        self.assertEqual(plan["memory"]["cold_cases"], 0)
+        self.assertFalse(plan["memory"]["equal_plain_notes_all_arms"])
         self.assertEqual(plan["embedding"]["revision"], "aa8f8b060edb00e03bfdd08813a2949946c8ba55")
         self.assertEqual(len(plan["embedding"]["files"]), 5)
 

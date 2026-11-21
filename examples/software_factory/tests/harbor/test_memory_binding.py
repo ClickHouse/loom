@@ -120,7 +120,7 @@ class HistoryCertificate(unittest.TestCase):
     def setUp(self):
         from unittest.mock import patch
 
-        from examples.software_factory.evals.flask.memory import fixtures
+        from examples.software_factory.tests.fixtures.flask_history import fixtures
         from examples.software_factory.tests.flask.test_memory_scenarios import SOURCES
 
         temporary = tempfile.TemporaryDirectory()
