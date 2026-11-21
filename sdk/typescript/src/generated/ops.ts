@@ -6623,6 +6623,7 @@ export interface MemoryProposalDecideInput {
   namespace: string;
   memory_keys: string[];
   decision: "accept" | "reject";
+  approved_sha256?: Record<string, string>;
   reason?: string;
 }
 
@@ -6650,6 +6651,7 @@ export interface MemoryProposalsInput {
 export interface MemoryProposal {
   memory_key: string;
   memory_id: string;
+  content_sha256?: string;
   agent?: string;
   memory_type?: string;
   value_preview?: string;
@@ -8242,6 +8244,7 @@ export interface SnapshotMemoryRow {
   updated_at?: string | null;
   value_json?: string;
   status?: "active" | "conflicted" | "tombstoned" | "duplicate" | "superseded" | "rejected" | "proposed";
+  requires_review?: boolean | null;
   conflict_with?: string[];
   duplicate_of?: string;
   evidence_count?: number;
@@ -11469,7 +11472,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.owner_report", group: "memory", method: "ownerReport", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "memory.pin", group: "memory", method: "pin", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: false },
   { name: "memory.promote", group: "memory", method: "promote", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
-  { name: "memory.proposal_decide", group: "memory", method: "proposalDecide", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
+  { name: "memory.proposal_decide", group: "memory", method: "proposalDecide", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "memory.proposals", group: "memory", method: "proposals", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.provenance", group: "memory", method: "provenance", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "memory.recall", group: "memory", method: "recall", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: true },

@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from fastapi import HTTPException
 
+from server.core.hashing import sha256_value
 from server.memory.api.models_crud import (
     MemoryDeleteInput,
     MemoryRestoreInput,
@@ -66,6 +67,10 @@ class _StubCH:
         fail_inserts_into: tuple[str, ...] = (),
     ) -> None:
         self.query_one_result = query_one_result
+        from server.memory.store.rows import identity_key
+
+        initial = _mk_row(**(query_one_result or {}))
+        self.memory_heads = {identity_key(initial): initial.model_dump()}
         self.query_all_routes = query_all_routes or []
         self.fail_lightweight_update = fail_lightweight_update
         self.fail_all_updates = fail_all_updates
@@ -83,6 +88,15 @@ class _StubCH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         self.query_all_sqls.append(sql)
+        if (
+            "FROM loom.memory FINAL" in sql
+            and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
+        ):
+            return [
+                self.memory_heads[k]
+                for k in (params or {}).get("keys", [])
+                if k in self.memory_heads
+            ]
         for needle, result in self.query_all_routes:
             if needle in sql:
                 return result
@@ -97,6 +111,10 @@ class _StubCH:
         if table in self.fail_inserts_into:
             raise RuntimeError(f"insert into {table} unavailable")
         self.insert_calls.append((table, rows, settings or {}))
+        if table == "loom.memory":
+            from server.memory.store.rows import identity_key
+
+            self.memory_heads.update({identity_key(r): r for r in rows})
 
     async def execute(self, sql: str, params: dict[str, Any] | None = None) -> None:
         if self.fail_all_updates:
@@ -125,6 +143,13 @@ class _RecordingEmbedder:
 
 
 _EMB_TABLE_ROW = {
+    "org": "test",
+    "namespace": "personal",
+    "agent": "cursor",
+    "user_id": "-",
+    "session_id": "-",
+    "memory_key": "user_dog_name",
+    "content_sha256": sha256_value(_mk_row().value),
     "embedding_model": "fake-test",
     "embedding_dim": 3,
     "embedding": [0.1, 0.1, 0.1],
