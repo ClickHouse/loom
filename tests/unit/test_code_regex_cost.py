@@ -293,7 +293,8 @@ _WALK_CHILD = f"""
 import faulthandler, json, sys
 faulthandler.dump_traceback_later({_WALK_DEADLINE_S}, exit=True)
 from tests.unit.lane_walks import walk_cost
-print(json.dumps(walk_cost(sys.argv[1])))
+samples = []
+print(json.dumps({{"costs": walk_cost(sys.argv[1], diagnostics=samples), "samples": samples}}))
 """
 
 
@@ -307,8 +308,11 @@ def test_a_lane_walk_costs_linear_time(name: str) -> None:
         cwd=pathlib.Path(__file__).resolve().parents[2],
     )
     assert done.returncode == 0, done.stderr[-4000:]
-    small, big = json.loads(done.stdout)
-    assert big < _FLOOR_S or big < RATIO * small, (name, small, big)
+    packet = json.loads(done.stdout)
+    small, big = packet["costs"]
+    assert big < _FLOOR_S or big < RATIO * small, json.dumps(
+        {"name": name, **packet}, sort_keys=True
+    )
 
 
 # The class guard: every lane parser in the ingest's registry, over generated shapes (runs
