@@ -1258,6 +1258,8 @@ async def _absent(ch: Any, block: Block) -> None:
 async def _verify(
     conn: Any, ch: Any, args: argparse.Namespace, identities: Sequence[RequestRow] | Block
 ) -> None:
+    from server.memory.store import pg_memory
+
     block = identities if isinstance(identities, Block) else None
     wanted = identities.rows if isinstance(identities, Block) else [asdict(r) for r in identities]
     for offset in range(0, len(wanted), 100):
@@ -1309,9 +1311,10 @@ async def _verify(
                 and record["last_error"] in (None, ""),
                 "delivery settled without failure",
             )
-            head, revision, audit = (
-                json.loads(record[name]) for name in ("head", "revision", "audit")
+            head, revision = (
+                pg_memory.decode_row(json.loads(record[name])) for name in ("head", "revision")
             )
+            audit = json.loads(record["audit"])
             _compare(head, revision, tuple(head), "authority full row")
             if block:
                 _compare(expected, head, tuple(expected), "authority staged row")

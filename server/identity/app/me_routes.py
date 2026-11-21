@@ -66,6 +66,7 @@ async def me_set_default_namespace(
 
 _SHARING_WRITE_OPS = [
     "memory.set",
+    "memory.append_batch",
     "memory.bulk_set",
     "memory.update_by_id",
     "memory.pin",

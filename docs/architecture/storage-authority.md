@@ -114,6 +114,34 @@ stops serving and background writers, waits out bounded sends, and states when t
 guarantee and optional settings apply. Both builds serve the same schema.
 An older writer can still reproduce the unchecked expiry race during that transition.
 
+## Atomic episodic appends
+
+`memory.append_batch` appends 1–1,000 episodic occurrences under one identity tuple.
+Every key must be distinct and absent, including from tombstoned heads. Equal values
+remain separate rows. The handler requires the Postgres authority before memory or
+provider mutation, then reuses bulk row preparation, blacklist checks, sensitivity,
+provenance and policy admission. It runs no embedding, identity deduplication, entity
+resolution or semantic supersession. Any refused entry aborts the entire batch.
+
+The commit checks absence again while holding the authority's generation and head
+locks. Heads, revision rows, hash-only audit rows, delivery obligations and the bound
+idempotency result commit together. A competing writer that creates one key refuses
+the complete append. Ordinary `memory.bulk_set` keeps its per-entry verdicts and
+identity deduplication; its partial selection is unsuitable for native history.
+
+Publication follows the commit. `PUBLICATION_PENDING` means the batch is committed and
+its remaining delivery belongs to the delivery worker. A replay of that request's
+idempotency key returns the committed rows, without appending again. A lost commit
+acknowledgement remains an uncertain outcome until that same request is resolved;
+clients must not compensate with deletes or invent replacement keys.
+
+The operation uses the existing episodic row format and erasure coverage, with no
+schema migration. Older servers do not register it and refuse rather than accepting
+an ignored atomicity flag. The ClickHouse authority refuses it; the operation catalogue
+advertises availability, not the deployment's storage readiness. Existing history
+reads, pops and clears keep their row format and behavior; this append operation does
+not give them cross-process linearizability.
+
 ## The tables
 
 The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every tenant primary
@@ -126,7 +154,7 @@ that moves it.
 | --------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom.authority`            | singleton                                                  | the recorded authority, its epoch and the deployment id                                                                                                                                                                                                                                                                                                                                 |
 | `loom.scope_generations`    | `(org, scope)`                                             | the last revision number of a namespace, or a policy generation (`scope = '*'`, org `''` for the global one)                                                                                                                                                                                                                                                                            |
-| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: the complete `loom.memory` row as JSON, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                                                                                                                                                                                            |
+| `loom.memory_current`       | `(org, namespace, agent, user_id, session_id, memory_key)` | the head of each key: its `loom.memory` row as JSON, without its default fields, with `memory_id`, `version`, `seq`, `content_sha256` beside it                                                                                                                                                                                                                                         |
 | `loom.memory_revisions`     | `(org, namespace, seq)`                                    | every committed row, append-only (a redaction scrubs one in place, and with `LOOM_PG_PAYLOAD_CLEAR_ENABLED` the clearing pass clears a delivered one's payload past the horizon: [payload clearing](#payload-clearing)), with its hash-only audit row and its metadata in typed columns ([revision metadata](#revision-metadata))                                                       |
 | `loom.memory_deliveries`    | `(org, namespace, seq)`                                    | the targets a revision still owes ClickHouse (bits: 1 memory row, 2 search document, 4 audit row, 8 a deleted decision's record, 16 the old vectors), its lease and fencing token; deleted when the last target lands                                                                                                                                                                   |
 | `loom.idempotency`          | `(org, key_hash)`                                          | an op's request digest, its state (`running`, `committed`, `done`), the revisions it committed, its answer, a lease and its token                                                                                                                                                                                                                                                       |
@@ -141,7 +169,7 @@ that moves it.
 | `loom.knowledge_datasets`   | `(org, namespace, source_uri, doc_version, dataset_id)`    | each dataset's catalog row at a document version: the snapshot that serves it, its schema and approval ([datasets](#datasets))                                                                                                                                                                                                                                                          |
 
 A head is the row `loom.memory FINAL` would serve: a commit replaces it only when its
-version is not older, as `ReplacingMergeTree(version)` decides. Holding the whole row
+version is not older, as `ReplacingMergeTree(version)` decides. Holding the row
 keeps every one of the write paths that build `loom.memory` rows unchanged
 (`server/memory/store/rows.py`): they all reach the commit through the one insert
 funnel, `insert_memory_versions`. The row keeps ClickHouse's precision (whole-second
@@ -153,7 +181,11 @@ A stored row (a head, or a revision's payload) may leave out a field at its
 (`rows.FIRST_VERSION_DEFAULTS`, `pg_memory.SPARSE_DEFAULTS`): every reader takes a
 missing field as that default, `decode_row` in Python and `coalesce` (or a test that
 holds for NULL) in SQL. Every other field is always stored, a default-valued one
-included. This build stores every field.
+included. A commit stores each row without the fields at their default
+(`pg_memory.sparse_row`), which keeps it smaller: most of a row's fields hold their
+default, and every stored field repeats its name. The writers that change a stored row in
+place (the usage fold, a redaction) merge fields into it, and may store a field at its
+default.
 
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its

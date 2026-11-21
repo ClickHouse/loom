@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from server.memory.api.models_bulk import (
+    MemoryAppendBatchInput,
     MemoryBulkGetInput,
     MemoryBulkGetOutput,
     MemoryBulkSetInput,
@@ -18,7 +19,7 @@ from server.memory.api.models_bulk import (
     MemorySetFromMessagesInput,
     MemorySetFromMessagesOutput,
 )
-from server.memory.app.bulk_set import handle_memory_bulk_set
+from server.memory.app.bulk_set import handle_memory_append_batch, handle_memory_bulk_set
 from server.memory.app.curation import handle_memory_import_curated
 from server.memory.app.extract.handler import (
     handle_memory_extraction_retry_mine,
@@ -32,6 +33,19 @@ from server.operations.base import Operation, Role
 # ============================================================
 # Operation declarations
 # ============================================================
+
+memory_append_batch = Operation(
+    name="memory.append_batch",
+    maturity="experimental",
+    session_content=True,
+    input_model=MemoryAppendBatchInput,
+    output_model=MemoryBulkSetOutput,
+    handler=handle_memory_append_batch,
+    idempotent=True,
+    required_role=Role.WRITER,
+    audit=False,  # Each committed revision carries its hash-only audit row.
+)
+
 
 memory_bulk_set = Operation(
     name="memory.bulk_set",

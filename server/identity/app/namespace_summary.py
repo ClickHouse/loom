@@ -94,7 +94,7 @@ async def handle_namespace_summary(input: NamespaceSummaryInput) -> NamespaceSum
             (
                 """
             SELECT
-                countIf(operation IN ('memory.set', 'memory.bulk_set',
+                countIf(operation IN ('memory.set', 'memory.append_batch', 'memory.bulk_set',
                                        'memory.set_from_messages',
                                        'memory.update_by_id',
                                        'memory.touch'))   AS writes,

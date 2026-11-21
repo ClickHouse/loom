@@ -105,8 +105,8 @@ _TOKEN_SPLIT_RE = re.compile(r"""[\s"',\[\]{}()<>\\]+""")
 _LEDGER_GETS = "('memory.get', 'memory.bulk_get')"
 _LEDGER_SEARCHES = "('memory.search', 'memory.ask')"
 _LEDGER_SETS = (
-    "('memory.set', 'memory.bulk_set', 'memory.update', 'memory.update_by_id', "
-    "'memory.set_from_messages')"
+    "('memory.set', 'memory.append_batch', 'memory.bulk_set', 'memory.update', "
+    "'memory.update_by_id', 'memory.set_from_messages')"
 )
 
 _NOT_STRUCTURED = "memory_type NOT IN {structured:Array(String)}"
