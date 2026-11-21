@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import shutil
+import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from examples.software_factory.evals.flask.historical import FrozenSource, HistoricalGrader, git
@@ -23,22 +26,93 @@ __all__ = [
     "task_inputs",
     "stage_task",
     "TASK_KIND",
+    "create_assets",
+    "build_dependencies",
+    "materialize_cases",
+    "prepare_compiler_artifacts",
+    "plan_inputs",
+    "freeze_plan",
 ]
-TASK_KIND = "historical-flask"
+TASK_KIND = "flask-e2e"
 HERE = Path(__file__).resolve().parent
 PACKAGE_ROOT = HERE.parents[1]
 
 
-def task_inputs(protocol, task_id, index_tier=None):
+def _bootstrap(command, target, loom_python):
+    root = HERE.parents[3]
+    logs = target.parent / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    flag = "--output" if command == "assets" else "--assets"
+    with (logs / (command + ".log")).open("wb") as stream:
+        subprocess.run(
+            [
+                loom_python,
+                "-m",
+                "examples.software_factory.evals.flask.bootstrap",
+                command,
+                flag,
+                str(target),
+            ],
+            cwd=root,
+            check=True,
+            stdout=stream,
+            stderr=subprocess.STDOUT,
+            env={
+                "PATH": os.environ.get("PATH", os.defpath),
+                "PYTHONPATH": str(root) + os.pathsep + str(root / "sdk/python"),
+                "LOOM_ENV_FILE": "",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+    return read(target / ("assets.json" if command == "assets" else "images.json"))
+
+
+def create_assets(output, *, loom_python):
+    return _bootstrap("assets", Path(output), loom_python)
+
+
+def build_dependencies(assets, *, loom_python):
+    return _bootstrap("build", Path(assets), loom_python)
+
+
+def materialize_cases(assets, output):
+    from .memory.materialize import materialize_cases as materialize
+
+    return materialize(assets, output)
+
+
+def prepare_compiler_artifacts(assets, materialization, output, *, loom_python, owner):
+    from .compiler_setup import prepare_compiler_artifacts as compile_sources
+
+    return compile_sources(assets, materialization, output, loom_python=loom_python, owner=owner)
+
+
+def plan_inputs(assets, materialization, output):
+    from .planning import inputs
+
+    return inputs(assets, materialization, output)
+
+
+def freeze_plan(prepared, setup, output, **kwargs):
+    from .planning import freeze
+
+    return freeze(prepared, setup, output, **kwargs)
+
+
+def task_inputs(protocol, task_id, *, binding=None):
     config = protocol["tasks"][task_id]
     public = next(
         row for row in read(protocol["historical_manifest"])["tasks"] if row["task_id"] == task_id
     )
     source = FrozenSource(Path(config["source_git"]), public["base_commit"])
-    if index_tier not in {None, "treesitter", "scip"}:
-        raise ValueError("Unknown treatment index tier")
-    namespace = "-" if index_tier is None else config["indexes"][index_tier]["namespace"]
-    task = source.task(public, namespace, config["symbol"])
+    namespace = "-" if binding is None else binding["code_namespace"]
+    if (
+        not isinstance(namespace, str)
+        or not namespace
+        or (binding is not None and namespace == "-")
+    ):
+        raise PermissionError("Treatment binding requires a code namespace")
+    task = replace(source.task(public, namespace, config["symbol"]), kind=TASK_KIND)
     private = read(config["evaluation_file"])
     if private["base_commit"] != task.base_commit:
         raise PermissionError("Evaluator and task bases differ")

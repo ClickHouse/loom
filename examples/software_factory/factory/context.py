@@ -15,9 +15,14 @@ class Context:
         ledger: Ledger,
         budget: Budget,
         org: str,
+        *,
+        memory_namespaces: tuple[str, ...] = (),
+        memory_code_namespaces: tuple[str, ...] = (),
     ):
         self.task, self.checkout, self.backend = task, checkout, backend
         self.ledger, self.budget, self.org = ledger, budget, org
+        self.memory_namespaces = tuple(memory_namespaces)
+        self.memory_code_namespaces = tuple(memory_code_namespaces)
         self.cache: dict[str, dict] = {}
         self.requests = 0
         self.chars = 0

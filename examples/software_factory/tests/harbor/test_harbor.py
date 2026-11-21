@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from examples.software_factory.evals.flask.grading import validate_candidate, validate_fixtures
 from examples.software_factory.factory.model import digest
-from examples.software_factory.harbor.index import STATUS_CACHES, TABLES, fingerprint
+from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, TABLES, fingerprint
 from examples.software_factory.harbor.study import result_record
 
 
@@ -27,12 +27,12 @@ class HarborContracts(unittest.TestCase):
         with self.assertRaises(PermissionError):
             validate_fixtures(fixtures, {}, "0" * 64)
 
-    def test_only_named_status_caches_are_excluded_from_source_fingerprint(self):
+    def test_only_named_mutable_state_is_excluded_from_source_fingerprint(self):
         source = {t: [] for t in TABLES}
-        row = {"namespace": "flask", "state_key": "git_head", "value": "base"}
+        row = {"org": "org", "namespace": "flask", "state_key": "git_head", "value": "base"}
         source["code_index_state"] = [row]
         expected = fingerprint(source)
-        for key in STATUS_CACHES:
+        for key in MUTABLE_STATE_KEYS:
             source["code_index_state"].append({**row, "state_key": key, "value": "cached"})
         self.assertEqual(fingerprint(source), expected)
         source["code_index_state"].append({**row, "state_key": "unknown_future_state"})
@@ -40,7 +40,7 @@ class HarborContracts(unittest.TestCase):
         source["code_index_state"] = [{**row, "value": "changed-base"}]
         self.assertNotEqual(fingerprint(source), expected)
         source["code_index_state"] = [row]
-        source["code_symbols"] = [{"namespace": "flask", "name": "changed"}]
+        source["code_symbols"] = [{"org": "org", "namespace": "flask", "name": "changed"}]
         self.assertNotEqual(fingerprint(source), expected)
 
     def test_verifier_rejects_test_injection_missing_files_and_wrong_base(self):

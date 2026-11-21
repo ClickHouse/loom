@@ -14,10 +14,13 @@ from harbor.models.trajectories.trajectory import Trajectory
 
 from examples.software_factory.factory.anthropic_provider import AnthropicProvider, accounting_usage
 from examples.software_factory.factory.engine import Factory
+from examples.software_factory.factory.memory_tools import MemoryTools
 from examples.software_factory.factory.model import Budget, digest
 from examples.software_factory.harbor.runtime import (
     ObservedProvider,
     backend,
+    episode_notes,
+    memory_backend,
     native_audit,
     read,
     task_inputs,
@@ -26,6 +29,7 @@ from examples.software_factory.harbor.runtime import (
 )
 
 from .profiles import load_profile
+from .scopes import binding_for
 
 
 def envelope(factory: Factory, result: dict | None = None) -> dict:
@@ -107,7 +111,14 @@ class FactoryAgent(BaseAgent):
         descriptor = json.loads(instruction)
         order = descriptor["schedule_order"]
         slot = protocol["schedule"][order]
-        config, source, task, private = task_inputs(protocol, slot["task_id"], slot["index_tier"])
+        binding = None if self.qualification else binding_for(protocol, slot)
+        config, source, task, private = task_inputs(
+            protocol,
+            slot["task_id"],
+            None if self.qualification else slot["index_tier"],
+            slot=None if self.qualification else slot,
+            binding=binding,
+        )
         if descriptor != {"schedule_order": order, "problem": task.problem}:
             raise PermissionError("Harbor instruction differs from the frozen task")
         if self.model_name != protocol["model_id"]:
@@ -122,13 +133,28 @@ class FactoryAgent(BaseAgent):
         def execute():
             retrieval = audit = provider = None
             try:
-                if slot["mode"] != "baseline":
+                notes = None if self.qualification else episode_notes(protocol, slot, folder)
+                memory = None
+                if not self.qualification and slot["mode"] != "baseline":
                     retrieval, audit = backend(
                         protocol,
                         task,
                         folder / "loom-transport.jsonl",
-                        index_tier=slot["index_tier"],
+                        slot=slot,
+                        binding=binding,
                     )
+                    if slot["memory_enabled"]:
+                        memory = MemoryTools(
+                            memory_backend(protocol, slot, binding, retrieval),
+                            org=binding["org"],
+                            namespace=binding["memory_namespace"],
+                            agent="factory-pilot",
+                            user_id="-",
+                            session_id="-",
+                            code_namespaces=(binding["code_namespace"],),
+                            allowed_paths=tuple(task.files),
+                            repository_tag=binding["repository_tag"],
+                        )
                 if self.qualification:
                     control_inputs = private
                     if self.qualification == "reference":
@@ -144,9 +170,15 @@ class FactoryAgent(BaseAgent):
                         source, task, control_inputs, self.qualification
                     )
                 else:
-                    key = dotenv_values(protocol["credentials_file"]).get("ANTHROPIC_API_KEY", "")
+                    inference = protocol["inference"]
+                    key = dotenv_values(inference["credentials_file"]).get("ANTHROPIC_API_KEY", "")
                     provider = AnthropicProvider(
-                        key, protocol["model_id"], approved_model_id=protocol["model_id"]
+                        key,
+                        protocol["model_id"],
+                        approved_model_id=protocol["model_id"],
+                        base_url=inference["base_url"],
+                        role="solver",
+                        order=order,
                     )
                     native_audit(provider, folder / "provider-transport.jsonl")
                     provider = ObservedProvider(provider, folder / "generation-journal.jsonl")
@@ -155,23 +187,29 @@ class FactoryAgent(BaseAgent):
                     provider,
                     grader,
                     folder / "factory",
-                    mode=slot["mode"],
+                    mode="baseline" if self.qualification else slot["mode"],
                     backend=retrieval,
                     budget=Budget(**protocol["attempt_budget"]),
-                    org=protocol["org"],
+                    org="-" if self.qualification else binding["org"],
+                    project_notes=notes,
+                    memory=memory,
                 )
                 grader.factory = factory
                 result = factory.run(external_verifier=True)
                 result.update(
                     schedule_order=order,
-                    arm=slot["arm"],
-                    index_tier=slot["index_tier"],
+                    arm="baseline" if self.qualification else slot["arm"],
+                    index_tier=None if self.qualification else slot["index_tier"],
+                    actual_org="-" if self.qualification else binding["org"],
+                    code_namespace="-" if self.qualification else binding["code_namespace"],
                     pairing_key=[slot["task_id"], slot["repeat"]],
                     protocol_sha256=digest(protocol),
                     source_sha256=task.source_sha256,
                     loom_transport_dispatches=audit.count() if audit else 0,
                 )
-                if slot["mode"] == "baseline" and any(
+                if not self.qualification and result["memory_enabled"] != slot["memory_enabled"]:
+                    raise PermissionError("Executed memory capability differs from scheduled arm")
+                if (self.qualification or slot["mode"] == "baseline") and any(
                     result[k] != 0
                     for k in (
                         "model_selected_loom_requests",

@@ -29,16 +29,40 @@ class ProviderBilling(unittest.TestCase):
                 }
             },
             schedule=[
-                dict(order=0, task_id="task", mode="baseline", arm="baseline", index_tier=None),
+                dict(
+                    order=0,
+                    task_id="task",
+                    mode="baseline",
+                    arm="baseline",
+                    index_tier=None,
+                    memory_enabled=False,
+                ),
                 dict(
                     order=1,
                     task_id="task",
                     mode="natural",
                     arm="loom-treesitter",
                     index_tier="treesitter",
+                    memory_enabled=False,
                 ),
             ],
         )
+        self.protocol["attempt_scopes"] = {
+            "0": dict(
+                org="-",
+                code_namespace="-",
+                memory_namespace=None,
+                token_file=None,
+                index_tier=None,
+            ),
+            "1": dict(
+                org="org",
+                task_id="task",
+                index_tier="treesitter",
+                code_namespace="parse",
+                memory_namespace=None,
+            ),
+        }
         self.entries = []
         for slot in self.protocol["schedule"]:
             folder = self.root / str(slot["order"])
@@ -57,7 +81,7 @@ class ProviderBilling(unittest.TestCase):
                 )
             )
 
-    def trace(self, identifiers=("one",), *, status=200):
+    def trace(self, identifiers=("one",), *, status=200, operation="code.symbol"):
         result = self.entries[1]["result"]
         count = len(identifiers)
         result.update(
@@ -66,9 +90,9 @@ class ProviderBilling(unittest.TestCase):
         rows = []
         for identifier in identifiers:
             rows += [
-                dict(phase="dispatch", path="/v1/code.symbol", request_id=None),
+                dict(phase="dispatch", path="/v1/" + operation, request_id=None),
                 dict(
-                    phase="response", path="/v1/code.symbol", status=status, request_id=identifier
+                    phase="response", path="/v1/" + operation, status=status, request_id=identifier
                 ),
             ]
         (Path(result["harbor_trial"]) / "agent/loom-transport.jsonl").write_text(
@@ -186,8 +210,22 @@ class ProviderBilling(unittest.TestCase):
         self.assertEqual(receipt["attempts"]["0"]["loom_provider_cost_usd"], 0)
 
     def test_same_response_id_cannot_be_billed_to_two_attempts(self):
-        slot = dict(order=2, task_id="task", mode="natural", arm="loom-scip", index_tier="scip")
+        slot = dict(
+            order=2,
+            task_id="task",
+            mode="natural",
+            arm="loom-scip",
+            index_tier="scip",
+            memory_enabled=False,
+        )
         self.protocol["schedule"].append(slot)
+        self.protocol["attempt_scopes"]["2"] = dict(
+            org="org",
+            task_id="task",
+            index_tier="scip",
+            code_namespace="compile",
+            memory_namespace=None,
+        )
         folder = self.root / "2"
         (folder / "agent").mkdir(parents=True)
         self.entries.append(
@@ -226,3 +264,86 @@ class ProviderBilling(unittest.TestCase):
         self.assertIn("WHERE org={org:String}", args[6])
         self.assertIn("request_id IN {ids:Array(String)}", args[6])
         self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"org": "org", "ids": ["one"]})
+
+    def test_memory_operations_require_the_memory_arm_and_its_namespace(self):
+        self.trace(operation="memory.set")
+        receipt, loader = self.audit([])
+        loader.assert_not_called()
+        self.assertEqual(receipt["attempts"]["1"]["proof_status"], "unknown")
+        slot = self.protocol["schedule"][1]
+        slot.update(arm="loom-treesitter-memory", memory_enabled=True)
+        self.protocol["attempt_scopes"]["1"]["memory_namespace"] = "working"
+        for entry in self.entries:
+            entry["result"]["protocol_sha256"] = digest(self.protocol)
+        self.entries[1]["result"].update(arm=slot["arm"], memory_enabled=True)
+        row = {**self.ledger(), "namespace": "working", "operation": "memory.set"}
+        receipt, _ = self.audit([row])
+        self.assertEqual(receipt["attempts"]["1"]["proof_status"], "known")
+        receipt, _ = self.audit([{**row, "namespace": "parse"}])
+        self.assertEqual(receipt["attempts"]["1"]["proof_status"], "unknown")
+
+    def test_attempt_scope_is_required_and_cannot_be_replaced_by_task_tier_scope(self):
+        self.trace()
+        del self.protocol["attempt_scopes"]["1"]
+        for entry in self.entries:
+            entry["result"]["protocol_sha256"] = digest(self.protocol)
+        receipt, loader = self.audit([self.ledger()])
+        loader.assert_not_called()
+        self.assertEqual(receipt["attempts"]["1"]["proof_status"], "unknown")
+
+    def test_separate_episode_orgs_are_billed_with_separate_scoped_queries(self):
+        self.trace()
+        scope = self.protocol["attempt_scopes"]["1"]
+        scope["org"] = "episode-org"
+        for entry in self.entries:
+            entry["result"]["protocol_sha256"] = digest(self.protocol)
+        receipt, loader = self.audit([{**self.ledger(), "org": "episode-org"}])
+        self.assertEqual(receipt["attempts"]["1"]["proof_status"], "known")
+        self.assertEqual(loader.call_args.args[0]["org"], "episode-org")
+
+    def test_org_batches_cannot_return_each_others_requested_rows(self):
+        slot = dict(
+            order=2,
+            task_id="task",
+            mode="natural",
+            arm="loom-scip",
+            index_tier="scip",
+            memory_enabled=False,
+        )
+        self.protocol["schedule"].append(slot)
+        self.protocol["attempt_scopes"]["2"] = dict(
+            org="second-org",
+            task_id="task",
+            index_tier="scip",
+            code_namespace="compile",
+            memory_namespace=None,
+        )
+        folder = self.root / "2"
+        (folder / "agent").mkdir(parents=True)
+        self.entries.append(
+            dict(
+                order=2,
+                result={
+                    **slot,
+                    "harbor_trial": str(folder),
+                    "loom_physical_requests": 1,
+                    "loom_transport_dispatches": 1,
+                    "loom_logical_requests": 1,
+                },
+            )
+        )
+        self.trace()
+        original = Path(self.entries[1]["result"]["harbor_trial"]) / "agent/loom-transport.jsonl"
+        (folder / "agent/loom-transport.jsonl").write_text(
+            original.read_text().replace('"one"', '"two"')
+        )
+        for entry in self.entries:
+            entry["result"]["protocol_sha256"] = digest(self.protocol)
+        first = self.ledger()
+        second = {**self.ledger("two"), "org": "second-org", "namespace": "compile"}
+        loader = Mock(side_effect=lambda bound, _: [second] if bound["org"] == "org" else [first])
+        receipt = audit_provider_costs(self.protocol, self.entries, ledger_loader=loader)
+        self.assertEqual(loader.call_count, 1)
+        self.assertTrue(
+            all(receipt["attempts"][str(order)]["proof_status"] == "unknown" for order in (1, 2))
+        )

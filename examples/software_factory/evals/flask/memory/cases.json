@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "workload": "simulated targeted memory history; not months of live learning",
+  "base_commit": "fa1ee7066807c21256e90089731c548b313394d2",
+  "base_source_sha256": "b1855722e22c724904bb7c3cff1c834abbd26bb5bd92d134ac8ff82c8ff3371d",
+  "dependency_task_id": "pallets__flask-4935",
+  "cases": [
+    {
+      "case_id": "flask-memory-response-headers",
+      "title": "Keep repeated response header values",
+      "problem": "Adding a multi-value Headers or MultiDict container to an existing response drops repeated header values. Preserve the supplied values and their order, replace earlier values of the same header as the current policy requires, and retain response body, status, subclass and streaming behavior. Plain mappings and ordinary unique-value header sequences must continue to work.",
+      "path": "src/flask/app.py",
+      "class_name": "Flask",
+      "function": "make_response",
+      "history_revisions": [
+        {
+          "key": "cookie-policy",
+          "value_a": "An existing response retains its cookies when a view returns additional header values.",
+          "value_b": "A view-supplied cookie collection replaces earlier Set-Cookie values as one ordered collection."
+        },
+        {
+          "key": "content-type-policy",
+          "value_a": "For a response object with an existing Content-Type, appended Content-Type values leave the original first value authoritative.",
+          "value_b": "A Content-Type supplied by the view replaces the response object's earlier Content-Type."
+        },
+        {
+          "key": "cache-control-policy",
+          "value_a": "Cache-Control values from a response object and from a returned header collection may coexist.",
+          "value_b": "The view's Cache-Control field replaces the earlier response field instead of leaving competing cache directives."
+        }
+      ]
+    },
+    {
+      "case_id": "flask-memory-cache-policy",
+      "title": "Preserve an explicit zero file cache age",
+      "problem": "A configured SEND_FILE_MAX_AGE_DEFAULT of zero is treated as absent after the cache-policy revision. Preserve explicit zero, keep None as the absence of a timed cache, convert timedelta settings to seconds, and resolve the active application's configuration on each call. Positive values and inherited application/blueprint behavior must remain compatible.",
+      "path": "src/flask/scaffold.py",
+      "class_name": "Scaffold",
+      "function": "get_send_file_max_age",
+      "history_revisions": [
+        {
+          "key": "absent-age",
+          "value_a": "An absent file cache-age setting uses the historical 43200-second fallback.",
+          "value_b": "An absent file cache-age setting does not request a timed max-age."
+        },
+        {
+          "key": "numeric-zero",
+          "value_a": "Numeric zero uses the historical default rather than specifying its own cache duration.",
+          "value_b": "Numeric zero is an explicit cache duration of zero seconds."
+        },
+        {
+          "key": "zero-duration",
+          "value_a": "A zero-length timedelta follows the historical fallback for false-like cache-age values.",
+          "value_b": "A zero-length timedelta represents zero seconds, with the same meaning as numeric zero."
+        }
+      ]
+    },
+    {
+      "case_id": "flask-memory-json-context",
+      "title": "Resolve JSON options from the current application",
+      "problem": "The JSON helper retains an earlier application's JSON options. Later application contexts disagree with their direct provider and jsonify output. Resolve options from the active application for each call, preserve explicit per-call overrides, and keep the standard no-application behavior. Do not keep application-dependent serialization options in process-global helper state.",
+      "path": "src/flask/json/__init__.py",
+      "class_name": null,
+      "function": "dumps",
+      "history_revisions": [
+        {
+          "key": "serialization-owner",
+          "value_a": "The JSON helper uses library serialization behavior even when an application is active.",
+          "value_b": "Inside an application context, serialization belongs to that application's JSON provider."
+        },
+        {
+          "key": "key-order-default",
+          "value_a": "Without an explicit sort_keys argument, helper output uses the library's insertion-order default.",
+          "value_b": "Without an explicit sort_keys argument, helper output follows the active provider's key-order setting."
+        },
+        {
+          "key": "unicode-default",
+          "value_a": "Without an explicit ensure_ascii argument, helper output uses the library's ASCII-escaping default.",
+          "value_b": "Without an explicit ensure_ascii argument, helper output follows the active provider's Unicode-escaping setting."
+        }
+      ]
+    }
+  ]
+}

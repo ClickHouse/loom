@@ -149,6 +149,9 @@ class QualifiedContext(Context):
             if not body.get("pattern"):
                 raise ValueError("Search pattern must be nonempty")
             body.update(limit=20)
+        body["include_lessons"] = bool(self.memory_namespaces)
+        if self.memory_namespaces:
+            body["lesson_namespaces"] = list(self.memory_namespaces)
         if op in {"code.grep", "code.search"}:
             prefix = args.get("path_prefix", "")
             if not isinstance(prefix, str):
@@ -174,7 +177,7 @@ class QualifiedContext(Context):
                     ),
                 }
         key = digest([op, body, self.checkout.state()])
-        if key in self.cache:
+        if not self.memory_namespaces and key in self.cache:
             self.ledger.emit("context_reuse", stage="selected", caller=caller, key=key)
             return self.cache[key]
         if self.budget.retrievals is not None and self.requests >= self.budget.retrievals:
@@ -230,7 +233,8 @@ class QualifiedContext(Context):
         ):
             raise TimeoutError("Context budget exhausted")
         self.chars += len(encoded)
-        self.cache[key] = evidence
+        if not self.memory_namespaces:
+            self.cache[key] = evidence
         self.ledger.emit(
             "context",
             stage="selected",
@@ -242,6 +246,64 @@ class QualifiedContext(Context):
         return evidence
 
     def project(self, op, data):
+        def lessons(items):
+            if not self.memory_namespaces:
+                return []
+            allowed = {*self.memory_namespaces, *self.memory_code_namespaces}
+            result = []
+            for item in items:
+                if item.get("namespace") not in allowed:
+                    raise PermissionError("Code lesson exceeds bound memory namespaces")
+                if item.get("path") and item["path"] not in self.task.files:
+                    raise PermissionError("Code lesson exceeds source scope")
+                result.append(
+                    {
+                        key: item[key]
+                        for key in (
+                            "namespace",
+                            "memory_key",
+                            "memory_id",
+                            "excerpt",
+                            "value",
+                            "path",
+                            "code_state",
+                            "changed_since",
+                            "code_changed_since",
+                            "suggestion",
+                            "version",
+                            "version_text",
+                            "content_sha256",
+                            "value_truncated",
+                            "next",
+                        )
+                        if key in item
+                    }
+                )
+                if "code" in item:
+                    links = []
+                    for link in item["code"]:
+                        if (
+                            link.get("code_namespace") not in self.memory_code_namespaces
+                            or link.get("path") not in self.task.files
+                        ):
+                            raise PermissionError("Code lesson link exceeds certified source scope")
+                        links.append(
+                            {
+                                key: link[key]
+                                for key in (
+                                    "code_namespace",
+                                    "path",
+                                    "symbol",
+                                    "state",
+                                    "changed_since",
+                                    "suggestion",
+                                )
+                                if key in link
+                            }
+                        )
+                    result[-1]["code"] = links
+            return result
+
         out = {
             key: data[key]
             for key in (
@@ -266,9 +328,22 @@ class QualifiedContext(Context):
             out["next_cursor"] = data["next_cursor"]
         rejected = []
         if op in {"code.symbol", "code.enclosing"}:
-            out["definitions"] = self.grounded_definitions(
-                data.get("definitions" if op == "code.symbol" else "results", []), rejected
-            )
+            original = data.get("definitions" if op == "code.symbol" else "results", [])
+            out["definitions"] = self.grounded_definitions(original, rejected)
+            if self.memory_namespaces:
+                for unit in out["definitions"]:
+                    matching = [
+                        item
+                        for item in original
+                        if item.get("path") == unit["path"]
+                        and item.get("start_line") == unit["start_line"]
+                        and item.get("end_line") == unit["end_line"]
+                    ]
+                    attached = lessons(
+                        [lesson for item in matching for lesson in item.get("lessons", [])]
+                    )
+                    if attached:
+                        unit["lessons"] = attached
             out["abstain"] = not out["definitions"]
             if op == "code.symbol" and data.get("candidates"):
                 candidates, seen = [], set()
@@ -313,4 +388,10 @@ class QualifiedContext(Context):
             freshness="checked_against_working_source",
             coverage="base_index_lower_bound",
         )
+        attached = lessons(data.get("lessons", []))
+        if attached:
+            out["lessons"] = attached
+            out["memory_freshness"] = "native_reported_state"
+        if self.memory_namespaces and "lessons_left_out" in data:
+            out["lessons_left_out"] = data["lessons_left_out"]
         return out

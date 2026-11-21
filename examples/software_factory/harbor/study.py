@@ -20,7 +20,7 @@ from harbor.job import Job
 from harbor.models.job.config import JobConfig
 
 from examples.software_factory.factory.model import digest
-from examples.software_factory.harbor.index import snapshot
+from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, select_snapshot, snapshot
 from examples.software_factory.harbor.paired import ARMS, analyze
 from examples.software_factory.harbor.reporting import generate_reports
 from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
@@ -32,6 +32,7 @@ from .judging import load_verdicts, run_judging
 from .metrics import known_total, token_totals
 from .profiles import load_profile
 from .public_export import export_public
+from .scopes import selected_scopes
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path(__file__).resolve().parent
@@ -165,22 +166,18 @@ def prepare(previous: Path, output: Path) -> Path:
     )
     if plan["harbor_version"] != "0.27.0":
         raise PermissionError("Install the pinned Harbor version")
-    frozen = read(Path(plan["index_snapshot_script"]).with_name("index-content.json"))
-    current = snapshot(plan["server_container"], plan["org"])
+    frozen = read(plan["index_content_file"])
+    current = snapshot(plan["server_container"], selected_scopes(plan))
     if current != frozen:
         raise PermissionError("Source index changed since the original frozen snapshot")
     write(output / "index-content.json", current)
     plan["index_content_sha256"] = digest(current)
     plan["index_monitor"] = {
-        "ignored_state_keys": [
-            "status_snapshot",
-            "symbol_stats_summary",
-            "table_counts",
-            "unit_risk_summary",
-        ],
+        "ignored_state_keys": sorted(MUTABLE_STATE_KEYS),
         "source_snapshot_matches_original": True,
         "reason": (
-            "Exclude explicit read caches; all source state and unknown keys remain fingerprinted."
+            "Exclude status caches and the memory-link worker's checked-head marker; "
+            "source heads, units and unknown state keys remain fingerprinted."
         ),
     }
     plan["preparation"] = {
@@ -207,9 +204,6 @@ def prepare(previous: Path, output: Path) -> Path:
     }
     assert all(plan[k] == original[k] for k in plan["preparation"]["unchanged"])
     plan["harbor_specs"], images = {}, {}
-    plan["reference_controls_file"] = str(
-        Path(next(iter(plan["tasks"].values()))["evaluation_file"]).with_name("tasks.json")
-    )
     for task_id in sorted(plan["tasks"]):
         plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
             plan, task_id, output, build_image
@@ -304,7 +298,6 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [output / (n + "-job.json") for n in ("live", "base", "reference")]
     paths += [output / "index-content.json", output / "images.json"]
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
-    plan.pop("index_snapshot_script", None)
     plan.pop("source_archive", None)
     write(protocol_path, plan)
     return protocol_path
@@ -430,7 +423,7 @@ def export(protocol: dict, job_name="live") -> dict:
         return {
             "attempts": entries,
             "protocol_sha256": digest(protocol),
-            "qualified": len(entries) == 3
+            "qualified": len(entries) == len(protocol["tasks"])
             and all(
                 e["result"]["harbor_reward_valid"]
                 and e["result"]["resolved"] == (job_name == "reference")
@@ -527,7 +520,7 @@ def export(protocol: dict, job_name="live") -> dict:
     return summary
 
 
-async def run(protocol_path: Path, kind: str):
+async def run(protocol_path: Path, kind: str, *, meter=None):
     protocol = read(protocol_path)
     verify(protocol)
     output = Path(protocol["output_root"])
@@ -542,17 +535,23 @@ async def run(protocol_path: Path, kind: str):
     if config.n_concurrent_trials != 1 or config.retry.max_retries != 0:
         raise PermissionError("Frozen trial order requires serial execution without retries")
     timers = {}
+    frozen_snapshot = read(output / "index-content.json")
     next_orders = [int(Path(t.path).name.removeprefix("slot-")) for t in config.tasks]
 
     async def start(event):
         timers[event.trial_name] = time.monotonic()
         verify(protocol)
         order = int(event.config.task.path.name.removeprefix("slot-"))
+        if meter is not None:
+            if meter.blocked:
+                raise PermissionError("Unsettled provider billing stops the cohort")
+            meter.set_phase(f"{kind}:{order}")
         if not next_orders or order != next_orders.pop(0):
             raise PermissionError("Harbor changed the frozen trial order")
-        current = await asyncio.to_thread(snapshot, protocol["server_container"], protocol["org"])
+        scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
         write(output / f"{kind}-index-before-{order:02d}.json", current)
-        if digest(current) != protocol["index_content_sha256"]:
+        if current != select_snapshot(frozen_snapshot, scopes):
             raise PermissionError("Source index changed before the Harbor trial")
         intent = output / f"{kind}-intent-{order:02d}.json"
         with intent.open("x") as stream:
@@ -569,9 +568,10 @@ async def run(protocol_path: Path, kind: str):
 
     async def end(event):
         order = int(event.config.task.path.name.removeprefix("slot-"))
-        current = await asyncio.to_thread(snapshot, protocol["server_container"], protocol["org"])
+        scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
         write(output / f"{kind}-index-after-{order:02d}.json", current)
-        if digest(current) != protocol["index_content_sha256"]:
+        if current != select_snapshot(frozen_snapshot, scopes):
             raise PermissionError("Source index changed during the Harbor trial")
         trial_folder = event.config.trials_dir / event.trial_name
         write(
@@ -613,6 +613,8 @@ async def run(protocol_path: Path, kind: str):
             audit_fairness, protocol, read(output / "live-attempts.json"), billing=costs
         )
         export(protocol)
+        if meter is not None:
+            meter.set_phase("judge")
         await asyncio.to_thread(
             run_judging,
             protocol,

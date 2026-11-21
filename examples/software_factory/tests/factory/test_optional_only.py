@@ -20,9 +20,9 @@ class OptionalOnly(unittest.TestCase):
             },
         )
 
-    def test_schedule_has_twenty_seven_primary_and_six_separate_aa_attempts(self):
+    def test_schedule_has_forty_five_primary_and_six_separate_aa_attempts(self):
         rows = schedule(["a", "b", "c"], seed=741)
-        self.assertEqual(len(rows), 33)
+        self.assertEqual(len(rows), 51)
         self.assertEqual(sum(r["repeat"] == "aa" for r in rows), 6)
         self.assertEqual({r["mode"] for r in rows}, {"baseline", "natural"})
         self.assertEqual(rows, schedule(["a", "b", "c"], seed=741))

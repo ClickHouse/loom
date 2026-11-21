@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 
 import httpx
 
@@ -87,17 +88,44 @@ class AnthropicProvider:
         *,
         approved_model_id: str,
         output_limit: int = 128000,
+        base_url: str = "https://api.anthropic.com",
+        role: str = "solver",
+        order: int | None = None,
         transport=None,
     ):
         if not api_key or not model_id or model_id != approved_model_id:
             raise PermissionError("Use the exact model frozen in the protocol")
+        address = httpx.URL(base_url)
+        if (
+            address.scheme not in {"http", "https"}
+            or not address.host
+            or address.username
+            or address.password
+            or address.query
+            or address.fragment
+            or role not in {"solver", "judge"}
+            or order is not None
+            and (type(order) is not int or order < 0)
+        ):
+            raise ValueError("Use a credential-free inference URL and explicit factory role")
         self.model_id = model_id
         self.output_limit = output_limit
         self.label = "anthropic-messages:" + model_id
         self.client = httpx.Client(
-            base_url="https://api.anthropic.com",
+            base_url=base_url,
             follow_redirects=False,
-            headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                **(
+                    {
+                        "x-factory-role": role,
+                        **({"x-factory-order": str(order)} if order is not None else {}),
+                    }
+                    if str(address).rstrip("/") != "https://api.anthropic.com"
+                    else {}
+                ),
+            },
             timeout=httpx.Timeout(None, connect=5),
             transport=transport if transport is not None else httpx.HTTPTransport(retries=0),
         )
@@ -118,7 +146,9 @@ class AnthropicProvider:
             response = self.client.post("/v1/messages", json={**payload, "max_tokens": max_tokens})
             response.raise_for_status()
             native = response.json()
-            if native.get("model") != self.model_id:
+            if not isinstance(native.get("model"), str) or not re.fullmatch(
+                re.escape(self.model_id) + r"(?:-\d{8})?", native["model"]
+            ):
                 raise ValueError("Response model differs from the frozen model")
             return {
                 "blocks": engine_blocks(native["content"]),

@@ -55,10 +55,10 @@ are acceptance criteria, not claims that an unmeasured run meets them.
 
 ## Modes and source tools
 
-| Mode       | Factory behavior                                                                                    | Model behavior                                   |
-| ---------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| `baseline` | Ordinary source tools; no Loom backend or schema                                                    | Reads, searches, edits and tests source          |
-| `natural`  | The same tools plus five read-only Loom tools, using the slot’s certified Tree-sitter or SCIP index | Chooses whether to use Loom; zero calls is valid |
+| Mode | Factory behavior | Model behavior |
+| --- | --- | --- |
+| `baseline` | Ordinary source tools; no Loom backend or schema | Reads, searches, edits and tests source |
+| `natural` | The same tools plus five read-only Loom tools, using the slot’s certified Tree-sitter or SCIP index | Chooses whether to use Loom; zero calls is valid |
 
 There is no enforced retrieval mode or host lookup quota. All arms receive the
 same public task instructions and authored-regression capability. Cold attempts

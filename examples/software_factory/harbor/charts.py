@@ -11,11 +11,9 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-ARMS = {
-    "baseline": "No Loom",
-    "loom-treesitter": "Claude + Loom, Tree-sitter",
-    "loom-scip": "Claude + Loom, SCIP",
-}
+from .arms import PRIMARY
+
+ARMS = {name: arm.label for name, arm in PRIMARY.items()}
 METRICS = [
     {"key": "resolved", "title": "Solved (hidden tests)", "kind": "rate"},
     {"key": "judge_fixed", "title": "Fixed, per blind judge", "kind": "rate"},

@@ -1,4 +1,5 @@
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -8,6 +9,7 @@ from unittest.mock import Mock, patch
 
 from examples.software_factory.evals.flask.grading import validate_candidate
 from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor.arms import PRIMARY
 from examples.software_factory.harbor.judging import blind_input, parse_verdict, run_judging
 
 
@@ -28,13 +30,13 @@ class BlindJudging(unittest.TestCase):
                 "hidden_grade": "must stay private",
                 "arm": "must stay private",
             }
-            for i in range(3)
+            for i in range(len(PRIMARY))
         ]
         for candidate in self.candidates:
             candidate["state"] = digest(candidate["files"])
         self.schedule = [
             {"order": i, "task_id": "issue", "repeat": 0, "arm": arm}
-            for i, arm in enumerate(("baseline", "loom-treesitter", "loom-scip"))
+            for i, arm in enumerate(PRIMARY)
         ]
         self.protocol = {
             "suite": {"adapter": "examples.software_factory.evals.flask.profile"},
@@ -47,6 +49,14 @@ class BlindJudging(unittest.TestCase):
             "model_id": "claude-haiku-5-5",
             "index_tier": "per-arm",
             "judge": {"enabled": True, "seed": 741, "output_tokens": 4096},
+        }
+        self.history = self.root / "public-history.json"
+        self.history.write_text(json.dumps({"public_documents": {}}))
+        self.protocol["memory_histories"] = {
+            "issue": {
+                "fixture_file": str(self.history),
+                "fixture_sha256": hashlib.sha256(self.history.read_bytes()).hexdigest(),
+            }
         }
         self.entries = []
         for i, candidate in enumerate(self.candidates):
@@ -62,7 +72,7 @@ class BlindJudging(unittest.TestCase):
                     "toolUse": {
                         "name": "record_verdict",
                         "input": {
-                            "fixed": {"A": True, "B": None, "C": False},
+                            "fixed": {"A": True, "B": None, "C": False, "D": True, "E": False},
                             "reason": "Source assessment.",
                         },
                     }
@@ -79,21 +89,92 @@ class BlindJudging(unittest.TestCase):
             seed=741,
             validate_candidate=validate_candidate,
         )
-        self.assertEqual(set(visible), {"public_issue", "base_files", "A", "B", "C", "context"})
+        self.assertEqual(
+            set(visible),
+            {"public_issue", "public_documents", "base_files", "A", "B", "C", "D", "E", "context"},
+        )
         self.assertNotIn("must stay private", json.dumps(visible))
-        self.assertEqual({entry["order"] for entry in mapping.values()}, {0, 1, 2})
+        self.assertEqual({entry["order"] for entry in mapping.values()}, set(range(5)))
         self.assertEqual(self.candidates, before)
 
     def test_structured_verdict_preserves_unknown_and_rejects_nonboolean_or_multiple(self):
-        self.assertIsNone(parse_verdict(self.response(), "ABC")["fixed"]["B"])
+        self.assertIsNone(parse_verdict(self.response(), "ABCDE")["fixed"]["B"])
         invalid = self.response()
         invalid["blocks"][0]["toolUse"]["input"]["fixed"]["A"] = 1
         with self.assertRaises(ValueError):
-            parse_verdict(invalid, "ABC")
+            parse_verdict(invalid, "ABCDE")
         invalid = self.response()
         invalid["blocks"] *= 2
         with self.assertRaises(ValueError):
-            parse_verdict(invalid, "ABC")
+            parse_verdict(invalid, "ABCDE")
+
+    def test_every_blind_candidate_shares_only_the_frozen_public_documents(self):
+        self.history.write_text(
+            json.dumps(
+                {
+                    "public_documents": {
+                        "public-policy": "Preserve the documented zero-value behavior."
+                    },
+                    "private_working_notes": "HIDDEN_WORKING_SENTINEL",
+                }
+            )
+        )
+        self.protocol["memory_histories"]["issue"]["fixture_sha256"] = hashlib.sha256(
+            self.history.read_bytes()
+        ).hexdigest()
+        provider = Mock(step=Mock(return_value=self.response()))
+        with patch(
+            "examples.software_factory.harbor.judging.task_inputs",
+            return_value=(None, None, self.task, None),
+        ):
+            run_judging(self.protocol, self.entries, provider=provider)
+        text = provider.step.call_args.args[0][0]["content"][0]["text"]
+        self.assertIn("Preserve the documented zero-value behavior.", text)
+        self.assertNotIn("HIDDEN_WORKING_SENTINEL", text)
+        self.assertNotIn("must stay private", text)
+
+    def test_missing_or_mutated_history_refuses_before_judge_dispatch(self):
+        provider = Mock(step=Mock(return_value=self.response()))
+        self.history.write_text('{"public_documents": {"changed": "data"}}')
+        with patch(
+            "examples.software_factory.harbor.judging.task_inputs",
+            return_value=(None, None, self.task, None),
+        ):
+            with self.assertRaises(PermissionError):
+                run_judging(self.protocol, self.entries, provider=provider)
+        provider.step.assert_not_called()
+
+    def test_owned_judge_uses_only_the_frozen_opaque_inference_route(self):
+        token = self.root / "opaque.env"
+        token.write_text("ANTHROPIC_API_KEY=OPAQUE_GATEWAY_TOKEN\n")
+        self.protocol["inference"] = {
+            "base_url": "http://127.0.0.1:12345",
+            "credentials_file": str(token),
+        }
+        self.protocol["credentials_file"] = "/unreadable/legacy.env"
+        self.protocol["judge"]["model_id"] = self.protocol["model_id"]
+        provider = Mock(step=Mock(return_value=self.response()))
+        with (
+            patch(
+                "examples.software_factory.factory.anthropic_provider.AnthropicProvider"
+            ) as constructor,
+            patch("examples.software_factory.harbor.runtime.native_audit"),
+            patch(
+                "examples.software_factory.harbor.runtime.ObservedProvider", return_value=provider
+            ),
+            patch(
+                "examples.software_factory.harbor.judging.task_inputs",
+                return_value=(None, None, self.task, None),
+            ),
+        ):
+            run_judging(self.protocol, self.entries)
+        constructor.assert_called_once_with(
+            "OPAQUE_GATEWAY_TOKEN",
+            self.protocol["model_id"],
+            approved_model_id=self.protocol["model_id"],
+            base_url="http://127.0.0.1:12345",
+            role="judge",
+        )
 
     def test_judging_is_once_per_complete_pair_with_independent_cost_and_no_raw_edits(self):
         provider = Mock(step=Mock(return_value=self.response()))

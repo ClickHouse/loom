@@ -8,6 +8,8 @@ import re
 import time
 from decimal import Decimal
 
+from .arms import ALL, CONTROLS, PRIMARY
+
 
 def _request_id(value) -> str | None:
     if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", value):
@@ -156,31 +158,38 @@ class Reservations:
 
 
 def schedule(task_ids: list[str], *, seed: int, repeats: int = 3) -> list[dict]:
-    if len(task_ids) != len(set(task_ids)) or len(task_ids) != 3 or repeats != 3:
-        raise ValueError("This proposed pilot freezes three tasks and three repeats")
+    if (
+        not task_ids
+        or any(not isinstance(task, str) or not task for task in task_ids)
+        or len(task_ids) != len(set(task_ids))
+        or type(repeats) is not int
+        or repeats != 3
+        or type(seed) is not int
+    ):
+        raise ValueError("Freeze unique scenario ids, three repeats and an integer seed")
     rng, rows = random.Random(seed), []
-    groups = []
-    for task in task_ids:
-        arms = ["baseline", "loom-treesitter", "loom-scip"]
-        rng.shuffle(arms)
+    groups, task_order, arms = [], sorted(task_ids), list(PRIMARY)
+    rng.shuffle(task_order)
+    rng.shuffle(arms)
+    for ordinal, task in enumerate(task_order):
         for repeat in range(repeats):
-            # A Latin rotation gives each arm every position once for this task.
-            groups.append((task, repeat, arms[repeat:] + arms[:repeat]))
-        aa = ["baseline-a", "baseline-b"]
+            # Three repeats cannot occupy all five positions. Consecutive rotations
+            # minimize the position imbalance across the entire frozen scenario set.
+            offset = (ordinal * repeats + repeat) % len(arms)
+            groups.append((task, repeat, arms[offset:] + arms[:offset]))
+        aa = list(CONTROLS)
         rng.shuffle(aa)
         groups.append((task, "aa", aa))
     rng.shuffle(groups)
     for task, repeat, arms in groups:
         for arm in arms:
-            baseline = arm.startswith("baseline")
             rows.append(
                 {
                     "order": len(rows),
                     "task_id": task,
                     "repeat": repeat,
                     "arm": arm,
-                    "mode": "baseline" if baseline else "natural",
-                    "index_tier": None if baseline else arm.removeprefix("loom-"),
+                    **ALL[arm].identity(),
                 }
             )
     return rows

@@ -20,12 +20,13 @@ from harbor.models.trial.result import TrialResult
 
 from examples.software_factory.factory.model import Budget, digest
 
+from .arms import ALL, validate_schedule
 from .billing import _trace
 from .charts import ARMS, generate_charts
 from .metrics import token_totals
 
 KIND = "factory-public-results"
-ALL_ARMS = (*ARMS, "baseline-a", "baseline-b")
+ALL_ARMS = tuple(ALL)
 COUNTERS = (
     "agent_test_requests",
     "agent_test_runs",
@@ -256,22 +257,14 @@ class Inputs:
 
 def schedule(protocol, metadata):
     rows = protocol["schedule"]
-    if digest(rows) != protocol["schedule_sha256"] or len(rows) != 33:
-        raise ValueError("Public comparison requires the complete frozen 33-slot schedule")
+    if digest(rows) != protocol["schedule_sha256"]:
+        raise ValueError("Public comparison requires the complete frozen schedule")
     tasks = {row["task_id"] for row in metadata["tasks"]}
-    expected = {(task, repeat, arm) for task in tasks for repeat in range(3) for arm in ARMS}
-    expected |= {(task, "aa", arm) for task in tasks for arm in ("baseline-a", "baseline-b")}
-    if len(tasks) != 3 or {(r["task_id"], r["repeat"], r["arm"]) for r in rows} != expected:
-        raise ValueError("Schedule must retain all primary repeats and separate A/A controls")
+    if set(validate_schedule(rows)) != tasks:
+        raise ValueError("Schedule and published scenario set differ")
     result = []
     for order, row in enumerate(rows):
-        tier = {"loom-treesitter": "treesitter", "loom-scip": "scip"}.get(row["arm"])
-        if (
-            row["order"] != order
-            or row["mode"] != ("natural" if tier else "baseline")
-            or row.get("index_tier") != tier
-        ):
-            raise ValueError("Scheduled arm, mode or tier changed")
+        tier = ALL[row["arm"]].index_tier
         result.append(
             {
                 "order": order,
@@ -279,6 +272,7 @@ def schedule(protocol, metadata):
                 "repeat": row["repeat"],
                 "arm": row["arm"],
                 "index_tier": tier,
+                "memory_enabled": ALL[row["arm"]].memory_enabled,
             }
         )
     return result
@@ -533,10 +527,10 @@ def measurements(protocol, slots, inputs):
             if trace.exists() or trace.is_symlink()
             else b""
         )
-        calls, namespace = None, None
+        calls, binding = None, None
         try:
             events = [json.loads(line) for line in traced.splitlines()]
-            calls, namespace = _trace(protocol, protocol["schedule"][order], factory, rows=events)
+            calls, binding = _trace(protocol, protocol["schedule"][order], factory, rows=events)
         except (KeyError, ValueError, TypeError):
             pass  # Missing or malformed billing evidence must remain unknown.
         if (
@@ -565,8 +559,8 @@ def measurements(protocol, slots, inputs):
         elif (
             bill.get("proof_status") == "known"
             and bool(calls)
-            and isinstance(namespace, str)
-            and bool(namespace)
+            and isinstance(binding, dict)
+            and bool(binding.get("code_namespace"))
             and billing_complete
             and len({identifier for identifier, _ in calls}) == len(calls)
             and bill.get("physical_request_ids_sha256")

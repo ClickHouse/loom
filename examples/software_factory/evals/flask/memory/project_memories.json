@@ -1,0 +1,1195 @@
+{
+  "schema_version": 1,
+  "origin_base_commit": "fa1ee7066807c21256e90089731c548b313394d2",
+  "origin_source_sha256": "b1855722e22c724904bb7c3cff1c834abbd26bb5bd92d134ac8ff82c8ff3371d",
+  "description": "Published short project facts grounded in pinned source; logical policy revisions are simulated.",
+  "records": [
+    {
+      "key": "history/cookie-policy",
+      "value": "A view-supplied cookie collection replaces earlier Set-Cookie values as one ordered collection.",
+      "files": [
+        "src/flask/app.py"
+      ],
+      "evidence": {
+        "path": "src/flask/app.py",
+        "anchor": "def make_response(",
+        "line": 2055,
+        "source_sha256": "b4c1ee24c8d6c39c85372118de932972e80a457bf43233fe7d913e2e80d130bf"
+      }
+    },
+    {
+      "key": "history/content-type-policy",
+      "value": "A Content-Type supplied by the view replaces the response object's earlier Content-Type.",
+      "files": [
+        "src/flask/app.py"
+      ],
+      "evidence": {
+        "path": "src/flask/app.py",
+        "anchor": "def make_response(",
+        "line": 2055,
+        "source_sha256": "b4c1ee24c8d6c39c85372118de932972e80a457bf43233fe7d913e2e80d130bf"
+      }
+    },
+    {
+      "key": "history/cache-control-policy",
+      "value": "The view's Cache-Control field replaces the earlier response field instead of leaving competing cache directives.",
+      "files": [
+        "src/flask/app.py"
+      ],
+      "evidence": {
+        "path": "src/flask/app.py",
+        "anchor": "def make_response(",
+        "line": 2055,
+        "source_sha256": "b4c1ee24c8d6c39c85372118de932972e80a457bf43233fe7d913e2e80d130bf"
+      }
+    },
+    {
+      "key": "history/absent-age",
+      "value": "An absent file cache-age setting does not request a timed max-age.",
+      "files": [
+        "src/flask/scaffold.py"
+      ],
+      "evidence": {
+        "path": "src/flask/scaffold.py",
+        "anchor": "def get_send_file_max_age(",
+        "line": 293,
+        "source_sha256": "d04a4b62b5a64b10e6509e2a9ea391180346ab6992dd974ff8181373a4e4a87d"
+      }
+    },
+    {
+      "key": "history/numeric-zero",
+      "value": "Numeric zero is an explicit cache duration of zero seconds.",
+      "files": [
+        "src/flask/scaffold.py"
+      ],
+      "evidence": {
+        "path": "src/flask/scaffold.py",
+        "anchor": "def get_send_file_max_age(",
+        "line": 293,
+        "source_sha256": "d04a4b62b5a64b10e6509e2a9ea391180346ab6992dd974ff8181373a4e4a87d"
+      }
+    },
+    {
+      "key": "history/zero-duration",
+      "value": "A zero-length timedelta represents zero seconds, with the same meaning as numeric zero.",
+      "files": [
+        "src/flask/scaffold.py"
+      ],
+      "evidence": {
+        "path": "src/flask/scaffold.py",
+        "anchor": "def get_send_file_max_age(",
+        "line": 293,
+        "source_sha256": "d04a4b62b5a64b10e6509e2a9ea391180346ab6992dd974ff8181373a4e4a87d"
+      }
+    },
+    {
+      "key": "history/serialization-owner",
+      "value": "Inside an application context, serialization belongs to that application's JSON provider.",
+      "files": [
+        "src/flask/json/__init__.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/__init__.py",
+        "anchor": "def dumps(",
+        "line": 84,
+        "source_sha256": "4cec257474f7fe415a5c794e44a8bdc825adedd6cf341d28bdd1c74169524736"
+      }
+    },
+    {
+      "key": "history/key-order-default",
+      "value": "Without an explicit sort_keys argument, helper output follows the active provider's key-order setting.",
+      "files": [
+        "src/flask/json/__init__.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/__init__.py",
+        "anchor": "def dumps(",
+        "line": 84,
+        "source_sha256": "4cec257474f7fe415a5c794e44a8bdc825adedd6cf341d28bdd1c74169524736"
+      }
+    },
+    {
+      "key": "history/unicode-default",
+      "value": "Without an explicit ensure_ascii argument, helper output follows the active provider's Unicode-escaping setting.",
+      "files": [
+        "src/flask/json/__init__.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/__init__.py",
+        "anchor": "def dumps(",
+        "line": 84,
+        "source_sha256": "4cec257474f7fe415a5c794e44a8bdc825adedd6cf341d28bdd1c74169524736"
+      }
+    },
+    {
+      "key": "history/blueprint-endpoints",
+      "value": "Blueprint route endpoints are prefixed with the blueprint's registered name.",
+      "files": [
+        "src/flask/blueprints.py"
+      ],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "class BlueprintSetupState",
+        "line": 36,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-record-once",
+      "value": "A record_once callback runs only for the blueprint's first registration on an application.",
+      "files": [
+        "src/flask/blueprints.py"
+      ],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def record_once(",
+        "line": 310,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-nesting",
+      "value": "A blueprint can register another blueprint; registration options can override that child's defaults.",
+      "files": [
+        "src/flask/blueprints.py"
+      ],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def register_blueprint(",
+        "line": 333,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/cli-factories",
+      "value": "An application import string may name an application object or a factory function.",
+      "files": [
+        "src/flask/cli.py"
+      ],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def find_app_by_string(",
+        "line": 111,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-dotenv",
+      "value": "Loading dotenv files does not overwrite environment variables that are already set.",
+      "files": [
+        "src/flask/cli.py"
+      ],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def load_dotenv(",
+        "line": 654,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-context",
+      "value": "Commands registered through the application CLI have an application context available.",
+      "files": [
+        "src/flask/cli.py"
+      ],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def with_appcontext(",
+        "line": 337,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/config-object",
+      "value": "Loading configuration from an object imports only uppercase attributes.",
+      "files": [
+        "src/flask/config.py"
+      ],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_object(",
+        "line": 194,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-environment",
+      "value": "Prefixed environment configuration defaults to FLASK_ and attempts JSON parsing of values.",
+      "files": [
+        "src/flask/config.py"
+      ],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_prefixed_env(",
+        "line": 101,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-mapping",
+      "value": "Configuration loaded from a mapping ignores keys that are not uppercase.",
+      "files": [
+        "src/flask/config.py"
+      ],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_mapping(",
+        "line": 275,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/context-copy",
+      "value": "A copied request context includes the current session and is pushed when the wrapped function runs.",
+      "files": [
+        "src/flask/ctx.py"
+      ],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def copy_current_request_context(",
+        "line": 146,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-after-request",
+      "value": "An after_this_request callback receives a response and must return that response or a replacement.",
+      "files": [
+        "src/flask/ctx.py"
+      ],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def after_this_request(",
+        "line": 113,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-app-lifetime",
+      "value": "Application contexts provide application-specific information and are also available to CLI commands.",
+      "files": [
+        "src/flask/ctx.py"
+      ],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "class AppContext",
+        "line": 229,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/flash-categories",
+      "value": "Flashed messages can be retrieved with categories and filtered by category.",
+      "files": [
+        "src/flask/helpers.py"
+      ],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def get_flashed_messages(",
+        "line": 369,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/stream-context",
+      "value": "Use a retained request context when a streaming generator needs request data after the view returns.",
+      "files": [
+        "src/flask/helpers.py"
+      ],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def stream_with_context(",
+        "line": 84,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/provider-special-types",
+      "value": "The default JSON provider supports dates, UUIDs, dataclasses and objects exposing an HTML representation.",
+      "files": [
+        "src/flask/json/provider.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/provider.py",
+        "anchor": "class DefaultJSONProvider",
+        "line": 125,
+        "source_sha256": "8d708dca97f5d4f3789e042312de8b9d2742590d721c802434b1e55d094207e0"
+      }
+    },
+    {
+      "key": "history/tagged-tuples",
+      "value": "The tagged session serializer preserves tuples by giving them a distinct type tag.",
+      "files": [
+        "src/flask/json/tag.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/tag.py",
+        "anchor": "class TagTuple",
+        "line": 130,
+        "source_sha256": "7f2b371c12ecb161ee300209b9371fd8ad1b0ada2c78f04a5c85804991048e75"
+      }
+    },
+    {
+      "key": "history/tagged-bytes",
+      "value": "The tagged session serializer represents bytes using a base64-encoded value.",
+      "files": [
+        "src/flask/json/tag.py"
+      ],
+      "evidence": {
+        "path": "src/flask/json/tag.py",
+        "anchor": "class TagBytes",
+        "line": 156,
+        "source_sha256": "7f2b371c12ecb161ee300209b9371fd8ad1b0ada2c78f04a5c85804991048e75"
+      }
+    },
+    {
+      "key": "history/logging-debug",
+      "value": "An application's logger uses DEBUG when debugging is enabled and no logger level was configured.",
+      "files": [
+        "src/flask/logging.py"
+      ],
+      "evidence": {
+        "path": "src/flask/logging.py",
+        "anchor": "def create_logger(",
+        "line": 53,
+        "source_sha256": "5989e0d1b2d3452fc226ba1c19c08b26989b1dfd65ca01c4fe983e2a8508438c"
+      }
+    },
+    {
+      "key": "history/logging-stream",
+      "value": "During a request the logging stream comes from the WSGI environment; otherwise it falls back to standard error.",
+      "files": [
+        "src/flask/logging.py"
+      ],
+      "evidence": {
+        "path": "src/flask/logging.py",
+        "anchor": "def wsgi_errors_stream(",
+        "line": 14,
+        "source_sha256": "5989e0d1b2d3452fc226ba1c19c08b26989b1dfd65ca01c4fe983e2a8508438c"
+      }
+    },
+    {
+      "key": "history/session-signed",
+      "value": "The default session interface stores session data in signed cookies.",
+      "files": [
+        "src/flask/sessions.py"
+      ],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "class SecureCookieSessionInterface",
+        "line": 326,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-nested",
+      "value": "Nested changes inside session values are not tracked automatically; mark the session modified when needed.",
+      "files": [
+        "src/flask/sessions.py"
+      ],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "class SecureCookieSession",
+        "line": 49,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-samesite",
+      "value": "The session cookie's SameSite attribute comes from SESSION_COOKIE_SAMESITE.",
+      "files": [
+        "src/flask/sessions.py"
+      ],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_cookie_samesite(",
+        "line": 262,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/template-context",
+      "value": "The default template context provides request, session and g when the corresponding contexts exist.",
+      "files": [
+        "src/flask/templating.py"
+      ],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "def _default_template_ctx_processor(",
+        "line": 21,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/template-selection",
+      "value": "Given a sequence of template names, template rendering chooses the first existing template.",
+      "files": [
+        "src/flask/templating.py"
+      ],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "def render_template(",
+        "line": 135,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/template-streaming",
+      "value": "Streaming a template retains an active request context for the generated output.",
+      "files": [
+        "src/flask/templating.py"
+      ],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "def _stream(",
+        "line": 162,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/client-sessions",
+      "value": "The test client's session_transaction context manager saves the session when its block exits.",
+      "files": [
+        "src/flask/testing.py"
+      ],
+      "evidence": {
+        "path": "src/flask/testing.py",
+        "anchor": "def session_transaction(",
+        "line": 121,
+        "source_sha256": "aa8314e4bf62322a6f35543ff3831a749c7782c2a848c1c3d1c41a6433f6deb1"
+      }
+    },
+    {
+      "key": "history/client-cli",
+      "value": "The CLI test runner provides ScriptInfo for its application when no explicit invocation object is supplied.",
+      "files": [
+        "src/flask/testing.py"
+      ],
+      "evidence": {
+        "path": "src/flask/testing.py",
+        "anchor": "def invoke(",
+        "line": 263,
+        "source_sha256": "aa8314e4bf62322a6f35543ff3831a749c7782c2a848c1c3d1c41a6433f6deb1"
+      }
+    },
+    {
+      "key": "history/view-instances",
+      "value": "Class-based views create an instance per request unless init_every_request is disabled.",
+      "files": [
+        "src/flask/views.py"
+      ],
+      "evidence": {
+        "path": "src/flask/views.py",
+        "anchor": "def as_view(",
+        "line": 83,
+        "source_sha256": "6ef7968a58af90f3fee0707dc3f7cebac073eac1cd225d104ea29414c0a5b731"
+      }
+    },
+    {
+      "key": "history/view-dispatch",
+      "value": "MethodView dispatches HTTP methods to matching methods on the view class.",
+      "files": [
+        "src/flask/views.py"
+      ],
+      "evidence": {
+        "path": "src/flask/views.py",
+        "anchor": "class MethodView",
+        "line": 135,
+        "source_sha256": "6ef7968a58af90f3fee0707dc3f7cebac073eac1cd225d104ea29414c0a5b731"
+      }
+    },
+    {
+      "key": "history/request-limit",
+      "value": "The request's maximum content length is a read-only view of MAX_CONTENT_LENGTH.",
+      "files": [
+        "src/flask/wrappers.py"
+      ],
+      "evidence": {
+        "path": "src/flask/wrappers.py",
+        "anchor": "def max_content_length(",
+        "line": 53,
+        "source_sha256": "7a5ded9f52e049457478d1a060c8ca2024f923ba862606e9221bdc8b89ebc10f"
+      }
+    },
+    {
+      "key": "history/request-endpoint",
+      "value": "The request endpoint is absent before URL matching or when URL matching fails.",
+      "files": [
+        "src/flask/wrappers.py"
+      ],
+      "evidence": {
+        "path": "src/flask/wrappers.py",
+        "anchor": "def endpoint(",
+        "line": 61,
+        "source_sha256": "7a5ded9f52e049457478d1a060c8ca2024f923ba862606e9221bdc8b89ebc10f"
+      }
+    },
+    {
+      "key": "history/config-envvar",
+      "value": "An environment-based config loader can read the filename of a Python configuration file from a named variable.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_envvar(",
+        "line": 77,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-python-files",
+      "value": "A Python configuration filename may be absolute or relative to the configuration root path.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_pyfile(",
+        "line": 165,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-file-loader",
+      "value": "Data-file configuration accepts a loader function and passes loaded values through mapping configuration.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_file(",
+        "line": 232,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-prefix-subset",
+      "value": "Configuration can return a dictionary containing only keys matching a chosen prefix.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def get_namespace(",
+        "line": 294,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-silent",
+      "value": "Silent file loading suppresses missing-file errors when explicitly requested.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_pyfile(",
+        "line": 165,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/config-nesting",
+      "value": "Double underscores in prefixed environment variable names create nested configuration dictionaries.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/config.py",
+        "anchor": "def from_prefixed_env(",
+        "line": 101,
+        "source_sha256": "51ba3f8eecd262c00aa83daf0f7be6ea68ec3e8dc43890dd484cd8abc94a4c92"
+      }
+    },
+    {
+      "key": "history/cli-discovery",
+      "value": "CLI application discovery examines a module for a suitable application and raises an error if none can be selected.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def find_best_app(",
+        "line": 32,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-import-path",
+      "value": "Preparing an application import from a filename calculates its module path and adds the needed search path.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def prepare_import(",
+        "line": 187,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-script-cache",
+      "value": "The command-line script loader reuses its already loaded application on subsequent loads.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def load_app(",
+        "line": 292,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-command-context",
+      "value": "Application command groups can explicitly disable the default application-context wrapper.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def command(",
+        "line": 370,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-development-server",
+      "value": "The built-in server is intended for development rather than production deployment.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def run_command(",
+        "line": 877,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-shell",
+      "value": "The Flask shell starts with an application context and an application-defined shell namespace.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def shell_command(",
+        "line": 941,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-route-list",
+      "value": "The routes command displays registered routes together with endpoints and methods.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def routes_command(",
+        "line": 1001,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-certificate-key",
+      "value": "A certificate supplied as a file requires a corresponding key option.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def _validate_key(",
+        "line": 775,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/cli-child-groups",
+      "value": "Nested application command groups use the application's context-aware group type by default.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/cli.py",
+        "anchor": "def group(",
+        "line": 384,
+        "source_sha256": "a4b9a758e6defc6e3f640150761ee4830a8f3314579b8a1485a51206924c7aae"
+      }
+    },
+    {
+      "key": "history/blueprint-record-state",
+      "value": "Blueprint registration callbacks receive the blueprint's setup state.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def record(",
+        "line": 301,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-state-subclass",
+      "value": "Blueprint subclasses can customize the registration setup-state class.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def make_setup_state(",
+        "line": 323,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-app-filter",
+      "value": "A blueprint can register a template filter that is available application-wide.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def app_template_filter(",
+        "line": 501,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-app-test",
+      "value": "A blueprint can register a template test that is available application-wide.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def app_template_test(",
+        "line": 535,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-app-global",
+      "value": "A blueprint can register a template global that is available application-wide.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def app_template_global(",
+        "line": 573,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-before-app",
+      "value": "A callback registered before every application request also runs for requests handled outside its blueprint.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def before_app_request(",
+        "line": 611,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-after-app",
+      "value": "A callback registered after every application request also runs for requests handled outside its blueprint.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def after_app_request(",
+        "line": 644,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-app-error",
+      "value": "An application error handler registered through a blueprint can handle requests outside that blueprint.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def app_errorhandler(",
+        "line": 677,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/blueprint-url-defaults",
+      "value": "Blueprints can register URL-default callbacks that apply across the application.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/blueprints.py",
+        "anchor": "def app_url_defaults(",
+        "line": 701,
+        "source_sha256": "7bad5737757d2607a5c81a4778fc44e80e1429c095af0e4f7e2280d02ba07aa9"
+      }
+    },
+    {
+      "key": "history/request-context-test",
+      "value": "Code can test whether a request context exists before relying on request-local data.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def has_request_context(",
+        "line": 187,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/app-context-test",
+      "value": "Code can test whether an application context exists before relying on the context-local application.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def has_app_context(",
+        "line": 219,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-g-default",
+      "value": "The g namespace can set and return a default attribute when that attribute is missing.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def setdefault(",
+        "line": 88,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-g-pop",
+      "value": "The g namespace can remove an attribute and optionally return a default when it is missing.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def pop(",
+        "line": 74,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-thread-copy",
+      "value": "Copying a request context shares the underlying request object; moving it across threads requires locking access.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "def copy(",
+        "line": 326,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/context-teardown",
+      "value": "Popping a request context triggers registered request teardown callbacks.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/ctx.py",
+        "anchor": "Pops the request context",
+        "line": 386,
+        "source_sha256": "6c611042e176fdc1ea67764d31e31e106f0738b2640e52fcf2ed810710ab45aa"
+      }
+    },
+    {
+      "key": "history/flash-once",
+      "value": "Flashing stores a message for retrieval by the following request.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def flash(",
+        "line": 337,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/flash-default-category",
+      "value": "A flashed message uses the message category unless a different category is supplied.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def flash(",
+        "line": 337,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/template-macros",
+      "value": "A template-exported macro or variable can be loaded as a Python attribute.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def get_template_attribute(",
+        "line": 315,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/static-safe-directory",
+      "value": "Directory-based file sending uses a safe path join so a requested path cannot escape the trusted directory.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def send_from_directory(",
+        "line": 552,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/static-trusted-directory",
+      "value": "The directory used for directory-based file sending must be trusted; only the relative requested path comes from a client.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def send_from_directory(",
+        "line": 552,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/root-path-discovery",
+      "value": "A package or module root is discovered from its import location when no root path is supplied.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def get_root_path(",
+        "line": 595,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/url-relative-blueprint",
+      "value": "A relative endpoint beginning with a dot refers to the current blueprint.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def url_for(",
+        "line": 212,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/redirect-default-status",
+      "value": "Redirect responses default to status302 when no other status is provided.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def redirect(",
+        "line": 266,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/abort-response",
+      "value": "The abort helper raises an HTTP exception or uses a supplied response as the error response.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/helpers.py",
+        "anchor": "def abort(",
+        "line": 290,
+        "source_sha256": "5d31d180b972c5e13347df3cabadfee0e63c46cc13b1c47ee5ec45c4ad7408b5"
+      }
+    },
+    {
+      "key": "history/session-null",
+      "value": "A null session permits reads but explains the configuration error when code tries to change it.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "class NullSession",
+        "line": 91,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-cookie-name",
+      "value": "The session cookie name comes from SESSION_COOKIE_NAME.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_cookie_name(",
+        "line": 179,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-cookie-path",
+      "value": "The session cookie path uses SESSION_COOKIE_PATH, falling back to APPLICATION_ROOT or the root path.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_cookie_path(",
+        "line": 241,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-cookie-http-only",
+      "value": "SESSION_COOKIE_HTTPONLY controls whether the session cookie is restricted from browser scripts.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_cookie_httponly(",
+        "line": 249,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-cookie-secure",
+      "value": "SESSION_COOKIE_SECURE controls whether the session cookie requires a secure connection.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_cookie_secure(",
+        "line": 256,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-permanent",
+      "value": "The session's permanent flag is represented by its _permanent dictionary key.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def permanent(",
+        "line": 25,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-expiration",
+      "value": "Permanent sessions receive an expiration based on the configured permanent-session lifetime.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def get_expiration_time(",
+        "line": 269,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-refresh",
+      "value": "A modified session is written; permanent sessions may also refresh on each request when configured.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def should_set_cookie(",
+        "line": 281,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-open-order",
+      "value": "Session loading occurs after the request context is pushed and before URL matching.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def open_session(",
+        "line": 297,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-save-order",
+      "value": "Session saving occurs after response generation and before the request context is removed.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def save_session(",
+        "line": 313,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/session-null-save",
+      "value": "Null sessions are not saved by the session interface.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/sessions.py",
+        "anchor": "def is_null_session(",
+        "line": 170,
+        "source_sha256": "ebaa06944faff6269cf9e6f9e2d14ddc82c08c9d4579eb871d6c3df1455aa317"
+      }
+    },
+    {
+      "key": "history/template-source",
+      "value": "Template source text can be rendered directly with a supplied context.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "def render_template_string(",
+        "line": 150,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/template-stream-type",
+      "value": "Streaming template rendering returns an iterator of strings.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "def stream_template(",
+        "line": 181,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/template-loader",
+      "value": "The dispatching template loader searches the application and its blueprints.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/templating.py",
+        "anchor": "class DispatchingJinjaLoader",
+        "line": 49,
+        "source_sha256": "d4fe0ecef4a70367ec253620413dc6e28c152acb8ecfc5dd742891ea3307189d"
+      }
+    },
+    {
+      "key": "history/test-request-builder",
+      "value": "The test request environment builder takes defaults from its application.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/testing.py",
+        "anchor": "class EnvironBuilder",
+        "line": 23,
+        "source_sha256": "aa8314e4bf62322a6f35543ff3831a749c7782c2a848c1c3d1c41a6433f6deb1"
+      }
+    },
+    {
+      "key": "history/view-url-arguments",
+      "value": "URL variables are passed as keyword arguments to the class-based view's dispatch handler.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/views.py",
+        "anchor": "def dispatch_request(",
+        "line": 27,
+        "source_sha256": "6ef7968a58af90f3fee0707dc3f7cebac073eac1cd225d104ea29414c0a5b731"
+      }
+    },
+    {
+      "key": "history/view-required-override",
+      "value": "A base view subclass must implement its dispatch handler and return a valid response.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/views.py",
+        "anchor": "def dispatch_request(",
+        "line": 27,
+        "source_sha256": "6ef7968a58af90f3fee0707dc3f7cebac073eac1cd225d104ea29414c0a5b731"
+      }
+    },
+    {
+      "key": "history/request-blueprint-name",
+      "value": "The current blueprint name can reflect nesting or registration under a different name.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/wrappers.py",
+        "anchor": "def blueprint(",
+        "line": 76,
+        "source_sha256": "7a5ded9f52e049457478d1a060c8ca2024f923ba862606e9221bdc8b89ebc10f"
+      }
+    },
+    {
+      "key": "history/request-blueprint-chain",
+      "value": "The request exposes the current blueprint followed by its parents, or an empty list when no blueprint matched.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/wrappers.py",
+        "anchor": "def blueprints(",
+        "line": 95,
+        "source_sha256": "7a5ded9f52e049457478d1a060c8ca2024f923ba862606e9221bdc8b89ebc10f"
+      }
+    },
+    {
+      "key": "history/response-cookie-limit",
+      "value": "The response's maximum cookie size is a read-only view of MAX_COOKIE_SIZE.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/wrappers.py",
+        "anchor": "def max_cookie_size(",
+        "line": 161,
+        "source_sha256": "7a5ded9f52e049457478d1a060c8ca2024f923ba862606e9221bdc8b89ebc10f"
+      }
+    },
+    {
+      "key": "history/session-tag-uuid",
+      "value": "The tagged session serializer preserves UUID values with a dedicated tag.",
+      "files": [],
+      "evidence": {
+        "path": "src/flask/json/tag.py",
+        "anchor": "class TagUUID",
+        "line": 188,
+        "source_sha256": "7f2b371c12ecb161ee300209b9371fd8ad1b0ada2c78f04a5c85804991048e75"
+      }
+    }
+  ],
+  "requirements": {
+    "rows": 100,
+    "code_linked": 40,
+    "unlinked": 60,
+    "max_words": 60,
+    "max_chars": 600
+  }
+}

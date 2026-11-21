@@ -99,7 +99,9 @@ def tool(name: str, description: str, properties: dict, required: list[str] | No
     }
 
 
-def tool_schemas(mode: str, *, regression_tests: bool = False) -> list[dict]:
+def tool_schemas(
+    mode: str, *, regression_tests: bool = False, project_notes: bool = False, memory: bool = False
+) -> list[dict]:
     string = {"type": "string"}
     tools = [
         tool(
@@ -135,8 +137,18 @@ def tool_schemas(mode: str, *, regression_tests: bool = False) -> list[dict]:
                 {"source": {"type": "string", "minLength": 1, "maxLength": 16000}},
             )
         )
+    if project_notes:
+        from examples.software_factory.factory.project_notes import schemas as note_schemas
+
+        tools.extend(note_schemas())
     if mode == "natural":
         from examples.software_factory.factory.retrieval_tools import schemas
 
         tools.extend(schemas())
+    if memory:
+        if mode != "natural":
+            raise ValueError("Native memory requires the optional Loom arm")
+        from examples.software_factory.factory.memory_tools import schemas as memory_schemas
+
+        tools.extend(memory_schemas())
     return tools

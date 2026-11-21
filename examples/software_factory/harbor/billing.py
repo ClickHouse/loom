@@ -9,8 +9,10 @@ from collections import Counter, defaultdict
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from examples.software_factory.factory.memory_tools import OPS as MEMORY_OPS
 from examples.software_factory.factory.model import digest
 from examples.software_factory.factory.retrieval_tools import OPERATIONS
+from examples.software_factory.harbor.arms import ALL
 from examples.software_factory.harbor.runtime import write
 
 FIELDS = (
@@ -21,6 +23,7 @@ FIELDS = (
     "loom_response_tokens",
 )
 READS = OPERATIONS | {"code.index_status"}
+MEMORY = set(MEMORY_OPS.values())
 LEDGER_SCRIPT = """import asyncio,json,sys
 from server.core.ch import get_client,set_query_tag
 async def main():
@@ -71,7 +74,7 @@ def _unknown(reason, *, dispatched=None, matched=0):
 def _trace(protocol, slot, result, *, rows=None):
     if not isinstance(result, dict):
         raise ValueError("Attempt result metadata is missing")
-    if any(
+    if type(result.get("memory_enabled")) is not bool or any(
         result.get(key) != value
         for key, value in {
             "protocol_sha256": digest(protocol),
@@ -79,9 +82,42 @@ def _trace(protocol, slot, result, *, rows=None):
             "mode": slot["mode"],
             "arm": slot["arm"],
             "index_tier": slot["index_tier"],
+            "memory_enabled": slot["memory_enabled"],
         }.items()
     ):
         raise ValueError("Attempt identity or protocol is unverified")
+    arm = ALL[slot["arm"]]
+    if type(slot.get("memory_enabled")) is not bool or any(
+        slot.get(key) != value for key, value in arm.identity().items()
+    ):
+        raise ValueError("Attempt treatment is unverified")
+    binding = protocol["attempt_scopes"].get(str(slot["order"]))
+    if slot["mode"] == "baseline":
+        if not isinstance(binding, dict) or any(
+            binding.get(key) != value
+            for key, value in {
+                "org": "-",
+                "code_namespace": "-",
+                "memory_namespace": None,
+                "token_file": None,
+                "index_tier": None,
+            }.items()
+        ):
+            raise ValueError("Baseline must not have a live Loom scope")
+        binding = None
+    elif (
+        not isinstance(binding, dict)
+        or binding.get("task_id") != slot["task_id"]
+        or binding.get("index_tier") != slot["index_tier"]
+        or any(
+            not isinstance(binding.get(key), str) or not binding[key]
+            for key in ("org", "code_namespace")
+        )
+        or (isinstance(binding.get("memory_namespace"), str) and bool(binding["memory_namespace"]))
+        != slot["memory_enabled"]
+        or (not slot["memory_enabled"] and binding.get("memory_namespace") is not None)
+    ):
+        raise ValueError("Attempt scope is unverified")
     if rows is None:
         path = Path(result["harbor_trial"]) / "agent/loom-transport.jsonl"
         rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
@@ -106,7 +142,8 @@ def _trace(protocol, slot, result, *, rows=None):
             ):
                 raise ValueError("Failed, missing or mismatched physical response")
             operation = row["path"].removeprefix("/v1/")
-            if not row["path"].startswith("/v1/") or operation not in READS:
+            allowed = READS | (MEMORY if slot["memory_enabled"] else set())
+            if not row["path"].startswith("/v1/") or operation not in allowed:
                 raise ValueError("Transport contains an undeclared operation")
             calls.append((request_id, operation))
             pending = None
@@ -128,15 +165,10 @@ def _trace(protocol, slot, result, *, rows=None):
             raise ValueError("Zero exposure is unverified")
     elif slot["mode"] == "baseline":
         raise ValueError("Baseline contains Loom dispatches")
-    namespace = (
-        None
-        if slot["index_tier"] is None
-        else protocol["tasks"][slot["task_id"]]["indexes"][slot["index_tier"]]["namespace"]
-    )
-    return calls, namespace
+    return calls, binding
 
 
-def _price(protocol, calls, namespace, grouped):
+def _price(calls, binding, grouped):
     matched, amounts = 0, []
     for request_id, operation in calls:
         records = grouped.get(request_id, [])
@@ -146,8 +178,9 @@ def _price(protocol, calls, namespace, grouped):
             )
         row = records[0]
         if (
-            row.get("org") != protocol["org"]
-            or row.get("namespace") != namespace
+            row.get("org") != binding["org"]
+            or row.get("namespace")
+            != binding["memory_namespace" if operation in MEMORY else "code_namespace"]
             or row.get("operation") != operation
             or row.get("success") is not True
             or row.get("error_code")
@@ -209,24 +242,34 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=load_ledger):
             )
             del traces[order]
     ids = sorted({request_id for calls, _ in traces.values() for request_id, _ in calls})
+    by_org = defaultdict(list)
+    for calls, binding in traces.values():
+        if calls:
+            by_org[binding["org"]].extend(identifier for identifier, _ in calls)
     grouped, query_status = defaultdict(list), "not_needed"
     if ids:
         try:
-            rows = ledger_loader(protocol, ids)
-            if not isinstance(rows, list) or any(
-                not isinstance(row, dict) or row.get("request_id") not in ids for row in rows
-            ):
-                raise ValueError("Ledger returned malformed or unrequested rows")
+            rows = []
+            for org, identifiers in sorted(by_org.items()):
+                batch = ledger_loader({**protocol, "org": org}, sorted(identifiers))
+                if not isinstance(batch, list) or any(
+                    not isinstance(row, dict)
+                    or row.get("org") != org
+                    or row.get("request_id") not in identifiers
+                    for row in batch
+                ):
+                    raise ValueError("Ledger returned malformed, unrequested or foreign rows")
+                rows.extend(batch)
             for row in rows:
                 grouped[row["request_id"]].append(row)
             query_status = "completed"
         except Exception as error:  # noqa: BLE001 — failed billing reads retain unknown cost
             query_status = "failed:" + type(error).__name__
-    for order, (calls, namespace) in traces.items():
+    for order, (calls, binding) in traces.items():
         proof[str(order)] = (
             _unknown("Provider ledger query failed", dispatched=len(calls))
             if calls and query_status.startswith("failed:")
-            else _price(protocol, calls, namespace, grouped)
+            else _price(calls, binding, grouped)
         )
     receipt = {
         "schema_version": 1,

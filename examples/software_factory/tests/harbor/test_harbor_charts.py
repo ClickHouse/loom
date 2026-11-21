@@ -17,13 +17,29 @@ class HarborCharts(unittest.TestCase):
             "model_id": "same-model",
             "schedule": [
                 {"order": i, "task_id": "public-issue", "repeat": 0, "arm": arm}
-                for i, arm in enumerate(("baseline", "loom-treesitter", "loom-scip", "baseline-a"))
+                for i, arm in enumerate(
+                    (
+                        "baseline",
+                        "loom-treesitter",
+                        "loom-treesitter-memory",
+                        "loom-scip",
+                        "loom-scip-memory",
+                        "baseline-a",
+                    )
+                )
             ],
             "reporting": {"chart_assets_root": str(self.root / "static/assets")},
         }
         self.views = {
             "views": {
-                arm: {"job_name": arm} for arm in ("baseline", "loom-treesitter", "loom-scip")
+                arm: {"job_name": arm}
+                for arm in (
+                    "baseline",
+                    "loom-treesitter",
+                    "loom-treesitter-memory",
+                    "loom-scip",
+                    "loom-scip-memory",
+                )
             }
         }
         self.entries = [
@@ -45,7 +61,7 @@ class HarborCharts(unittest.TestCase):
     def test_primary_rows_preserve_exact_metrics_and_pending_unknowns(self):
         before = copy.deepcopy(self.entries)
         data = chart_data(self.protocol, self.entries, self.views)
-        self.assertEqual(len(data["attempts"]), 3)
+        self.assertEqual(len(data["attempts"]), 5)
         self.assertEqual(data["attempts"][0]["seconds"], 12.0)
         self.assertEqual(data["attempts"][0]["native_seconds"], 11.0)
         self.assertEqual(data["attempts"][0]["cost"], 0.02)
@@ -54,7 +70,7 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["attempts"][1]["state"], "pending")
         self.assertEqual(self.entries, before)
         self.assertEqual(data["observed"], 1)
-        self.assertEqual(data["scheduled"], 4)
+        self.assertEqual(data["scheduled"], 6)
         self.assertFalse(data["complete"])
 
     def test_all_requested_metrics_preserve_known_zero_and_unknown_evaluations(self):

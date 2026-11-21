@@ -1,16 +1,56 @@
 # Software factory evaluations
 
-The shared coding factory runs with ordinary source tools or optional read-only
-Loom tools. Harbor owns trial environments, verification, reporting and charts.
+From the repository root, inspect the evaluation without installing Python packages
+or contacting a provider:
+
+```bash
+python3 -m examples.software_factory plan
+```
+
+Run with a local Docker daemon and an explicit provider budget:
+
+```bash
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run --budget-usd 10
+```
+
+The launcher builds pinned controller dependencies, mounts source read-only, and
+automates the inner setup and evaluation. The plan contains six cases, five arms,
+three repeats and twelve separate A/A controls: 102 attempts, plus 24 blind
+fixed-only judgments using the same model. Embedding uses the checked local
+`bge-small` weights. The plan reports Loom's separate native Anthropic model
+default; its internal requests share the provider budget. History cases expose
+100 short project records through tools,
+with the same plain notes available to every arm; cold cases start empty.
+
+Interrupted work is never retried automatically. Explicit resume preserves the
+frozen source and budget, and the inner controller refuses unsettled paid requests:
+
+```bash
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory resume --output ./factory-run --budget-usd 10
+python3 -m examples.software_factory cleanup --output ./factory-run
+```
+
+Cleanup uses recorded resource identities and ownership labels. It retains local
+reports and receipts; it does not prune unrelated Docker data.
+
+Use `--eval flask` on any command to select the published profile explicitly; it
+is the default. Each `evals/<id>/eval.json` names that project's public suite,
+scenarios, memory catalog and adapter. Profiles supply facts, build and index
+recipes, and tests; the Harbor runner, metrics, budget gateway and reports are
+shared. Resume and cleanup retain the selected profile identity.
+
+Every arm has ordinary source tools and plain project notes. Model-selected Loom
+tools add Tree-sitter or SCIP retrieval, with native memory enabled in separate
+paired arms. Harbor owns trial environments, verification, reporting and charts.
 Each repository evaluation pins its public issues, source revisions, dependencies,
 index scopes and test adapters in its own directory.
 
 ## Python E2E evaluation: Flask
 
 [Run the Flask evaluation](evals/flask/README.md) and follow its
-[reproduction instructions](evals/flask/REPRODUCE.md). The suite compares baseline,
-Claude-selected Loom Tree-sitter and Claude-selected Loom SCIP on the same public
-source. No enforced Loom path exists.
+[reproduction instructions](evals/flask/REPRODUCE.md). The five arms compare baseline,
+model-selected Tree-sitter and SCIP retrieval, and each retrieval tier with native
+memory. All arms solve the same case source; no enforced Loom path exists.
 
 The layout separates the agent and evaluation machinery from repository choices:
 

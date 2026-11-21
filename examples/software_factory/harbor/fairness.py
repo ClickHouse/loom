@@ -5,15 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from examples.software_factory.factory.anthropic_provider import wire_messages
+from examples.software_factory.factory.memory_tools import OPS as MEMORY_OPS
 from examples.software_factory.factory.model import digest, tool_schemas
 from examples.software_factory.factory.retrieval_tools import TOOL_OPS
 from examples.software_factory.harbor.billing import _trace
+from examples.software_factory.harbor.index import select_snapshot
+from examples.software_factory.harbor.memory import validate_history_certificate
 from examples.software_factory.harbor.paired import analyze
 from examples.software_factory.harbor.runtime import read, verify, write
+from examples.software_factory.harbor.scopes import selected_scopes
 
 ATTEMPT_CHECKS = (
     "artifact_integrity",
@@ -63,11 +68,16 @@ def _prompt(protocol, slot, start, initial, public):
     if len(metadata) != 1 or set(metadata[0]) != {"repository", "base_commit", "source_paths"}:
         return False
     meta = metadata[0]
-    scopes = protocol["tasks"][slot["task_id"]]["indexes"].values()
+    scopes = [
+        scope
+        for scope in protocol["attempt_scopes"].values()
+        if scope["task_id"] == slot["task_id"]
+    ]
     return (
         meta["repository"] == issue["repository"]
         and meta["base_commit"] == issue["base_commit"]
         and isinstance(meta["source_paths"], list)
+        and bool(scopes)
         and all(
             scope["source_scope"]["paths_sha256"] == digest(meta["source_paths"])
             for scope in scopes
@@ -99,7 +109,7 @@ def _conversation(events, dispatches):
         elif kind == "provider_response":
             _append(messages, "assistant", row["blocks"])
         elif kind == "tool_request":
-            active_loom = TOOL_OPS.get(row["name"])
+            active_loom = {**TOOL_OPS, **MEMORY_OPS}.get(row["name"])
         elif kind == "tool_result":
             _append(
                 messages,
@@ -121,6 +131,134 @@ def _conversation(events, dispatches):
         if kind == "hidden_verification" or kind == "context" and row.get("caller") == "host":
             host_free = False
     return number == len(dispatches), bool(host_free)
+
+
+def _native_memory_scope(data, binding):
+    namespace = binding["memory_namespace"]
+    nodes = [data]
+    for field in ("results", "hits"):
+        if not isinstance(data.get(field, []), list):
+            return False
+        nodes.extend(data.get(field, []))
+    for node in nodes:
+        if (
+            not isinstance(node, dict)
+            or node.get("namespace", namespace) != namespace
+            or not isinstance(node.get("code", []), list)
+            or any(
+                not isinstance(link, dict)
+                or link.get("code_namespace") != binding["code_namespace"]
+                for link in node.get("code", [])
+            )
+            or any(ns != namespace for ns in node.get("namespaces_searched", []))
+        ):
+            return False
+    return True
+
+
+def _memory_evidence(protocol, slot, result, start, events, calls):
+    binding = protocol["attempt_scopes"].get(str(slot["order"]))
+    enabled = slot["memory_enabled"]
+    namespace = binding["memory_namespace"] if enabled else None
+    history = binding["memory_history_sha256"] if enabled else None
+    frozen = protocol["memory_histories"][slot["task_id"]]
+    fixture = Path(frozen["fixture_file"])
+    if hashlib.sha256(fixture.read_bytes()).hexdigest() != frozen["fixture_sha256"]:
+        return False
+    notes = digest(read(fixture)["public_documents"])
+    for identity in (result, start):
+        if (
+            type(identity.get("memory_enabled")) is not bool
+            or identity["memory_enabled"] != enabled
+            or identity.get("memory_namespace") != namespace
+            or identity.get("memory_history_sha256") != history
+            or identity.get("notes_history_sha256") != notes
+        ):
+            return False
+    if enabled:
+        validate_history_certificate(protocol, slot, binding)
+        if history != notes:
+            return False
+    expected, memory_ids = [], set()
+    physical = set(calls)
+    for row in events:
+        if row["kind"] != "retrieval":
+            continue
+        operation, request = row.get("op"), row.get("request", {})
+        memory = operation in MEMORY_OPS.values()
+        if (
+            binding is None
+            or request.get("org") != binding["org"]
+            or request.get("namespace") != (namespace if memory else binding["code_namespace"])
+        ):
+            return False
+        if not memory:
+            if operation != "code.index_status" and (
+                request.get("include_lessons") is not enabled
+                or request.get("lesson_namespaces", []) != ([namespace] if enabled else [])
+            ):
+                return False
+            continue
+        data = row.get("native_result")
+        if (
+            not enabled
+            or not isinstance(data, dict)
+            or digest(data) != row.get("result_sha256")
+            or row.get("scope") != {"org": binding["org"], "namespace": namespace}
+            or row.get("permission") != "allowed"
+            or row.get("ignored_args")
+            or data.get("ignored_args")
+            or data.get("namespace", namespace) != namespace
+            or (row.get("request_id"), operation) not in physical
+            or row.get("request_id") in memory_ids
+            or not _native_memory_scope(data, binding)
+        ):
+            return False
+        memory_ids.add(row["request_id"])
+        if operation not in {"memory.set", "memory.update"}:
+            continue
+        if data.get("noop") is True or data.get("updated") is False:
+            continue
+        version = data.get("new_version" if operation == "memory.update" else "version")
+        if (
+            type(version) is not int
+            or version <= 0
+            or not isinstance(data.get("memory_id"), str)
+            or not data["memory_id"]
+            or not isinstance(data.get("content_sha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", data["content_sha256"])
+            or (
+                data.get("updated") is not True
+                if operation == "memory.update"
+                else not isinstance(data.get("status"), str)
+                or not data["status"]
+                or data.get("noop") is not False
+                or data.get("dry_run") is not False
+            )
+        ):
+            return False
+        expected.append(
+            dict(
+                operation=operation,
+                memory_id=data["memory_id"],
+                memory_key=request["memory_key"],
+                version=version,
+                content_sha256=data["content_sha256"],
+                namespace=namespace,
+            )
+        )
+    persisted = [
+        {key: value for key, value in row.items() if key not in {"kind", "sequence", "elapsed_s"}}
+        for row in events
+        if row["kind"] == "memory_persisted"
+    ]
+    return (
+        expected == persisted
+        and type(result.get("memory_rows_written")) is int
+        and result["memory_rows_written"] == len(expected)
+        and isinstance(result.get("memory_rows_written_basis"), str)
+        and bool(result["memory_rows_written_basis"])
+    )
 
 
 def audit_fairness(protocol, entries, *, billing=None):
@@ -179,7 +317,7 @@ def audit_fairness(protocol, entries, *, billing=None):
             billing = read(Path(protocol["output_root"]) / "provider-costs.json")
         except (OSError, ValueError):
             billing = {}
-    common = tool_schemas("baseline", regression_tests=True)
+    common = tool_schemas("baseline", regression_tests=True, project_notes=True)
     for slot in protocol["schedule"]:
         order = slot["order"]
         if len(observed.get(order, [])) != 1:
@@ -188,10 +326,13 @@ def audit_fairness(protocol, entries, *, billing=None):
             continue
         result = observed[order][0]
         try:
-            identity = all(
+            identity = type(result.get("memory_enabled")) is bool and all(
                 result.get(k) == v
                 for k, v in {
-                    **{key: slot[key] for key in ("task_id", "mode", "arm", "index_tier")},
+                    **{
+                        key: slot[key]
+                        for key in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
+                    },
                     "schedule_order": order,
                     "protocol_sha256": digest(protocol),
                 }.items()
@@ -229,7 +370,12 @@ def audit_fairness(protocol, entries, *, billing=None):
             transport = _jsonl(folder / "agent/provider-transport.jsonl")
             dispatches = [r for r in transport if r.get("phase") == "dispatch"]
             responses = [r for r in transport if r.get("phase") == "response"]
-            expected_tools = tool_schemas(slot["mode"], regression_tests=True)
+            expected_tools = tool_schemas(
+                slot["mode"],
+                regression_tests=True,
+                project_notes=True,
+                memory=slot["memory_enabled"],
+            )
             exposure = start["tools"] == expected_tools and expected_tools[: len(common)] == common
             exposure &= all(r["payload"]["tools"] == expected_tools for r in dispatches)
             check("schema_exposure", bool(exposure), "Only optional read schemas differ", order)
@@ -320,7 +466,9 @@ def audit_fairness(protocol, entries, *, billing=None):
             calls, _ = _trace(protocol, slot, result)
             loom_ids.extend(identifier for identifier, _ in calls)
             lookups = [r for r in events if r["kind"] == "retrieval"]
-            selected = sum(r["kind"] == "tool_request" and r["name"] in TOOL_OPS for r in events)
+            selected = sum(
+                r["kind"] == "tool_request" and r["name"] in (TOOL_OPS | MEMORY_OPS) for r in events
+            )
             accounting = len(lookups) == result.get(
                 "loom_logical_requests"
             ) and selected == result.get("model_selected_loom_requests") == result.get(
@@ -348,20 +496,20 @@ def audit_fairness(protocol, entries, *, billing=None):
             )
             check(
                 "memory_evidence",
-                type(result.get("memory_rows_written")) is int
-                and result["memory_rows_written"] == 0
-                and isinstance(result.get("memory_rows_written_basis"), str)
-                and "read-only" in result["memory_rows_written_basis"].lower(),
-                "Explicit zero and read-only basis required; schemas checked separately",
+                _memory_evidence(protocol, slot, result, start, events, calls),
+                "Native receipts, persisted events, lesson scope and public history must agree",
                 order,
             )
             snapshots = [
                 read(Path(protocol["output_root"]) / f"live-index-{phase}-{order:02d}.json")
                 for phase in ("before", "after")
             ]
+            original_snapshot = read(Path(protocol["output_root"]) / "index-content.json")
+            expected_snapshot = select_snapshot(original_snapshot, selected_scopes(protocol, slot))
             check(
                 "index_immutable",
-                all(digest(snapshot) == protocol["index_content_sha256"] for snapshot in snapshots),
+                digest(original_snapshot) == protocol["index_content_sha256"]
+                and all(snapshot == expected_snapshot for snapshot in snapshots),
                 "Both source audits match the frozen certificate",
                 order,
             )

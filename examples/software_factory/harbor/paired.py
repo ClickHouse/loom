@@ -9,7 +9,9 @@ from statistics import fmean
 from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
-ARMS = ("baseline", "loom-treesitter", "loom-scip", "baseline-a", "baseline-b")
+from .arms import ALL, contrasts, validate_schedule
+
+ARMS = tuple(ALL)
 
 
 def _number(value, *, integer=False):
@@ -96,38 +98,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     rows = schedule["attempts"]
     if digest(rows) != schedule["schedule_sha256"]:
         raise ValueError("Persisted schedule hash differs")
-    tasks = sorted({row["task_id"] for row in rows})
-    expected = {
-        (task, repeat, arm) for task in tasks for repeat in range(3) for arm in ARMS[:3]
-    } | {(task, "aa", arm) for task in tasks for arm in ARMS[3:]}
-    actual = [(r["task_id"], r["repeat"], r["arm"]) for r in rows]
-    if (
-        len(tasks) != 3
-        or len(rows) != 33
-        or set(actual) != expected
-        or any(type(r["order"]) is not int for r in rows)
-        or any(type(r["repeat"]) is not int for r in rows if r["arm"] in ARMS[:3])
-        or [r["order"] for r in rows] != list(range(33))
-        or any(
-            r["mode"] != ("baseline" if r["arm"].startswith("baseline") else "natural")
-            or r.get("index_tier")
-            != (None if r["arm"].startswith("baseline") else r["arm"].removeprefix("loom-"))
-            for r in rows
-        )
-    ):
-        raise ValueError("Expected the frozen three-task, three-repeat pilot and A/A pairs")
-    for task in tasks:
-        positions = {arm: Counter() for arm in ARMS[:3]}
-        for repeat in range(3):
-            block = [r for r in rows if r["task_id"] == task and r["repeat"] == repeat]
-            if len(block) != 3 or [r["order"] for r in block] != list(
-                range(block[0]["order"], block[0]["order"] + 3)
-            ):
-                raise ValueError("Primary arms require contiguous balanced triplets")
-            for position, row in enumerate(block):
-                positions[row["arm"]][position] += 1
-        if any(counts != Counter({0: 1, 1: 1, 2: 1}) for counts in positions.values()):
-            raise ValueError("Each task arm must occupy each triplet position once")
+    tasks = validate_schedule(rows)
     if type(resamples) is not int or not 100 <= resamples <= 10000 or type(seed) is not int:
         raise ValueError("Freeze an integer seed and 100-10000 exploratory resamples")
     observed, identity, metrics = {}, set(), {}
@@ -136,10 +107,15 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         if type(order) is not int or not 0 <= order < len(rows) or order in observed:
             raise ValueError("Duplicate or unscheduled attempt; no best-of selection")
         row = rows[order]
-        if any(result.get(k) != row[k] for k in ("task_id", "mode", "arm", "index_tier")):
+        if type(result.get("memory_enabled")) is not bool or any(
+            result.get(k) != row[k]
+            for k in ("task_id", "mode", "arm", "index_tier", "memory_enabled")
+        ):
             raise ValueError("Attempt identity differs from its schedule slot")
         identity.add((result["provider"], result["kind"]))
         value = _metrics(result)
+        if not row["memory_enabled"] and value["memory_rows_written"] != 0:
+            raise ValueError("Memory-disabled treatment has nonzero or unverified writes")
         if row["mode"] == "baseline" and any(
             value[key] != 0
             for key in (
@@ -174,7 +150,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         "aa_reference": {},
         "arms": {},
         "interpretation": (
-            "Three task clusters cannot establish significance, savings or adoption. "
+            "Intervals resample complete scenario clusters, not correlated stages or repeats. "
             "Input provenance and billing require independent qualification."
         ),
     }
@@ -186,6 +162,7 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         successes = sum(metrics[i]["quality"] for i in present)
         total = math.fsum(costs) if priced else None
         report["arms"][arm] = {
+            **ALL[arm].identity(),
             "expected": len(slots),
             "observed": len(present),
             "resolved": successes,
@@ -201,12 +178,10 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
     if missing:
         return report  # Missing attempts are visible; no partial-cohort selection.
     lookup = {(r["task_id"], r["repeat"], r["arm"]): metrics[r["order"]] for r in rows}
-    for destination, left, right, repeats in (
-        (report["paired_deltas"], "loom-treesitter", "baseline", range(3)),
-        (report["paired_deltas"], "loom-scip", "baseline", range(3)),
-        (report["paired_deltas"], "loom-scip", "loom-treesitter", range(3)),
-        (report["aa_reference"], "baseline-b", "baseline-a", ["aa"]),
-    ):
+    comparisons = [
+        (report["paired_deltas"], left, right, range(3)) for left, right in contrasts()
+    ] + [(report["aa_reference"], "baseline-b", "baseline-a", ["aa"])]
+    for destination, left, right, repeats in comparisons:
         contrast = {}
         for key in next(iter(metrics.values())):
             differences = []

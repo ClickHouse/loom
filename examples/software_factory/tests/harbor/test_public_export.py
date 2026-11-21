@@ -19,7 +19,7 @@ class PublicExportTests(unittest.TestCase):
         self.fixture = fixtures.HarborReporting()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
-        self.fixture.add(33)
+        self.fixture.add(51)
         self.protocol = self.fixture.protocol
         self.protocol.update(
             model_id="fixture-model", schedule_sha256=digest(self.protocol["schedule"])
@@ -33,6 +33,30 @@ class PublicExportTests(unittest.TestCase):
             }
             for task in self.fixture.tasks
         }
+        self.protocol["attempt_scopes"] = {
+            str(slot["order"]): dict(
+                org="episode-" + str(slot["order"]),
+                task_id=slot["task_id"],
+                index_tier=slot["index_tier"],
+                code_namespace="code",
+                memory_namespace="working" if slot["memory_enabled"] else None,
+            )
+            for slot in self.protocol["schedule"]
+            if slot["mode"] != "baseline"
+        }
+        self.protocol["attempt_scopes"].update(
+            {
+                str(slot["order"]): dict(
+                    org="-",
+                    code_namespace="-",
+                    memory_namespace=None,
+                    token_file=None,
+                    index_tier=None,
+                )
+                for slot in self.protocol["schedule"]
+                if slot["mode"] == "baseline"
+            }
+        )
         self.protocol["public_reproduction"] = {
             "schema_version": 1,
             "suite": {
@@ -116,9 +140,9 @@ class PublicExportTests(unittest.TestCase):
         result = public_export.export_public(self.protocol, self.output, require_complete=True)
         self.assertTrue(result["complete"])
         rows = read(self.output / "attempts.json")
-        self.assertEqual(len(rows), 33)
+        self.assertEqual(len(rows), 51)
         self.assertEqual(sum(row["arm"] in {"baseline-a", "baseline-b"} for row in rows), 6)
-        self.assertEqual(sum(row["resolved"] is True for row in rows), 18)
+        self.assertEqual(sum(row["resolved"] is True for row in rows), 33)
         for path in self.output.rglob("*"):
             if path.is_file():
                 data = path.read_text()
@@ -399,7 +423,7 @@ class PublicExportTests(unittest.TestCase):
         write(path, TrialResult.model_validate(raw).model_dump(mode="json"))
         public_export.export_public(self.protocol, self.output)
         rows = read(self.output / "attempts.json")
-        self.assertEqual(len(rows), 33)
+        self.assertEqual(len(rows), 51)
         self.assertFalse(rows[0]["resolved"])
         self.assertEqual(rows[0]["state"], "invalid_verifier")
 

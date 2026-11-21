@@ -52,7 +52,21 @@ class ReviewContracts(unittest.TestCase):
                 1,
             ),
         }
-        implementation = public_reproduction(lock, protocol)["implementation"]
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "tasks.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            {"task_id": row["task_id"], "base_commit": "f" * 40}
+                            for row in lock["tasks"]
+                        ]
+                    }
+                )
+            )
+            protocol["historical_manifest"] = str(manifest)
+            public = public_reproduction(lock, protocol)
+        implementation = public["implementation"]
         self.assertEqual(implementation["controller_commit"], "b" * 40)
         self.assertEqual(implementation["server_commit"], "a" * 40)
         self.assertFalse(implementation["controller_dirty"])
@@ -64,7 +78,6 @@ class ReviewContracts(unittest.TestCase):
         self.assertEqual(
             implementation["server_files"], protocol["server_source_identity"]["files"]
         )
-        public = public_reproduction(lock, protocol)
         public["pricing"]["source"] = "https://platform.claude.com/docs/en/about-claude/pricing"
         self.assertEqual(public_metadata(public)["implementation"], implementation)
         public["implementation"]["controller_files"] = {"/private/token.env": "a" * 64}

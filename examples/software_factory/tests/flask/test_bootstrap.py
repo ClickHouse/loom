@@ -142,7 +142,10 @@ class BootstrapTests(unittest.TestCase):
             (source / "server").mkdir()
             p = source / "server/a.py"
             p.write_text("x=1\n")
-            with patch.object(bootstrap, "command", return_value=b'{"server/a.py":"wrong"}'):
+            with patch(
+                "examples.software_factory.harbor.source.command",
+                return_value=b'{"server/a.py":"wrong"}',
+            ):
                 with self.assertRaises(PermissionError):
                     bootstrap.server_identity(source, "owned-server", "/app")
 
@@ -225,7 +228,22 @@ class BootstrapTests(unittest.TestCase):
             assets.mkdir()
             (assets / "trusted").mkdir()
             public_file = assets / "historical.json"
-            public_file.write_text('{"tasks": []}')
+            public_file.write_text(
+                json.dumps(
+                    {
+                        "tasks": [
+                            bootstrap.public_task(
+                                dict(
+                                    self.row,
+                                    instance_id=pin["task_id"],
+                                    base_commit=pin["base_commit"],
+                                )
+                            )
+                            for pin in self.lock["tasks"]
+                        ]
+                    }
+                )
+            )
             bootstrap.write(
                 assets / "assets.json",
                 {
@@ -328,8 +346,8 @@ class BootstrapTests(unittest.TestCase):
                     return_value={
                         "files": {},
                         "relative_files": {},
-                        "dirty": False,
                         "commit": "a" * 40,
+                        "dirty": False,
                     },
                 ),
                 patch.object(bootstrap, "index_status", side_effect=statuses),
@@ -347,7 +365,7 @@ class BootstrapTests(unittest.TestCase):
             ):
                 path = bootstrap.create_protocol(config, root / "protocol")
             result = json.loads(path.read_text())
-            self.assertEqual(len(result["schedule"]), 33)
+            self.assertEqual(len(result["schedule"]), 51)
             self.assertEqual(result["index_tier"], "per-arm")
             for task in result["tasks"].values():
                 self.assertEqual(set(task["indexes"]), {"treesitter", "scip"})

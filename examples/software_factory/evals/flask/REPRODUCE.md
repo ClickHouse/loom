@@ -29,8 +29,8 @@ memory and disk space for the test images and trial artifacts.
   timings from different hardware are separate measurements. A host unable to
   execute the pinned image architecture needs Docker emulation.
 
-| Public task           | Exact Flask base                           |
-| --------------------- | ------------------------------------------ |
+| Public task | Exact Flask base |
+| --- | --- |
 | `pallets__flask-4045` | `d8c37f43724cd9fb0870f77877b7c4c7e38a19e0` |
 | `pallets__flask-4575` | `bd56d19b167822a9a23e2e9e2a07ccccc36baa8d` |
 | `pallets__flask-4935` | `fa1ee7066807c21256e90089731c548b313394d2` |

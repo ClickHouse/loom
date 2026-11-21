@@ -6,11 +6,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from examples.software_factory.factory.anthropic_provider import wire_messages
 from examples.software_factory.factory.model import digest, tool_schemas
 from examples.software_factory.harbor.fairness import audit_fairness
+from examples.software_factory.harbor.index import TABLES, fingerprint, select_snapshot
 from examples.software_factory.harbor.live_support import schedule
+from examples.software_factory.harbor.scopes import selected_scopes
 
 
 def save(path, value):
@@ -29,7 +32,7 @@ class FairnessProof(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
-        snapshot = [{"source": "frozen"}]
+        snapshot = fingerprint({table: [] for table in TABLES})
         public = [
             dict(
                 task_id=t,
@@ -49,6 +52,7 @@ class FairnessProof(unittest.TestCase):
             output_root=str(self.root),
             model_id="claude-haiku-5-5",
             index_tier="per-arm",
+            server_commit="b" * 40,
             historical_manifest=str(self.root / "public.json"),
             index_certificate_file=str(self.root / "certificate.json"),
             index_certificate_sha256=hashlib.sha256(
@@ -58,23 +62,88 @@ class FairnessProof(unittest.TestCase):
             attempt_budget={"output_tokens": 128000},
             schedule=schedule(["a", "b", "c"], seed=741),
             tasks={},
+            attempt_scopes={},
+            memory_histories={},
             harbor_specs={},
         )
         for issue in public:
+            fixture = self.root / (issue["task_id"] + "-history.json")
+            save(fixture, {"public_documents": {}})
+            self.protocol["memory_histories"][issue["task_id"]] = {
+                "fixture_file": str(fixture),
+                "fixture_sha256": hashlib.sha256(fixture.read_bytes()).hexdigest(),
+            }
             task = issue["task_id"]
             source = digest({"src/a.py": task})
             self.protocol["tasks"][task] = {
+                "base_commit": "a" * 40,
                 "indexes": {
                     tier: {
                         "namespace": task + "-" + tier,
                         "source_scope": {"paths_sha256": digest(["src/a.py"])},
                     }
                     for tier in ["treesitter", "scip"]
-                }
+                },
             }
             self.protocol["harbor_specs"][task] = dict(
                 source_sha256=source, grader_sha256=digest(task)
             )
+        for slot in self.protocol["schedule"]:
+            baseline = slot["mode"] == "baseline"
+            self.protocol["attempt_scopes"][str(slot["order"])] = dict(
+                org="-" if baseline else "org-" + slot["task_id"] + "-" + slot["index_tier"],
+                task_id=slot["task_id"],
+                index_tier=slot["index_tier"],
+                base_commit="a" * 40,
+                code_namespace="-" if baseline else "code",
+                token_file=None if baseline else "reader.token",
+                repository_tag="repo:0123456789",
+                memory_namespace="working-" + str(slot["order"])
+                if slot["memory_enabled"]
+                else None,
+                compiler_rows={"definitions": 0},
+                source_scope={
+                    "verified": True,
+                    "base_commit": "a" * 40,
+                    "paths_sha256": digest(["src/a.py"]),
+                },
+                memory_history_sha256=digest({}) if slot["memory_enabled"] else None,
+            )
+        tables = {table: [] for table in TABLES}
+        tables["code_files"] = [
+            {"org": org, "namespace": "code", "path": "src/a.py"}
+            for org in sorted(
+                {
+                    row["org"]
+                    for row in self.protocol["attempt_scopes"].values()
+                    if row["index_tier"] is not None
+                }
+            )
+        ]
+        snapshot = fingerprint(tables)
+        save(self.root / "index-content.json", snapshot)
+        self.protocol["index_content_sha256"] = digest(snapshot)
+        certificate = {"index_content_sha256": digest(snapshot), "scopes": {}}
+        for row in self.protocol["attempt_scopes"].values():
+            if row["index_tier"] is not None:
+                certificate["scopes"][row["task_id"] + ":" + row["index_tier"]] = {
+                    "org": row["org"],
+                    "namespace": row["code_namespace"],
+                    "git_head": row["base_commit"],
+                    "build_commit": self.protocol["server_commit"],
+                    "compiler_rows": row["compiler_rows"],
+                    "source_scope": row["source_scope"],
+                }
+        save(self.root / "certificate.json", certificate)
+
+        self.protocol["index_certificate_sha256"] = hashlib.sha256(
+            (self.root / "certificate.json").read_bytes()
+        ).hexdigest()
+        self.history_validator = patch(
+            "examples.software_factory.harbor.fairness.validate_history_certificate",
+            return_value={},
+        ).start()
+        self.addCleanup(patch.stopall)
         self.protocol["schedule_sha256"] = digest(self.protocol["schedule"])
         self.billing = dict(
             protocol_sha256=digest(self.protocol), cohort_complete=True, attempts={}
@@ -99,7 +168,12 @@ class FairnessProof(unittest.TestCase):
                     ],
                 )
             ]
-            tools = tool_schemas(slot["mode"], regression_tests=True)
+            tools = tool_schemas(
+                slot["mode"],
+                regression_tests=True,
+                project_notes=True,
+                memory=slot["memory_enabled"],
+            )
             self.write_generation(folder, order, prompt, tools)
             result = {
                 **slot,
@@ -120,8 +194,16 @@ class FairnessProof(unittest.TestCase):
                 "loom_transport_dispatches": 0,
                 "context_reuses": 0,
                 "local_scope_refusals": 0,
+                "memory_enabled": slot["memory_enabled"],
+                "memory_namespace": self.protocol["attempt_scopes"][str(slot["order"])][
+                    "memory_namespace"
+                ],
+                "memory_history_sha256": digest({}) if slot["memory_enabled"] else None,
+                "notes_history_sha256": digest({}),
                 "memory_rows_written": 0,
-                "memory_rows_written_basis": "Recorded read-only operation allowlist",
+                "memory_rows_written_basis": "Confirmed native write receipts"
+                if slot["memory_enabled"]
+                else "Recorded read-only operation allowlist",
                 "harbor_reward_valid": True,
                 "status": "completed",
                 "resolved": False,
@@ -130,6 +212,12 @@ class FairnessProof(unittest.TestCase):
                 kind="start",
                 task_id=task,
                 mode=slot["mode"],
+                memory_enabled=slot["memory_enabled"],
+                memory_namespace="working-" + str(slot["order"])
+                if slot["memory_enabled"]
+                else None,
+                memory_history_sha256=digest({}) if slot["memory_enabled"] else None,
+                notes_history_sha256=digest({}),
                 provider="anthropic-messages:claude-haiku-5-5",
                 budget=self.protocol["attempt_budget"],
                 source_sha256=result["source_sha256"],
@@ -150,7 +238,10 @@ class FairnessProof(unittest.TestCase):
             journal(folder / "agent/factory/events.jsonl", events)
             self.entries.append(dict(order=order, result=result))
             for phase in ["before", "after"]:
-                save(self.root / f"live-index-{phase}-{order:02d}.json", snapshot)
+                save(
+                    self.root / f"live-index-{phase}-{order:02d}.json",
+                    select_snapshot(snapshot, selected_scopes(self.protocol, slot)),
+                )
             self.billing["attempts"][str(order)] = dict(
                 proof_status="known",
                 physical_requests_matched=0,
@@ -214,7 +305,7 @@ class FairnessProof(unittest.TestCase):
     def test_complete_failed_tasks_can_be_fair_without_a_quality_win(self):
         proof = self.audit()
         self.assertTrue(proof["passed"], proof["checks"])
-        self.assertEqual(proof["counts"]["scheduled_attempts"], 33)
+        self.assertEqual(proof["counts"]["scheduled_attempts"], 51)
         self.assertFalse(any(e["result"]["resolved"] for e in self.entries))
         self.assertEqual(
             json.loads((self.root / "fairness-audit.json").read_text())["protocol_sha256"],
@@ -225,7 +316,7 @@ class FairnessProof(unittest.TestCase):
         proof = self.audit(self.entries[:-1])
         self.assertFalse(proof["passed"])
         self.assertFalse(proof["complete"])
-        self.assertEqual(proof["counts"]["observed_attempts"], 32)
+        self.assertEqual(proof["counts"]["observed_attempts"], 50)
         self.entries[0]["result"]["harbor_reward_valid"] = False
         self.assertFalse(self.audit()["checks"]["execution_integrity"]["passed"])
 
@@ -289,7 +380,11 @@ class FairnessProof(unittest.TestCase):
         self.assertFalse(self.audit()["passed"])
 
     def test_cached_choices_and_local_refusals_are_not_counted_as_http(self):
-        entry = next(e for e in self.entries if e["result"]["mode"] == "natural")
+        entry = next(
+            e
+            for e in self.entries
+            if e["result"]["mode"] == "natural" and not e["result"]["memory_enabled"]
+        )
         result = entry["result"]
         order = entry["order"]
         folder = Path(result["harbor_trial"])
@@ -323,7 +418,17 @@ class FairnessProof(unittest.TestCase):
             events.append(dict(kind="tool_request", name=call["name"]))
             if i == 0:
                 events.append(
-                    dict(kind="retrieval", caller="model", op="code.symbol", physical_requests=3)
+                    dict(
+                        kind="retrieval",
+                        caller="model",
+                        op="code.symbol",
+                        physical_requests=3,
+                        request={
+                            "org": self.protocol["attempt_scopes"][str(order)]["org"],
+                            "namespace": "code",
+                            "include_lessons": False,
+                        },
+                    )
                 )
             else:
                 events.append(

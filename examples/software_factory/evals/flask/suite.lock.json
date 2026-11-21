@@ -2,8 +2,12 @@
   "id": "flask",
   "title": "Python E2E evaluation: Flask",
   "repository": "pallets/flask",
-  "languages": ["python"],
-  "source_roots": ["src/flask"],
+  "languages": [
+    "python"
+  ],
+  "source_roots": [
+    "src/flask"
+  ],
   "adapter": "examples.software_factory.evals.flask.profile",
   "schema_version": 1,
   "dataset": {
@@ -84,7 +88,9 @@
       "89b2ef2247e3b562a16eef663bc0e2e703ec6468e2fa8a5cd61cd449786d4f6e",
       "9e0ce3aa93a819ba5b45120216b23878cf6e8525eb3848653452b4192b92afed"
     ],
-    "blinker==1.4": ["471aee25f3992bd325afa3772f1063dbdbbca947a041b8b89466dc00d606f8b6"],
+    "blinker==1.4": [
+      "471aee25f3992bd325afa3772f1063dbdbbca947a041b8b89466dc00d606f8b6"
+    ],
     "itsdangerous==2.1.2": [
       "2c2349112351b88699d8d4b6b075022c0808887cb7ad10069318a8b0bc88db44",
       "5dbbc68b317e5e42f327f9021763545dc3fc3bfe22e6deb96aaf1fc38874156a"
@@ -325,7 +331,11 @@
         "python-dotenv==1.0.0",
         "toml==0.10.2"
       ],
-      "build_requirements": ["pip==24.3.1", "setuptools==65.5.1", "wheel==0.44.0"]
+      "build_requirements": [
+        "pip==24.3.1",
+        "setuptools==65.5.1",
+        "wheel==0.44.0"
+      ]
     },
     {
       "task_id": "pallets__flask-4575",
@@ -365,7 +375,11 @@
         "pytest==7.4.4",
         "python-dotenv==1.0.0"
       ],
-      "build_requirements": ["pip==24.3.1", "setuptools==70.3.0", "wheel==0.44.0"]
+      "build_requirements": [
+        "pip==24.3.1",
+        "setuptools==70.3.0",
+        "wheel==0.44.0"
+      ]
     },
     {
       "task_id": "pallets__flask-4935",
@@ -402,10 +416,17 @@
         "pytest==7.4.4",
         "python-dotenv==1.0.0"
       ],
-      "build_requirements": ["pip==24.3.1", "setuptools==70.3.0", "wheel==0.44.0"]
+      "build_requirements": [
+        "pip==24.3.1",
+        "setuptools==70.3.0",
+        "wheel==0.44.0"
+      ]
     }
   ],
-  "index_tiers": ["treesitter", "scip"],
+  "index_tiers": [
+    "treesitter",
+    "scip"
+  ],
   "attributions": [
     {
       "name": "swe-bench-license",

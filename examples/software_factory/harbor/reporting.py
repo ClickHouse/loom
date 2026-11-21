@@ -16,11 +16,9 @@ from statistics import fmean
 from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
-PRIMARY_VIEWS = {
-    "baseline": "no-loom",
-    "loom-treesitter": "loom-treesitter",
-    "loom-scip": "loom-scip",
-}
+from .arms import PRIMARY
+
+PRIMARY_VIEWS = {name: "no-loom" if name == "baseline" else name for name in PRIMARY}
 VIEW_KIND = "factory-derived-harbor-comparison"
 NORMALIZED_FIELDS = [
     "result.task_name",

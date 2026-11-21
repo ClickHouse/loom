@@ -29,6 +29,7 @@ def inputs():
                     "mode": row["mode"],
                     "arm": row["arm"],
                     "index_tier": row["index_tier"],
+                    "memory_enabled": row["memory_enabled"],
                     "provider": "authored-fixture",
                     "kind": "authored-analysis-contract",
                     "resolved": True,
@@ -43,6 +44,7 @@ def inputs():
                     "provider_logical_requests": 1,
                     "provider_physical_requests": 1,
                     "provider_failed_requests": 0,
+                    "memory_rows_written": 0,
                     "provider_usage": [{"inputTokens": 10, "outputTokens": 2}],
                 },
             }
@@ -51,6 +53,17 @@ def inputs():
 
 
 class PairedAnalysisContracts(unittest.TestCase):
+    def test_memory_treatment_requires_boolean_identity_and_no_disabled_writes(self):
+        order, entries = inputs()
+        target = next(e for e in entries if e["result"]["arm"] == "baseline")
+        target["result"]["memory_enabled"] = 0
+        with self.assertRaisesRegex(ValueError, "identity"):
+            analyze(order, entries, resamples=100)
+        target["result"]["memory_enabled"] = False
+        target["result"]["memory_rows_written"] = 1
+        with self.assertRaisesRegex(ValueError, "Memory-disabled"):
+            analyze(order, entries, resamples=100)
+
     def test_baseline_physical_dispatch_is_zero_and_known(self):
         for physical in (1, None):
             with self.subTest(physical=physical):
@@ -71,7 +84,7 @@ class PairedAnalysisContracts(unittest.TestCase):
         self.assertEqual(arm["resolved"], 8)
         self.assertEqual(arm["total_cost_usd"], 26)
         self.assertEqual(arm["cost_per_success_usd"], 26 / 8)
-        self.assertEqual(report["cohort_total_cost_usd"], 74)
+        self.assertEqual(report["cohort_total_cost_usd"], 110)
         self.assertEqual(arm["statuses"]["objective_failure"], 1)
 
     def test_unknowns_are_not_zero_or_removed_from_pairs(self):
@@ -95,7 +108,7 @@ class PairedAnalysisContracts(unittest.TestCase):
         self.assertFalse(report["complete"])
         self.assertEqual(report["missing_orders"], [missing])
         self.assertEqual(report["paired_deltas"], {})
-        self.assertEqual(sum(a["observed"] for a in report["arms"].values()), 32)
+        self.assertEqual(sum(a["observed"] for a in report["arms"].values()), 50)
 
     def test_duplicates_scope_changes_and_baseline_exposure_refuse(self):
         order, entries = inputs()
@@ -176,6 +189,11 @@ class PairedAnalysisContracts(unittest.TestCase):
                 "loom-treesitter-minus-baseline",
                 "loom-scip-minus-baseline",
                 "loom-scip-minus-loom-treesitter",
+                "loom-treesitter-memory-minus-baseline",
+                "loom-scip-memory-minus-baseline",
+                "loom-treesitter-memory-minus-loom-treesitter",
+                "loom-scip-memory-minus-loom-scip",
+                "loom-scip-memory-minus-loom-treesitter-memory",
             },
         )
         wrong = copy.deepcopy(entries)
@@ -191,7 +209,7 @@ class PairedAnalysisContracts(unittest.TestCase):
         for key in ("arm", "mode", "index_tier"):
             left[key], right[key] = right[key], left[key]
         order["schedule_sha256"] = digest(order["attempts"])
-        with self.assertRaisesRegex(ValueError, "position once"):
+        with self.assertRaisesRegex(ValueError, "distinct positions"):
             analyze(order, entries, resamples=100)
 
     def test_cli_reads_explicit_controller_exports_without_clients(self):

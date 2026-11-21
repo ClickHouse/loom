@@ -17,6 +17,7 @@ from harbor.models.job.result import JobResult, JobStats
 from harbor.models.trial.result import TrialResult
 
 from examples.software_factory.factory.model import digest
+from examples.software_factory.harbor.arms import ALL
 from examples.software_factory.harbor.reporting import PRIMARY_VIEWS, generate_reports
 
 
@@ -51,18 +52,15 @@ class HarborReporting(unittest.TestCase):
         for task in self.tasks:
             for repeat in range(3):
                 arms = list(PRIMARY_VIEWS)
-                for arm in arms[repeat:] + arms[:repeat]:
+                shift = (self.tasks.index(task) * 3 + repeat) % len(arms)
+                for arm in arms[shift:] + arms[:shift]:
                     schedule.append(
                         {
                             "order": len(schedule),
                             "task_id": task,
                             "repeat": repeat,
                             "arm": arm,
-                            "mode": "baseline" if arm == "baseline" else "natural",
-                            "index_tier": {
-                                "loom-treesitter": "treesitter",
-                                "loom-scip": "scip",
-                            }.get(arm),
+                            **ALL[arm].identity(),
                         }
                     )
         for task in self.tasks:
@@ -75,6 +73,7 @@ class HarborReporting(unittest.TestCase):
                         "arm": arm,
                         "mode": "baseline",
                         "index_tier": None,
+                        "memory_enabled": False,
                     }
                 )
         self.protocol = {
@@ -112,9 +111,9 @@ class HarborReporting(unittest.TestCase):
             id=self.source_id,
             started_at=self.start,
             updated_at=self.start + timedelta(seconds=len(results) * 50),
-            finished_at=self.start + timedelta(seconds=2000) if len(results) == 33 else None,
-            n_total_trials=33,
-            stats=JobStats.from_trial_results(results, n_total_trials=33),
+            finished_at=self.start + timedelta(seconds=2000) if len(results) == 51 else None,
+            n_total_trials=51,
+            stats=JobStats.from_trial_results(results, n_total_trials=51),
         )
         write(self.source / "result.json", aggregate.model_dump(mode="json"))
         write(
@@ -134,6 +133,8 @@ class HarborReporting(unittest.TestCase):
             "baseline": 0.0876721,
             "loom-treesitter": 0.0875002,
             "loom-scip": 0.0856215,
+            "loom-treesitter-memory": 0.09,
+            "loom-scip-memory": 0.08,
             "baseline-a": 0.0278679,
             "baseline-b": 0.0251254,
         }
@@ -141,6 +142,8 @@ class HarborReporting(unittest.TestCase):
             "baseline": 3,
             "loom-treesitter": 6,
             "loom-scip": 5,
+            "loom-treesitter-memory": 7,
+            "loom-scip-memory": 8,
             "baseline-a": 2,
             "baseline-b": 2,
         }
@@ -215,6 +218,7 @@ class HarborReporting(unittest.TestCase):
                 "mode": slot["mode"],
                 "arm": slot["arm"],
                 "index_tier": slot["index_tier"],
+                "memory_enabled": slot["memory_enabled"],
                 "resolved": passed,
                 "harbor_reward_valid": True,
                 "generation_cost_usd": cost,
@@ -246,8 +250,8 @@ class HarborReporting(unittest.TestCase):
         self.assertTrue((self.root / "reports/charts.html").exists())
         self.assertEqual(hashes(self.source), before)
 
-    def test_complete_views_preserve_assets_metrics_and_three_by_nine_pairing(self):
-        self.add(33)
+    def test_complete_views_preserve_assets_metrics_and_five_by_nine_pairing(self):
+        self.add(51)
         before = hashes(self.source)
         original_entries = copy.deepcopy(self.entries)
         report = generate_reports(self.protocol, self.entries)
@@ -258,20 +262,30 @@ class HarborReporting(unittest.TestCase):
         scenario = report["scenarios"]["scenario-a"]
         self.assertEqual(scenario["aa_controls"]["expected"], 2)
         self.assertEqual(set(scenario["aa_control_arms"]), {"baseline-a", "baseline-b"})
-        self.assertEqual(report["native_views"]["copied_trials"], 33)
+        self.assertEqual(report["native_views"]["copied_trials"], 51)
         self.assertFalse(report["charts"]["published"])
         self.assertTrue(Path(report["charts"]["html"]).exists())
         self.assertEqual(report["links"]["charts"], report["charts"]["html"])
         self.assertEqual(read(self.root / "reporting-manifest.json")["charts"], report["charts"])
-        for arm, expected in [("baseline", 3), ("loom-treesitter", 6), ("loom-scip", 5)]:
+        for arm, expected in [
+            ("baseline", 3),
+            ("loom-treesitter", 6),
+            ("loom-scip", 5),
+            ("loom-treesitter-memory", 7),
+            ("loom-scip-memory", 8),
+        ]:
             view = self.root / "jobs" / PRIMARY_VIEWS[arm]
             native = read(view / "result.json")
             self.assertEqual(native["n_total_trials"], 9)
             self.assertEqual(native["stats"]["n_completed_trials"], 9)
             self.assertEqual(report["primary_arms"][arm]["resolved"], expected)
-            total = {"baseline": 0.0876721, "loom-treesitter": 0.0875002, "loom-scip": 0.0856215}[
-                arm
-            ]
+            total = {
+                "baseline": 0.0876721,
+                "loom-treesitter": 0.0875002,
+                "loom-scip": 0.0856215,
+                "loom-treesitter-memory": 0.09,
+                "loom-scip-memory": 0.08,
+            }[arm]
             self.assertAlmostEqual(native["stats"]["cost_usd"], total)
             self.assertAlmostEqual(report["primary_arms"][arm]["generation_cost_usd"], total)
         for row in report["paired_rows"]:
@@ -294,7 +308,7 @@ class HarborReporting(unittest.TestCase):
             self.assertEqual(len(checksums), 1)
         self.assertEqual(hashes(self.source), before)
         self.assertEqual(self.entries, original_entries)
-        self.assertEqual(len(list((self.root / "reports/attempts").glob("*.json"))), 33)
+        self.assertEqual(len(list((self.root / "reports/attempts").glob("*.json"))), 51)
         self.assertEqual(len(list((self.root / "reports/scenarios").glob("*.json"))), 3)
         self.assertEqual(report["primary_arms"]["baseline"]["mean_native_duration_s"], 36)
         self.assertEqual(report["primary_arms"]["baseline"]["mean_end_to_end_s"], 37.25)
@@ -303,8 +317,8 @@ class HarborReporting(unittest.TestCase):
         self.add(4)
         report = generate_reports(self.protocol, self.entries)
         self.assertFalse(report["complete"])
-        self.assertEqual(report["expected_attempts"], 33)
-        self.assertEqual(len(report["pending_orders"]), 29)
+        self.assertEqual(report["expected_attempts"], 51)
+        self.assertEqual(len(report["pending_orders"]), 47)
         self.assertEqual(report["primary_arms"]["baseline"]["pending"], 8)
         self.assertIsNone(report["primary_arms"]["baseline"]["success_rate"])
         self.assertIsNone(report["paired_rows"][1]["cells"]["loom-scip"])
@@ -312,8 +326,8 @@ class HarborReporting(unittest.TestCase):
         self.assertIsNone(report["attempts"][4]["metrics"])
         native = read(self.root / "jobs/loom-treesitter/result.json")
         self.assertEqual(native["n_total_trials"], 9)
-        self.assertEqual(native["stats"]["n_completed_trials"], 2)
-        self.assertEqual(native["stats"]["n_pending_trials"], 7)
+        self.assertEqual(native["stats"]["n_completed_trials"], 1)
+        self.assertEqual(native["stats"]["n_pending_trials"], 8)
         self.assertIsNone(native["finished_at"])
 
     def test_empty_run_has_pending_reports_without_fake_trials(self):
@@ -332,7 +346,7 @@ class HarborReporting(unittest.TestCase):
         (self.source / "result.json").unlink()
         report = generate_reports(self.protocol, [])
         self.assertEqual(report["native_views"]["status"], "awaiting_source_job")
-        self.assertEqual(report["pending_orders"], list(range(33)))
+        self.assertEqual(report["pending_orders"], list(range(51)))
         attempt = self.root / "reports/attempts/attempt-00.md"
         attempt.unlink()
         generate_reports(self.protocol, [])

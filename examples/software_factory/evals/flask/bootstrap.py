@@ -7,7 +7,6 @@ import hashlib
 import json
 import re
 import shutil
-import subprocess
 import uuid
 from dataclasses import asdict
 from pathlib import Path
@@ -23,17 +22,16 @@ from examples.software_factory.factory.model import Budget, digest
 from examples.software_factory.harbor.index import snapshot
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.runtime import read, write
+from examples.software_factory.harbor.source import (
+    check_files,
+    command,
+    controller_identity,
+    server_identity,
+    sha,
+)
 
 HERE = Path(__file__).resolve().parent
 LOCK = HERE / "suite.lock.json"
-
-
-def sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def command(args: list[str], *, data: bytes | None = None) -> bytes:
-    return subprocess.run(args, input=data, capture_output=True, check=True, timeout=600).stdout
 
 
 def download(url: str, expected: str, target: Path) -> None:
@@ -255,14 +253,6 @@ def stage_compiler_source(source: FrozenSource, target: Path) -> dict:
     return receipt
 
 
-def check_files(files: dict) -> None:
-    if not files:
-        raise PermissionError("A nonempty input manifest is required")
-    for name, expected in files.items():
-        if sha(Path(name)) != expected:
-            raise PermissionError("A bootstrap input changed: " + name)
-
-
 def build_dependencies(assets: Path) -> Path:
     receipt = read(assets / "assets.json")
     check_files(receipt["files"])
@@ -310,59 +300,6 @@ def build_dependencies(assets: Path) -> Path:
         {"images": images, "artifact_files": artifacts, "provider_requests": 0, "loom_writes": 0},
     )
     return target
-
-
-def server_identity(root: Path, container: str, container_root: str) -> dict:
-    paths = [
-        p
-        for part in ("server", "schemas")
-        for p in (root / part).rglob("*")
-        if p.is_file() and p.suffix in {".py", ".json", ".sql"}
-    ]
-    relative = {str(p.relative_to(root)): sha(p) for p in paths}
-    if not relative:
-        raise PermissionError("Runtime source manifest is empty")
-    code = (
-        "import hashlib,json,sys;from pathlib import Path;"
-        "v=json.load(sys.stdin);root=Path(v['root']);"
-        "print(json.dumps({p:hashlib.sha256((root/p).read_bytes()).hexdigest() "
-        "for p in v['paths']}))"
-    )
-    actual = json.loads(
-        command(
-            ["docker", "exec", "-i", container, "/opt/venv/bin/python", "-c", code],
-            data=json.dumps({"root": container_root, "paths": list(relative)}).encode(),
-        )
-    )
-    if actual != relative:
-        raise PermissionError("Host runtime source differs from the serving container")
-    return {
-        "commit": git(root, "rev-parse", "HEAD").decode().strip(),
-        "dirty": bool(git(root, "status", "--porcelain", "--", "server", "schemas")),
-        "relative_files": relative,
-        "files": {str(root / p): h for p, h in relative.items()},
-        "container_source_root": container_root,
-        "container_bytes_verified": True,
-    }
-
-
-def controller_identity() -> dict:
-    root = HERE.parents[3]
-    parts = ("examples/software_factory", "sdk/python", "pyproject.toml", "uv.lock")
-    names = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *parts)
-    relative = {
-        name: sha(root / name)
-        for name in sorted(set(names.decode().strip("\0").split("\0")))
-        if name and (root / name).is_file()
-    }
-    if not relative:
-        raise PermissionError("Controller source manifest is empty")
-    return {
-        "commit": git(root, "rev-parse", "HEAD").decode().strip(),
-        "dirty": bool(git(root, "status", "--porcelain", "--", *parts)),
-        "relative_files": relative,
-        "files": {str(root / name): hashed for name, hashed in relative.items()},
-    }
 
 
 def index_status(endpoint: str, token_file: Path, org: str, namespace: str) -> dict:
