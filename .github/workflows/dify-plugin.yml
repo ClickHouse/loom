@@ -4,11 +4,17 @@ on:
   pull_request:
     paths:
       - integrations/dify/**
+      - sdk/python/**
+      - scripts/gates/dify*
+      - tests/unit/test_dify_application_guards.py
       - .github/workflows/dify-plugin.yml
   push:
     branches: [main]
     paths:
       - integrations/dify/**
+      - sdk/python/**
+      - scripts/gates/dify*
+      - tests/unit/test_dify_application_guards.py
       - .github/workflows/dify-plugin.yml
 
 permissions:
@@ -38,3 +44,51 @@ jobs:
         with:
           name: loom-dify-plugin
           path: loom-0.1.0.difypkg
+
+  application-smoke:
+    name: Dify CE native application smoke
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      UV_NO_CACHE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: false
+      - name: Install the candidate's locked server dependencies
+        run: uv sync --locked --python "$(which python)" --extra dev --extra code
+      - name: Build the exact candidate SDK wheel
+        run: uv build sdk/python --out-dir dify-sdk-wheel
+      - name: Install the candidate wheel for fixture setup
+        run: |
+          wheels=(dify-sdk-wheel/clickhouse_loom-*.whl)
+          test "${#wheels[@]}" -eq 1
+          uv pip install --python "$PWD/.venv/bin/python" "${wheels[0]}"
+      - name: Pure mocked ownership and failure guards
+        run: .venv/bin/python -m pytest -q tests/unit/test_dify_application_guards.py
+      - name: Package the candidate plugin with the checked official CLI
+        run: |
+          curl --fail --location https://github.com/langgenius/dify-plugin-daemon/releases/download/0.6.15/dify-plugin-linux-amd64 --output "$RUNNER_TEMP/dify"
+          echo "d0a1e3b25bd6c5f6cd749cad2cf04817ea808344e6cc07a2c49bb0108019ab93  $RUNNER_TEMP/dify" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/dify"
+          "$RUNNER_TEMP/dify" plugin package integrations/dify -o loom-0.1.0.difypkg
+      - name: Exercise the owned Dify application
+        run: .venv/bin/python scripts/gates/dify_application_smoke.py
+      - name: Verify owned cleanup even when the smoke fails
+        if: always()
+        run: .venv/bin/python scripts/gates/dify_application_smoke.py --cleanup-only
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dify-application-evidence
+          path: dify-application-evidence/
+          if-no-files-found: error
+          retention-days: 7
