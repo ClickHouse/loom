@@ -127,8 +127,7 @@ class Provisioner:
                 command, input=data, capture_output=True, text=True, check=True, timeout=timeout
             )
         except subprocess.CalledProcessError as error:
-            if command[:2] == ["docker", "build"]:
-                self._build_log(command, error.stdout, error.stderr, error.returncode)
+            self._build_log(command, error.stdout, error.stderr, error.returncode)
             raise
         if command[:2] == ["docker", "build"]:
             self._build_log(command, result.stdout, result.stderr, result.returncode)
@@ -143,7 +142,8 @@ class Provisioner:
         for name in ("ANTHROPIC_API_KEY", "HTTPS_PROXY"):
             if value := os.environ.get(name):
                 content = content.replace(value, "[redacted]")
-        path = folder / ("build-" + uuid.uuid4().hex + ".json")
+        prefix = "build-" if command[:2] == ["docker", "build"] else "command-failure-"
+        path = folder / (prefix + uuid.uuid4().hex + ".json")
         path.write_text(content + "\n")
         path.chmod(0o600)
 
@@ -926,6 +926,23 @@ class Provisioner:
             time.sleep(1)
         raise TimeoutError("Native memory links did not reach the required observed state")
 
+    def _mirror(self, task, mirror):
+        self._cmd(["git", "init", "--bare", str(mirror)])
+        self._cmd(
+            [
+                "git",
+                "-C",
+                str(mirror),
+                "fetch",
+                "--no-tags",
+                "--update-shallow",
+                "--no-write-fetch-head",
+                "--",
+                task["source_git"],
+                task["base_commit"] + ":refs/heads/factory-frozen",
+            ]
+        )
+
     def prepare(self, tasks: dict, schedule: list, fixtures: dict, compiler_receipt: dict):
         require(self.runtime is not None, "Start the owned runtime before setup")
         completed = self.output / "setup.json"
@@ -963,27 +980,7 @@ class Provisioner:
                 / "mirrors"
                 / (hashlib.sha256(task_id.encode()).hexdigest()[:16] + ".git")
             )
-            self._cmd(
-                [
-                    "git",
-                    "clone",
-                    "--mirror",
-                    "--no-hardlinks",
-                    "--",
-                    task["source_git"],
-                    str(mirror),
-                ]
-            )
-            self._cmd(
-                [
-                    "git",
-                    "-C",
-                    str(mirror),
-                    "update-ref",
-                    "refs/heads/factory-frozen",
-                    task["base_commit"],
-                ]
-            )
+            self._mirror(task, mirror)
             mirrors[task_id] = str(mirror)
         for group in groups.values():
             task = tasks[group["task_id"]]

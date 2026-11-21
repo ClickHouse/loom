@@ -1,6 +1,7 @@
 """Provisioning owns exact resources and never substitutes fake native evidence."""
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +41,42 @@ class ProvisioningContracts(unittest.TestCase):
         with self.assertRaises(PermissionError):
             instance.start()
         self.run.assert_not_called()
+
+    def test_mirror_fetches_the_pinned_commit_from_a_shallow_source_without_refs(self):
+        repository = self.root / "repository"
+        repository.mkdir()
+
+        def git(path, *args):
+            return subprocess.run(
+                ["git", "-C", str(path), *args], check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        git(repository, "init")
+        (repository / "source.py").write_text("value = 1\n")
+        git(repository, "add", "source.py")
+        git(
+            repository,
+            "-c",
+            "user.name=agent",
+            "-c",
+            "user.email=agent@example.com",
+            "commit",
+            "-m",
+            "base",
+        )
+        commit = git(repository, "rev-parse", "HEAD")
+        source = self.root / "public.git"
+        source.mkdir()
+        git(source, "init", "--bare")
+        git(source, "fetch", "--depth=1", str(repository), commit)
+        self.assertEqual(git(source, "for-each-ref"), "")
+        mirror = self.root / "frozen.git"
+        self.provision.run = subprocess.run
+        self.provision._mirror({"source_git": str(source), "base_commit": commit}, mirror)
+        self.assertEqual(git(mirror, "rev-parse", "factory-frozen"), commit)
+        self.assertEqual(git(mirror, "show", commit + ":source.py"), "value = 1")
+        self.assertTrue((mirror / "shallow").is_file())
+        self.assertEqual(git(source, "for-each-ref"), "")
 
     def test_runtime_uses_the_owned_local_model_tag_not_an_image_id_as_repository(self):
         owner = self.provision.owner
