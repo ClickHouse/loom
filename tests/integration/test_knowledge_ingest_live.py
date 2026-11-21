@@ -724,9 +724,19 @@ async def test_a_workbooks_sheets_are_datasets_each_sampled_past_its_rejected_ro
             c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
             source_uri=uri,
         )  # fmt: skip
-        await _work(org, ns, job["ingestion_id"])
+        worker_state = await _work(org, ns, job["ingestion_id"])
         got = await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri,
                         sample_rows=2)  # fmt: skip
+    dataset_count = len(got["datasets"])
+    assert dataset_count == 2, {
+        "dataset_count": dataset_count,
+        "worker_state": (
+            worker_state
+            if type(worker_state) is str
+            and worker_state in {"pending", "processing", "ready", "partial", "failed", "cancelled"}
+            else "unknown"
+        ),
+    }
     one, two = got["datasets"]
     assert (one["sheet"], one["row_count"], one["rejected_rows"]) == ("One", 3, 1)
     assert one["rows"] == [{"k": "a", "v": 1}, {"k": "c", "v": 3}]
