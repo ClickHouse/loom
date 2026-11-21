@@ -10,6 +10,48 @@ The [development guide](./docs/development/repository-guide.md) goes deeper: [re
 - **Search existing issues.** The bug may already be tracked.
 - **Keep changes focused.** One concern per pull request. A refactor, a bug fix and a feature do not share a commit.
 
+## Choose a first contribution
+
+Start with [unassigned good first issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-label%3Ablocked%20-label%3Ahold)
+or [unassigned help wanted issues](https://github.com/ClickHouse/loom/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22%20no%3Aassignee%20-label%3Ablocked%20-label%3Ahold).
+Read the issue's latest comments and linked pull requests before starting: someone can
+be working on it without an assignee. Check [open pull requests](https://github.com/ClickHouse/loom/pulls)
+for the same change. Help wanted includes larger design work; the label alone does not
+make a task suitable for a beginner.
+
+Choose one reproducible problem and a small acceptance check. If the issue has no active
+claim or pull request, describe the part you intend to work on in its thread. A question,
+a documentation correction and a failing example are useful contributions too; use the
+[issue forms](#filing-an-issue) when you need to report a problem.
+
+| Start from                             | Read                                                                                               | First check                                                                                    |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| A broken instruction or link           | [Documentation style](./docs/development/documentation-style.md)                                   | Run the link check below, replacing the page parameter with the page you edited.               |
+| A Python bug with a small reproduction | [Repository map](./docs/development/repository-guide.md), [testing](./docs/development/testing.md) | Run the affected test file or one test with `python -m pytest path/to/test.py::test_name -q`.  |
+| A lab or course project                | [Teaching guide](./docs/guides/teaching.md), [course starter](./examples/course-starter/README.md) | Run the starter's grader against your own local stack; it fails until the TODOs are completed. |
+
+After the Python environment in [Development setup](#development-setup), this checks one
+page without starting a database, server or model provider:
+
+```bash
+python -m pytest 'tests/unit/test_doc_links.py::test_relative_links_resolve[CONTRIBUTING.md]' -q
+```
+
+A successful run reports `1 passed`. If it fails, fix the reported target or heading.
+The link check verifies local targets and headings, not external sites or the accuracy of
+instructions. Check the changed commands and explanations too. Unit tests use isolated
+configuration and test doubles; integration tests need a private stack
+([testing](./docs/development/testing.md)). Keep tokens, personal data and customer data
+out of reproductions. Security reports follow [SECURITY.md](./SECURITY.md).
+
+Finish with the [branch and checks workflow](#branch-change-check) and the
+[commit sign-off](#commits-and-sign-offs-dco). In the pull request, say what reproduces the
+problem, what changes and which focused checks you ran. CI runs the wider checks; read
+each failed job rather than treating an unrun check as passing. After a merge, use the
+same issue searches to choose a related test, example or small fix for your next contribution.
+The repository's [contributor history](https://github.com/ClickHouse/loom/graphs/contributors)
+and merged pull requests record contributions.
+
 ## Filing an issue
 
 Every issue goes through a form in `.github/ISSUE_TEMPLATE/`; pick the one that fits:
@@ -53,7 +95,13 @@ cd loom
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e ".[dev]"
+```
 
+Documentation checks and unit tests need only this environment. No database, running
+server or provider account is needed for the focused check above. Continue below when
+your change needs a running server:
+
+```bash
 # Start ClickHouse locally, with the config and lemmatizer dictionary Loom needs
 # (a bare clickhouse-server container fails every memory_embeddings insert)
 bash dev/ci_start_clickhouse.sh
@@ -79,7 +127,7 @@ docker compose --env-file .env -f compose.yaml -f dev/docker-compose.dev.yml --p
 
 1. Branch from `main`. CI runs on pull requests into `main` or a `release/X.Y` line and on pushes to them. A pull request stacked on another branch gets no checks until it targets one of them.
 2. Make the change with its tests ([testing](./docs/development/testing.md)). If it moves a source that something is generated from, regenerate it ([code generation](./docs/development/code-generation.md)). If it changes the schema, follow [migrations](./docs/development/migrations.md).
-3. Run what CI runs:
+3. Run focused checks for the changed behavior first. CI runs the following wider gates; use [testing](./docs/development/testing.md) to choose the relevant local checks:
 
 ```bash
 make format        # ruff, Biome, Prettier, Taplo, shfmt (CI: make format-check)

@@ -86,17 +86,18 @@ def _line_embeddings(old: list[str], new: list[str]) -> tuple[list[int | None], 
     return first, list(reversed(last))
 
 
-def _terminal_append(historical, current, units, sources, positions) -> bool:
+def _terminal_append(historical, current, units, sources, positions, current_positions) -> bool:
     from scripts.i18n import chunks
 
     before, after = sources.historical_raw, sources.current_raw
+    # Maintained link rewrites can change the prepared prefix without changing raw ownership.
     if (
         not units
         or not before.endswith("\n")
         or len(after) <= len(before)
         or not after.startswith(before)
-        or not current.english.startswith(historical.english)
-        or len(current.english) <= len(historical.english)
+        or current_positions[len(before)] is None
+        or not current_positions[len(before)] < len(current.english)
         or positions[-1] != len(historical.english)
         or units[-1].end != len(historical.english)
         or not units[-1].start < units[-1].end
@@ -212,7 +213,7 @@ def partition_counterparts(historical, current, units, sources: SourceOrigins):
     if any(p not in inverse or p in ambiguous for p in cuts):
         raise ValueError("original cut falls inside a source transformation")
     terminal_append = new[-1] == len(current.english) and _terminal_append(
-        historical, current, units, sources, old
+        historical, current, units, sources, old, new
     )
     raw = _raw_projection(
         sources.historical_raw,

@@ -2,15 +2,15 @@
 
 Loom can serve as the lab environment for a course on AI agents, information retrieval,
 databases or software engineering. Each student runs their own single-user stack, on a
-laptop with Docker or in a GitHub codespace with nothing installed on their machine. Each
-lab links the page that does its work.
+laptop with Docker. A hosted codespace is optional and has its own billing. Each lab
+links the page that does its work.
 
 ## Setup
 
-| Students have                  | Start with                                                                                  |
-| ------------------------------ | ------------------------------------------------------------------------------------------- |
-| A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces) |
-| Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone) |
+| Students have                  | Start with                                                                                                                |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| Docker on their own machine    | [Quickstart: fast path](../getting-started/quickstart.md#fast-path-released-image-no-clone)                               |
+| A GitHub account and a browser | [Try it in GitHub Codespaces](../getting-started/quickstart.md#try-it-in-github-codespaces), after checking billing below |
 
 A codespace uses the student's Codespaces quota while it runs and while its disk is kept, and
 GitHub deletes one left unused for its retention period, with its data
@@ -81,7 +81,10 @@ graded by hand: their exercises ask for explanations.
 A grading run takes about two minutes, most of it starting the stack. In a private
 repository those minutes count against the Actions quota of the account or organization
 that owns it ([Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions));
-codespaces cost what [Setup](#setup) says.
+codespaces cost what [Setup](#setup) says. Standard hosted compute in public repositories
+is free under those terms; artifact and cache storage have separate allowances. Local
+grading avoids hosted compute charges. Keep student submissions, grades and personal
+data private when deciding how to distribute and grade the work.
 
 ## Lab 1: an agent that remembers
 
@@ -183,3 +186,27 @@ Exercises:
 | Information retrieval | 1, 2    | [Search and ask](../features/memory/search-and-ask.md), [evaluate Loom](../getting-started/evaluate.md)   |
 | Databases             | 1, 4    | [Storage authority](../architecture/storage-authority.md), [SQL surface](../reference/sql-surface.md)     |
 | Software engineering  | 3       | [Code index](../features/code-index/overview.md), [PR history](../features/code-index/history-and-prs.md) |
+
+## Bounded projects after the labs
+
+Use the existing labs as the starting point. Each project produces a small reproducible
+artifact and an explanation of its limits, without generated answers or paid model calls.
+
+| Project                             | Deliverable                                                                                                                    | Acceptance                                                                                                                                                                   |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Retrieval evaluation from Lab 2     | A synthetic document, answerable questions with labeled passages, unanswerable questions and the search script.                | Separate cutoff selection from held-out questions. Report recall@k and false positives and false negatives for the chosen similarity cutoff; retain the raw hits and labels. |
+| Call graph investigation from Lab 3 | A small repository fixture you may redistribute, expected caller relationships and commands for both index and literal search. | Explain each missed or extra relationship, including dynamic calls; do not present static results as a complete runtime graph.                                               |
+| Memory history from Lab 1           | A script that writes, revises and reads one synthetic fact and its versions.                                                   | Show the before/after values and provenance, then repeat on a fresh namespace without affecting another student's data.                                                      |
+
+An instructor can assess reproducibility, correctness of the labels or expected results,
+and the explanation of failure cases separately. Preserve the repository commit, released
+image digest, SDK version, configuration, commands and raw results with the submission.
+License original fixtures explicitly; preserve the license and notices for reused material.
+Use synthetic data rather than student records or private documents. A local retrieval
+exercise does not establish general answer quality or a published benchmark result.
+
+A student who finds a reproducible defect can follow the
+[first contribution path](../../CONTRIBUTING.md#choose-a-first-contribution). Search for an
+existing issue and active work first; a course project does not reserve upstream work or
+promise acceptance. Use the repository's [software citation metadata](../../CITATION.cff)
+and record the exact source commit or release used in a report.
