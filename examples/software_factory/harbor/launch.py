@@ -14,13 +14,14 @@ import subprocess
 import sys
 import tempfile
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .arms import PRIMARY
 from .build_recipe import PYTHON_IMAGE, native_recipe
 from .catalog import load_evaluation
+from .host_tunnel import HostTunnel
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path("examples/software_factory/harbor")
@@ -238,14 +239,19 @@ class Docker:
     def __init__(self):
         self.process = None
         self.key = os.environ.get("ANTHROPIC_API_KEY", "")
+        self.proxy_url = self.proxy_token = None
 
     def environment(self, secret=False):
         env = {key: value for key, value in os.environ.items() if key in HOST_ENV}
         if secret:
             env["ANTHROPIC_API_KEY"] = self.key
+        if self.proxy_url:
+            env["HTTPS_PROXY"] = self.proxy_url
         return env
 
     def run(self, args, *, capture=False, missing=False, secret=False):
+        if self.proxy_url and args[0] == "build":
+            args = ["build", "--build-arg", "HTTPS_PROXY", *args[1:]]
         if not capture:
             process = subprocess.Popen(
                 ["docker", *args],
@@ -288,7 +294,10 @@ class Docker:
         return result.stdout.strip()
 
     def redact(self, text):
-        return text.replace(self.key, "[redacted]") if self.key else text
+        for value in (self.key, self.proxy_url, self.proxy_token):
+            if value:
+                text = text.replace(value, "[redacted]")
+        return text
 
     def attach(self, name, *, secret=False):
         self.process = subprocess.Popen(
@@ -344,7 +353,20 @@ def container_args(record, action, name):
     args = ["create", "--name", name, "--init"]
     for key, value in labels(record).items():
         args.extend(["--label", key + "=" + value])
-    for path in (root, str(Path(root) / "sdk/python")):
+    paths = [root, str(Path(root) / "sdk/python")]
+    gitfile = Path(root) / ".git"
+    if gitfile.is_file():
+        marker = gitfile.read_text().strip()
+        if not marker.startswith("gitdir: "):
+            raise LaunchError("Worktree Git metadata is malformed")
+        directory = (Path(root) / marker.removeprefix("gitdir: ")).resolve(strict=True)
+        commonfile = directory / "commondir"
+        common = (directory / commonfile.read_text().strip()).resolve(strict=True)
+        if not directory.is_relative_to(common) or not (common / "objects").is_dir():
+            raise LaunchError("Worktree Git metadata has no containing object store")
+        if not common.is_relative_to(Path(root)):
+            paths.append(str(common))
+    for path in paths:
         if "," in path:
             raise LaunchError("Docker bind paths must not contain commas")
         args.extend(["--mount", f"type=bind,src={path},dst={path},readonly"])
@@ -364,6 +386,8 @@ def container_args(record, action, name):
     )
     if action != "cleanup":
         args.extend(["--env", "ANTHROPIC_API_KEY"])
+    if record.get("host_tunnel"):
+        args.extend(["--env", "HTTPS_PROXY"])
     args.extend(
         [
             record["image_id"],
@@ -489,7 +513,17 @@ def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="
             raise LaunchError("The inner controller entry point is missing")
         output.mkdir(parents=True, mode=0o700)
     with output_lock(output):
-        return _execute(action, output, amount, root=root, docker=docker, descriptor=descriptor)
+        use_tunnel = isinstance(docker, Docker) and sys.platform == "darwin"
+        with HostTunnel() if use_tunnel else nullcontext() as tunnel:
+            if tunnel is not None:
+                docker.proxy_url, docker.proxy_token = tunnel.url, tunnel.token
+            try:
+                return _execute(
+                    action, output, amount, root=root, docker=docker, descriptor=descriptor
+                )
+            finally:
+                if tunnel is not None:
+                    docker.proxy_url = docker.proxy_token = None
 
 
 def _execute(action, output, amount, *, root, docker, descriptor):
@@ -509,6 +543,7 @@ def _execute(action, output, amount, *, root, docker, descriptor):
             image_id=None,
             containers=[],
             started=False,
+            host_tunnel=isinstance(docker, Docker) and bool(docker.proxy_url),
             state="building",
         )
         save(path, record)

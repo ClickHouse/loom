@@ -99,6 +99,14 @@ def execute(args):
     if launch["evaluation"] != args.eval:
         raise PermissionError("Repository evaluation differs from the launch record")
     profile = profile_for(source, args.eval)
+    proxy = os.environ.get("HTTPS_PROXY")
+    if proxy:
+        docker_config = Path.home() / ".docker/config.json"
+        if docker_config.exists():
+            raise PermissionError("The controller must have a fresh Docker configuration")
+        docker_config.parent.mkdir(mode=0o700, exist_ok=True)
+        docker_config.write_text(json.dumps({"proxies": {"default": {"httpsProxy": proxy}}}))
+        docker_config.chmod(0o600)
     meter = Spending(output / "spending.jsonl", dollars=args.budget_usd, model="claude-haiku-5-5")
     gateway = runtime = None
     try:

@@ -206,6 +206,18 @@ class PublicLauncher(unittest.TestCase):
             if path.is_file():
                 self.assertNotIn(docker.key, path.read_text())
 
+    def test_linked_worktree_mounts_its_exact_git_object_store_readonly(self):
+        common = self.root.parent / "objects.git"
+        (common / "objects").mkdir(parents=True)
+        worktree = common / "worktrees/evaluation"
+        worktree.mkdir(parents=True)
+        (worktree / "commondir").write_text("../..")
+        (self.root / ".git").write_text("gitdir: " + str(worktree))
+        docker = FakeDocker()
+        self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 0)
+        create = next(args for args, _ in docker.calls if args[0] == "create")
+        self.assertIn(f"type=bind,src={common},dst={common},readonly", create)
+
     def test_budget_and_existing_output_refuse_before_docker(self):
         docker = FakeDocker()
         docker.key = ""

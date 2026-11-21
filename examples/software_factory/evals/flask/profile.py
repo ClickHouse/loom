@@ -59,6 +59,8 @@ def _bootstrap(command, target, loom_python):
             stderr=subprocess.STDOUT,
             env={
                 "PATH": os.environ.get("PATH", os.defpath),
+                "HOME": str(Path.home()),
+                "HTTPS_PROXY": os.environ.get("HTTPS_PROXY", ""),
                 "PYTHONPATH": str(root) + os.pathsep + str(root / "sdk/python"),
                 "LOOM_ENV_FILE": "",
                 "PYTHONDONTWRITEBYTECODE": "1",
