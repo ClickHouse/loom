@@ -98,6 +98,7 @@ export function Browse() {
   const [searched, setSearched] = useState<{ q: string; rows: BrowseEntry[] | null; error: unknown } | null>(null);
   const [searchReads, setSearchReads] = useState(0);
   const [showAll, setShowAll] = useState(false);
+  const publicList = useRef<HTMLDivElement | null>(null);
   // The browse read failed: its error, in place of the public list; Retry reads again.
   const [error, setError] = useState<unknown>(null);
   const [reads, setReads] = useState(0);
@@ -170,6 +171,9 @@ export function Browse() {
       setRows(null);
       setError(null);
       setShowAll(false);
+      // Nothing of the last org's page or search stays: its answer is not this org's.
+      setFull(false);
+      setSearched(null);
       load(signal, live);
     },
     [identity.org, reads],
@@ -503,7 +507,12 @@ export function Browse() {
             )}
 
           {rows !== null && searchError === null && filtered.length > 0 && (
-            <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || searching || undefined}>
+            <div
+              ref={publicList}
+              className="space-y-2"
+              data-testid="browse-list"
+              aria-busy={refreshing || searching || undefined}
+            >
               {shown.map((r) => (
                 <SpaceRow
                   key={r.namespace}
@@ -531,8 +540,8 @@ export function Browse() {
                     if (next)
                       window.setTimeout(
                         () =>
-                          document
-                            .querySelector<HTMLElement>(
+                          publicList.current
+                            ?.querySelector<HTMLElement>(
                               `[data-focus-key="${CSS.escape(`space:${next.namespace}`)}"] [data-row-open]`,
                             )
                             ?.focus(),

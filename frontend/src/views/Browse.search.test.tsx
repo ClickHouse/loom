@@ -114,6 +114,24 @@ describe("Browse: a full page", () => {
     expect(await screen.findByText("zeta-ops")).toBeInTheDocument();
     expect(optsOf(2)).toMatchObject({ query: "zeta" });
   });
+
+  it("drops the last org's search when the org changes", async () => {
+    browseNamespaces.mockResolvedValueOnce(page(200));
+    render(<Browse />);
+    expect(await screen.findByText("team-000")).toBeInTheDocument();
+    browseNamespaces.mockResolvedValueOnce([row("zeta-ops")]);
+    await userEvent.type(screen.getByLabelText("Search namespaces"), "zeta");
+    expect(await screen.findByText("zeta-ops")).toBeInTheDocument();
+
+    // The other org's page is short: its filter is local, and acme's answer is gone.
+    browseNamespaces.mockResolvedValueOnce([row("zeta-two"), row("omega")]);
+    act(() => useStore.setState({ identity: { org: "other", namespace: "team", agent: "loom-ui" } }));
+    expect(await screen.findByText("zeta-two")).toBeInTheDocument();
+    expect(screen.queryByText("zeta-ops")).toBeNull();
+    expect(screen.queryByText("omega")).toBeNull();
+    await new Promise((r) => setTimeout(r, 400));
+    expect(browseNamespaces).toHaveBeenCalledTimes(3);
+  });
 });
 
 describe("Browse: a page under the limit", () => {
