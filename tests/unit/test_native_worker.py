@@ -22,8 +22,22 @@ import pytest
 from tests import _native_worker as native
 
 
+def _mock_core_pattern(monkeypatch, value):
+    original = Path.read_text
+
+    def read_text(path, *args, **kwargs):
+        if path == Path("/proc/sys/kernel/core_pattern"):
+            if isinstance(value, OSError):
+                raise value
+            return value
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+
 @pytest.fixture
 def session(tmp_path, monkeypatch):
+    _mock_core_pattern(monkeypatch, "core.%p\n")
     monkeypatch.setattr(resource, "getrlimit", lambda _: (0, 0))
     monkeypatch.setattr(native.shutil, "which", lambda _: "/synthetic/gdb")
     monkeypatch.delenv(native.CONTEXT, raising=False)
@@ -67,6 +81,7 @@ def test_records_are_private_bounded_and_never_overwrite(tmp_path):
 
 @pytest.mark.parametrize("reason", ["core", "debugger", "environment"])
 def test_unavailable_capture_refuses_before_creating_session(tmp_path, monkeypatch, reason):
+    _mock_core_pattern(monkeypatch, "core.%p\n")
     monkeypatch.setattr(resource, "getrlimit", lambda _: (1 if reason == "core" else 0, 1))
     monkeypatch.setattr(native.shutil, "which", lambda _: None if reason == "debugger" else "gdb")
     monkeypatch.delenv(native.CONTEXT, raising=False)
@@ -78,6 +93,29 @@ def test_unavailable_capture_refuses_before_creating_session(tmp_path, monkeypat
     with pytest.raises(ValueError):
         native.NativeSession(tmp_path)
     assert not (tmp_path / "native").exists()
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    ["core.%p\n", "|/usr/bin/core-collector %p\n", PermissionError("core pattern unreadable")],
+)
+def test_core_dump_policy_is_checked_before_creating_session(tmp_path, monkeypatch, pattern):
+    _mock_core_pattern(monkeypatch, pattern)
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (0, 0))
+    monkeypatch.setattr(native.shutil, "which", lambda _: "/synthetic/gdb")
+    monkeypatch.delenv(native.CONTEXT, raising=False)
+    if isinstance(pattern, OSError):
+        with pytest.raises(OSError) as refused:
+            native.NativeSession(tmp_path)
+        assert refused.value is pattern
+        assert not (tmp_path / "native").exists()
+    elif pattern.startswith("|"):
+        with pytest.raises(ValueError, match="piped core dumps"):
+            native.NativeSession(tmp_path)
+        assert not (tmp_path / "native").exists()
+    else:
+        session = native.NativeSession(tmp_path)
+        assert session.root.is_dir()
 
 
 def test_worker_configuration_rejects_unsupported_specs_without_partial_changes(session):

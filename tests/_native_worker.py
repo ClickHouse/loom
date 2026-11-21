@@ -100,6 +100,9 @@ class NativeSession:
 
         if resource.getrlimit(resource.RLIMIT_CORE)[0] != 0:
             raise ValueError("native diagnostics require an existing zero core limit")
+        # Piped kernel handlers receive raw dumps even when the core limit is zero.
+        if Path("/proc/sys/kernel/core_pattern").read_text().startswith("|"):
+            raise ValueError("native diagnostics refuse piped core dumps")
         if CONTEXT in os.environ:
             raise ValueError("native diagnostic environment is already in use")
         debugger = shutil.which("gdb")

@@ -58,10 +58,12 @@ GDB is a CI test tool; it is not a server dependency. The controlled transport c
 `python -m tests.unit.test_native_worker --mechanism`.
 
 `-p tests._worker_status --native-worker-signatures` opts into this collection on Linux
-with GDB and an existing zero core-size limit. Missing prerequisites or a tracing
-refusal stop startup. No tracing policy or capability changes are made. Each helper
-sets its own parent-death signal so forced launcher termination also stops its debugger
-and worker. Registrations never authorize controller signals to another process.
+with GDB, a zero core-size limit and no piped core-dump handler. CI restricts only each
+diagnostic command's soft core-size limit to zero. A piped handler, unreadable core
+configuration, missing prerequisites or a tracing refusal stop startup. No tracing
+policy or capability changes are made. Each helper sets its own parent-death signal so
+forced launcher termination also stops its debugger and worker. Registrations never
+authorize controller signals to another process.
 
 Session artifacts under `.pytest_cache/worker-status/` contain bounded native
 PCs, symbols, module identities and offsets for up to eight threads and 24 frames per
