@@ -187,6 +187,11 @@ default, and every stored field repeats its name. The writers that change a stor
 place (the usage fold, a redaction) merge fields into it, and may store a field at its
 default.
 
+A stored row always carries `requires_review`, including false. When that field
+is absent, decoding treats a proposed or rejected row as requiring review. Keeping
+false explicit lets an ordinary rejected fact remain correctable without clearing
+the review requirement of a proposal.
+
 A memory id is not unique within an org: a namespace restored from another's snapshot
 keeps the memory ids under newer versions. Every head read by id therefore names its
 namespace (`reads.get_by_id`), and an op addressed by the id alone (`memory.get_by_id`,

@@ -134,8 +134,6 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
     """source_class and a live attestation ride onto the shared embedding, so
     the provenance ranking term and memory.ask's unverified-external filter
     treat a promoted row like its source; a stale attestation does not count."""
-    from types import SimpleNamespace
-
     from server.memory import store as memory_repo
     from server.memory.api.models_lifecycle import MemoryPromoteInput
     from server.memory.app import conflicts
@@ -165,22 +163,25 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
     monkeypatch.setattr(shared_repo, "insert_shared_embedding", _shared_emb)
 
     for verified_sha, want in (("a" * 64, 1), ("b" * 64, 0)):
-        src = SimpleNamespace(
-            sensitivity="",
-            org="o",
-            namespace="team",
-            agent="a",
-            user_id="-",
-            session_id="-",
-            memory_key="k",
-            value={"v": "external fact"},
-            memory_type="semantic",
-            confidence=0.9,
-            valid_at=None,
-            source_class="external",
-            verified_by="human:alice",
-            verified_sha256=verified_sha,
-            content_sha256="a" * 64,
+        src = memory_repo.MemoryRow.from_snapshot(
+            dict(
+                memory_id="11111111-1111-1111-1111-111111111111",
+                sensitivity="",
+                org="o",
+                namespace="team",
+                agent="a",
+                user_id="-",
+                session_id="-",
+                memory_key="k",
+                value={"v": "external fact"},
+                memory_type="semantic",
+                confidence=0.9,
+                valid_at=None,
+                source_class="external",
+                verified_by="human:alice",
+                verified_sha256=verified_sha,
+                content_sha256="a" * 64,
+            )
         )
 
         async def _get(*a: Any, _src: Any = src, **kw: Any) -> Any:

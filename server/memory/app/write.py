@@ -800,6 +800,7 @@ def _stamp_lifecycle(
         return dup
     if input.proposed:
         memory_row["status"] = "proposed"
+        memory_row["requires_review"] = 1
     return ""
 
 

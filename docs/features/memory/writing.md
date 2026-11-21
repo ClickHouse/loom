@@ -340,16 +340,21 @@ fact. The `relations` it names stay out of the fact graph, and accepting it does
 them: state them again once it is established. A key that already holds a fact answers 409
 `KEY_HOLDS_FACT`. `memory.proposals` lists proposals with the graded runs that relied on
 each. A run in the proposal's namespace counts toward its trial when it names the key in
-`run.complete(memories_used=…)` and is graded with `run.grade`. Loom decides only when the
-owner set `proposal_policy.mode` to `auto` (`min_passes`, `max_fails`,
-`reject_after_fails`). See [runs](../runs.md).
+`run.complete(memories_used=…)` and is graded with `run.grade`. Pass thresholds mark a
+proposal ready for review. With `proposal_policy.mode="auto"`, `reject_after_fails` can
+reject a proposal; automatic acceptance is refused. See [runs](../runs.md).
 
-Any writer, the proposing agent's own token included, accepts or rejects a proposal under
-either policy mode, with `memory.proposal_decide` or on the **Proposals** tab of the
-**Review queue** at `/admin/review_queue`. The admin drawer never lists the Review queue for
-a proposal ([dashboard](../dashboard.md#the-admin-drawer)): open `/admin/review_queue`
-directly. A decision names a key and decides its newest row, so the tab offers no decision
-for a key that more than one listed proposal holds. Accepting a proposal that recorded a
+`memory.proposal_decide` requires an administrator. Acceptance also requires an
+authenticated human whose subject, including linked aliases, differs from the proposer.
+Service accounts and anonymous callers cannot approve. Acceptance supplies
+`approved_sha256`, a map from each key to the canonical `content_sha256` that the reviewer
+read. Missing hashes or changed content leave that key undecided. The approved revision
+records the reviewer's identity and content hash. Pending review survives rejection,
+metadata changes, tombstones and snapshot restoration; ordinary writes cannot activate it.
+A pending row cannot be moved to another key. The **Proposals** tab of the **Review queue**
+at `/admin/review_queue` supplies the displayed hashes when an administrator accepts.
+A decision names a key and decides its newest row, so the tab offers no decision for a key
+that more than one listed proposal holds. Accepting a proposal that recorded a
 contradiction while on trial stores it `conflicted`, and it waits on the **Conflicts** tab.
 Learnings have a review of their own:
 [learnings review queue](./procedures-and-learnings.md#learnings-review-queue).
@@ -470,8 +475,7 @@ These writes send no event:
 A receiver that mirrors what Loom serves reads `memory.auto_retirements` for the rows the
 supersessions above retired: a write's own and the conflict resolver's.
 
-Accepting a proposal, by `memory.proposal_decide` or the namespace's `auto` proposal
-policy, sends `memory.written`.
+Accepting a proposal with `memory.proposal_decide` sends `memory.written`.
 
 ```json
 {

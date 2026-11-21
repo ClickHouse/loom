@@ -18,22 +18,22 @@ from tests.unit.test_cell_trigger_ci_creator import protocol_reader as protocol_
 # Frozen independently from the specified typed rows and length-prefixed chain format.
 FROZEN_CHAINS = {
     "delivery1": [
-        "b9de65407fb5cb99d9c1b7bdfe57cbc4bc53631ecd43f8d3cbe4ad43c6d0a9d9",
-        "b9de65407fb5cb99d9c1b7bdfe57cbc4bc53631ecd43f8d3cbe4ad43c6d0a9d9",
-        "2ff1b1e421e82c66fb3f2bf908287732ae165ca8085bd978406fa5d5da98e763",
-        "460467af421698fa9dd5afc8245b401b95744c3400314bb3b0d9cac7e1e2998a",
+        "51bd6e8908f2494690b42922fa9febb90c54795fbfbb0a6fc54985f2b932c31d",
+        "51bd6e8908f2494690b42922fa9febb90c54795fbfbb0a6fc54985f2b932c31d",
+        "54be88fc192eff14e61baa778cf1df9bc1139e8263262e70d42983e5469d6239",
+        "fcf23a1ee95f236c09e2e3fd10ef8ffa8ead9d86dc9203fe8db39cb399fbbbf2",
     ],
     "delivery2": [
-        "12dc10b5fd92b7040f1ce74a7f7117d65e7a0201cfb2fe253e49083d01b3d8e7",
-        "12dc10b5fd92b7040f1ce74a7f7117d65e7a0201cfb2fe253e49083d01b3d8e7",
-        "454e76f525cd9b82b5e37973b122f84b7eb4aa5cebbdd2e6eb3816d73edd29b0",
-        "6d05bc5906e4a0d03f08d7e18f8b9402ce0d62d0708965d18c936850e18ea331",
+        "f73f3b3be6c5fd24463ed9502e31df23c58c3064b51dc0aa4299cd27bebc1027",
+        "f73f3b3be6c5fd24463ed9502e31df23c58c3064b51dc0aa4299cd27bebc1027",
+        "da18067ae8443825622dda7ed41c789c9414441cbdd58d8a6f1a38884caf3927",
+        "e0907c09e6ad430fd278bb28a77d3431ca2ffccd043c76f73f63e0993d237313",
     ],
     "api": [
         "78a3c6e80c1664b376cdf33619b47146c51d2b1740b2b69349446d937e45f45c",
         "78a3c6e80c1664b376cdf33619b47146c51d2b1740b2b69349446d937e45f45c",
-        "5efc943155e492a999b0877f66eac86ed90fd1338e24f5388cac9e47bb18ef7e",
-        "460467af421698fa9dd5afc8245b401b95744c3400314bb3b0d9cac7e1e2998a",
+        "e8d048f64d6f860160e0f1c92b578dc6ebffcd4d96b8720265650339d8b17d9b",
+        "fcf23a1ee95f236c09e2e3fd10ef8ffa8ead9d86dc9203fe8db39cb399fbbbf2",
     ],
 }
 
@@ -116,7 +116,7 @@ def _case(native, count, api):
     items, stored, memories, audits, expected = [], [], [], [], []
     for index in range(count):
         row, audit = _row_and_audit(specification, index, api)
-        assert set(row) == set(specification["memory_fields"]) and len(row) == 61
+        assert set(row) == set(specification["memory_fields"]) and len(row) == 62
         item = dict(
             kind="api" if api else "delivery",
             key=row["memory_key"],
@@ -127,7 +127,9 @@ def _case(native, count, api):
         if not api:
             item.update(row=deepcopy(row), audit=deepcopy(audit))
         sparse = {
-            key: value for key, value in row.items() if key not in specification["sparse_defaults"]
+            key: value
+            for key, value in row.items()
+            if key == "requires_review" or key not in specification["sparse_defaults"]
         }
         record = {}
         for prefix, fields in (
