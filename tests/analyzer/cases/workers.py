@@ -292,7 +292,10 @@ async def _period_keys(ch: RecordingCH, c: dict[str, Any]) -> None:
     from server.memory.app import period_digest
 
     ident = {"org": ORG, "namespace": NS, "agent": "bot", "user_id": "alice"}
-    await period_digest._skipped_period_keys(ch, ident, rewrite=False)
+    await period_digest._skipped_period_keys(ch, ident, ["period_digest_first_last"], rewrite=False)
+    for after in (None, (datetime(2026, 1, 1), "s1")):
+        async for _ in period_digest._fetch_digests(ch, ident, after=after):
+            pass
 
 
 async def _conflict_resolver(ch: RecordingCH, c: dict[str, Any]) -> None:
@@ -399,8 +402,53 @@ async def _source_retirements(ch: RecordingCH, c: dict[str, Any]) -> None:
     await queue.write(item, pending=False, ch=ch)
 
 
+async def _refusal_publication(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.app import extraction_queue as queue
+    from server.memory.domain.refusals import inspect
+    from server.memory.store import refusals
+
+    key = (ORG, NS, "alice")
+    await refusals._matches_clickhouse(ch, key, [inspect("a removed passage")])
+    await refusals._matches_clickhouse(ch, key, [inspect("a removed passage")], erasure_only=True)
+    await refusals._delete_old_vector(
+        ch,
+        {
+            "org": ORG,
+            "namespace": NS,
+            "agent": "a",
+            "user_id": "alice",
+            "session_id": "s",
+            "memory_key": "k",
+            "scope": "private",
+            "embedding_model": "m",
+            "version": 7,
+        },
+    )
+    await refusals._delete_old_shared(
+        ch, {"org": ORG, "namespace": NS, "memory_key": "k", "version": 7}
+    )
+    row = queue._mirror(
+        {
+            "org": ORG,
+            "namespace": NS,
+            "agent": "a",
+            "user_id": "alice",
+            "session_id": "s",
+            "queue_id": "q",
+            "payload": '{"messages":[]}',
+            "version": 6,
+        },
+        status="done",
+    )
+    await queue._source_present(ch, row)
+    await queue._drop_refused(ch, row)
+
+
 def cases() -> list[Case]:
     return [
+        Case(
+            "memory.refusal_publication", "server.memory.store.refusals", _refusal_publication, {}
+        ),
         Case(
             "workers.source_retirements",
             "server.knowledge.store.source_retirements",

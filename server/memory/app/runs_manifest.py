@@ -204,8 +204,8 @@ async def fetch_manifest_rows(
     if sids:
         digests = await ch.query_all(
             f"""
-            SELECT session_id, substring(summary_text, 1, {_DIGEST_CHARS * 2}) AS summary_text,
-                   length(derived_from) AS derived_n
+            SELECT org, namespace, agent, user_id, session_id, summary_text, key_facts,
+                   derived_from, version, length(derived_from) AS derived_n
             FROM loom.session_summaries FINAL
             WHERE {scope}
               AND session_id IN {{sids:Array(String)}}
@@ -214,6 +214,9 @@ async def fetch_manifest_rows(
             """,
             params={**params, "sids": sids},
         )
+    from server.memory.store.summary_sources import current_summary_sources
+
+    digests = await current_summary_sources(ch, digests, org=org, namespace=namespace)
     return merge_rows(list(observations or []), list(runs or []), list(digests or []), limit=limit)
 
 

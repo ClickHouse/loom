@@ -84,6 +84,7 @@ def worker_env(monkeypatch):
 
     async def insert_rows(rows, *a, **kw):
         inserted.append(list(rows))
+        return rows
 
     async def none_missing(**kw):
         return []

@@ -6,15 +6,17 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
 
 from server.core import leases
+from server.core.ch import get_client
 from server.core.datetimes import naive_utc_now, to_naive_utc
 from server.core.errors import (
+    AuthInsufficientError,
     DefinitionCeilingError,
     DefinitionNameTakenError,
     DefinitionPromotionRefusedError,
@@ -23,7 +25,7 @@ from server.core.errors import (
     SensitiveDefinitionRefusedError,
     ValidationError,
 )
-from server.core.hashing import served_content_sha256
+from server.core.hashing import served_content_sha256, sha256_value
 from server.embedding import get_embedder
 from server.embedding.documents import document_vector
 from server.embedding.embedder import Embedder
@@ -49,8 +51,8 @@ from server.memory.domain.memory_types import (
 from server.memory.domain.promotion_source import promotion_source
 from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.domain.trust import verification_state
+from server.memory.store import refusals
 from server.memory.store import shared as shared_repo
-from server.memory.store import source_review
 from server.memory.store.rows import MemoryRow, next_version, version_over
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
@@ -187,7 +189,7 @@ async def handle_memory_promote(
         if embedder is None
         else _shared_vector_row(src, target_key, excerpt, embedder, embedding, now_naive)
     )
-    async with source_review.publication(src) as mark:
+    async with _promotion_admission(src, target_key, definition=is_definition_promotion) as mark:
         if is_definition_promotion:
             await _write_definition(input.org, input.namespace, names, row, vector_row, mark)
         else:
@@ -199,6 +201,20 @@ async def handle_memory_promote(
         reversible_until=reversible_until,
         ignored_args=ignored,
     )
+
+
+@asynccontextmanager
+async def _promotion_admission(
+    source: MemoryRow, target_key: str, *, definition: bool
+) -> AsyncIterator[Callable[[bool], None]]:
+    # Demotion holds this claim while borrowing its source connection too.
+    async with AsyncExitStack() as stack:
+        if definition:
+            await stack.enter_async_context(_definition_claim(source.org, source.namespace))
+        mark = await stack.enter_async_context(
+            refusals.source_publication(get_client(), source, target_key)
+        )
+        yield mark
 
 
 async def _write_shared(
@@ -265,7 +281,10 @@ async def _approved_definition_names(
 
 def _refuse_unshareable(src: MemoryRow) -> None:
     """Refuse a row the shared layer cannot carry: a block row or a 'high' one."""
-    source_review.require_reviewed(src)
+    from server.memory.domain.proposal_review import pending_review
+
+    if pending_review(src):
+        raise AuthInsufficientError("An unreviewed proposal cannot be promoted")
     # Block rows are per-agent working memory; loom.shared has no char_limit,
     # so promoting one would silently drop its overflow cap. Refuse.
     if src.memory_type == "profile":
@@ -320,6 +339,7 @@ def _shared_vector_row(
         "memory_type": src.memory_type,
         "scope": "shared",
         "content_excerpt": excerpt,
+        "content_sha256": sha256_value(src.value),
         "embedding_model": embedder.model_name,
         "embedding_dim": embedder.dim if embedding else 0,
         "embedding": embedding,  # [] when embed failed
@@ -332,7 +352,7 @@ def _shared_vector_row(
         # counts only while it binds the promoted content's hash.
         "source_class": src.source_class,
         "verified": int(
-            verification_state(src.verified_by, src.verified_sha256, src.content_sha256)
+            verification_state(src.verified_by, src.verified_sha256, sha256_value(src.value))
             in ("human", "process")
         ),
     }
@@ -349,18 +369,17 @@ async def _write_definition(
     """Write the definition's shared row and its vector unless the namespace is at its
     ceiling or another shared definition holds one of its names, under the namespace's
     claim: of a definition's promotions and demotes, the last to run decides."""
-    async with _definition_claim(org, namespace):
-        key = row["memory_key"]
-        await _check_shared_definitions(org, namespace, names, key)
-        # Above the row and the vector: a demote cut off between the two left a retired
-        # vector above the live row.
-        head = await shared_repo.fetch_shared(org, namespace, key, strong=True)
-        version = await _definition_version(org, namespace, key, head)
-        mark(True)
-        await shared_repo.insert_shared_row({**row, "version": version})
-        if vector_row is not None:
-            await shared_repo.insert_shared_embedding({**vector_row, "version": version})
-        mark(False)
+    key = row["memory_key"]
+    await _check_shared_definitions(org, namespace, names, key)
+    # Above the row and the vector: a demote cut off between the two left a retired
+    # vector above the live row.
+    head = await shared_repo.fetch_shared(org, namespace, key, strong=True)
+    version = await _definition_version(org, namespace, key, head)
+    mark(True)
+    await shared_repo.insert_shared_row({**row, "version": version})
+    if vector_row is not None:
+        await shared_repo.insert_shared_embedding({**vector_row, "version": version})
+    mark(False)
 
 
 async def _definition_version(

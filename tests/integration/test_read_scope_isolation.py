@@ -348,7 +348,11 @@ def _bounded_writes() -> list[Any]:
 
     names = {n for n, why in NARROW_SAFE_OPS.items() if why.startswith("a write")}
     names |= {n for n in SCOPED_OPS if _writes(OPERATIONS_BY_NAME[n])}
-    return [OPERATIONS_BY_NAME[n] for n in sorted(names)]
+    # A permanent delete runs after writes that reuse this walk's canary value.
+    return [
+        OPERATIONS_BY_NAME[n]
+        for n in sorted(names, key=lambda name: (name == "memory.delete", name))
+    ]
 
 
 def _refused_ops() -> list[Any]:
@@ -991,6 +995,18 @@ def test_writes_aimed_at_vs_runs_threads_records_and_blobs_leave_them_alone(
         ns_tok,
         "memory.set",
         {**v, "memory_key": f"pinned/{tag}", "value": pinned_text, "pinned": True},
+    )
+    wait_until(
+        lambda: (
+            ch_client.query(
+                "SELECT count() FROM loom.memory_embeddings FINAL "
+                "WHERE org = {org:String} AND namespace = {ns:String} "
+                "AND memory_key = {key:String} AND tombstoned_at IS NULL",
+                parameters={"org": seed.org, "ns": seed.ns, "key": f"pinned/{tag}"},
+            ).result_rows[0][0]
+            == 1
+        ),
+        description="the pinned conflict peer to be published",
     )
     near = {"memory_key": f"near/{tag}", "value": pinned_text.replace(code, "unknown")}
     # Control: an unbounded writer is blocked by the pinned row, so the probe can see it.

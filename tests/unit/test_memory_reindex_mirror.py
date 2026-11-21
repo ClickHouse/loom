@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.embedding._provider import MalformedEmbedding
 from server.memory import store as mr
 
@@ -27,6 +28,26 @@ class _CH:
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> list[Any]:
         self.sql.append(sql)
         self.params.append(params or {})
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            from server.memory.store import MemoryRow, build_memory_version_row, identity_key
+
+            heads = [
+                MemoryRow.from_snapshot(
+                    {
+                        **r,
+                        "value": r["content_excerpt"],
+                        "memory_id": "11111111-1111-1111-1111-111111111111",
+                    }
+                )
+                for r in self.rows
+            ]
+            return [
+                build_memory_version_row(row)
+                for row in heads
+                if identity_key(row) in params["keys"]
+            ]
         if "max(version) AS ev" in sql:
             return []  # no embedding row of the key yet
         return self.rows
@@ -57,6 +78,7 @@ def _memory_mirror_row() -> dict[str, Any]:
         "memory_key": "k",
         "memory_type": "preference",
         "content_excerpt": "x" * 600,
+        "content_sha256": sha256_value("x" * 600),
         "run_id": "r",
         "entities": ["e"],
         "tags": ["t"],
@@ -125,6 +147,23 @@ def test_a_reindexed_row_carries_its_memory_rows_columns(monkeypatch: Any) -> No
     assert row["embedding_model"] == "fake-model"
 
 
+def test_a_withheld_reindex_is_not_counted_or_indexed(monkeypatch: Any) -> None:
+    ch = _CH([_memory_mirror_row()])
+    indexed: list[Any] = []
+
+    async def withheld(rows: Any, **_: Any) -> list[Any]:
+        assert len(rows) == 1
+        return []
+
+    async def index(rows: Any, **_: Any) -> None:
+        indexed.extend(rows)
+
+    monkeypatch.setattr(mr, "insert_embedding_rows", withheld)
+    monkeypatch.setattr(mr, "index_late_rows", index)
+    assert _run(monkeypatch, ch).processed == 0
+    assert indexed == [] and ch.inserted == []
+
+
 def test_the_read_skips_high_sensitivity_rows_and_current_keys_unless_forced(
     monkeypatch: Any,
 ) -> None:
@@ -170,7 +209,15 @@ class _RecordingEmbedder(_Embedder):
 def test_reindex_embeds_memory_sets_texts_and_pairs_the_key_vector(monkeypatch: Any) -> None:
     from server.memory.domain.embed_text import embedding_texts
 
-    rows = [dict(_memory_mirror_row(), memory_key=k, content_excerpt=f"v {k}") for k in "ab"]
+    rows = [
+        dict(
+            _memory_mirror_row(),
+            memory_key=k,
+            content_excerpt=f"v {k}",
+            content_sha256=sha256_value(f"v {k}"),
+        )
+        for k in "ab"
+    ]
     ch = _CH(rows)
     emb = _RecordingEmbedder()
     _run_with(monkeypatch, ch, emb)
@@ -286,3 +333,12 @@ def test_a_reindex_indexes_its_late_bm25_rows(monkeypatch: Any) -> None:
     ch = _CH([dict(_memory_mirror_row())])
     assert _run(monkeypatch, ch).processed == 1
     assert len(handed) == 1 and handed[0][0]["memory_key"] == "k"
+
+
+def test_reindex_repairs_an_unhashed_canonical_source_without_attesting_it(monkeypatch):
+    source = _memory_mirror_row() | {"content_sha256": "", "verified": 1}
+    ch = _CH([source])
+    assert _run(monkeypatch, ch).processed == 1
+    row = ch.inserted[0][1][0]
+    assert row["content_sha256"] == sha256_value(source["content_excerpt"])
+    assert row["verified"] == 0

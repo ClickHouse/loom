@@ -853,18 +853,20 @@ async def _open_edges(ch: Any, org: str, want: set[str]) -> list[str]:
 
 async def _retired_embedding(ch: Any, row: dict[str, Any]) -> None:
     """`row`'s search row as its retirement left it: superseded, with a vector."""
+    from server.core.hashing import served_row_value, sha256_value
     from server.memory import store as M
 
-    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key", "content_sha256")
+    cols = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
     emb = M.build_embedding_row(
         **{c: row[c] for c in cols},
+        content_sha256=sha256_value(served_row_value(row)),
         embedding_model="itest",
         embedding_dim=3072,
         embedding=[0.01] * 3072,
         status="superseded",
         invalid_at=naive_utc_now(),
     )
-    await M.insert_embedding_rows([emb], ch=ch)
+    assert await M.insert_embedding_rows([emb], ch=ch) == [emb]
 
 
 async def _embedding_status(ch: Any, row: dict[str, Any]) -> str:

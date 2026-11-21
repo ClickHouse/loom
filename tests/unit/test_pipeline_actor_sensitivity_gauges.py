@@ -241,6 +241,8 @@ class _CH:
 
     async def query_all(self, sql, params=None):
         self.calls.append((sql, params or {}))
+        if "FROM loom.memory_refusals" in sql:
+            return []
         return list(self.rows)
 
     async def query_one(self, sql, params=None):
@@ -341,6 +343,7 @@ async def test_apply_relabels_tombstones_high_and_tags_medium(monkeypatch) -> No
 
     async def _ins(rows, *, ch=None):
         inserted.append(rows)
+        return rows
 
     monkeypatch.setattr(memory_repo, "retire_vectors_for_keys", _retire)
     monkeypatch.setattr(memory_repo, "live_embedding_rows_for_key", _live)
@@ -1292,6 +1295,7 @@ async def test_integrity_counts_and_the_dim0_repair(monkeypatch) -> None:
 
     async def _ins(rows, *, ch=None):
         inserted.append(rows)
+        return rows
 
     monkeypatch.setattr(memory_repo, "insert_embedding_rows", _ins)
     rows = [
@@ -1490,7 +1494,7 @@ async def test_the_medium_tag_copy_rechecks_its_head(monkeypatch) -> None:
         return [{**ident, "tags": ["t"], "embedding": [0.1], "embedding_dim": 1, "version": 3}]
 
     async def _ins(rows, *, ch=None):
-        return None
+        return rows
 
     async def _check(rows, *, ch=None):
         checked.append(rows)

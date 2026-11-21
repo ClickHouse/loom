@@ -48,8 +48,8 @@ async with Agent(org="acme", namespace="support", agent="auditor") as agent:
         print(v["written_at"], v["actor"], v["source_class"], v["value"])
 ```
 
-A tombstone is a version too, so a delete shows in history and `memory.restore` can
-revive the key within 14 days. For point-in-time reads of current state, use `as_of` on
+A tombstone is a version too, so a delete shows in history. `memory.restore` can
+reverse an automatic tombstone within 14 days when no permanent refusal exists. For point-in-time reads of current state, use `as_of` on
 `memory.get`, `memory.search` and `memory.ask`
 ([validity time](./writing.md#validity-time-valid_at-and-valid_to)).
 

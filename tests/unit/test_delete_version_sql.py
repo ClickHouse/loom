@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 import server.memory.app.handlers as hm
+from server.core.hashing import sha256_value
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory import store as memory_repo
 from server.memory.api.models_crud import (
@@ -27,6 +28,7 @@ from server.memory.api.models_crud import (
 )
 from server.memory.app import set_commit
 from server.memory.store import key_write_lock
+from server.memory.store.refusals import check_clickhouse as check_consent
 from server.memory.store.rows import build_first_version_row
 from tests.unit.clickhouse_local import CLICKHOUSE, KeptCH, ddl, view
 
@@ -54,7 +56,7 @@ def _row(value: str, version: int) -> dict[str, Any]:
             "memory_type": "procedural",  # not embedded: memory.set's plain insert
             "value": json.dumps(value),
             "value_json": "{}",
-            "content_sha256": "",
+            "content_sha256": sha256_value(value),
             "actor": "process:okf-sync",
             "source_class": "imported",
             "confidence": 1.0,
@@ -67,7 +69,7 @@ def _row(value: str, version: int) -> dict[str, Any]:
 async def _recorded_checks(ch: KeptCH) -> list[dict[str, Any]]:
     """Every check delete_version recorded, done or not, oldest tombstone first."""
     return await ch.query_all(
-        "SELECT checked, tombstone, done FROM loom.delete_version_checks FINAL ORDER BY tombstone"
+        "SELECT checked, tombstone, checked_state_sha256, done FROM loom.delete_version_checks FINAL ORDER BY tombstone"
     )
 
 
@@ -77,6 +79,7 @@ async def _times_out(*_a: Any, **_k: Any) -> Any:
 
 @pytest.fixture
 def ch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> KeptCH:
+    monkeypatch.setattr("server.memory.store.refusals.check_clickhouse", check_consent)
     ch = KeptCH(
         tmp_path,
         ddl("memory"),
@@ -111,6 +114,7 @@ def _in_flight_set(version: int) -> set_commit._SetWrite:
         expires_at=None,
     )
     w.memory_row = _row("Thursdays", version)
+    w.new_sha = sha256_value("Thursdays")
     w.memory_id = _MID
     return w
 
@@ -363,6 +367,7 @@ async def test_a_bulk_write_in_flight_during_a_delete_lands_with_its_vectors(
                 memory_key=_KEY,
                 memory_type="semantic",
                 content_excerpt=value,
+                content_sha256=sha256_value(value),
                 version=v,
                 embedding=[0.0] * 3072,
                 embedding_dim=3072,
@@ -740,7 +745,13 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
     # Run again (its done mark lost), the check answers the same and copies nothing twice.
     rows_before = await ch.query_all("SELECT version FROM loom.memory_versions ORDER BY version")
     (done,) = await _recorded_checks(ch)
-    check = {**_ID, "memory_key": _KEY, "checked": done["checked"], "tombstone": done["tombstone"]}
+    check = {
+        **_ID,
+        "memory_key": _KEY,
+        "checked": done["checked"],
+        "tombstone": done["tombstone"],
+        "checked_state_sha256": done["checked_state_sha256"],
+    }
     again = await hm.rerun_delete_check(check)
     assert again is not None and (again.tombstoned, again.found) == (False, False)
     assert (
@@ -754,9 +765,18 @@ async def test_a_plain_delete_below_the_tombstone_answers_not_found_and_restores
 
     monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
-    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
-    assert restored.restored is True
-    got = await _read_back(ch)
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="refused by a previous deletion"):
+        await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    got = await memory_repo.get_by_key(
+        memory_repo.Identity(**_ID),
+        _KEY,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
+        include_tombstoned=True,
+        ch=ch,
+    )
     assert got is not None and got.value == "Thursdays"
 
 
@@ -795,15 +815,24 @@ async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
     assert out.tombstoned is False and out.found is False
     monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
-    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
-    assert restored.restored is True
-    got = await _read_back(ch)
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="refused by a previous deletion"):
+        await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    got = await memory_repo.get_by_key(
+        memory_repo.Identity(**_ID),
+        _KEY,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
+        include_tombstoned=True,
+        ch=ch,
+    )
     assert got is not None and got.value == "Tuesdays"
     assert (list(got.tags) if column == "tags" else got.expire_reason) == changed
 
 
 @pytest.mark.asyncio
-async def test_a_restored_key_does_not_carry_the_delete_version_marker(
+async def test_a_deleted_version_refuses_restore_and_retains_its_marker(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # The marker stays on delete_version's tombstone; the row memory.restore brings back,
@@ -817,10 +846,19 @@ async def test_a_restored_key_does_not_carry_the_delete_version_marker(
     await hm.handle_memory_delete_version(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
     )
-    out = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
-    assert out.restored is True
-    got = await _read_back(ch)
-    assert got is not None and not got.source_trace.startswith("memory.delete_version:")
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="refused by a previous deletion"):
+        await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    got = await memory_repo.get_by_key(
+        memory_repo.Identity(**_ID),
+        _KEY,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
+        include_tombstoned=True,
+        ch=ch,
+    )
+    assert got is not None and got.source_trace == f"memory.delete_version:{head}"
 
 
 @pytest.mark.asyncio
@@ -835,11 +873,11 @@ async def test_a_later_write_listed_but_not_read_leaves_the_check_owed(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
-    write_row = hm._write_tombstone_row
+    key_moved_on = hm._key_moved_on
 
-    async def set_lands_first(existing: Any, **kw: Any) -> None:
-        await set_commit._set_plain_insert(w, ch)
-        await write_row(existing, **kw)
+    async def set_lands_first(existing: Any, **kw: Any) -> Any:
+        await ch.insert("loom.memory", [w.memory_row])
+        return await key_moved_on(existing, **kw)
 
     async def nothing(*_a: Any, **_k: Any) -> list[Any]:
         return []
@@ -847,7 +885,7 @@ async def test_a_later_write_listed_but_not_read_leaves_the_check_owed(
     async def no_retire(*_a: Any, **_k: Any) -> None:
         raise AssertionError("nothing retires before the check runs")
 
-    monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
+    monkeypatch.setattr(hm, "_key_moved_on", set_lands_first)
     monkeypatch.setattr(hm, "_retire_derived", no_retire)
     monkeypatch.setattr(memory_repo, "fetch_version_rows", nothing)
     with pytest.raises(BackendUnavailableError):
@@ -887,6 +925,7 @@ async def test_a_batch_whose_fence_read_missed_a_conditional_delete_lands_with_i
                 memory_key=_KEY,
                 memory_type="semantic",
                 content_excerpt=value,
+                content_sha256=sha256_value(value),
                 version=v,
                 embedding=[0.0] * 3072,
                 embedding_dim=3072,
@@ -1165,12 +1204,12 @@ async def test_a_check_that_fails_after_the_tombstone_is_finished_by_the_worker(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
-    write_row = hm._write_tombstone_row
+    key_moved_on = hm._key_moved_on
     retired: list[Any] = []
 
     async def set_lands_first(existing: Any, **kw: Any) -> None:
-        await set_commit._set_plain_insert(w, ch)
-        await write_row(existing, **kw)
+        await ch.insert("loom.memory", [w.memory_row])
+        raise RuntimeError("timeout")
 
     retire = hm._retire_derived
 
@@ -1178,10 +1217,8 @@ async def test_a_check_that_fails_after_the_tombstone_is_finished_by_the_worker(
         retired.append(True)
         return await retire(*a, **k)
 
-    monkeypatch.setattr(hm, "_write_tombstone_row", set_lands_first)
+    monkeypatch.setattr(hm, "_key_moved_on", set_lands_first)
     monkeypatch.setattr(hm, "_retire_derived", count_retire)
-    key_moved_on = hm._key_moved_on
-    monkeypatch.setattr(hm, "_key_moved_on", _times_out)
     with pytest.raises(BackendUnavailableError):
         await hm.handle_memory_delete_version(
             MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
@@ -1333,12 +1370,11 @@ async def _live_chunk_contents(ch: KeptCH) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_a_short_versions_passage_shared_with_the_head_stays_live(
+async def test_a_deleted_passage_is_not_restored_through_a_newer_heads_chunks(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The removed version is too short to chunk, but its one passage is chunk 0 of the head
-    # that lands after the delete's check: the delete retires that row with the version's
-    # passages and puts it back for the head.
+    # A delayed row shares the deleted passage as its first chunk. Refusal keeps
+    # that passage retired even when the newer row still carries it.
     from server.memory.app import set_chunks
     from server.memory.app.chunk_projection import chunk_text
 
@@ -1363,7 +1399,8 @@ async def test_a_short_versions_passage_shared_with_the_head_stays_live(
         MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=old)
     )
     assert out.tombstoned is True
-    assert await _live_chunk_contents(ch) == sorted(r["content"] for r in rows)
+    assert await _live_chunk_contents(ch) == sorted(r["content"] for r in rows[1:])
+    assert rows[0]["content"] not in await _live_chunk_contents(ch)
 
 
 _PAST = datetime(2020, 1, 1)
@@ -1581,15 +1618,15 @@ async def _owed_after_a_failed_check(
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
     w = _in_flight_set(time.time_ns() - 1_000_000)
-    write_row = hm._write_tombstone_row
 
-    async def set_lands_first(existing: Any, **kw: Any) -> None:
-        await set_commit._set_plain_insert(w, ch)
-        await write_row(existing, **kw)
+    async def late_set_then_timeout(existing: Any, **kw: Any) -> None:
+        # A previously admitted insert lands after the tombstone; its head check
+        # times out before it can lift the live write above the delete.
+        await ch.insert("loom.memory", [w.memory_row])
+        raise RuntimeError("timeout")
 
     with monkeypatch.context() as m:
-        m.setattr(hm, "_write_tombstone_row", set_lands_first)
-        m.setattr(hm, "_key_moved_on", _times_out)
+        m.setattr(hm, "_key_moved_on", late_set_then_timeout)
         m.setattr(hm, "next_version", lambda: time.time_ns() + clock_ahead_ns)
         with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
@@ -1664,25 +1701,31 @@ async def _tombstone_held_back(ch: KeptCH, monkeypatch: pytest.MonkeyPatch) -> t
     queued: the version it named, and the call that commits the insert late."""
     head = time.time_ns() - 10_000_000_000
     await ch.insert("loom.memory", [_row("Tuesdays", head)])
-    write_row = hm._write_tombstone_row
-    queued: list[tuple[Any, dict[str, Any]]] = []
+    insert = ch.insert
+    queued: list[tuple[str, list[dict[str, Any]], Any]] = []
 
-    async def times_out_queued(existing: Any, **kw: Any) -> None:
-        queued.append((existing, kw))
-        raise RuntimeError("timeout")
+    async def times_out_queued(table: str, rows: list[dict[str, Any]], settings=None) -> None:
+        if table == "loom.memory" and rows[0]["source_trace"].startswith("memory.delete_version:"):
+            queued.append((table, rows, settings))
+            raise RuntimeError("timeout")
+        await insert(table, rows, settings=settings)
 
     async def commit_late() -> None:
-        ((existing, kw),) = queued
-        await write_row(existing, **kw)
+        ((table, rows, settings),) = queued
+        await insert(table, rows, settings=settings)
 
     from server.core.errors import BackendUnavailableError
 
     with monkeypatch.context() as m:
-        m.setattr(hm, "_write_tombstone_row", times_out_queued)
+        m.setattr(ch, "insert", times_out_queued)
         with pytest.raises(BackendUnavailableError):
             await hm.handle_memory_delete_version(
                 MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head)
             )
+    from server.memory.store import write_fence
+
+    keeper = write_fence._lease_client(ch)
+    keeper.advance(max((row["ttl"] for row in keeper.keys.values()), default=0) + 1)
     return head, commit_late
 
 
@@ -1765,7 +1808,7 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
     finally:
         request_id_var.reset(rid)
     setup_receipts = [row for event, row in emitted if event == "memory.set"]
-    assert len(setup_receipts) == int(failure in {"the check after it", "a retry"})
+    assert setup_receipts == []
     if setup_receipts:
         assert setup_receipts[0]["subject"]["memory_key"] == _KEY
     emitted[:] = [(event, row) for event, row in emitted if event != "memory.set"]
@@ -1909,9 +1952,18 @@ async def test_a_plain_delete_above_a_late_tombstone_of_the_same_delete_is_copie
     assert out.tombstoned is False and out.found is False
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
     monkeypatch.setattr(restore_mod, "get_client", lambda: ch)
-    restored = await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
-    assert restored.restored is True
-    got = await _read_back(ch)
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError, match="refused by a previous deletion"):
+        await restore_mod.handle_memory_restore(MemoryRestoreInput(**_ID, memory_key=_KEY))
+    got = await memory_repo.get_by_key(
+        memory_repo.Identity(**_ID),
+        _KEY,
+        strong=True,
+        scope=WHOLE_NAMESPACE,
+        include_tombstoned=True,
+        ch=ch,
+    )
     assert got is not None and got.value == "Thursdays"
 
 
@@ -1923,7 +1975,13 @@ async def test_a_recovered_check_run_again_stands_on_the_tombstone_it_wrote(
     # stands on that tombstone, answers the same and writes nothing.
     head, _commit_late = await _tombstone_held_back(ch, monkeypatch)
     (owed,) = await _recorded_checks(ch)
-    check = {**_ID, "memory_key": _KEY, "checked": head, "tombstone": owed["tombstone"]}
+    check = {
+        **_ID,
+        "memory_key": _KEY,
+        "checked": head,
+        "tombstone": owed["tombstone"],
+        "checked_state_sha256": owed["checked_state_sha256"],
+    }
     first = await hm.rerun_delete_check(check)
     assert first is not None and first.tombstoned is True
     assert first.version is not None and first.version > int(owed["tombstone"])

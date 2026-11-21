@@ -12,6 +12,7 @@ let the two go out of sync.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -63,6 +64,16 @@ async def insert_shared_row(
             f"missing={missing} unknown={unknown}"
         )
     ch = ch or _default_client()
+    from server.memory.store.refusals import assert_shared_publication, shared_retirement
+
+    if row.get("tombstoned_at") is not None:
+        async with shared_retirement(ch, row) as publish:
+            if publish:
+                await ch.insert(
+                    "loom.shared", [row], settings={"async_insert": 0, "wait_for_async_insert": 1}
+                )
+        return
+    assert_shared_publication(row)
     await ch.insert(
         "loom.shared",
         [row],
@@ -86,11 +97,102 @@ async def insert_shared_embedding(
     from server.memory.store.rows import build_embedding_row
 
     ch = ch or _default_client()
+    from server.memory.store.refusals import assert_shared_publication
+
+    assert_shared_publication(row, vector=True)
     await ch.insert(
         "loom.memory_embeddings",
         [build_embedding_row(**row)],
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
+
+
+async def shared_embedding_source(
+    row: dict[str, Any], *, ch: _CHClient
+) -> tuple[dict[str, Any], Any, set[str]] | None:
+    """The complete approved source behind this shared cache row, if it still agrees."""
+    from server.core import pg
+    from server.core.hashing import served_row_value, sha256_value
+    from server.memory.domain.excerpt import build_excerpt
+    from server.memory.domain.promotion_source import promotion_keys, promotion_users
+    from server.memory.domain.temporal_sql import SERVED_STATUSES
+    from server.memory.store import pg_memory
+    from server.memory.store.reads import memory_rows_by_identity_keys
+    from server.memory.store.rows import _hydrate
+
+    shared = await fetch_shared(row["org"], row["namespace"], row["memory_key"], strong=True, ch=ch)
+    if not shared or shared.get("tombstoned_at") is not None:
+        return None
+    entries = shared.get("promoted_from") or []
+    users = promotion_users(entries, row["org"], row["namespace"])
+    if users is None:
+        return None
+    keys = promotion_keys(entries, row["org"], row["namespace"])
+    if keys is None:
+        return None
+    if pg.enabled():
+        raw_heads = await pg_memory.heads_by_keys(keys, include_tombstoned=True, durable=True)
+        heads = {key: _hydrate(head) for key, head in raw_heads.items()}
+    else:
+        heads = await memory_rows_by_identity_keys(
+            keys, include_tombstoned=True, sequential=True, ch=ch
+        )
+    digest = sha256_value(served_row_value(shared))
+    for key in keys:
+        source = heads.get(key)
+        if source is None or sha256_value(source.value) != digest:
+            continue
+        if (
+            source.status not in SERVED_STATUSES
+            or source.requires_review
+            or source.tombstoned_at
+            or source.sensitivity == "high"
+        ):
+            continue
+        if row.get("content_excerpt") == build_excerpt(
+            json.dumps(source.value, default=str), memory_key=source.memory_key
+        ):
+            return shared, source, users
+    return None
+
+
+async def repair_shared_embeddings(
+    rows: list[dict[str, Any]], *, ch: _CHClient
+) -> list[dict[str, Any]]:
+    """Repair a shared mirror only while its full promoted source still qualifies."""
+    from server.core.hashing import sha256_value
+    from server.memory.domain.trust import verification_state
+    from server.memory.store.refusals import source_publication
+
+    written = []
+    for row in rows:
+        proof = await shared_embedding_source(row, ch=ch)
+        if proof is None:
+            continue
+        shared, source, users = proof
+        digest = sha256_value(source.value)
+        async with source_publication(ch, source, row["memory_key"], refusal_users=users) as mark:
+            current = await fetch_shared(
+                row["org"], row["namespace"], row["memory_key"], strong=True, ch=ch
+            )
+            if current != shared:
+                continue
+            mark(True)
+            await insert_shared_embedding(
+                {
+                    **row,
+                    "content_sha256": digest,
+                    "source_class": source.source_class,
+                    "verified": int(
+                        verification_state(source.verified_by, source.verified_sha256, digest)
+                        in ("human", "process")
+                    ),
+                },
+                ch=ch,
+            )
+            mark(False)
+            written.append(row)
+    return written
 
 
 async def fetch_shared(

@@ -6,6 +6,7 @@ per-run UUID namespace and cleans up after itself.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 
 pytestmark = pytest.mark.skipif(
@@ -87,6 +89,7 @@ async def _seed_memory(
                 "memory_key": memory_key,
                 "memory_type": memory_type,
                 "value": json.dumps(value, default=str),
+                "content_sha256": sha256_value(value),
                 "confidence": confidence,
                 "version": version,
                 "pinned": 1 if pinned else 0,
@@ -95,6 +98,44 @@ async def _seed_memory(
         settings={"async_insert": 0, "wait_for_async_insert": 1},
     )
     return version
+
+
+async def _seed_promoted(
+    ch: Any, org: str, ns: str, key: str, value: str, memory_type: str = "semantic"
+) -> Any:
+    from server.memory import store as memory_repo
+    from server.memory.domain.promotion_source import promotion_source
+    from server.memory.store import shared
+    from server.memory.store.refusals import source_publication
+
+    identity = memory_repo.Identity(org=org, namespace=ns, agent="itest-bot")
+    await _seed_memory(ch, identity, key, memory_type, value)
+    source = await memory_repo.get_by_key(identity, key, ch=ch, fresh=True, scope=WHOLE_NAMESPACE)
+    assert source is not None
+    now = datetime.now(UTC).replace(tzinfo=None)
+    row = {
+        "org": org,
+        "namespace": ns,
+        "memory_key": key,
+        "value": json.dumps(value),
+        "memory_type": memory_type,
+        "confidence": 0.9,
+        "promoted_from": [
+            promotion_source(org, ns, source.agent, source.user_id, source.session_id, key)
+        ],
+        "promotion_event": str(uuid.uuid4()),
+        "promoted_from_candidate_id": None,
+        "promoted_by": "process:test",
+        "rationale": "fixture",
+        "promoted_at": now,
+        "reversible_until": now,
+        "superseded_by": None,
+        "tombstoned_at": None,
+        "version": memory_repo.next_version(),
+    }
+    async with source_publication(ch, source, key):
+        await shared.insert_shared_row(row, ch=ch)
+    return source
 
 
 async def _tombstone_memory(ch: Any, identity: Any, memory_key: str) -> None:
@@ -472,33 +513,9 @@ async def test_shared_repo_insert_fetch_promoted(
 
     org, ns = "itest-org", isolated_id
     key = "itest-shared-key"
-    now = datetime.now(UTC).replace(tzinfo=None)
-    promo_id = str(uuid.uuid4())
-    await shared_repo.insert_shared_row(
-        {
-            "org": org,
-            "namespace": ns,
-            "memory_key": key,
-            "value": "v1",
-            "memory_type": "semantic",
-            "confidence": 0.9,
-            "promoted_from": [],
-            "promotion_event": promo_id,
-            "promoted_from_candidate_id": None,
-            "promoted_by": "itest",
-            "rationale": "itest",
-            "promoted_at": now,
-            "reversible_until": now,
-            "superseded_by": None,
-            "tombstoned_at": None,
-            "version": 1,
-        },
-        ch=ch,
-    )
-
+    await _seed_promoted(ch, org, ns, key, "v1")
     row = await shared_repo.fetch_shared(org, ns, key, ch=ch)
-    assert row is not None
-    assert row["value"] == "v1"
+    assert row is not None and json.loads(row["value"]) == "v1"
 
 
 @pytest.mark.asyncio
@@ -699,6 +716,10 @@ async def test_embedding_worker_reconciles_shared_stub(
     org = "itest-org"
     ns = isolated_id
     memory_key = f"shared-orphan-{uuid.uuid4().hex[:6]}"
+    from server.memory.domain.excerpt import build_excerpt
+
+    value = "this is the content the worker will embed"
+    await _seed_promoted(ch, org, ns, memory_key, value, "preference")
     # tz-aware UTC matches the worker's INSERT path (collapses on FINAL)
     now = datetime.now(UTC)
     # stub must use the worker's model_name or rows never collapse on FINAL
@@ -720,7 +741,8 @@ async def test_embedding_worker_reconciles_shared_stub(
                 "memory_key": memory_key,
                 "memory_type": "preference",
                 "scope": "shared",
-                "content_excerpt": "this is the content the worker will embed",
+                "content_excerpt": build_excerpt(json.dumps(value), memory_key=memory_key),
+                "content_sha256": sha256_value(value),
                 "embedding_model": embedder_model,
                 "embedding_dim": 0,
                 "embedding": _wide([]),

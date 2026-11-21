@@ -24,6 +24,30 @@ class _FakeCH:
         return self.rows[: int(self.params["lim"])]
 
 
+def _wire_sources(monkeypatch, rows):
+    from tests.unit.test_memory_verify import _row
+
+    for row in rows:
+        row.update(agent="a", user_id="-", derived_from=["k1"], key_facts=[row["summary_text"]])
+
+    async def read(keys, **kwargs):
+        from server.memory.store.rows import identity_key
+
+        parents = [
+            _row(
+                namespace="n",
+                agent="a",
+                session_id=r["session_id"],
+                memory_key="k1",
+                value=r["summary_text"],
+            )
+            for r in rows
+        ]
+        return {identity_key(r): r for r in parents if identity_key(r) in keys}
+
+    monkeypatch.setattr("server.memory.store.summary_sources.memory_rows_by_identity_keys", read)
+
+
 def test_op_is_registered_for_viewers() -> None:
     op = next(o for o in ALL_OPERATIONS if o.name == "memory.digests")
     assert op.required_role.name == "VIEWER"
@@ -45,6 +69,7 @@ async def test_wildcard_lists_all_sessions_and_pages(monkeypatch: pytest.MonkeyP
         }
         for i in range(3)
     ]
+    _wire_sources(monkeypatch, rows)
     ch = _FakeCH(rows)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
     out = await cur.handle_memory_digests(
@@ -52,7 +77,7 @@ async def test_wildcard_lists_all_sessions_and_pages(monkeypatch: pytest.MonkeyP
     )
     assert "session_id = {s:String}" not in ch.sql and ch.params["lim"] == 3
     assert [r.session_id for r in out.rows] == ["ns:session_0", "ns:session_1"] and out.truncated
-    assert out.rows[0].key_facts == ["a"] and out.rows[0].derived_from == ["k1"]
+    assert out.rows[0].key_facts == ["digest 0"] and out.rows[0].derived_from == ["k1"]
 
 
 @pytest.mark.asyncio
@@ -67,7 +92,7 @@ async def test_concrete_session_filters(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 @pytest.mark.asyncio
-async def test_a_digest_that_reads_as_a_credential_is_listed_without_its_text(
+async def test_a_digest_that_reads_as_a_credential_is_withheld(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.unit._fake_credentials import OPENAI_KEY
@@ -76,6 +101,7 @@ async def test_a_digest_that_reads_as_a_credential_is_listed_without_its_text(
         {"session_id": "ns:s1", "summary_text": f"The user pasted {OPENAI_KEY}.", "key_facts": []},
         {"session_id": "ns:s2", "summary_text": "Planned the retreat.", "key_facts": []},
     ]
+    _wire_sources(monkeypatch, rows)
     monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(rows))
     out = await cur.handle_memory_digests(MemoryDigestsInput(org="o", namespace="n", agent="a"))
-    assert [r.summary_text for r in out.rows] == ["", "Planned the retreat."]
+    assert [r.summary_text for r in out.rows] == ["Planned the retreat."]

@@ -30,7 +30,25 @@ def test_reembed_uses_the_memory_writer(writers):
             seen.append(customer.headers(await customer.require()))
             return [[1.0, 0.0] for _ in texts]
 
+    from server.core.hashing import sha256_value
+    from server.memory.store.rows import build_memory_version_row
+    from tests.unit.test_memory_verify import _row
+
+    source = _row(
+        org="acme",
+        namespace=AGENT_NS,
+        agent="a",
+        user_id="u1",
+        memory_key="k1",
+        value="agent-8 wrote this",
+    )
+
     class CH:
+        async def query_all(self, sql, params=None):
+            if "FROM loom.memory FINAL" in sql:
+                return [build_memory_version_row(source)]
+            return []
+
         async def insert(self, *args, **kwargs):
             pass
 
@@ -42,6 +60,7 @@ def test_reembed_uses_the_memory_writer(writers):
         session_id="-",
         memory_key="k1",
         content_excerpt="agent-8 wrote this",
+        content_sha256=sha256_value(source.value),
         embedding_model="old",
         embedding=[1.0, 0.0],
         memory_key_embedding=[1.0, 0.0],

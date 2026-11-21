@@ -240,6 +240,7 @@ async def test_run_pipeline_aborts_on_extraction_error(
     fail-open one: downstream steps do not run, the error reaches the
     caller (the handler maps it to 502)."""
     import server.memory.app.extract as mx
+    from server.memory.app import pipeline
     from server.memory.app.pipeline import register_step, run_pipeline
     from server.memory.app.pipeline_state import PipelineStep
 
@@ -253,6 +254,7 @@ async def test_run_pipeline_aborts_on_extraction_error(
         ran.append("after")
         return state
 
+    monkeypatch.setattr(pipeline, "_REGISTRY", dict(pipeline._REGISTRY))
     register_step("test.after_extract", _sentinel)
     state = WorkflowState(
         org="dev", namespace="ns", agent="a", messages=[{"role": "user", "content": "x"}]

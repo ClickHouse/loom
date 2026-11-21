@@ -430,7 +430,6 @@ server/memory/app/search/query_spelling.py::_MAX_DOUBLINGS
 server/memory/app/search_llm.py::_QUERY_ENTITY_CACHE_MAX
 server/memory/app/search_llm.py::_VERB_SYNONYM_CACHE_MAX
 server/memory/app/session_brief.py::_MAX_SOURCE_SESSIONS
-server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_INPUT_CHARS
 server/memory/app/session_summary.py::_SESSION_SUMMARY_MAX_KEY_FACTS
 server/memory/app/set_chunks.py::_MAX_CHUNKS_FALLBACK
 server/memory/app/set_entities.py::_SET_ENTITY_MAX_CANDIDATES

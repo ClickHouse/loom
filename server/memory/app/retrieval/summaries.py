@@ -167,7 +167,7 @@ async def fetch_session_summaries(
                -- supertype for String, DateTime" — silently swallowed by the
                -- except below, killing the whole leg under any as_of.
                toString(coalesce(valid_at, toDateTime(0))) AS valid_at_iso,
-               derived_from
+               derived_from, key_facts
         FROM loom.session_summaries FINAL
         WHERE {where_sql}
         -- No `LIMIT 1 BY` and no `session_id` tiebreak here:

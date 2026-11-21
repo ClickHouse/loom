@@ -146,6 +146,9 @@ async def handle_memory_export_evidence(
             """,
             params=params,
         )
+        from server.memory.store.summary_sources import current_summary_sources
+
+        rows = await current_summary_sources(ch, rows, org=input.org, namespace=input.namespace)
         digests = [
             EvidenceDigest(
                 session_id=str(r["session_id"]),
@@ -379,7 +382,9 @@ async def handle_memory_import_evidence(
                 )
             )
         if rows:
-            await ch.insert("loom.memory_chunks", rows, settings=committed_insert_settings())
+            from server.memory.store.refusals import insert_content_rows
+
+            await insert_content_rows(ch, "loom.memory_chunks", rows)
             out.chunks_written = len(rows)
         from server.memory.app.chunk_links import SOURCES_TABLE, import_link_rows
 
@@ -432,10 +437,8 @@ async def handle_memory_import_evidence(
                 )
             )
         if drows:
-            await ch.insert(
-                "loom.session_summaries",
-                drows,
-                settings=committed_insert_settings(),
-            )
-            out.digests_written = len(drows)
+            from server.memory.store.summary_sources import insert_verified_summaries
+
+            out.digests_written = await insert_verified_summaries(ch, drows)
+            out.skipped += len(drows) - out.digests_written
     return out

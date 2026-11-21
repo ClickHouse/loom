@@ -1365,7 +1365,13 @@ class CHClient:
             return None
         return dict(zip(result.column_names, rows[0], strict=False))
 
-    async def _query_fail_open(self, op_name: str, sql: str, params: dict[str, Any] | None) -> Any:
+    async def _query_fail_open(
+        self,
+        op_name: str,
+        sql: str,
+        params: dict[str, Any] | None,
+        settings: dict[str, Any] | None = None,
+    ) -> Any:
         """Run a SELECT with the standard retry; if the server rejects the
         quantized-codes setting (a replica that does not know it), turn the
         setting off for this process and run the query once
@@ -1376,7 +1382,7 @@ class CHClient:
             res = await self._statement_client().query(
                 text,
                 parameters=params or {},
-                settings=statement_settings(text, cls="read"),
+                settings=statement_settings(text, settings, cls="read"),
                 **_reader_auth(),
             )
             note_result_summary(res)
@@ -1408,8 +1414,10 @@ class CHClient:
         self,
         sql: str,
         params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        result = await self._query_fail_open("query_all", sql, params)
+        result = await self._query_fail_open("query_all", sql, params, settings)
         return [dict(zip(result.column_names, row, strict=False)) for row in result.result_rows]
 
     async def query_columns(

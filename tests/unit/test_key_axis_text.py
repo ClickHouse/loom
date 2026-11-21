@@ -100,6 +100,11 @@ async def test_a_reembed_never_sends_an_import_key_to_the_embedder(
     class _CH:
         rows: list[dict[str, Any]] = []
 
+        async def query_all(self, sql, params=None):
+            if "FROM loom.memory FINAL" in sql:
+                return [row for key, row in heads.items() if key in params["keys"]]
+            return []
+
         async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
             self.rows = rows
 
@@ -115,6 +120,9 @@ async def test_a_reembed_never_sends_an_import_key_to_the_embedder(
     stored = {
         "org": "o",
         "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
         "embedding_model": "m1",
         "embedding_dim": 2,
         "memory_key_embedding": [0.0, 0.0],
@@ -125,6 +133,15 @@ async def test_a_reembed_never_sends_an_import_key_to_the_embedder(
         {**stored, "memory_key": digest, "content_excerpt": '"Prefers dark roast."'},
         {**stored, "memory_key": "coffee_order", "content_excerpt": '"Dark." (#coffee_order)'},
     ]
+    from server.core.hashing import sha256_value
+    from server.memory.store.rows import build_memory_version_row, identity_key
+    from tests.unit.test_memory_verify import _row
+
+    heads = {}
+    for row, value in zip(chunk, ("Prefers dark roast.", "Dark."), strict=True):
+        source = _row(org="o", namespace="n", agent="a", memory_key=row["memory_key"], value=value)
+        heads[identity_key(source)] = build_memory_version_row(source)
+        row["content_sha256"] = sha256_value(value)
     emb, ch = _Emb(), _CH()
     await reembed._rewrite_page(ch, emb, "memory_embeddings", chunk, key_only=False)
     assert emb.batches == [['"Prefers dark roast."', '"Dark." (#coffee_order)'], ["coffee order"]]

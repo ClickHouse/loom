@@ -45,6 +45,8 @@ async def test_contended_value_write_publishes_no_embedding(
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, table, rows, **kw):
@@ -129,6 +131,8 @@ async def test_unanswered_high_memory_send_still_fences_search(monkeypatch):
 
     class LostAnswer:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return []
 
         async def insert(self, *args, **kw):
@@ -167,6 +171,8 @@ async def test_high_write_cancelled_during_holder_release_still_fences_search(
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, table, batch, **kw):
@@ -214,6 +220,8 @@ async def test_cancelled_high_send_fences_and_preserves_the_cancellation(monkeyp
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return []
 
         async def insert(self, *args, **kw):
@@ -245,6 +253,8 @@ async def test_copy_commit_mark_and_followups_survive_holder_release_cancellatio
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, *args, **kw):
@@ -334,6 +344,8 @@ async def test_acknowledged_point_write_records_after_release_cancellation(
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, table, batch, **kw):
@@ -399,6 +411,8 @@ async def test_unacknowledged_restore_leaves_its_mirror_for_retry(monkeypatch):
         async def query_all(self, sql, params):
             if "FROM loom.memory_refusals" in sql:
                 return []
+            if "FROM loom.memory_refusals" in sql:
+                return []
             if "PREWHERE (org, namespace" in sql:
                 return [source.model_dump()]
             assert "AS search_deleted" in sql
@@ -462,6 +476,8 @@ async def test_acknowledged_copy_finishes_followups_under_repeated_cancellation(
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, *args, **kw):
@@ -518,6 +534,8 @@ async def test_bulk_embedding_failure_still_announces_acknowledged_memory(monkey
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, table, rows, **kw):
@@ -547,6 +565,8 @@ async def test_bulk_followup_finishes_under_repeated_cancellation(monkeypatch, c
 
     class CH:
         async def query_all(self, *args, **kwargs):
+            if "FROM loom.memory_refusals" in args[0]:
+                return []
             return [_row().model_dump()]
 
         async def insert(self, *args, **kw):

@@ -6,8 +6,8 @@ and once under the default `auto_reinforce` (both retire on a confident update),
 through `memory.set` (odd sessions) and `memory.bulk_set` (even sessions), each a
 week apart. Six attributes change once or twice, each change under a new key and in
 new words; other facts are restated, elaborated, or sit near a different fact;
-one pinned fact is contradicted later; one fact is deleted and brought back
-with Undo; the rest are unrelated (`bench/conflict_resolver_scenario.py`, the
+one pinned fact is contradicted later; one fact is deleted and stays absent;
+the rest are unrelated (`bench/conflict_resolver_scenario.py`, the
 scenario and its ground truth). A scenario embedder gives every text a fixed
 direction, so the write path's own check decides which rows the resolver owes a
 judgement, and the judge answers each (row, peer) pair from the scenario's
@@ -37,8 +37,10 @@ import pytest
 from bench.conflict_resolver_scenario import (
     ATTRIBUTES,
     BY_KEY,
+    CHECK_DELETED_IN,
     CURRENT,
     DELETE_IN,
+    DELETED,
     FACTS,
     FLAGGED_AT_WRITE,
     JUDGE,
@@ -46,7 +48,6 @@ from bench.conflict_resolver_scenario import (
     LOW_CONFIDENCE,
     MALFORMED,
     OLDER,
-    RESTORE_IN,
     SESSIONS,
     SOLO,
     relation_of,
@@ -146,11 +147,40 @@ class _OnlyOrg:
         return await self.ch.query_all(sql, params={**(params or {}), "only_org": self.org})
 
 
+async def _insert_queue_vector(ch: Any, row: dict[str, Any]) -> None:
+    from server.core.hashing import sha256_value
+    from server.memory.store.inserts import insert_embedding_rows, insert_memory_versions
+    from server.memory.store.rows import build_first_version_row
+
+    value = row["org"]
+    row["content_sha256"] = sha256_value(value)
+    row["content_excerpt"] = value
+    source = build_first_version_row(
+        {
+            **{
+                k: row[k]
+                for k in ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+            },
+            "value": json.dumps(value),
+            "value_json": "{}",
+            "memory_type": row["memory_type"],
+            "confidence": 1.0,
+            "content_sha256": row["content_sha256"],
+            "status": row["status"],
+            "version": row["version"],
+            "actor": "process:itest",
+            "source_class": "asserted",
+        },
+        now=naive_utc_now(),
+    )
+    await insert_memory_versions([source], ch=ch)
+    assert await insert_embedding_rows([row], ch=ch) == [row]
+
+
 @pytest.mark.parametrize("leg", ["owed", "unjudged"])
 async def test_org_queue_scope_precedes_the_candidate_limit(ch, leg: str) -> None:
     from server.core.vectors.codes_state import stored_width
     from server.memory.store import conflict_resolver as queue
-    from server.memory.store.inserts import insert_embedding_rows
     from server.memory.store.rows import build_embedding_row
 
     orgs = [unique_org("queue-scope") for _ in range(2)]
@@ -184,9 +214,9 @@ async def test_org_queue_scope_precedes_the_candidate_limit(ch, leg: str) -> Non
         )
 
     try:
-        await insert_embedding_rows([vector(foreign)], ch=ch)
+        await _insert_queue_vector(ch, vector(foreign))
         assert await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, own)) == []
-        await insert_embedding_rows([vector(own)], ch=ch)
+        await _insert_queue_vector(ch, vector(own))
         rows = await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, own))
         assert [(row["org"], row["memory_key"]) for row in rows] == [(own, "pending")]
         rows = await fetch(limit=1, seed=0, ch=_OnlyOrg(ch, foreign))
@@ -318,10 +348,11 @@ async def _write_session(org: str, session: int) -> None:
     await after_write.drain()
 
 
-async def _delete_or_restore(org: str, session: int) -> None:
-    from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
+async def _delete_and_check_absent(org: str, session: int) -> None:
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+    from server.memory import store as memory_repo
+    from server.memory.api.models_crud import MemoryDeleteInput
     from server.memory.app.handlers import handle_memory_delete
-    from server.memory.app.restore import handle_memory_restore
 
     if session in DELETE_IN:
         key = DELETE_IN[session]
@@ -329,12 +360,16 @@ async def _delete_or_restore(org: str, session: int) -> None:
             MemoryDeleteInput(**_identity(org, BY_KEY[key].session), memory_key=key)
         )
         assert out.tombstoned, key
-    if session in RESTORE_IN:
-        key = RESTORE_IN[session]
-        back = await handle_memory_restore(
-            MemoryRestoreInput(**_identity(org, BY_KEY[key].session), memory_key=key)
+    if session in CHECK_DELETED_IN:
+        key = CHECK_DELETED_IN[session]
+        current = await memory_repo.get_by_key(
+            memory_repo.Identity(**_identity(org, BY_KEY[key].session)),
+            key,
+            fresh=True,
+            strong=True,
+            scope=WHOLE_NAMESPACE,
         )
-        assert (back.restored, back.from_status) == (True, "tombstoned"), key
+        assert current is None, key
 
 
 async def _drain(run: Run) -> None:
@@ -434,7 +469,7 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
     org = run.org
     for session in range(1, SESSIONS + 1):
         await _write_session(org, session)
-        await _delete_or_restore(org, session)
+        await _delete_and_check_absent(org, session)
         rows = await _rows(ch, org)
         for f in FACTS:
             if f.session == session:
@@ -442,7 +477,7 @@ async def test_a_long_run_of_sessions_ends_with_one_live_value_per_attribute(ch,
         await _drain(run)
 
     rows = await _rows(ch, org)
-    assert set(rows) == {f.key for f in FACTS}
+    assert set(rows) == {f.key for f in FACTS} - DELETED
     assert run.judge.unexpected == [], "a cluster held a peer the scenario did not place"
 
     # Each attribute: its current value is live and unflagged; every older value is

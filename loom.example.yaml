@@ -3237,8 +3237,8 @@ settings:
   # `offset` (wire cap stays 1000). 0 = no viewer cap. [restart]
   # memory_list_viewer_limit: 100
 
-  # Transcript characters the session-digest call reads (~4 chars a token); 0 = the
-  # built-in 3000. [restart]
+  # Characters of complete source facts included in an extractive session digest; 0 =
+  # the built-in 3000. Facts are never clipped to fit. [restart]
   # memory_session_digest_max_input_chars: 3000
 
   # content_excerpt ceiling for answer-bearing facts (question_topic set) when
@@ -4987,10 +4987,10 @@ settings:
   # records none (the default; consent is given, not withdrawn); "query" only the legs
   # whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …);
   # "all" also the legs carrying retrieved memories or conversation turns
-  # (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's
-  # `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also
-  # gates loom.search_trace_log.query. Token counts, cost, latency and quality scores
-  # are never gated. [restart]
+  # (inline_rerank, iterative_judge, extract, …). A namespace's `capture_generation_io`
+  # overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates
+  # loom.search_trace_log.query. Token counts, cost, latency and quality scores are
+  # never gated. [restart]
   # langfuse_capture_io_level: "off"
 
   # Per-field cap on recorded prompt/completion text; truncation adds an explicit

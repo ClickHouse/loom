@@ -111,7 +111,11 @@ class _CHClient(Protocol):
     ) -> dict[str, Any] | None: ...
 
     async def query_all(
-        self, sql: str, params: dict[str, Any] | None = None
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]: ...
 
     async def execute(

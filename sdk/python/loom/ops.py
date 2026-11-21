@@ -15586,7 +15586,7 @@ class MemoryResolveOrphanDuplicatesOutput(TypedDict, total=False):
 
 
 class MemoryRestoreInput(TypedDict, total=False):
-    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
+    "Reverse automatic retirement when no deletion or erasure refusal blocks the value."
 
     org: Required[str]
     namespace: Required[str]
@@ -15600,7 +15600,7 @@ class MemoryRestoreInput(TypedDict, total=False):
 
 
 class MemoryRestoreBody(TypedDict, total=False):
-    "Bring back a deleted memory (within 14 days) or one Loom retired on its own."
+    "Reverse automatic retirement when no deletion or erasure refusal blocks the value."
 
     org: NotRequired[str]
     namespace: NotRequired[str]

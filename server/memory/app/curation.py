@@ -144,12 +144,16 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)
     rows = await ch.query_all(
-        "SELECT session_id, summary_text, key_facts, derived_from, valid_at, created_at, "
+        "SELECT agent, user_id, session_id, summary_text, key_facts, derived_from, "
+        "valid_at, created_at, "
         "version FROM loom.session_summaries FINAL WHERE "
         + where
         + " ORDER BY created_at, session_id LIMIT {lim:UInt32}",
         params,
     )
+    from server.memory.store.summary_sources import current_summary_sources
+
+    rows = await current_summary_sources(ch, rows, org=input.org, namespace=input.namespace)
     page = rows[: int(input.limit)]
     # Checking every digest's text is CPU work; it runs off the event loop.
     return MemoryDigestsOutput(
@@ -206,7 +210,8 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
     sessions_total = 0
     if int(input.sessions_limit) > 0:
         digests = await ch.query_all(
-            "SELECT session_id, summary_text, length(key_facts) AS kf, length(derived_from) AS df, "
+            "SELECT agent, user_id, session_id, summary_text, key_facts, derived_from, "
+            "length(key_facts) AS kf, length(derived_from) AS df, "
             "coalesce(valid_at, created_at) AS d FROM loom.session_summaries FINAL "
             "WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL "
             "ORDER BY d DESC, session_id LIMIT {lim:UInt32}",
@@ -218,6 +223,11 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
             base,
         )
         sessions_total = int((total or [{}])[0].get("c") or 0)
+        from server.memory.store.summary_sources import current_summary_sources
+
+        digests = await current_summary_sources(
+            ch, digests, org=input.org, namespace=input.namespace
+        )
         page = digests[: int(input.sessions_limit)]
         # Checking every digest's text is CPU work; it runs off the event loop.
         headlines = await asyncio.to_thread(

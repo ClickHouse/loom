@@ -198,9 +198,22 @@ def test_a_chunk_an_earlier_build_embedded_is_held_back_by_its_text(
 def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
     control_plane_url: str, ch_client, token: str
 ) -> None:
-    """Imported so the digest's text is known: a plain digest is embedded and found, one
-    that reads as high is stored as written with no vector and never a hit."""
+    """A proven plain digest is found; credential-bearing digest text is withheld."""
     plain, secret = f"s-{uuid.uuid4().hex[:8]}", f"s-{uuid.uuid4().hex[:8]}"
+    for session, text in ((plain, _PLAIN_TURN[:300]), (secret, _SECRET_TURN[:300])):
+        source = _post(
+            control_plane_url,
+            token,
+            NS_DIGEST,
+            "memory.set",
+            {
+                "session_id": session,
+                "memory_key": "digest-source",
+                "memory_type": "episodic",
+                "value": text,
+            },
+        )
+        assert source.status_code == 200, source.text
     r = _post(
         control_plane_url,
         token,
@@ -208,12 +221,18 @@ def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
         "memory.import_evidence",
         {
             "digests": [
-                {"session_id": plain, "summary_text": _PLAIN_TURN[:300]},
-                {"session_id": secret, "summary_text": _SECRET_TURN[:300]},
+                {
+                    "session_id": session,
+                    "summary_text": text,
+                    "key_facts": [text],
+                    "derived_from": ["digest-source"],
+                }
+                for session, text in ((plain, _PLAIN_TURN[:300]), (secret, _SECRET_TURN[:300]))
             ]
         },
     )
-    assert r.status_code == 200 and r.json()["digests_written"] == 2, r.text
+    assert r.status_code == 200 and r.json()["digests_written"] == 1, r.text
+    assert r.json()["skipped"] == 1, r.text
     dims = dict(
         ch_client.query(
             "SELECT session_id, embedding_dim FROM loom.session_summaries FINAL "
@@ -221,7 +240,7 @@ def test_a_session_digest_that_reads_as_a_credential_has_no_vector(
             parameters={"o": ORG, "n": NS_DIGEST},
         ).result_rows
     )
-    assert int(dims[secret]) == 0 and int(dims[plain]) > 0, dims
+    assert secret not in dims and int(dims[plain]) > 0, dims
     r = _search(control_plane_url, token, NS_DIGEST, "nightly export billing job key")
     assert f"summary:{secret}" not in _keys(r)
     assert _API_KEY not in r.text and _AWS_KEY_ID not in r.text

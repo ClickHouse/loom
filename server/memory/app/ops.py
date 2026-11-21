@@ -363,10 +363,21 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
     # would; a key without axis text gets memory.set's zero vector at dim 0.
     embedding_rows = []
     for i, r in enumerate(rows):
+        from server.core.hashing import hash_text, served_row_value, sha256_value
+
         key_vec = key_vecs.get(i, [])
+        canonical_hash = sha256_value(served_row_value({"value": r["content_excerpt"]}))
         embedding_rows.append(
             memory_repo.build_embedding_row(
-                **{k: v for k, v in r.items() if k not in ("memory_version", "content_excerpt")},
+                **{
+                    k: v
+                    for k, v in r.items()
+                    if k not in ("memory_version", "content_excerpt", "content_sha256", "verified")
+                },
+                content_sha256=canonical_hash,
+                verified=int(
+                    bool(r.get("verified")) and hash_text(r.get("content_sha256")) == canonical_hash
+                ),
                 content_excerpt=texts[i][0],
                 embedding_model=target_model,
                 embedding_dim=embedder.dim,
@@ -376,13 +387,13 @@ async def handle_memory_reindex(input: MemoryReindexInput) -> MemoryReindexOutpu
                 embed_attempts=1,
             )
         )
-    await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
+    admitted = await memory_repo.insert_embedding_rows(embedding_rows, ch=ch)
     await _recheck_reindexed_heads(rows, embedding_rows, ch=ch, model=target_model)
     # One above versions read before the embed call: under the BM25 watermark.
-    await memory_repo.index_late_rows(embedding_rows, ch=ch)
+    await memory_repo.index_late_rows(admitted, ch=ch)
 
     return MemoryReindexOutput(
-        processed=len(embedding_rows),
+        processed=len(admitted),
         skipped_already_current=0,
         target_model=target_model,
         target_dim=embedder.dim,

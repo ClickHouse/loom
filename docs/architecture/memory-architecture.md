@@ -724,10 +724,10 @@ is left. Its triples close as for a row that holds none.
 
 A revision (`memory.set`, `memory.bulk_set`, `memory.update_by_id`) of a row that
 existed before the write closes the facts its row held that no row holds any longer, and
-an Undo of a retirement or of a delete opens again those the restored row's current value
+an Undo of reversible retirement opens again those the restored row's current value
 holds by the same rule (another row's claim keeps a fact from closing, but never reopens
 one); either, when it fails, is recorded for `projection_repair` as `triples_reconcile`.
-A delete closes none of its row's facts, so the only facts a delete's Undo opens again
+A tombstone closes none of its row's facts, so the only facts a reversible restore opens again
 are ones another row's revision or retirement closed while the row was gone.
 
 A dropped fact still valid later ("until Dec 1") ends now, and so does one a retired row
@@ -1004,14 +1004,15 @@ session, agent or run identity. A read bounded on one of those axes omits the ag
 graph signals, including hub pruning and graph paths. Its fact legs retain their scoped
 cosine and query-entity ranking. Namespace-wide reads use the graph aggregates.
 
-Session digests carry the keys they compressed in `derived_from`. Before deduplication,
-the summary leg checks those known sources under the digest's full identity. A source
-that is missing, unserved, deleted, expired, outside its validity, high-sensitivity or at a newer
-version withholds the digest. An unreadable source check withholds all unchecked digests.
-Without source revision hashes, a later source version conservatively withholds a digest
-during replay too. Lineage covers extracted facts, not every sentence of the transcript:
-a digest without a known source remains session evidence, and does not prove that its
-statements are current facts.
+Session digests contain whole committed source values joined by newlines. Their ordered
+`derived_from` and `key_facts` reconstruct every byte of `summary_text`; raw transcript
+text and model-generated additions cannot contribute. Every digest reader verifies that
+proof against the authoritative heads under the digest's exact agent, user and session.
+Missing, changed, unserved, expired, truncated, sensitive or unreviewed sources withhold
+the digest. A pin or touch that leaves the same eligible content does not invalidate it.
+Legacy digests without complete proof are withheld. Source-read failures fail closed.
+A digest hit cannot open unrelated raw turns from its session. Model-generated period
+lessons and contrast reflections enter proposed state for independent review.
 
 `memory.list` excludes rejected rows from both sort orders and counts. A key lookup can
 inspect a rejected row. `memory.for_file` also checks `valid_to` before adding a fact to

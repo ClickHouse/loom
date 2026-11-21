@@ -83,11 +83,9 @@ async def write_evidence_rows(
             }
         )
         out.append(EvidenceRow(evidence_id=evidence_id, content_sha256=content_sha))
-    await ch.insert(
-        "loom.memory_evidence",
-        rows,
-        settings=batched_insert_settings(),
-    )
+    from server.memory.store.refusals import insert_content_rows
+
+    await insert_content_rows(ch, "loom.memory_evidence", rows)
     return out
 
 

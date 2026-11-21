@@ -12,9 +12,10 @@ Two halves:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import ANY, AsyncMock
 
 import pytest
 
@@ -81,264 +82,156 @@ def test_defaults_match_schema_for_omitted_columns() -> None:
     assert row["user_id"] == "-"
 
 
-# ----------------------------------------------------------------------
-# Pure helpers — _top_key_facts + _build_session_summary_user_prompt
-# ----------------------------------------------------------------------
+@pytest.fixture
+def writer(monkeypatch: Any) -> Any:
+    from server.memory import store
+    from server.memory.app import digest_chain, session_summary
+    from tests.unit.test_memory_verify import _row
+
+    source = _row(
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        memory_key="known",
+        value="current fact",
+    )
+    state = SimpleNamespace(
+        written=[
+            {
+                "memory_id": source.memory_id,
+                "memory_key": source.memory_key,
+                "version": source.version,
+            }
+        ],
+        extracted_facts=[{"memory_key": "uncommitted", "value": "retired transcript fact"}],
+        messages=[{"role": "user", "content": "retired transcript fact"}],
+        observation_date=None,
+    )
+    ch = SimpleNamespace(insert=AsyncMock(), query_all=AsyncMock(return_value=[]))
+    from server.memory.store.rows import identity_key
+
+    monkeypatch.setattr(
+        "server.memory.store.summary_sources.memory_rows_by_identity_keys",
+        AsyncMock(return_value={identity_key(source): source}),
+    )
+    read = AsyncMock(return_value=source)
+    vector = AsyncMock(return_value=[1.0, 0.0])
+    link = AsyncMock()
+    monkeypatch.setattr(store, "get_by_id", read)
+    monkeypatch.setattr(session_summary, "get_client", lambda: ch)
+    monkeypatch.setattr(session_summary, "get_embedder", lambda: SimpleNamespace(model_name="fake"))
+    monkeypatch.setattr(session_summary, "document_vector", vector)
+    monkeypatch.setattr(digest_chain, "link_digest", link)
+    inp = SimpleNamespace(
+        org="o", namespace="n", agent="a", user_id="u", session_id="s", run_id="run"
+    )
+    return SimpleNamespace(
+        input=inp, state=state, source=source, ch=ch, read=read, vector=vector, link=link
+    )
 
 
-def test_top_key_facts_never_carry_a_credential(monkeypatch: pytest.MonkeyPatch) -> None:
-    # The digest is listed by memory.digests and sent to the outcome judge; a fact whose
-    # text reads as high stays out of its key facts, whatever the autodetect setting.
-    from server.memory.app.extract.handler import _top_key_facts
+async def test_digest_contains_only_committed_current_sources(writer: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
+
+    await _write_session_summary(writer.input, writer.state)
+    table, rows = writer.ch.insert.call_args.args
+    assert table == "loom.session_summaries"
+    row = rows[0]
+    assert set(row) == set(SESSION_SUMMARY_PERSISTED_COLS)
+    assert row["summary_text"] == "current fact"
+    assert row["key_facts"] == ["current fact"]
+    assert row["derived_from"] == ["known"]
+    assert "retired transcript fact" not in str(row)
+    assert row["run_id"] == "run"
+    writer.vector.assert_awaited_once_with(ANY, "current fact")
+    writer.link.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"status": "rejected"},
+        {"status": "proposed"},
+        {"sensitivity": "high"},
+        {"version": 101},
+        {"session_id": "another-session"},
+        {"value_truncated": True},
+    ],
+)
+async def test_unqualified_sources_are_not_embedded_or_written(writer: Any, change: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
+
+    writer.read.return_value = writer.source.model_copy(update=change)
+    await _write_session_summary(writer.input, writer.state)
+    writer.ch.insert.assert_not_awaited()
+    writer.vector.assert_not_awaited()
+
+
+async def test_no_committed_fact_produces_no_digest(writer: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
+
+    writer.state.written = []
+    await _write_session_summary(writer.input, writer.state)
+    writer.read.assert_not_awaited()
+    writer.ch.insert.assert_not_awaited()
+
+
+async def test_a_source_read_failure_is_reported_to_the_projection_caller(writer: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
+
+    writer.read.side_effect = TimeoutError("authority unavailable")
+    with pytest.raises(TimeoutError):
+        await _write_session_summary(writer.input, writer.state)
+    writer.ch.insert.assert_not_awaited()
+
+
+async def test_digest_cap_keeps_whole_facts_instead_of_partial_provenance(
+    writer: Any, monkeypatch: Any
+) -> None:
+    from server.memory.app.session_summary import _write_session_summary
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "memory_sensitivity_autodetect", False)
-    token = "ghp_" + "a" * 36
-    facts = [
-        {"value": f"the deploy token is {token}"},
-        {"value": {"note": "deploy token:\n" + token}},  # JSON-escaped, the newline hides it
-        {"value": "user lives in Berlin"},
-    ]
-    assert _top_key_facts(facts) == ["user lives in Berlin"]
+    monkeypatch.setattr(settings, "memory_session_digest_max_input_chars", 500)
+    writer.read.return_value = writer.source.model_copy(update={"value": "x" * 501})
+    await _write_session_summary(writer.input, writer.state)
+    writer.ch.insert.assert_not_awaited()
+    writer.vector.assert_not_awaited()
 
 
-def test_the_judge_prompt_drops_a_stored_credential_key_fact() -> None:
-    # Digests an earlier build wrote may hold one; the outcome judge's prompt drops it.
-    from server.memory.app.session_outcomes import judge_prompt
+async def test_a_missing_observation_date_stays_undated(writer: Any) -> None:
+    from server.memory.app.session_summary import _write_session_summary
 
-    token = "ghp_" + "a" * 36
-    _system, user = judge_prompt("a session", [f"the token is {token}", "ran the tests"])
-    assert token not in user and "ran the tests" in user
+    await _write_session_summary(writer.input, writer.state)
+    assert writer.ch.insert.call_args.args[1][0]["valid_at"] is None
 
 
-def test_top_key_facts_dedups_and_caps() -> None:
-    from server.memory.app.extract.handler import (
-        _SESSION_SUMMARY_MAX_KEY_FACTS,
-        _top_key_facts,
-    )
+async def test_a_source_removed_while_embedding_is_not_published(writer, monkeypatch):
+    from server.memory.app.session_summary import _write_session_summary
 
-    facts = [
-        {"value": "user lives in Berlin"},
-        {"value": "user lives in Berlin"},  # dup -> dropped
-        {"value": {"city": "Berlin"}},  # dict -> json string surface
-        {"value": ""},  # empty -> dropped
-        {"value": "fact a"},
-        {"value": "fact b"},
-        {"value": "fact c"},
-        {"value": "fact d"},
-        {"value": "fact e"},
-    ]
-    out = _top_key_facts(facts)
-    assert len(out) <= _SESSION_SUMMARY_MAX_KEY_FACTS
-    assert out[0] == "user lives in Berlin"
-    # The dict value coerces to a JSON string surface, not dropped.
-    assert any("Berlin" in s and "{" in s for s in out)
-
-
-def test_user_prompt_carries_date_and_truncates() -> None:
-    from server.memory.app.extract.handler import (
-        _SESSION_SUMMARY_MAX_INPUT_CHARS,
-        _build_session_summary_user_prompt,
-    )
-
-    msgs = [{"role": "user", "content": "x" * 10000}]
-    prompt = _build_session_summary_user_prompt(msgs, "2024-03-11")
-    assert "Session date: 2024-03-11" in prompt
-    assert "[user]" in prompt
-    # The transcript body is bounded; the header + framing add a little.
-    assert len(prompt) < _SESSION_SUMMARY_MAX_INPUT_CHARS + 200
-
-
-def test_user_prompt_unknown_date() -> None:
-    from server.memory.app.extract.handler import _build_session_summary_user_prompt
-
-    prompt = _build_session_summary_user_prompt([{"role": "user", "content": "hi"}], None)
-    assert "Session date: unknown" in prompt
-
-
-# ----------------------------------------------------------------------
-# _write_session_summary — end-to-end with stubs
-# ----------------------------------------------------------------------
-
-
-@dataclass
-class _FakeInput:
-    org: str = "o"
-    namespace: str = "n"
-    agent: str = "a"
-    user_id: str = "u"
-    session_id: str = "sess-1"
-
-
-@dataclass
-class _FakeState:
-    extracted_facts: list[dict[str, Any]] = field(default_factory=list)
-    observation_date: str | None = None
-    operator_policy: str = ""
-
-
-class _FakeLLM:
-    provider = "fake"
-    model = "fake-echo-1"
-
-    def __init__(self, text: str = "on 2024-03-11, the user moved to Berlin.") -> None:
-        self._text = text
-        self.calls: list[tuple[str, str, int]] = []
-
-    async def complete(self, system, user, max_tokens=1024, response_format=None):
-        from server.llm.client import LLMResult
-
-        self.calls.append((system, user, max_tokens))
-        return LLMResult(
-            text=self._text,
-            tokens_in=10,
-            tokens_out=5,
-            provider=self.provider,
-            model=self.model,
+    async def removed_during_embedding(*args, **kwargs):
+        monkeypatch.setattr(
+            "server.memory.store.summary_sources.memory_rows_by_identity_keys",
+            AsyncMock(return_value={}),
         )
+        return [1.0, 0.0]
 
-
-class _FakeEmbedder:
-    def __init__(self, vec: list[float] | None = None) -> None:
-        self.model_name = "fake-ngram-8"
-        self.dim = 8
-        self._vec = [0.1] * 8 if vec is None else vec
-
-    async def embed(self, text: str) -> list[float]:
-        return list(self._vec)
-
-    async def embed_many(self, texts: list[str]) -> list[list[float]]:
-        return [await self.embed(text) for text in texts]
-
-
-class _FakeCH:
-    def __init__(self) -> None:
-        self.inserts: list[tuple[str, list[dict[str, Any]], dict[str, Any]]] = []
-
-    async def insert(self, table, rows, settings=None):
-        self.inserts.append((table, rows, settings or {}))
-
-
-@pytest.fixture
-def _patch_clients(monkeypatch):
-    """Patch get_llm_client / get_embedder / get_client used by the writer."""
-    import server.llm.client as llm_mod
-    from server.memory.app import bulk_set as _bulk_set_mod
-    from server.memory.app import session_summary as _session_summary_mod
-
-    llm = _FakeLLM()
-    embedder = _FakeEmbedder()
-    ch = _FakeCH()
-    # _write_session_summary imports get_llm_client lazily from server.llm.client
-    monkeypatch.setattr(llm_mod, "get_llm_client", lambda: llm)
-    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: embedder)
-    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: embedder)
-    monkeypatch.setattr(_bulk_set_mod, "get_client", lambda: ch)
-    monkeypatch.setattr(_session_summary_mod, "get_client", lambda: ch)
-    return llm, embedder, ch
-
-
-@pytest.mark.asyncio
-async def test_write_summary_inserts_full_row(_patch_clients) -> None:
-    from server.memory.app.extract.handler import _write_session_summary
-
-    llm, embedder, ch = _patch_clients
-    state = _FakeState(
-        extracted_facts=[{"value": "user moved to Berlin"}, {"value": "likes jazz"}],
-        observation_date="2024-03-11",
+    monkeypatch.setattr(
+        "server.memory.app.session_summary.document_vector", removed_during_embedding
     )
-    await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
-
-    assert len(ch.inserts) == 1
-    table, rows, settings = ch.inserts[0]
-    assert table == "loom.session_summaries"
-    # Synchronous insert so the immediate post-ingest read sees it.
-    assert settings.get("async_insert") == 0
-    assert settings.get("wait_for_async_insert") == 1
-    assert len(rows) == 1
-    row = rows[0]
-    # Mirror-every-column: every persisted column is present in the insert dict.
-    assert set(row) == set(SESSION_SUMMARY_PERSISTED_COLS)
-    assert row["summary_text"]
-    assert row["summary_embedding"] == [0.1] * 8
-    assert row["embedding_model"] == "fake-ngram-8"
-    assert row["embedding_dim"] == 8
-    # key_facts derived from extracted_facts (no extra LLM call).
-    assert row["key_facts"] == ["user moved to Berlin", "likes jazz"]
-    # valid_at carries the parsed session date (LABEL).
-    assert isinstance(row["valid_at"], datetime)
-    assert row["valid_at"].year == 2024 and row["valid_at"].month == 3
-    # Exactly one cheap LLM call, max_tokens bounded.
-    assert len(llm.calls) == 1
-    assert llm.calls[0][2] == 160
+    await _write_session_summary(writer.input, writer.state)
+    writer.ch.insert.assert_not_awaited()
+    writer.link.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_write_summary_null_valid_at_when_undated(_patch_clients) -> None:
-    from server.memory.app.extract.handler import _write_session_summary
+async def test_a_current_source_after_many_missing_candidates_can_still_form_a_digest(writer):
+    from server.memory.app.session_summary import _write_session_summary
 
-    _llm, _embedder, ch = _patch_clients
-    state = _FakeState(extracted_facts=[{"value": "f"}], observation_date=None)
-    await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
-
-    row = ch.inserts[0][1][0]
-    assert row["valid_at"] is None
-
-
-@pytest.mark.asyncio
-async def test_write_summary_skips_when_no_facts(_patch_clients) -> None:
-    from server.memory.app.extract.handler import _write_session_summary
-
-    llm, _embedder, ch = _patch_clients
-    state = _FakeState(extracted_facts=[], observation_date="2024-03-11")
-    await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
-
-    # Nothing to summarize -> no LLM call, no insert.
-    assert llm.calls == []
-    assert ch.inserts == []
-
-
-@pytest.mark.asyncio
-async def test_write_summary_skips_on_empty_digest(monkeypatch, _patch_clients) -> None:
-    from server.memory.app.extract.handler import _write_session_summary
-
-    llm, _embedder, ch = _patch_clients
-    llm._text = "   "  # whitespace-only digest
-    state = _FakeState(extracted_facts=[{"value": "f"}], observation_date="2024-03-11")
-    await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
-
-    assert ch.inserts == []  # empty digest -> no row
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("vec", [[], [0.1], [float("nan")] * 8, [float("inf")] * 8])
-async def test_write_summary_skips_on_invalid_embedding(monkeypatch, _patch_clients, vec) -> None:
-    from server.memory.app import bulk_set as _bulk_set_mod
-    from server.memory.app import session_summary as _session_summary_mod
-    from server.memory.app.extract.handler import _write_session_summary
-
-    llm, _embedder, ch = _patch_clients
-    monkeypatch.setattr(_bulk_set_mod, "get_embedder", lambda: _FakeEmbedder(vec=vec))
-    monkeypatch.setattr(_session_summary_mod, "get_embedder", lambda: _FakeEmbedder(vec=vec))
-    state = _FakeState(extracted_facts=[{"value": "f"}], observation_date="2024-03-11")
-    await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
-
-    assert ch.inserts == []  # Invalid vectors never become summary rows.
-
-
-@pytest.mark.asyncio
-async def test_write_summary_propagates_for_caller_failopen(monkeypatch, _patch_clients) -> None:
-    """The writer itself raises on LLM error; the CALLER wraps it (the
-    set_from_messages try/except records a projection failure). So the writer's
-    contract is: raise, don't swallow — the fail-open boundary is one level up."""
-    import server.llm.client as llm_mod
-    from server.memory.app.extract.handler import _write_session_summary
-
-    class _BoomLLM:
-        async def complete(self, *a, **k):
-            raise RuntimeError("llm down")
-
-    monkeypatch.setattr(llm_mod, "get_llm_client", lambda: _BoomLLM())
-    state = _FakeState(extracted_facts=[{"value": "f"}], observation_date="2024-03-11")
-    with pytest.raises(RuntimeError, match="llm down"):
-        await _write_session_summary(_FakeInput(), [{"role": "user", "content": "hi"}], state)
+    committed = writer.state.written[0]
+    writer.state.written = [dict(memory_id=f"missing-{i}", version=100) for i in range(48)] + [
+        committed
+    ]
+    writer.read.side_effect = [None] * 48 + [writer.source]
+    await _write_session_summary(writer.input, writer.state)
+    assert writer.read.await_count == 49
+    assert writer.ch.insert.call_args.args[1][0]["key_facts"] == [writer.source.value]

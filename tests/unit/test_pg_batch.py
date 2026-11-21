@@ -56,6 +56,7 @@ class _Batching:
         self.release = asyncio.Event()
         self.alone: BaseException | None = None
         self.refuse_documents: BaseException | None = None
+        self.withhold_documents: set[str] = set()
         self.refuse_retirement = False
         # Each retirement's keys; `retire_alone` is what a retirement of one commit raises.
         self.retired: list[list[str]] = []
@@ -91,11 +92,13 @@ class _Batching:
             self.memory.append(keys)
             return len(rows)
 
-        async def _documents(rows: Any, *, ch: Any) -> None:
+        async def _documents(rows: Any, *, ch: Any) -> list[dict[str, Any]]:
             if self.refuse_documents is not None:
                 raise self.refuse_documents
+            rows = [r for r in rows if r["memory_key"] not in self.withhold_documents]
             self.documents.append([r["memory_key"] for r in rows])
             self.document_rows += rows
+            return rows
 
         async def _audits(rows: Any, *, ch: Any, retried: bool) -> None:
             self.audits.append(len(rows))
@@ -385,6 +388,47 @@ async def test_a_document_whose_key_moved_on_is_not_sent_and_stays_owed(
     ]
     # Handed over at once, so no search waits out the writer's lease for it.
     assert batch.handed_over == [("o", "n", 1)]
+
+
+async def test_a_document_withheld_after_the_heads_read_stays_owed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    batch = _Batching(monkeypatch)
+    batch.withhold_documents = {"k1"}
+    await asyncio.gather(batch.submit("k1", 1), batch.submit("k2", 2))
+    assert batch.documents == [["k2"]]
+    assert sorted(batch.landed) == [
+        (("o", "n", 1), MEMORY_ROW | AUDIT_ROW),
+        (("o", "n", 2), _FULL),
+    ]
+    assert batch.handed_over == [("o", "n", 1)]
+
+
+@pytest.mark.parametrize("field", ["org", "namespace", "agent", "user_id", "session_id"])
+async def test_a_receipt_cannot_settle_another_identity(monkeypatch, field) -> None:
+    from server.memory.store.rows import identity_key
+
+    batch = _Batching(monkeypatch)
+    first, other = batch.committed("k", 1), batch.committed("k", 2)
+    other.rows[0][field] = "other"
+    other.seqs[0] = (other.rows[0]["org"], other.rows[0]["namespace"], 2)
+    rows = [first.rows[0], other.rows[0]]
+
+    async def heads(keys, **kw):
+        return {identity_key(row): (row, 0) for row in rows}
+
+    async def insert(documents, **kw):
+        assert len(documents) == 2
+        return documents[:1]
+
+    monkeypatch.setattr(pg_memory, "heads_owing", heads)
+    monkeypatch.setattr("server.memory.store.inserts.insert_embedding_rows", insert)
+    await asyncio.gather(
+        pg_batch.submit(first, documents=rows[:1], ch=batch.ch),
+        pg_batch.submit(other, documents=rows[1:], ch=batch.ch),
+    )
+    assert batch.landed == [(first.seqs[0], _FULL), (other.seqs[0], MEMORY_ROW | AUDIT_ROW)]
+    assert batch.handed_over == other.seqs
 
 
 @pytest.mark.parametrize("head_owes", [0, SEARCH_DOC])

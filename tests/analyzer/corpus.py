@@ -163,7 +163,11 @@ class RecordingCH:
         return [r if isinstance(r, _Row) else _Row(r) for r in self._rows(sql, params)]
 
     async def query_all(
-        self, sql: str, params: dict[str, Any] | None = None
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        settings: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         p = dict(params or {})
         self.calls.append(("query_all", sql, p))
