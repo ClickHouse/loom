@@ -5,6 +5,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _qualified_sources(monkeypatch):
+    # These cases isolate ranking and hit mapping; source proof has its own suite.
+    async def qualified(ch, rows, **kwargs):
+        return rows
+
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualified)
+
 
 def test_digest_row_carries_links_and_session_into_the_hit() -> None:
     """The summary leg's row → SearchHit mapping (memory.app.retrieval)."""

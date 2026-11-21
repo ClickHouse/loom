@@ -7,8 +7,7 @@
   exact, reads the full rows by exact key only for what the scan returned,
   writes one insert per table per round, and scans from 0 on its slow clock;
 - entity_extractor reads the cost cap once per pass for every namespace of
-  its rows and writes the pass's rows in one batch (six statements, not
-  six per row); the batch write emits the same rows as N single writes;
+  its rows and writes the pass's rows in batches with bounded source checks; the batch write emits the same rows as N single writes;
 - the cost-cap verdict for N namespaces is one statement, fail-open;
 - embedding_worker marks itself idle only when all three legs found nothing;
 - every pass records its counts as outcome scalars.
@@ -23,6 +22,7 @@ from typing import Any
 import pytest
 
 from server.code.store.index import CodeRepo as _RealCodeRepo
+from server.core.hashing import sha256_value
 from server.settings import settings
 from server.workers import pass_context
 from server.workers import supervisor as sup
@@ -565,6 +565,32 @@ class _CH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
         self.heads: dict[Any, Any] = {}
 
+        for batch in answers:
+            for row in batch:
+                if "entities" in row and "embedding_model" not in row:
+                    from server.memory.store.rows import identity_key
+
+                    head = {**_mem_row(row["memory_key"]), **row}
+                    self.heads[identity_key(head)] = head
+
+    async def query_one(self, sql, params=None):
+        import json
+
+        from server.core.hashing import served_row_value
+        from server.memory.domain.promotion_source import promotion_source
+
+        self.queries.append(" ".join(sql.split()))
+        assert "FROM loom.shared FINAL" in sql
+        key = (params["org"], params["ns"], "a", "-", "-", params["memory_key"])
+        source = self.heads.get(key)
+        if source is None:
+            return None
+        return {
+            "value": json.dumps(served_row_value(source)),
+            "tombstoned_at": None,
+            "promoted_from": [promotion_source(*key)],
+        }
+
     async def query_all(self, sql, params=None):
         from server.memory.store.rows import identity_key
 
@@ -606,6 +632,7 @@ def _mem_row(key: str) -> dict[str, Any]:
         "memory_type": "semantic",
         "value": '{"a": 1}',
         "value_json": "{}",
+        "content_sha256": sha256_value({"a": 1}),
         "confidence": 1.0,
         "version": 1,
         "pinned": 0,
@@ -619,7 +646,10 @@ def _mem_row(key: str) -> dict[str, Any]:
 
 
 def _emb_row(key: str, scope: str = "private") -> dict[str, Any]:
+    import json
+
     from server.memory import store as mr
+    from server.memory.domain.excerpt import build_excerpt
 
     return {
         **mr.EMBEDDING_PERSISTED_COLS,
@@ -631,7 +661,10 @@ def _emb_row(key: str, scope: str = "private") -> dict[str, Any]:
         "memory_key": key,
         "memory_type": "semantic",
         "scope": scope,
-        "content_excerpt": "x",
+        "content_excerpt": build_excerpt(json.dumps({"a": 1}), memory_key=key)
+        if scope == "shared"
+        else "x",
+        "content_sha256": sha256_value({"a": 1}),
         "embedding_model": "m",
         "embedding_dim": 3,
         "embedding": [0.1, 0.2, 0.3],
@@ -656,9 +689,7 @@ def _item(
     }
 
 
-def test_apply_entities_batch_is_six_statements_for_n_rows_and_emits_the_same_rows_as_n_single_writes() -> (
-    None
-):
+def test_apply_entities_batch_bounds_reads_and_preserves_every_mirror() -> None:
     from server.memory import store as mr
 
     ch = _CH(
@@ -703,27 +734,34 @@ def test_apply_entities_batch_is_six_statements_for_n_rows_and_emits_the_same_ro
         mr.apply_entities_batch([_item("k1", ["alice"]), _item("k2", ["bob", "eve"])], ch=ch)
     )
     assert written == {"memory": 2, "memory_embeddings": 3}
-    assert len(ch.queries) == 4 and [t for t, _ in ch.inserts] == [
+    assert len(ch.queries) == 17 and [t for t, _ in ch.inserts] == [
         "loom.memory",
         "loom.memory_embeddings",
+        "loom.memory_embeddings",
     ]
+    mirrors = [q for q in ch.queries if "FROM loom.memory_embeddings" in q]
+    heads = [q for q in ch.queries if "FROM loom.memory FINAL" in q]
+    assert len(mirrors) == 2 and len(heads) == 5
+    assert len([q for q in ch.queries if "FROM loom.shared FINAL" in q]) == 2
+    assert len([q for q in ch.queries if "memory_refusals" in q]) == 8
     assert (
         ch.queries[0].startswith("SELECT")
         and "FROM loom.memory FINAL PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN"
         in ch.queries[0]
     )
-    assert (
-        "PREWHERE (org, namespace" in ch.queries[1]
-    )  # Review state is checked under the write fence.
-    assert ch.queries[2].startswith(
+    assert "PREWHERE (org, namespace" in heads[1]  # Review state is checked under the write fence.
+    assert mirrors[0].startswith(
         "SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key, scope, embedding_model FROM loom.memory_embeddings"
     )
-    assert ch.queries[3].startswith(
+    assert mirrors[1].startswith(
         "SELECT * FROM loom.memory_embeddings FINAL PREWHERE (org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key) IN"
     )
     mem = {r["memory_key"]: r for r in ch.inserts[0][1]}
     assert mem["k1"]["entities"] == ["alice"] and mem["k2"]["entities"] == ["bob", "eve"]
-    emb = ch.inserts[1][1]
+    emb = sorted(
+        (r for table, rows in ch.inserts if table == "loom.memory_embeddings" for r in rows),
+        key=lambda r: (r["memory_key"], r["scope"]),
+    )
     assert [(r["memory_key"], r["scope"], r["entities"]) for r in emb] == [
         ("k1", "private", ["alice"]),
         ("k2", "private", ["bob", "eve"]),
@@ -736,7 +774,11 @@ def test_apply_entities_batch_is_six_statements_for_n_rows_and_emits_the_same_ro
     assert all(set(mr.EMBEDDING_PERSISTED_COLS) <= set(r) for r in emb), (
         "every persisted column mirrored"
     )
-    assert all(r["embedding"] == [0.1, 0.2, 0.3] and r["content_excerpt"] == "x" for r in emb)
+    assert all(
+        r["embedding"] == [0.1, 0.2, 0.3]
+        and r["content_excerpt"] == _emb_row(r["memory_key"], r["scope"])["content_excerpt"]
+        for r in emb
+    )
 
 
 def test_apply_entities_batch_writes_only_onto_the_head_the_entities_came_from() -> None:
@@ -771,12 +813,12 @@ def test_apply_entities_batch_keeps_its_work_over_a_copy_of_the_same_text() -> N
     takes the entities; one whose text changed does not."""
     from server.memory import store as mr
 
-    read = "a" * 64
+    read = sha256_value({"a": 1})
     ch = _CH(
         answers=[
             [
                 _mem_row("k1") | {"version": 3, "content_sha256": read},
-                _mem_row("k2") | {"version": 3, "content_sha256": "b" * 64},
+                _mem_row("k2") | {"version": 3, "content_sha256": sha256_value({"a": 2})},
             ]
         ]
     )
@@ -796,7 +838,7 @@ def test_a_copy_of_the_same_text_redacted_or_made_high_since_keeps_no_entities(
 ) -> None:
     from server.memory import store as mr
 
-    read = "a" * 64
+    read = sha256_value({"a": 1})
     ch = _CH(answers=[[_mem_row("k1") | {"version": 3, "content_sha256": read} | since]])
     written = asyncio.run(
         mr.apply_entities_batch([_item("k1", ["alice"], content_sha256=read)], ch=ch)
@@ -818,7 +860,8 @@ def test_apply_entities_batch_copies_every_search_document_of_a_head_written() -
     )
     written = asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"])], ch=ch))
     assert written == {"memory": 1, "memory_embeddings": 2}
-    assert [(r["scope"], r["version"]) for r in ch.inserts[1][1]] == [("private", 2), ("shared", 3)]
+    vectors = [r for table, rows in ch.inserts if table == "loom.memory_embeddings" for r in rows]
+    assert sorted((r["scope"], r["version"]) for r in vectors) == [("private", 2), ("shared", 3)]
 
 
 def test_apply_entities_batch_leaves_a_newer_writes_search_document(
@@ -835,7 +878,7 @@ def test_apply_entities_batch_leaves_a_newer_writes_search_document(
         slept.append(s)
 
     monkeypatch.setattr(entities.asyncio, "sleep", sleep)
-    head, newer = "a" * 64, "b" * 64
+    head, newer = sha256_value({"a": 1}), sha256_value({"a": 2})
     ch = _CH(
         answers=[
             [_mem_row("k1") | {"content_sha256": head}],
@@ -875,7 +918,7 @@ def test_a_restatement_with_its_own_entities_keeps_them() -> None:
     pass's to tag."""
     from server.memory import store as mr
 
-    read = "a" * 64
+    read = sha256_value({"a": 1})
     restated = _mem_row("k1") | {"version": 3, "content_sha256": read, "entities": ["acme"]}
     ch = _CH(answers=[[restated]])
     written = asyncio.run(
@@ -890,7 +933,7 @@ def test_apply_entities_batch_writes_above_a_copy_newer_than_its_draw() -> None:
     from server.memory import store as mr
     from server.memory.store.rows import next_version
 
-    read = "a" * 64
+    read = sha256_value({"a": 1})
     far = next_version() + 10**9  # a lock from a replica whose clock is a second ahead
     ch = _CH(answers=[[_mem_row("k1") | {"version": far, "content_sha256": read}]])
     asyncio.run(mr.apply_entities_batch([_item("k1", ["alice"], content_sha256=read)], ch=ch))
@@ -1053,7 +1096,10 @@ def test_apply_entities_batch_retries_the_mirror_once_for_the_keys_whose_memory_
     written = asyncio.run(mr.apply_entities_batch([_item("k1", ["a"]), _item("k2", ["b"])], ch=ch))
     assert slept == [mr.ENTITY_MIRROR_RETRY_DELAY_S], "exactly one bounded retry for the batch"
     assert written == {"memory": 2, "memory_embeddings": 2}
-    assert len(ch.queries) == 6 and len(ch.inserts) == 2
+    assert len(ch.queries) == 11 and len(ch.inserts) == 2
+    assert len([q for q in ch.queries if "FROM loom.memory_embeddings" in q]) == 4
+    assert len([q for q in ch.queries if "FROM loom.memory FINAL" in q]) == 3
+    assert len([q for q in ch.queries if "memory_refusals" in q]) == 4
     assert [r["memory_key"] for r in ch.inserts[1][1]] == ["k1", "k2"]
 
 
@@ -1075,7 +1121,7 @@ def test_apply_entities_batch_with_no_live_memory_rows_writes_nothing_and_does_n
     assert asyncio.run(mr.apply_entities_batch([], ch=ch)) == {"memory": 0, "memory_embeddings": 0}
 
 
-def test_heal_reads_every_pair_in_one_keyed_final_read_and_one_insert() -> None:
+def test_heal_batches_mirror_reads_and_checks_shared_sources() -> None:
     from server.memory import store as mr
 
     pairs = [
@@ -1100,9 +1146,12 @@ def test_heal_reads_every_pair_in_one_keyed_final_read_and_one_insert() -> None:
     ]
     ch = _CH(answers=[pairs, [_emb_row("k1"), _emb_row("k2"), _emb_row("k2", "shared")]])
     healed = asyncio.run(mr.heal_divergent_entities(limit=50, ch=ch))
-    assert healed == 3 and len(ch.queries) == 2 and len(ch.inserts) == 1
+    assert healed == 3 and len(ch.queries) == 13 and len(ch.inserts) == 2
+    assert len([q for q in ch.queries if "FROM loom.shared FINAL" in q]) == 2
+    assert len([q for q in ch.queries if "memory_refusals" in q]) == 6
     assert "IN {keys:Array(Tuple(String, String, String, String, String, String))}" in ch.queries[1]
-    assert [(r["memory_key"], r["entities"]) for r in ch.inserts[0][1]] == [
+    vectors = [r for table, rows in ch.inserts if table == "loom.memory_embeddings" for r in rows]
+    assert sorted((r["memory_key"], r["entities"]) for r in vectors) == [
         ("k1", ["x"]),
         ("k2", ["y"]),
         ("k2", ["y"]),
@@ -1172,6 +1221,7 @@ def emb_env(monkeypatch: pytest.MonkeyPatch):
 
     async def insert_rows(rows, *a, **kw):
         env["inserted"].append(list(rows))
+        return [] if env.get("withheld") else rows
 
     async def orphans(**kw):
         return [dict(o) for o in env["orphans"]]
@@ -1361,3 +1411,42 @@ def test_the_liveness_filter_is_one_keyed_aggregate_over_the_page() -> None:
     )
     assert params["keys"] == [("o", "n1", "m", "p", "c")]
     assert out == [{"org": "o", "namespace": "n1", "path": "p", "chunk_id": "c", "version": 7}]
+
+
+async def test_embedding_worker_counts_only_acknowledged_fills(emb_env):
+    from server.memory.workers import embedding as worker
+    from server.workers import status
+
+    emb_env.update(stubs=[_stub_row()], withheld=True)
+    result = await worker.run_pass(worker.EmbeddingWorkerConfig(batch_size=10))
+    assert result.embedded_count == 0 and result.reconciled == []
+    assert status.get_registry().snapshot()["embedding_worker"]["last_outcome"]["rows_written"] == 0
+
+
+@pytest.mark.copy_head_check
+async def test_embedding_worker_withholds_an_unbacked_shared_stub_before_embedding(
+    emb_env, monkeypatch
+):
+    from server.memory.store import shared
+    from server.memory.workers import embedding as worker
+
+    seen = []
+
+    async def missing(row, **kwargs):
+        seen.append(row)
+        return None
+
+    class Provider:
+        model_name, dim = "fake-ngram-3", 3
+
+        async def embed_many(self, texts):
+            pytest.fail("An unbacked shared stub reached the provider")
+
+        async def embed(self, text):
+            pytest.fail("An unbacked shared stub reached the provider")
+
+    emb_env["stubs"] = [_stub_row() | {"scope": "shared"}]
+    monkeypatch.setattr(shared, "shared_embedding_source", missing)
+    monkeypatch.setattr(worker, "get_embedder", lambda: Provider())
+    result = await worker.run_pass(worker.EmbeddingWorkerConfig(batch_size=10))
+    assert len(seen) == 1 and result.embedded_count == 0 and not emb_env["inserted"]

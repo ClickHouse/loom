@@ -354,8 +354,8 @@ async def queue_profile_reembed(
             )
             for r in rows
         ]
-        await memory_repo.insert_embedding_rows(stubs, ch=ch)
-        return len(stubs)
+        admitted = await memory_repo.insert_embedding_rows(stubs, ch=ch)
+        return len(admitted)
     except Exception as e:  # noqa: BLE001 — the read-side check heals it later
         log.warning("profile re-embed stub write failed: %s", e)
         return 0

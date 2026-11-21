@@ -383,6 +383,7 @@ async def memory_rows_by_identity_keys(
     ch: _CHClient | None = None,
     sequential: bool = False,
     include_tombstoned: bool = False,
+    max_value_chars: int | None = None,
 ) -> dict[IdentityKey, MemoryRow]:
     """`get_by_key` for N exact identity keys, in statements whose keys each fit one form
     field (`query_all_sliced`): the same projection under FINAL, the full sort key in
@@ -393,19 +394,29 @@ async def memory_rows_by_identity_keys(
     if not keys:
         return {}
     if pg.enabled():
-        heads = await pg_memory.heads_by_keys(keys, include_tombstoned=include_tombstoned)
+        heads = await pg_memory.heads_by_keys(
+            keys, include_tombstoned=include_tombstoned, max_value_chars=max_value_chars
+        )
         return {k: _hydrate(h) for k, h in heads.items()}
     ch = ch or _default_client()
     # Bound a slice at a time: one parameter holds as many keys as a form field does.
+    where = []
+    if not include_tombstoned:
+        where.append("tombstoned_at IS NULL")
+    if max_value_chars is not None:
+        where.append(
+            "length(value) <= {value_cap:UInt64} AND "
+            "length(toString(value_json)) <= {value_cap:UInt64}"
+        )
     rows = await query_all_sliced(
         ch,
         f"""{_MEMORY_FINAL_PROJECTION}
         PREWHERE (org, namespace, agent, user_id, session_id, memory_key)
                  IN {{keys:{_IDENTITY_KEY_TUPLE}}}
-        {"" if include_tombstoned else "WHERE tombstoned_at IS NULL"}
+        {("WHERE " + " AND ".join(where)) if where else ""}
         {_SEQUENTIAL if sequential else ""}
         """,
-        {"keys": list(keys)},
+        {"keys": list(keys), "value_cap": max_value_chars},
         "keys",
     )
     return {identity_key(r): _hydrate(r) for r in rows}

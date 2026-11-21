@@ -14,6 +14,28 @@ from server.core import ch_writes
 from server.settings import settings
 
 
+async def test_query_all_keeps_its_statement_settings_through_the_driver(monkeypatch):
+    seen = []
+
+    class Driver:
+        async def query(self, sql, parameters, settings, **kwargs):
+            seen.append((sql, parameters, settings))
+            return SimpleNamespace(column_names=["v"], result_rows=[(1,)], summary={})
+
+    async def guarded(*args, **kwargs):
+        return None
+
+    client = ch_mod.CHClient()
+    monkeypatch.setattr(type(client), "client", property(lambda self: Driver()))
+    monkeypatch.setattr(ch_mod, "guard_pending_schema", guarded)
+    result = await client.query_all(
+        "SELECT {v:UInt8} AS v", params={"v": 1}, settings={"allow_experimental_ai_functions": 1}
+    )
+    assert result == [{"v": 1}]
+    assert seen[0][1] == {"v": 1}
+    assert seen[0][2]["allow_experimental_ai_functions"] == 1
+
+
 @pytest.mark.asyncio
 async def test_session_settings_enable_filesystem_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}

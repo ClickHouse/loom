@@ -21,11 +21,12 @@ def wire() -> None:
     from server.code.domain.index import repos
     from server.code.domain.index.compiler_tiers import TIERS
     from server.core.ch import add_insert_observer
+    from server.erasure.store.consent import ConsentPolicy, use_policy
     from server.identity.app.directory import IdentityDirectory
     from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
     from server.memory.app import provenance, recent_writes
     from server.memory.domain.memory_types import NON_SEARCHABLE_TYPES
-    from server.memory.store import pg_publish
+    from server.memory.store import pg_publish, refusals
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
     from server.observability.budget_notifications import use_observer
     from server.observability.state_inputs import StateInputs, use_state_inputs
@@ -35,6 +36,16 @@ def wire() -> None:
     use_directory(IdentityDirectory())
     use_observer(schedule)
     pg_publish.use_writer(provenance.writer_actor)
+    refusals.use_writer(provenance.writer_actor)
+    use_policy(
+        ConsentPolicy(
+            fence_names=lambda org, kind, value: refusals.erasure_fence_names(org, kind, value),
+            lease_client=lambda ch: refusals._lease_client(ch),
+            lock_postgres=lambda *args, **kwargs: refusals.lock_postgres(*args, **kwargs),
+            record_clickhouse=lambda *args, **kwargs: refusals.record_clickhouse(*args, **kwargs),
+            record_postgres=lambda *args, **kwargs: refusals.record_postgres(*args, **kwargs),
+        )
+    )
     use_state_inputs(
         StateInputs(
             live_chunk_sql=LIVE_CHUNK_SQL,

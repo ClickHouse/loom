@@ -12,6 +12,7 @@ import pytest
 from server.core.ch import CHClient
 from server.core.datetimes import naive_utc_now
 from server.memory.app.retrieval.summaries import fetch_session_summaries
+from server.memory.domain.summary_provenance import render_summary
 from server.memory.store import lifecycle
 from server.memory.store.lifecycle import bulk_tombstone_scope
 from server.memory.store.rows import MEMORY_PERSISTED_COLS, next_version
@@ -93,13 +94,14 @@ async def test_session_summaries_inherit_known_source_state_and_version(
     vector = [1.0] + [0.0] * 3071
     states = ["active", "conflicted", "rejected", "proposed", "superseded", "tombstoned"]
     for status in [*states, "rewritten", "high", "expired", "past", "standalone", "missing"]:
-        fields: dict[str, Any] = {"version": 100, "session_id": status}
+        fields: dict[str, Any] = {"version": 100, "session_id": status, "value": json.dumps(status)}
         if status in states:
             fields["status"] = status
         if status == "tombstoned":
             fields["tombstoned_at"] = naive_utc_now()
         if status == "rewritten":
             fields["version"] = 300
+            fields["value"] = json.dumps("a replacement fact")
         if status == "high":
             fields["sensitivity"] = "high"
         if status in ("past", "expired"):
@@ -115,7 +117,8 @@ async def test_session_summaries_inherit_known_source_state_and_version(
             "user_id": "reader",
             "session_id": status,
             "version": 200,
-            "summary_text": status,
+            "summary_text": render_summary([status]),
+            "key_facts": [status],
             "summary_embedding": vector,
             "embedding_model": "fixture-model",
             "embedding_dim": len(vector),
@@ -140,7 +143,7 @@ async def test_session_summaries_inherit_known_source_state_and_version(
         )
     finally:
         await ch.disconnect()
-    assert {h.content_excerpt for h in hits} == {"active", "conflicted", "standalone"}
+    assert {h.content_excerpt for h in hits} == {"active", "conflicted"}
 
 
 async def test_clear_keeps_a_complete_tombstone_in_version_history(
@@ -452,7 +455,15 @@ async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
         ("stale", "rejected", query),
         ("fresh", "active", [0.7, 0.2] + [0.0] * 3070),
     ):
-        _memory(ch_client, me, "source", session_id=session, status=status, version=100)
+        _memory(
+            ch_client,
+            me,
+            "source",
+            session_id=session,
+            status=status,
+            version=100,
+            value=json.dumps(session),
+        )
         row = {
             "org": me["org"],
             "namespace": me["namespace"],
@@ -460,7 +471,8 @@ async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
             "user_id": "reader",
             "session_id": session,
             "version": 200,
-            "summary_text": session,
+            "summary_text": render_summary([session]),
+            "key_facts": [session],
             "summary_embedding": vector,
             "embedding_dim": 3072,
             "embedding_model": "fixture-model",

@@ -70,6 +70,8 @@ class _StubCH:
         self.inserts.append((table, rows))
 
     async def query_all(self, sql: str, params: Any = None, **kwargs: Any) -> list[dict[str, Any]]:
+        if "FROM loom.memory_refusals" in sql:
+            return []
         if (
             "FROM loom.memory FINAL" in sql
             and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql

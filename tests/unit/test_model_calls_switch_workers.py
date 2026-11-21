@@ -303,8 +303,9 @@ def test_an_org_switched_off_mid_pass_keeps_its_stub_and_its_attempts(monkeypatc
     async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
         return rows, []
 
-    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> list[dict[str, Any]]:
         written.extend(rows)
+        return rows
 
     async def nothing(*a: Any, **k: Any) -> None:
         return None
@@ -384,8 +385,9 @@ def test_a_stale_switch_stops_the_embedding_worker_before_any_write(monkeypatch)
 
     written: list[Any] = []
 
-    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> list[dict[str, Any]]:
         written.extend(rows)
+        return rows
 
     async def none(*a: Any, **k: Any) -> list[Any]:
         return []
@@ -438,8 +440,9 @@ def test_a_switch_gone_stale_mid_embedding_pass_writes_nothing_and_spends_no_att
     async def served(rows: list[dict[str, Any]], *a: Any) -> tuple[list[Any], list[Any]]:
         return rows, []
 
-    async def insert(rows: list[dict[str, Any]], **_: Any) -> None:
+    async def insert(rows: list[dict[str, Any]], **_: Any) -> list[dict[str, Any]]:
         written.extend(rows)
+        return rows
 
     async def nothing(*a: Any, **k: Any) -> None:
         return None

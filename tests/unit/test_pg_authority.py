@@ -1365,6 +1365,118 @@ def _claim(seq: int, targets: int, *, ns: str = "n", attempts: int = 1) -> pg_me
     )
 
 
+async def test_delivery_retains_only_the_document_admission_withheld(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from server.memory.app import after_write, pg_delivery
+    from server.memory.store import pg_publish
+
+    claims = [
+        replace(
+            _claim(i, pg_memory.SEARCH_DOC),
+            lease_token=10 + i,
+            deadline=time.monotonic() + 60,
+            row={
+                "org": "o",
+                "namespace": "n",
+                "agent": "a",
+                "user_id": "u",
+                "session_id": "s",
+                "memory_key": f"k{i}",
+                "version": i,
+            },
+        )
+        for i in range(1, 5)
+    ]
+    completed, released, indexed = [], [], []
+
+    async def none(*a, **kw):
+        return None
+
+    async def held(*a, **kw):
+        return {pg_publish.document_id(claims[0].row)}
+
+    async def heads(owed, deadline):
+        assert [c.seq for c in owed] == [2, 3, 4]
+        return [replace(claims[2], row={**claims[2].row, "version": 30}), claims[3]]
+
+    async def documents(built, **kw):
+        return [dict(c.row) for c in built]
+
+    async def insert(rows, **kw):
+        assert [r["version"] for r in rows] == [30, 4]
+        return rows[:1]
+
+    async def complete(seqs, target, *, tokens):
+        completed.append((seqs, target, tokens))
+
+    async def release(owed):
+        released.extend(c.seq for c in owed)
+
+    monkeypatch.setattr("server.core.ch.get_client", lambda: object())
+    monkeypatch.setattr(pg_publish, "publish_rows", none)
+    monkeypatch.setattr(pg_publish, "held_documents", held)
+    monkeypatch.setattr(pg_publish, "retire_decision_records", none)
+    monkeypatch.setattr(pg_delivery, "_still_heads", heads)
+    monkeypatch.setattr(pg_delivery, "_search_documents", documents)
+    monkeypatch.setattr(pg_delivery, "_retire_old_vectors", none)
+    monkeypatch.setattr("server.memory.store.insert_embedding_rows", insert)
+    monkeypatch.setattr(after_write, "index_late_rows", lambda rows, **kw: indexed.extend(rows))
+    monkeypatch.setattr(pg_memory, "complete", complete)
+    monkeypatch.setattr(pg_memory, "release", release)
+    assert await pg_delivery._publish(claims) == 3
+    assert completed == [
+        ([("o", "n", 1), ("o", "n", 2), ("o", "n", 3)], pg_memory.SEARCH_DOC, [11, 12, 13])
+    ]
+    assert released == [4] and [r["version"] for r in indexed] == [30]
+
+
+async def test_a_delivery_withheld_by_admission_counts_no_success_or_failure(monkeypatch) -> None:
+    from server.memory.app import pg_delivery
+
+    async def renew(claims):
+        return claims
+
+    async def withheld(claims, **kw):
+        return 0
+
+    async def unexpected(*a, **kw):
+        raise AssertionError("withholding counts no failure")
+
+    monkeypatch.setattr(pg_memory, "renew", renew)
+    monkeypatch.setattr(pg_memory, "record_failure", unexpected)
+    monkeypatch.setattr(pg_delivery, "_publish", withheld)
+    assert await pg_delivery.publish_claims([_claim(1, pg_memory.SEARCH_DOC)]) == (0, 0)
+
+
+@pytest.mark.parametrize("present", [False, True])
+async def test_a_copy_settles_only_an_exact_document_held_in_clickhouse(monkeypatch, present):
+    from server.memory.store import lifecycle, pg_publish
+
+    row = {
+        "org": "o",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "memory_key": "k",
+        "version": 7,
+    }
+    seq, completed = ("o", "n", 3), []
+
+    async def held(org, ns, ids, **kw):
+        assert (org, ns, ids) == ("o", "n", [pg_publish.document_id(row)])
+        return set(ids) if present else {(*ids[0][:-1], 6)}
+
+    async def complete(seqs, target):
+        completed.append((seqs, target))
+
+    monkeypatch.setattr(pg_publish, "held_documents", held)
+    monkeypatch.setattr(pg_memory, "complete", complete)
+    await lifecycle._settle_documents(SimpleNamespace(rows=[row], seqs=[seq]), [True], ch=object())
+    assert completed == [([seq] if present else [], pg_memory.SEARCH_DOC)]
+
+
 @pytest.mark.asyncio
 async def test_a_revision_clickhouse_keeps_refusing_holds_back_only_itself(
     monkeypatch: pytest.MonkeyPatch,
@@ -1376,10 +1488,11 @@ async def test_a_revision_clickhouse_keeps_refusing_holds_back_only_itself(
     published: list[tuple[list[int], bool]] = []
     failed: list[int] = []
 
-    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
+    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> int:
         if any(c.seq == 2 for c in claims) and not stub:
             raise RuntimeError("refused")
         published.append(([c.seq for c in claims], stub))
+        return len(claims)
 
     async def _record_failure(
         claims: list[pg_memory.Claimed], error: BaseException, *, park: bool = False
@@ -1406,10 +1519,11 @@ async def test_a_revision_clickhouse_keeps_refusing_holds_back_only_itself(
     assert published == [([2], True)]
 
     # A stub refused too parks that claim alone; the rest of the pass is published.
-    async def _refuse_2(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
+    async def _refuse_2(claims: list[pg_memory.Claimed], *, stub: bool = False) -> int:
         if any(c.seq == 2 for c in claims):
             raise RuntimeError("refused")
         published.append(([c.seq for c in claims], stub))
+        return len(claims)
 
     monkeypatch.setattr(pg_delivery, "_publish", _refuse_2)
     published.clear()
@@ -1459,10 +1573,14 @@ def test_the_authoritys_erasure_step_leads_the_erasing_steps_and_runs_only_under
     from server.settings import settings
 
     monkeypatch.setattr(settings, "storage_authority", "postgres")
-    assert authority_steps(USER_STEPS)[0][0] == "pg_memory.delete"
+    assert [name for name, _ in authority_steps(USER_STEPS)][:2] == [
+        "memory.refusals",
+        "pg_memory.delete",
+    ]
     # A namespace's sources stop first, so no sync turn writes into what the steps erase.
     names = [name for name, _ in authority_steps(NAMESPACE_STEPS)]
-    assert names[:4] == [
+    assert names[:5] == [
+        "memory.refusals",
         "knowledge_sources.retire",
         "knowledge_source_push.delete",
         "pg_memory.delete",
@@ -1859,10 +1977,11 @@ async def test_a_refused_statement_is_the_claims_attempt_and_the_rest_still_publ
     published: list[int] = []
     refused = pg.PostgresRefusedError(asyncpg.exceptions.CheckViolationError("check"))
 
-    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
+    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> int:
         if any(c.seq == 1 for c in claims):
             raise refused
         published.extend(c.seq for c in claims)
+        return len(claims)
 
     async def _record(
         claims: list[pg_memory.Claimed], error: BaseException, *, park: bool = False
@@ -1925,8 +2044,9 @@ async def test_a_namespace_whose_claims_are_all_gone_leaves_the_rest_of_the_pass
 
     published: list[str] = []
 
-    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
+    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> int:
         published.extend(c.namespace for c in claims)
+        return len(claims)
 
     async def _renew(claims: list[pg_memory.Claimed]) -> list[pg_memory.Claimed]:
         return [c for c in claims if c.namespace != "erased"]
@@ -1952,11 +2072,12 @@ async def test_a_last_attempt_its_lease_ran_out_on_publishes_its_stub_under_a_ne
     stubs: list[pg_memory.Claimed] = []
     renewals: list[int] = []
 
-    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> None:
+    async def _publish(claims: list[pg_memory.Claimed], *, stub: bool = False) -> int:
         pg_lease.check_lease(claims[0].deadline)
         if not stub:
             raise pg_lease.PublicationPending()  # the embedder outlasted the lease
         stubs.extend(claims)
+        return len(claims)
 
     async def _renew(claims: list[pg_memory.Claimed]) -> list[pg_memory.Claimed]:
         renewals.append(len(claims))
@@ -2057,10 +2178,11 @@ async def test_a_refused_audit_row_fails_the_attempt_after_the_search_document_i
         return set()
 
     async def _docs(claims: list[object], *, stub: bool = False) -> list[dict[str, object]]:
-        return [{"memory_key": "k"}]
+        return [{"org": "o", "namespace": "n", "memory_key": "k"}]
 
-    async def _insert(docs: list[object], ch: object = None) -> None:
+    async def _insert(docs: list[object], ch: object = None) -> list[object]:
         steps.append("documents")
+        return docs
 
     async def _complete(seqs: object, done: int, *, tokens: object = 1) -> None:
         steps.append(f"complete {done}")
@@ -3001,9 +3123,13 @@ async def test_a_verdict_linking_an_erased_memory_is_reached_again(
             return None
 
         async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            if "loom.memory_refusals" in sql:
+                return []
             return [{"org": "o", "scope": "n", "generation": 5}]
 
         async def fetchval(self, sql: str, *args: Any) -> bool:
+            if "loom.memory_refusals" in sql:
+                return False
             asked.append(list(args[2]))
             return uuid.UUID(erased) in args[2]
 
@@ -3136,9 +3262,10 @@ def _delivery_pass(monkeypatch: pytest.MonkeyPatch, publish: Any) -> dict[str, l
         # New objects, as the store's `replace` returns.
         return [SimpleNamespace(**vars(c)) for c in batch]
 
-    async def _publish(batch: list[Any], **_: Any) -> None:
+    async def _publish(batch: list[Any], **_: Any) -> int:
         seen["published"].append([c.seq for c in batch])
         await publish(batch)
+        return len(batch)
 
     async def _release(batch: list[Any]) -> None:
         seen["released"].extend(c.seq for c in batch)
@@ -5821,6 +5948,8 @@ async def test_a_commit_owes_the_retirement_from_the_head_it_locks(
             return None
 
         async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+            if "loom.memory_refusals" in sql:
+                return []
             if "loom.memory_current c" in sql:
                 return [{**row, "row": pg_memory.encode_row(head)}]
             return [{"org": "o", "scope": "n", "generation": 5}]

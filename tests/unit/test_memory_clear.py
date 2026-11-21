@@ -530,15 +530,20 @@ def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
         .on("SELECT max(version) AS v", [{"v": 0}])
         .on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
     )
+    ch.on("FROM loom.memory_refusals", [])
     ch.on("SELECT count() AS n", [{"n": 2}])
     ch.on("SELECT * FROM loom.memory FINAL", page)
     ch.on("SELECT DISTINCT cityHash64", [])
-    ch.on(
-        "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)",
-        lambda sql, params: [
-            r for r in ch.inserted("memory") if lifecycle.identity_key(r) in params["keys"]
-        ],
-    )
+
+    def heads(sql, params):
+        current = {}
+        for row in [*rows, *ch.inserted("memory")]:
+            key = lifecycle.identity_key(row)
+            if key not in current or row["version"] >= current[key]["version"]:
+                current[key] = row
+        return [current[key] for key in params["keys"] if key in current]
+
+    ch.on("PREWHERE (org, namespace, agent, user_id, session_id, memory_key)", heads)
     monkeypatch.setattr(lifecycle, "reemit_embedding_rows_for_keys", AsyncMock(return_value=0))
     return ch.install(monkeypatch)
 

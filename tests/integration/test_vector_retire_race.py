@@ -9,7 +9,6 @@ Skips cleanly when LOOM_CH_HOST is unset.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import os
 import uuid
@@ -19,6 +18,7 @@ from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.settings import settings
 from tests.integration._eventually import eventually
 
@@ -83,8 +83,8 @@ def _memory_row(ns: str, version: int, value: str, sensitivity: str) -> dict[str
             "memory_key": KEY,
             "memory_type": "semantic",
             "value": json.dumps(value),
-            "value_json": json.dumps({"v": value}),
-            "content_sha256": hashlib.sha256(value.encode()).hexdigest(),
+            "value_json": "{}",
+            "content_sha256": sha256_value(value),
             "confidence": 1.0,
             "actor": "process:itest",
             "source_class": "asserted",
@@ -119,6 +119,7 @@ async def _embedded_write(ch: Any, ns: str, value: str, entity: str) -> None:
         memory_type="semantic",
         scope="private",
         content_excerpt=value,
+        content_sha256=sha256_value(value),
         embedding_model="fake",
         embedding_dim=_DIM,
         embedding=_wide([0.1, 0.2, 0.3]),
@@ -870,10 +871,11 @@ async def test_chunks_finishing_after_a_newer_high_write_are_not_served(
 
 
 async def test_a_deleted_memory_restores_searchable(ch: Any) -> None:
-    """set, delete, restore: the restored key has a live vector again (the restore's
+    """Set, automatic retirement, restore: the restored key has a live vector again (the restore's
     embeddings read once failed on every call with ILLEGAL_AGGREGATION)."""
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput, MemorySetInput
-    from server.memory.app import handlers, restore, write
+    from server.memory.app import restore, write
+    from tests.integration._memory import retire_reversibly
 
     ns = f"itest-{uuid.uuid4().hex[:12]}"
     key = f"restore_live_{uuid.uuid4().hex[:6]}"
@@ -892,7 +894,7 @@ async def test_a_deleted_memory_restores_searchable(ch: Any) -> None:
         value = f"the {key} vault is audited each quarter"
         await write.handle_memory_set(MemorySetInput(**ident, memory_key=key, value=value))
         assert await live_vectors() == 1
-        out = await handlers.handle_memory_delete(MemoryDeleteInput(**ident, memory_key=key))
+        out = await retire_reversibly(MemoryDeleteInput(**ident, memory_key=key))
         assert out.tombstoned and await live_vectors() == 0
         res = await restore.handle_memory_restore(MemoryRestoreInput(**ident, memory_key=key))
         assert res.restored
@@ -1279,6 +1281,7 @@ class _ProxyBeforeReindexHeadRead:
             and "head" not in self.fired
             and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
             and "FROM loom.memory FINAL" in sql
+            and "WHERE tombstoned_at IS NULL" in sql
         ):
             self.fired.append("head")
             await self._before_head()
@@ -1355,6 +1358,7 @@ class _ProxyBeforeRetireRead:
             and "head" not in self.fired
             and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
             and "FROM loom.memory FINAL" in sql
+            and "WHERE tombstoned_at IS NULL" in sql
         ):
             self.fired.append("head")
         elif (
@@ -1607,7 +1611,8 @@ async def _high_key_with_row_above_its_fence(
         created_at=datetime.now(UTC).replace(tzinfo=None),
         version=int(head["version"]) + 10,
     )
-    await M.insert_embedding_rows([row], ch=ch)
+    # Seed a legacy cache write already admitted before its source became high.
+    await ch.insert("loom.memory_embeddings", [row], settings={"async_insert": 0})
     return secret, int(head["version"])
 
 
@@ -1636,8 +1641,8 @@ async def test_a_high_candidate_whose_head_moved_retires_nothing(ch: Any) -> Non
         newer = scanned | {
             "version": M.next_version(),
             "value": json.dumps(text),
-            "value_json": json.dumps({"v": text}),
-            "content_sha256": hashlib.sha256(text.encode()).hexdigest(),
+            "value_json": "{}",
+            "content_sha256": sha256_value(text),
         }
         await M.insert_memory_versions([newer], ch=ch)
         embedder = get_embedder()
@@ -1651,6 +1656,7 @@ async def test_a_high_candidate_whose_head_moved_retires_nothing(ch: Any) -> Non
             memory_type="semantic",
             scope="private",
             content_excerpt=text,
+            content_sha256=newer["content_sha256"],
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             embedding=[0.1] * embedder.dim,
@@ -1702,6 +1708,7 @@ async def test_a_high_candidate_is_labelled_whatever_other_key_holds_its_id(ch: 
             memory_type="semantic",
             scope="private",
             content_excerpt="the vault password",
+            content_sha256=scanned["content_sha256"],
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             embedding=[0.1] * embedder.dim,
@@ -1757,6 +1764,7 @@ async def test_the_sweep_labels_a_row_stored_with_no_user_or_session(ch: Any) ->
             memory_type="semantic",
             scope="private",
             content_excerpt="the badge PIN",
+            content_sha256=row["content_sha256"],
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             embedding=[0.1] * embedder.dim,
@@ -1879,12 +1887,19 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
             memory_type="semantic",
             scope="private",
             content_excerpt=f"the {word} runbook",
+            content_sha256=sha256_value(f"the {word} runbook"),
             embedding_model=embedder.model_name,
             embedding_dim=embedder.dim,
             embedding=[0.1] * embedder.dim,
             created_at=datetime.now(UTC).replace(tzinfo=None),
             version=time.time_ns() - ago_s * 1_000_000_000,  # drawn ago_s seconds ago
         )
+
+    async def publish(rows: list[dict[str, Any]]) -> None:
+        for row in rows:
+            canonical = _memory_row(ns, row["version"], row["content_excerpt"], "")
+            await M.insert_memory_versions([{**canonical, "memory_key": row["memory_key"]}], ch=ch)
+        assert len(await M.insert_embedding_rows(rows, ch=ch)) == len(rows)
 
     async def marker_indexed() -> bool:
         await refresh()
@@ -1898,10 +1913,10 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
     try:
         # A row drawn now: once a pass has indexed it, the watermarks are past it and so
         # past the late rows below, drawn 30 s ago, whatever other namespaces wrote.
-        await M.insert_embedding_rows([late_row("marker", ago_s=0)], ch=ch)
+        await publish([late_row("marker", ago_s=0)])
         await eventually(marker_indexed, max_wait=60.0, interval=1.0, description="the marker")
         indexed, control = late_row("slow_write"), late_row("slow_write_unindexed")
-        await M.insert_embedding_rows([indexed, control], ch=ch)
+        await publish([indexed, control])
         assert await M.index_late_rows([indexed], ch=ch) == 1
         await refresh()
         stats = await ch.query_all(
@@ -1917,7 +1932,13 @@ async def test_a_slow_writes_embedding_is_still_counted_in_the_bm25_stats(ch: An
         )
         assert int(df["n"]) == 2  # the marker and the indexed late row, not the control
     finally:
-        for table in ("memory_embeddings", "memory_doc_stats", "memory_term_freq"):
+        for table in (
+            "memory",
+            "memory_versions",
+            "memory_embeddings",
+            "memory_doc_stats",
+            "memory_term_freq",
+        ):
             await ch.execute(
                 f"DELETE FROM loom.{table} WHERE org = {{o:String}} AND namespace = {{n:String}}",
                 params={"o": ORG, "n": ns},

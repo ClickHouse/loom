@@ -30,6 +30,127 @@ pytestmark = pytest.mark.asyncio
 _SEQUENTIAL = {"select_sequential_consistency": 1}
 
 
+@pytest.mark.parametrize("scope_type", ["user_id", "namespace"])
+async def test_erasure_refuses_old_values_after_native_revision_payload_cleanup(
+    pg_conn, call, org, ch_client, scope_type
+):
+    from server.core import pg
+    from server.core.ch import get_client
+    from server.memory.store import history, pg_memory
+    from server.memory.workers.pg_payload_clear import effective_horizon_minutes
+
+    namespace, user = f"cleared-{uuid.uuid4().hex[:8]}", "alice"
+    values = [f"retired secret {uuid.uuid4().hex}", f"replacement secret {uuid.uuid4().hex}"]
+    for value in values:
+        response = await call(
+            "memory.set", _set(namespace, "secret", value, user_id=user, classify=False)
+        )
+        assert response.status_code == 200, response.text
+        await _published(pg_conn, org)
+    await pg_conn.execute("DELETE FROM loom.memory_deliveries WHERE org=$1 AND settled", org)
+    await pg_conn.execute(
+        "UPDATE loom.memory_revisions SET committed_at=now()-interval '30 days', "
+        "delivered_at=now()-interval '30 days' WHERE org=$1",
+        org,
+    )
+    ch = get_client()
+    await ch.connect()
+    try:
+        horizon = effective_horizon_minutes() * 60.0
+        offered = [
+            r for r in await pg_memory.clearable_revisions(horizon, None, 100_000) if r.org == org
+        ]
+        assert len(offered) == 2
+        assert await pg_memory.clear_payloads(horizon, await history.versions_held(offered)) == 2
+    finally:
+        await ch.disconnect()
+        await pg.close_pool()
+    assert (
+        await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_revisions WHERE org=$1 AND row IS NULL", org
+        )
+        == 2
+    )
+    erased = await call(
+        "erasure.request",
+        {
+            "scope_type": scope_type,
+            "scope_value": user if scope_type == "user_id" else namespace,
+            "requester": "operator",
+        },
+    )
+    assert erased.status_code == 200 and erased.json()["status"] == "completed", erased.text
+    assert (
+        await pg_conn.fetchval("SELECT count(*) FROM loom.memory_revisions WHERE org=$1", org) == 0
+    )
+    target = "future" if scope_type == "user_id" else namespace
+    for value in values:
+        returned = await call(
+            "memory.set", _set(target, uuid.uuid4().hex, value, user_id=user, classify=False)
+        )
+        assert returned.status_code == 422, returned.text
+        assert returned.json()["detail"]["reason"] == "forgotten"
+    unrelated = await call(
+        "memory.set",
+        _set(target, "unrelated", "A separate current fact", user_id=user, classify=False),
+    )
+    assert unrelated.status_code == 200, unrelated.text
+
+
+async def test_erasure_keeps_consent_for_native_dependents_without_a_clickhouse_parent(
+    pg_conn, call, org, ch_client
+):
+    """Authoritative keys capture another writer's raw quote despite projection lag."""
+    private = f"private source {uuid.uuid4().hex}"
+    quote = f"derived quote {uuid.uuid4().hex}"
+    for key, user, value, tags in (
+        ("source", "alice", private, []),
+        ("summary", "bob", "A consolidated private source", ["consolidated", "src:source"]),
+    ):
+        response = await call(
+            "memory.set", _set("facts", key, value, user_id=user, tags=tags, classify=False)
+        )
+        assert response.status_code == 200, response.text
+    await _published(pg_conn, org)
+    ch_client.insert(
+        "loom.memory_chunks",
+        [[org, "facts", "a", "bob", "-", "summary", 0, quote, [0.0] * 3072, 3072]],
+        column_names=[
+            "org",
+            "namespace",
+            "agent",
+            "user_id",
+            "session_id",
+            "parent_memory_key",
+            "chunk_index",
+            "content",
+            "embedding",
+            "embedding_dim",
+        ],
+    )
+    for table in ("memory", "memory_versions"):
+        ch_client.command(
+            f"DELETE FROM loom.{table} WHERE org={{org:String}}", parameters={"org": org}
+        )
+    erased = await call(
+        "erasure.request",
+        {"scope_type": "user_id", "scope_value": "alice", "requester": "operator"},
+    )
+    assert erased.status_code == 200 and erased.json()["status"] == "completed", erased.text
+    assert await pg_conn.fetchval("SELECT count(*) FROM loom.memory_current WHERE org=$1", org) == 0
+    for value in (private, quote, "A consolidated private source"):
+        returned = await call(
+            "memory.set", _set("future", uuid.uuid4().hex, value, user_id="alice", classify=False)
+        )
+        assert returned.status_code == 422, returned.text
+        assert returned.json()["detail"]["reason"] == "forgotten"
+    unrelated = await call(
+        "memory.set",
+        _set("future", "unrelated", "An unrelated current fact", user_id="alice", classify=False),
+    )
+    assert unrelated.status_code == 200, unrelated.text
+
+
 @pytest.fixture
 async def pg_authority(control_plane_url: str) -> str:
     """The DSN of the Postgres authority the server under test runs on; skips otherwise."""
@@ -69,8 +190,9 @@ def call(control_plane_url: str, mint_test_token: Any, org: str) -> Any:
     token = mint_test_token(org=org, namespaces=["*"], roles=["writer", "admin", "org_admin"])
 
     async def _call(op: str, body: dict[str, Any], **headers: str) -> httpx.Response:
-        # An erasure on a remote ClickHouse runs longer than a write.
-        async with httpx.AsyncClient(base_url=control_plane_url, timeout=120) as c:
+        # Erasure waits out publishers before waiting for ClickHouse mutations.
+        timeout = httpx.Timeout(120, read=600 if op == "erasure.request" else 120)
+        async with httpx.AsyncClient(base_url=control_plane_url, timeout=timeout) as c:
             return await c.post(
                 f"/v1/{op}",
                 json={"org": org, **body},
@@ -164,8 +286,8 @@ async def test_a_bulk_write_of_bytes_another_key_holds_is_judged_on_the_authorit
 ) -> None:
     """Identity dedup holds an entry whose bytes a live key of the identity holds, even
     one whose delivery ClickHouse is still owed (a write that answered at its commit);
-    a key deleted or rewritten since holds them no more, whatever ClickHouse holds yet,
-    and the entry is written."""
+    a key rewritten since holds them no more, whatever ClickHouse holds yet. An explicit
+    deletion refuses those bytes under another key too."""
     from server.core.hashing import sha256_value
     from server.memory.store import pg_memory
 
@@ -206,6 +328,19 @@ async def test_a_bulk_write_of_bytes_another_key_holds_is_judged_on_the_authorit
             "memory.bulk_set",
             {"namespace": ns, "agent": "a", "entries": [{"memory_key": "b", "value": value}]},
         )
+        if keeper == "deleted":
+            assert out.status_code == 422, out.text
+            assert out.json()["detail"]["reason"] == "forgotten"
+            assert (
+                await pg_conn.fetchval(
+                    "SELECT count(*) FROM loom.memory_current "
+                    "WHERE org = $1 AND namespace = $2 AND memory_key = 'b'",
+                    org,
+                    ns,
+                )
+                == 0
+            )
+            return
         assert out.status_code == 200, out.text
         written = [r["memory_key"] for r in out.json()["written"] if r.get("version")]
         assert written == ([] if keeper == "undelivered" else ["b"]), out.text
@@ -775,6 +910,7 @@ async def test_a_redact_reaches_a_revision_by_its_metadata(
     whose payload is cleared through its columns, which it then marks."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     at = "WHERE org = $1 AND namespace = $2 AND version = $3"
@@ -1231,6 +1367,8 @@ async def test_a_relabel_refused_for_a_head_written_since_its_read_fences_nothin
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     scanned = (await call("memory.set", _set(ns, "k", "the vault password is hunter2"))).json()
+    await _published(pg_conn, org)
+    assert _live_sweep_vectors(ch_client, org, ns, "a") >= 1
     key = (org, ns, "a", "-", "-", "k")
     candidate = sensitivity_sweep.SweepCandidate(
         memory_id=scanned["memory_id"],
@@ -1558,6 +1696,7 @@ async def test_a_user_erasure_leaves_a_consolidated_row_another_namespace_built(
         _set(theirs, "profile", "uses emacs", **tags),
     ):
         assert (await call("memory.set", body)).status_code == 200
+    await _published(pg_conn, org)
     r = await call(
         "erasure.request", {"scope_type": "user_id", "scope_value": user, "requester": "t"}
     )
@@ -2034,6 +2173,10 @@ async def test_a_redaction_leaves_another_key_holding_the_same_id_alone(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the badge number is 99"))).json()
     copy = {**await _head_row(pg_conn, org, ns), "agent": "b", "version": rows.next_version()}
+    try:
+        await pg_memory.commit_versions([copy], [audit_row_for(copy, request_id="", writer="")])
+    finally:
+        await pg.close_pool()
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k"})
     assert gone.status_code == 200, gone.text
     tombstone = await pg_conn.fetchval(
@@ -2042,7 +2185,6 @@ async def test_a_redaction_leaves_another_key_holding_the_same_id_alone(
         ns,
     )
     try:
-        await pg_memory.commit_versions([copy], [audit_row_for(copy, request_id="", writer="")])
         _, copies = await pg_memory.redact(
             (org, ns, "a", "-", "-", "k"),
             first["memory_id"],
@@ -2420,6 +2562,8 @@ async def test_a_reject_is_the_authoritys_head_and_clickhouses_row(
     and ClickHouse's memory row both read rejected, with the reason."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact to reject"))).status_code == 200
+    await _published(pg_conn, org)
+    assert _live_sweep_vectors(ch_client, org, ns, "a") >= 1
     before = int((await _head_row(pg_conn, org, ns, "k"))["version"])
     body = {"namespace": ns, "agent": "a", "memory_key": "k", "rejection_reason": "wrong"}
     rejected = await call("memory.reject", body)
@@ -2615,6 +2759,7 @@ async def test_an_erasure_takes_an_in_flight_requests_claim(
     """A claim a request still holds is fenced by the org's erasure: its commit then
     finds no claim under its token and is refused, so it stores no answer."""
     from server.core import pg
+    from server.core.hashing import sha256_value
     from server.memory.store import pg_memory
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
@@ -2640,6 +2785,8 @@ async def test_an_erasure_takes_an_in_flight_requests_claim(
         == 2
     )
     row["memory_id"], row["version"] = str(uuid.uuid4()), int(row["version"]) + 1
+    value = "A different request must still honor the fenced claim"
+    row["value"], row["content_sha256"] = json.dumps(value), sha256_value(value)
     try:
         with pytest.raises(pg_memory.IdempotencyFenced):
             await pg_memory.commit_versions([row], [{}], idempotency=(org, key, 1))
@@ -2834,6 +2981,7 @@ async def test_a_redaction_fences_the_claim_still_sending_the_old_text(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
@@ -3116,6 +3264,7 @@ async def test_a_user_erasure_run_again_waits_out_what_an_earlier_run_removed(
     """A user's scope reads the org's evidence: a run that finds the user's rows gone still
     waits out the publishers the earlier run removed."""
     from server.core import pg
+    from server.core.ch import get_client
     from server.erasure.store import steps_pg
     from server.memory.store import pg_memory
 
@@ -3133,13 +3282,18 @@ async def test_a_user_erasure_run_again_waits_out_what_an_earlier_run_removed(
         seq,
         pg_memory.MEMORY_ROW,
     )
+    ch = get_client()
+    await ch.connect()
     try:
         removed, leases = await steps_pg._erase_once(org, None, user)
         assert removed == 2 and 15 < max(leases) <= 20
         removed, leases = await steps_pg._erase_once(org, None, user)
         assert removed == 0 and 15 < max(leases) <= 20
     finally:
-        await pg.close_pool()
+        try:
+            await ch.disconnect()
+        finally:
+            await pg.close_pool()
 
 
 @pytest.mark.usefixtures("pg_authority")
@@ -3381,8 +3535,29 @@ async def test_reconcile_status_holds_back_what_the_authority_has_not_published(
         tombstoned = {"tombstoned_at": "2026-01-01T00:00:00"}
         await _unpublished(pg_conn, org, ns, "deleted", tombstoned, owed, an_hour)
         for k in ("deleted", "erased", "published"):
-            await memory_repo.reemit_embedding_rows_for_keys(
-                [(ident[k], {"status": "superseded"})], ch=ch
+            vectors = await memory_repo.live_embedding_rows_for_key(
+                ch, org=org, namespace=ns, agent="a", user_id="-", session_id="-", memory_key=k
+            )
+            assert vectors
+            # Corrupt the projection directly; publication admission refuses this mismatch.
+            await ch.insert(
+                "loom.memory_embeddings",
+                [
+                    memory_repo.build_embedding_row(
+                        **(
+                            {
+                                c: v
+                                for c, v in vector.items()
+                                if c in memory_repo.EMBEDDING_PERSISTED_COLS
+                            }
+                            | {
+                                "status": "superseded",
+                                "version": memory_repo.reemit_version(vector),
+                            }
+                        )
+                    )
+                    for vector in vectors
+                ],
             )
         await pg_conn.execute(
             "DELETE FROM loom.memory_current WHERE org = $1 AND namespace = $2 "
@@ -3497,8 +3672,19 @@ async def test_a_restores_failed_search_document_is_left_to_the_worker(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact to bring back"))).status_code == 200
-    gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k"})
-    assert gone.status_code == 200, gone.text
+    # Automatic retirement has no permanent refusal, so a restore remains permitted.
+    from server.memory.store.pg_publish import audit_row_for
+
+    original = rows._hydrate(await _head_row(pg_conn, org, ns))
+    retired = rows.build_memory_version_row(
+        original, version=rows.version_over(original), tombstoned_at=datetime.now(UTC)
+    )
+    try:
+        await pg_memory.commit_versions(
+            [retired], [audit_row_for(retired, request_id="", writer="")], publisher_lease=False
+        )
+    finally:
+        await pg.close_pool()
     head = rows._hydrate(await _head_row(pg_conn, org, ns))
     row = rows.build_memory_version_row(
         head, version=rows.version_over(head), tombstoned_at=None, expires_at=None
@@ -3901,6 +4087,7 @@ async def test_a_fenced_holder_is_waited_out_after_its_delivery_moves_on(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
@@ -4126,8 +4313,11 @@ async def test_a_retry_that_took_over_a_fenced_claim_stores_no_residue(
     from server.erasure.store.steps_pg import pg_residue
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
-    body, key = _set(ns, "k", "a fact in flight"), uuid.uuid4().hex
-    assert (await call("memory.set", body, **{"Idempotency-Key": key})).status_code == 200
+    original = _set(ns, "k", "a fact in flight")
+    assert (await call("memory.set", original)).status_code == 200
+    body, key = {"namespace": ns, "agent": "a", "memory_key": "k"}, uuid.uuid4().hex
+    deleted = await call("memory.delete", body, **{"Idempotency-Key": key})
+    assert deleted.status_code == 200 and deleted.json()["tombstoned"], deleted.text
     # The request as it was before the erasure: claimed long ago, still running.
     await pg_conn.execute(
         "UPDATE loom.idempotency SET state = 'running', response_body = NULL, "
@@ -4139,10 +4329,15 @@ async def test_a_retry_that_took_over_a_fenced_claim_stores_no_residue(
         "erasure.request", {"scope_type": "namespace", "scope_value": ns, "requester": "t"}
     )
     assert r.json()["status"] == "completed", r.text
-    retry = await call("memory.set", body, **{"Idempotency-Key": key})
+    retry = await call("memory.delete", body, **{"Idempotency-Key": key})
     assert retry.status_code == 200, retry.text
+    assert not retry.json()["tombstoned"], retry.text
     assert (
         await pg_conn.fetchval("SELECT state FROM loom.idempotency WHERE org = $1", org) == "done"
+    )
+    refused = await call("memory.set", original)
+    assert refused.status_code == 422 and refused.json()["detail"]["reason"] == "forgotten", (
+        refused.text
     )
     try:
         residue = await pg_residue(org, "namespace", ns)
@@ -4429,10 +4624,7 @@ async def test_erasing_a_namespace_leaves_its_restored_copy_writable(
 async def test_a_restore_leaves_out_the_memories_an_erasure_removed_while_evidence_lasts(
     call: Any, pg_conn: Any, org: str
 ) -> None:
-    """A restore into the namespace writes the snapshot's memories but those an erasure
-    removed from it, counts the ones left out, and is done for that snapshot. The
-    evidence expires by its age, not by the sweep: a snapshot first restored after it
-    writes the memory, and an erasure of it again starts its evidence again."""
+    """A restore skips recent erasures and still refuses them after evidence expiry."""
     from server.core import pg
     from server.memory.store import pg_memory
     from server.settings import settings
@@ -4475,10 +4667,10 @@ async def test_a_restore_leaves_out_the_memories_an_erasure_removed_while_eviden
         )
 
     await _erase()
-    gone = await call(
-        "memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k2", "user_id": "other"}
+    rejected = await call(
+        "memory.reject", {"namespace": ns, "agent": "a", "memory_key": "k2", "user_id": "other"}
     )
-    assert gone.status_code == 200, gone.text
+    assert rejected.status_code == 200, rejected.text
     sid = snapshot.json()["snapshot_id"]
     restored = await _restore(sid)
     assert restored["restored"] is True and restored["counts"]["erased_skipped"] == 1
@@ -4496,14 +4688,11 @@ async def test_a_restore_leaves_out_the_memories_an_erasure_removed_while_eviden
         replay = await _restore(sid)
         assert replay["restored"] is False and replay["counts"]["erased_skipped"] == 1
         assert (await _get("k1", erased_user)).get("found") is False
-        # Another snapshot id restores it: its commit is no longer refused.
-        again = await _restore(str(uuid.uuid4()))
-        assert again["counts"]["erased_skipped"] == 0
-        assert (await _get("k1", erased_user))["memory_id"] == mid
-        # Erased again while the old evidence row is still there: the evidence restarts.
-        await _erase()
-        assert await pg_memory.erased_ids(org, ns, [mid]) == {mid}
-        await _age_evidence()
+        payload = {**snapshot.json(), "snapshot_id": str(uuid.uuid4())}
+        again = await call("namespace.restore", {"target_namespace": ns, "payload": payload})
+        assert again.status_code == 422, again.text
+        assert again.json()["detail"]["reason"] == "forgotten"
+        assert (await _get("k1", erased_user)).get("found") is False
         await pg_memory.sweep_erasure_evidence(10_000)
     finally:
         await pg.close_pool()

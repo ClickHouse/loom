@@ -341,7 +341,7 @@ superseded in the record plane and does not keep the record.
   with `sweep=true` and `blacklist.sweep`. `decision.chain`, `decision.precedents` and `decision.outcome` stop
   serving it, and `memory.record.history` shows the last version with `status="tombstoned"`. Two retirements that
   race can each write a tombstoned version, so history may list the tombstone twice.
-- **After a retirement**: `memory.restore`, or `namespace.rollback` past the delete, revives the row but not the
+- **After a retirement**: a reversible automatic retirement can be restored, but this revives the row without the
   record; call `decision.record` again. A row moved with `keep_redirect=false` is no longer a decision: its new key
   has no record, and `decision.record` with the same category and scenario records it again under its derived key.
 - **Leaves the record active**: a delete of another identity's row; `memory.clear` and `namespace.rollback`, which

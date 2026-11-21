@@ -21,6 +21,7 @@ from server.memory.api.models_lifecycle import MemoryPromoteInput
 from server.memory.app import promote
 from server.memory.domain.definitions import definition_names, fold_name
 from server.memory.store import MemoryRow, shared
+from server.memory.store.rows import identity_key
 from server.settings import settings
 from tests.unit.clickhouse_local import CLICKHOUSE, LocalCH, ddl
 
@@ -50,7 +51,7 @@ def _row(**over: Any) -> MemoryRow:
 
 
 @pytest.fixture
-def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def store(monkeypatch: pytest.MonkeyPatch, no_blacklisted_values: None) -> dict[str, Any]:
     """The source row, the live shared definitions (key -> value) and what was written,
     with the claim: `free` (False: another holds it; None: the lease store does not
     answer), `claims` (the names taken) and `held` (inside it); `heads` and
@@ -68,6 +69,10 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     async def get_by_key(*_a: Any, **_k: Any) -> MemoryRow:
         return state["row"]
+
+    async def sources(*args, **kwargs):
+        row = state["row"]
+        return {identity_key(row): row}
 
     async def definitions(org: str, namespace: str, limit: int, **_k: Any) -> list[dict]:
         # The two fields the store extracts, as its statement reads them.
@@ -99,6 +104,7 @@ def store(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
             state["held"] = False
 
     monkeypatch.setattr(memory_repo, "get_by_key", get_by_key)
+    monkeypatch.setattr("server.memory.store.reads.memory_rows_by_identity_keys", sources)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
     monkeypatch.setattr(promote, "writer_actor", lambda fallback="": "user:admin")
     monkeypatch.setattr(promote, "naive_utc_now", lambda: NOW)
@@ -174,6 +180,20 @@ def test_a_name_folds_step_by_step(name: str, folded: str) -> None:
 )
 def test_a_definitions_names(value: Any, names: set[str] | None) -> None:
     assert definition_names(value) == names
+
+
+async def test_definition_claim_precedes_the_source_connection(store, monkeypatch):
+    """A demote holds the claim while borrowing a connection; promotion uses that order."""
+    original = promote.refusals.source_publication
+
+    @asynccontextmanager
+    async def admission(*args, **kwargs):
+        assert store["held"], "the definition claim must precede the source connection"
+        async with original(*args, **kwargs) as mark:
+            yield mark
+
+    monkeypatch.setattr(promote.refusals, "source_publication", admission)
+    await promote.handle_memory_promote(_input())
 
 
 async def test_an_approved_definition_is_promoted_by_the_tokens_actor(

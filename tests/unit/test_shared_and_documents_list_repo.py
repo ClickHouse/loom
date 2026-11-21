@@ -10,14 +10,18 @@ live chunk counts of that page's sources.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
 
+from server.core.hashing import sha256_value
 from server.core.tag_sql import TagFilter, tag_where
 from server.knowledge.store import documents as documents_repo
 from server.memory.store import shared as shared_repo
+from server.memory.store.rows import build_memory_version_row
+from tests.unit.test_memory_verify import _row
 
 # The any-case tag matches, as the list reads render them.
 _FOLDED_ANY = tag_where(TagFilter(("x",), "folded_any"), {})
@@ -26,6 +30,7 @@ _FOLDED_ALL = tag_where(TagFilter(("x",), "folded_all"), {})
 
 class StubCH:
     def __init__(self) -> None:
+        self.source = None
         self.query_one_calls: list[tuple[str, dict[str, Any]]] = []
         self.query_one_returns: list[dict[str, Any] | None] = []
         self.query_all_calls: list[tuple[str, dict[str, Any]]] = []
@@ -39,13 +44,28 @@ class StubCH:
 
     async def query_all(self, sql, params=None):
         self.query_all_calls.append((sql, params or {}))
+        if "memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql:
+            return [build_memory_version_row(self.source)] if self.source else []
         return self.query_all_returns.pop(0) if self.query_all_returns else []
 
-    async def execute(self, sql, params=None):
+    async def execute(self, sql, params=None, *, settings=None):
         self.execute_calls.append((sql, params or {}))
 
     async def insert(self, table, rows, settings=None):
         self.insert_calls.append((table, rows, settings or {}))
+
+
+@asynccontextmanager
+async def _approved_source(ch, value="source fact"):
+    from server.memory.store.refusals import source_publication
+
+    ch.source = _row(
+        org="clickhouse", namespace="ns", agent="author", memory_key="source", value=value
+    )
+    async with source_publication(ch, ch.source, "k"):
+        yield ch.source
 
 
 # ----------------------------------------------------------------------
@@ -56,15 +76,17 @@ class StubCH:
 @pytest.mark.asyncio
 async def test_insert_shared_row_forces_synchronous_visibility() -> None:
     ch = StubCH()
-    await shared_repo.insert_shared_row(
-        {
-            **dict.fromkeys(shared_repo.SHARED_PERSISTED_COLS),
-            "org": "clickhouse",
-            "namespace": "ns",
-            "memory_key": "k",
-        },
-        ch=ch,
-    )
+    async with _approved_source(ch, "source fact"):
+        await shared_repo.insert_shared_row(
+            {
+                **dict.fromkeys(shared_repo.SHARED_PERSISTED_COLS),
+                "org": "clickhouse",
+                "namespace": "ns",
+                "memory_key": "k",
+                "value": "source fact",
+            },
+            ch=ch,
+        )
     table, _, settings = ch.insert_calls[0]
     assert table == "loom.shared"
     # search-visibility contract: next FINAL read sees the row.
@@ -98,10 +120,18 @@ async def test_insert_shared_embedding_uses_memory_embeddings_table() -> None:
     """The shared embedding lives on loom.memory_embeddings (the same
     table as private embeddings) — scope='shared' is the marker."""
     ch = StubCH()
-    await shared_repo.insert_shared_embedding(
-        {"scope": "shared", "agent": "_shared"},
-        ch=ch,
-    )
+    async with _approved_source(ch, "source fact"):
+        await shared_repo.insert_shared_embedding(
+            {
+                "org": "clickhouse",
+                "namespace": "ns",
+                "memory_key": "k",
+                "content_sha256": sha256_value("source fact"),
+                "scope": "shared",
+                "agent": "_shared",
+            },
+            ch=ch,
+        )
     table, rows, _ = ch.insert_calls[0]
     assert table == "loom.memory_embeddings"
     assert rows[0]["agent"] == "_shared"
@@ -116,10 +146,19 @@ async def test_insert_shared_embedding_writes_a_complete_builder_row() -> None:
     from server.memory.store.rows import EMBEDDING_PERSISTED_COLS
 
     ch = StubCH()
-    await shared_repo.insert_shared_embedding(
-        {"scope": "shared", "agent": "_shared", "content_excerpt": "dogs were barking"},
-        ch=ch,
-    )
+    async with _approved_source(ch, "dogs were barking"):
+        await shared_repo.insert_shared_embedding(
+            {
+                "org": "clickhouse",
+                "namespace": "ns",
+                "memory_key": "k",
+                "content_sha256": sha256_value("dogs were barking"),
+                "scope": "shared",
+                "agent": "_shared",
+                "content_excerpt": "dogs were barking",
+            },
+            ch=ch,
+        )
     row = ch.insert_calls[0][1][0]
     assert set(row) == set(EMBEDDING_PERSISTED_COLS)
     assert row["content_excerpt_lemma"] == "dog be bark"
@@ -140,13 +179,16 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
     from server.memory.app import promote as _memory_promote
 
     written: list[dict[str, Any]] = []
+    ch = StubCH()
+    insert_shared_embedding = shared_repo.insert_shared_embedding
+    monkeypatch.setattr(_memory_promote, "get_client", lambda: ch)
 
     class _Emb:
         model_name = "fake"
         dim = 2
 
-        async def embed(self, text: str) -> list[float]:
-            return [0.1, 0.2]
+        async def embed_many(self, texts: list[str]) -> list[list[float]]:
+            return [[0.1, 0.2] for _ in texts]
 
     async def _no_peers(**kw: Any) -> list[Any]:
         return []
@@ -155,6 +197,7 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
         return None
 
     async def _shared_emb(row: dict[str, Any], **kw: Any) -> None:
+        await insert_shared_embedding(row, ch=ch)
         written.append(row)
 
     monkeypatch.setattr(_memory_promote, "get_embedder", lambda: _Emb())
@@ -162,13 +205,13 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
     monkeypatch.setattr(shared_repo, "insert_shared_row", _shared_row)
     monkeypatch.setattr(shared_repo, "insert_shared_embedding", _shared_emb)
 
-    for verified_sha, want in (("a" * 64, 1), ("b" * 64, 0)):
+    for verified_sha, want in ((sha256_value({"v": "external fact"}), 1), ("b" * 64, 0)):
         src = memory_repo.MemoryRow.from_snapshot(
             dict(
                 memory_id="11111111-1111-1111-1111-111111111111",
                 sensitivity="",
                 org="o",
-                namespace="team",
+                namespace="n",
                 agent="a",
                 user_id="-",
                 session_id="-",
@@ -180,7 +223,7 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
                 source_class="external",
                 verified_by="human:alice",
                 verified_sha256=verified_sha,
-                content_sha256="a" * 64,
+                content_sha256=sha256_value({"v": "external fact"}),
             )
         )
 
@@ -188,6 +231,7 @@ async def test_promote_carries_the_source_provenance_onto_the_shared_embedding(
             return _src
 
         monkeypatch.setattr(memory_repo, "get_by_key", _get)
+        ch.source = src
         written.clear()
         await _memory_promote.handle_memory_promote(
             MemoryPromoteInput(org="o", namespace="n", agent="a", memory_key="k")
@@ -216,13 +260,8 @@ async def test_fetch_shared_none_when_missing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tombstone_shared_embedding_re_emits_a_versioned_row() -> None:
-    """memory.search(scope='shared') filters on tombstoned_at IS NULL; the
-    demote path lands the tombstone as a committed re-emit of the live shared
-    rows (every column carried, tombstoned_at set, fresh version) so the next
-    search does not see the row — and never as an ALTER UPDATE, whose patch
-    part would cost the fact leg its codes-first read."""
-    from server.memory.store import EMBEDDING_PERSISTED_COLS
+async def test_tombstone_shared_embedding_deletes_older_cached_versions() -> None:
+    """Shared retirement deletes older cache versions without publishing another copy."""
 
     ch = StubCH()
     when = datetime(2026, 5, 17, tzinfo=UTC)
@@ -243,19 +282,14 @@ async def test_tombstone_shared_embedding_re_emits_a_versioned_row() -> None:
         ]
     )
     await shared_repo.tombstone_shared_embedding("clickhouse", "ns", "k", when, version=9, ch=ch)
-    assert ch.execute_calls == []
+    assert len(ch.execute_calls) == 1 and not ch.insert_calls
     read_sql, read_params = ch.query_all_calls[0]
     assert "scope = 'shared'" in read_sql and "tombstoned_at IS NULL" in read_sql
     assert "FINAL" in read_sql and read_params["k"] == "k"
-    ((table, rows, settings),) = ch.insert_calls
-    assert table == "loom.memory_embeddings" and settings == {
-        "async_insert": 0,
-        "wait_for_async_insert": 1,
-    }
-    (row,) = rows
-    assert set(row) >= set(EMBEDDING_PERSISTED_COLS)
-    assert row["tombstoned_at"] == when and row["scope"] == "shared"
-    assert row["embedding"] == [0.1, 0.2, 0.3] and row["version"] == 9  # the demote's
+    delete_sql, delete_params = ch.execute_calls[0]
+    assert delete_sql.startswith("DELETE FROM loom.memory_embeddings")
+    assert "version < {version:UInt64}" in delete_sql
+    assert delete_params["scope"] == "shared" and delete_params["version"] == 9
 
 
 @pytest.mark.asyncio
@@ -368,3 +402,26 @@ async def test_list_with_chunk_counts_requires_every_tag_when_asked() -> None:
     sql, params = ch.query_all_calls[0]
     assert _FOLDED_ALL in sql
     assert params["tags"] == ["Specs", "onboarding"]
+
+
+def test_promoted_vector_binds_verification_to_the_complete_served_value():
+    from types import SimpleNamespace
+
+    from server.memory.app.promote import _shared_vector_row
+
+    source = _row(
+        value="complete served fact",
+        content_sha256="a" * 64,
+        verified_by="human:reviewer",
+        verified_sha256="a" * 64,
+    )
+    row = _shared_vector_row(
+        source,
+        "k",
+        "display excerpt",
+        SimpleNamespace(model_name="m", dim=1),
+        [0.5],
+        datetime.now(UTC),
+    )
+    assert row["content_sha256"] == sha256_value(source.value)
+    assert row["verified"] == 0

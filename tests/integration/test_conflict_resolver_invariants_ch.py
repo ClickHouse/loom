@@ -4,7 +4,7 @@ and an erasure request hit the same keys. After each seed:
 
 - no user write or pin is lost: each key holds what its last user write left;
 - every retired row has a `memory.auto_supersede` record and can be undone;
-- no flag, clear or retirement below 0.90;
+- no model action below 0.90; dead flags clear without a model judgement;
 - no text of another user or another tenant reaches a prompt;
 - nothing is written in an org whose erasure was requested while a call was in flight;
 - once the writes stop and a pass drains, the next pass makes no call.
@@ -140,10 +140,17 @@ class _Writer:
                 self.wrote(key, session, out.version, ("value", value, False))
             elif op == "pin" and head is not None and head["tombstoned_at"] is None:
                 value = _text(head["value"])
-                out = await handle_memory_pin(
-                    MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
-                )
-                self.wrote(key, session, out.version, ("value", value, True))
+                from server.core.errors import ValidationError
+
+                try:
+                    out = await handle_memory_pin(
+                        MemorySetInput(**ident, session_id=session, memory_key=key, value=value)
+                    )
+                except ValidationError as error:
+                    if error.extra.get("reason") != "forgotten":
+                        raise
+                else:
+                    self.wrote(key, session, out.version, ("value", value, True))
             elif op == "delete":
                 gone = await handle_memory_delete(
                     MemoryDeleteInput(**ident, session_id=session, memory_key=key)
@@ -206,6 +213,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     from server.memory.api.models_crud import MemoryRestoreInput
     from server.memory.app import after_write, write
     from server.memory.app.restore import handle_memory_restore
+    from server.memory.store import conflict_resolver as queue
     from server.memory.workers.conflict_resolver import run_pass
     from server.settings import settings
 
@@ -214,6 +222,22 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     writer = _Writer(ch, org, seed)
     erasing = seed % 3 == 0
     stored: dict[str, set[int]] = {}
+    dead_peers: set[str] = set()
+    read_dead_flags = queue.dead_flags
+
+    async def observed_dead_flags(
+        read_org: str,
+        namespace: str,
+        identity: tuple[str, str, str, str],
+        *,
+        ch: Any = None,
+    ) -> list[str]:
+        peers = await read_dead_flags(read_org, namespace, identity, ch=ch)
+        if (read_org, namespace) == (org, NS):
+            dead_peers.update(peers)
+        return peers
+
+    monkeypatch.setattr(queue, "dead_flags", observed_dead_flags)
 
     async def in_call(entries: list[dict[str, Any]]) -> None:
         acts = any(e["confidence"] >= 0.9 and e["same_entity"] for e in entries)
@@ -276,7 +300,17 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
 
     assert not any(_SECRET in prompt for prompt in calls), "another user's or tenant's text"
     for record in await _audit(ch, org, "memory.conflict_resolver"):
-        assert all(p["confidence"] >= 0.90 for p in record["pairs"]), record
+        assert record["pairs"], record
+        if record["model"]:
+            assert all(p["confidence"] >= 0.90 for p in record["pairs"]), record
+        else:
+            for pair in record["pairs"]:
+                assert pair == {
+                    "peer_id": pair["peer_id"],
+                    "action": "clear",
+                    "reason": "peer_not_live",
+                }, record
+                assert pair["peer_id"] in dead_peers, record
 
     recorded = {
         e["memory_id"] for r in await _audit(ch, org, "memory.auto_supersede") for e in r["retired"]

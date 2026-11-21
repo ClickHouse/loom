@@ -73,8 +73,10 @@ async def test_a_pending_proposal_cannot_be_published_to_shared_search(monkeypat
         )
 
 
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_promotion_rechecks_the_source_after_preparing_its_projection(monkeypatch):
     from server.memory.store.pg_memory import AdmissionContendedError
+    from server.memory.store.rows import identity_key
 
     source = _row("")
     changed = source.model_copy(
@@ -89,7 +91,11 @@ async def test_promotion_rechecks_the_source_after_preparing_its_projection(monk
     async def write(*args, **kwargs):
         writes.append(args)
 
+    async def heads(*args, **kwargs):
+        return {identity_key(changed): changed}
+
     monkeypatch.setattr(memory_repo, "get_by_key", get)
+    monkeypatch.setattr("server.memory.store.reads.memory_rows_by_identity_keys", heads)
     monkeypatch.setattr(promote, "get_embedder", lambda: None)
     monkeypatch.setattr(shared, "insert_shared_row", write)
     with pytest.raises(AdmissionContendedError):

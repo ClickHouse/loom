@@ -143,12 +143,10 @@ async def handle_memory_digests(input: MemoryDigestsInput) -> MemoryDigestsOutpu
         where += " AND session_id = {s:String}"
         params["s"] = input.session_id
     where += scope_and(request_scope(), params)
-    rows = await ch.query_all(
-        "SELECT session_id, summary_text, key_facts, derived_from, valid_at, created_at, "
-        "version FROM loom.session_summaries FINAL WHERE "
-        + where
-        + " ORDER BY created_at, session_id LIMIT {lim:UInt32}",
-        params,
+    from server.memory.store.summary_pages import verified_summary_page
+
+    rows = await verified_summary_page(
+        ch, org=input.org, namespace=input.namespace, where=where, params=params, limit=input.limit
     )
     page = rows[: int(input.limit)]
     # Checking every digest's text is CPU work; it runs off the event loop.
@@ -205,12 +203,16 @@ async def handle_memory_outline(input: MemoryOutlineInput) -> MemoryOutlineOutpu
     sessions: list[_OutlineSession] = []
     sessions_total = 0
     if int(input.sessions_limit) > 0:
-        digests = await ch.query_all(
-            "SELECT session_id, summary_text, length(key_facts) AS kf, length(derived_from) AS df, "
-            "coalesce(valid_at, created_at) AS d FROM loom.session_summaries FINAL "
-            "WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL "
-            "ORDER BY d DESC, session_id LIMIT {lim:UInt32}",
-            {**base, "lim": int(input.sessions_limit) + 1},
+        from server.memory.store.summary_pages import verified_summary_page
+
+        digests = await verified_summary_page(
+            ch,
+            org=input.org,
+            namespace=input.namespace,
+            where="org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL",
+            params=base,
+            limit=input.sessions_limit,
+            order="newest",
         )
         total = await ch.query_all(
             "SELECT count() AS c FROM loom.session_summaries FINAL "

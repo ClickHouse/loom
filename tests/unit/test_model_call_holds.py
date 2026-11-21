@@ -82,12 +82,13 @@ class _Stubs:
         candidates = sorted(live, key=lambda r: -r["version"])[: batch_size * 4]
         return [dict(r) for r in sorted(candidates, key=lambda r: r["created_at"])[:batch_size]]
 
-    async def insert(self, rows: list[dict[str, Any]], **_: Any) -> None:
+    async def insert(self, rows: list[dict[str, Any]], **_: Any) -> list[dict[str, Any]]:
         self.embedded.update(r["memory_key"] for r in rows if r["embedding_dim"] > 0)
         for row in rows:
             self.rows = [
                 dict(row) if old["memory_key"] == row["memory_key"] else old for old in self.rows
             ]
+        return rows
 
     async def writers(self, org: str, keys: Any, **_: Any) -> dict[Any, Any]:
         # a* were written by agent-a, b* by agent-b, into the shared namespace

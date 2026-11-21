@@ -435,8 +435,9 @@ async def test_the_embedding_worker_leaves_a_switched_off_orgs_stubs_until_it_is
             dict(s) for s in stubs if s["org"] not in exclude_orgs and s["memory_key"] not in done
         ]
 
-    async def insert_rows(rows: list[dict[str, Any]], *a: Any, **kw: Any) -> None:
+    async def insert_rows(rows: list[dict[str, Any]], *a: Any, **kw: Any) -> list[dict[str, Any]]:
         inserted.extend(rows)
+        return rows
 
     async def none(**_: Any) -> list[Any]:
         return []
@@ -662,6 +663,24 @@ class _DropCH:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "source_version" in params:
+            from server.core.hashing import sha256_text
+
+            return (
+                [{"found": 1}]
+                if any(
+                    all(
+                        row.get(k) == params[k]
+                        for k in ("org", "namespace", "agent", "user_id", "session_id", "queue_id")
+                    )
+                    and row["version"] == params["source_version"]
+                    and sha256_text(row.get("payload") or "").upper() == params["payload_sha"]
+                    for row in self.rows
+                )
+                else []
+            )
         self.sql, self.params = sql, params
         return self.rows
 
@@ -671,7 +690,19 @@ class _DropCH:
         self.inserts.append((table, rows))
 
 
-_WAITING = [{"org": "acme", "namespace": "n", "queue_id": "q1", "status": "pending"}]
+_WAITING = [
+    {
+        "org": "acme",
+        "namespace": "n",
+        "agent": "a",
+        "user_id": "-",
+        "session_id": "-",
+        "version": 1,
+        "payload": '{"messages":[]}',
+        "queue_id": "q1",
+        "status": "pending",
+    }
+]
 
 
 def test_a_dropped_request_is_marked_failed_after_its_drop_record_is_written() -> None:
