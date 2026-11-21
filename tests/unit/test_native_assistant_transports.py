@@ -476,3 +476,111 @@ def test_native_host_calls_loom_before_the_first_model_turn(monkeypatch):
     frames = asyncio.run(scenario())
     assert state.turns == 1 and all(r.origin == "host_context" for r in state.receipts)
     assert frames[-1]["usage"]["prompt_tokens"] == 100
+
+
+@pytest.mark.parametrize("origin", ["host_context", "model_tool"])
+@pytest.mark.parametrize("affordable", [False, True])
+def test_tool_cost_ceiling_survives_authenticated_mcp_context(
+    monkeypatch: pytest.MonkeyPatch, origin: str, affordable: bool
+) -> None:
+    from dataclasses import replace
+
+    from fastapi import FastAPI
+
+    from server.assistant.app import agent, runtime
+    from server.auth.context import current_auth
+    from server.clients import _http
+    from server.observability import cost_accumulator
+    from server.observability.run_context import current_ledger_run
+    from server.transport import mcp, mcp_call
+    from tests.unit.mcp_probe import _Out, serve_probe
+
+    probe = serve_probe(monkeypatch)
+    principal = replace(
+        probe["tokens"]["alice"],
+        is_service_account=False,
+        consumer="loom-assistant",
+        token_id="assistant-tool-budget",
+    )
+    initial_spent = 0.0005
+    state = agent.State(spent=initial_spent)
+    sent = []
+    children = []
+    entered = []
+
+    async def dispatch(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, json={})
+
+    async def handler(inp):
+        assert current_auth().subject == principal.subject
+        assert current_ledger_run() == state.run_id
+        assert (inp.org, inp.namespace) == ("acme", "n")
+        entered.append(inp.query)
+        children.append(cost_accumulator.current())
+        async with _http._build(
+            transport=httpx.MockTransport(dispatch), event_hooks={"request": [_http._on_request]}
+        ) as client:
+            await client.post(
+                "https://provider.invalid/embeddings",
+                json={"model": "text-embedding-3-small", "input": "x" * 1000},
+            )
+        cost_accumulator.report_embed("text-embedding-3-small", 1000)
+        return _Out()
+
+    operation = replace(
+        mcp_call.TOOLS_BY_NAME["loom_test_refusal_probe"],
+        name="memory.search",
+        handler=handler,
+        idempotent=True,
+        required_role=Role.VIEWER,
+    )
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, "loom_memory_search", operation)
+
+    async def readable(auth, org, namespace):
+        assert auth.subject == principal.subject
+        return (org, namespace) == ("acme", "n"), False
+
+    async def share_available(*args):
+        return None
+
+    monkeypatch.setattr(runtime, "_afford", share_available)
+    monkeypatch.setattr("server.auth.jwt.authenticate_token", AsyncMock(return_value=principal))
+    monkeypatch.setattr("server.transport.mcp_auth._may_read", readable)
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    monkeypatch.setattr(settings, "inference_gateway_hosts", "provider.invalid")
+    monkeypatch.setattr(settings, "inference_customer_header", "")
+    monkeypatch.setattr(
+        settings,
+        "assistant_answer_ceiling_usd",
+        initial_spent + (1 if affordable else 0.000001),
+    )
+    app = FastAPI()
+    mcp.attach(app)
+    monkeypatch.setattr(tools, "_app", app)
+
+    async def scenario():
+        parent = cost_accumulator.begin_op()
+        cost_accumulator.report_embed("text-embedding-3-small", 7)
+        previous_cost = parent.cost_usd
+        native = tools.Tools("acme", "n", "alice", state.run_id)
+        if affordable:
+            receipt = await agent._call(
+                native, "loom_memory_search", {"query": "policy"}, origin=origin, state=state
+            )
+            assert receipt.result == {"ok": True} and receipt.origin == origin
+            assert len(sent) == 1 and native.receipts == [receipt]
+            charge = cost_accumulator.embed_cost_usd("text-embedding-3-small", 1000)
+            assert receipt.cost_usd == children[0].cost_usd == charge
+            assert state.spent >= initial_spent + charge
+        else:
+            with pytest.raises(AssistantUpstreamError):
+                await agent._call(
+                    native, "loom_memory_search", {"query": "policy"}, origin=origin, state=state
+                )
+            assert sent == [] and native.receipts == []
+            assert state.spent == initial_spent and children[0].cost_usd == 0
+        assert entered == ["policy"] and children[0] is not parent
+        assert cost_accumulator.current() is parent and parent.cost_usd == previous_cost
+
+    asyncio.run(scenario())
