@@ -74,8 +74,34 @@ def external(request):
             body["namespace"],
         ]
         if operation == "backfill":
-            command += ["--commit", body["commit"], "--no-fetch", "--embed", "--edges-second-pass"]
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=1800)
+            command += [
+                "--commit",
+                body["commit"],
+                "--no-fetch",
+                "--embed",
+                "--edges-second-pass",
+                "--concurrency",
+                "1",
+            ]
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, check=True, timeout=1800
+            )
+        except subprocess.CalledProcessError as error:
+            from pathlib import Path
+
+            diagnostics = {
+                "returncode": error.returncode,
+                "stdout": error.stdout,
+                "stderr": error.stderr,
+                "cgroup": {
+                    name: path.read_text()
+                    for name in ("memory.events", "memory.peak", "memory.max")
+                    if (path := Path("/sys/fs/cgroup") / name).is_file()
+                },
+            }
+            print(json.dumps(diagnostics), file=sys.stderr)
+            raise
         return {
             "operation": operation,
             "exit_code": result.returncode,
