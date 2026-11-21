@@ -32,7 +32,6 @@ SERVICES = {
     "init_permissions",
     "local_sandbox",
     "nginx",
-    "pgvector",
     "plugin_daemon",
     "redis",
     "sandbox",
@@ -137,6 +136,31 @@ def image_volume_mounts(service_name, service, image):
         mounts.append({"type": "volume", "source": name, "target": target})
         volumes[name] = {}
     return mounts, volumes
+
+
+def validate_platform_services(config):
+    require(set(config["services"]) == SERVICES, "Official service closure differs")
+    # These workflows call plugin tools; the host's optional dataset subsystem is unused.
+    # An explicit empty selector preserves its documented no-vector-store mode.
+    for name in ("api", "worker", "worker_beat"):
+        require(
+            (config["services"][name].get("environment") or {}).get("VECTOR_STORE") == "",
+            "Tools-only vector configuration differs",
+        )
+
+
+def plugin_storage_source(service, root):
+    expected = root / "docker/volumes/plugin_daemon"
+    mounts = [mount for mount in service.get("volumes", []) if mount["target"] == "/app/storage"]
+    require(
+        len(mounts) == 1
+        and mounts[0]["type"] == "bind"
+        and mounts[0]["source"] == str(expected)
+        and not mounts[0].get("read_only")
+        and not service.get("user"),
+        "Plugin storage binding differs",
+    )
+    return expected
 
 
 def read_session(pid):
@@ -254,8 +278,8 @@ class Runtime:
             if not key.startswith(("LOOM_", "UV_", "PYTHON"))
         }
         self.env.update(
-            COMPOSE_PROFILES="postgresql,pgvector",
-            VECTOR_STORE="pgvector",
+            COMPOSE_PROFILES="postgresql",
+            VECTOR_STORE="",
             DB_TYPE="postgresql",
             EXPOSE_PLUGIN_DEBUGGING_HOST="127.0.0.1",
             EXPOSE_PLUGIN_DEBUGGING_PORT="17883",
@@ -270,7 +294,6 @@ class Runtime:
             "PLUGIN_DIFY_INNER_API_KEY",
             "DIFY_AGENT_LOCAL_SANDBOX_AUTH_TOKEN",
             "DIFY_AGENT_API_TOKEN",
-            "PGVECTOR_POSTGRES_PASSWORD",
             "SANDBOX_API_KEY",
         ):
             self.env[key] = self.secret("Aa7" + secrets.token_hex(24))
@@ -599,7 +622,6 @@ class Runtime:
             "DIFY_AGENT_LOCAL_SANDBOX_AUTH_TOKEN",
             "DIFY_AGENT_API_TOKEN",
             "DIFY_AGENT_SERVER_SECRET_KEY",
-            "PGVECTOR_POSTGRES_PASSWORD",
             "SANDBOX_API_KEY",
             "CODE_EXECUTION_API_KEY",
             "INIT_PASSWORD",
@@ -612,7 +634,15 @@ class Runtime:
             self.path / "docker/task-loopback.override.yaml",
         )
         self.cfg = json.loads(self.compose("config", "--format", "json").stdout)
-        require(set(self.cfg["services"]) == SERVICES, "Official service closure differs")
+        validate_platform_services(self.cfg)
+        self.record(
+            "host-scope.json",
+            {
+                "tools": ["remember", "recall", "search_knowledge"],
+                "host_vector_store": None,
+                "host_dataset_retrieval_tested": False,
+            },
+        )
         require(
             str(
                 self.cfg["services"]["plugin_daemon"]["environment"]["FORCE_VERIFYING_SIGNATURE"]
@@ -665,6 +695,7 @@ class Runtime:
         self.record("platform-caps.json", override)
         self.created = True
         self.persist()
+        self.initialize_plugin_storage()
         self.phase = "official-platform-start"
         self.compose("up", "-d", "--pull", "never", timeout=300)
         self.discover()
@@ -672,6 +703,81 @@ class Runtime:
             {row["service"] for row in self.containers.values()} >= SERVICES,
             "Missing official service container",
         )
+
+    def initialize_plugin_storage(self):
+        self.phase = "official-storage-init"
+        service = self.cfg["services"]["plugin_daemon"]
+        (image,) = self.docker_json("image", "inspect", service["image"])
+        require(
+            image["Id"] == self.expected_images["plugin_daemon"]
+            and image["Config"]["User"] == "dify",
+            "Plugin storage image differs",
+        )
+        storage = plugin_storage_source(service, self.path)
+        require(
+            not storage.exists()
+            and not storage.is_symlink()
+            and storage.parent.resolve() == storage.parent,
+            "Plugin storage must be fresh",
+        )
+        storage.mkdir(mode=0o700, parents=True)
+        original = storage.stat()
+        require(
+            original.st_uid == os.getuid() and not any(storage.iterdir()),
+            "Plugin storage owner differs",
+        )
+        self.discover()
+        helper = self.project + "-storage-init"
+        # The bind hides the image's ownership; initialize only this new empty directory.
+        self.compose(
+            "run",
+            "--name",
+            helper,
+            "--no-deps",
+            "--pull",
+            "never",
+            "--user",
+            "0:0",
+            "--entrypoint",
+            "/bin/sh",
+            "plugin_daemon",
+            "-ec",
+            "test -d /app/storage && test ! -L /app/storage "
+            '&& test -z "$(ls -A /app/storage)" '
+            '&& chown "$(id -u dify):$(id -g dify)" /app/storage',
+            timeout=30,
+        )
+        current = storage.stat()
+        require(
+            (current.st_dev, current.st_ino) == (original.st_dev, original.st_ino)
+            and current.st_uid != 0,
+            "Plugin storage initialization differs",
+        )
+        self.retire_storage_helper(helper)
+        self.record(
+            "plugin-storage.json",
+            {"image": image["Id"], "user": "dify", "uid": current.st_uid, "gid": current.st_gid},
+        )
+
+    def retire_storage_helper(self, name):
+        self.discover()
+        (row,) = self.docker_json("container", "inspect", name)
+        ident = row["Id"]
+        owner = self.containers.get(ident, {})
+        require(
+            row["Name"] == "/" + name
+            and owner.get("service") == "plugin_daemon"
+            and row["Created"] == owner.get("created")
+            and row["Image"] == self.expected_images["plugin_daemon"]
+            and row["State"]["Status"] == "exited"
+            and row["State"]["ExitCode"] == 0
+            and not row["State"].get("OOMKilled")
+            and not row["HostConfig"]["AutoRemove"],
+            "Storage helper completion differs",
+        )
+        self.command(["docker", "container", "rm", "-v", ident])
+        require(ident not in self.ids("container", "-a", "--no-trunc"), "Storage helper remains")
+        self.containers.pop(ident)
 
     def platform_ready(self):
         end = time.monotonic() + 180
@@ -696,6 +802,7 @@ class Runtime:
         raise RuntimeError("Official service readiness deadline exceeded")
 
     def discover(self):
+        containers = {}
         for ident in self.ids(
             "container",
             "-a",
@@ -740,7 +847,7 @@ class Runtime:
                     self.volumes[volume["Name"]] = volume["CreatedAt"]
                 else:
                     require(mount["Type"] == "tmpfs", "Unexpected mount type")
-            self.containers[ident] = {"service": service, "created": data["Created"]}
+            containers[ident] = {"service": service, "created": data["Created"]}
         for name in self.ids(
             "volume", "--filter", "label=com.docker.compose.project=" + self.project
         ):
@@ -764,6 +871,7 @@ class Runtime:
                 "Network ownership differs",
             )
             self.networks[ident] = data["Created"]
+        self.containers = containers
 
     def fixture(self):
         self.phase = "loom-fixture"
