@@ -25,7 +25,7 @@ import pytest
 from loom_extractor import ExtractionError, Options, decode, detect_format, extract
 from loom_extractor.artifact import Artifact, Block, Coverage, Locator
 from server.knowledge.domain.extract import InvalidArtifact, parse_artifact, structural
-from tests.unit.code_fixtures import untraced
+from tests.unit.code_fixtures import linear_sample_context, untraced
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "knowledge"
 
@@ -1388,14 +1388,19 @@ def test_a_heading_line_with_a_long_run_of_blanks_is_read_whole() -> None:
     assert (heading.type, heading.text) == ("heading", "a b")
 
 
-def _cpu(fn: Any) -> float:
+def _cpu(fn: Any, *, samples: list[dict[str, Any]] | None = None) -> float:
     """This process's CPU seconds `fn` takes, timed `untraced`, so neither a test running
     beside it nor the tracer counts. Every caller runs extractor code, which the unit
     job's coverage does not measure, so the pause loses no coverage."""
-    with untraced():
-        start = time.process_time()
-        fn()
-        return time.process_time() - start
+    before = linear_sample_context() if samples is not None else None
+    try:
+        with untraced():
+            start = time.process_time()
+            fn()
+            return time.process_time() - start
+    finally:
+        if samples is not None:
+            samples.append({"before": before, "after": linear_sample_context()})
 
 
 def _within(seconds: float, fn: Any) -> None:
@@ -1583,13 +1588,16 @@ def test_one_line_sql_with_a_comment_after_every_semicolon_splits_in_linear_time
 
     sql._spans("SELECT 1;", "clickhouse")  # imports sqlglot and the dialect before timing
     small_text = "SELECT 1; /* c */ " * 10_000
-    small = _cpu(lambda: sql._spans(small_text, "clickhouse"))
+    samples: list[dict[str, Any]] = []
+    small = _cpu(lambda: sql._spans(small_text, "clickhouse"), samples=samples)
     text = "SELECT 1; /* c */ " * 160_000
     out: list[list[Any]] = []
-    large = _cpu(lambda: out.append(sql._spans(text, "clickhouse")))
+    large = _cpu(lambda: out.append(sql._spans(text, "clickhouse")), samples=samples)
     # A linear split costs about 17x for 16x the statements; a newline search from each `;`
     # not stopped at the next token scans to the end of this one-line text (about 50x).
-    assert large < 24 * small + 0.05, (small, large)
+    assert large < 24 * small + 0.05, json.dumps(
+        {"small_s": small, "large_s": large, "samples": samples}, sort_keys=True
+    )
     assert len(out[0]) == 160_000
     # No span cuts a comment: each holds every `*/` its `/*` opens.
     assert all(

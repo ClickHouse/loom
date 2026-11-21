@@ -10,7 +10,7 @@ import functools
 import time
 from collections.abc import Callable
 
-from tests.unit.code_fixtures import untraced
+from tests.unit.code_fixtures import linear_sample_context, untraced
 
 
 def _markdown(text: str) -> object:
@@ -324,6 +324,10 @@ def _wanted(lane: str) -> Callable[[str], object]:
             return lang_rust.wanted_paths("src/a/b.rs", specs)
         if lane == "go":
             return lang_go.go_wanted_paths(specs, [("m", "")])
+        if lane == "thrift":
+            from server.code.domain.extract import lang_thrift
+
+            return lang_thrift.wanted_paths("a/b/c.thrift", specs)
         return lang_proto.wanted_paths("a/b/c.proto", specs)
 
     return walk
@@ -431,6 +435,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("rust-long-use", _wanted("rust"), _run("", "a::")),
     ("go-imports", _wanted("go"), _numbered("m/p{}\n")),
     ("proto-imports", _wanted("proto"), _numbered("p{}.proto\n")),
+    ("thrift-includes", _wanted("thrift"), _numbered("t{}.thrift\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
     (
@@ -506,16 +511,31 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
 _WALK_N = 100_000
 
 
-def walk_cost(name: str) -> tuple[float, float]:
+def walk_cost(
+    name: str, *, diagnostics: list[dict[str, object]] | None = None
+) -> tuple[float, float]:
     """The best of three times of the walk at N and 4N characters."""
     walk, text = next((w[1], w[2]) for w in WALKS if w[0] == name)
 
-    def cost(n: int) -> float:
+    def timed_cost(n: int) -> float:
         t = text(n)
         with untraced():  # a full collection costs in proportion to the heap, not to the text
             t0 = time.process_time()  # CPU time: a loaded host stretches wall time, not this
             walk(t)
             return time.process_time() - t0
+
+    def cost(n: int) -> float:
+        if diagnostics is None:
+            return timed_cost(n)
+        before = linear_sample_context()
+        cpu_s = None
+        try:
+            cpu_s = timed_cost(n)
+            return cpu_s
+        finally:
+            diagnostics.append(
+                {"n": n, "cpu_s": cpu_s, "before": before, "after": linear_sample_context()}
+            )
 
     return min(cost(_WALK_N) for _ in range(3)), min(cost(4 * _WALK_N) for _ in range(3))
 
@@ -539,6 +559,7 @@ SAMPLES: dict[str, tuple[str, str, str]] = {
     "astro": ("a.astro", "", "typescript"),
     "angular_template": ("a.component.html", "", "typescript"),
     "proto": ("a.proto", "", "proto"),
+    "thrift": ("a.thrift", "", "thrift"),
     "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n", "gotemplate"),
     "hcl": ("a.tf", "", "hcl"),
     "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n", "k8s"),
@@ -779,6 +800,8 @@ def registry_cost(
         source = (head + text(n)).encode()
         parse_s, parse_bytes, parse_raised = 0.0, 0, False
         errors = {}
+        # These boundaries include untraced setup and restoration, outside the timed walk.
+        before = linear_sample_context() if samples is not None else None
         with untraced():
             t0 = time.process_time()  # CPU time, as in `walk_cost`
             if samples is None:
@@ -794,6 +817,8 @@ def registry_cost(
                     "n": n,
                     "source_bytes": len(source),
                     "cpu_s": took,
+                    "before": before,
+                    "after": linear_sample_context(),
                     "parsed_bytes": parse_bytes,
                     "lane": lane,
                     "finished": finished,
