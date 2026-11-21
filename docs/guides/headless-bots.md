@@ -34,8 +34,8 @@ files, then store it as a secret. The token is the first output line. Create the
 capture file with mode `600` before redirecting output:
 
 ```bash
-install -m 600 /dev/null token.txt
-loom init --agent ci-reviewer --server-url https://<loom> --no-files | head -n 1 > token.txt
+install -m 600 /dev/null token.txt &&
+  loom init --agent ci-reviewer --server-url https://<loom> --no-files | head -n 1 > token.txt
 ```
 
 With `--json` the sign-up result is printed as JSON without the token; with
