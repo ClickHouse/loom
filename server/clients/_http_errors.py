@@ -12,7 +12,7 @@ and Anthropic put the reason there (`error.code` / `error.type` /
 `request`, same `response`, so every retry / outage predicate keeps working —
 with a first line of the form
 
-    400 Bad Request from openai:chat: code=invalid_prompt type=invalid_request_error msg=…
+    400 Bad Request from openai:responses: code=invalid_prompt type=invalid_request_error msg=…
 
 The fields are unquoted on purpose: the ledger's redaction keeps them.
 """

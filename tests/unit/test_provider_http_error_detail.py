@@ -19,7 +19,7 @@ from server.clients._http_errors import (
 )
 from server.observability.event_args import bounded_error
 
-_REQ = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+_REQ = httpx.Request("POST", "https://api.openai.com/v1/responses")
 
 
 def _openai_400() -> httpx.Response:
@@ -40,10 +40,10 @@ def _openai_400() -> httpx.Response:
 
 def test_openai_body_reason_leads_the_message_and_survives_redaction() -> None:
     with pytest.raises(httpx.HTTPStatusError) as ei:
-        raise_for_status_with_detail(_openai_400(), "openai:chat")
+        raise_for_status_with_detail(_openai_400(), "openai:responses")
     exc = ei.value
     first = str(exc).splitlines()[0]
-    assert first.startswith("400 Bad Request from openai:chat: ")
+    assert first.startswith("400 Bad Request from openai:responses: ")
     assert "code=invalid_prompt" in first and "type=invalid_request_error" in first
     # Same exception class, request and response: retry / outage predicates
     # keep reading the status code.
@@ -76,7 +76,7 @@ def test_non_json_body_raises_the_original_message() -> None:
     resp = httpx.Response(502, text="<html>bad gateway</html>", request=_REQ)
     assert provider_error_detail(resp) == ""
     with pytest.raises(httpx.HTTPStatusError) as ei:
-        raise_for_status_with_detail(resp, "openai:chat")
+        raise_for_status_with_detail(resp, "openai:responses")
     assert str(ei.value).startswith("Server error '502 Bad Gateway'")
     assert provider_error_code(ei.value) == ""
 

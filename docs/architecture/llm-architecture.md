@@ -188,13 +188,13 @@ low.
 an inferred provider. `loom doctor`'s `llm_provider` line warns when the key is missing.
 The stock `.env` pins `LOOM_LLM_PROVIDER=fake`.
 
-| Provider    | Module                    | Key                                                  |
-| ----------- | ------------------------- | ---------------------------------------------------- |
-| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`                                     |
-| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY`                                  |
-| `bedrock`   | `server/llm/bedrock.py`   | deployment AWS role or SDK credential chain          |
-| `local`     | `server/llm/local.py`     | none: the OpenAI client at `LOOM_LOCAL_LLM_BASE_URL` |
-| `fake`      | `server/llm/fake.py`      | none                                                 |
+| Provider    | Module                    | Key                                                 |
+| ----------- | ------------------------- | --------------------------------------------------- |
+| `openai`    | `server/llm/openai.py`    | `OPENAI_API_KEY`                                    |
+| `anthropic` | `server/llm/anthropic.py` | `ANTHROPIC_API_KEY`                                 |
+| `bedrock`   | `server/llm/bedrock.py`   | deployment AWS role or SDK credential chain         |
+| `local`     | `server/llm/local.py`     | none: chat completions at `LOOM_LOCAL_LLM_BASE_URL` |
+| `fake`      | `server/llm/fake.py`      | none                                                |
 
 Per-stage models (`LOOM_MEMORY_ASK_SYNTH_MODEL`, `LOOM_CODE_SUMMARY_MODEL` and the other
 `*_model` settings) build their own client with `get_llm_client_for_model`, inferring
@@ -278,10 +278,32 @@ async def complete(system, user, max_tokens=1024, response_format=None) -> LLMRe
 ```
 
 `LLMResult` carries the text, input and output tokens, cached-input and cache-write
-tokens, the answering provider and model, and `from_cache`. There is no tool-use path.
+tokens, the answering provider and model, the stop reason and `from_cache`. There is no
+tool-use path.
 
-**Structured output.** Callers pass `response_format={"type": "json_object"}`. The OpenAI
-client passes it through. The Anthropic client has no JSON mode: it appends a JSON
+**OpenAI's two APIs.** The `openai` client calls the Responses API
+(`POST <LOOM_OPENAI_BASE_URL>/responses`); the `local` client calls chat completions
+(`server/llm/chat_completions.py`), which every OpenAI-compatible model server speaks.
+Each owns its request and reply; the retries, the bearer and customer headers, the
+learned request shape, the generation span, provider health (`openai:responses`,
+`local:chat`), the cost report and the content capture are one call in
+`server/llm/openai.py`. A Responses request:
+
+- sends the system prompt as a `developer` message before the user message, not as
+  `instructions`: a `json_object` format needs the word "json" in an input message;
+- sets `store: false`, so the provider keeps no response to retrieve later, and carries
+  no `previous_response_id`, `tools` or `prompt`;
+- always carries an output cap, `max_output_tokens`, of at least 16 (the API's least).
+
+Its reply's text is the `output_text` parts of the `message` items (reasoning items carry
+none), and its status becomes the stop reason in chat completions' words: `completed` is
+`stop`, `incomplete` for `max_output_tokens` is `length`, for `content_filter`
+`content_filter`, and a `refusal` part is `refusal`.
+
+**Structured output.** Callers pass `response_format={"type": "json_object"}` (or a
+`json_schema` format) in chat completions' shape. The local client passes it through; the
+OpenAI client sends it as the Responses `text.format`, a schema's `name`, `schema` and
+`strict` beside its `type`. The Anthropic client has no JSON mode: it appends a JSON
 directive to the system prompt, strips code fences and marks the system block cacheable.
 The caller parses (`server/llm/json_text.py`).
 
@@ -297,11 +319,14 @@ restriction.
 Each client builds the rest of its request (the lowest reasoning effort and an
 output cap), and provider responses teach other traits once per model per process:
 
-- a 400 naming a field the model does not take (`temperature`, `reasoning_effort`, an
-  `output_config`, the cap field under its other name) drops that field: the call is
-  re-sent without it, and later calls leave it out;
+- a 400 naming a field the model does not take (`temperature`, `reasoning_effort` or
+  `reasoning`, an `output_config`, a cap field under its other name) drops that field:
+  the call is re-sent without it, and later calls leave it out. An error `param` that
+  names a field the request cannot go without (`input`, `messages`, the Responses
+  `max_output_tokens`) drops nothing;
 - a 400 refusing a reasoning effort settles on the lowest one it lists
-  (`LOOM_LLM_OPENAI_REASONING_EFFORT` pins one instead);
+  (`LOOM_LLM_OPENAI_REASONING_EFFORT` pins one instead, never below that lowest); a
+  refused effort above it, pinned or a client's own, drops the effort field;
 - a 400 naming the model's output limit clamps caps to it;
 - reasoning and thinking tokens count against the output cap, so the tokens a reply
   reports become the model's reserve (twice the most seen, at most

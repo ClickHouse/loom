@@ -208,7 +208,7 @@ async def test_failed_check_leaves_running_provider_health_alone(
     from server.observability import provider_health
 
     async def failing(*_: object) -> None:
-        with provider_health.recording("openai:chat"):
+        with provider_health.recording("openai:responses"):
             raise RuntimeError("candidate key rejected")
 
     provider_health.reset()

@@ -154,11 +154,12 @@ async def test_openai_client_passes_the_cached_share_to_the_ledger(
 
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     data = {
-        "choices": [{"message": {"content": "hi"}}],
+        "status": "completed",
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "hi"}]}],
         "usage": {
-            "prompt_tokens": 21500,
-            "completion_tokens": 400,
-            "prompt_tokens_details": {"cached_tokens": 20000},
+            "input_tokens": 21500,
+            "output_tokens": 400,
+            "input_tokens_details": {"cached_tokens": 20000},
         },
     }
     monkeypatch.setattr(openai_mod, "_http_client", lambda: _StubHTTP(data))
