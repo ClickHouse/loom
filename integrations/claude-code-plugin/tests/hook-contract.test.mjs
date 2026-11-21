@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostEnv } from "./host-env.mjs";
+import { removeSandbox } from "./hook-sandbox.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(here, "..");
@@ -285,7 +286,7 @@ test("malformed, empty and non-object payloads: every hook exits 0 silently", as
     assertContract(await runAll(cases), 8000);
   } finally {
     await loom.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
 
@@ -305,7 +306,7 @@ test("no token anywhere: every hook exits 0 silently and sends no request", asyn
     assert.deepEqual(loom.ops, [], "a hook without a token reached the server");
   } finally {
     await loom.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
 
@@ -330,7 +331,7 @@ test("server unreachable, answering 401, or hanging: every hook stays within its
   } finally {
     await unauthorized.close();
     await hang.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
 
@@ -348,7 +349,7 @@ test("a host that never closes stdin does not hold a hook open", async () => {
     assertContract(await runAll(cases), 8000);
   } finally {
     await loom.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
 
@@ -366,7 +367,7 @@ test("a well-formed session against a healthy server: every hook exits 0 silentl
     assert.ok(loom.ops.length > 0, "no hook reached a healthy server");
   } finally {
     await loom.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
 
@@ -385,6 +386,6 @@ test("a payload over the stdin cap is dropped, not parsed: every hook exits 0 si
     assertContract(await runAll(cases, 4), 15000);
   } finally {
     await loom.close();
-    fs.rmSync(box.dir, { recursive: true, force: true });
+    await removeSandbox(box);
   }
 });
