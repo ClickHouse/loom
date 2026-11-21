@@ -2,7 +2,7 @@
 
 A proposal is written, hidden from default reads, served on request, relied
 on by two runs, graded by session, listed with its graded counts, left alone
-under the manual default, accepted once the owner sets `auto`, and rejected
+under the manual default, accepted by an independent human administrator, and rejected
 on a fail at `reject_after_fails`. A regrade with the same verdict is a no-op,
 and a later run.complete keeps the grade.
 """
@@ -15,7 +15,9 @@ from typing import Any
 import httpx
 import pytest
 
+from server.auth.jwt import mint_token
 from tests.integration._eventually import eventually
+from tests.integration._resources import unique_org
 
 
 async def _call(c: httpx.AsyncClient, op: str, body: dict[str, Any], expect: int = 200) -> Any:
@@ -29,11 +31,22 @@ def _keys(out: dict[str, Any]) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str) -> None:
-    org, ns = "grades-test", f"grades-{uuid.uuid4().hex[:6]}"
+async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str, mint_test_token) -> None:
+    org, ns = unique_org("grades-test"), f"grades-{uuid.uuid4().hex[:6]}"
     ident = {"org": org, "namespace": ns, "agent": "w"}
     scope = {"org": org, "namespace": ns}
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=60) as c:
+    author = mint_test_token(org=org, roles=["admin"], subject="proposer")
+    reviewer = mint_token(
+        subject="reviewer",
+        org=org,
+        namespaces=[ns],
+        roles=["admin"],
+        ttl_seconds=600,
+        is_service_account=False,
+    )
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, timeout=60, headers={"Authorization": f"Bearer {author}"}
+    ) as c:
         await _call(c, "namespace.register", {**scope, "owner_email": "t@example.com"})
         await _call(
             c,
@@ -135,7 +148,24 @@ async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str) -> None
             },
         )
         decided = (await _call(c, "run.grade", grade))["proposals_decided"]
-        assert [(d["memory_key"], d["decision"]) for d in decided] == [("lesson_p1", "accept")]
+        assert decided == []
+        assert (await _call(c, "memory.get", {**ident, "memory_key": "lesson_p1"}))[
+            "status"
+        ] == "proposed"
+        async with httpx.AsyncClient(
+            base_url=control_plane_url, timeout=60, headers={"Authorization": f"Bearer {reviewer}"}
+        ) as review:
+            accepted = await _call(
+                review,
+                "memory.proposal_decide",
+                {
+                    **scope,
+                    "decision": "accept",
+                    "memory_keys": ["lesson_p1"],
+                    "approved_sha256": {"lesson_p1": p1["content_sha256"]},
+                },
+            )
+            assert accepted["decided"] == 1, accepted
         assert (await _call(c, "memory.get", {**ident, "memory_key": "lesson_p1"}))[
             "status"
         ] == "active"
@@ -169,7 +199,7 @@ async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str) -> None
             "status"
         ] == "rejected"
 
-        await _call(
+        p3 = await _call(
             c,
             "memory.set",
             {
@@ -179,20 +209,32 @@ async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str) -> None
                 "value": "Prefer the EXCHANGE TABLES swap for repartitions",
             },
         )
-        out = await _call(
-            c,
-            "memory.proposal_decide",
-            {**scope, "decision": "accept", "memory_keys": ["lesson_p3", "fact_a", "nope"]},
-        )
+        async with httpx.AsyncClient(
+            base_url=control_plane_url, timeout=60, headers={"Authorization": f"Bearer {reviewer}"}
+        ) as review:
+            out = await _call(
+                review,
+                "memory.proposal_decide",
+                {
+                    **scope,
+                    "decision": "accept",
+                    "memory_keys": ["lesson_p3", "fact_a", "nope"],
+                    "approved_sha256": {"lesson_p3": p3["content_sha256"]},
+                },
+            )
         by = {r["memory_key"]: r for r in out["results"]}
         assert out["decided"] == 1 and by["lesson_p3"]["status"] == "active"
         assert not by["fact_a"]["decided"] and by["nope"]["reason"] == "not found"
 
 
 @pytest.mark.asyncio
-async def test_run_grade_needs_exactly_one_target(control_plane_url: str) -> None:
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
-        base = {"org": "grades-test", "namespace": "grades-x", "grade": "pass"}
+async def test_run_grade_needs_exactly_one_target(control_plane_url: str, mint_test_token) -> None:
+    org = unique_org("grades-test")
+    token = mint_test_token(org=org, roles=["admin"])
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, timeout=30, headers={"Authorization": f"Bearer {token}"}
+    ) as c:
+        base = {"org": org, "namespace": "grades-x", "grade": "pass"}
         await _call(c, "run.grade", base, expect=422)
         await _call(c, "run.grade", {**base, "run_id": "a", "session_id": "b"}, expect=422)
         await _call(c, "run.grade", {**base, "run_id": "no-such-run"}, expect=404)
