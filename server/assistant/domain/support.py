@@ -99,9 +99,9 @@ def support_of(
     no_data: frozenset[str],
     unknown_names: list[str] | None = None,
 ) -> str:
-    """The answer's support. `codes` are its citations' codes; `calls` what its tool calls
-    left (None when they could not be read; on the non-streamed path never read for a
-    cited, empty or abstaining answer, or one naming an unknown name); `citable` the ops
+    """The answer's support. `codes` are its citations' receipt verdicts; `calls` are
+    outcomes derived from this answer's bounded tool receipts (None when unavailable);
+    `citable` the ops
     whose rows an answer can cite; `no_data` the ops that return no namespace data;
     `unknown_names` the op and setting names it writes that the build neither serves nor
     documents.
