@@ -540,7 +540,7 @@ async def test_a_definition_skips_the_close_shared_row_check(
 
 
 async def test_a_claim_that_runs_out_is_repaired_by_sending_the_promotion_again(
-    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    store: dict[str, Any], monkeypatch: pytest.MonkeyPatch, memory_insert_keeper
 ) -> None:
     embedded: list[tuple[str, int]] = []
     cut_off = False
@@ -558,6 +558,13 @@ async def test_a_claim_that_runs_out_is_repaired_by_sending_the_promotion_again(
     with pytest.raises(ClaimExpired):
         await promote.handle_memory_promote(_input())
     assert len(store["written"]) == 1 and embedded == []
+    # A failed send keeps its fence until the last admitted insert can no longer run.
+    from server.core.lease_writes import FenceUnavailableError, lease_ttl_s
+    from server.core.rmt_carry import send_bound_s
+
+    with pytest.raises(FenceUnavailableError):
+        await promote.handle_memory_promote(_input())
+    memory_insert_keeper.advance(lease_ttl_s(send_bound_s()) + 1)
     # The second promotion is a revision of the same key, and writes both at one version.
     cut_off = False
     store["shared"] = {KEY: VALUE}
