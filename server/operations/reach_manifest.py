@@ -123,6 +123,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.trace": ("sdk_method",),
     "code.verify": ("sdk_method",),
     "code.verify_citations": ("sdk_method",),
+    "collection.budget_set": ("dashboard",),
     "collection.create": ("dashboard",),
     "collection.delete": ("dashboard",),
     "collection.list": (

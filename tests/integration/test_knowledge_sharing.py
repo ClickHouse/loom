@@ -1109,3 +1109,70 @@ def test_a_document_says_which_agent_and_session_wrote_it_and_what_it_is(gw: Gat
         {"namespace": col, "source_uri": "x", "content": "y", "source_class": "observed"},
     )
     assert refused.status_code == 422, "a body only declares a downgrade"
+
+
+def test_only_collection_admins_change_its_spend_policy_and_keep_other_settings(
+    gw: Gateway,
+) -> None:
+    tag = uuid.uuid4().hex[:8]
+    collection = _collection(gw, "alice", f"col-budget-{tag}")
+    foreign = _collection(gw, "alice", f"col-foreign-{tag}")
+    for user, role in (("bob", "viewer"), ("carol", "writer")):
+        gw.ok(
+            "alice",
+            "grants.create",
+            {"namespace": collection, "subject": f"user:{user}", "role": role},
+        )
+    before = gw.ok("alice", "namespace.get", {"namespace": collection})
+    original = {
+        field: before[field]
+        for field in ("daily_cost_cap_usd", "daily_user_cost_cap_usd", "budget_alert_inbox")
+    }
+    patch = {"namespace": collection, "daily_cost_cap_usd": 0.25, "daily_user_cost_cap_usd": 0.125}
+    for user in ("bob", "carol", "dan"):
+        assert gw.call(user, "collection.budget_set", patch).status_code == 403
+    other_org = httpx.post(
+        f"{gw.base}/v1/collection.budget_set",
+        json={"org": gw.org, **patch},
+        headers={"Authorization": f"Bearer {end_user_issuer.mint(gw.org + '-other', 'alice')}"},
+        timeout=60,
+    )
+    assert other_org.status_code == 403
+    own_inbox, foreign_inbox = f"budget-{tag}", f"other-{tag}"
+    for namespace, inbox in ((collection, own_inbox), (foreign, foreign_inbox)):
+        gw.ok(
+            "alice", "inbox.register", {"namespace": namespace, "inbox": inbox, "owner_agent": "-"}
+        )
+    rejected = gw.call(
+        "alice", "collection.budget_set", {**patch, "budget_alert_inbox": foreign_inbox}
+    )
+    assert rejected.status_code == 422 and "owned by this collection" in rejected.text
+    assert gw.ok("alice", "namespace.get", {"namespace": collection}) == before
+    changed = gw.ok("alice", "collection.budget_set", {**patch, "budget_alert_inbox": own_inbox})
+    assert changed["changed"] and changed["daily_cost_cap_usd"] == 0.25
+    after = gw.ok("alice", "namespace.get", {"namespace": collection})
+    expected = {
+        **before,
+        "daily_cost_cap_usd": 0.25,
+        "daily_user_cost_cap_usd": 0.125,
+        "budget_alert_inbox": own_inbox,
+    }
+    assert {key: value for key, value in after.items() if key != "updated_at"} == {
+        key: value for key, value in expected.items() if key != "updated_at"
+    }
+    status = gw.ok("alice", "cost.budget_status", {"namespace": collection})
+    assert status["user_id"] == "alice"
+    assert status["cap_source"] == "namespace_user" and status["cap_usd"] == 0.125
+    gw.ok("alice", "collection.budget_set", {"namespace": collection, **original})
+    restored = gw.ok("alice", "namespace.get", {"namespace": collection})
+    assert {key: value for key, value in restored.items() if key != "updated_at"} == {
+        key: value for key, value in before.items() if key != "updated_at"
+    }
+    wrong_route = gw.call(
+        "alice",
+        "namespace.register",
+        {"namespace": collection, "owner_email": "user:alice", "daily_cost_cap_usd": 1},
+    )
+    assert wrong_route.status_code == 403
+    assert "namespace.register is not open to an end user" in wrong_route.text
+    assert gw.ok("alice", "namespace.get", {"namespace": collection}) == restored

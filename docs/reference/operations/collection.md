@@ -8,6 +8,28 @@ Every op is `POST /v1/<op>` over HTTP and the MCP tool `loom_<op>`. The identity
 
 <!-- prettier-ignore-start -->
 
+## `collection.budget_set`
+
+Change only a collection's spend caps and warning destination.
+
+`POST /v1/collection.budget_set` · MCP `loom_collection_budget_set` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `daily_cost_cap_usd` | `float \| None` | `None` | Collection cap in USD per rolling 24 hours; 0 inherits the server default, omit keeps it. |
+| `daily_user_cost_cap_usd` | `float \| None` | `None` | Named-user cap in USD per rolling 24 hours; 0 inherits the server default, omit keeps it. |
+| `budget_alert_inbox` | `str \| None` | `None` | An existing task inbox owned by this collection; '' disables warnings, omit keeps it. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `namespace` | `str` | The namespace the op reads or writes. |
+| `changed` | `bool` |  |
+| `daily_cost_cap_usd` | `float` |  |
+| `daily_user_cost_cap_usd` | `float` |  |
+| `budget_alert_inbox` | `str` |  |
+
 ## `collection.create`
 
 Create a collection: a namespace read and written only through grants.

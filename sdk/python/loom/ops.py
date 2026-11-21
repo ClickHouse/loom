@@ -100,6 +100,7 @@ OpName = Literal[
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.budget_set",
     "collection.create",
     "collection.delete",
     "collection.list",
@@ -479,6 +480,7 @@ OP_NAMES: tuple[str, ...] = (
     "code.trace",
     "code.verify",
     "code.verify_citations",
+    "collection.budget_set",
     "collection.create",
     "collection.delete",
     "collection.list",
@@ -1528,6 +1530,18 @@ OPS: dict[str, OpSpec] = {
         1500,
         False,
         True,
+    ),
+    "collection.budget_set": OpSpec(
+        "collection.budget_set",
+        "CollectionBudgetSetInput",
+        "CollectionBudgetSetBody",
+        "CollectionBudgetSetOutput",
+        True,
+        "admin",
+        "experimental",
+        80,
+        True,
+        False,
     ),
     "collection.create": OpSpec(
         "collection.create",
@@ -8135,6 +8149,34 @@ class CodeVerifyCitationsOutput(TypedDict, total=False):
     as_of: NotRequired[dict[str, Any]]
     note: NotRequired[str]
     trace_run_id: NotRequired[str]
+
+
+class CollectionBudgetSetInput(TypedDict, total=False):
+    "Change only a collection's spend caps and warning destination."
+
+    org: Required[str]
+    namespace: Required[str]
+    daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
+
+
+class CollectionBudgetSetBody(TypedDict, total=False):
+    "Change only a collection's spend caps and warning destination."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    daily_cost_cap_usd: NotRequired[Optional[float]]
+    daily_user_cost_cap_usd: NotRequired[Optional[float]]
+    budget_alert_inbox: NotRequired[Optional[str]]
+
+
+class CollectionBudgetSetOutput(TypedDict, total=False):
+    namespace: Required[str]
+    changed: Required[bool]
+    daily_cost_cap_usd: Required[float]
+    daily_user_cost_cap_usd: Required[float]
+    budget_alert_inbox: Required[str]
 
 
 class CollectionCreateInput(TypedDict, total=False):

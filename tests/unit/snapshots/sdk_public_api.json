@@ -516,6 +516,10 @@
         "collection": {
           "class": "CollectionOps",
           "methods": {
+            "budget_set": [
+              "body",
+              "options"
+            ],
             "create": [
               "body",
               "options"

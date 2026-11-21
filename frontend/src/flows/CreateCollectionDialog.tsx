@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Checkbox } from "@clickhouse/click-ui/Checkbox";
 import { Select } from "@clickhouse/click-ui/Select";
@@ -25,7 +26,8 @@ export type ClaimCreateVersion = () => number;
  *  open when the answer lands waits for the new collection. The person is told whether it was
  *  made or one of that title already sits there; `typed` is shown when the answer names none. */
 export function announceCreated(r: CollectionCreated, typed: string, org: string): void {
-  invalidateSharedCollections({ name: r.namespace, org });
+  // Match the opening reload's priority so a delayed refresh cannot start a second read.
+  flushSync(() => invalidateSharedCollections({ name: r.namespace, org }));
   const shown = r.title || typed || r.namespace;
   toast(r.created ? `Created ${shown}` : `${shown} already exists here`, r.created ? "ok" : "info");
 }

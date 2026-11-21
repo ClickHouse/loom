@@ -10,6 +10,7 @@ import { confirmAction } from "../components/ConfirmDialog";
 import { toast, toastError } from "../components/Toast";
 import { type ClaimCreateVersion, CreateCollectionDialog } from "../flows/CreateCollectionDialog";
 import { MoveCollectionDialog } from "../flows/MoveCollectionDialog";
+import { CollectionBudgetDialog } from "../flows/CollectionBudgetDialog";
 import { CollectionBack, CollectionChips, CollectionPath, cycleStart } from "./LibraryHierarchy";
 import {
   COLLECTIONS_LISTED,
@@ -29,6 +30,7 @@ import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { PLACE_PICKER_LABEL } from "../lib/useTreeFocusHandoff";
 import { invalidateSharedCollections, onCollectionsChanged } from "../lib/collectionPlaces";
 import { ALL_DOCUMENTS } from "../lib/libraryPlace";
+import { needsRole } from "../lib/namespaceRole";
 
 /** The select's value for the namespace picked in the header: an item cannot carry "". */
 const NAMESPACE_SHELF = "__namespace__";
@@ -154,6 +156,8 @@ export function useReadableCollections(org: string, showing: string | null = nul
   const hold = answered && showing !== null && answer.rows.some((c) => c.namespace === showing) ? showing : "";
   useAbortableEffect(
     (signal, live) => {
+      // A reload can replace this effect before its deferred callback runs.
+      if (!live()) return;
       setError(null);
       void (async () => {
         for (let attempt = 0; ; attempt++) {
@@ -256,6 +260,7 @@ export function LibraryCollections({
 }) {
   const all = place === ALL_DOCUMENTS;
   const [moving, setMoving] = useState<CollectionEntry | null>(null);
+  const [budgeting, setBudgeting] = useState<CollectionEntry | null>(null);
   const { rows, error } = collections;
   // New collection and Move belong to the place they opened in: a move to another
   // closes them, and coming back does not reopen them. The list answering (or read again)
@@ -263,7 +268,11 @@ export function LibraryCollections({
   useEffect(() => {
     setCreating(false);
     setMoving(null);
+    setBudgeting(null);
   }, [place]);
+  useEffect(() => {
+    setBudgeting(null);
+  }, [org, current?.namespace, current?.role]);
   // The select's order; beside the tree there is no select.
   const ordered = useMemo(() => (besideTree ? [] : treeOrder(rows ?? [])), [rows, besideTree]);
   // A phone gets the path as one back button in the select's row, and no chips.
@@ -339,6 +348,13 @@ export function LibraryCollections({
   const collection = current && !current.personal ? current : null;
   const items: RowMenuItem[] = [];
   if (collection) {
+    items.push({
+      label: "Budget…",
+      reason: collection.role === "admin" ? null : needsRole("admin", collection.namespace),
+      onSelect: () => {
+        if (collection.role === "admin") setBudgeting(collection);
+      },
+    });
     if (collection.role === "admin") {
       items.push({ label: "Move…", icon: "arrow-right", onSelect: () => setMoving(collection) });
       items.push({
@@ -460,6 +476,14 @@ export function LibraryCollections({
             Load collections again
           </Button>
         </p>
+      )}
+      {budgeting && (
+        <CollectionBudgetDialog
+          key={`${org}/${budgeting.namespace}`}
+          org={org}
+          collection={budgeting}
+          onClose={() => setBudgeting(null)}
+        />
       )}
       {moving && (
         <MoveCollectionDialog

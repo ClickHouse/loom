@@ -112,6 +112,22 @@ feature page). A client draws a conversation's saved state with one
 `conversation.saved_status` call, and a user erasure takes the user's conversation rows,
 saved ones included.
 
+## Collection spend policy
+
+`collection.budget_set` lets a collection's admin change its rolling 24-hour USD cap,
+its separate named-user cap and its budget warning inbox. An omitted field keeps its
+stored value; a zero cap inherits the server default, and an empty inbox disables
+warnings. A warning inbox must belong to the same collection. Personal, missing and
+retired collections cannot be configured through this operation.
+
+The audited operation holds the directory-row claim from read through write and carries
+every unrelated directory column forward. It changes no collection membership, tree,
+visibility or login state. `namespace.register` continues to refuse collection names.
+Budget status and admission guards read the same directory columns for collections as
+for other namespaces; the operation changes no spend events or enforcement thresholds.
+Both adjacent builds read the same stored fields, so the operation requires no schema
+change. The Library's collection menu provides the same budget controls.
+
 ## Identity
 
 A service in front of Loom (a chat app) signs a short-lived token for each request it
