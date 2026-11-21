@@ -276,6 +276,12 @@ def _parse_java(path: str, source: bytes) -> ParsedFile:
     return pf
 
 
+def _parse_thrift(path: str, source: bytes) -> ParsedFile:
+    from server.code.domain.extract.lang_thrift import parse_thrift
+
+    return parse_thrift(path, source)
+
+
 def _parse_proto(path: str, source: bytes) -> ParsedFile:
     from server.code.domain.extract.lang_proto import parse_proto
 
@@ -404,6 +410,7 @@ _PARSERS = {
     "astro": _parse_astro,
     "angular_template": _parse_angular_template,
     "proto": _parse_proto,
+    "thrift": _parse_thrift,
     "gotemplate": _parse_gotemplate,
     "hcl": _parse_hcl,
     "k8s": _parse_k8s,
@@ -423,7 +430,7 @@ _LANE_INCLUDE_LANGS: frozenset[str] = frozenset(
 # The lanes without a tree-sitter grammar — chunks from their symbol spans, edges from
 # their reference sites (`lane_units`)
 LANE_UNIT_LANGS: frozenset[str] = frozenset(
-    {"proto", "gotemplate", "hcl", "k8s", "jsonnet", "lua", "graphql"}
+    {"proto", "thrift", "gotemplate", "hcl", "k8s", "jsonnet", "lua", "graphql"}
 )
 
 
@@ -445,6 +452,10 @@ def _lane_module(lang: str) -> Any:
         from server.code.domain.extract import lang_lua
 
         return lang_lua
+    if lang == "thrift":
+        from server.code.domain.extract import lang_thrift
+
+        return lang_thrift
     if lang == "graphql":
         from server.code.domain.extract import lang_graphql
 
