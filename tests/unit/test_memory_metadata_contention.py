@@ -34,7 +34,12 @@ class Replica:
     async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
         assert "loom.memory" in sql
         assert "select_sequential_consistency = 1" in sql
-        return [self.head]
+        heads = {}
+        for row in self.table:
+            key = rows.identity_key(row)
+            if key not in heads or row["version"] >= heads[key]["version"]:
+                heads[key] = row
+        return [heads[key] for key in params["keys"] if key in heads]
 
 
 @pytest.fixture
@@ -360,7 +365,7 @@ async def test_memory_insert_respects_its_admission_deadline(
     attempts = 0
     lease = SimpleNamespace()
     release = AsyncMock()
-    client = SimpleNamespace(insert=AsyncMock())
+    client = SimpleNamespace(insert=AsyncMock(), query_all=AsyncMock(return_value=[]))
 
     async def take(*args, **kw):
         nonlocal attempts

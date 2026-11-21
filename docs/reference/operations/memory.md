@@ -1534,7 +1534,7 @@ Promote a single source memory to the namespace's shared layer.
 
 Accept (→ active, served by default) or reject a list of proposals.
 
-`POST /v1/memory.proposal_decide` · MCP `loom_memory_proposal_decide` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+`POST /v1/memory.proposal_decide` · MCP `loom_memory_proposal_decide` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -1542,6 +1542,7 @@ Accept (→ active, served by default) or reject a list of proposals.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_keys` | `list[str]` | required | Keys of the proposals to decide; a key that is not a proposal is left as is and reported. |
 | `decision` | `Literal['accept', 'reject']` | required | `accept` makes each proposal live (`active`, or `conflicted` when contradicted on trial); `reject` sets it `rejected`. |
+| `approved_sha256` | `dict[str, str]` | *(computed)* | Acceptance binds the content the reviewer saw, one canonical hash per key. |
 | `reason` | `str` | `''` | Why; stored as the rejection reason on `reject` ("proposal rejected" when empty). |
 
 | Output field | Type | Meaning |
