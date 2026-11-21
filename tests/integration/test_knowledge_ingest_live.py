@@ -78,7 +78,7 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
     return dict(r.json())
 
 
-async def _work(org: str, ns: str, ingestion_id: str) -> None:
+async def _work(org: str, ns: str, ingestion_id: str) -> str:
     """Run the job in this process, on the same ClickHouse, as a worker pass that
     took it does. A pass takes one job of the whole queue, which other tests'
     jobs share, so it may not be this one."""
@@ -91,7 +91,9 @@ async def _work(org: str, ns: str, ingestion_id: str) -> None:
     try:
         job = await ingestions.get_ingestion(org, ns, ingestion_id)
         assert job is not None, ingestion_id
-        assert await ingest_run.take_and_run(job) is not None, f"job {ingestion_id} did not run"
+        state = await ingest_run.take_and_run(job)
+        assert state is not None, f"job {ingestion_id} did not run"
+        return state
     finally:
         await ch.disconnect()
 
@@ -648,10 +650,22 @@ async def test_a_delete_bounded_before_a_metadata_edit_keeps_the_carried_snapsho
             c, "knowledge.ingest", org=org, namespace=ns, upload_id=up.json()["upload_id"],
             source_uri=uri,
         )  # fmt: skip
-        await _work(org, ns, job["ingestion_id"])
-        (d,) = (await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri))[
+        worker_state = await _work(org, ns, job["ingestion_id"])
+        datasets = (await _op(c, "knowledge.dataset_get", org=org, namespace=ns, source_uri=uri))[
             "datasets"
         ]
+        dataset_count = len(datasets)
+        assert dataset_count == 1, {
+            "dataset_count": dataset_count,
+            "worker_state": (
+                worker_state
+                if type(worker_state) is str
+                and worker_state
+                in {"pending", "processing", "ready", "partial", "failed", "cancelled"}
+                else "unknown"
+            ),
+        }
+        (d,) = datasets
         ch = get_client()
         await ch.connect()
         try:
