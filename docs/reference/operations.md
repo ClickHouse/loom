@@ -525,7 +525,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.owner_report`](operations/memory.md#memoryowner_report) | The owner's view of their memory: what they own, who read it, how it was used. | viewer | read | no |  |
 | [`memory.pin`](operations/memory.md#memorypin) | WHAT: Save a standing fact and protect it. | writer | idempotent | yes |  |
 | [`memory.promote`](operations/memory.md#memorypromote) | Promote a single source memory to the namespace's shared layer. | admin | write | no | yes |
-| [`memory.proposal_decide`](operations/memory.md#memoryproposal_decide) | Accept (→ active, served by default) or reject a list of proposals. | writer | idempotent | no | yes |
+| [`memory.proposal_decide`](operations/memory.md#memoryproposal_decide) | Accept (→ active, served by default) or reject a list of proposals. | admin | idempotent | no | yes |
 | [`memory.proposals`](operations/memory.md#memoryproposals) | List facts on trial (written with memory.set proposed=true) with the graded runs that relied on each — passes, fails — and what the namespace's proposal policy says (`ready`: accept / reject). | viewer | read | no |  |
 | [`memory.provenance`](operations/memory.md#memoryprovenance) | Resolve a memory's origin for user-facing provenance. | viewer | read | yes |  |
 | [`memory.recall`](operations/memory.md#memoryrecall) | Search the raw conversation turns behind this namespace's memories — the messages `memory.set_from_messages` extracted from — by text and by time. | viewer | read | yes |  |
