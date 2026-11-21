@@ -113,6 +113,31 @@ async def _published(pg_conn: Any, org: str) -> None:
     await eventually(landed, description="the org's deliveries published")
 
 
+async def test_digest_source_proof_reads_exact_authoritative_metadata(
+    call: Any, org: str, pg_conn: Any
+) -> None:
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    ns = f"pg-{uuid.uuid4().hex[:8]}"
+    response = await call("memory.set", _set(ns, "source", "a source fact"))
+    assert response.status_code == 200, response.text
+    key = (org, ns, "a", "-", "-", "source")
+    other_key = (org, ns, "another-agent", "-", "-", "source")
+    stored = await pg_conn.fetchval(
+        "SELECT row FROM loom.memory_current WHERE org = $1 AND namespace = $2", org, ns
+    )
+    try:
+        heads = await pg_memory.summary_source_heads([key, other_key])
+        decoded = pg_memory.decode_row(stored)
+        assert heads == {
+            key: {col: decoded.get(col) for col in pg_memory.SUMMARY_SOURCE_STATE_COLUMNS}
+        }
+        assert "value" not in heads[key] and "value_json" not in heads[key]
+    finally:
+        await pg.close_pool()
+
+
 @pytest.mark.usefixtures("pg_authority")
 async def test_a_write_is_listed_and_rolled_back_right_after_it_answers(
     call: Any, org: str
@@ -2421,6 +2446,18 @@ async def test_a_reject_is_the_authoritys_head_and_clickhouses_row(
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "a fact to reject"))).status_code == 200
     before = int((await _head_row(pg_conn, org, ns, "k"))["version"])
+
+    # A new set answers at commit; reject copies the vectors already published.
+    async def document_published() -> bool:
+        rows = ch_client.query(
+            "SELECT status, version FROM loom.memory_embeddings FINAL "
+            "WHERE org = {org:String} AND namespace = {ns:String} AND memory_key = 'k'",
+            settings=_SEQUENTIAL,
+            parameters={"org": org, "ns": ns},
+        ).result_rows
+        return rows == [("active", before)]
+
+    await eventually(document_published, description="the initial vector is published")
     body = {"namespace": ns, "agent": "a", "memory_key": "k", "rejection_reason": "wrong"}
     rejected = await call("memory.reject", body)
     assert rejected.status_code == 200 and rejected.json()["rejected"] is True, rejected.text

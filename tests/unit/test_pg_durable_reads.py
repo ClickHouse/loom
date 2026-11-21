@@ -114,6 +114,7 @@ _CALLERS = {
     "server/memory/store/redaction.py": "decides a redaction, which commits",
     "server/memory/store/source_review.py": "holds the exact source after a durable read "
     "through shared publication",
+    "server/memory/store/summary_sources.py": "filters which digests a search serves; sends nothing",
     "server/memory/workers/pg_payload_clear.py": "clears through its own commit, and only "
     "revisions delivered a horizon ago that ClickHouse holds",
 }
