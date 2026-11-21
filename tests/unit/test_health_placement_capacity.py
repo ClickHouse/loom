@@ -80,6 +80,17 @@ def app(router: _Router, monkeypatch: pytest.MonkeyPatch) -> FastAPI:
     monkeypatch.setattr(health, "_calibration_block", lambda *_args: {})
     monkeypatch.setattr(health, "_ratelimit_block", lambda: {})
     monkeypatch.setattr(health, "_deployment_config_block", lambda: {})
+    monkeypatch.setattr(
+        health,
+        "_capacity_observation",
+        AsyncMock(
+            return_value={
+                "model": {},
+                "write_requests": {"status": "unknown"},
+                "scope": {"status": "not_requested"},
+            }
+        ),
+    )
     monkeypatch.setattr(pg, "enabled", lambda: False)
     monkeypatch.setattr(schema_status, "schema_status", AsyncMock(return_value={}))
     monkeypatch.setattr(
@@ -106,7 +117,7 @@ def _placement(response: httpx.Response) -> dict[str, Any]:
     assert response.headers["Cache-Control"] == "no-store"
     answer = response.json()
     assert "capacity" in answer
-    assert set(answer["capacity"]) == {"placement"}
+    assert set(answer["capacity"]) == {"placement", "model", "write_requests", "scope"}
     return dict(answer["capacity"]["placement"])
 
 

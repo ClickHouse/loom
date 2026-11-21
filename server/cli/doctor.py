@@ -749,6 +749,12 @@ def _cmd_doctor(_args: argparse.Namespace) -> int:
     listed but do not fail); 1 = at least one FAIL.
     """
     checks = _run_doctor_checks(tuple(getattr(_args, "pg_allow_role", None) or ()))
+    if getattr(_args, "capacity", False):
+        from server.cli.doctor_capacity import capacity_checks
+
+        checks += capacity_checks(_args.capacity_org, _args.capacity_namespace)
+    elif getattr(_args, "capacity_org", None) or getattr(_args, "capacity_namespace", None):
+        checks.append(("capacity_scope", FAIL, "scope selection requires --capacity"))
     if getattr(_args, "stray_orgs", False):
         checks += _stray_org_checks(_args.stray_orgs_budget)
     # The client's side of the same picture, when asked.
@@ -885,5 +891,16 @@ def _add_doctor_flags(p_doc: argparse.ArgumentParser) -> None:
         type=float,
         default=60.0,
         help="Seconds --stray-orgs may read for, smallest tables first (default 60).",
+    )
+    p_doc.add_argument(
+        "--capacity",
+        action="store_true",
+        help="Read bounded capacity observations from the configured deployment.",
+    )
+    p_doc.add_argument("--capacity-org", default=None, help="The single org to observe.")
+    p_doc.add_argument(
+        "--capacity-namespace",
+        default=None,
+        help="The single namespace to observe with --capacity-org.",
     )
     p_doc.add_argument("--token", default=None, help="Override the client's token.")

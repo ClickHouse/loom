@@ -375,7 +375,13 @@ async def health_ready(response: Response) -> dict[str, object]:
 
 
 @health_router.get("/v1/health")
-async def health(request: Request, response: Response, include: str = "") -> dict[str, object]:
+async def health(
+    request: Request,
+    response: Response,
+    include: str = "",
+    capacity_org: str | None = None,
+    capacity_namespace: str | None = None,
+) -> dict[str, object]:
     """Multi-tier health.
 
     Default response (lightweight; safe for high-frequency liveness
@@ -449,11 +455,62 @@ async def health(request: Request, response: Response, include: str = "") -> dic
     if "mirrors" in requested and settings.code_intel_enabled:
         out["mirrors"] = await _mirrors_block()
     if "capacity" in requested and platform_admin:
-        from server.core import cell_router
-
-        out["capacity"] = {"placement": await cell_router.placement_capacity()}
+        out["capacity"] = await _capacity_block(request, capacity_org, capacity_namespace)
     out.update(_included_blocks(requested))
     return out
+
+
+async def _capacity_block(
+    request: Request,
+    org: str | None,
+    namespace: str | None,
+) -> dict[str, object]:
+    from server.core import cell_router
+
+    return {
+        "placement": await cell_router.placement_capacity(),
+        **await _capacity_observation(request, org, namespace),
+    }
+
+
+async def _capacity_observation(
+    request: Request,
+    org: str | None,
+    namespace: str | None,
+) -> dict[str, object]:
+    """The positive admin gate precedes this optional, one-scope diagnostic."""
+    from server.auth import authz, tenancy
+    from server.auth.bearer import bearer_token
+    from server.auth.jwt import TokenError, verify_token
+    from server.identity.domain.read_scope import resolve_read_filters
+    from server.memory.app import capacity
+    from server.operations.base import Role
+
+    try:
+        token = bearer_token(request.headers.get("Authorization"))
+        if token is None:
+            return {}
+        auth = verify_token(token)
+        if auth.has_ns_roles() or not auth.has_role(Role.PLATFORM_ADMIN):
+            return {}
+    except TokenError:
+        return {}
+    if org is None and namespace is None:
+        return await capacity.observe()
+    # No enumeration, wildcard, arbitrary-size selector or implicit scope selection.
+    if not capacity.selection_valid(org, namespace):
+        return await capacity.observe(scope_refused=True, org=org, namespace=namespace)
+    assert org is not None and namespace is not None
+
+    async def authorized_scope() -> Any:
+        # Called inside the single-observer guard, before any scope count. It
+        # never places or records an org, even while the cell is recording.
+        if not await tenancy.is_held(org):
+            raise PermissionError("scope unavailable")
+        await authz.check_authorized(auth, Role.VIEWER, org, namespace)
+        return resolve_read_filters(requested=None, user_id=None, session_id=None, auth=auth)
+
+    return await capacity.observe(org, namespace, authorize=authorized_scope)
 
 
 async def _pg_ok() -> bool:

@@ -4862,6 +4862,29 @@ settings:
   # agent_events. [live]
   # insights_agents_connected_ttl_s: 60.0
 
+  # Maximum SLI watermark age for capacity rates, seconds; older evidence is unknown.
+  # [restart]
+  # capacity_rollup_max_lag_s: 300.0
+
+  # Outer deadline for one capacity read or scope authorization, seconds; expiry is
+  # unknown. [restart]
+  # capacity_observation_timeout_s: 3.0
+
+  # Capacity count threshold and physical-row read ceiling; 1..1M, not a write quota.
+  # [restart]
+  # capacity_scope_max_rows: 1000000
+
+  # Native capacity statement deadline, seconds, in ClickHouse and Postgres; at least 1
+  # ms. [restart]
+  # capacity_read_max_execution_s: 2.0
+
+  # Bytes one capacity read may scan or allocate in ClickHouse; at least 1 byte.
+  # [restart]
+  # capacity_read_max_bytes: 67108864
+
+  # MiB of Postgres working memory for capacity statements; at least 1 MiB. [restart]
+  # capacity_pg_work_mem_mib: 4
+
   # Most audit rows one verifier pass checks; past it the newest go unchecked and the
   # pass says so. [live]
   # audit_verify_max_rows_per_pass: 500000

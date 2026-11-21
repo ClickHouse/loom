@@ -751,7 +751,12 @@ class Router:
             return refusal
         return await _answered(
             lambda: directory.attach_read(request.path_params["cell"], audited=True),
-            lambda found: {**_attach_answer(found), "other": found.other},
+            lambda found: {
+                **_attach_answer(found),
+                "other": found.other,
+                "closed": found.row.closed,
+                "placements_max": found.row.placements_max,
+            },
         )
 
     async def set_administration(self, request: Request) -> JSONResponse:

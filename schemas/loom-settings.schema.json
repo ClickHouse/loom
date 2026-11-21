@@ -243,6 +243,43 @@
           "type": "number",
           "description": "Seconds between each replica's re-read of the shared calibration (loom.embedder_calibration), so every replica serves the same gates."
         },
+        "capacity_observation_timeout_s": {
+          "default": 3.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Outer deadline for one capacity read or scope authorization, seconds; expiry is unknown."
+        },
+        "capacity_pg_work_mem_mib": {
+          "default": 4,
+          "minimum": 1,
+          "type": "integer",
+          "description": "MiB of Postgres working memory for capacity statements; at least 1 MiB."
+        },
+        "capacity_read_max_bytes": {
+          "default": 67108864,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Bytes one capacity read may scan or allocate in ClickHouse; at least 1 byte."
+        },
+        "capacity_read_max_execution_s": {
+          "default": 2.0,
+          "minimum": 0.001,
+          "type": "number",
+          "description": "Native capacity statement deadline, seconds, in ClickHouse and Postgres; at least 1 ms."
+        },
+        "capacity_rollup_max_lag_s": {
+          "default": 300.0,
+          "exclusiveMinimum": 0,
+          "type": "number",
+          "description": "Maximum SLI watermark age for capacity rates, seconds; older evidence is unknown."
+        },
+        "capacity_scope_max_rows": {
+          "default": 1000000,
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Capacity count threshold and physical-row read ceiling; 1..1M, not a write quota."
+        },
         "cell": {
           "default": "",
           "type": "string",

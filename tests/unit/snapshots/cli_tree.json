@@ -11225,6 +11225,9 @@
         "pg_allow_role",
         "stray_orgs",
         "stray_orgs_budget",
+        "capacity",
+        "capacity_org",
+        "capacity_namespace",
         "token"
        ]
       }
@@ -11335,6 +11338,51 @@
        "type": "builtins:float",
        "required": false,
        "help": "Seconds --stray-orgs may read for, smallest tables first (default 60).",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--capacity"
+       ],
+       "dest": "capacity",
+       "action": "_StoreTrueAction",
+       "default": false,
+       "const": true,
+       "choices": null,
+       "nargs": 0,
+       "type": null,
+       "required": false,
+       "help": "Read bounded capacity observations from the configured deployment.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--capacity-org"
+       ],
+       "dest": "capacity_org",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The single org to observe.",
+       "metavar": null
+      },
+      {
+       "option_strings": [
+        "--capacity-namespace"
+       ],
+       "dest": "capacity_namespace",
+       "action": "_StoreAction",
+       "default": null,
+       "const": null,
+       "choices": null,
+       "nargs": null,
+       "type": null,
+       "required": false,
+       "help": "The single namespace to observe with --capacity-org.",
        "metavar": null
       },
       {

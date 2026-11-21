@@ -4329,6 +4329,18 @@ class ObservabilitySettings(BaseModel):
     # reused: the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of
     # agent_events.
     insights_agents_connected_ttl_s: Annotated[float, LIVE] = Field(default=60.0, gt=0)
+    # Maximum SLI watermark age for capacity rates, seconds; older evidence is unknown.
+    capacity_rollup_max_lag_s: float = Field(default=300.0, gt=0, allow_inf_nan=False)
+    # Outer deadline for one capacity read or scope authorization, seconds; expiry is unknown.
+    capacity_observation_timeout_s: float = Field(default=3.0, gt=0, allow_inf_nan=False)
+    # Capacity count threshold and physical-row read ceiling; 1..1M, not a write quota.
+    capacity_scope_max_rows: int = Field(default=1_000_000, ge=1, le=1_000_000)
+    # Native capacity statement deadline, seconds, in ClickHouse and Postgres; at least 1 ms.
+    capacity_read_max_execution_s: float = Field(default=2.0, ge=0.001, allow_inf_nan=False)
+    # Bytes one capacity read may scan or allocate in ClickHouse; at least 1 byte.
+    capacity_read_max_bytes: int = Field(default=67_108_864, ge=1)
+    # MiB of Postgres working memory for capacity statements; at least 1 MiB.
+    capacity_pg_work_mem_mib: int = Field(default=4, ge=1)
     # Most audit rows one verifier pass checks; past it the newest go unchecked and the
     # pass says so.
     audit_verify_max_rows_per_pass: Annotated[int, LIVE] = Field(default=500000, ge=1)

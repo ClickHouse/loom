@@ -1441,7 +1441,7 @@ entry points and the named exceptions:
 | `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                               |
 | `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend    |
 | `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend         |
-| `cell_automation.provision`, `directory.set_administration`                             | Fresh claim, paired authority, two live bot proofs, fenced public metadata and operator audit     |
+| `cell_automation.provision`, `directory.set_administration`                             | Fresh claim, paired authority, two live bot proofs, fenced public metadata and operator audit      |
 | `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                     |
 | `directory.set_limit`, `rotate_credential`                                              | Read and compare the current generation/registration/pair; do not claim or rotate                  |
 | `directory.register`                                                                    | Bootstrap default or immutable rerun lookup; never replaces existing acceptance or generation      |
@@ -2017,3 +2017,65 @@ An integration test with two cells and a router in CI's Postgres job:
   the org;
 - a cell restored from before an org's placement serves it once ready, an erasure leaves
   the org's placement, and with the directory lost every cell serves the orgs it holds.
+
+### Capacity observations
+
+`GET /v1/health?include=capacity` reports placement evidence, a labelled storage
+model and successful memory write requests per second. A verified, unscoped
+platform-admin token is required even when ordinary authentication is disabled.
+Detailed responses use `Cache-Control: no-store`. Ordinary liveness and readiness
+probes do not perform these observations.
+
+The storage model uses approximate historical baselines of 13.6 decimal KB per
+ClickHouse key and 6.8 decimal KB per Postgres key. The measured vector dimensions
+and revision shape matter: other vector tables, history, objects, replicas,
+indexes and pending work change the footprint. Multiplying a key count by the
+baseline estimates bytes; it does not measure current disk usage or establish a
+write-throughput ceiling.
+
+The write rate reads the existing SLI rollup across serving processes writing the
+cell's telemetry store. It reports successful requests over a complete five-minute
+window ending at the rollup's ingested watermark, with both endpoints, observation
+time and lag. Bulk requests have a separate rate because one request can commit
+many rows. Committed rows per second remain unavailable. Telemetry can lose events;
+an absent rollup or a watermark older than `LOOM_CAPACITY_ROLLUP_MAX_LAG_S` is
+unknown. That freshness bound defaults to five minutes; it does not change the
+five-minute rate window.
+
+Adding both `capacity_org=<org>` and `capacity_namespace=<namespace>` observes one
+scope. Both selectors must be explicit names of at most 255 UTF-8 bytes; wildcards
+and partial selectors are refused. The server checks read-only cell tenancy,
+namespace authorization, restricted-namespace grants and the token's read scope
+before counting. It never records or places an org for this diagnostic. Omitting
+selectors performs no namespace enumeration.
+
+The scope block separates current served memory heads from physical rows in
+`memory_embeddings`. The latter includes versions and tombstones and does not
+count every vector table. Current heads use the inventory's served status and
+tombstone predicates; expired entries remain until their sweep. Each read stops
+after `LOOM_CAPACITY_SCOPE_MAX_ROWS` plus one matching row and reports
+`exact`, `at_least` or `unknown`, with its source, observation time and elapsed
+read time. The diagnostic threshold defaults to one million and can be lowered;
+it is separate from the vector serving policy. ClickHouse reads also enforce
+that physical-row ceiling, `LOOM_CAPACITY_READ_MAX_BYTES` for read bytes and memory,
+`LOOM_CAPACITY_READ_MAX_EXECUTION_S` for execution and throw semantics. Their
+defaults are one million rows, 64 MiB and two seconds. Postgres uses a read-only
+transaction, the same native deadline and `LOOM_CAPACITY_PG_WORK_MEM_MIB`, default
+4 MiB, for working memory. `LOOM_CAPACITY_OBSERVATION_TIMEOUT_S` bounds each read
+and scope authorization outside the store, default three seconds. A failed budget reports `unknown` rather than a false
+zero. `FINAL` can scan more physical versions than its logical output, and native
+limits can overshoot by processing blocks. Separate point-in-time observations
+are not a commit admission count or a quota decision.
+
+Capacity observations share the existing diagnostic rate bucket and permit one
+expensive observation per process. A concurrent request receives unavailable
+evidence immediately; it does not join a diagnostic queue. A failed count does
+not change liveness or readiness.
+
+`loom doctor --capacity` reads the same model and request-rate evidence using its
+configured deployment stores. `--capacity-org <org> --capacity-namespace <namespace>`
+selects one scope. The command verifies paired stores and the configured cell
+before reading scope rows. Placement evidence uses the existing operator directory
+read and its operator credential; it does not give that credential to a server.
+An unlimited quota, a missing quota field and an unavailable directory are distinct
+answers, and unavailable evidence is a warning rather than a passing check.

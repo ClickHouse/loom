@@ -1665,6 +1665,12 @@ Telemetry, audit, tracing and the ops surface.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_INSIGHTS_AGENTS_CONNECTED_TTL_S` | `float` | `60.0` | live | Seconds one agents.connected answer per (org, namespace, window, caller) is reused: the sidebar badge asks every 30 s per tab and the answer is a 24 h scan of agent_events. |
+| `LOOM_CAPACITY_ROLLUP_MAX_LAG_S` | `float` | `300.0` |  | Maximum SLI watermark age for capacity rates, seconds; older evidence is unknown. |
+| `LOOM_CAPACITY_OBSERVATION_TIMEOUT_S` | `float` | `3.0` |  | Outer deadline for one capacity read or scope authorization, seconds; expiry is unknown. |
+| `LOOM_CAPACITY_SCOPE_MAX_ROWS` | `int` | `1000000` |  | Capacity count threshold and physical-row read ceiling; 1..1M, not a write quota. |
+| `LOOM_CAPACITY_READ_MAX_EXECUTION_S` | `float` | `2.0` |  | Native capacity statement deadline, seconds, in ClickHouse and Postgres; at least 1 ms. |
+| `LOOM_CAPACITY_READ_MAX_BYTES` | `int` | `67108864` |  | Bytes one capacity read may scan or allocate in ClickHouse; at least 1 byte. |
+| `LOOM_CAPACITY_PG_WORK_MEM_MIB` | `int` | `4` |  | MiB of Postgres working memory for capacity statements; at least 1 MiB. |
 | `LOOM_AUDIT_VERIFY_MAX_ROWS_PER_PASS` | `int` | `500000` | live | Most audit rows one verifier pass checks; past it the newest go unchecked and the pass says so. |
 
 ## Provider

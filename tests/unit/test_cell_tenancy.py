@@ -473,7 +473,7 @@ ROUTES: dict[str, str] = {
     "/v1/auth/agent-signup POST": "named",
     "/v1/auth/login POST": "password sign-in: the account is this cell's",
     "/v1/auth/self-signup POST": "named",
-    "/v1/health GET": "health probe",
+    "/v1/health GET": "health probe; selected capacity scope is explicitly authorized",
     "/v1/health/live GET": "health probe",
     "/v1/health/ready GET": "health probe",
     "/v1/health/deployment GET": "health probe",
