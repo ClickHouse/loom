@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from tests._native_worker import PIPE_REFUSAL, NativeSession, pipe_refusal_context
+
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -39,6 +41,7 @@ class WorkerStatus:
         self.config = config
         self.handles: dict[WorkerController, Any] = {}
         self.records = 0
+        self.max_records = MAX_RECORDS
         self.path: Path | None = None
         self.dropped_handles = 0
         try:
@@ -47,12 +50,44 @@ class WorkerStatus:
             self.path = Path(tempfile.mkdtemp(prefix="session-", dir=root)) / "status.jsonl"
         except OSError:
             pass  # The job log still carries observations when artifact creation fails.
+        self.native: NativeSession | None = None
+        if config.getoption("native_worker_signatures", default=False):
+            if self.path is None:
+                raise pytest.UsageError("native diagnostics require a private artifact directory")
+            try:
+                self.native = NativeSession(self.path.parent)
+            except (OSError, ValueError) as error:
+                if type(error) is ValueError and error.args == (PIPE_REFUSAL,):
+                    try:
+                        self.emit(pipe_refusal_context())
+                    except Exception:  # noqa: BLE001 — refusal metadata must preserve startup failure
+                        pass
+                raise pytest.UsageError(str(error)) from None
+            self.max_records = 2 * MAX_RECORDS
+            config.add_cleanup(self.native_cleanup)
+
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_xdist_setupnodes(self, specs: list[Any]) -> None:
+        if self.native is not None:
+            try:
+                self.native.configure(
+                    specs, self.config.getoption("maxworkerrestart", default=None)
+                )
+            except ValueError as error:
+                raise pytest.UsageError(str(error)) from None
+
+    def native_cleanup(self) -> None:
+        if self.native is not None:
+            try:
+                self.emit(self.native.finish())
+            except Exception:  # noqa: BLE001 — cleanup diagnostics must preserve pytest's result
+                self.emit({"event": "native_cleanup", "capture": "unavailable"})
 
     def emit(self, record: dict[str, Any]) -> None:
-        if self.records >= MAX_RECORDS:
+        if self.records >= self.max_records:
             return
-        if self.records == MAX_RECORDS - 1:
-            record = {"event": "record_limit", "limit": MAX_RECORDS}
+        if self.records == self.max_records - 1:
+            record = {"event": "record_limit", "limit": self.max_records}
         self.records += 1
         record = {**record, "sequence": self.records, "artifact_available": self.path is not None}
         line = _encode(record)
@@ -124,12 +159,26 @@ class WorkerStatus:
         except Exception as e:  # noqa: BLE001 — diagnostic failure must not replace pytest's outcome
             state = type(e).__name__[:64]
         output = getattr(node, "workeroutput", {})
+        if self.native is not None and process is not None:
+            try:
+                native = self.native.observe(process.pid)
+            except Exception:  # noqa: BLE001 — diagnostic failure must preserve worker status
+                native = {"capture": "unavailable"}
+            self.emit(
+                {
+                    "event": "native_worker",
+                    "worker": node.gateway.id[:64],
+                    "pid": process.pid,
+                    **native,
+                }
+            )
         self.emit(
             {
                 "event": "worker_status",
                 "stage": stage,
                 "worker": node.gateway.id[:64],
                 "pid": getattr(process, "pid", None),
+                "process_role": "native_launcher" if self.native is not None else "pytest_worker",
                 "os_state": state,
                 "os_returncode": returncode,
                 "os_signal": -returncode if returncode is not None and returncode < 0 else None,
@@ -160,6 +209,14 @@ class WorkerStatus:
 def pytest_configure(config: pytest.Config) -> None:
     if not hasattr(config, "workerinput"):
         config.pluginmanager.register(WorkerStatus(config), "worker-terminal-status")
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--native-worker-signatures",
+        action="store_true",
+        help="Capture bounded native worker fault metadata with an ancestor debugger",
+    )
 
 
 def _encode(record: dict[str, Any]) -> str:

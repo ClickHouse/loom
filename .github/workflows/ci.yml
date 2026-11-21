@@ -190,6 +190,27 @@ jobs:
           clickhouse local --query "SELECT version()"
       # Random order over one worker per core, so a test that depends on another
       # fails here; reproduce a failure as tests/README.md describes.
+      - name: Install the native worker debugger
+        if: matrix.part == 3
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y gdb
+      - name: Prepare native diagnostic core policy
+        if: matrix.part == 3
+        env:
+          NATIVE_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+          NATIVE_JOB_CONTAINER_ID: ${{ job.container.id }}
+        run: |
+          test "$NATIVE_RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test -z "$NATIVE_JOB_CONTAINER_ID"
+          sudo sysctl -w kernel.core_pattern=core
+          test "$(cat /proc/sys/kernel/core_pattern)" = core
+      - name: Check native worker transport and termination
+        if: matrix.part == 3
+        run: |
+          ulimit -S -c 0
+          python -m tests.unit.test_native_worker --mechanism
       - name: pytest unit (this part, random order)
         env:
           LOOM_TEST_SHARD: ${{ matrix.part }}/${{ strategy.job-total }}
@@ -197,7 +218,13 @@ jobs:
         run: |
           SEED="${{ github.run_id }}${{ github.run_attempt }}"
           echo "pytest-randomly seed: $SEED"
+          NATIVE_ARGS=()
+          if [ "${{ matrix.part }}" = 3 ]; then
+            ulimit -S -c 0
+            NATIVE_ARGS=(--native-worker-signatures)
+          fi
           pytest tests/unit -vv -n auto -p randomly -p tests._worker_status --randomly-seed="$SEED" --durations=15 \
+            "${NATIVE_ARGS[@]}" \
             -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
