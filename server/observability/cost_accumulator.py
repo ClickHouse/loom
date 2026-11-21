@@ -341,6 +341,9 @@ def watch_costs() -> Iterator[CostWatch]:
 
 
 def _observed(model: str, dollars: float) -> None:
+    from server.observability import provider_budget
+
+    provider_budget.observed(model, dollars)
     watch = _watch.get()
     if watch is not None:
         watch.cost_usd += dollars

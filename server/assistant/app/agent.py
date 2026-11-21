@@ -16,7 +16,7 @@ from server.assistant.domain import context
 from server.core.ch import set_query_tag
 from server.core.errors import AssistantUpstreamError
 from server.llm import agent as models
-from server.observability import cost_accumulator, genai
+from server.observability import cost_accumulator, genai, provider_budget
 from server.settings import settings
 
 
@@ -181,13 +181,19 @@ def _append(
         )
 
 
-async def _call(tools: Tools, op: str, args: dict[str, Any], *, origin: str) -> Receipt:
+async def _call(
+    tools: Tools, op: str, args: dict[str, Any], *, origin: str, state: State
+) -> Receipt:
     # Host context and model tools pass the same operation transport and its spend
     # checks. The answer's admission bit and token are fixed before this work.
     from server.assistant.app.runtime import _afford
 
     await _afford(tools.org, tools.namespace)
-    return await tools.call(op, args, origin=origin)
+    with provider_budget.limited(settings.assistant_answer_ceiling_usd - state.spent) as budget:
+        try:
+            return await tools.call(op, args, origin=origin)
+        finally:
+            state.spent += budget.cost_usd
 
 
 def _arguments(call: models.ToolCall, offered: set[str], seen: set[str]) -> dict[str, Any]:
@@ -226,8 +232,7 @@ async def run(
         if state.spent >= settings.assistant_answer_ceiling_usd:
             raise AssistantUpstreamError("the answer exhausted its tool cost budget")
         name = "loom_" + op.replace(".", "_")
-        receipt = await _call(tools, name, args, origin="host_context")
-        state.spent += receipt.cost_usd
+        receipt = await _call(tools, name, args, origin="host_context", state=state)
         call = models.ToolCall(f"host-context-{index}", name, json.dumps(args))
         _append(messages, [call], [receipt])
         yield _event(
@@ -268,8 +273,7 @@ async def run(
             if state.spent >= settings.assistant_answer_ceiling_usd:
                 raise AssistantUpstreamError("the answer exhausted its tool cost budget")
             args = _arguments(call, offered, call_ids)
-            receipt = await _call(tools, call.name, args, origin="model_tool")
-            state.spent += receipt.cost_usd
+            receipt = await _call(tools, call.name, args, origin="model_tool", state=state)
             receipts.append(receipt)
             yield _event(
                 "loom.tool",

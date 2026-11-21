@@ -573,9 +573,22 @@ answer size, per-turn output tokens, total tokens and model cost. Each model tur
 reserves an upper estimate before sending. A failed request with incomplete usage
 retains the reservation as an estimate, not fabricated tokens; its ledger arguments
 mark `out_cost_estimated` and `out_model_usage_status`. Reported usage is charged once,
-including failures after usage arrived. Tool spend is observed for the answer budget
-but remains on the tool's own ledger row, avoiding a second charge. Unpriced tool
-spend refuses completion. A zero cost ceiling refuses calls.
+including failures after usage arrived.
+
+Host context and model-selected tools share the answer's remaining cost allowance.
+The shared model HTTP sender reserves a priced upper bound before every provider
+send, including retries and redirects. Serialized request bytes bound input tokens;
+the output cap and largest cache-write rate bound completion cost. Unpriced models,
+unbounded output and protocols without a bounded price refuse before dispatch.
+Authentication token exchange is separate from inference. A swallowed tool refusal
+still refuses the answer.
+
+Tool reservations remain charged to the answer allowance after failure or
+cancellation. Reported charges remain on the tool's own ledger row; sends without
+reported usage leave reservation estimates on the answer ledger, with no invented
+token counts. Known charges are never reported a second time. Reservations are
+conservative and can refuse further work before actual reported spend reaches the
+ceiling. A zero cost ceiling refuses calls.
 
 ## Who can use it
 
