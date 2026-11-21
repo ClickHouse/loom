@@ -520,6 +520,23 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   files that did resolve. Pull request numbers and setting names are printed as unresolved in a dry run, for a human to
   add; a backticked snake_case name is looked up first and reported as a setting when the index does not define it. A
   name defined in several files is printed as unresolved, for a human to pick the file.
+- **Code discovery in a dry run**: a supported decision with no resolved or quoted file searches the selected
+  repository's code index using its document quotations, even when they contain no code identifiers. The report
+  shows up to three `candidate (unverified)` spans with live indexed excerpts, the document quote and the code
+  branch and commit. Suggestions stay outside `files` and create no memory-code links. Search similarity is not
+  evidence that a requirement is implemented. Inspect the spans and any relevant tests, callers or configuration;
+  record confirmed paths through `decision.record` after reviewing the complete decision body.
+
+  Discovery runs for at most eight unresolved decisions per preview, with a three-second bound per decision and
+  a 2000-character quotation query. Search uses the selected namespace only, without query expansion, model-backed
+  retrieval legs or reranking. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
+  stale, changing or ungrounded index evidence says `deferred`. Later decisions past the preview limit also say
+  `deferred`. These discovery states do not change the extraction command's exit code or its exact-link behavior.
+  With `--repo`, discovery reads the repository's trunk as exact mention resolution does; without it, it reads the
+  document's namespace and needs a configured code index there. Applied extraction and native source synchronization
+  do not discover or persist inferred links. Run the preview again after the document or code changes; suggestions
+  are not saved or automatically verified.
+
 - **Reconcile**: the document says otherwise when the support check finds the key's stored decision no longer
   stated; the model's wording alone is no change. A decision still stated is recorded again only for its row fields,
   in its stored words. A row is frozen against re-extraction when it is pinned or attested in its current form

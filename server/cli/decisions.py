@@ -12,6 +12,7 @@ from server.cli._apply import add_apply_flags
 from server.cli._ch import dry_run_orgs, run_connected
 
 if TYPE_CHECKING:
+    from server.code.app.prose_candidates import CodeDiscovery
     from server.memory.app.decision_extract import Action, ExtractReport
 
 # Below this a window holds a sentence or two, too little to state a decision and its reason.
@@ -167,6 +168,8 @@ def print_report(report: ExtractReport) -> None:
         print(f"- {verb} {rec.memory_key}" + (f": {rec.note}" if rec.note else ""))
         for line in rec.signals or ["no code names"]:
             print(f"    signal: {line}")
+        if rec.code_discovery is not None:
+            _print_code_discovery(rec.code_discovery)
         if report.dry_run:
             for name in rec.unresolved:
                 print(f"    unresolved: {name}")
@@ -201,3 +204,23 @@ def print_report(report: ExtractReport) -> None:
                 f"- {tag} {key} source-changed: pinned, attested or with a recorded outcome, "
                 "the document no longer states it"
             )
+
+
+def _print_code_discovery(discovery: CodeDiscovery) -> None:
+    print(
+        f"    code discovery: {discovery.status}"
+        + (f": {discovery.note}" if discovery.note else "")
+    )
+    if discovery.quote:
+        print("    document quote: " + json.dumps(discovery.quote, ensure_ascii=False))
+    if discovery.as_of:
+        print(
+            f"    code index: {discovery.namespace} "
+            f"{discovery.as_of.get('branch', '')}@{discovery.as_of.get('commit', '')}"
+        )
+    for candidate in discovery.candidates:
+        print(
+            f"    candidate (unverified): {candidate.path}:{candidate.start_line}-"
+            f"{candidate.end_line} {candidate.symbol}"
+        )
+        print("      indexed excerpt: " + json.dumps(candidate.excerpt, ensure_ascii=False))
