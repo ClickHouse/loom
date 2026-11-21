@@ -2,12 +2,59 @@
 
 from __future__ import annotations
 
+import argparse
 import ast
+import json
 import subprocess
 
 import pytest
 
 from tests.integration import _cell_each_fleet as fleet
+
+
+@pytest.mark.parametrize("purpose", ["automation", "recovery"])
+@pytest.mark.parametrize("prefix", ["-", "--"])
+def test_provision_passes_option_shaped_thumbprints_unchanged(
+    monkeypatch, tmp_path, purpose, prefix
+):
+    from server.cli import cell_automation
+
+    parser = argparse.ArgumentParser()
+    cell_automation.add_automation_parser(parser.add_subparsers())
+    node = {"cell": "alpha", "deployment_id": "deployment", "env": {}}
+    for item, character in (("automation", "A"), ("recovery", "B")):
+        node[item] = {
+            "name": item,
+            "thumbprint": character * 43,
+            "key_file": tmp_path / (item + ".pem"),
+        }
+    node[purpose]["thumbprint"] = prefix + "A" * (43 - len(prefix))
+    calls = []
+
+    def child(command, env):
+        args = parser.parse_args(command[2:])
+        for item in ("automation", "recovery"):
+            assert getattr(args, item + "_thumbprint") == node[item]["thumbprint"]
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "version": 1,
+                    "cell": node["cell"],
+                    "deployment_id": node["deployment_id"],
+                    **{
+                        item: {key: node[item][key] for key in ("name", "thumbprint")}
+                        for item in ("automation", "recovery")
+                    },
+                }
+            ),
+        )
+
+    monkeypatch.setattr(fleet, "child", child)
+    fleet._provision(node, "https://router.example", "private-operator", tmp_path / "ca.pem")
+    assert len(calls) == 1
 
 
 def test_failed_child_reports_only_allowed_metadata(monkeypatch):

@@ -230,8 +230,8 @@ def _provision(node: dict[str, Any], router: str, operator: str, ca: Path) -> No
         command += [
             f"--{purpose}-bot",
             bot["name"],
-            f"--{purpose}-thumbprint",
-            bot["thumbprint"],
+            # Base64url thumbprints can start with an option prefix.
+            f"--{purpose}-thumbprint={bot['thumbprint']}",
             f"--{purpose}-key",
             str(bot["key_file"]),
         ]
