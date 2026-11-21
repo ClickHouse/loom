@@ -18,10 +18,7 @@ log = logging.getLogger(__name__)
 
 # (input, output) USD per 1k tokens. Unlisted models bill $0 (the .get()
 # default below); embedders bill input only.
-PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
-    "text-embedding-3-small": (0.00002, 0.0),
-    "text-embedding-3-large": (0.00013, 0.0),
-    "text-embedding-ada-002": (0.0001, 0.0),
+_COMPLETION_PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "gpt-4o-mini": (0.00015, 0.0006),
     "gpt-4o": (0.0025, 0.01),
     "gpt-4o-2024-08-06": (0.0025, 0.01),
@@ -58,11 +55,29 @@ PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
     "claude-opus-4-6": (0.005, 0.025),
     "claude-sonnet-5": (0.002, 0.010),
     "claude-sonnet-5-5": (0.002, 0.010),
-    "fake-ngram-3072": (0.0, 0.0),
-    "fake-ngram-1024": (0.0, 0.0),
-    "fake-ngram-512": (0.0, 0.0),
     "fake-echo-1": (0.0, 0.0),
 }
+
+
+# Pricing groups also declare which inference protocol each rate describes.
+_EMBEDDING_PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
+    "text-embedding-3-large": (0.00013, 0.0),
+    "text-embedding-3-small": (0.00002, 0.0),
+    "text-embedding-ada-002": (0.0001, 0.0),
+    "fake-ngram-1024": (0.0, 0.0),
+    "fake-ngram-3072": (0.0, 0.0),
+    "fake-ngram-512": (0.0, 0.0),
+}
+PRICE_PER_1K_TOKENS: dict[str, tuple[float, float]] = {
+    **_COMPLETION_PRICE_PER_1K_TOKENS,
+    **_EMBEDDING_PRICE_PER_1K_TOKENS,
+}
+
+
+def is_priced_for(model: str, *, embedding: bool) -> bool:
+    """Whether the table's rate is known for this model's inference protocol."""
+    models = _EMBEDDING_PRICE_PER_1K_TOKENS if embedding else _COMPLETION_PRICE_PER_1K_TOKENS
+    return model in models and is_priced(model)
 
 
 # An unlisted model bills $0 (the table's .get() default). Each such model is

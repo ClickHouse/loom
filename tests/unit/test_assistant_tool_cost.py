@@ -218,11 +218,6 @@ def test_fail_open_tool_cannot_swallow_a_refused_provider_send(
     [
         ("chat/completions", {"model": "gpt-4o-mini", "messages": [], "max_completion_tokens": 12}),
         ("v1/messages", {"model": "claude-sonnet-4-6", "messages": [], "max_tokens": 12}),
-        (
-            "model/claude-sonnet-4-6/converse",
-            {"messages": [], "inferenceConfig": {"maxTokens": 12}},
-        ),
-        ("model/text-embedding-3-small/invoke", {"texts": ["query"]}),
     ],
 )
 def test_supported_protocol_reserves_before_each_actual_http_dispatch(
@@ -342,3 +337,239 @@ def test_only_authentication_exchange_is_exempt(monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(AssistantUpstreamError):
         with provider_budget.limited(0):
             provider_budget.sending(httpx.Request("POST", "https://auth.invalid/other", json={}))
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("embeddings", {"model": "gpt-4o-mini", "input": "query"}),
+        (
+            "chat/completions",
+            {"model": "text-embedding-3-small", "messages": [], "max_tokens": 100},
+        ),
+    ],
+)
+def test_a_price_for_another_protocol_never_admits_a_send(path: str, payload: dict) -> None:
+    from server.observability import provider_budget
+
+    with pytest.raises(AssistantUpstreamError):
+        with provider_budget.limited(1) as budget:
+            provider_budget.sending(
+                httpx.Request("POST", "https://provider.invalid/" + path, json=payload)
+            )
+    assert budget.sends == []
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "model/cohere.embed-v4%3A0/invoke",
+            {
+                "texts": ["query"],
+                "input_type": "search_query",
+                "embedding_types": ["float"],
+                "output_dimension": 256,
+                "truncate": "NONE",
+            },
+        ),
+        ("model/text-embedding-3-small/invoke", {"texts": ["query"]}),
+        (
+            "model/claude-sonnet-4-6/converse",
+            {"messages": [], "inferenceConfig": {"maxTokens": 12}},
+        ),
+        (
+            "v2/rerank",
+            {
+                "model": "rerank-english-v3.0",
+                "query": "query",
+                "documents": ["one", "two"],
+                "top_n": 2,
+                "return_documents": False,
+            },
+        ),
+        (
+            "rerank",
+            {"query": "query", "prompt_template": "", "candidates": [{"content_excerpt": "one"}]},
+        ),
+    ],
+)
+def test_routes_without_a_price_contract_refuse_before_dispatch(path: str, payload: dict) -> None:
+    from server.observability import provider_budget
+
+    with pytest.raises(AssistantUpstreamError):
+        with provider_budget.limited(1) as budget:
+            provider_budget.sending(
+                httpx.Request("POST", "https://provider.invalid/" + path, json=payload)
+            )
+    assert budget.sends == []
+
+
+def test_builtin_llm_reranking_still_uses_priced_bounded_dispatch(
+    boundary: list, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.llm import client as llm_client
+    from server.llm import customer, openai
+    from server.memory.app import rerank
+    from server.observability import provider_budget
+
+    async def check() -> None:
+        sent = []
+
+        async def transport(request: httpx.Request) -> httpx.Response:
+            assert budget.reserved > 0
+            sent.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": '{"ranked": [1, 0]}'}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 100, "completion_tokens": 5},
+                },
+            )
+
+        async def who() -> Any:
+            return object()
+
+        async def headers(_: str) -> dict[str, str]:
+            return {}
+
+        model = openai.OpenAILLMClient("gpt-4o-mini", api_key="fixture-key")
+        monkeypatch.setattr(model, "_headers", headers)
+        monkeypatch.setattr(llm_client, "get_llm_client", lambda: model)
+        monkeypatch.setattr(customer, "require", who)
+        monkeypatch.setattr(customer, "headers", lambda _: {})
+        monkeypatch.setattr(rerank, "reads_llm_free", lambda: False)
+        first = rerank.RerankCandidate("one", "ns", "one", "fact", 0.8)
+        second = rerank.RerankCandidate("two", "ns", "two", "fact", 0.7)
+        async with _http._build(
+            transport=httpx.MockTransport(transport), event_hooks={"request": [_http._on_request]}
+        ) as client:
+            monkeypatch.setattr(openai, "_http_client", lambda: client)
+            with provider_budget.limited(1) as budget:
+                ordered = await rerank.rerank(
+                    endpoint="builtin:openai",
+                    prompt_template="",
+                    query="query",
+                    candidates=[first, second],
+                )
+        assert ordered == [second, first]
+        assert len(sent) == 1 and sent[0].url.path.endswith("/chat/completions")
+        assert len(budget.sends) == 1 and budget.sends[0].reported
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("embeddings", {"model": "fake-ngram-3072", "input": "query"}),
+        ("chat/completions", {"model": "fake-echo-1", "messages": [], "max_tokens": 100}),
+    ],
+)
+def test_offline_fake_prices_cannot_authorize_http_inference(path: str, payload: dict) -> None:
+    from server.observability import provider_budget
+
+    with pytest.raises(AssistantUpstreamError):
+        with provider_budget.limited(1) as budget:
+            provider_budget.sending(
+                httpx.Request("POST", "https://provider.invalid/" + path, json=payload)
+            )
+    assert budget.sends == []
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        (
+            "chat/completions",
+            {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": "https://content.invalid/image"},
+                            }
+                        ],
+                    }
+                ],
+                "max_tokens": 10,
+            },
+        ),
+        (
+            "chat/completions",
+            {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
+                                "input_audio": {"data": "YQ==", "format": "wav"},
+                            }
+                        ],
+                    }
+                ],
+                "max_tokens": 10,
+            },
+        ),
+        (
+            "v1/messages",
+            {
+                "model": "claude-sonnet-4-6",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "document",
+                                "source": {
+                                    "type": "url",
+                                    "url": "https://content.invalid/document",
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "max_tokens": 10,
+            },
+        ),
+        (
+            "v1/messages",
+            {
+                "model": "claude-sonnet-4-6",
+                "messages": [],
+                "system": [
+                    {
+                        "type": "image",
+                        "source": {"type": "base64", "media_type": "image/png", "data": "YQ=="},
+                    }
+                ],
+                "max_tokens": 10,
+            },
+        ),
+        (
+            "chat/completions",
+            {
+                "model": "gpt-4o-mini",
+                "messages": [],
+                "tools": [{"type": "web_search"}],
+                "max_tokens": 10,
+            },
+        ),
+    ],
+)
+def test_nontext_or_external_work_cannot_use_the_text_token_bound(path: str, payload: dict) -> None:
+    from server.observability import provider_budget
+
+    with pytest.raises(AssistantUpstreamError):
+        with provider_budget.limited(1) as budget:
+            provider_budget.sending(
+                httpx.Request("POST", "https://provider.invalid/" + path, json=payload)
+            )
+    assert budget.sends == []

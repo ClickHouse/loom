@@ -111,6 +111,47 @@ def observed(model: str, dollars: float) -> None:
         budget.observed(model, dollars)
 
 
+def _text(value: object) -> bool:
+    if isinstance(value, str):
+        return True
+    return isinstance(value, list) and all(
+        isinstance(block, dict)
+        and not set(block) - {"type", "text", "cache_control"}
+        and block.get("type", "text") == "text"
+        and isinstance(block.get("text"), str)
+        for block in value
+    )
+
+
+def _completion_input(payload: dict[str, object]) -> bool:
+    # These are the fields emitted by the text-only completion clients. External
+    # tools and multimodal inputs need a different input and billing bound.
+    fields = {
+        "model",
+        "messages",
+        "system",
+        "max_tokens",
+        "max_completion_tokens",
+        "temperature",
+        "reasoning_effort",
+        "response_format",
+        "output_config",
+        "inferenceConfig",
+    }
+    messages = payload.get("messages")
+    return (
+        not set(payload) - fields
+        and _text(payload.get("system", ""))
+        and isinstance(messages, list)
+        and all(
+            isinstance(message, dict)
+            and not set(message) - {"role", "content"}
+            and _text(message.get("content"))
+            for message in messages
+        )
+    )
+
+
 def _price(request: httpx.Request) -> tuple[str, float]:
     payload = json.loads(request.content)
     if not isinstance(payload, dict):
@@ -118,19 +159,34 @@ def _price(request: httpx.Request) -> tuple[str, float]:
     path = request.url.path.rstrip("/")
     model = payload.get("model")
     if "/model/" in path:
-        model = unquote(path.split("/model/", 1)[1].rsplit("/", 1)[0])
-        if not cost_accumulator.is_priced(model) and cost_accumulator.is_priced("bedrock:" + model):
-            model = "bedrock:" + model
-    if not isinstance(model, str) or not cost_accumulator.is_priced(model):
+        # Native routing identity is distinct from a first-party model name.
+        model = "bedrock:" + unquote(path.split("/model/", 1)[1].rsplit("/", 1)[0])
+    if (
+        not isinstance(model, str)
+        or model.startswith("fake-")
+        or not cost_accumulator.is_priced(model)
+    ):
         raise ValueError("provider has no price")
     # Serialized UTF-8 bytes include text and protocol framing and bound input
     # tokens. Cache writes use the largest supported multiplier.
     size = len(request.content)
-    if path.endswith("/embeddings") and isinstance(payload.get("input"), (str, list)):
+    if (
+        path.endswith("/embeddings")
+        and cost_accumulator.is_priced_for(model, embedding=True)
+        and isinstance(payload.get("input"), (str, list))
+    ):
         return model, cost_accumulator.embed_cost_usd(model, size)
-    if path.endswith("/invoke") and isinstance(payload.get("texts"), list):
+    if (
+        path.endswith("/invoke")
+        and cost_accumulator.is_priced_for(model, embedding=True)
+        and isinstance(payload.get("texts"), list)
+    ):
         return model, cost_accumulator.embed_cost_usd(model, size)
-    if path.endswith(("/chat/completions", "/messages", "/converse")):
+    if path.endswith(
+        ("/chat/completions", "/messages", "/converse")
+    ) and cost_accumulator.is_priced_for(model, embedding=False):
+        if not _completion_input(payload):
+            raise ValueError("provider input has no text-only token bound")
         config = payload.get("inferenceConfig", {})
         maximum = payload.get(
             "max_completion_tokens", payload.get("max_tokens", config.get("maxTokens"))

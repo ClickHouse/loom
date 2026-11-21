@@ -577,9 +577,16 @@ including failures after usage arrived.
 
 Host context and model-selected tools share the answer's remaining cost allowance.
 The shared model HTTP sender reserves a priced upper bound before every provider
-send, including retries and redirects. Serialized request bytes bound input tokens;
+send, including retries and redirects. Only text inputs use the serialized-byte
+input bound; image, audio, document and provider-owned tool payloads refuse.
+Serialized request bytes bound text input tokens;
 the output cap and largest cache-write rate bound completion cost. Unpriced models,
 unbounded output and protocols without a bounded price refuse before dispatch.
+Prices are specific to embedding or completion protocols and to the provider route;
+a completion rate cannot admit an embedding or a native provider alias. Offline
+fake-model prices cannot authorize an HTTP inference send. Built-in
+LLM reranking uses the completion reservation. External reranking and native
+embedding routes without a configured price contract refuse before sending.
 Authentication token exchange is separate from inference. A swallowed tool refusal
 still refuses the answer.
 
