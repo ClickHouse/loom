@@ -77,6 +77,26 @@ def stamp(span: Any) -> None:
         span.set_attribute("langfuse.trace.metadata.loom_" + key, value)
 
 
+def authenticated(span: Any, auth: Any, operation: str, request_id: str = "") -> None:
+    """Keep early refusals discoverable without trusting a requested namespace."""
+    if span is None or auth is None:
+        return
+    try:
+        from server.observability.otel import set_loom_attributes
+
+        set_loom_attributes(
+            op_name=operation,
+            org=auth.org,
+            namespace="-",
+            agent="-",
+            user_id=auth.subject,
+            request_id=request_id,
+            capture_level="off",
+        )
+    except Exception:  # noqa: BLE001 — optional identity stamping must not fail a call
+        pass
+
+
 @contextlib.contextmanager
 def mcp_call(
     params: Mapping[str, Any],

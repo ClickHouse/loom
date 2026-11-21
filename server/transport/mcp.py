@@ -151,6 +151,7 @@ async def _observe_call(
     *,
     headers: Mapping[str, str],
     dispatch: Callable[[Any], Awaitable[dict[str, Any] | None]],
+    auth: Any = None,
 ) -> dict[str, Any] | None:
     from server.observability import prompt_context
 
@@ -161,6 +162,7 @@ async def _observe_call(
     with prompt_context.mcp_call(
         params, headers=headers, operation=_call_operation(params)
     ) as span:
+        prompt_context.authenticated(span, auth, _call_operation(params))
         result = await dispatch(payload)
         if result is not None:
             prompt_context.outcome(span, result, protocol_refusals=(UNSUPPORTED_PROTOCOL_VERSION,))
@@ -180,7 +182,7 @@ async def _handle_request(
             req, auth, client_name, mcp_session_id, schema_profile, toolset
         )
 
-    return await _observe_call(payload, headers={}, dispatch=dispatch)
+    return await _observe_call(payload, headers={}, dispatch=dispatch, auth=auth)
 
 
 async def _dispatch_request(
@@ -507,7 +509,9 @@ def attach(app: FastAPI) -> None:
                 **listing,
             )
 
-        _dispatch = partial(_observe_call, headers=request.headers, dispatch=_dispatch_one)
+        _dispatch = partial(
+            _observe_call, headers=request.headers, dispatch=_dispatch_one, auth=auth
+        )
 
         if isinstance(payload, list):
             responses = await _dispatch_batch(payload, _dispatch)

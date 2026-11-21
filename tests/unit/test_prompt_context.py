@@ -12,6 +12,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from server.observability import genai, prompt_context
+from tests.unit.test_http_idempotency_after_auth import client as client
+from tests.unit.test_mcp_idempotency_replay_conflict import gated as gated
+from tests.unit.test_mcp_idempotency_replay_conflict import probe as probe
 
 
 @pytest.fixture
@@ -630,3 +633,132 @@ async def test_review_http_timeout_conversion_preserves_classification(
     assert root.attributes["loom.call.outcome"] == expected
     assert "private provider failure" not in str(root.attributes)
     assert not root.events
+
+
+def _assert_authenticated_replay_roots(roots):
+    assert len(roots) == 2
+    for root in roots:
+        assert root.attributes["loom.org"] == "o"
+        assert root.attributes["loom.namespace"] == "n"
+        assert root.attributes["langfuse.user.id"] == "alice"
+        assert {"org:o", "namespace:n"} <= set(root.attributes["langfuse.trace.tags"])
+        assert root.attributes["loom.request_id"]
+        assert root.attributes["loom.prompt.tool_call_id"] == "logical-replay"
+        assert root.attributes["loom.call.outcome"] == "success"
+    assert (
+        roots[0].attributes["loom.call.attempt_id"] != roots[1].attributes["loom.call.attempt_id"]
+    )
+    assert roots[0].attributes["loom.request_id"] != roots[1].attributes["loom.request_id"]
+
+
+@pytest.mark.parametrize("transport", ["http", "mcp"])
+def test_review_authenticated_early_refusal_uses_token_identity(
+    monkeypatch, client, spans, transport
+):
+    from server.auth import bearer, jwt
+    from server.transport import mcp
+
+    http_client, rows, ran = client
+    monkeypatch.setattr(jwt, "authenticate_token", bearer.authenticate_token)
+    headers = {"Authorization": "Bearer alice", "X-Loom-Tool-Call-Id": "logical-refusal"}
+    if transport == "http":
+        result = http_client.post(
+            "/v1/memory.unlock", json={"org": "forged", "namespace": "forged"}, headers=headers
+        )
+        assert result.status_code == 422
+    else:
+        mcp.attach(http_client.app)
+        result = http_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "does_not_exist",
+                    "arguments": {"org": "forged", "namespace": "forged"},
+                },
+            },
+        )
+        assert result.json().get("error") or result.json().get("result", {}).get("isError")
+    assert not rows and not ran
+    roots = [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    assert len(roots) == 1
+    attributes = roots[0].attributes
+    assert attributes["loom.org"] == "o"
+    assert attributes["langfuse.user.id"] == "alice"
+    assert "org:o" in attributes["langfuse.trace.tags"]
+    assert attributes["loom.namespace"] == "-"
+    assert "forged" not in str(attributes)
+    assert attributes["loom.prompt.tool_call_id"] == "logical-refusal"
+    assert attributes["loom.call.outcome"] == "refusal"
+
+
+def test_review_authenticated_http_replay_retains_identity(client, spans):
+    from tests.unit.test_http_idempotency_after_auth import BODY
+
+    http_client, rows, ran = client
+    headers = {
+        "Authorization": "Bearer alice",
+        "Idempotency-Key": "identity-replay",
+        "X-Loom-Call-Origin": "tool",
+        "X-Loom-Tool-Call-Id": "logical-replay",
+    }
+    first = http_client.post("/v1/memory.unlock", json=BODY, headers=headers)
+    replay = http_client.post("/v1/memory.unlock", json=BODY, headers=headers)
+    assert first.status_code == replay.status_code == 200
+    assert replay.headers["X-Idempotent-Replay"] == "true"
+    assert ran == ["k"] and len(rows) == 1
+    _assert_authenticated_replay_roots(
+        [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    )
+
+
+@pytest.mark.asyncio
+async def test_review_authenticated_mcp_replay_retains_identity(monkeypatch, gated, spans):
+    from dataclasses import replace
+
+    from pydantic import BaseModel
+
+    from server.transport import mcp, mcp_call
+    from tests.unit.test_mcp_idempotency_replay_conflict import TOOL, _principal
+
+    class ScopedInput(BaseModel):
+        text: str
+        org: str
+        namespace: str
+        agent: str
+
+    op = replace(mcp_call.TOOLS_BY_NAME[TOOL], input_model=ScopedInput)
+    monkeypatch.setitem(mcp_call.TOOLS_BY_NAME, TOOL, op)
+    results = []
+    for req_id in (1, 2):
+        results.append(
+            await mcp._handle_request(
+                {
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "method": "tools/call",
+                    "params": {
+                        "name": TOOL,
+                        "arguments": {
+                            "text": "safe fixture",
+                            "org": "o",
+                            "namespace": "n",
+                            "agent": "a",
+                            "_idempotency_key": "identity-replay",
+                        },
+                        "_meta": {"loom": {"origin": "tool", "tool_call_id": "logical-replay"}},
+                    },
+                },
+                auth=_principal("alice"),
+            )
+        )
+    assert all(not r["result"]["isError"] for r in results)
+    assert results[1]["result"]["_meta"] == {"idempotentReplay": True}
+    store, ran = gated
+    assert ran == ["safe fixture"] and len(store.rows) == 1
+    _assert_authenticated_replay_roots(
+        [s for s in spans.get_finished_spans() if s.attributes.get("loom.call.root")]
+    )
