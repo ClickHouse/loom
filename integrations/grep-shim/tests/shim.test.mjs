@@ -243,13 +243,13 @@ test("grep: a 401, unparseable JSON or a server past the timeout all give native
   }
 });
 
-test("grep: a received 401 or malformed JSON takes the response fallback path", {
+test("grep: received failures and an admitted stalled fetch give native output", {
   skip: !NATIVE.grep && "no native grep on PATH",
 }, async () => {
   const dir = checkout();
   try {
     const want = await runRaw(NATIVE.grep, ["-rn", "foo", "src"], { cwd: dir });
-    for (const mode of ["401", "garbage"]) {
+    for (const mode of ["401", "garbage", "hang"]) {
       const record = path.join(dir, `response-${mode}.json`);
       const got = await shim("grep", ["-rn", "foo", "src"], {
         cwd: dir,
@@ -269,6 +269,10 @@ test("grep: a received 401 or malformed JSON takes the response fallback path", 
       assert.equal(seen.requestValidated, true, mode);
       assert.equal(seen.jsonCalls, mode === "garbage" ? 1 : 0, mode);
       assert.equal(seen.jsonRejected, mode === "garbage", mode);
+      assert.equal(seen.pendingEntered, mode === "hang", mode);
+      assert.equal(seen.signalAborted, mode === "hang", mode);
+      assert.equal(seen.abortName, mode === "hang" ? "TimeoutError" : "", mode);
+      assert.equal(seen.watchdogExpired, false, mode);
       assert.ok(got.ms < 3000, `${mode} took ${got.ms} ms`);
     }
   } finally {
