@@ -197,11 +197,34 @@ def run() -> None:
         else:
             result = {"kind": "unavailable", "reason": "terminal_status_unknown"}
     except gdb.error as error:
-        refused = any(
-            token in str(error).lower()
-            for token in ("ptrace", "not permitted", "permission denied")
-        )
+        detail = str(error).lower()
+        refused = any(token in detail for token in ("ptrace", "not permitted", "permission denied"))
         result = {"kind": "unavailable", "reason": "trace_refused" if refused else "debugger_error"}
+        result["error_categories"] = [
+            category
+            for category in (
+                "register",
+                "no such process",
+                "not being run",
+                "thread",
+                "running",
+                "breakpoint",
+                "memory",
+                "signal",
+                "exited",
+            )
+            if category in detail
+        ]
+        result["error_digest"] = hashlib.sha256(detail.encode()).hexdigest()
+        try:
+            result["inferior_pid"] = gdb.selected_inferior().pid
+        except gdb.error:
+            result["inferior_pid"] = None
+        for key, expression in (("exit_code", "$_exitcode"), ("exit_signal", "$_exitsignal")):
+            try:
+                result[key] = integer(expression)
+            except (gdb.error, TypeError, ValueError):
+                result[key] = None
     result["observed_fatal_stops"] = stops
     result["captured_stops"] = min(stops, native.MAX_STOPS)
     result["trap_stops"] = trap_stops
