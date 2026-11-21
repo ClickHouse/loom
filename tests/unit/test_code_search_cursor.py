@@ -474,10 +474,15 @@ def _chunk(path: str, n_lines: int, start: int = 1) -> dict[str, Any]:
     }
 
 
+@pytest.mark.parametrize("unmapped", [False, True])
 def test_grep_excludes_paths_and_issues_a_cursor_for_the_extracted_tail(
     monkeypatch: pytest.MonkeyPatch,
+    unmapped: bool,
 ) -> None:
-    repo = _GrepRepo([_chunk("a.cpp", 3), _chunk("skip.cpp", 3), _chunk("b.cpp", 3)])
+    chunks = [_chunk("a.cpp", 3), _chunk("skip.cpp", 3), _chunk("b.cpp", 3)]
+    if unmapped:
+        chunks.append({**_chunk("container.cpp", 2), "kind": "class_skeleton", "end_line": 100})
+    repo = _GrepRepo(chunks)
     monkeypatch.setattr(grep, "CodeRepo", lambda: repo)
 
     async def _as_of(repo_, org, ns):
@@ -493,6 +498,7 @@ def test_grep_excludes_paths_and_issues_a_cursor_for_the_extracted_tail(
     out = asyncio.run(grep.handle_code_grep(inp))
     assert len(out.matches) == 4 and {m["path"] for m in out.matches} == {"a.cpp", "b.cpp"}
     assert out.has_more and out.next_cursor and out.truncated
+    assert out.partial is unmapped
     assert len(puts) == 1 and len(puts[0]["matches"]) == 6  # every extracted line, none skipped
 
     # page 2 from the stored lines: one point read, no chunk scan
@@ -509,7 +515,9 @@ def test_grep_excludes_paths_and_issues_a_cursor_for_the_extracted_tail(
     page = asyncio.run(grep.handle_code_grep(inp.model_copy(update={"cursor": out.next_cursor})))
     assert [m["line"] for m in page.matches] == [2, 3] and page.matches[0]["path"] == "b.cpp"
     assert not page.has_more and page.as_of["page_offset"] == 4
-    assert page.chunks_matched == 3
+    assert page.chunks_matched == len(chunks)
+    assert page.partial is unmapped
+    assert page.partial_reason == out.partial_reason
 
 
 def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -523,3 +531,37 @@ def test_grep_cursor_for_another_pattern_is_a_400(monkeypatch: pytest.MonkeyPatc
     )
     with pytest.raises(ValidationError, match="invalid cursor"):
         asyncio.run(grep.handle_code_grep(CodeGrepInput(pattern="needle", cursor=c)))
+
+
+@pytest.mark.parametrize("line_mapping", [None, 0, 2])
+def test_grep_reruns_pools_without_the_current_source_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+    line_mapping: int | None,
+) -> None:
+    repo = _GrepRepo([_chunk("a.cpp", 3, start=10)])
+    monkeypatch.setattr(grep, "CodeRepo", lambda: repo)
+
+    async def _as_of(*args):
+        return {}
+
+    monkeypatch.setattr(grep, "index_as_of", _as_of)
+    inp = CodeGrepInput(pattern="needle", limit=2)
+    payload = {
+        "matches": [{"path": "a.cpp", "line": n, "text": "old needle"} for n in range(900, 903)],
+        "chunks_matched": 1,
+        "truncated": False,
+    }
+    if line_mapping is not None:
+        payload["line_mapping"] = line_mapping
+
+    async def _get_pool(*args):
+        return {"payload": payload, "indexed_commit": "", "created_at": None}
+
+    monkeypatch.setattr(paging, "get_pool", _get_pool)
+    cursor = paging.encode(
+        kind="g", run_id="old", offset=1, params=grep._grep_params_hash(inp), indexed_commit=""
+    )
+    out = asyncio.run(grep.handle_code_grep(inp.model_copy(update={"cursor": cursor})))
+    assert [hit["line"] for hit in out.matches] == [11, 12]
+    assert out.as_of["page_fallback"] == "source_line_mapping_changed"
+    assert out.partial and "restart pagination" in out.note

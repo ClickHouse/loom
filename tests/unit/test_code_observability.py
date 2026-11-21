@@ -750,12 +750,14 @@ def test_grep_traces_literal_and_regex_routes(monkeypatch: pytest.MonkeyPatch) -
                 {
                     "path": "src/A.cpp",
                     "start_line": 1,
+                    "end_line": 2,
                     "scope": "f",
                     "content": "int x;\nLOGICAL_ERROR here\n",
                 },
                 {
                     "path": "src/B.cpp",
                     "start_line": 40,
+                    "end_line": 40,
                     "scope": "g",
                     "content": "LOGICAL_ERROR again\n",
                 },
