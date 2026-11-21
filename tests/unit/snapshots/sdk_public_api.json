@@ -1049,6 +1049,10 @@
               "body",
               "options"
             ],
+            "append_batch": [
+              "body",
+              "options"
+            ],
             "apply": [
               "body",
               "options"

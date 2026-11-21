@@ -222,6 +222,8 @@ class _BulkWriteState:
     # Keys of a step built without a vector whose labels the replay changed: its row lands
     # with none, so `_vectors_to_retire` retires the key's older vector when that row wins.
     vectorless_keys: set[str] = field(default_factory=set)
+    # A distinct occurrence batch may neither skip an entry nor revise an existing key.
+    strict_append: bool = False
 
 
 # Columns a bulk version row sets from the live row under its key before the rest of

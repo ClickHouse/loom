@@ -159,13 +159,14 @@ curl -sX POST "$LOOM/v1/memory.set" \
   blank or `"-"` org is the token's own. On a single-user server, a call with no token
   that names no `org`, or a blank or `"-"` one, runs in the install's org
   (`LOOM_SELF_SIGNUP_ORG`), the one MCP and the dashboard use; a code or tracker op
-  keeps its plane org. A call with no token to `memory.set`, `memory.bulk_set`,
-  `memory.get`, `memory.delete`, `memory.list`, `memory.history`, `memory.search`,
+  keeps its plane org. A call with no token to `memory.set`, `memory.append_batch`,
+  `memory.bulk_set`, `memory.get`, `memory.delete`, `memory.list`, `memory.history`,
+  `memory.search`,
   `memory.search_trace`, `memory.ask`, `memory.update`, `search.query` or
   `knowledge.search` may also leave out `namespace` and `agent`: it runs in the
-  install's namespace (`LOOM_DEFAULT_NAMESPACE`). With no agent, `memory.set` and
-  `memory.bulk_set` write as agent `http`; `memory.get` and `memory.delete` try the
-  key under agent `http`, then under any agent of the same user; `memory.list` reads
+  install's namespace (`LOOM_DEFAULT_NAMESPACE`). With no agent, `memory.set`,
+  `memory.append_batch` and `memory.bulk_set` write as agent `http`; `memory.get` and
+  `memory.delete` try the key under agent `http`, then under any agent of the same user; `memory.list` reads
   every agent's rows of the call's user and session (`-` when it names none) and
   `memory.history` every agent's, user's and session's versions of the key, as on
   MCP; a `memory.history` that names a `user_id` or `session_id` names its agent

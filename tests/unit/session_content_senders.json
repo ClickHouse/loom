@@ -345,6 +345,10 @@
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
+    "sdk/typescript/src/integrations/openai-agents.ts:ops.capabilities:d29e857647f728e2169d:1": {
+      "category": "scope",
+      "reason": "Sends only identity scope and an empty operation catalogue request; retained SessionCapture contributors still guard discovery and append."
+    },
     "sdk/typescript/src/session.ts:<dynamic>:f81d27efc95e87cdbb46:1": {
       "category": "delivery",
       "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
@@ -401,15 +405,15 @@
     "sdk/python/loom/integrations/haystack.py": "8ab24c9dfb4220b35c8194605a77368a9b7b8a29d27a0b6b30569668947a31e0",
     "sdk/python/loom/integrations/langgraph.py": "5d68e6ab1645d868477a13b14aa6d734c72f72057464cac9a21aa707add17e7b",
     "sdk/python/loom/integrations/llamaindex.py": "06eaa071115cad752d27bdc9bf7c4d5b6f5d7d39d9896267fcd459a4e06bf661",
-    "sdk/python/loom/integrations/openai_agents.py": "e6fe0384a361c2c5e48db26837d8c454e52b5f7fb010fd7f6541f24a22459a7a",
+    "sdk/python/loom/integrations/openai_agents.py": "143fe1df060b96550a33f77fa44416e291c2154552e433f8309275f61c8fca2a",
     "sdk/python/loom/memory.py": "e1384e84ddf58b503dc430eca1b2e734eb5e5680ac6904a64785bb50a63316d1",
-    "sdk/python/loom/run.py": "3d408cedd849fe9c16a9cb1a57dbe88367993aa225f6a8b23bac8c644e04723b",
+    "sdk/python/loom/run.py": "1d47d5f4d197f78de347d2cf66b9f59f4292846d214f7116c444035971c6ab42",
     "sdk/python/loom/session.py": "5f0fd61fcfdbf9d60888b111887fca8f32e24eb51ca9ff04a256901657c3202b",
     "sdk/typescript/src/integrations/claude-memory.ts": "c846f0011d7cf1ba4b30e99fbfd8adb6b29abff56856d0dbe14fba620007f6bc",
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
     "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
-    "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
+    "sdk/typescript/src/integrations/openai-agents.ts": "f185d90da6512833c590c4729aaf2bfb140ff469e4864fad6d761e29a66c1b0a",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }
 }

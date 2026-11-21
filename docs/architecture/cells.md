@@ -967,11 +967,10 @@ read-only scope, lists any tenancy row the directory does not place.
   `enforced` with the orgs held. Every Loom write on a cell is marked, so it pays the
   setting lookup alone, measured on the statements with the triggers on and off (no cost
   distinguishable from zero: six rounds range from −0.36 to 0.49 µs a row, [benchmark
-  results](../benchmarks/results.md)), which predicts the gate holds by a wide margin. The
-  gate itself is an end-to-end `memory.set` and delivery-pass measurement on a cell, which
-  needs attach and is checked with it; until then the triggers, which a later cell gets from
-  prepare's next migrating boot, ship on the statement-level measurement. `loom.tenancy`
-  itself has its own guard, since a tenancy row makes an org held: `tenancy_record`, a
+  results](../benchmarks/results.md)). These statement timings do not establish either
+  gate. Both require the end-to-end `memory.set` and delivery-pass acceptance workload on
+  an attached cell. `loom.tenancy` itself has its own guard, since a tenancy row makes an
+  org held: `tenancy_record`, a
   row-level `AFTER INSERT OR UPDATE OF org` origin trigger with the same marker `WHEN`,
   calls `loom.tenancy_refuse_unmarked()` (migration 012), which refuses, `LT001`, an
   unmarked session's tenancy row, or an update that moves one to another org, in every state
