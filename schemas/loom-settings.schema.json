@@ -1134,6 +1134,11 @@
           "type": "string",
           "description": "The scalar entry's branch: the one the ingest worker fetches and indexes."
         },
+        "code_git_ca_file": {
+          "default": "",
+          "type": "string",
+          "description": "PEM bundle git verifies https remotes with, in place of its default roots (a server under a private authority); under /etc/ssl, which the job sandbox mounts. code_git_proxy_ca_file takes its place through the proxy. Empty = default roots."
+        },
         "code_git_dir": {
           "default": "",
           "type": "string",

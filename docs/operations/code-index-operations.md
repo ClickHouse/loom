@@ -136,6 +136,13 @@ LOOM_CODE_REPOS_JSON='[
 Name a `git_remote` host in ASCII, as punycode for an internationalised name: a page
 add refuses any other, so the two spell a host alike.
 
+A git server under a private certificate authority needs `LOOM_CODE_GIT_CA_FILE`: a PEM
+bundle git verifies https remotes with in place of the image's default roots, so include
+the public roots when other remotes are public. Repository jobs read no system or global
+git config and inherit no `GIT_SSL_CAINFO` or `SSL_CERT_FILE`, so this setting is how a
+bundle reaches them. Put it under `/etc/ssl`, which the repository-job sandbox mounts.
+Through the forward proxy, `LOOM_CODE_GIT_PROXY_CA_FILE` takes its place when set.
+
 An entry whose `git_remote` is a local path or `file://` mirror is known by its `repo`,
 which a page add of the same repository must match: name a mirror of a repository on a
 host other than GitHub as `host/owner/name` in `repo`.

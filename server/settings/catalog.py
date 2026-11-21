@@ -1077,6 +1077,10 @@ class CodeSettings(BaseModel):
     code_git_fetch_pr_heads: bool = True
     # Max PR heads fetched per shared mirror per ingest pass.
     code_git_pr_head_batch: int = 200
+    # PEM bundle git verifies https remotes with, in place of its default roots (a server
+    # under a private authority); under /etc/ssl, which the job sandbox mounts.
+    # code_git_proxy_ca_file takes its place through the proxy. Empty = default roots.
+    code_git_ca_file: str = ""
     # The code index's network git (clone, fetch, ls-remote, submodule update) through
     # an operator's forward proxy (code/app/index/git_proxy.py). With the proxy set, such
     # a git job connects through it or is refused: never directly.

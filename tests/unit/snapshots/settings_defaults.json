@@ -195,6 +195,7 @@
  "code_gh_items_head_fill_batch": 200,
  "code_gh_items_head_github_batch": 20,
  "code_git_branch": "main",
+ "code_git_ca_file": "",
  "code_git_dir": "",
  "code_git_extra_branches": "",
  "code_git_fetch_ledger_merges": true,
