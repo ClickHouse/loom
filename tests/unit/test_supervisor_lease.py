@@ -345,6 +345,54 @@ def test_a_holder_that_gave_up_takes_its_own_key_back_on_the_next_round() -> Non
     assert "holds workers_supervisor" in lease.reason
 
 
+@pytest.mark.parametrize(
+    ("renew_at", "resume_at", "should_run"),
+    [(10.0, 16.0, True), (14.0, 20.0, True), (None, 16.0, False), (10.0, 26.0, False)],
+)
+async def test_old_wait_timeout_rechecks_confirmed_renewal(
+    monkeypatch: pytest.MonkeyPatch,
+    renew_at: float | None,
+    resume_at: float,
+    should_run: bool,
+) -> None:
+    now = [0.0]
+    lock = _Lock([True], cfg=leader.lease_config(30))
+    lock.clock = lambda: now[0]
+    monkeypatch.setattr(leader, "_stand_aside_reason", lambda: "")
+    monkeypatch.setattr(leader, "newer_build", lambda _name: 0)
+    lease = _auto(lock)
+    lease.step()
+    pending = asyncio.get_running_loop().create_future()
+    stops: list[bool] = []
+    waits: list[float | None] = []
+
+    async def on_lost() -> None:
+        stops.append(True)
+
+    async def stale_wait(
+        fs: set[Any],
+        *,
+        timeout: float | None = None,  # noqa: ASYNC109 — mirrors asyncio.wait's keyword
+    ) -> Any:
+        assert fs == {pending}
+        waits.append(timeout)
+        if len(waits) == 1:
+            assert timeout == 15.0
+            if renew_at is not None:
+                now[0] = renew_at
+                lock.renew_if_due()
+            now[0] = resume_at
+            return set(), {pending}
+        pending.set_result(None)
+        return {pending}, set()
+
+    monkeypatch.setattr(leader.asyncio, "wait", stale_wait)
+    running = await leader._until_done(pending, lease, True, on_lost)
+    assert running is should_run
+    assert stops == ([] if should_run else [True])
+    assert waits == [15.0, (renew_at + 15.0 - resume_at) if should_run else None]
+
+
 async def test_the_workers_stop_at_the_deadline_while_a_renewal_blocks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
