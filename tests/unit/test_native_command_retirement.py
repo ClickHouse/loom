@@ -212,6 +212,90 @@ def test_actual_mint_never_signs_without_verified_enrollment(native, monkeypatch
     assert not gate.enrolled and not gate.closed and events == []
 
 
+def _claim_async_state(gate, events, stdin_fd=None):
+    """Fixed metadata only: never coroutine arguments, locals, task names or exception text."""
+    import asyncio
+    import os
+    import signal
+    from itertools import islice
+    from pathlib import Path
+
+    handler = signal.getsignal(signal.SIGINT)
+    state = {
+        "sigint_blocked": signal.SIGINT in signal.pthread_sigmask(signal.SIG_BLOCK, []),
+        "sigint_pending": signal.SIGINT in signal.sigpending(),
+        "stdin_blocking": os.get_blocking(stdin_fd) if stdin_fd is not None else None,
+        "sigint_handler": (
+            "default"
+            if handler is signal.default_int_handler
+            else "ignored"
+            if handler == signal.SIG_IGN
+            else "custom"
+        ),
+        "gate": {
+            key: getattr(gate, key) for key in ("active", "closed", "enrolled", "producers_stopped")
+        },
+        "events": {
+            key: events.count(key)
+            for key in (
+                "verified",
+                "enrolled",
+                "acceptance",
+                "lookup",
+                "release",
+                "buffer",
+                "certificate",
+            )
+        },
+        "tasks": [],
+    }
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        state["loop_running"] = False
+        return state
+    state["loop_running"] = True
+    tasks = asyncio.all_tasks(loop)
+    state["tasks_truncated"] = len(tasks) > 8
+    for task in islice(tasks, 8):
+        frames = []
+        coroutine = task.get_coro()
+        for _ in range(8):
+            frame = getattr(coroutine, "cr_frame", None) or getattr(coroutine, "gi_frame", None)
+            if frame is not None:
+                frames.append(
+                    [
+                        Path(frame.f_code.co_filename).name[:64],
+                        frame.f_code.co_name[:64],
+                        frame.f_lineno,
+                    ]
+                )
+            coroutine = getattr(coroutine, "cr_await", None) or getattr(
+                coroutine, "gi_yieldfrom", None
+            )
+            if coroutine is None:
+                break
+        state["tasks"].append({"cancelling": task.cancelling(), "frames": frames})
+    return state
+
+
+def _write_claim_async_state(trace_fd, gate, events, stdin_fd=None):
+    import contextlib
+    import json
+    import os
+
+    try:
+        packet = json.dumps(
+            _claim_async_state(gate, events, stdin_fd), separators=(",", ":")
+        ).encode()
+        if len(packet) > 32700:
+            packet = b'{"observer_truncated":true}'
+        os.write(trace_fd, b"claim_async_state=" + packet + b"\n")
+    except Exception:  # noqa: BLE001 — diagnostics must preserve the failed exit check.
+        with contextlib.suppress(OSError):
+            os.write(trace_fd, b'claim_async_state={"observer_failed":true}\n')
+
+
 def _claim_prompt_subprocess(result_path):
     """Run the real command and asyncio.run with only its external work faked."""
     import faulthandler
@@ -250,7 +334,12 @@ def _claim_prompt_subprocess(result_path):
         )
         outcome = None
         try:
-            faulthandler.register(signal.SIGUSR1, file=trace_fd, all_threads=True)
+
+            def diagnostic(_signum, _frame):
+                _write_claim_async_state(trace_fd, gate, events, sys.stdin.fileno())
+
+            signal.signal(signal.SIGUSR1, diagnostic)
+            faulthandler.register(signal.SIGUSR1, file=trace_fd, all_threads=True, chain=True)
             outcome = access._cmd_claim_release(SimpleNamespace(org="o", namespace="n", yes=False))
         except KeyboardInterrupt:
             outcome = "interrupted"
@@ -279,7 +368,7 @@ def claim_prompt_child(tmp_path):
 
     owned = []
 
-    def start(mode="pipe", contents=b""):
+    def start(mode="pipe", contents=b"", *, stalled=False):
         result = tmp_path / f"claim-{len(owned)}.json"
         child = SimpleNamespace(
             process=None,
@@ -306,8 +395,9 @@ def claim_prompt_child(tmp_path):
                 sys.executable,
                 "-B",
                 "-c",
-                "from tests.unit.test_native_command_retirement import _claim_prompt_subprocess; "
-                "import sys; _claim_prompt_subprocess(sys.argv[1])",
+                "from tests.unit.test_native_command_retirement import "
+                + ("_claim_prompt_stalled_subprocess" if stalled else "_claim_prompt_subprocess")
+                + " as run; import sys; run(sys.argv[1])",
                 str(result),
             ],
             cwd=Path(__file__).resolve().parents[2],
@@ -440,3 +530,118 @@ def test_actual_claim_prompt_answer_and_eof_controls(
     assert result["events"].index("lookup") < result["events"].index("certificate")
     assert result["events"].count("acceptance") == (2 if expected == 0 else 1)
     assert result["events"].count("release") == (1 if expected == 0 else 0)
+
+
+def _claim_prompt_stalled_subprocess(result_path):
+    """Signal the actual command before publishing the observer's ready marker."""
+    import asyncio
+    import os
+    import signal
+    from pathlib import Path
+
+    async def stalled_answer():
+        os.kill(os.getpid(), signal.SIGINT)
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            Path(result_path).with_suffix(".stalled").touch()
+            print("Continue? [y/N] ", end="", flush=True)
+            await asyncio.Future()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(access, "_claim_release_answer", stalled_answer)
+        _claim_prompt_subprocess(result_path)
+
+
+def test_claim_cancel_diagnostic_exposes_suspended_native_coroutine(claim_prompt_child):
+    import json
+    import signal
+    import time
+
+    child = claim_prompt_child(stalled=True)
+    _wait_for_claim_prompt(child)
+    assert child.result.with_suffix(".stalled").exists()
+    child.process.send_signal(signal.SIGUSR1)
+    end = time.monotonic() + 2
+    trace = ""
+    while "claim_async_state=" not in trace:
+        assert time.monotonic() < end, "the trace omitted the suspended native command"
+        trace = child.trace.read_bytes()[:65536].decode(errors="replace")
+        time.sleep(0.01)
+    packet = json.loads(trace.split("claim_async_state=", 1)[1].splitlines()[0])
+    frames = [frame for task in packet["tasks"] for frame in task["frames"]]
+    assert any(frame[1] == "stalled_answer" for frame in frames)
+    assert any(task["cancelling"] == 1 for task in packet["tasks"])
+    assert packet["gate"] == {
+        "active": 1,
+        "closed": False,
+        "enrolled": True,
+        "producers_stopped": False,
+    }
+    assert not packet["sigint_blocked"] and not packet["sigint_pending"]
+    assert "Current thread" in trace
+    child.process.send_signal(signal.SIGINT)
+    child.process.wait(timeout=5)
+    assert child.process.returncode == 0
+    result = json.loads(child.result.read_text())
+    assert result["outcome"] == "interrupted" and result["quiescent"]
+
+
+def test_claim_cancel_diagnostic_limits_tasks_frames_and_metadata():
+    import asyncio
+    import json
+
+    async def run():
+        async def nested(depth):
+            if depth:
+                await nested(depth - 1)
+            else:
+                await asyncio.Future()
+
+        tasks = [asyncio.create_task(nested(20), name="private-task-name") for _ in range(20)]
+        try:
+            await asyncio.sleep(0)
+            state = _claim_async_state(retirement.RetirementGate(), ["private-event"])
+            assert state["loop_running"] and state["tasks_truncated"]
+            assert len(state["tasks"]) == 8
+            assert all(len(task["frames"]) <= 8 for task in state["tasks"])
+            packet = json.dumps(state)
+            assert len(packet.encode()) < 32768
+            assert "private-task-name" not in packet and "private-event" not in packet
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+def test_claim_cancel_diagnostic_without_running_loop():
+    state = _claim_async_state(retirement.RetirementGate(), [])
+    assert not state["loop_running"] and state["tasks"] == []
+
+
+def test_claim_cancel_diagnostic_failure_has_no_exception_text(monkeypatch):
+    import os
+    import sys
+
+    def failed(*_):
+        raise ValueError("private exception detail")
+
+    packets = []
+    monkeypatch.setattr(sys.modules[__name__], "_claim_async_state", failed)
+    monkeypatch.setattr(os, "write", lambda fd, packet: packets.append((fd, packet)))
+    _write_claim_async_state(42, retirement.RetirementGate(), [])
+    assert packets == [(42, b'claim_async_state={"observer_failed":true}\n')]
+
+    monkeypatch.setattr(
+        sys.modules[__name__], "_claim_async_state", lambda *_: {"large": "x" * 40000}
+    )
+    _write_claim_async_state(42, retirement.RetirementGate(), [])
+    assert packets[-1] == (42, b'claim_async_state={"observer_truncated":true}\n')
+
+    def closed(*_):
+        raise OSError("private descriptor detail")
+
+    monkeypatch.setattr(os, "write", closed)
+    _write_claim_async_state(42, retirement.RetirementGate(), [])
