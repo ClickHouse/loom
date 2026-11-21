@@ -183,7 +183,7 @@ Adding a new operation ([full walkthrough](./docs/development/adding-an-operatio
 1. Define `<Op>Input` / `<Op>Output` Pydantic models in `server/<domain>/api/models_<group>.py`.
 2. Write the handler in `server/<domain>/app/<group>.py`; it imports the models at module top.
 3. Declare the `Operation` in `server/<domain>/api/ops_<group>.py` and append it to that module's `OPERATIONS`.
-4. Regenerate the SDK op tables and the Python per-op client: `python scripts/codegen/sdk_py_gen.py`, `python scripts/codegen/sdk_py_client_gen.py` and `python scripts/codegen/sdk_ts_gen.py` (CI runs each with `--check`). Add a method to the hand-written client in `sdk/python/loom/<group>.py` when the op belongs in the high-level API.
+4. Regenerate the SDK op tables and the Python per-op client: `python scripts/codegen/sdk_py_gen.py`, `python scripts/codegen/sdk_py_client_gen.py`, `python scripts/codegen/sdk_ts_gen.py` and `python scripts/codegen/sdk_rb_gen.py` (each has a `--check`). Add a method to the hand-written client in `sdk/python/loom/<group>.py` when the op belongs in the high-level API.
 5. Add unit tests, and an integration test under `tests/integration/` for a new read or write path.
 
 The HTTP and MCP transports discover registered operations; you don't touch transport code.
