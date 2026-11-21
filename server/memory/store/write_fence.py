@@ -11,6 +11,7 @@ from typing import Any
 from server.core import lease_writes
 from server.core.ch import write_limit_s
 from server.core.repo_base import _CHClient
+from server.memory.domain.proposal_review import enforce_review
 from server.memory.store.pg_memory import AdmissionContendedError
 from server.memory.store.reads import memory_rows_by_identity_keys
 from server.memory.store.rows import IdentityKey, MemoryRow, identity_key, memory_head_state
@@ -48,10 +49,11 @@ async def checked_write(
     async with lease_writes.fenced_many(
         names, ch=_lease_client(ch), wait_s=_admission_wait_s()
     ) as mark:
+        current = await memory_rows_by_identity_keys(
+            list(keys), ch=ch, sequential=True, include_tombstoned=True
+        )
+        enforce_review(rows, current)
         if expected_heads is not None:
-            current = await memory_rows_by_identity_keys(
-                list(keys), ch=ch, sequential=True, include_tombstoned=True
-            )
             # Clock skew lets independent writers choose the same head+2 version.
             if any(
                 memory_head_state(current.get(key)) != memory_head_state(head)
