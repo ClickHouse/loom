@@ -1174,6 +1174,9 @@ class Provisioner:
             self._backfill(group, task, head)
             if group["index_tier"] == "scip":
                 self._compile(group, head, revision, compiler_receipt, admin, files)
+                # Compiler symbols change the resolver's name table; reconcile native
+                # parser edges against that completed table before certifying it.
+                self._backfill(group, task, head)
             if authored and revision == "B":
                 old_keys = [
                     event["key"]
