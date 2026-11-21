@@ -10,6 +10,7 @@ import os
 import secrets
 import signal
 import sys
+import traceback
 from pathlib import Path
 
 from .catalog import load_evaluation
@@ -56,7 +57,19 @@ class Phases:
         self.append("started", phase)
         self.started.add(phase)
         print(json.dumps({"phase": phase, "state": "started"}), flush=True)
-        result = function()
+        try:
+            result = function()
+        except Exception as error:  # noqa: BLE001 — persist the failure site without exception payloads
+            self.append(
+                "failed",
+                phase,
+                error_type=type(error).__name__,
+                frames=[
+                    {"file": Path(frame.filename).name, "line": frame.lineno}
+                    for frame in traceback.extract_tb(error.__traceback__)
+                ],
+            )
+            raise
         receipt = self.output / "phases" / (phase + ".json")
         receipt.parent.mkdir(parents=True, exist_ok=True)
         write(receipt, result)
