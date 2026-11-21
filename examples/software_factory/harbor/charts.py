@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .arms import PRIMARY
+from .cohorts import comparison_cohorts
 
 ARMS = {name: arm.label for name, arm in PRIMARY.items()}
 METRICS = [
@@ -121,6 +122,7 @@ def chart_data(protocol, entries, views_manifest):
         "arms": ARMS,
         "metrics": METRICS,
         "titles": titles,
+        "cohorts": comparison_cohorts(protocol),
         "attempts": rows,
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),

@@ -1,7 +1,8 @@
 # Python E2E evaluation: Flask
 
 The factory runs the same coding-agent loop with ordinary source tools alone
-or with optional read-only Loom tools backed by Tree-sitter or SCIP. Harbor owns historical Flask trial
+or with optional Loom tools backed by Tree-sitter or SCIP, with native memory in
+separate arms. Harbor owns historical Flask trial
 scheduling, Docker environment lifecycle, independent verification and its local
 viewer. An offline replay exercises the loop without model inference.
 
@@ -12,9 +13,29 @@ public SWE-bench tasks, build dependency images, configure your own Loom endpoin
 and viewer tokens, and run free Harbor controls before paid inference. No private
 predecessor protocol or image supplied by a maintainer is required.
 
-The study pins Harbor 0.27.0, three public issues at exact Flask revisions,
-three paired repeats across baseline, Loom Tree-sitter and Loom SCIP, plus six
-baseline A/A controls: 33 scheduled attempts.
+The study pins Harbor 0.27.0 and compares five arms: baseline, Tree-sitter,
+Tree-sitter with memory, SCIP, and SCIP with memory. Claude chooses every Loom
+call. Six cases, three repeats and twelve separate A/A controls produce 102
+attempts. The primary comparison contains three historical Flask issues at exact
+revisions, with nine attempts per arm. Three authored memory scenarios form a
+separate experiment, also with nine attempts per arm. Reports and charts keep
+these experiments separate.
+
+The pinned SWE-bench dataset contains eleven Flask issues. The three historical
+issues are the existing pilot selection, not a random or exhaustive Flask sample.
+The other eight are outside this pilot; this does not establish that they are
+unsuitable or that any arm fails them. Repeats measure run variation and do not
+increase the number of independent issues. This pilot cannot establish a general
+Flask performance claim.
+
+All arms receive the same issue, source, visible tests, ordinary tools, model,
+limits and public project notes. Only the optional Loom tools differ. The authored
+scenarios simulate project history; they do not measure months of live learning.
+Their short policy notes explicitly name the functions whose changes are tracked.
+The same names and facts are present in ordinary notes for every arm. Historical
+issues start with empty project history. Hidden tests and reference fixes stay
+outside every agent environment.
+
 The provider is direct Anthropic Messages using `claude-haiku-5-5`.
 Execution is serial with retries disabled. Reports, CSV/JSON exports and bar
 charts are generated before the first paid trial and after each completed trial;
@@ -43,26 +64,27 @@ owns the same policy in its task definition.
 End-to-end time includes setup, the factory loop, transfer, independent
 verification, teardown and both index audits. Agent time and native Harbor wall
 time are also retained. Generation cost uses native provider usage and the
-frozen pricing rule. Backend and infrastructure costs remain separate; missing
-billing evidence is unknown. Failed and incomplete attempts remain in exports.
+frozen pricing rule. Loom provider costs are included in the comparison; setup, judging and
+infrastructure are separate. Missing billing evidence is unknown. Failed and incomplete attempts remain in exports.
 A partial cohort has no final comparison.
 
 Each Loom tier is compared separately with baseline. The target is 9/9 issue
 successes with at least 20% lower aggregate
-generation cost and end-to-end time against paired baseline attempts. Report
+total agent and Loom provider cost, and agent time against paired baseline attempts.
+End-to-end time, one-time setup, judge cost and infrastructure usage are separate. Report
 paired uncertainty and A/A noise alongside the point estimates. These targets
 are acceptance criteria, not claims that an unmeasured run meets them.
 
 ## Modes and source tools
 
-| Mode | Factory behavior | Model behavior |
-| --- | --- | --- |
-| `baseline` | Ordinary source tools; no Loom backend or schema | Reads, searches, edits and tests source |
-| `natural` | The same tools plus five read-only Loom tools, using the slot’s certified Tree-sitter or SCIP index | Chooses whether to use Loom; zero calls is valid |
+| Mode       | Factory behavior                                                                                    | Model behavior                                   |
+| ---------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| `baseline` | Ordinary source tools; no Loom backend or schema                                                    | Reads, searches, edits and tests source          |
+| `natural`  | The same tools plus five read-only Loom tools, using the slot’s certified Tree-sitter or SCIP index | Chooses whether to use Loom; zero calls is valid |
 
 There is no enforced retrieval mode or host lookup quota. All arms receive the
-same public task instructions and authored-regression capability. Cold attempts
-have no cross-issue memory. Retrieval writes no memory rows.
+same public task instructions and authored-regression capability. Cold historical attempts have no project history. Memory arms expose native
+search, reads and writes; persisted agent writes and setup writes are separate counters.
 
 `factory/workspace.py` limits source reads and edits to the task manifest. Each attempt
 has a source-only checkout. Paging preserves complete source authority while

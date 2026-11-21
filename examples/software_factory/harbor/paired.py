@@ -10,8 +10,29 @@ from bench.bootstrap import paired_bootstrap
 from examples.software_factory.factory.model import digest
 
 from .arms import ALL, contrasts, validate_schedule
+from .cohorts import comparison_cohorts
 
 ARMS = tuple(ALL)
+
+
+def analyze_cohorts(protocol, entries):
+    cohorts = comparison_cohorts(protocol)
+    reports = {}
+    for family, cohort in cohorts["groups"].items():
+        slots = [s for s in protocol["schedule"] if s["task_id"] in cohort["task_ids"]]
+        orders = {slot["order"]: index for index, slot in enumerate(slots)}
+        rows = [{**slot, "order": orders[slot["order"]]} for slot in slots]
+        selected = [
+            {**entry, "order": orders[entry["order"]]}
+            for entry in entries
+            if entry["order"] in orders
+        ]
+        reports[family] = {
+            **analyze({"attempts": rows, "schedule_sha256": digest(rows)}, selected),
+            "label": cohort["label"],
+            "original_orders": [slot["order"] for slot in slots],
+        }
+    return {"primary_cohort": cohorts["default"], "pooled_headline": False, "cohorts": reports}
 
 
 def _number(value, *, integer=False):

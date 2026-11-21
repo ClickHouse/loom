@@ -86,7 +86,11 @@ def inputs(assets: Path, materialization: dict, output: Path) -> dict:
         "historical_manifest": materialization["historical_manifest"],
         "reference_controls_file": materialization["reference_controls_file"],
         "public_inputs": frozen,
-        "schedule": schedule(sorted(tasks), seed=lock["schedule_seed"]),
+        "schedule": schedule(
+            sorted(tasks),
+            seed=lock["schedule_seed"],
+            task_families={task: row["scenario_family"] for task, row in tasks.items()},
+        ),
     }
     write(output / "inputs.json", result)
     return result

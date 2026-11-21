@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
 from .arms import PRIMARY
+from .cohorts import comparison_cohorts
 
 PRIMARY_VIEWS = {name: "no-loom" if name == "baseline" else name for name in PRIMARY}
 VIEW_KIND = "factory-derived-harbor-comparison"
@@ -504,9 +505,23 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             else:
                 text += "No measured result yet. Cost, time and success remain unknown.\n"
             _atomic(path.with_suffix(".md"), text)
-    primary = {
+    all_scenarios = {
         arm: _summary(slots, observed) for arm, slots in groups.items() if arm in PRIMARY_VIEWS
     }
+    cohorts = comparison_cohorts(protocol)
+    cohort_reports = {}
+    for family, cohort in cohorts["groups"].items():
+        slots = [s for s in schedule if s["task_id"] in cohort["task_ids"]]
+        cohort_reports[family] = {
+            **cohort,
+            "arms": {
+                arm: _summary([s for s in slots if s["arm"] == arm], observed)
+                for arm in PRIMARY_VIEWS
+            },
+            "aa_controls": _summary([s for s in slots if s["arm"] not in PRIMARY_VIEWS], observed),
+        }
+    primary = cohort_reports[cohorts["default"]]["arms"]
+    primary_tasks = set(cohorts["groups"][cohorts["default"]]["task_ids"])
     controls = _summary(groups.get("aa-controls", []), observed)
     control_arms = {
         arm: _summary([s for s in groups.get("aa-controls", []) if s["arm"] == arm], observed)
@@ -523,7 +538,13 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "# A/A controls\n\nThese controls are excluded from the primary comparison.\n\n"
         + _table(control_arms),
     )
-    paired = sorted({(s["task_id"], s["repeat"]) for s in schedule if s["arm"] in PRIMARY_VIEWS})
+    paired = sorted(
+        {
+            (s["task_id"], s["repeat"])
+            for s in schedule
+            if s["arm"] in PRIMARY_VIEWS and s["task_id"] in primary_tasks
+        }
+    )
     rows = [
         {
             "task_id": task,
@@ -595,6 +616,10 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "scenario_count": len(scenarios),
         "expected_primary_pair_rows": len(rows),
         "primary_arms": primary,
+        "primary_cohort": cohorts["default"],
+        "cohorts": cohort_reports,
+        "pooled_headline": False,
+        "all_scenarios_arms": all_scenarios,
         "aa_controls": controls,
         "paired_rows": rows,
         "scenarios": scenarios,
@@ -616,9 +641,14 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     text = (
         f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
         f"{len(scenarios)} distinct scenarios. {len(rows)} task/repeat rows are expected "
-        "in the primary comparison.\n\n"
+        f"in the primary comparison: {cohorts['groups'][cohorts['default']]['label']}.\n\n"
+        "Historical issues and authored experiments are reported separately. "
+        "Native Harbor comparison links include all scenarios.\n\n"
     )
     text += _table(primary) + "\n" + " · ".join(f"[{key}]({value})" for key, value in links.items())
+    for family, cohort in cohort_reports.items():
+        if family != cohorts["default"]:
+            text += "\n\n## " + cohort["label"] + "\n\n" + _table(cohort["arms"])
     text += (
         "\n\nA/A controls are separate: "
         + str(controls["observed"])

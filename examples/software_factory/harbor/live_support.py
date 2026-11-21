@@ -157,7 +157,9 @@ class Reservations:
         return cost
 
 
-def schedule(task_ids: list[str], *, seed: int, repeats: int = 3) -> list[dict]:
+def schedule(
+    task_ids: list[str], *, seed: int, repeats: int = 3, task_families: dict | None = None
+) -> list[dict]:
     if (
         not task_ids
         or any(not isinstance(task, str) or not task for task in task_ids)
@@ -171,11 +173,23 @@ def schedule(task_ids: list[str], *, seed: int, repeats: int = 3) -> list[dict]:
     groups, task_order, arms = [], sorted(task_ids), list(PRIMARY)
     rng.shuffle(task_order)
     rng.shuffle(arms)
-    for ordinal, task in enumerate(task_order):
+    if task_families is not None:
+        if set(task_families) != set(task_ids) or any(
+            not isinstance(family, str) or not family for family in task_families.values()
+        ):
+            raise ValueError("Declare every task family before scheduling")
+        families = list(dict.fromkeys(task_families[task] for task in task_order))
+        positions = [
+            task for family in families for task in task_order if task_families[task] == family
+        ]
+    else:
+        positions = task_order
+    ordinals = {task: index for index, task in enumerate(positions)}
+    for task in task_order:
         for repeat in range(repeats):
             # Three repeats cannot occupy all five positions. Consecutive rotations
             # minimize the position imbalance across the entire frozen scenario set.
-            offset = (ordinal * repeats + repeat) % len(arms)
+            offset = (ordinals[task] * repeats + repeat) % len(arms)
             groups.append((task, repeat, arms[offset:] + arms[:offset]))
         aa = list(CONTROLS)
         rng.shuffle(aa)

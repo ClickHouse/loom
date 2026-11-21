@@ -250,6 +250,23 @@ class HarborReporting(unittest.TestCase):
         self.assertTrue((self.root / "reports/charts.html").exists())
         self.assertEqual(hashes(self.source), before)
 
+    def test_historical_primary_keeps_authored_results_separate(self):
+        manifest = read(self.root / "historical.json")
+        for row in manifest["tasks"]:
+            row["scenario_family"] = (
+                "historical-issue" if row["task_id"] == self.tasks[0] else "authored"
+            )
+        write(self.root / "historical.json", manifest)
+        self.add(51)
+        report = generate_reports(self.protocol, self.entries)
+        self.assertEqual(report["primary_cohort"], "historical-issue")
+        self.assertFalse(report["pooled_headline"])
+        self.assertEqual(report["expected_primary_pair_rows"], 3)
+        self.assertEqual(report["primary_arms"]["baseline"]["observed"], 3)
+        self.assertEqual(report["cohorts"]["authored"]["arms"]["baseline"]["observed"], 6)
+        self.assertEqual(report["all_scenarios_arms"]["baseline"]["observed"], 9)
+        self.assertEqual(report["observed_attempts"], 51)
+
     def test_complete_views_preserve_assets_metrics_and_five_by_nine_pairing(self):
         self.add(51)
         before = hashes(self.source)

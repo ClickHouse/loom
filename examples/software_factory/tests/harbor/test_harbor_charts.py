@@ -117,6 +117,22 @@ class HarborCharts(unittest.TestCase):
         self.assertFalse(row["resolved"])
         self.assertIsNone(row["cost"])
 
+    def test_authored_and_historical_experiments_have_separate_chart_cohorts(self):
+        self.protocol["tasks"] = {
+            "public-issue": {"scenario_family": "historical-issue"},
+            "authored": {"scenario_family": "authored-simulated-memory-history"},
+        }
+        self.protocol["schedule"].append(
+            {"order": 6, "task_id": "authored", "repeat": 0, "arm": "baseline"}
+        )
+        data = chart_data(self.protocol, self.entries, self.views)
+        self.assertEqual(data["cohorts"]["default"], "historical-issue")
+        self.assertFalse(data["cohorts"]["pooled_headline"])
+        self.assertEqual(
+            data["cohorts"]["groups"]["historical-issue"]["task_ids"], ["public-issue"]
+        )
+        self.assertEqual(len(data["attempts"]), 6)
+
     def test_native_assets_and_navigation_install_without_modifying_raw_records(self):
         shell = self.root / "static/index.html"
         shell.parent.mkdir(parents=True)

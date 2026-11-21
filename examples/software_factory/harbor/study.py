@@ -21,7 +21,7 @@ from harbor.models.job.config import JobConfig
 
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.index import MUTABLE_STATE_KEYS, select_snapshot, snapshot
-from examples.software_factory.harbor.paired import ARMS, analyze
+from examples.software_factory.harbor.paired import ARMS, analyze, analyze_cohorts
 from examples.software_factory.harbor.reporting import generate_reports
 from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
 
@@ -436,6 +436,7 @@ def export(protocol: dict, job_name="live") -> dict:
     report = analyze(
         {"attempts": protocol["schedule"], "schedule_sha256": protocol["schedule_sha256"]}, entries
     )
+    report.update(analyze_cohorts(protocol, entries))
     write(output / "paired-report.json", report)
     summary = {
         "complete": report["complete"],

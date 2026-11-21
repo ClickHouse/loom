@@ -52,6 +52,8 @@ class SharedPlanning(unittest.TestCase):
         }
         self.certificate = self.root / "certificate.json"
         self.certificate.write_text(json.dumps(dict(scopes=scopes)))
+        public = self.root / "public-project-cases.json"
+        public.write_text(json.dumps({"tasks": [{"task_id": "sample"}]}))
         content = self.root / "index.json"
         content.write_text("{}")
         bindings = {}
@@ -94,7 +96,7 @@ class SharedPlanning(unittest.TestCase):
             memory_histories={
                 "sample": dict(fixture_file=str(self.fixture), fixture_sha256=sha(self.fixture))
             },
-            historical_manifest="public-project-cases.json",
+            historical_manifest=str(public),
             reference_controls_file="private-project-controls.json",
         )
         identity = dict(commit=self.server, dirty=False, relative_files={}, files={})

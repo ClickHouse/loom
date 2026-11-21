@@ -8,8 +8,8 @@
 </style></head><body><main>
 <nav><a href="/jobs">Harbor jobs</a><a id="comparison">Native comparison</a><a href="/assets/factory-charts/index.html">All chart reports</a></nav>
 <h1>Issue → verified fix</h1><p id="subtitle" class="muted"></p>
-<div class="toolbar"><span class="pill" id="progress"></span><span class="muted">Three arms · independent final grading · A/A controls excluded from bars</span></div>
-<fieldset><label>Issue<select id="issue"><option value="">All issues</option></select></label><label>Repeat<select id="repeat"><option value="">All repeats</option></select></label><label>Time measure<select id="timing"><option value="agent_seconds">Agent time</option><option value="seconds">Full end-to-end</option><option value="native_seconds">Native Harbor duration</option></select></label></fieldset>
+<div class="toolbar"><span class="pill" id="progress"></span><span class="muted">Five arms · independent final grading · A/A controls excluded from bars</span></div>
+<fieldset><label>Experiment<select id="cohort"></select></label><label>Issue<select id="issue"><option value="">All issues in experiment</option></select></label><label>Repeat<select id="repeat"><option value="">All repeats</option></select></label><label>Time measure<select id="timing"><option value="agent_seconds">Agent time</option><option value="seconds">Full end-to-end</option><option value="native_seconds">Native Harbor duration</option></select></label></fieldset>
 <section id="overview" class="charts" aria-label="Overall comparison"></section>
 <p class="legend">Every bar starts at zero. Dashed lines mark 100% correctness or 20% below the matching no-Loom mean. These are observed targets, not confidence intervals.</p>
 <h2>By issue</h2><section id="issues" class="issue-grid"></section>

@@ -10,6 +10,7 @@ from examples.software_factory.factory.model import Budget, digest
 
 from .arms import PRIMARY, validate_schedule
 from .charts import METRICS
+from .cohorts import comparison_cohorts
 from .runtime import write
 from .scopes import binding_for, frozen_json, selected_scopes
 from .source import check_files, controller_identity
@@ -135,6 +136,7 @@ def freeze_plan(
         "metrics": [dict(metric) for metric in METRICS],
         "files": {},
     }
+    plan["comparison_cohorts"] = comparison_cohorts(plan)
     for slot in plan["schedule"]:
         binding_for(plan, slot)
     if len(selected_scopes(plan)) != len(tasks) * 2:
