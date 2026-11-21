@@ -235,6 +235,37 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
     return dict(r.json())
 
 
+async def _ingest_failure_context(org: str, ns: str, ingestion_id: str) -> dict[str, Any]:
+    """Read only fixed status fields; a retry message can contain source content."""
+    from server.knowledge.store import ingestions
+
+    try:
+        async with asyncio.timeout(1):
+            row = await ingestions.get_ingestion(org, ns, ingestion_id)
+    except Exception:  # noqa: BLE001 — diagnostic reads must not replace the failed assertion
+        return {"observation": "unavailable"}
+    if row is None:
+        return {"observation": "missing"}
+    choices = {
+        "state": {"pending", "processing", "ready", "partial", "failed", "cancelled"},
+        "stage": {"", "parse", "embed", "publish"},
+        "error_code": {"", "retrying", "retries_exhausted", "revision_conflict"},
+    }
+    out: dict[str, Any] = {}
+    for key, allowed in choices.items():
+        value = row.get(key)
+        out[key] = (
+            value
+            if type(value) is str and value in allowed
+            else "other"
+            if key == "error_code"
+            else "unknown"
+        )
+    attempts = row.get("attempts")
+    out["attempts"] = attempts if type(attempts) is int and 0 <= attempts <= 1_000_000 else None
+    return out
+
+
 async def _ingest(
     c: httpx.AsyncClient, org: str, ns: str, name: str, data: bytes, tags: list[str]
 ) -> None:
@@ -268,7 +299,11 @@ async def _ingest(
     try:
         row = await ingestions.get_ingestion(org, ns, job["ingestion_id"])
         assert row is not None
-        assert await ingest_run.take_and_run(row) == "ready", name
+        state = await ingest_run.take_and_run(row)
+        assert state == "ready", (
+            name,
+            await _ingest_failure_context(org, ns, job["ingestion_id"]),
+        )
     finally:
         await ch.disconnect()
 
