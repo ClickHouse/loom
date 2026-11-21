@@ -247,9 +247,9 @@ async def _call_tool(
     """One MCP `tools/call`, in phases (each below this function, in order):
     resolve the tool → session-content admission → bind the caller's identity →
     stamp the session run's id → argument refusal + validation → authorization → admission (traffic
-    class, policy, rate limit) → the session run begins → idempotency replay
-    (only for an admitted caller) → open the trace → span identity
-    (inline) → the handler → success telemetry → the response. Every phase
+    class, policy, rate limit) → the session run begins → stamp admitted trace
+    identity → idempotency replay (only for an admitted caller) → the handler →
+    success telemetry → the response. Every phase
     that can end the call returns its response and this function returns it
     at once, so no gate runs after a refusal and none runs after the
     handler."""
