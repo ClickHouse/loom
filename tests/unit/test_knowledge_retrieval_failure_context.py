@@ -792,3 +792,29 @@ async def test_dispatcher_returns_the_same_awaitable_and_fixture_restores_once()
         assert returned is answer and await returned is result
         assert len(calls) == 1 and calls[0][0] is job and calls[0][1] is error
     assert ingest_run._retry_or_fail is original and native._retry_attempt.get() is None
+
+
+def test_native_cause_bound_does_not_even_read_a_fifth_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from clickhouse_connect.driver.exceptions import DatabaseError
+
+    from server.core.errors import BackendUnavailableError
+
+    error = BackendUnavailableError()
+    previous = error
+    for _ in range(4):
+        cause = BackendUnavailableError()
+        previous.__cause__ = cause
+        previous = cause
+    previous.__cause__ = DatabaseError("Code: 241. private-fifth-link")
+    reads: list[BaseException] = []
+    descriptor = BaseException.__dict__["__cause__"]
+
+    def cause_of(exc: BaseException) -> BaseException | None:
+        reads.append(exc)
+        return descriptor.__get__(exc)
+
+    monkeypatch.setattr(BackendUnavailableError, "__cause__", property(cause_of))
+    assert native._retry_failure(error)["native_code"] is None
+    assert len(reads) == 4

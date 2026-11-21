@@ -294,7 +294,7 @@ def _retry_failure(error: Exception) -> dict[str, Any]:
                 break
             if depth:
                 out["native_exception"] = "other"
-            if not any(type(current) is cls for cls, _ in labels):
+            if depth == 4 or not any(type(current) is cls for cls, _ in labels):
                 break
             current = BaseException.__getattribute__(current, "__cause__")
     except Exception:  # noqa: BLE001 — diagnostics must not replace the worker outcome
