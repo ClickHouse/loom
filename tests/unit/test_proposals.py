@@ -5,15 +5,20 @@ owner-set policy."""
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
+from server.core.hashing import sha256_value
 from server.memory.app import proposals as p
 from server.memory.domain import proposal_policy as pp
 from server.memory.domain import temporal_sql as ts
 from server.observability.audit import digest
+
+_HASH = sha256_value("candidate fact")
 
 
 def test_served_statuses_admit_proposed_only_when_asked() -> None:
@@ -59,16 +64,21 @@ def test_graded_counts_statement_counts_graded_runs_by_relied_on_key() -> None:
     assert "grade IN ('pass', 'fail')" in sql and "FROM loom.agent_runs FINAL" in sql
 
 
-class _Row:
-    def __init__(self, key: str, status: str, conflict_with: list[str] | None = None) -> None:
-        self.memory_key, self.status = key, status
-        self.org = "o"
-        self.namespace = "n"
-        self.agent, self.user_id, self.session_id = "a", "-", "-"
-        self.memory_id = f"id-{key}"
-        self.conflict_with = conflict_with or []
-        self.content_sha256 = "sha"
-        self.version = 1
+def _proposal_row(key: str, status: str, conflict_with: list[str] | None = None) -> Any:
+    from tests.unit.test_memory_verify import _row
+
+    return _row(
+        memory_key=key,
+        status=status,
+        conflict_with=conflict_with or [],
+        namespace="n",
+        agent="a",
+        memory_id=f"id-{key}",
+        content_sha256=_HASH,
+        value="candidate fact",
+        version=1,
+        actor="process:author",
+    )
 
 
 class _CH:
@@ -82,13 +92,26 @@ class _CH:
 
 @pytest.fixture()
 def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    from server.auth import aliases, authz, context
     from server.memory import store as memory_repo
     from server.observability import audit
 
+    async def admits(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    async def subjects(*args: Any, **kwargs: Any) -> list[str]:
+        return ["t"]
+
+    monkeypatch.setattr(
+        context, "current_auth", lambda: SimpleNamespace(subject="t", is_service_account=False)
+    )
+    monkeypatch.setattr(authz.CachedGate, "admits", admits)
+    monkeypatch.setattr(aliases, "read_aliases", subjects)
+
     rows = {
-        "p1": _Row("p1", "proposed"),
-        "p2": _Row("p2", "proposed", conflict_with=["id-fact"]),
-        "fact": _Row("fact", "active"),
+        "p1": _proposal_row("p1", "proposed"),
+        "p2": _proposal_row("p2", "proposed", conflict_with=["id-fact"]),
+        "fact": _proposal_row("fact", "active"),
     }
     seen: dict[str, Any] = {
         "mirror": [],
@@ -104,6 +127,13 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         assert strong and ident.agent == "*"
         return [rows[k] for k in keys if k in rows]
 
+    async def _heads(keys: Any, **kwargs: Any) -> dict[Any, Any]:
+        from server.memory.store.rows import identity_key
+
+        return {identity_key(row): row for row in rows.values() if identity_key(row) in keys}
+
+    monkeypatch.setattr("server.memory.store.write_fence.memory_rows_by_identity_keys", _heads)
+
     async def _mirror(batch: list[dict[str, Any]], *, ch: Any = None) -> int:
         seen["mirror"].extend(batch)
         return len(batch)
@@ -116,46 +146,118 @@ def repo(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     async def _flag(
         org: str, ids: list[str], update: Any, *, ch: Any = None, namespace: str | None = None
     ) -> int:
-        seen["flagged"].append((ids, update(_Row("fact", "active"))))
+        seen["flagged"].append((ids, update(_proposal_row("fact", "active"))))
         return len(ids)
 
     monkeypatch.setattr(memory_repo, "get_many_by_keys", _many)
     monkeypatch.setattr(memory_repo, "mirror_status_to_embeddings", _mirror)
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _flag)
-    monkeypatch.setattr(
-        memory_repo,
-        "build_memory_version_row",
-        lambda row, **ov: {
-            "org": row.org,
-            "namespace": row.namespace,
-            "agent": row.agent,
-            "user_id": row.user_id,
-            "session_id": row.session_id,
-            "memory_key": row.memory_key,
-            **ov,
-        },
-    )
-    # The stub builder returns partial rows; the funnel's full-row check is
-    # pinned in test_rmt_write_is_typed.
-    monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
 
     async def _announce(changes: Any) -> None:
         seen["announced"].extend((event, row["memory_key"]) for event, row in changes)
 
     monkeypatch.setattr(audit, "emit", _emit)
     monkeypatch.setattr(p.webhooks, "announce", _announce)
+    seen["rows"] = rows
     return seen
+
+
+@pytest.mark.parametrize("authenticated", [False, True])
+def test_a_proposal_cannot_be_accepted_without_a_human_principal(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch, authenticated: bool
+) -> None:
+    from server.auth import context
+
+    auth = SimpleNamespace(subject="author", is_service_account=True) if authenticated else None
+    monkeypatch.setattr(context, "current_auth", lambda: auth)
+    ch = _CH()
+    with pytest.raises(HTTPException) as failure:
+        asyncio.run(p.decide("o", "n", ["p1"], "accept", actor="process:author", ch=ch))
+    assert failure.value.status_code == 403
+    assert ch.inserts == []
+    assert repo["announced"] == []
+
+
+def test_a_human_cannot_accept_their_own_proposal(
+    repo: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.auth import authz, context
+
+    async def admits(*args: Any, **kwargs: Any) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        context, "current_auth", lambda: SimpleNamespace(subject="t", is_service_account=False)
+    )
+    monkeypatch.setattr(authz.CachedGate, "admits", admits)
+    repo["rows"]["p1"] = repo["rows"]["p1"].model_copy(update={"actor": "human:t"})
+    ch = _CH()
+    out = asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p1"],
+            "accept",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            ch=ch,
+        )
+    )
+    assert out[0].decided is False
+    assert ch.inserts == []
+
+
+def test_proposal_decisions_require_administrator_access() -> None:
+    from server.memory.api.ops_proposals import memory_proposal_decide
+    from server.operations.base import Role
+
+    assert memory_proposal_decide.required_role is Role.ADMIN
+
+
+def test_graded_runs_cannot_automatically_accept_a_proposal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def policy(*args: Any, **kwargs: Any) -> pp.ProposalPolicy:
+        return pp.ProposalPolicy(mode="auto", min_passes=2)
+
+    async def proposed(*args: Any, **kwargs: Any) -> list[str]:
+        return ["p1"]
+
+    async def counts(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {"p1": p.GradedCounts(passes=20, fails=0)}
+
+    async def decide(*args: Any, **kwargs: Any) -> list[Any]:
+        return [p.DecideResult("p1", True, "active")]
+
+    monkeypatch.setattr(p, "policy_for", policy)
+    monkeypatch.setattr(p, "proposal_keys_among", proposed)
+    monkeypatch.setattr(p, "graded_counts", counts)
+    monkeypatch.setattr(p, "decide", decide)
+    assert asyncio.run(p.apply_policy("o", "n", ["p1"], ch=object())) == []
 
 
 def test_decide_changes_only_proposals_and_mirrors_every_decided_row(repo: dict[str, Any]) -> None:
     ch = _CH()
-    out = asyncio.run(p.decide("o", "n", ["p1", "fact", "gone"], "accept", actor="human:t", ch=ch))
+    out = asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p1", "fact", "gone"],
+            "accept",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            ch=ch,
+        )
+    )
     assert [(r.memory_key, r.decided, r.status) for r in out] == [
         ("p1", True, "active"),
         ("fact", False, "active"),
         ("gone", False, ""),
     ]
     assert [r["status"] for r in ch.inserts[0]] == ["active"]
+    assert ch.inserts[0][0]["requires_review"] == 0
+    assert ch.inserts[0][0]["verified_by"] == "human:t"
+    assert ch.inserts[0][0]["verified_sha256"] == _HASH
     # an `active` flip is mirrored too (write_versions_by_ids would skip it)
     assert [r["memory_key"] for r in repo["mirror"]] == ["p1"]
     assert repo["audit"] == [("memory.proposal_accept", "human:t", "p1")]
@@ -165,7 +267,17 @@ def test_an_accepted_proposal_that_met_a_contradiction_lands_conflicted(
     repo: dict[str, Any],
 ) -> None:
     ch = _CH()
-    asyncio.run(p.decide("o", "n", ["p2"], "accept", actor="human:t", ch=ch))
+    asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p2"],
+            "accept",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            ch=ch,
+        )
+    )
     assert ch.inserts[0][0]["status"] == "conflicted"
     ids, update = repo["flagged"][0]
     assert (
@@ -190,16 +302,26 @@ def test_the_reject_audit_row_holds_the_reasons_hash_not_its_text(repo: dict[str
     """The reason is kept on the rejected row, which erasure reaches; the audit row,
     which it does not, keeps its hash and length."""
     reason = "Dana Reyes says the vault code 4417 is wrong"
-    asyncio.run(p.decide("o", "n", ["p1"], "reject", actor="human:t", reason=reason, ch=_CH()))
+    asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p1"],
+            "reject",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            reason=reason,
+            ch=_CH(),
+        )
+    )
     (subject,) = repo["subjects"]
     assert "4417" not in str(subject)
     assert subject["reason"] == digest(reason)
     assert subject["reason"]["chars"] == len(reason)
 
 
-@pytest.mark.parametrize("decision", ["accept", "reject"])
 def test_a_policy_decision_audit_row_records_the_policy(
-    repo: dict[str, Any], decision: p.Decision
+    repo: dict[str, Any],
 ) -> None:
     """Loom's own reason is the owner's policy: configuration, kept readable."""
     policy = pp.ProposalPolicy(mode="auto", reject_after_fails=3)
@@ -208,7 +330,7 @@ def test_a_policy_decision_audit_row_records_the_policy(
             "o",
             "n",
             ["p1"],
-            decision,
+            "reject",
             actor="process:proposal_policy",
             reason=f"owner policy: {policy.model_dump_json()}",
             policy=policy,
@@ -227,13 +349,33 @@ def test_a_policy_decision_audit_row_records_the_policy(
 
 def test_an_accepted_proposal_is_announced_as_written(repo: dict[str, Any]) -> None:
     """The proposal was never served: accepting it is the key's first served write."""
-    asyncio.run(p.decide("o", "n", ["p1", "fact"], "accept", actor="human:t", ch=_CH()))
+    asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p1", "fact"],
+            "accept",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            ch=_CH(),
+        )
+    )
     assert repo["announced"] == [("memory.written", "p1")]
 
 
 def test_a_rejected_proposal_is_not_announced(repo: dict[str, Any]) -> None:
     """A rejected proposal was never served or announced: nothing changed for a reader."""
-    asyncio.run(p.decide("o", "n", ["p1"], "reject", actor="human:t", ch=_CH()))
+    asyncio.run(
+        p.decide(
+            "o",
+            "n",
+            ["p1"],
+            "reject",
+            actor="human:t",
+            approved_sha256={"p1": _HASH, "p2": _HASH},
+            ch=_CH(),
+        )
+    )
     assert repo["announced"] == []
 
 
@@ -266,12 +408,14 @@ def test_mark_peers_keeps_a_proposal_on_trial(monkeypatch: pytest.MonkeyPatch) -
     writes: list[tuple[list[str], dict[str, Any]]] = []
 
     async def _write(org: str, ids: list[str], update: Any, *, ch: Any = None, **_: Any) -> int:
-        row = _Row("new", "proposed") if ids == ["new"] else _Row("peer", "active")
+        row = (
+            _proposal_row("new", "proposed") if ids == ["new"] else _proposal_row("peer", "active")
+        )
         writes.append((ids, update(row)))
         return 1
 
     async def _get(mid: str, **kw: Any) -> Any:
-        return _Row(mid, "active")
+        return _proposal_row(mid, "active")
 
     monkeypatch.setattr(memory_repo, "write_versions_by_ids", _write)
     monkeypatch.setattr(memory_repo, "get_by_id", _get)
@@ -300,7 +444,7 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
     from server.memory.domain import conflicts as conflict_rules
 
     async def _get(mid: str, **kw: Any) -> Any:
-        return _Row("new", "proposed")
+        return _proposal_row("new", "proposed")
 
     async def _never(*a: Any, **k: Any) -> Any:
         raise AssertionError("a proposal must not supersede its peers")
@@ -328,3 +472,66 @@ def test_a_proposal_supersedes_nothing_on_any_refines_path(monkeypatch: pytest.M
         )
     )
     assert n == 0
+
+
+def test_acceptance_requires_the_reviewed_content_hash(repo):
+    ch = _CH()
+    out = asyncio.run(p.decide("o", "n", ["p1"], "accept", actor="human:t", ch=ch))
+    assert not out[0].decided and "approved_sha256" in out[0].reason
+    assert ch.inserts == []
+
+
+def test_an_agent_cannot_replace_the_content_after_it_was_reviewed(repo):
+    repo["rows"]["p1"] = repo["rows"]["p1"].model_copy(update={"value": "replacement fact"})
+    ch = _CH()
+    out = asyncio.run(
+        p.decide("o", "n", ["p1"], "accept", actor="human:t", approved_sha256={"p1": _HASH}, ch=ch)
+    )
+    assert not out[0].decided and ch.inserts == []
+
+
+def test_an_unreadable_alias_directory_cannot_establish_an_independent_reviewer(repo, monkeypatch):
+    async def unavailable(*args, **kwargs):
+        raise TimeoutError("directory unavailable")
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", unavailable)
+    ch = _CH()
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            p.decide(
+                "o", "n", ["p1"], "accept", actor="human:t", approved_sha256={"p1": _HASH}, ch=ch
+            )
+        )
+    assert ch.inserts == []
+
+
+def test_a_linked_alias_cannot_approve_its_own_proposal(repo, monkeypatch):
+    async def linked(*args, **kwargs):
+        return ["t", "contact"]
+
+    monkeypatch.setattr("server.auth.aliases.read_aliases", linked)
+    repo["rows"]["p1"] = repo["rows"]["p1"].model_copy(update={"actor": "human:CONTACT"})
+    ch = _CH()
+    out = asyncio.run(
+        p.decide("o", "n", ["p1"], "accept", actor="human:t", approved_sha256={"p1": _HASH}, ch=ch)
+    )
+    assert not out[0].decided and ch.inserts == []
+
+
+async def test_listing_decodes_the_native_fixed_string_hash(monkeypatch):
+    from server.memory.api.models_proposals import MemoryProposalsInput
+    from server.memory.app import proposals_ops
+
+    class CH:
+        async def query_all(self, sql, **kwargs):
+            if "substring(value" in sql:
+                return [{"memory_key": "p", "mid": "m", "content_sha256": _HASH.encode()}]
+            return []
+
+    async def policy(*args, **kwargs):
+        return pp.ProposalPolicy()
+
+    monkeypatch.setattr(proposals_ops, "get_client", CH)
+    monkeypatch.setattr(p, "policy_for", policy)
+    out = await proposals_ops.handle_memory_proposals(MemoryProposalsInput(org="o", namespace="n"))
+    assert out.proposals[0].content_sha256 == _HASH

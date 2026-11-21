@@ -89,6 +89,13 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
    row stays attached to the write, so its locks and pin still hold and Postgres
    admission checks that row's exact version before replacing it. Lifecycle status and
    `valid_to` do not make an exact-key-readable row absent.
+   Pending proposals carry `requires_review` through revisions, rejection, deletion and
+   snapshots. The storage commit checks the locked current head before activating it or
+   clearing that bit. Only `memory.proposal_decide` can grant a permit for the exact
+   source and destination revisions, after an independent authenticated human
+   administrator supplies the hash of the content reviewed. Linked subjects count as
+   the same reviewer. Unknown proposer identity and failed alias reads refuse approval.
+   Automatic grading can reject or mark a proposal ready, but never accepts one.
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the

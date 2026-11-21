@@ -554,6 +554,10 @@ async def test_clear_duplicate_tag_writes_a_full_version_and_mirrors_it(monkeypa
             self.executed.append(sql)
 
         async def query_all(self, sql, params=None):
+            if "FROM loom.memory_refusals" in sql:
+                return []
+            if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+                return [mr.build_memory_version_row(existing)]
             emb = {c: None for c in mr.EMBEDDING_PERSISTED_COLS}
             identity = {
                 "org": "src-org",

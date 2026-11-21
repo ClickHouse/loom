@@ -36,11 +36,11 @@ def test_default_proof_bounds_json_encoder_setup(
 
     monkeypatch.setattr(native.json, "dumps", counted)
     _expected(native, specification, context, memories[0], audits[0], api)
-    # One row has 43 defaults; encoder setup must not repeat for each field.
+    # Encoder setup stays bounded as the protocol adds default fields.
     assert calls <= 16
 
 
-@pytest.mark.parametrize("index", range(43))
+@pytest.mark.parametrize("index", range(44))
 def test_default_proof_refuses_each_changed_field(keeper_config_case, protocol_reader, index):
     native, *_ = keeper_config_case
     specification, context, _, _, memories, audits, _ = _case(native, 1, False)
