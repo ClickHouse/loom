@@ -462,10 +462,11 @@ See [code index repositories](../features/code-index/repositories.md).
 
 ## Restricted namespaces (`classification=restricted`)
 
-Everything above widens access. `classification` narrows it: a namespace whose
-`loom.namespaces.classification` is `restricted`, or whose `LOOM_CODE_REPOS_JSON` entry says
-`"classification": "restricted"` (either input restricts), switches every default off. A
-read or write passes only when **all** hold:
+A namespace whose directory row or effective code repository classification is
+`restricted` switches automatic access off. For an operator-configured repository,
+a persisted `code.repo.set_access` row overrides the configured classification and
+join policy. Widening to `standard` requires confirmation and the caller's own live
+admin grant. A read or write on a restricted namespace passes only when **all** hold:
 
 1. the token belongs to the namespace's org (`org="*"` does not count);
 2. the token names the namespace literally, in `namespaces` or `ns_roles`
