@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -185,6 +186,48 @@ class BehavioralContracts(unittest.TestCase):
             ):
                 result = factory.run()
             self.assertEqual(result["status"], "invalid_grader")
+
+    def test_attach_deadline_stays_invalid_after_hidden_observations_succeed(self):
+        for actions in ([], [{"name": "test"}]):
+            with self.subTest(actions=actions), tempfile.TemporaryDirectory() as directory:
+                factory = self.factory(Path(directory), [{"actions": actions}])
+                expected = {p.key: p.expected for p in factory.grader.probes}
+                attached = 0
+
+                def command(args, expected=expected, **kwargs):
+                    nonlocal attached
+                    if args[1] == "start":
+                        attached += 1
+                        if attached == 1:
+                            raise subprocess.TimeoutExpired(args, 30)
+                        rows = json.loads(kwargs["input"])
+                        kwargs["stdout"].write(
+                            json.dumps(
+                                [{"id": r["id"], "value": expected[r["id"]]} for r in rows]
+                            ).encode()
+                        )
+                    return SimpleNamespace(
+                        returncode=0,
+                        stdout=json.dumps(
+                            {"ExitCode": 0, "Running": False, "OOMKilled": False, "Error": ""}
+                        ),
+                    )
+
+                with (
+                    patch(
+                        "examples.software_factory.observations.subprocess.run", side_effect=command
+                    ),
+                    patch("examples.software_factory.observations.remove_owned") as cleanup,
+                ):
+                    result = factory.run()
+                self.assertEqual(attached, 2)
+                self.assertEqual(cleanup.call_count, 2)
+                hidden = [r for r in factory.ledger.rows if r["kind"] == "hidden_verification"]
+                self.assertEqual([r["passed"] for r in hidden], [True])
+                self.assertEqual(result["status"], "invalid_grader")
+                self.assertFalse(result["resolved"])
+                runtime = factory.grader.output / "visible-1/observations/runtime.json"
+                self.assertEqual(json.loads(runtime.read_text())["transport_timeout_s"], 30)
 
     def test_visible_infrastructure_failure_remains_invalid_after_hidden_success(self):
         for actions in ([], [{"name": "test"}]):

@@ -83,14 +83,14 @@ class DockerObservations:
                     (self.output / "runtime.json").write_text(
                         json.dumps(
                             {
-                                "candidate_timeout_s": 30,
+                                "transport_timeout_s": 30,
                                 "elapsed_s": time.monotonic() - started,
                             }
                         )
                         + "\n"
                     )
-                    raise CandidateFailure(
-                        "candidate_timeout", "Candidate exceeded30seconds"
+                    raise RuntimeError(
+                        "Candidate observation transport timed out; execution outcome is unknown"
                     ) from error
             sizes = {
                 stream: (self.output / stream).stat().st_size for stream in ("stdout", "stderr")

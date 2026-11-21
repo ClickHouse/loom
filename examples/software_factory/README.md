@@ -384,8 +384,9 @@ registration; it accepts no Python program, file path, shell command or verdict.
 The candidate sees API inputs, never the host expectations or grading program.
 Candidate exit status, JUnit and `passed: true` cannot supply a passing grade.
 Missing, extra, replayed, duplicate or malformed observations fail the checks.
-Candidate crashes, syntax errors and time limits return failed checks so the
-agent can revise; Docker transport, state and cleanup failures halt evaluation.
+Candidate crashes, syntax errors and output limits return failed checks so the
+agent can revise. Docker attach deadlines leave execution outcomes unknown;
+transport, state and cleanup failures halt evaluation.
 
 Coverage is deliberately narrow: dotted blueprint names, app redirect methods
 and delegation, and nested blueprint subdomains, with passing neighbors. These
