@@ -481,6 +481,13 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ### Symbol bodies
 
+Literal hits, rendered-message matches and symbol mentions use the same retained-source
+line mapping as definition bodies. Copied doc comments and continuation headers do not
+become file lines. Compacted class skeletons and incomplete source fragments cannot
+establish exact hit coordinates: grep omits those lines and marks its response partial,
+and symbol mentions disclose truncation. A missing hit in that response is not evidence
+that the file lacks the text.
+
 A definition body covers every declared source line without conflicting overlaps,
 missing lines or skeleton substitutions. Doc-comment copies and continuation headers
 are removed from chunk prefixes when placing the retained lines. The read uses live

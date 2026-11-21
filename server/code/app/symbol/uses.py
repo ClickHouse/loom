@@ -12,6 +12,7 @@ from server.code.app import symbol_uses as _uses_brief
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.extract.treesitter import lang_for_path
 from server.code.domain.search_scope import LANG_EXTENSIONS, build_scope
+from server.code.domain.symbol_body import retained_source_lines
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
@@ -62,14 +63,12 @@ def _uses_lines(
     handler's extraction so a line grep returns is a line this returns:
     case-sensitive literal, (path, line) deduped across windows of one
     oversized unit, the synthetic continuation header dropped."""
-    from server.code.app.grep import _CONTINUED_PREFIX
-
     out: list[dict[str, Any]] = []
     seen: set[tuple[str, int]] = set()
     for c in chunks:
-        lines = str(c["content"]).splitlines()
-        if lines and lines[0].startswith(_CONTINUED_PREFIX):
-            lines = lines[1:]
+        lines = retained_source_lines(c)
+        if lines is None:
+            continue
         scope = str(c.get("scope") or "")
         span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
         for off, line in enumerate(lines):
@@ -139,7 +138,11 @@ async def _symbol_uses(
         if not any(p == u["path"] and lo <= u["line"] <= hi for p, lo, hi in definition_spans)
     ]
     lines.sort(key=lambda u: (u["path"], u["line"]))
-    truncated = len(lines) > limit or any(len(part) >= chunk_limit for part in fetched)
+    truncated = (
+        len(lines) > limit
+        or any(len(part) >= chunk_limit for part in fetched)
+        or any(retained_source_lines(chunk) is None for chunk in chunks)
+    )
     return lines[:limit], truncated
 
 

@@ -72,7 +72,7 @@ def _chunk(path: str, start: int, scope: str, content: str) -> dict[str, Any]:
     return {
         "path": path,
         "start_line": start,
-        "end_line": start + content.count("\n"),
+        "end_line": start + len(content.splitlines()) - 1,
         "scope": scope,
         "content": content,
         "symbol_ids": [],

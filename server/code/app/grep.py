@@ -32,6 +32,7 @@ from server.code.app.spans import (
     start_stage_wall,
 )
 from server.code.domain import deadline as code_deadline
+from server.code.domain.symbol_body import retained_source_lines
 from server.code.store.index import CodeRepo
 from server.core.caller_regex import compile_caller_regex
 from server.core.ch import caller_shaped, class_timeout_s
@@ -330,7 +331,7 @@ async def _grep_lines(
         anchors=len(neighbours),
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
-        **_partial_fields(budget),
+        **_line_coverage_fields(chunks, budget),
     )
 
 
@@ -398,7 +399,7 @@ async def _grep_neighbours(
 
 # server/code/domain/extract/chunker.py::_split_oversized prefixes every
 # window after the first with this marker + the unit's header line.
-_CONTINUED_PREFIX = "// … continued from "
+_CONTINUED_PREFIXES = ("// … continued from ", "# … continued from ", "/* … continued from ")
 
 # Most chunk text the line step scans per call: 200 chunks of at most
 # LOOM_CODE_CHUNK_MAX_CHARS (6000) is 1.2 MB, so 2 MB leaves room for older, larger
@@ -427,15 +428,13 @@ def _matching_lines(
         scanned += len(content)
         if scanned > _LINE_SCAN_MAX_CHARS:
             return matches, True
-        lines = content.splitlines()
-        # a continuation window of an oversized unit opens with a synthetic
-        # "// … continued from <header>" line that is not in the file: drop
-        # it so line numbers stay exact and the header cannot re-match
-        if lines and lines[0].startswith(_CONTINUED_PREFIX):
-            lines = lines[1:]
+        lines = retained_source_lines(c)
+        if lines is None:
+            continue
         scope = str(c["scope"] or "")
         span = spans.get((str(c["path"]), scope), (0, 0)) if scope else (0, 0)
         for off, line in enumerate(lines):
+            line = line.removesuffix("\n").removesuffix("\r")
             hay = line if input.case_sensitive else line.lower()
             hit = line_re.search(line) if line_re is not None else (needle in hay)
             if not hit:
@@ -668,7 +667,7 @@ async def _unit_spans(
         else:
             spans[key] = (min(prev[0], start) if start else prev[0], max(prev[1], end))
             windowed.add(key)
-        if str(c.get("content") or "").startswith(_CONTINUED_PREFIX):
+        if str(c.get("content") or "").startswith(_CONTINUED_PREFIXES):
             windowed.add(key)
         sym_ids.setdefault(key, []).extend(str(s) for s in (c.get("symbol_ids") or []) if s)
     ids = list(dict.fromkeys(s for key in windowed for s in sym_ids.get(key, [])))
@@ -892,7 +891,7 @@ async def _grep_message(
         note=note.strip().rstrip(";"),
         trace_run_id=trace_run_id,
         **verdict_fields,
-        **_partial_fields(budget),
+        **_line_coverage_fields(chunks, budget),
     )
 
 
@@ -952,6 +951,19 @@ def _statement_matches(
 def _notes(*parts: str) -> str:
     """Non-empty notes joined with '; ', each stripped of a trailing ';'."""
     return "; ".join(p for p in (str(x).strip().rstrip(";").strip() for x in parts) if p)
+
+
+def _line_coverage_fields(
+    chunks: list[dict[str, Any]], budget: code_deadline.Budget | None
+) -> dict[str, Any]:
+    fields = _partial_fields(budget)
+    if any(retained_source_lines(chunk) is None for chunk in chunks):
+        fields["partial"] = True
+        fields["partial_reason"] = _notes(
+            fields.get("partial_reason", ""),
+            "some indexed chunks have no exact source line mapping; inspect the source file",
+        )
+    return fields
 
 
 _MESSAGE_FALLBACK_NOTE = (

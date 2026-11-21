@@ -58,11 +58,11 @@ def grep_chunks_sql(cond: str, prefix_clause: str, path_sql: str, extra_settings
     """mode=matches: whole chunk rows in (path, start_line) order, chunk_id
     breaking ties so the page edge is deterministic."""
     inner = newest_live(
-        "path, scope, symbol_ids, start_line, end_line, content, chunk_id",
+        "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id",
         _where(cond, prefix_clause, path_sql),
     )
     return f"""
-            SELECT path, scope, symbol_ids, start_line, end_line, content
+            SELECT path, scope, symbol_ids, kind, start_line, end_line, content
             FROM {inner}
             ORDER BY path, start_line, chunk_id
             LIMIT {{limit:UInt32}}
@@ -94,7 +94,7 @@ def grep_message_sql(prefix_clause: str, path_sql: str, extra_settings: str = ""
         "                  AND multiSearchAny(content, {keywords:Array(String)})"
     )
     inner = newest_live(
-        "path, scope, symbol_ids, start_line, end_line, content, chunk_id,\n"
+        "path, scope, symbol_ids, kind, start_line, end_line, content, chunk_id,\n"
         "                       arrayCount(\n"
         "                           x -> x > 0,\n"
         "                           multiSearchAllPositionsCaseInsensitive(\n"
@@ -103,7 +103,7 @@ def grep_message_sql(prefix_clause: str, path_sql: str, extra_settings: str = ""
         _where(cond, prefix_clause, path_sql),
     )
     return f"""
-            SELECT path, scope, symbol_ids, start_line, end_line, content, shingles,
+            SELECT path, scope, symbol_ids, kind, start_line, end_line, content, shingles,
                    uniqExact(path) OVER () AS admitted_files
             FROM {inner}
             ORDER BY shingles DESC, path, start_line, chunk_id
