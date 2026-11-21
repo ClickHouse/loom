@@ -26,8 +26,10 @@ last value, and while the key is `null` `router_why` names the last transient ca
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from server.core import cell
@@ -55,6 +57,10 @@ _logged_why = ""
 # Whether this process runs the background reader; without it reads are on demand.
 _background = False
 _read: asyncio.Task[None] | None = None
+
+# A placement diagnostic never queues behind another observation in this process.
+_capacity_reading = False
+_CAPACITY_MAX_BYTES = 8192  # not a setting: six bounded identity/limit/time fields
 
 
 def router_url() -> str:
@@ -224,6 +230,82 @@ async def _ask(c: httpx.AsyncClient) -> tuple[str, bool | None, str, bool]:
     return (state if state in (ATTACHING, SERVING) else OTHER), True, "", False
 
 
+async def placement_capacity() -> dict[str, object]:
+    """Fresh own-cell placement evidence for the authorized opt-in health answer."""
+    import httpx
+
+    from server.clients._vendor import read_capped
+
+    global _capacity_reading
+    unknown: dict[str, object] = {
+        "status": "unknown",
+        "source": "router",
+        "reason": "placement evidence unavailable",
+    }
+    name, deployment_id = settings.cell, cell.deployment_id()
+    if not cell.NAME.fullmatch(name) or not deployment_id or unset():
+        return unknown
+    if _capacity_reading:
+        return {**unknown, "reason": "a capacity observation is already in progress"}
+    _capacity_reading = True
+    limit = float(settings.cell_router_timeout_s)
+    try:
+        async with (
+            asyncio.timeout(limit),
+            httpx.AsyncClient(timeout=limit, follow_redirects=False) as client,
+        ):
+            async with client.stream(
+                "GET",
+                f"{router_url()}/cells/v1/cells/{name}/capacity",
+                headers={"Authorization": f"Bearer {settings.cell_router_token}"},
+            ) as response:
+                if response.status_code != 200:
+                    return unknown
+                raw = await read_capped(response, _CAPACITY_MAX_BYTES)
+            answer = (
+                _placement_evidence(json.loads(raw), name, deployment_id)
+                if raw is not None
+                else None
+            )
+            return (
+                {"status": "known", "source": "router", **answer} if answer is not None else unknown
+            )
+    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError, ValueError):
+        return unknown
+    finally:
+        _capacity_reading = False
+
+
+def _placement_evidence(value: object, name: str, deployment_id: str) -> dict[str, object] | None:
+    """Trust only the recorded identity and the router's complete typed public answer."""
+    if not isinstance(value, dict) or set(value) != {
+        "cell",
+        "deployment_id",
+        "placed_orgs",
+        "placements_max",
+        "closed",
+        "observed_at",
+    }:
+        return None
+    if value["cell"] != name or value["deployment_id"] != deployment_id:
+        return None
+    placed, maximum, observed = value["placed_orgs"], value["placements_max"], value["observed_at"]
+    if type(placed) is not int or not 0 <= placed <= cell.PLACEMENTS_MAX:
+        return None
+    if maximum is not None and (
+        type(maximum) is not int or not 0 <= maximum <= cell.PLACEMENTS_MAX
+    ):
+        return None
+    if type(value["closed"]) is not bool or not isinstance(observed, str) or len(observed) > 64:
+        return None
+    try:
+        if datetime.fromisoformat(observed).tzinfo is None:
+            return None
+    except ValueError:
+        return None
+    return dict(value)
+
+
 def start_reader() -> asyncio.Task[None]:
     """The background reader of a server process with `LOOM_CELL` set: it waits for the
     `first` row, asks on a first cell until it has read `serving`, and ends on a later
@@ -264,6 +346,7 @@ def start_reader() -> asyncio.Task[None]:
 
 def _reset_for_tests() -> None:
     global _answer, _serving, _router, _router_why, _unauthorized_since, _background, _read
-    global _logged_why
+    global _logged_why, _capacity_reading
+    _capacity_reading = False
     _answer, _serving, _router, _router_why = None, False, None, ""
     _unauthorized_since, _background, _read, _logged_why = None, False, None, ""

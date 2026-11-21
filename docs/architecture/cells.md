@@ -277,6 +277,19 @@ time, immediately refusing a concurrent read instead of queuing it. Reads use th
 directory's existing connection and statement bounds. A missing or revoked cell credential
 refuses; an unreadable directory answers 503 without reporting a count. The read neither places an org nor changes a limit.
 
+An unscoped, verified platform admin requests this cell's placement evidence with
+`GET /v1/health?include=capacity`. Its `capacity.placement` block reports `status: known`,
+`source: router` and the six fields above only after both cell and deployment identity
+match this process's recorded identity. Missing configuration, a failed router read,
+an older router without the capacity route, an invalid answer or a concurrent observation
+reports `status: unknown` with a fixed reason and no count or quota fields. Reads use this
+cell's router credential, the configured router timeout, an 8 KiB response-body bound and
+one observation per process without a waiter queue. Responses carry
+`Cache-Control: no-store`. Anonymous, invalid, revoked and namespace-scoped tokens receive
+no capacity block and trigger no capacity read. Default health and readiness probes are unchanged.
+This block reports placement limits; it contains no write rates, namespace row counts,
+footprint estimates or vector admission metrics.
+
 With the directory unreachable, rules 1 to 4 route from the router's cached cells; a
 lookup of an org it has not cached and a placement answer 503.
 
@@ -1001,7 +1014,7 @@ read-only scope, lists any tenancy row the directory does not place.
   503 with `Retry-After`; past the quota, a call for an org the directory does not place
   yet answers 503 as for a closed cell (an operator's `loom cell place` is exempt from
   the rate, as above); and each cell's placements are reported in
-  `/v1/health?include=capacity` and by `loom doctor`, which names a cell with no quota.
+  `/v1/health?include=capacity` to an unscoped, verified platform admin.
   Every org the first cell's attach places (step 2's snapshot, its configured orgs included,
   and step 4's) is counted but never refused by quota or a closed cell, since the cell
   already serves it and refusing it would strand its data (one past `ORG_MAX_BYTES` the
@@ -1509,9 +1522,6 @@ participate in this protocol.
   orgs, its identity provider OIDC client and SCIM token, and its router credential
   (`LOOM_CELL_ROUTER_URL`, `LOOM_CELL_ROUTER_TOKEN`, which its pods hold, and
   `LOOM_CELL_ROUTER_TIMEOUT_S`).
-- Each cell reports writes per second, rows per namespace and bytes per key in
-  `/v1/health?include=capacity`, against about 13.6 KB a key in ClickHouse and 6.8 KB in
-  Postgres ([Memory at scale](../benchmarks/results.md#memory-at-scale)).
 - **An org stays in its cell.** Moving an org between cells is a design of its own: it
   needs the org's writes fenced in every process of the cell, a copy of every store that
   counts nothing twice, and a verified removal.

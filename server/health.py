@@ -448,6 +448,10 @@ async def health(request: Request, response: Response, include: str = "") -> dic
     out["ratelimit"] = _ratelimit_block()
     if "mirrors" in requested and settings.code_intel_enabled:
         out["mirrors"] = await _mirrors_block()
+    if "capacity" in requested and platform_admin:
+        from server.core import cell_router
+
+        out["capacity"] = {"placement": await cell_router.placement_capacity()}
     out.update(_included_blocks(requested))
     return out
 
