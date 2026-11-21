@@ -35,13 +35,14 @@ async def _request(auth, *, bag=True, tail=True, protected=True):
 
 
 @pytest.fixture
-def native(monkeypatch):
+def native(monkeypatch, request):
     from server.knowledge.store import mirror_latch
     from server.settings import settings
 
     monkeypatch.setattr(settings, "auth_required", True)
     monkeypatch.setattr(settings, "knowledge_mirrored_sources_enabled", True)
     auth = principal("viewer", org="org", namespaces=("allowed",), service_account=False)
+    kind = getattr(request, "param", "gdrive")
     source = SimpleNamespace(
         namespace="allowed",
         name="personal",
@@ -50,7 +51,7 @@ def native(monkeypatch):
         credential_mode="connected",
         owner_subject="canonical@example.test",
         access=MIRRORED_ACCESS,
-        kind="gdrive",
+        kind=kind,
     )
     state = SimpleNamespace(
         auth=auth,
@@ -70,8 +71,12 @@ def native(monkeypatch):
     hit = live_search.live_provider_search.LiveProviderHit(
         "private-id",
         "Private title",
-        "https://drive.google.com/file/d/private-id",
-        "gdrive",
+        {
+            "gdrive": "https://drive.google.com/file/d/private-id",
+            "notion": "https://notion.so/private-id",
+            "linear": "https://linear.app/document/private-id",
+        }[kind],
+        kind,
         "private excerpt",
     )
 
@@ -156,6 +161,7 @@ async def test_live_search_requires_real_request_privacy_ownership(native, missi
     assert not native.started.is_set()
 
 
+@pytest.mark.parametrize("native", ["gdrive", "notion", "linear"], indirect=True)
 async def test_live_search_keeps_only_asker_connected_authorized_sources_and_original_authority(
     native,
 ):
@@ -168,6 +174,7 @@ async def test_live_search_keeps_only_asker_connected_authorized_sources_and_ori
             {"owner_subject": "other@example.test"},
             {"active": False},
             {"access": "shared"},
+            {"kind": "recording"},
         )
     ] + [native.source]
     async with _request(native.auth):
@@ -175,6 +182,7 @@ async def test_live_search_keeps_only_asker_connected_authorized_sources_and_ori
         assert result is not None
         assert len(native.resolutions) == len(result.contributions) == 1
         assert result.contributions[0].authority is native.authorities[0]
+        assert all(hit.provider == native.source.kind for hit in result.hits)
         assert result.deadline == native.deadline
         assert await live_search.publish(result) is result
         assert result.fresh()

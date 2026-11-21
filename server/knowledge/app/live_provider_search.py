@@ -443,8 +443,8 @@ async def revalidate(
                     "live membership",
                     max_bytes=settings.knowledge_live_search_response_max_bytes,
                 )
-                row = data.get("document")
-                return isinstance(row, dict) and _linear_member(source, hit.id, row)
+                document = data.get("document")
+                return isinstance(document, dict) and _linear_member(source, hit.id, document)
         except (VendorError, linear.LinearError):
             return False
         return False
