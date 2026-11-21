@@ -46,7 +46,7 @@ A leg that fails returns `{"error": ...}` under its own key; the other sections 
 | `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row as stored), `full`, `unit`, `none`.                                                                        |
 | `page`    | A `memory.next_page` handle from an earlier response.                                                                                                                       |
 | `explain` | A `why:` note per memory hit; nothing withheld.                                                                                                                             |
-| `live`    | Default false. Add ephemeral hits from the asker's connected sources on an untagged first-page search.                                                                     |
+| `live`    | Default false. Add ephemeral hits from the asker's connected sources on an untagged first-page search.                                                                      |
 
 ### Live connected sources
 
