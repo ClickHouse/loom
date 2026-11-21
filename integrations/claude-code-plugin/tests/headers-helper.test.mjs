@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 process.env.LOOM_HOOK_NO_MAIN = "1";
-import { checkoutScope, headersFor, hookToken, projectDir } from "../bin/loom-mcp-headers.mjs";
+import { checkoutScope, headersFor, hookToken } from "../bin/loom-mcp-headers.mjs";
 import { cachePathFor, scopeHeader } from "../lib/repo-scope.mjs";
 import { execSync } from "node:child_process";
 import { hostEnv, withTmpdir } from "./host-env.mjs";
@@ -35,6 +35,19 @@ function run(env, box = sandbox()) {
     timeout: 5000,
   });
   return { ...box, out, parsed: JSON.parse(out) };
+}
+
+function publishSession(box, cwd, session) {
+  const module = new URL("../lib/mcp-project.mjs", import.meta.url).href;
+  const code = `import { publishProject } from ${JSON.stringify(module)}; if (!publishProject(JSON.parse(process.argv[1]), { pid: Number(process.argv[2]) })) process.exit(1);`;
+  execFileSync(
+    process.execPath,
+    ["--input-type=module", "-e", code, JSON.stringify({ cwd, session_id: session }), String(process.pid)],
+    {
+      env: hostEnv({ PATH: process.env.PATH, HOME: box.home, TMPDIR: box.tmp }),
+      timeout: 5000,
+    },
+  );
 }
 
 test("headersFor: a bearer for a token, an empty object for none", () => {
@@ -74,8 +87,7 @@ test("the plugin's .mcp.json uses the helper and a localhost default URL", () =>
   const block = JSON.parse(fs.readFileSync(fileURLToPath(new URL("../.mcp.json", import.meta.url)), "utf8"));
   const loom = block.mcpServers.loom;
   assert.equal(loom.type, "http");
-  // the toolset is a setting; the fragment carries the project directory to the helper
-  assert.equal(loom.url, "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}");
+  assert.equal(loom.url, "${user_config.server_url}");
   assert.equal(loom.headersHelper, 'node "${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs"');
   assert.equal(loom.headers, undefined, "no static header: the helper supplies it");
 });
@@ -100,9 +112,10 @@ test("headersFor: the scope header rides beside the bearer, only for an indexed 
   assert.deepEqual(scopeHeader({ indexed: true, org: "o" }), {}, "no namespace, no header");
 });
 
-test("the helper reads the shunt's cache for the checkout it runs in", () => {
+test("the helper reads the shunt's cache for its session checkout", () => {
   const repo = gitRepo();
   const box = { ...sandbox(), cwd: repo };
+  publishSession(box, repo, "cache-session");
   fs.writeFileSync(
     cachePathFor(repo, box.tmp),
     JSON.stringify({
@@ -138,38 +151,26 @@ test("the helper reads the shunt's cache for the checkout it runs in", () => {
   assert.deepEqual(run({ LOOM_API_KEY: "env.tok", LOOM_MCP_CODE_SCOPE: "off" }, box).parsed, {
     Authorization: "Bearer env.tok",
   });
-  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, { ...box, cwd: sandbox().cwd }).parsed, {
+  publishSession(box, sandbox().cwd, "outside");
+  assert.deepEqual(run({ LOOM_API_KEY: "env.tok" }, box).parsed, {
     Authorization: "Bearer env.tok",
   });
 });
 
-test("the helper names the project directory in its URL's fragment, not the checkout it runs in", () => {
-  // Claude Code starts the helper in the plugin root, which may sit inside
-  // another checkout, and hands it the entry's URL with the project
-  // directory substituted as it is.
+test("the helper uses private session context instead of the plugin checkout", () => {
   const project = gitRepo();
   const pluginCheckout = gitRepo();
   const box = { ...sandbox(), cwd: pluginCheckout };
   const entry = (namespace) => JSON.stringify({ ts: Date.now(), indexed: true, org: "clickhouse", namespace });
   fs.writeFileSync(cachePathFor(project, box.tmp), entry("code-project"));
   fs.writeFileSync(cachePathFor(pluginCheckout, box.tmp), entry("code-plugin"));
-  const url = (dir) => ({ LOOM_API_KEY: "env.tok", CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?toolset=coding#${dir}` });
-  assert.deepEqual(run(url(project), box).parsed, {
+  publishSession(box, project, "project");
+  const env = { LOOM_API_KEY: "env.tok", CLAUDE_CODE_MCP_SERVER_URL: "http://localhost:7777/mcp?toolset=coding" };
+  assert.deepEqual(run(env, box).parsed, {
     Authorization: "Bearer env.tok",
     "X-Loom-Code-Scope": "clickhouse/code-project",
   });
-  // an empty or unsubstituted fragment names no checkout, never the cwd's
-  for (const dir of ["", "${CLAUDE_PROJECT_DIR}"])
-    assert.deepEqual(run(url(dir), box).parsed, { Authorization: "Bearer env.tok" }, dir);
-  // a URL without a fragment (the Codex entry): the checkout the helper runs in
-  const codex = { LOOM_API_KEY: "env.tok", CLAUDE_CODE_MCP_SERVER_URL: "http://h/mcp?toolset=coding" };
-  assert.equal(run(codex, box).parsed["X-Loom-Code-Scope"], "clickhouse/code-plugin");
-});
-
-test("projectDir: the fragment as it is, whatever the path holds", () => {
-  const dir = `/home/me/odd #50% $(id) \`x\` "q" it's`;
-  assert.equal(projectDir({ CLAUDE_CODE_MCP_SERVER_URL: `http://h/mcp?toolset=coding#${dir}` }), dir);
-  assert.equal(projectDir({}), process.cwd());
+  assert.deepEqual(run({ ...env, CLAUDE_CODE_MCP_SERVER_URL: "https://invalid.example" }, box).parsed, {});
 });
 
 test("checkoutScope: cache miss → one bounded lookup that also fills the cache", async () => {

@@ -2,7 +2,7 @@
   "mcpServers": {
     "loom": {
       "type": "http",
-      "url": "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}",
+      "url": "${user_config.server_url}",
       "headersHelper": "node \"${CLAUDE_PLUGIN_ROOT}/bin/loom-mcp-headers.mjs\""
     }
   }

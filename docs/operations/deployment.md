@@ -827,9 +827,10 @@ and what it leaves:
   `code.symbol`) lists code tools that refuse. The plugins, `loom install` for Claude Code,
   Codex and Cursor, the lines `loom up` and `loom init` print, and the dashboard's Claude Code,
   Codex and Cursor snippets ask for `coding`. Point those entries at `core` (with `tasks`
-  added where agents use the task inbox): the Claude Code plugin's `toolset` option
+  added where agents use the task inbox): set `?toolset=core` in the Claude Code
+  plugin's complete `server_url` option, keeping any proxy prefix before `/mcp`
   ([options](../features/integrations/claude-code.md#install)),
-  `loom install --toolset core`, or for the Codex plugin a `[mcp_servers.loom]` override in
+  run `loom install --toolset core`, or for the Codex plugin use a `[mcp_servers.loom]` override in
   `~/.codex/config.toml` that keeps the plugin's `http_headers_helper` line, since the
   override replaces the entry whole
   ([the server](../features/integrations/codex.md#the-server)).

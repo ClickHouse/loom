@@ -193,7 +193,7 @@ test("the toolset decides: none on assistant alone, no writes on readonly, as th
     assert.deepEqual(toolsetAllows(v), { writes: false }, v);
   assert.deepEqual(toolsetAllows("core+readonly"), { writes: true });
   assert.deepEqual(toolsetAllows("core,coding"), { writes: true });
-  assert.deepEqual(toolsetAllows(undefined), { writes: true });
+  assert.equal(toolsetAllows(undefined), null);
 });
 
 test("a joiner after a letter goes, whatever selector stood between them", () => {

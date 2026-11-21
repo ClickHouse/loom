@@ -97,6 +97,39 @@ day. They can remain longer, especially when no new session starts. The log of w
 tool calls the plugin redirected or let through (no prompt or file content) stays until
 you remove it (`LOOM_SHUNT_LOG=off` stops it).
 
+Claude Code's SessionStart also writes `loom-mcp-project-<hash>.json` in the system
+temp directory (normally `/tmp/loom-mcp-project-<hash>.json` on Linux), mode 0600.
+It holds the checkout's absolute working directory, session ID, native client PID,
+parent PID, process name and OS process creation marker. It contains no credential
+or transcript. The MCP header helper uses it to find this client's checkout and
+code namespace. It survives SessionEnd; a later SessionStart tries to prune it after
+one day without a write. This is best-effort cleanup, with no deletion deadline.
+Codex does not write or read this artifact.
+
+To match that native client identity, Claude Code reads `/proc/<pid>/stat` and
+`/proc/sys/kernel/random/boot_id` on Linux. On macOS it runs:
+
+```sh
+ps -p <pid> -o ppid= -o lstart= -o ucomm=
+```
+
+On Windows it resolves `System32\cscript.exe` under the absolute, drive-qualified
+`SystemRoot` from the parent OS environment. It runs that host with
+`//nologo //E:JScript //B`, the plugin's `assets/mcp-project-win32.js` file and the
+validated PID as separate arguments. Missing or malformed `SystemRoot` supplies
+no scope; the executable is never searched for in the checkout.
+That static helper queries local WMI for `Name`, `ParentProcessId` and `CreationDate`.
+It requires exactly one result and returns the name, parent PID and an exact UTC
+FILETIME creation marker. A blocked script host or WMI query supplies no checkout
+scope; the plugin does not enable components or change scripting policy.
+
+Each subprocess has a one-second timeout and a 16 KiB output limit. These queries
+read the process name, parent PID and creation marker, without collecting process
+command lines or environments. The header helper checks at most three ancestors,
+through known shells to the nearest client, and waits nominally 1.5 seconds for its
+checkout context; one process query can finish after that interval. Codex's fixed
+MCP entry skips these process queries.
+
 Two skills reach other services, each only when you ask for it. The `loom-status` skill
 can install Node.js from NodeSource through apt, dnf or yum, or from apk or Homebrew, and
 runs that installer only after you agree. The `improve-loom-for-my-repo` skill searches
@@ -143,7 +176,7 @@ In short:
 ```bash
 claude plugin marketplace add ClickHouse/loom        # or a path to a local clone
 claude plugin install loom@loom \
-  --config server_url=https://loom.example.com \
+  --config "server_url=https://loom.example.com/mcp?toolset=coding" \
   --config token=<writer JWT>
 ```
 
@@ -151,15 +184,21 @@ Install either this plugin or `loom-code-skill`, not both; the plugin already sh
 `loom-code` skill. Update with `claude plugin update loom@loom`: hooks ship with the
 plugin, not the server.
 
-| Option        | Default                                        | Meaning                                                                               |
-| ------------- | ---------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `server_url`  | `$LOOM_BASE_URL`, else `http://localhost:7777` | Loom base URL, no trailing slash                                                      |
-| `token`       | empty                                          | a writer JWT, stored as a sensitive value                                             |
-| `toolset`     | `coding`                                       | the MCP listing (`?toolset=`), e.g. `coding+tracker`; every op stays callable by name |
-| `local_first` | `false`                                        | `true` stands the code shunt down (same as `LOOM_CODE_LOCAL_FIRST=on`)                |
+| Option        | Default                                                                              | Meaning                                                                |
+| ------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| `server_url`  | `$LOOM_BASE_URL/mcp?toolset=coding`, else `http://localhost:7777/mcp?toolset=coding` | Full MCP endpoint; include the proxy prefix and desired toolset        |
+| `token`       | empty                                                                                | a writer JWT, stored as a sensitive value                              |
+| `local_first` | `false`                                                                              | `true` stands the code shunt down (same as `LOOM_CODE_LOCAL_FIRST=on`) |
 
-Every option is optional; Claude Code asks once, and an empty answer falls back to the
-[lookups below](#configuration).
+The endpoint query chooses the listing, for example `?toolset=coding+tracker`. Without
+a recognized toolset the server chooses its configured default. The hooks do not infer that default.
+
+An origin-only `server_url` needs reconfiguration with `/mcp?toolset=coding` appended
+(after any proxy prefix). Hooks report the required endpoint and refuse network work
+until it is valid. Claude Code can still attempt an unauthenticated MCP connection.
+
+Claude Code asks once for optional settings. Keep the default endpoint or supply a
+complete URL. An empty token uses the [lookups below](#configuration).
 
 - **Install token.** The MCP header helper cannot see install options, so the first hook
   of a session copies the token and URL into `~/.loom/config.json` (0600). It does so only
@@ -338,19 +377,19 @@ hook matching, request execution, nonempty context and delivery to the agent.
 
 ## Configuration
 
-**Where the hooks find the server and the identity.** Environment first, then the install
-option, then `~/.loom/config.json`, then the token's claims, then the defaults
-(`lib/loom-client.mjs`: `resolveServerUrl`, `resolveToken`, `resolveScope`):
+**Where the hooks find the server and the identity.** The MCP endpoint selects the
+control-plane base, including its proxy prefix. Credentials and identity follow the
+lookups below (`lib/loom-client.mjs`):
 
 | What      | Lookup order                                                                                             |
 | --------- | -------------------------------------------------------------------------------------------------------- |
-| server    | `LOOM_BASE_URL` → `server_url` option → `config.json` `url` → `http://localhost:7777`                    |
+| server    | the base of `server_url`; its default uses `LOOM_BASE_URL`, else `http://localhost:7777`                 |
 | token     | `LOOM_API_KEY` → `token` option → `config.json` `token` → `~/.loom/token` (moved by `LOOM_API_KEY_FILE`) |
 | org       | `LOOM_ORG` → `config.json` `org` → the token's `org` claim → `default`                                   |
 | namespace | `LOOM_NAMESPACE` → `config.json` `namespace` → the token's first non-wildcard namespace → `coding`       |
 | agent     | `LOOM_AGENT` → `config.json` `agent` → `claude-code`                                                     |
 
-For a remote server the hooks and the header helper need only one file
+Store the remote server's token in one file for the hooks, helper and CLI
 (`LOOM_CONFIG_FILE` moves it):
 
 ```json
@@ -358,8 +397,8 @@ For a remote server the hooks and the header helper need only one file
 ```
 
 The MCP entry does not read it: its URL is the `server_url` install option, whose
-default is `LOOM_BASE_URL`, else localhost. Set one of those too, or the entry sends the
-file's token to localhost and the primer says so.
+default appends `/mcp?toolset=coding` to `LOOM_BASE_URL`, else localhost. Set the
+endpoint too; a config file alone does not select the plugin's destination.
 
 **Project scoping.** The project is the basename of the git toplevel
 (`LOOM_PROJECT_NAME` overrides it). With the default `LOOM_PROJECT_SCOPE=tag`, every
@@ -371,11 +410,9 @@ not share memory.
 
 ## The MCP entry and its header helper
 
-The plugin's `.mcp.json` points at `<server_url>/mcp?toolset=<toolset>` and gets its
-headers from `bin/loom-mcp-headers.mjs`. Claude Code runs the helper in the plugin root,
-so the URL ends in `#${CLAUDE_PROJECT_DIR}`: Claude Code hands the helper the URL with the
-project directory filled in, and never sends the fragment to the server. The helper
-sends:
+The plugin's `.mcp.json` uses the complete `server_url` value. The header helper runs
+in the plugin root, so it reads checkout context from SessionStart's private state
+rather than its working directory. It sends:
 
 - `Authorization: Bearer <token>`, from the same lookup as the hooks except the install
   option (see above). With no token, the helper performs the same first-session sign-up
@@ -385,12 +422,25 @@ sends:
   resolves to. The server applies it to every `code.*` call that names no namespace, so
   the model does not have to pass one. `LOOM_MCP_CODE_SCOPE=off` disables it.
 
+The MCP header helper uses the latest SessionStart checkout directory, held with
+the session identifier, client PID, parent PID, process name and OS process creation
+marker in a private temporary file. This file contains no token and survives session
+end. It is keyed to the client process's creation identity. The helper checks only
+its own live process ancestors and waits for a
+bounded interval. An unavailable process identity, missing context, unindexed checkout
+or failed repository lookup leaves the connection without an implicit code scope;
+pass org and namespace explicitly in that case. A helper error does not prevent
+Claude Code from attempting an MCP connection. A later SessionStart attempts to
+remove state files untouched for a day.
+
 The checkout's repository is found from its remotes (`origin`, then `upstream`, then the
 rest) through `code.repos`. A GitHub fork with no index of its own resolves to its
 parent's index when you can read it. `LOOM_CODE_REPO=<owner>/<name>` or a bare name (or
 the `code_repo` option, or `code_repo` in `~/.loom/config.json`) is the fallback candidate
 after the remotes: it serves a session outside any git checkout, or a checkout with no
-index, and gives it that repository's index and scope header. The helper's own lookup is bounded at 2.5 s; a miss costs only the header.
+index, and gives it that repository's index and scope header. The repository lookup
+uses request timeouts, separately from the local context wait; a miss leaves the
+scope header absent.
 See [code index overview](../code-index/overview.md) and the
 [MCP reference](../../reference/mcp.md) for how the server uses the scope.
 

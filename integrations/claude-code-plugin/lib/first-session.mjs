@@ -141,7 +141,7 @@ export async function ensureCredential({
 } = {}) {
   const plan = planSignup(env, { hasToken });
   if (!plan.run) return { status: hasToken ? "present" : "off", reason: plan.reason };
-  const base = String(serverUrl || "").replace(/\/+$/, "");
+  const base = String(serverUrl || "");
   if (!base) return { status: "error", reason: "no server url" };
   const configPath = paths.configPath || loomConfigPath(env);
   const dir = dirname(configPath);

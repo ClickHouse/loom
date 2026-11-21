@@ -82,7 +82,7 @@ function runHook(payload, { tmp, url = "http://127.0.0.1:9", env = {} }) {
     child.stdout.on("data", (c) => {
       out += c;
     });
-    child.on("close", () => {
+    child.on("close", (exitCode, signal) => {
       let log = "";
       try {
         log = fs.readFileSync(logPath(tmp), "utf8");
@@ -90,7 +90,13 @@ function runHook(payload, { tmp, url = "http://127.0.0.1:9", env = {} }) {
         /* no decision logged */
       }
       const hso = out ? JSON.parse(out).hookSpecificOutput : {};
-      resolve({ deny: hso.permissionDecisionReason ?? null, updatedInput: hso.updatedInput ?? null, log });
+      resolve({
+        deny: hso.permissionDecisionReason ?? null,
+        updatedInput: hso.updatedInput ?? null,
+        log,
+        exitCode,
+        signal,
+      });
     });
     child.stdin.end(JSON.stringify(payload));
   });
@@ -385,9 +391,20 @@ test("a flush leaves another reporting scope's batch alone", async () => {
     // Another repository's batch, and one this repository's lines would go to under another server.
     const others = [pendingPath(tmp, url, "X", "code-other"), pendingPath(tmp, "http://127.0.0.1:9", "Y")];
     for (const f of others) fs.writeFileSync(f, plantedBatch, { mode: 0o600 });
-    assert.ok((await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting })).deny);
+    const result = await runHook(readOf(dir, "src/a.cpp"), { tmp, url, env: reporting });
+    assert.ok(result.deny);
     await settle();
-    assert.ok(outcomes(seen).length >= 1, "this scope's own batch is posted");
+    assert.ok(
+      outcomes(seen).length >= 1,
+      `this scope's own batch is posted: ${JSON.stringify({
+        exitCode: result.exitCode,
+        signal: result.signal,
+        requests: seen.slice(-5).map(({ url, body }) => ({
+          path: url.slice(0, 80),
+          action: String(body.action ?? "").slice(0, 40),
+        })),
+      })}`,
+    );
     assert.equal(carriesPlanted(seen), false);
     for (const f of others) assert.equal(fs.readFileSync(f, "utf8"), plantedBatch);
   });

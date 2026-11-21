@@ -4,17 +4,19 @@
 // stores the values with Claude Code and exports them to hook processes as
 // CLAUDE_PLUGIN_OPTION_SERVER_URL / CLAUDE_PLUGIN_OPTION_TOKEN. The MCP entry
 // takes the URL by `${user_config.server_url}` substitution, but its header
-// helper is not a hook and receives no option (measured on 2.1.273): it reads
-// LOOM_API_KEY, then ~/.loom/config.json, then ~/.loom/token. So the first hook
+// helper is not a hook and receives no option. It reads available credential
+// env vars, then ~/.loom/config.json, then ~/.loom/token. So the first hook
 // of a session writes the option token — and the URL beside it — into
-// ~/.loom/config.json when nothing else already provides a token. Claude
-// Code re-runs the helper on a 401 and retries the call once, so the first
-// tool call of the first session finds it. Idempotent, 0600, never throws.
+// ~/.loom/config.json when nothing else already provides a token. The helper
+// waits briefly for that file. Writes are idempotent and private; an invalid
+// endpoint refuses network work with an actionable configuration notice.
 
+import { claudeEndpoint, EndpointError, parseEndpoint } from "./mcp-endpoint.mjs";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import {
+  hookClient,
   loomConfigPath,
   loomTokenPath,
   normalizeUrl,
@@ -24,14 +26,16 @@ import {
 } from "./loom-client.mjs";
 import { readJsonFile, removeFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
-/** The server Claude Code's MCP entry was told to call: the install option,
- *  else `LOOM_BASE_URL`, which the `server_url` default reads. "" when
- *  neither names one and the entry falls back to localhost. */
+/** The endpoint's control-plane base: an explicit install value, else
+ *  the environment default. "" when neither names a server. */
 function namedServerUrl(env) {
-  return normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL);
+  if (entryIsFixed() || hookClient(process.argv, env) !== "claude-code") {
+    return normalizeUrl(env.LOOM_BASE_URL || env.CLAUDE_PLUGIN_OPTION_SERVER_URL);
+  }
+  return env.CLAUDE_PLUGIN_OPTION_SERVER_URL || env.LOOM_BASE_URL ? claudeEndpoint(env).base : "";
 }
 
-/** The URL Claude Code's MCP entry calls. */
+/** The control-plane base of Claude Code's MCP endpoint. */
 export function mcpServerUrl(env = process.env) {
   return namedServerUrl(env) || "http://localhost:7777";
 }
@@ -43,16 +47,16 @@ export function entryIsFixed() {
   return Boolean(pluginDefaults().server_url);
 }
 
-/** Whether two base URLs name one server: origins compared, with the
+/** Whether two control-plane bases match, including proxy prefixes, with the
  *  loopback spellings folded. Unparsable values compare as strings. */
 export function sameServer(a, b) {
-  const origin = (u) => {
-    const parsed = new URL(normalizeUrl(u));
+  const base = (u) => {
+    const parsed = new URL(parseEndpoint(`${String(u || "").trim()}/mcp`).url);
     const host = parsed.hostname === "127.0.0.1" || parsed.hostname === "[::1]" ? "localhost" : parsed.hostname;
-    return `${parsed.protocol}//${host}${parsed.port ? `:${parsed.port}` : ""}`;
+    return `${parsed.protocol}//${host}${parsed.port ? `:${parsed.port}` : ""}${parsed.pathname.slice(0, -4)}`;
   };
   try {
-    return origin(a) === origin(b);
+    return base(a) === base(b);
   } catch {
     return normalizeUrl(a) === normalizeUrl(b);
   }
@@ -67,14 +71,25 @@ const installStatePath = (tmp) => tmpStatePath("install", PLUGIN_ROOT, { tmp });
  *  script, which the agent runs from a shell that carries no option; an
  *  install without the option removes a stale one. */
 export function saveInstallServerUrl(env = process.env, { tmp } = {}) {
-  const url = normalizeUrl(env.CLAUDE_PLUGIN_OPTION_SERVER_URL);
+  if (entryIsFixed() || hookClient(process.argv, env) !== "claude-code") return;
+  let endpoint;
+  try {
+    endpoint = claudeEndpoint(env);
+  } catch (error) {
+    if (!(error instanceof EndpointError)) throw error;
+    writeJsonFile(installStatePath(tmp), { invalid: true });
+    throw error;
+  }
+  const url = env.CLAUDE_PLUGIN_OPTION_SERVER_URL ? endpoint.base : "";
   if (url) writeJsonFile(installStatePath(tmp), { url });
   else removeFile(installStatePath(tmp));
 }
 
 /** The saved install URL, "" when no session saved one. */
 export function installServerUrl({ tmp } = {}) {
-  return String(readJsonFile(installStatePath(tmp), {}).url || "");
+  const saved = readJsonFile(installStatePath(tmp), {});
+  if (saved.invalid) throw new EndpointError();
+  return String(saved.url || "");
 }
 
 /** The server the status script checks under Claude Code: the one the MCP
@@ -107,14 +122,14 @@ export function planMaterialize(env, { configExists, configToken, tokenFileExist
  *  server. Pure. */
 export function installTokenNotice(plan, env = process.env) {
   if (String(env.LOOM_API_KEY || "").trim() || plan.write || !plan.configHasToken) return "";
-  const saved = normalizeUrl(plan.configUrl);
+  const saved = String(plan.configUrl || "").trim();
   const inUse = mcpServerUrl(env);
   if (!saved || sameServer(saved, inUse)) return "";
   const where = `Loom: ${loomConfigPath(env)} holds a token saved for ${saved}, which the loom MCP tools send to `;
   if (!namedServerUrl(env)) {
     return (
       `${where}${inUse}, the MCP entry's default, since nothing names its server. Point the entry at ` +
-      `${saved}: install with --config server_url=${saved}, or export LOOM_BASE_URL=${saved}, and restart.`
+      `${saved}: install with --config "server_url=${saved}/mcp?toolset=coding", or export LOOM_BASE_URL=${saved}, and restart.`
     );
   }
   return `${where}${inUse}. If the loom tools fail to connect, put a ${inUse} token in that file or in LOOM_API_KEY and restart.`;
@@ -130,7 +145,7 @@ export function applyPluginOptions(env = process.env, paths = {}) {
     configToken: existing.token,
     tokenFileExists: existsSync(tokenPath),
   });
-  plan.configUrl = normalizeUrl(existing.url);
+  plan.configUrl = String(existing.url || "").trim();
   plan.configHasToken = Boolean(String(existing.token || "").trim());
   if (!plan.write) return plan;
   try {

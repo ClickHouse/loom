@@ -133,9 +133,9 @@ function responsesTurn(body, res) {
 }
 
 /** The fake: the model API under /v1/messages and /v1/responses, Loom for
- *  everything else (any op answers an empty success, MCP answers 401).
+ *  everything else (optional dummy signup, other ops empty success, MCP 401).
  *  `seen` records each request's path and Authorization header. */
-async function startFake(port) {
+export async function startFake(port, { indexedRepos = [], prefix = "", signup = false } = {}) {
   const seen = [];
   const handler = (req, res) => {
     let raw = "";
@@ -147,43 +147,58 @@ async function startFake(port) {
       } catch {
         /* a non-JSON body is recorded like any other */
       }
-      const url = req.url || "";
-      seen.push({ path: url.split("?")[0], auth: req.headers.authorization || "", mode: body.mode, repos: body.repos });
+      const rawUrl = req.url || "";
+      const url = prefix && rawUrl.startsWith(prefix + "/") ? rawUrl.slice(prefix.length) : rawUrl;
+      seen.push({
+        path: rawUrl.split("?")[0],
+        url: rawUrl,
+        auth: req.headers.authorization || "",
+        scope: req.headers["x-loom-code-scope"] || "",
+        mode: body.mode,
+        repos: body.repos,
+      });
       if (url.startsWith("/v1/messages/count_tokens")) {
         res.writeHead(200, { "content-type": "application/json" });
         res.end('{"input_tokens":1}');
       } else if (url.startsWith("/v1/messages")) messagesTurn(body, res);
       else if (url.startsWith("/v1/responses")) responsesTurn(body, res);
-      else if (url.startsWith("/mcp")) {
+      else if (signup && url === "/v1/auth/agent-signup") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ token: TOKEN, namespace: "local", org: "e2e", subject: "you", claim_code: "" }));
+      } else if (url.startsWith("/mcp")) {
         // The helper's header is what is under test, not the MCP protocol.
         res.writeHead(401, { "content-type": "application/json" });
         res.end("{}");
       } else {
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ rendered: "", results: [], repos: [] }));
+        res.end(
+          JSON.stringify({ rendered: "", results: [], repos: url.startsWith("/v1/code.repos") ? indexedRepos : [] }),
+        );
       }
     });
   };
   // `localhost` resolves to ::1 first on some hosts: listen on both.
   const servers = [];
+  let boundPort = port;
   for (const host of ["127.0.0.1", "::1"]) {
     const server = http.createServer(handler);
     try {
       await new Promise((resolve, reject) => {
         server.once("error", reject);
-        server.listen(port, host, resolve);
+        server.listen(boundPort, host, resolve);
       });
       servers.push(server);
+      boundPort = server.address().port;
     } catch (e) {
       // No IPv6 here: IPv4 alone serves. Anything else (the port taken) fails.
       if (host === "127.0.0.1" || !["EADDRNOTAVAIL", "EAFNOSUPPORT"].includes(e.code)) throw e;
     }
   }
   const close = () => Promise.all(servers.map((s) => new Promise((r) => s.close(r))));
-  return { seen, close };
+  return { seen, close, url: `http://localhost:${boundPort}` };
 }
 
-function run(cmd, args, { env, cwd, timeoutMs = 180000, input = "" }) {
+export function run(cmd, args, { env, cwd, timeoutMs = 180000, input = "" }) {
   return new Promise((resolve) => {
     const child = spawn(cmd, args, { env, cwd, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
@@ -205,7 +220,7 @@ function run(cmd, args, { env, cwd, timeoutMs = 180000, input = "" }) {
 
 /** A scratch home holding only the Loom token, with HOME and USERPROFILE
  *  both pointing at it. */
-function scratch() {
+export function scratch() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "loom-e2e-"));
   const home = path.join(dir, "home");
   const work = path.join(dir, "work");
@@ -291,8 +306,10 @@ function jsonLines(text) {
   return out;
 }
 
-function baseEnv(home) {
-  const env = { ...process.env, HOME: home, USERPROFILE: home };
+export function baseEnv(home) {
+  const tmp = path.join(home, "tmp");
+  fs.mkdirSync(tmp, { recursive: true });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TMPDIR: tmp, TMP: tmp, TEMP: tmp };
   for (const k of Object.keys(env)) {
     if (/^(LOOM_|ANTHROPIC_|CLAUDE_|CODEX_|OPENAI_)/.test(k)) delete env[k];
   }
@@ -307,7 +324,7 @@ async function claudeSession(opts, box, url) {
   env.DISABLE_AUTOUPDATER = "1";
   const setup = [
     ["plugin", "marketplace", "add", repoRoot],
-    ["plugin", "install", "loom@loom", "--config", `server_url=${url}`],
+    ["plugin", "install", "loom@loom", "--config", `server_url=${url}/mcp?toolset=coding`],
   ];
   for (const args of setup) {
     const r = await run(opts.bin, args, { env, cwd: box.work, timeoutMs: 120000 });
@@ -455,7 +472,7 @@ function expectedCalls(agent) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   const fake = await startFake(opts.port);
-  const url = `http://localhost:${opts.port}`;
+  const url = fake.url;
   const box = scratch();
   const EXPECTED_CALLS = expectedCalls(opts.agent);
   let result;
@@ -507,7 +524,8 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exitCode = 1;
-});
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  main().catch((e) => {
+    console.error(e);
+    process.exitCode = 1;
+  });

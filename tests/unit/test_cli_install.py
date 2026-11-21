@@ -204,29 +204,22 @@ def test_install_one_toolset_rides_the_url(tmp_path, monkeypatch: pytest.MonkeyP
     )
 
 
-def test_plugin_mcp_json_mounts_the_coding_toolset() -> None:
-    """The coding-agent plugin's own MCP block: the coding
-       toolset on the URL, a localhost default when LOOM_BASE_URL is unset, and the
-       bearer from a `headersHelper` that reads the same places the hooks do
-    — no export is required."""
+def test_plugin_mcp_json_uses_the_complete_endpoint_option() -> None:
+    """The plugin mounts one endpoint option with a complete coding-toolset default
+    and gets credentials from its header helper."""
     from pathlib import Path
 
     root = Path(cli.__file__).resolve().parents[2]
     block = json.loads((root / "integrations/claude-code-plugin/.mcp.json").read_text())
     loom = block["mcpServers"]["loom"]
-    # The URL is the install-time option, whose default keeps
-    # the LOOM_BASE_URL-then-localhost behaviour (Claude Code expands the env form
-    # inside a substituted default — verified on 2.1.273)
-    # The toolset is the plugin's `toolset` setting (default `coding`)
-    # The fragment hands the header helper the project directory (never sent)
-    assert (
-        loom["url"]
-        == "${user_config.server_url}/mcp?toolset=${user_config.toolset}#${CLAUDE_PROJECT_DIR}"
-    )
+    assert loom["url"] == "${user_config.server_url}"
     manifest = json.loads(
         (root / "integrations/claude-code-plugin/.claude-plugin/plugin.json").read_text()
     )
-    assert manifest["userConfig"]["toolset"]["default"] == "coding"
+    assert manifest["userConfig"]["server_url"]["default"] == (
+        "${LOOM_BASE_URL:-http://localhost:7777}/mcp?toolset=coding"
+    )
+    assert "toolset" not in manifest["userConfig"]
     assert "headers" not in loom
     assert "bin/loom-mcp-headers.mjs" in loom["headersHelper"]
     assert (root / "integrations/claude-code-plugin/bin/loom-mcp-headers.mjs").is_file()

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { postBounded, postFireAndForget, requestJson } from "../lib/loom-client.mjs";
+import { EndpointError } from "../lib/mcp-endpoint.mjs";
 
 // No credential from this machine may reach the fake servers below.
 process.env.LOOM_CONFIG_FILE = "/nonexistent/loom-config.json";
@@ -101,5 +102,24 @@ test("a fire-and-forget post carries a request id and returns before the answer"
     assert.match(s.seen[0].headers["x-request-id"], /^loomhook-\d+-[a-z0-9]+$/);
   } finally {
     await s.close();
+  }
+});
+
+test("an installed endpoint refuses stale queued destinations and invalid origin-only values", async () => {
+  const configured = await server(json(200, {}));
+  const stale = await server(json(200, {}));
+  const old = process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL;
+  try {
+    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = `${configured.url}/proxy/mcp?toolset=coding`;
+    await assert.rejects(postBounded("memory.set", {}, { token: "dummy", serverUrl: stale.url }), EndpointError);
+    assert.throws(() => postFireAndForget("memory.set", {}, { token: "dummy", serverUrl: stale.url }), EndpointError);
+    process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = configured.url;
+    await assert.rejects(postBounded("memory.set", {}, { token: "dummy" }), EndpointError);
+    assert.deepEqual(configured.seen, []);
+    assert.deepEqual(stale.seen, []);
+  } finally {
+    if (old === undefined) delete process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL;
+    else process.env.CLAUDE_PLUGIN_OPTION_SERVER_URL = old;
+    await Promise.all([configured.close(), stale.close()]);
   }
 });

@@ -723,6 +723,7 @@ main() {
     server_url=http://localhost:$port
     [ "$host" = 127.0.0.1 ] || server_url=http://$host:$port
     # The plugins' own server URL, which a plugin installed before keeps.
+    claude_endpoint="$server_url/mcp?toolset=coding"
     default_url=http://localhost:7777
     if considered claude-code && command -v claude >/dev/null 2>&1; then
       claude_config="${CLAUDE_CONFIG_DIR:-${HOME:-}}/.claude.json"
@@ -732,10 +733,10 @@ main() {
       if ! bounded 60 claude plugin list >"$tmp_dir/claude.plugins"; then
         printf 'Claude Code: could not list its plugins (above), so it is left as it is\n'
       elif grep -Eq '(^|[[:space:]])loom@loom$' "$tmp_dir/claude.plugins"; then
-        printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config server_url=%s` points it here\n' "$server_url"
+        printf 'Claude Code: the Loom plugin is installed already; `claude mcp list` shows the server it uses, and `claude plugin install loom@loom --config "server_url=%s"` points it here\n' "$claude_endpoint"
         kept=1
       elif grep -q '"loom"[[:space:]]*:' "$claude_config" 2>/dev/null; then
-        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config server_url=%s\n' "$claude_config" "$server_url"
+        printf 'Claude Code: a loom MCP server is set up already, for every project or for one (%s), and is left as it is; to use the plugin instead: claude mcp remove loom, then claude plugin install loom@loom --config "server_url=%s"\n' "$claude_config" "$claude_endpoint"
         kept=1
       elif ! node_ok; then
         # Its hooks and MCP header helper run the `node` on PATH, with no search.
@@ -745,11 +746,11 @@ main() {
         # It clones the repository: the slowest call, so it gets 5 minutes.
         bounded 300 claude plugin marketplace add ClickHouse/loom >/dev/null || true
         # The URL is always given: the plugin's default reads LOOM_BASE_URL.
-        if bounded 60 claude plugin install loom@loom --config "server_url=$server_url" >/dev/null; then
+        if bounded 60 claude plugin install loom@loom --config "server_url=$claude_endpoint" >/dev/null; then
           printf 'Claude Code: connected to %s (the plugin'"'"'s other settings are optional)\n' "$server_url"
           agents="$agents, Claude Code"
         else
-          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom --config server_url=%s\n' "$server_url"
+          printf 'Claude Code: could not install the plugin (above); to try again: claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom --config "server_url=%s"\n' "$claude_endpoint"
         fi
       fi
     fi

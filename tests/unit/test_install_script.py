@@ -1319,7 +1319,10 @@ def test_loom_connect_installs_the_claude_code_plugin(
     assert result.returncode == 0, result.stderr
     calls = claude.read_text().splitlines()
     assert "plugin marketplace add ClickHouse/loom" in calls
-    assert "plugin install loom@loom --config server_url=http://localhost:28977" in calls
+    assert (
+        "plugin install loom@loom --config server_url=http://localhost:28977/mcp?toolset=coding"
+        in calls
+    )
     assert "mcp list" not in calls
     assert "Claude Code: connected to http://localhost:28977" in result.stdout
     assert "Connected: Claude Code." in result.stdout
@@ -1337,7 +1340,10 @@ def test_a_claude_plugin_from_before_is_left_as_it_is(
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="claude-code", LOOM_PORT=port)
     assert result.returncode == 0, result.stderr
     assert claude.read_text().splitlines() == ["plugin list"]
-    assert f"--config server_url=http://localhost:{port}` points it here" in result.stdout
+    assert (
+        f'--config "server_url=http://localhost:{port}/mcp?toolset=coding"` points it here'
+        in result.stdout
+    )
     assert "Connected:" not in result.stdout
     assert "Your agents keep the Loom setup they had." in result.stdout
 
@@ -1438,8 +1444,9 @@ def test_loom_connect_all_connects_every_client(install, installer_env: dict[str
     code = _agent_cli(installer_env, "code")
     result = run(LOOM_SKIP_START="0", LOOM_CONNECT="all")
     assert result.returncode == 0, result.stderr
-    assert "plugin install loom@loom --config server_url=http://localhost:7777" in (
-        claude.read_text().splitlines()
+    assert (
+        "plugin install loom@loom --config server_url=http://localhost:7777/mcp?toolset=coding"
+        in (claude.read_text().splitlines())
     )
     assert "plugin add loom@loom" in codex.read_text().splitlines()
     assert any(c.startswith("--add-mcp ") for c in code.read_text().splitlines())
@@ -1572,7 +1579,7 @@ def test_a_linux_terminal_with_no_display_opens_no_dashboard(installer_env: dict
             "claude",
             "claude-code",
             "claude plugin marketplace add ClickHouse/loom; claude plugin install loom@loom"
-            " --config server_url=http://localhost:7777",
+            ' --config "server_url=http://localhost:7777/mcp?toolset=coding"',
         ),
         (
             "codex",
@@ -1604,7 +1611,9 @@ def test_a_terminal_is_asked_before_an_agent_is_connected(
     env = {k: v for k, v in installer_env.items() if k != "LOOM_CONNECT"}
     seen = _on_terminal({**env, "LOOM_SKIP_START": "0"}, [], b"[Y/n]", answer)
     assert b"Connect Claude Code to Loom? [Y/n]" in seen
-    installed = "plugin install loom@loom --config server_url=http://localhost:7777"
+    installed = (
+        "plugin install loom@loom --config server_url=http://localhost:7777/mcp?toolset=coding"
+    )
     assert (installed in claude.read_text().splitlines()) == installs
 
 

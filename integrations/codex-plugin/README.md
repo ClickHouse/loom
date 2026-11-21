@@ -43,7 +43,8 @@ filing a report. The full
 [data-handling disclosure](https://clickhouse.github.io/loom/features/integrations/claude-code/#data-handling)
 lists what each hook sends, local commands, retention, outside services and off
 switches. Codex's capture differences are listed below; it does not run the
-duplicate-entry check of `~/.claude.json`.
+duplicate-entry check of `~/.claude.json`. Its fixed MCP entry also skips the native
+client process queries and `loom-mcp-project-<hash>.json` checkout artifact.
 
 ## Install
 

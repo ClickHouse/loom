@@ -124,10 +124,10 @@ test("the source line sits between token and auth, names the lookup, and warns w
   const warn = await run("config", "https://elsewhere/");
   const line = warn.checks.find((c) => c.name === "source");
   assert.equal(line.grade, "WARN");
-  assert.match(line.detail, /names https:\/\/elsewhere; this check uses https:\/\/loom\.test/);
+  assert.match(line.detail, /names https:\/\/elsewhere\/; this check uses https:\/\/loom\.test/);
   assert.ok(line.detail.includes(loomConfigPath()));
   assert.equal(warn.ok, true); // a WARN never fails the check
-  assert.equal((await run("config", `${serverUrl}/`)).checks[2].grade, "PASS");
+  assert.equal((await run("config", serverUrl)).checks[2].grade, "PASS");
   assert.equal((await run("file", "https://elsewhere")).checks[2].detail, `token from ${loomTokenPath()}`);
   assert.equal((await run("agent", "https://elsewhere")).checks[2].detail, "token from the workload-token exchange");
   const none = await run("", "", "");
@@ -135,6 +135,28 @@ test("the source line sits between token and auth, names the lookup, and warns w
     none.checks.some((c) => c.name === "source"),
     false,
   );
+});
+
+test("the source warning distinguishes literal proxy path separators", async () => {
+  for (const [configUrl, serverUrl] of [
+    ["https://loom.test/proxy/", "https://loom.test/proxy"],
+    ["https://loom.test/proxy", "https://loom.test/proxy/"],
+    ["https://loom.test/", "https://loom.test"],
+  ]) {
+    const result = await clientStatus({
+      serverUrl,
+      token: token(),
+      scope,
+      now,
+      fetchImpl: responses().fetchImpl,
+      tokenKind: "config",
+      configUrl,
+    });
+    const line = result.checks.find((c) => c.name === "source");
+    assert.equal(line.grade, "WARN");
+    assert.ok(line.detail.includes(`names ${configUrl};`), line.detail);
+    assert.ok(line.detail.includes(`uses ${serverUrl}`), line.detail);
+  }
 });
 
 test("the agent-mode line names the server the exchange went to, not the one checked", async () => {

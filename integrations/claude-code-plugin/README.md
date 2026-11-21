@@ -15,19 +15,18 @@ The tools and the hooks share one identity (org, namespace, agent) and the same
 conflict detection, blacklist and erasure. What the plugin sends, and where, is
 under [data handling](#data-handling).
 
-The plugin also mounts the MCP tools: `.mcp.json` points at
-`${user_config.server_url}/mcp?toolset=${user_config.toolset}` (the
-`server_url` and `toolset` plugin options; `server_url` defaults to
-`$LOOM_BASE_URL`, else `http://localhost:7777`), and its `headersHelper`
-(`bin/loom-mcp-headers.mjs`) sends `Authorization: Bearer <token>` from the
-same places the hooks read it. The helper also sends `X-Loom-Code-Scope: org/namespace` — the repository this checkout resolved to (the shunt's cache, else one bounded lookup) — and the server applies it to every `loom_code_*` call that names no namespace, so the model cannot land on the deployment's default repository by forgetting the primer's scope line. `LOOM_MCP_CODE_SCOPE=off` disables it.
+The plugin mounts its MCP tools at the complete `server_url` option through
+`${user_config.server_url}`. The default is `$LOOM_BASE_URL/mcp?toolset=coding`,
+else `http://localhost:7777/mcp?toolset=coding`. Its `headersHelper`
+(`bin/loom-mcp-headers.mjs`) sends the bearer token and, when the session's checkout
+resolves to an indexed repository, `X-Loom-Code-Scope: org/namespace`. The server
+applies that scope to code calls that name no namespace. Context or lookup misses
+leave the header absent; pass org and namespace explicitly then.
+`LOOM_MCP_CODE_SCOPE=off` disables the header.
 
-`coding` is the coding-agent toolset: 21 tools (save /
-revise / read / delete, the working-memory scratchpad, `context.pack`, the
-eight code tools, the duplicate check, bisect candidates, PR check and blast
-radius, `loom_search`, `loom_activate`, `loom_op`), ~9k
-tokens per `tools/list`; every other op runs through `loom_op {op, arguments}`. The
-`toolset` plugin setting selects another listing, including a union such as `coding+tracker`. See
+The `toolset` query selects the listing, including a union such as
+`?toolset=coding+tracker`. The `coding` listing combines memory and code tools;
+other operations are callable through `loom_op {op, arguments}`. See
 [MCP clients](https://clickhouse.github.io/loom/features/integrations/mcp-clients/).
 
 > **Bare mode skips hooks.** `claude --bare` (chosen by some agent harnesses for prompt-cache and cost reasons) does not run PreToolUse hooks, so the token shunt and the outcome capture in this plugin do not fire there. A harness that wants the shunt under bare mode needs the SDK backend's hook path instead.
@@ -111,6 +110,39 @@ plugin tries to remove other state files untouched for a day. They can remain
 longer, especially when no new session starts. The log of which tool calls the plugin redirected
 or let through (no prompt or file content) stays until you remove it
 (`LOOM_SHUNT_LOG=off` stops it).
+
+Claude Code's SessionStart also writes `loom-mcp-project-<hash>.json` in the system
+temp directory (normally `/tmp/loom-mcp-project-<hash>.json` on Linux), mode 0600.
+It holds the checkout's absolute working directory, session ID, native client PID,
+parent PID, process name and OS process creation marker. It contains no credential
+or transcript. The MCP header helper uses it to find this client's checkout and
+code namespace. It survives SessionEnd; a later SessionStart tries to prune it after
+one day without a write. This is best-effort cleanup, with no deletion deadline.
+Codex does not write or read this artifact.
+
+To match that native client identity, Claude Code reads `/proc/<pid>/stat` and
+`/proc/sys/kernel/random/boot_id` on Linux. On macOS it runs:
+
+```sh
+ps -p <pid> -o ppid= -o lstart= -o ucomm=
+```
+
+On Windows it resolves `System32\cscript.exe` under the absolute, drive-qualified
+`SystemRoot` from the parent OS environment. It runs that host with
+`//nologo //E:JScript //B`, the plugin's `assets/mcp-project-win32.js` file and the
+validated PID as separate arguments. Missing or malformed `SystemRoot` supplies
+no scope; the executable is never searched for in the checkout.
+That static helper queries local WMI for `Name`, `ParentProcessId` and `CreationDate`.
+It requires exactly one result and returns the name, parent PID and an exact UTC
+FILETIME creation marker. A blocked script host or WMI query supplies no checkout
+scope; the plugin does not enable components or change scripting policy.
+
+Each subprocess has a one-second timeout and a 16 KiB output limit. These queries
+read the process name, parent PID and creation marker, without collecting process
+command lines or environments. The header helper checks at most three ancestors,
+through known shells to the nearest client, and waits nominally 1.5 seconds for its
+checkout context; one process query can finish after that interval. Codex's fixed
+MCP entry skips these process queries.
 
 Two skills reach other services when you run them. `loom-status` can install
 Node.js after you agree: on Linux, as root or with passwordless sudo, it
@@ -217,18 +249,20 @@ both ship a skill named `loom-code`, and this plugin already carries it.
 
 ```bash
 claude plugin marketplace add ClickHouse/loom   # or a local clone path
-claude plugin install loom@loom --config server_url=https://<loom> --config token=<writer JWT>
+claude plugin install loom@loom --config "server_url=https://<loom>/mcp?toolset=coding" --config token=<writer JWT>
 ```
 
 Optional: `--config local_first=true` (or `LOOM_CODE_LOCAL_FIRST=on` in your environment) is the one switch for "I work from my local tree": the code shunt stands down entirely and grep/Read run on your working tree, whatever commit you are on. Off by default: the index answers every file you have not modified, however far behind upstream your checkout is, and only your modified files are read or grepped locally.
 
 Both options are optional: without `--config`, Claude Code
-prompts for them, and an empty answer leaves them unset — the server
-URL falls back to `$LOOM_BASE_URL`, then `http://localhost:7777`, and the token to
+prompts for them. Keep the default endpoint or supply a complete URL. The
+endpoint defaults to `$LOOM_BASE_URL/mcp?toolset=coding`, then
+`http://localhost:7777/mcp?toolset=coding`, and the token to
 `$LOOM_API_KEY`, `~/.loom/config.json`, `~/.loom/token`. A token given here is
 stored by Claude Code (keychain where available) and reaches the hooks as an
 environment variable; the first session writes it to `~/.loom/config.json`
-(0600), where the MCP header helper, the `loom` CLI and the SDK also read it.
+(0600), where the MCP header helper, the `loom` CLI and the SDK also read it. This
+also works when the client filters credential environment variables from the helper.
 
 Already installed? Hooks land with the plugin version, not with the server:
 a client installed before a hook was added keeps posting from the hooks it
@@ -253,10 +287,24 @@ server to `http://localhost:7777` — set `LOOM_BASE_URL` for a remote server, o
 loom mint-token --subject you --org <your-org> --namespaces coding --roles writer > ~/.loom/token
 ```
 
+An origin-only `server_url` must be set to the complete endpoint, such as
+`https://loom.your-host.example/mcp?toolset=coding`. Put a union such as
+`coding+tracker` in that URL; there is no separate toolset option. Hooks print a
+configuration notice and perform no network work for an invalid endpoint. The client
+may still attempt an unauthenticated MCP connection.
+
+The header helper gets the session checkout from a private temporary file written
+from SessionStart's structured payload, rather than from shell arguments. The file
+contains the cwd, session identifier, client PID, parent PID, process name and
+OS process creation marker; it contains no token. It survives session end. A later
+SessionStart attempts to remove state files untouched for a day. If context or the
+repository lookup is unavailable, no implicit code scope is sent; pass org and
+namespace explicitly.
+
 ### Hosted / remote Loom — one config file
 
 Pointing the plugin at a remote server? Give the MCP entry the server at install
-time (`--config server_url=https://loom.your-host.example`, or `LOOM_BASE_URL` in the
+time (`--config "server_url=https://loom.your-host.example/mcp?toolset=coding"`, or `LOOM_BASE_URL` in the
 shell that starts Claude Code; the entry never reads `~/.loom/config.json`), and drop
 a single `~/.loom/config.json` for the hooks and the header helper:
 
@@ -269,8 +317,9 @@ a single `~/.loom/config.json` for the hooks and the header helper:
 ```
 
 The plugin reads `url` / `token` / `namespace` / `org` from it — no shell
-exports, no `settings.json` edits. Environment variables still take priority
-(CI / one-off overrides). `chmod 600 ~/.loom/config.json` — it holds a token.
+exports, no `settings.json` edits. The installed endpoint is authoritative for both MCP and hook requests; its path
+before `/mcp` is the HTTP base, including a reverse-proxy prefix. `LOOM_BASE_URL`
+sets the default only when no endpoint was configured. `chmod 600 ~/.loom/config.json` — it holds a token.
 
 ### Generic / non-plugin clients
 
@@ -284,7 +333,7 @@ path.
 | ------------------------------------- | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_NODE`                           | _(unset)_                                                                                | Path to the Node binary `bin/loom-node` runs (the Codex hooks, `hooks.generic.json` and the skills' commands); it wins over the search. A path that is not Node 18+ fails them. Claude Code's hooks and header helper run the `node` on PATH.                                                                                                                                                                                                                                                                                                                                                                           |
 | `LOOM_NODE_SYSTEM_DIRS`               | Homebrew, Linuxbrew, `/usr/local/bin`, `/usr/bin`, `/bin`, `/snap/bin`, `/opt/local/bin` | Colon-separated directories `bin/loom-node` searches last, after PATH and the version managers.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `LOOM_BASE_URL`                       | _(`~/.loom/config.json` → )_ `http://localhost:7777`                                     | Control-plane base URL.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `LOOM_BASE_URL`                       | `http://localhost:7777`                                                                  | Claude Code: default base used to build the MCP endpoint; an explicit `server_url` wins. Generic and Codex hooks: control-plane base override, ahead of configured or default bases.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `LOOM_API_KEY`                        | _(unset)_                                                                                | Bearer JWT. Falls back to `~/.loom/config.json`, then `~/.loom/token`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `LOOM_CONFIG_FILE`                    | `~/.loom/config.json`                                                                    | JSON config (`url`/`token`/`namespace`/`org`); env vars override it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `LOOM_ORG`                            | _(token's `org` claim)_ → `default`                                                      | Org segment of the identity tuple.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
