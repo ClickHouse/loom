@@ -21,8 +21,12 @@ credentials and propagates credential failures. Operator setup is in
 
 ### Selection
 
-`server/embedding/embedder.py` (`provider_for`, `get_embedder`) picks the served embedder
-once per process:
+`server/embedding/embedder.py` (`provider_for`, `get_embedder`) selects and caches the
+served embedder from the active settings. Applying or clearing dashboard provider
+configuration resets that cache. Changing the embedding space requires the
+[rebuild procedure](../getting-started/models-and-keys.md).
+
+Selection follows this order:
 
 1. A label resolves first. `prefix:<dim>:<model>` and `ctx[<variant>]:<model>` are views
    over the served embedder and cannot be the served model.
@@ -668,7 +672,8 @@ real providers. See [running benchmarks](../benchmarks/running.md).
 
 ## Invariants
 
-- A process serves one embedder and one default LLM client, chosen at startup.
+- A process serves one embedder and one default LLM client at a time. Dashboard
+  configuration can replace the cached clients; changing the embedding space requires a rebuild.
 - Vectors of different `embedding_model` values are never compared.
 - The served embedder falls back to the fake only when its key is missing, and says so on
   `/v1/health`. A secondary embedder never falls back.
