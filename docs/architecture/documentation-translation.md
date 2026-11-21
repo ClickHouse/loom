@@ -79,8 +79,11 @@ monotone origins. Earliest and latest embeddings of retained lines must agree at
 endpoint. Replacing an endpoint line or inserting text at an interior unit or separator
 boundary refuses; the planner does not assign that text to a neighbouring request.
 
-A terminal append can extend the final original whole when both raw and prepared old
-containers are exact proper prefixes of their current containers. The final original
+A terminal append can extend the final original whole when the old raw container is an
+exact proper prefix of the current raw container. Complete authenticated source maps
+must locate the old raw EOF inside the current prepared container, before its EOF.
+Maintained link-route changes can alter earlier prepared text or shorten the container;
+each changed original whole still needs its own current-input completion. The final original
 must already own the last heading section and end at historical EOF. Only closed,
 unindented, brace-free ordinary paragraphs under that heading may be appended. Added
 headings, lists, tables, code blocks, HTML, reference definitions and ambiguous

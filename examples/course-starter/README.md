@@ -4,14 +4,9 @@ Four labs on [Loom](https://github.com/ClickHouse/loom), a memory and search sto
 agents. You run your own Loom, in a GitHub codespace or on your laptop, and write small
 Python programs and a SQL query against it. Each lab's text, exercises and background
 are in [the course guide](https://github.com/ClickHouse/loom/blob/main/docs/guides/teaching.md).
-No API key and no paid service is needed.
+The labs need no model API key. The local laptop route needs no hosted service.
 
 ## Start Loom
-
-**In a codespace:** on this repository's page, choose **Code**, then **Codespaces**, then
-**Create codespace**. Setting it up takes several minutes; when the terminal says Loom
-is running, the dashboard is on the forwarded port 7777 (the **Ports** tab). In each new
-terminal, run `. .venv/bin/activate`.
 
 **On a laptop with Docker:** install Loom with the
 [quickstart's fast path](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md#fast-path-released-image-no-clone),
@@ -20,6 +15,19 @@ then, in this repository's directory, with Python 3.11 or newer:
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
 ```
+
+Use your own machine for a route without cloud compute charges. Docker, the stack's
+images and data still need local memory and disk space; check the
+[setup requirements](https://github.com/ClickHouse/loom/blob/main/docs/getting-started/quickstart.md#prerequisites)
+before starting.
+
+**In a codespace (optional):** check your
+[compute and storage billing](https://docs.github.com/en/billing/concepts/product-billing/github-codespaces)
+first. A codespace uses its owner's quota and can incur charges; the lab does not grant
+an allowance. On this repository's page, choose **Code**, then **Codespaces**, then
+**Create codespace**. Setting it up takes several minutes; when the terminal says Loom
+is running, the dashboard is on the forwarded port 7777 (the **Ports** tab). In each new
+terminal, run `. .venv/bin/activate`.
 
 ## The labs
 
@@ -46,3 +54,9 @@ reason, and exits non-zero while any check fails. On a laptop it finds the stack
 
 Every push runs the same checks on GitHub Actions, on a fresh Loom: open the **Actions**
 tab, then the latest **Grade** run, whose summary lists each check.
+
+Standard hosted runner compute for a public repository is free under
+[Actions billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
+Private repository compute and artifact or cache storage have separate allowances. You
+can run the grader locally without enabling hosted grading; choose repository visibility
+for your work's privacy, not to publish private answers or data for free compute.
