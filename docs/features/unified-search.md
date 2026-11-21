@@ -46,13 +46,14 @@ A leg that fails returns `{"error": ...}` under its own key; the other sections 
 | `bodies`  | `excerpt` (default, 200 characters; a decision or constraint row as stored), `full`, `unit`, `none`.                                                                        |
 | `page`    | A `memory.next_page` handle from an earlier response.                                                                                                                       |
 | `explain` | A `why:` note per memory hit; nothing withheld.                                                                                                                             |
-| `live`    | Default false. Add ephemeral hits from the asker's connected Drive and Notion sources on an untagged first-page search.                                                     |
+| `live`    | Default false. Add ephemeral hits from the asker's connected sources on an untagged first-page search.                                                                     |
 
 ### Live connected sources
 
 `live=true` searches the asker's own connected registrations with the provider's
-native search: Drive full-text and Notion titles. It requires the existing
-session-protection contract and mirrored-source configuration. Another person's
+native search: Drive full-text, Notion titles and Linear documents in registered
+projects. It requires the existing session-protection contract and mirrored-source
+configuration. Another person's
 registration or a shared ingestion credential is never used for this leg.
 
 The optional `live` section contains at most ten hits marked `live=true`, with
@@ -64,7 +65,8 @@ private read still marks the whole response for protected-client handling.
 
 Coverage is bounded: Drive folders contribute direct children, and explicit file
 items do not widen to an account search. Notion checks each page's registered
-ancestry. Native search failure or incomplete coverage is not proof of absence.
+ancestry. Linear checks each document's current registered project membership.
+Native search failure or incomplete coverage is not proof of absence.
 See [live-source search](../architecture/live-source-search.md) for corpus,
 publication and content boundaries.
 

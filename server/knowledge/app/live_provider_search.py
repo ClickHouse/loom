@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from server.clients import gdrive, notion
+from server.clients import gdrive, linear, notion
 from server.clients._checked_access import CheckedAccess
 from server.clients._http import get_client
 from server.clients._vendor import VendorError, request_json
@@ -26,6 +26,20 @@ from server.settings import settings
 _DRIVE_FILES = "https://www.googleapis.com/drive/v3/files"
 _NOTION_API = "https://api.notion.com/v1"
 _DRIVE_FIELDS = "id,name,webViewLink,mimeType,trashed,parents,driveId,modifiedTime"
+_LINEAR_SEARCH = """
+query LiveDocuments($term: String!, $first: Int!, $projects: [ID!]!) {
+  searchDocuments(term: $term, first: $first, includeArchived: false,
+                  includeComments: false, filter: {project: {id: {in: $projects}}}) {
+    nodes { id title url trashed archivedAt project { id } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+"""
+_LINEAR_DOCUMENT_STATE = """
+query LiveDocumentState($id: String!) {
+  document(id: $id) { id trashed archivedAt project { id } }
+}
+"""
 
 
 @dataclass(frozen=True)
@@ -293,6 +307,75 @@ async def _notion(
     return list(found.values())[:top_k]
 
 
+def _linear_projects(source: KnowledgeSource) -> list[str]:
+    return list(
+        dict.fromkeys(
+            item["id"]
+            for item in source.items[: settings.knowledge_live_search_max_items]
+            if item.get("type") == "project"
+            and isinstance(item.get("id"), str)
+            and linear.valid_id(item["id"])
+        )
+    )
+
+
+def _linear_member(source: KnowledgeSource, ident: Any, row: dict[str, Any]) -> bool:
+    project = row.get("project")
+    return (
+        isinstance(ident, str)
+        and linear.valid_id(ident)
+        and row.get("id") == ident
+        and row.get("trashed") is False
+        and "archivedAt" in row
+        and row["archivedAt"] is None
+        and isinstance(project, dict)
+        and isinstance(project.get("id"), str)
+        and linear.valid_id(project["id"])
+        and project["id"] in _linear_projects(source)
+    )
+
+
+async def _linear(
+    source: KnowledgeSource, access: CheckedAccess, query: str, top_k: int
+) -> list[LiveProviderHit]:
+    projects = _linear_projects(source)
+    if not projects:
+        return []
+    first = min(top_k, linear.PAGE_SIZE)
+    try:
+        data = await linear._query(
+            access,
+            _LINEAR_SEARCH,
+            {"term": query, "first": first, "projects": projects},
+            "live search",
+            max_bytes=settings.knowledge_live_search_response_max_bytes,
+        )
+    except linear.LinearError as e:
+        raise SearchUnavailable("live source is unavailable") from e
+    page = data.get("searchDocuments")
+    rows = page.get("nodes") if isinstance(page, dict) else None
+    info = page.get("pageInfo") if isinstance(page, dict) else None
+    if (
+        not isinstance(rows, list)
+        or len(rows) > first
+        or any(not isinstance(row, dict) for row in rows)
+        or not isinstance(info, dict)
+        or not isinstance(info.get("hasNextPage"), bool)
+        or (info.get("endCursor") is not None and not isinstance(info["endCursor"], str))
+        or (info["hasNextPage"] and not info.get("endCursor"))
+    ):
+        raise SearchUnavailable("live source is unavailable")
+    found: dict[str, LiveProviderHit] = {}
+    for row in rows:
+        ident = row.get("id")
+        if not _linear_member(source, ident, row) or not isinstance(row.get("title"), str):
+            continue
+        hit = _hit("linear", ident, row["title"], row.get("url"))
+        if hit is not None:
+            found.setdefault(hit.id, hit)
+    return list(found.values())[:top_k]
+
+
 async def search(
     source: KnowledgeSource,
     access: CheckedAccess,
@@ -314,6 +397,10 @@ async def search(
             )
         elif source.kind == "notion":
             result = await _notion(
+                source, access, query, min(top_k, settings.knowledge_live_search_max_hits)
+            )
+        elif source.kind == "linear":
+            result = await _linear(
                 source, access, query, min(top_k, settings.knowledge_live_search_max_hits)
             )
         else:
@@ -348,6 +435,16 @@ async def revalidate(
             if source.kind == "notion" and notion.valid_id(hit.id):
                 row = await _notion_json(access, "GET", "/pages/" + hit.id)
                 return row.get("id") == hit.id and await _notion_member(source, access, row)
-        except VendorError:
+            if source.kind == "linear" and linear.valid_id(hit.id):
+                data = await linear._query(
+                    access,
+                    _LINEAR_DOCUMENT_STATE,
+                    {"id": hit.id},
+                    "live membership",
+                    max_bytes=settings.knowledge_live_search_response_max_bytes,
+                )
+                row = data.get("document")
+                return isinstance(row, dict) and _linear_member(source, hit.id, row)
+        except (VendorError, linear.LinearError):
             return False
         return False
