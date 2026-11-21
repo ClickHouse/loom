@@ -1084,6 +1084,7 @@ def test_final_verdict_follows_native_cleanup_and_artifact_close(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sparse_storage", [False, True])
 @pytest.mark.parametrize(
     "fault",
     [
@@ -1100,7 +1101,7 @@ def test_final_verdict_follows_native_cleanup_and_artifact_close(
     ],
 )
 async def test_composed_stored_verification_compares_authority_projection_vectors_and_audits(
-    monkeypatch, fault
+    monkeypatch, fault, sparse_storage
 ):
     import logging
 
@@ -1118,17 +1119,20 @@ async def test_composed_stored_verification_compares_authority_projection_vector
     monkeypatch.setattr(server.embedding, "get_embedder", lambda: FakeNGramEmbedder(dim=16))
     block = await gate._build_block(args(), 1)
     block.seqs = [("org", "ns", i + 1) for i in range(5)]
+    stored = [pg_memory.encode_row(row) for row in block.rows]
+    if sparse_storage:
+        stored = [pg_memory.sparse_row(row) for row in stored]
     records = [
         {
-            "head": json.dumps(pg_memory.encode_row(row)),
-            "revision": json.dumps(pg_memory.encode_row(row)),
+            "head": json.dumps(stored[i]),
+            "revision": json.dumps(stored[i]),
             "audit": json.dumps(pg_memory.encode_audit(audit)),
             "seq": i + 1,
             "targets": 1 if fault == "targets" else 0,
             "attempts": 1 if fault == "attempts" else 0,
             "last_error": "",
         }
-        for i, (row, audit) in enumerate(zip(block.rows, block.audits, strict=True))
+        for i, (_row, audit) in enumerate(zip(block.rows, block.audits, strict=True))
     ]
     projections = [dict(row) for row in block.rows]
     documents = [dict(row) for row in block.documents]
@@ -1177,10 +1181,13 @@ async def test_composed_stored_verification_compares_authority_projection_vector
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("sparse_storage", [False, True])
 @pytest.mark.parametrize(
     "fault", ["", "memory_key", "value", "version", "content_sha256", "status"]
 )
-async def test_api_authority_failure_names_only_the_failed_field(monkeypatch, fault):
+async def test_api_authority_failure_names_only_the_failed_field(
+    monkeypatch, fault, sparse_storage
+):
     import logging
 
     import server.embedding
@@ -1215,7 +1222,8 @@ async def test_api_authority_failure_names_only_the_failed_field(monkeypatch, fa
             "content_sha256": "0" * 64,
             "status": "conflicted",
         }[fault]
-    stored = json.dumps(pg_memory.encode_row(head))
+    encoded = pg_memory.encode_row(head)
+    stored = json.dumps(pg_memory.sparse_row(encoded) if sparse_storage else encoded)
     conn = SimpleNamespace(
         fetch=AsyncMock(
             return_value=[

@@ -66,6 +66,7 @@ _SKIP_OPS = {
     "memory.copy_to",
     "memory.cross_promote",
     "memory.set_from_messages",
+    "memory.append_batch",
     "memory.bulk_set",
     "memory.set",
     "memory.update_by_id",

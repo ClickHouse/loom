@@ -38,10 +38,8 @@ class OwnedChildren:
 
     @staticmethod
     def rss(pid: int) -> int:
-        try:
-            status = Path("/proc", str(pid), "status").read_text()
-        except FileNotFoundError:
-            return 0  # Vanished sample, never proof that the process used no memory.
+        # The forest owner must verify disappearance after a failed status read.
+        status = Path("/proc", str(pid), "status").read_text()
         return next(
             (int(line.split()[1]) for line in status.splitlines() if line.startswith("VmRSS:")), 0
         )

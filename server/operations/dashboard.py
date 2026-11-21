@@ -166,6 +166,7 @@ NOT_IN_DASHBOARD: dict[str, str] = _named_once(
             "code.scip_status",
             "cost.record_turns",
             "knowledge.bulk_add",
+            "memory.append_batch",
             "memory.bulk_set",
             "memory.delete_version",
             "memory.export_evidence",

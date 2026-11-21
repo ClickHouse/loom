@@ -187,10 +187,12 @@ class _CoordinationSession:
     channel: AsyncClient | None = None
     checked: bool = False
     closed: bool = False
+    inflight: int = 0
 
     def check(self, client: CHClient | None = None) -> None:
         if (
             self.closed
+            or self.owner._disconnecting
             or (client is not None and client is not self.owner)
             or self.owner.generation != self.generation
             or self.owner.client is not self.driver
@@ -198,6 +200,22 @@ class _CoordinationSession:
         ):
             self.closed = True
             raise CoordinationSessionLost()
+
+
+@dataclass
+class _CoordinationTransport:
+    owner_driver: AsyncClient
+    generation: int
+    configuration: dict[str, Any]
+    channel: AsyncClient
+
+    def current(self, client: CHClient) -> bool:
+        return (
+            not client._disconnecting
+            and client._client is self.owner_driver
+            and client.generation == self.generation
+            and client.__dict__.get("_connection_config") == self.configuration
+        )
 
 
 _coordination_session: ContextVar[_CoordinationSession | None] = ContextVar(
@@ -876,6 +894,8 @@ class CHClient:
     _slots: asyncio.Semaphore | None
     _stream_slots: asyncio.Semaphore
     _reconnect_lock: asyncio.Lock
+    _coordination_idle: _CoordinationTransport | None
+    _disconnecting: bool
 
     def __init__(self) -> None:
         self._client: AsyncClient | None = None
@@ -897,6 +917,8 @@ class CHClient:
             limit = int(settings.ch_pool_maxsize)
             d["_slots"] = asyncio.Semaphore(limit) if limit > 0 else None
         d.setdefault("_stream_slots", asyncio.Semaphore(STREAM_SLOTS))
+        d.setdefault("_coordination_idle", None)
+        d.setdefault("_disconnecting", False)
         if "_reconnect_lock" not in d:
             d["_reconnect_lock"] = asyncio.Lock()
 
@@ -906,7 +928,12 @@ class CHClient:
 
         Every step still attests the backend; a checked session is never recreated.
         """
-        if _coordination_session.get() is not None or _analyst_var.get() is not None:
+        self._ensure_state()
+        if (
+            _coordination_session.get() is not None
+            or _analyst_var.get() is not None
+            or self._disconnecting
+        ):
             raise CoordinationSessionLost()
         session = _CoordinationSession(self, self.client, self.generation, uuid.uuid4().hex)
         configuration = dict(self._connection_config)
@@ -918,6 +945,12 @@ class CHClient:
 
             async def open_channel() -> None:
                 # Own it before the guarded call's final generation/identity check.
+                idle, self._coordination_idle = self._coordination_idle, None
+                if idle is not None:
+                    if idle.current(self):
+                        session.channel = idle.channel
+                        return
+                    idle.channel._force_close()
                 session.channel = await _make_driver(
                     configuration, connector_limit=1, coordination=True
                 )
@@ -928,21 +961,33 @@ class CHClient:
             yield
             failed = False
         finally:
+            reusable = not failed and not session.closed and session.inflight == 0
             session.closed = True
             _coordination_session.reset(token)
             try:
-                if session.channel is not None:
-                    if failed:
-                        # A delivered proof timeout cannot bound a fresh cleanup await.
-                        session.channel._force_close()
-                    else:
-                        try:
-                            await session.channel.close()
-                        except BaseException:
-                            session.channel._force_close()
-                            raise
+                await self._return_coordination_transport(session, configuration, reusable)
             finally:
                 self._stream_slots.release()
+
+    async def _return_coordination_transport(
+        self, session: _CoordinationSession, configuration: dict[str, Any], reusable: bool
+    ) -> None:
+        if session.channel is None:
+            return
+        transport = _CoordinationTransport(
+            session.driver, session.generation, configuration, session.channel
+        )
+        if not reusable or not transport.current(self):
+            # A failed or still-running proof must never lend its channel to another owner.
+            session.channel._force_close()
+        elif self._coordination_idle is None:
+            self._coordination_idle = transport
+        else:
+            try:
+                await session.channel.close()
+            except BaseException:
+                session.channel._force_close()
+                raise
 
     @property
     def connected(self) -> bool:
@@ -958,20 +1003,31 @@ class CHClient:
         await _turn_off_unsafe_condition_cache(client)
         self._client = client
         self._connection_config = configuration
+        self._disconnecting = False
         await _probe_vector_state(self)
 
     async def disconnect(self) -> None:
         self._ensure_state()
-        retired = list(self._retired.values())
-        self._retired.clear()
-        for old in retired:
-            try:
-                await old.close()
-            except Exception:  # noqa: BLE001 — closing is best effort
-                pass
-        if self._client is not None:
-            await self._client.close()
-            self._client = None
+        self._disconnecting = True
+        idle, self._coordination_idle = self._coordination_idle, None
+        try:
+            retired = list(self._retired.values())
+            self._retired.clear()
+            for old in retired:
+                try:
+                    await old.close()
+                except Exception:  # noqa: BLE001 — closing is best effort
+                    pass
+            if self._client is not None:
+                await self._client.close()
+                self._client = None
+        finally:
+            if idle is not None:
+                try:
+                    await idle.channel.close()
+                except BaseException:
+                    idle.channel._force_close()
+                    raise
 
     @property
     def client(self) -> AsyncClient:
@@ -1218,6 +1274,8 @@ class CHClient:
         self._ensure_state()
         session = _coordination_session.get()
         took = False
+        if session is not None:
+            session.inflight += 1
         try:
             if session is not None:
                 session.check(self)
@@ -1233,6 +1291,8 @@ class CHClient:
                 session.closed = True
             raise
         finally:
+            if session is not None:
+                session.inflight -= 1
             if took:
                 self._release_slot()
 
