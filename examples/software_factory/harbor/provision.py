@@ -514,6 +514,7 @@ class Provisioner:
             },
         }
         save(self.output / "runtime-config/settings.json", settings)
+        (self.output / "runtime-config/repos.env").write_text("")
         server_env = self.output / "private/server.env"
         server_env.write_text(
             "LOOM_CH_USER=loom\nLOOM_CH_PASSWORD="
@@ -524,7 +525,8 @@ class Provisioner:
             + gateway["token"]
             + "\nLOOM_ANTHROPIC_BASE_URL="
             + gateway["url"]
-            + "\nLOOM_SETTINGS_FILE=/runtime-config/settings.json\nLOOM_BUILD_COMMIT="
+            + "\nLOOM_SETTINGS_FILE=/runtime-config/settings.json"
+            + "\nLOOM_ENV_FILE=/runtime-config/repos.env\nLOOM_BUILD_COMMIT="
             + commit
             + "\nLOOM_INSTANCE_LABEL="
             + self.prefix
@@ -1001,10 +1003,8 @@ class Provisioner:
                     else "",
                 }
             )
-        config_path = self.output / "runtime-config/settings.json"
-        settings = json.loads(config_path.read_text())
-        settings["settings"]["code_repos_json"] = json.dumps(configs)
-        save(config_path, settings)
+        repo_settings = self.output / "runtime-config/repos.env"
+        repo_settings.write_text("LOOM_CODE_REPOS_JSON=" + json.dumps(json.dumps(configs)) + "\n")
         self._owned("container", self.runtime["server_container"])
         self._cmd(["docker", "restart", self.runtime["server_container"]])
         self._healthy()
@@ -1080,6 +1080,7 @@ class Provisioner:
                 "local-models.image",
                 "runtime.image",
                 "runtime-config/settings.json",
+                "runtime-config/repos.env",
             )
         ]
         immutable = [
