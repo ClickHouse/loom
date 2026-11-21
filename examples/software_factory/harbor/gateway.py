@@ -34,15 +34,25 @@ def decode(raw):
     return json.loads(raw, object_pairs_hook=pairs, parse_constant=constant)
 
 
+def cache_control(value):
+    if value is not None and (
+        not isinstance(value, dict)
+        or set(value) - {"type", "ttl"}
+        or value.get("type") != "ephemeral"
+        or value.get("ttl") not in {None, "5m", "1h"}
+    ):
+        raise ValueError("Unknown prompt-cache pricing category")
+
+
 def text_request(payload):
     """The byte reservation covers text and custom tools, without paid side services."""
     if (
         not isinstance(payload, dict)
-        or payload.get("cache_control") is not None
         or payload.get("service_tier") not in {None, "standard"}
         or payload.get("inference_geo") not in {None, "global"}
     ):
         raise ValueError("Request uses an unfrozen provider price category")
+    cache_control(payload.get("cache_control"))
     blocks = []
     system = payload.get("system")
     if isinstance(system, list):
@@ -52,17 +62,20 @@ def text_request(payload):
         if isinstance(content, list):
             blocks.extend(content)
     for tool in payload.get("tools", []):
-        if tool.get("type") not in {None, "custom"} or tool.get("cache_control") is not None:
-            raise ValueError("Hosted or cached tools have no frozen price")
+        if tool.get("type") not in {None, "custom"}:
+            raise ValueError("Hosted tools have no frozen price")
+        cache_control(tool.get("cache_control"))
     while blocks:
         block = blocks.pop()
-        if (
-            not isinstance(block, dict)
-            or block.get("type")
-            not in {"text", "tool_use", "tool_result", "thinking", "redacted_thinking"}
-            or block.get("cache_control") is not None
-        ):
-            raise ValueError("Only uncached text blocks have a reserved input bound")
+        if not isinstance(block, dict) or block.get("type") not in {
+            "text",
+            "tool_use",
+            "tool_result",
+            "thinking",
+            "redacted_thinking",
+        }:
+            raise ValueError("Only text blocks have a reserved input bound")
+        cache_control(block.get("cache_control"))
         if block["type"] == "tool_result" and isinstance(block.get("content"), list):
             blocks.extend(block["content"])
 

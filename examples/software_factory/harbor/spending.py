@@ -15,7 +15,9 @@ from examples.software_factory.factory.model import digest
 
 ATTRIBUTION = {"org", "namespace", "feature", "order"}
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-PRICE_BASIS = "Frozen standard uncached list prices; not an invoice or infrastructure cost"
+PRICE_BASIS = (
+    "Frozen standard list prices including prompt caching; not an invoice or infrastructure cost"
+)
 
 
 class Spending:
@@ -112,21 +114,64 @@ class Spending:
             or not isinstance(model, str)
             or not re.fullmatch(re.escape(reservation["request_model"]) + r"(?:-\d{8})?", model)
             or any(type(usage.get(key)) is not int or usage[key] < 0 for key in USAGE)
-            or usage["cache_read_input_tokens"] != 0
-            or usage["cache_creation_input_tokens"] != 0
             or usage.get("service_tier", "standard") != "standard"
             or usage.get("inference_geo") not in {None, "global"}
             or usage["input_tokens"] > reservation["input_token_bound"]
             or usage["output_tokens"] > reservation["output_token_bound"]
         ):
-            raise ValueError("Provider model, identity or standard uncached usage is unverified")
+            raise ValueError("Provider model, identity or standard usage is unverified")
+        detail = usage.get(
+            "cache_creation",
+            {
+                "ephemeral_5m_input_tokens": usage["cache_creation_input_tokens"],
+                "ephemeral_1h_input_tokens": 0,
+            },
+        )
+        if (
+            not isinstance(detail, dict)
+            or set(detail) - {"ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"}
+            or any(
+                type(detail.get(key, 0)) is not int or detail.get(key, 0) < 0
+                for key in ("ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens")
+            )
+            or sum(detail.values()) != usage["cache_creation_input_tokens"]
+            or sum(
+                usage[key]
+                for key in (
+                    "input_tokens",
+                    "cache_read_input_tokens",
+                    "cache_creation_input_tokens",
+                )
+            )
+            > reservation["input_token_bound"]
+        ):
+            raise ValueError("Provider cache usage is inconsistent or exceeds the input bound")
         server_tools = usage.get("server_tool_use")
         if server_tools is not None and (
             not isinstance(server_tools, dict)
             or any(type(v) is not int or v != 0 for v in server_tools.values())
         ):
             raise ValueError("Hosted tool usage has no frozen price")
-        return {key: usage[key] for key in USAGE}
+        return {**{key: usage[key] for key in USAGE}, "cache_creation": detail}
+
+    def usage_cost(self, model, usage):
+        total = sum(
+            usage[key]
+            for key in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+        )
+        incoming, outgoing = self.rates(model, total)
+        detail = usage["cache_creation"]
+        charged_input = (
+            usage["input_tokens"]
+            + Decimal("0.1") * usage["cache_read_input_tokens"]
+            + Decimal("1.25") * detail.get("ephemeral_5m_input_tokens", 0)
+            + Decimal("2") * detail.get("ephemeral_1h_input_tokens", 0)
+        )
+        return (
+            incoming,
+            outgoing,
+            (charged_input * incoming + usage["output_tokens"] * outgoing) / 1000000,
+        )
 
     def _apply(self, row):
         event = row["event"]
@@ -155,7 +200,7 @@ class Spending:
                 row["request_model"], row["input_token_bound"], ceiling=True
             )
             expected = (
-                row["input_token_bound"] * incoming + row["output_token_bound"] * outgoing
+                row["input_token_bound"] * incoming * 2 + row["output_token_bound"] * outgoing
             ) / 1000000
             if Decimal(row["reserved_usd"]) != expected or (
                 self.limit is not None and self.spent + self._reserved() + expected > self.limit
@@ -186,10 +231,7 @@ class Spending:
                     {"model": row["response_model"], "usage": row["usage"]},
                     row["request_id"],
                 )
-                incoming, outgoing = self.rates(reservation["request_model"], usage["input_tokens"])
-                cost = (
-                    usage["input_tokens"] * incoming + usage["output_tokens"] * outgoing
-                ) / 1000000
+                incoming, outgoing, cost = self.usage_cost(reservation["request_model"], usage)
                 if (
                     Decimal(row["cost_usd"]) != cost
                     or cost > Decimal(reservation["reserved_usd"])
@@ -257,7 +299,7 @@ class Spending:
                 raise ValueError("Only bounded controller attribution is recorded")
             incoming = size + 4096
             rates = self.rates(payload["model"], incoming, ceiling=True)
-            ceiling = (incoming * rates[0] + output * rates[1]) / 1000000
+            ceiling = (incoming * rates[0] * 2 + output * rates[1]) / 1000000
             if self.limit is not None and self.spent + self._reserved() + ceiling > self.limit:
                 raise PermissionError("Provider allowance cannot cover this request")
             ticket = len(self.rows)
@@ -282,10 +324,7 @@ class Spending:
             reservation = self.pending[ticket]
             try:
                 usage = self._usage(reservation, response, request_id)
-                incoming, outgoing = self.rates(reservation["request_model"], usage["input_tokens"])
-                cost = (
-                    usage["input_tokens"] * incoming + usage["output_tokens"] * outgoing
-                ) / 1000000
+                incoming, outgoing, cost = self.usage_cost(reservation["request_model"], usage)
                 if cost > Decimal(reservation["reserved_usd"]):
                     raise ValueError("Actual provider cost exceeds its reservation")
             except (KeyError, ValueError, TypeError) as error:
@@ -349,7 +388,21 @@ class Spending:
                     pending_reserved_usd=float(
                         sum((Decimal(row["reserved_usd"]) for row in pending), Decimal(0))
                     ),
-                    input_tokens=sum(row["usage"]["input_tokens"] for row in receipts),
+                    input_tokens=sum(
+                        row["usage"][key]
+                        for row in receipts
+                        for key in (
+                            "input_tokens",
+                            "cache_read_input_tokens",
+                            "cache_creation_input_tokens",
+                        )
+                    ),
+                    cache_read_input_tokens=sum(
+                        row["usage"]["cache_read_input_tokens"] for row in receipts
+                    ),
+                    cache_creation_input_tokens=sum(
+                        row["usage"]["cache_creation_input_tokens"] for row in receipts
+                    ),
                     output_tokens=sum(row["usage"]["output_tokens"] for row in receipts),
                 )
 

@@ -99,6 +99,44 @@ class SpendingContracts(unittest.TestCase):
         self.addCleanup(restored.close)
         self.assertEqual(restored.summary(), summary)
 
+    def test_native_payload_preserves_cache_and_prices_the_actual_usage(self):
+        payload = {
+            **self.payload,
+            "system": [
+                {"type": "text", "text": "Project context", "cache_control": {"type": "ephemeral"}}
+            ],
+        }
+        self.assertIn("cache_control", payload["system"][0])
+        payload["system"][0]["cache_control"]["ttl"] = "1h"
+        seen = []
+        response = self.response(
+            cache_read_input_tokens=1000,
+            cache_creation_input_tokens=200,
+            cache_creation={"ephemeral_5m_input_tokens": 100, "ephemeral_1h_input_tokens": 100},
+        )
+
+        def provider(request):
+            seen.append(json.loads(request.content))
+            return httpx.Response(200, headers={"request-id": "native-cache"}, json=response)
+
+        result = self.gateway(provider).forward(payload, {**self.headers, "x-factory-role": "loom"})
+        self.assertEqual(seen, [payload])
+        self.assertEqual(result.json(), response)
+        self.assertAlmostEqual(float(self.journal.spent), 0.0000625)
+        self.assertEqual(self.journal.summary()["input_tokens"], 1300)
+        self.journal.close()
+        restored = Spending(self.path, dollars="1", model="claude-haiku-5-5")
+        self.addCleanup(restored.close)
+        self.assertEqual(restored.spent, self.journal.spent)
+
+    def test_cached_prompt_selects_the_long_context_rate(self):
+        payload = {**self.payload, "messages": [{"role": "user", "content": "x" * 110000}]}
+        ticket = self.journal.reserve(payload, role="loom")
+        self.journal.settle(
+            ticket, self.response(input_tokens=1, cache_read_input_tokens=100000), "long-cache"
+        )
+        self.assertAlmostEqual(float(self.journal.spent), 0.0050505)
+
     def test_failed_dispatch_retains_reservation_and_blocks_the_next(self):
         calls = []
 
@@ -133,7 +171,7 @@ class SpendingContracts(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.journal.reserve({**self.payload, "max_tokens": 128000}, role="solver")
 
-    def test_missing_or_cached_usage_remains_unknown(self):
+    def test_missing_cache_counters_remain_unknown(self):
         for index, usage in enumerate(
             ({}, {"input_tokens": 10, "output_tokens": 2, "cache_read_input_tokens": 5})
         ):
@@ -423,7 +461,7 @@ class SpendingContracts(unittest.TestCase):
         self.assertTrue(self.journal.pending)
         self.assertTrue(self.journal.blocked)
 
-    def test_unpriced_media_hosted_tools_and_cache_controls_refuse_before_dispatch(self):
+    def test_unpriced_media_hosted_tools_and_cache_categories_refuse_before_dispatch(self):
         seen = []
         gateway = self.gateway(lambda request: seen.append(request))
         requests = [
@@ -442,7 +480,7 @@ class SpendingContracts(unittest.TestCase):
                 ],
             },
             {**self.payload, "tools": [{"type": "web_search_20250305", "name": "web_search"}]},
-            {**self.payload, "cache_control": {"type": "ephemeral"}},
+            {**self.payload, "cache_control": {"type": "ephemeral", "ttl": "2h"}},
             {**self.payload, "service_tier": "priority"},
         ]
         for payload in requests:

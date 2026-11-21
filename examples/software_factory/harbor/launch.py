@@ -19,6 +19,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 from .arms import PRIMARY
+from .build_recipe import PYTHON_IMAGE, native_recipe
 from .catalog import load_evaluation
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -206,14 +207,18 @@ def source_hash(root, output):
 
 
 def build_context(root, destination, output=None):
-    production = (root / "Dockerfile").read_text()
+    production = native_recipe((root / "Dockerfile").read_text())
     marker = re.search(r"^FROM py-builder AS local-models\s*$", production, re.MULTILINE)
     fragment = (root / HERE / "controller.Dockerfile").read_text()
     if marker is None:
         raise LaunchError("The production Python builder stage cannot be identified")
     prefix = production[: marker.start()]
     base = re.search(r"^FROM (\S+@sha256:[0-9a-f]{64}) AS py-builder$", prefix, re.MULTILINE)
-    if base is None or "FROM " + base[1] + " AS factory-controller" not in fragment:
+    if (
+        base is None
+        or base[1] != PYTHON_IMAGE
+        or "FROM " + base[1] + " AS factory-controller" not in fragment
+    ):
         raise LaunchError("Controller and core Python base images must have the same pinned ABI")
     if prefix.count("--extra local-embedder") != 1:
         raise LaunchError("The locked core dependency command differs")

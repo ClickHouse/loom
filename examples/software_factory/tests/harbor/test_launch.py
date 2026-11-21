@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from examples.software_factory.harbor import launch
 from examples.software_factory.harbor.arms import PRIMARY
+from examples.software_factory.harbor.build_recipe import COMPILER_INSTALL
 from examples.software_factory.harbor.catalog import load_evaluation
 
 
@@ -107,7 +108,10 @@ class PublicLauncher(unittest.TestCase):
             "a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1"
         )
         (self.root / "Dockerfile").write_text(
-            f"FROM {base} AS py-builder\nRUN uv sync --locked --extra local-embedder\n"
+            f"FROM {base} AS py-builder\n"
+            + COMPILER_INSTALL
+            + "\n"
+            + "RUN uv sync --locked --extra local-embedder\n"
             "FROM py-builder AS local-models\nRUN unavailable-heavy-stage\n"
         )
         for name in ("pyproject.toml", "uv.lock", "README.md"):

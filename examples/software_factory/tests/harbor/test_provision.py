@@ -286,6 +286,7 @@ class ProvisioningContracts(unittest.TestCase):
             path = source / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("public source " + name)
+        (source / "Dockerfile").write_text(Path("Dockerfile").read_text())
         (source / ".env").write_text("ANTHROPIC_API_KEY=credential-sentinel")
         private = source / ".task-artifacts/private-evaluator.json"
         private.parent.mkdir()

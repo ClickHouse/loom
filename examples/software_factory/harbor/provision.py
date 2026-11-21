@@ -312,6 +312,11 @@ class Provisioner:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
             manifest[name] = sha(target)
+        from .build_recipe import native_recipe
+
+        production = context / "Dockerfile"
+        production.write_text(native_recipe(production.read_text()))
+        manifest["Dockerfile"] = sha(production)
         save(self.output / "build-source-manifest.json", manifest)
         return context
 
