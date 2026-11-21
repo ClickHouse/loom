@@ -50,6 +50,8 @@ Code reads use the serving API defaults for result counts, token limits, search
 legs, ranking and body delivery. Every returned body is checked against the local
 source span. Code-linked lessons are enabled only for the attempt's bound memory
 namespace, including literal grep reads.
+Solver and Loom transports share a 300-second request allowance, with retries
+disabled. This allowance is separate from measured agent and end-to-end time.
 
 Each attempt has a source-only checkout and an isolated test environment. Agent
 and verifier containers have no network, one CPU, 512 MiB and 64 processes. The

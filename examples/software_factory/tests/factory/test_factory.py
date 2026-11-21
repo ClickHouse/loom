@@ -396,6 +396,7 @@ class AdapterContracts(unittest.TestCase):
         self.addCleanup(adapter.close)
         receipt = adapter.request("code.symbol", {"org": "fixture", "namespace": "frozen"})
         self.assertEqual(agent.options["retry"], {"max_attempts": 1})
+        self.assertNotIn("timeout_s", agent.options)
         self.assertEqual(receipt["physical_requests"], 3)
         self.assertEqual(receipt["request_id"], "request-id")
         # Reuse the same async runner across sequential SDK operations.

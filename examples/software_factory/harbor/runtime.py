@@ -10,7 +10,7 @@ from pathlib import Path
 
 from examples.software_factory.factory.adapters import SDKContext
 from examples.software_factory.factory.anthropic_provider import accounting_usage
-from examples.software_factory.factory.model import digest
+from examples.software_factory.factory.model import TRANSPORT_TIMEOUT_S, digest
 from examples.software_factory.harbor.live_support import TransportAudit
 
 from .profiles import load_profile
@@ -196,7 +196,7 @@ def backend(protocol, task, path, *, slot, binding=None):
         coalesce_sets=False,
         pacing=False,
         retry={"max_attempts": 1},
-        timeout_s=10,
+        timeout_s=TRANSPORT_TIMEOUT_S,
     )
     agent.transport._client.event_hooks["request"].append(audit.request)
     agent.transport._client.event_hooks["response"].append(audit.response)

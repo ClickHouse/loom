@@ -9,6 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import httpx
 
+from examples.software_factory.factory.model import TRANSPORT_TIMEOUT_S
+
 from .spending import Spending
 
 ATTRIBUTION_HEADERS = {
@@ -95,7 +97,7 @@ class Gateway:
         self.client = httpx.Client(
             base_url="https://api.anthropic.com",
             headers={"x-api-key": api_key},
-            timeout=httpx.Timeout(300, connect=5),
+            timeout=httpx.Timeout(TRANSPORT_TIMEOUT_S, connect=5),
             transport=transport if transport is not None else httpx.HTTPTransport(retries=0),
             follow_redirects=False,
         )

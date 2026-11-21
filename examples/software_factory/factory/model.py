@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 MODES = ("baseline", "natural")
+TRANSPORT_TIMEOUT_S = 300
 
 
 def digest(value: Any) -> str:

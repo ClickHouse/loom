@@ -171,7 +171,7 @@ class SDKContext:
             or any(body.get(k) != self.expected_scope.get(k) for k in ("org", "namespace"))
         ):
             raise PermissionError("Index authorization is unverified")
-        result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1}, timeout_s=10)
+        result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1})
         if result.data.get("ignored_args"):
             raise PermissionError("Index ignored request arguments")
         after = await self.verify_scope(self.agent, body)
