@@ -32,6 +32,9 @@ or MCP connection your client supports. Read its capture settings before using p
 code or conversations. For a pipeline with separate implementation and review agents,
 continue with [memory for a software factory](multi-agent.md#memory-for-a-software-factory).
 
+Compare [memory architectures](../guides/compare-agent-memory.md) by deployment,
+sharing, provenance and staleness handling before choosing a service or harness.
+
 ### Check one coding lesson across sessions
 
 Use a disposable example rather than a secret or an unverified project rule:
