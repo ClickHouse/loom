@@ -1538,7 +1538,7 @@ async def _trigger_try_clock():
         yield
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 @pytest.mark.parametrize("jump", [0.0, 0.25])
 async def test_trigger_try_clock_ignores_unrelated_scheduling(monkeypatch, clock, jump):
     loop = asyncio.get_running_loop()
@@ -1570,7 +1570,7 @@ async def test_trigger_try_clock_ignores_unrelated_scheduling(monkeypatch, clock
     assert calls == [jump]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 async def test_trigger_try_clock_still_cancels_genuinely_blocked_cleanup(monkeypatch):
     cancelled = asyncio.Event()
 
@@ -1600,7 +1600,7 @@ async def test_trigger_try_clock_still_cancels_genuinely_blocked_cleanup(monkeyp
         assert owner._close_task is not None and owner._close_task.done()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 async def test_trigger_try_clock_drains_and_rejects_an_orphan_task():
     cancelled = []
 
