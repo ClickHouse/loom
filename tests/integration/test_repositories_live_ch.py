@@ -350,13 +350,17 @@ async def test_retention_apply_emits_multiif_with_per_namespace_overrides(
                 namespace_overrides=overrides,
                 leader=True,
             )
-            if n >= 8:
+            if n >= 7:
                 break
             await _drain()
-        assert n == 8  # one ALTER per managed table
+        assert n == 7  # Audit retention is configured independently.
 
-        row = await ch.query_one(
+        audit = await ch.query_one(
             "SELECT engine_full FROM system.tables WHERE database='loom' AND name='audit_log'",
+        )
+        assert "TTL" not in (audit or {}).get("engine_full", "")
+        row = await ch.query_one(
+            "SELECT engine_full FROM system.tables WHERE database='loom' AND name='agent_events'",
         )
         engine_full = (row or {}).get("engine_full", "")
         assert "multiIf" in engine_full
