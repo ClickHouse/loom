@@ -184,7 +184,7 @@ async def _backfill(args: argparse.Namespace) -> int:
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
             # The batches written before the hold are compacted and recorded.
-            await _close_index(counters, org, ns, model_name, started, head, mode)
+            await _close_index(repo, counters, org, ns, model_name, started, head, mode)
             return 1
         if not paths_file:
             await repo.set_state(org, ns, cursor_key, str(b_start + len(chunk_paths)))
@@ -221,7 +221,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     if getattr(args, "dialect_folder_pass", False):
         folder = await _dialect_folder_pass(repo, org, ns, head)
         counters["dialect_inherited"] = folder["inherited"]
-    await _close_index(counters, org, ns, model_name, started, head, mode)
+    await _close_index(repo, counters, org, ns, model_name, started, head, mode)
     if paths_file:
         # a targeted repair proves nothing about the rest of the tree: the
         # per-merge watermark must keep walking every commit it has not seen
@@ -435,6 +435,7 @@ async def _dialect_folder_pass(repo: Any, org: str, ns: str, head: str) -> dict[
 
 
 async def _close_index(
+    repo: Any,
     counters: dict[str, int],
     org: str,
     ns: str,
@@ -443,8 +444,11 @@ async def _close_index(
     head: str,
     mode: str,
 ) -> None:
-    """The index phase's end: compact what it wrote and record its pass."""
+    """The index phase's end: compact what it wrote, republish its counts and record
+    its pass."""
     await _compact_after_bulk(counters["chunks"] + counters.get("moved", 0), model_name)
+    if counters["files"]:
+        await _republish_counts(repo, org, ns)
     await _record_manual_pass(
         "code_ingest",
         org,
@@ -458,6 +462,21 @@ async def _close_index(
         head=head[:12],
         mode=mode,
     )
+
+
+async def _republish_counts(repo: Any, org: str, ns: str) -> None:
+    """The shared counts and coverage rows, as the ingest pass publishes them after it
+    moves rows; a CLI phase moves rows outside that pass. A reader serves the counts
+    row whatever watermarks it was computed at, the coverage row while they match, and
+    embedding moves none."""
+    try:
+        await repo.refresh_table_counts(org, ns)
+    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+        print(f"  table counts not republished: {type(e).__name__}: {e}", file=sys.stderr)
+    try:
+        await repo.refresh_coverage(org, ns)
+    except Exception as e:  # noqa: BLE001 — never fail a finished phase over a cache row
+        print(f"  coverage not republished: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 async def _held_batch(
@@ -620,6 +639,8 @@ async def _backfill_embed(repo: Any, org: str, ns: str, args: argparse.Namespace
     async def _finish(code: int) -> int:
         _note(phase="embed", embedded=total, failed=result.failed, poisoned=result.poisoned)
         await _compact_after_bulk(total, embedder.model_name)
+        if total:
+            await _republish_counts(repo, org, ns)
         await _record_manual_pass(
             "code_embed_recovery",
             org,
