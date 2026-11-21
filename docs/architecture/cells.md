@@ -265,6 +265,18 @@ accepted only when the credential's SHA-256 is one of the hashes the directory r
 for `<cell>`, within `LOOM_CELL_ROUTER_TIMEOUT_S` (default 5 s, the placement call's
 timeout); a refused, failed or late answer counts as unreadable.
 
+A cell reads its placement capacity with `GET /cells/v1/cells/<cell>/capacity`
+and its own router credential. Current and next credentials are accepted only for the
+named cell, and checked again against the freshly read directory row. The response
+contains only `cell`, `deployment_id`, `placed_orgs`, `placements_max`, `closed` and
+`observed_at`, the database statement's observation time. A null placement maximum means
+no placement quota; a closed cell still reports its limits. Every response carries
+`Cache-Control: no-store`. These reads share administration reads' per-client address
+budget and `Retry-After` refusal. Each router process admits only one capacity read at a
+time, immediately refusing a concurrent read instead of queuing it. Reads use the
+directory's existing connection and statement bounds. A missing or revoked cell credential
+refuses; an unreadable directory answers 503 without reporting a count. The read neither places an org nor changes a limit.
+
 With the directory unreachable, rules 1 to 4 route from the router's cached cells; a
 lookup of an org it has not cached and a placement answer 503.
 

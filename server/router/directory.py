@@ -788,6 +788,21 @@ async def first_cell_named(cell_name: str) -> Cell | None:
     return _cell(row) if row else None
 
 
+async def capacity(cell_name: str) -> tuple[Cell, datetime] | None:
+    """One named cell's placement limits and the database statement's observation time."""
+    async with _reading(), _connection() as conn:
+        row = await conn.fetchrow(
+            f"SELECT capacity.*, statement_timestamp() AS observed_at "
+            f"FROM ({_CELL} WHERE cell = $1) AS capacity",
+            cell_name,
+        )
+    if row is None:
+        return None
+    fields = dict(row)
+    observed_at = fields.pop("observed_at")
+    return _cell(fields), observed_at
+
+
 async def place(org: str, cell_name: str, refusal: Callable[[Cell], str]) -> tuple[str, str]:
     """Place `org` in `cell_name` unless it is placed already; the (cell, deployment id)
     that holds it. An org placed already answers its cell, whatever the cell's state.

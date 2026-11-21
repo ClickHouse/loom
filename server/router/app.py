@@ -7,6 +7,8 @@
   cell's own credential only, which its processes read until they have read `serving`,
   answered from each replica's read of the row at most once per
   `LOOM_ROUTER_DIRECTORY_CACHE_S` (a failed read answering 503 for that window);
+- `GET /cells/v1/cells/<cell>/capacity`: fresh placement limits, identity and database
+  observation time for the named cell's own credential, with Cache-Control: no-store;
 - `GET /cells/lookup?org=`: which cell, and at which host, an org lives in (unauthenticated,
   rate-limited per client address); a placed org's answer is cached and given while the
   directory cannot be read, and before any cell is registered the lookup answers 503 with
@@ -201,6 +203,7 @@ class Router:
         # Fresh administration reads share lookup admission's configured per-address
         # budget, with separate counters so they do not consume ordinary lookups.
         self._administration = Limiter(settings.router_lookups_per_minute, clock=clock)
+        self._capacity_reading = False
         # The cells' credential hashes, read from the directory at most once per
         # LOOM_ROUTER_DIRECTORY_CACHE_S: a call with a wrong credential reads nothing.
         # A failed read stands for the window too, so an outage is not read once per call.
@@ -339,6 +342,37 @@ class Router:
         if not row.holds(presented):
             return _refused(401, "the credential names no cell of this directory")
         return JSONResponse({"cell": row.cell, "state": row.state})
+
+    async def capacity(self, request: Request) -> JSONResponse:
+        """Read only this cell's fresh placement limits with its own credential."""
+        headers = {"Cache-Control": "no-store"}
+        name = request.path_params["cell"]
+        presented = await self._authenticated(request, name)
+        if isinstance(presented, JSONResponse):
+            presented.headers.update(headers)
+            return presented
+        if refusal := self._administration_limit(request):
+            refusal.headers.update(headers)
+            return refusal
+        if self._capacity_reading:
+            return _refused(
+                429, "a capacity read is already in progress", {**headers, "Retry-After": "1"}
+            )
+        self._capacity_reading = True
+        try:
+            found = await directory.capacity(name)
+        except directory.DirectoryUnavailable as e:
+            return _refused(503, e.reason, headers)
+        finally:
+            self._capacity_reading = False
+        if found is None or found[0].cell != name or not found[0].holds(presented):
+            self._forget_credentials()
+            return _refused(401, "the credential names no cell of this directory", headers)
+        row, observed_at = found
+        answer = _limits(row)
+        del answer["next_credential_pending"]
+        answer.update(deployment_id=row.deployment_id, observed_at=observed_at.isoformat())
+        return JSONResponse(answer, headers=headers)
 
     async def _state_row(self, name: str) -> _StateRead:
         """Cell `name`'s row for its state route, read from the directory at most once per
@@ -1515,6 +1549,7 @@ def build_app(router: Router | None = None) -> Starlette:
         routes=[
             Route("/cells/v1/placements", router.place, methods=["POST"]),
             Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
+            Route("/cells/v1/cells/{cell}/capacity", router.capacity, methods=["GET"]),
             Route(
                 "/cells/v1/cells/{cell}/administration",
                 router.administration_identity,
