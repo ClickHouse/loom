@@ -176,11 +176,11 @@ def test_the_page_says_whether_loom_itself_asked_for_it(client, headers, own: bo
     assert f"window.__LOOM_OWN_ORIGIN = {flag};" in r.text
 
 
-@pytest.mark.parametrize(("url", "on"), [("http://chat.internal:3080", True), ("", False)])
+@pytest.mark.parametrize(("url", "on"), [(True, True), (False, False)])
 def test_the_page_says_whether_the_assistant_chat_is_set_up(client, monkeypatch, url, on) -> None:
     from server.settings import settings
 
-    monkeypatch.setattr(settings, "assistant_librechat_url", url)
+    monkeypatch.setattr(settings, "assistant_enabled", url)
     r = client.get("/memories")
     assert f"window.__LOOM_ASSISTANT = {'true' if on else 'false'};" in r.text
 

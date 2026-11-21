@@ -8,7 +8,7 @@
  *  (server/memory/app/ask/handler.py, server/code/app/ask.py) and document questions abstain
  *  (server/knowledge/app/synthesize.py). The assistant, Library decision extraction and
  *  conflict resolution stop earlier, at their own share of the cap
- *  (server/assistant/app/bridge.py `assistant_budget_share`;
+ *  (server/assistant/app/runtime.py `assistant_budget_share`;
  *  server/knowledge/app/source_sync.py and server/memory/workers/conflict_resolver.py
  *  `*_cap_share`). Other model calls are not capped, so the sentence lists what stops rather
  *  than saying every call does. Writes are accepted. Shown in the namespace settings and on

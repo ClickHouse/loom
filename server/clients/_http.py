@@ -96,6 +96,9 @@ async def _on_request(request: httpx.Request) -> None:
     from server.llm import gateway
 
     await gateway.sending(request)
+    from server.observability import provider_budget
+
+    provider_budget.sending(request)
 
 
 async def _on_response(response: httpx.Response) -> None:

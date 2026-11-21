@@ -48,24 +48,6 @@ app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "loom.assistantName" -}}
-{{- include "loom.suffixed" (dict "root" . "suffix" "librechat") }}
-{{- end }}
-
-{{- define "loom.assistantSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "loom.name" . | trunc 53 | trimSuffix "-" }}-librechat
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{- define "loom.assistantMongoName" -}}
-{{- include "loom.suffixed" (dict "root" . "suffix" "librechat-mongo" "max" 52) }}
-{{- end }}
-
-{{- define "loom.assistantMongoSelectorLabels" -}}
-app.kubernetes.io/name: {{ include "loom.name" . | trunc 47 | trimSuffix "-" }}-librechat-mongo
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
 {{- define "loom.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
 {{- default (include "loom.fullname" .) .Values.serviceAccount.name }}
@@ -239,11 +221,8 @@ LOOM_PG_POOL_MAX_SIZE: {{ $pg.poolMaxSize | quote }}
 # The release's extractor (extractor.yaml); its token is in the release Secret.
 LOOM_DOCUMENT_EXTRACTOR_URL: {{ printf "http://%s:8790" (include "loom.extractorName" .) | quote }}
 {{- end }}
-{{- $ownAssistant := hasKey .Values.env "LOOM_ASSISTANT_LIBRECHAT_URL" }}
-{{- range .Values.extraEnv }}{{ if eq .name "LOOM_ASSISTANT_LIBRECHAT_URL" }}{{ $ownAssistant = true }}{{ end }}{{ end }}
-{{- if and .Values.assistant.enabled (not $ownAssistant) }}
-# The release's LibreChat (assistant.yaml), which runs the agent Loom seeds.
-LOOM_ASSISTANT_LIBRECHAT_URL: {{ printf "http://%s:3080" (include "loom.assistantName" .) | quote }}
+{{- if not (hasKey .Values.env "LOOM_ASSISTANT_ENABLED") }}
+LOOM_ASSISTANT_ENABLED: {{ .Values.assistant.enabled | quote }}
 {{- end }}
 # The web processes' shared files: serve.sh makes $XDG_RUNTIME_DIR/loom, 0700
 # and owned by the pod's user (an emptyDir itself is neither).
@@ -337,7 +316,6 @@ upgraded with --reuse-values from a chart without the block has none. */}}
 {{- if $tls.secretName -}}
 {{- if not (kindIs "string" $tls.secretName) }}{{ fail "tls.secretName must be the name of a kubernetes.io/tls Secret" }}{{ end -}}
 {{- if not (has (toString $tls.minVersion) (list "1.2" "1.3")) }}{{ fail "tls.minVersion must be \"1.2\" or \"1.3\"" }}{{ end -}}
-{{- if dig "enabled" false (.Values.assistant | default dict) }}{{ fail "assistant.enabled calls Loom's port over plain HTTP, which tls.secretName turns off: turn one of them off" }}{{ end -}}
 {{- $ingress := .Values.ingress | default dict -}}
 {{- if and $ingress.enabled (eq (toString $ingress.className) "alb") -}}
 {{- /* The controller also reads these from the Service, where they win over the Ingress's. */}}

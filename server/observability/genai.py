@@ -527,6 +527,32 @@ class _Generation:
         self._model = model
         self._attempts = 0
 
+    def record_accounting(
+        self,
+        *,
+        usage_status: str,
+        price_model: str,
+        reasoning_tokens: int | None = None,
+        estimated_cost: float | None = None,
+    ) -> None:
+        """Record uncertainty without inventing token counts or a measured zero cost."""
+        if self._span is None:
+            return
+        try:
+            self._span.set_attribute("loom.llm.usage_status", usage_status)
+            self._span.set_attribute("loom.llm.price_model", price_model)
+            self._span.set_attribute("gen_ai.request.attempts", self._attempts)
+            if reasoning_tokens is None:
+                self._span.set_attribute("loom.llm.reasoning_tokens_unknown", True)
+            else:
+                # A subset of output, kept out of additive usage series.
+                self._span.set_attribute("loom.llm.reasoning_tokens", reasoning_tokens)
+            if estimated_cost is not None:
+                self._span.set_attribute("loom.llm.cost_estimated", True)
+                self._span.set_attribute("loom.llm.estimated_cost_usd", estimated_cost)
+        except Exception:  # noqa: BLE001 — span delivery must not lose accounting
+            pass
+
     def record_content(self, *, system: str = "", user: str = "", output: str = "") -> None:
         """Attach bounded prompt/completion text, and link the prompt version.
 

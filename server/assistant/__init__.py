@@ -1,1 +1,1 @@
-"""The assistant: LibreChat runs the agent beside Loom; Loom supplies its tools and identity."""
+"""The native assistant: bounded model and tool execution under the caller's identity."""

@@ -51,17 +51,22 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 ## Assistant
 
-The assistant: LibreChat run headless beside Loom, and the agent Loom seeds in it.
+Native assistant admission, tool and model budgets.
 
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
-| `LOOM_ASSISTANT_LIBRECHAT_URL` | `str` | `''` |  | LibreChat's internal address (http://librechat:3080), reachable only from Loom. "" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read. |
-| `LOOM_ASSISTANT_SERVICE_EMAIL` | `str` | `'loom-assistant@loom.invalid'` |  | Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail. |
-| `LOOM_ASSISTANT_SETUP_RETRY_S` | `float` | `60.0` |  | Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment). |
+| `LOOM_ASSISTANT_ENABLED` | `bool` | `False` |  | Serve the assistant with its explicitly configured provider; false refuses chat. |
+| `LOOM_ASSISTANT_MAX_STEPS` | `int` | `8` |  | Model turns, including the final answer; tool calls share a separate total bound. |
+| `LOOM_ASSISTANT_MAX_TOOL_CALLS` | `int` | `16` |  | Total host-context and model-selected tool calls allowed in one answer. |
+| `LOOM_ASSISTANT_MAX_CONTEXT_BYTES` | `int` | `100000` |  | UTF-8 bytes of the complete context, tools and messages included. |
+| `LOOM_ASSISTANT_MAX_TOOL_RESULT_CHARS` | `int` | `20000` |  | Characters allowed in one tool result; oversize results refuse. |
+| `LOOM_ASSISTANT_MAX_OUTPUT_CHARS` | `int` | `20000` |  | Characters of provisional answer text allowed across all model turns. |
+| `LOOM_ASSISTANT_MAX_OUTPUT_TOKENS` | `int` | `2048` |  | Output tokens requested from one model turn. |
+| `LOOM_ASSISTANT_MAX_TOKENS` | `int` | `100000` |  | Total reported input and output tokens allowed across all turns. |
 | `LOOM_ASSISTANT_ANSWER_TTL_S` | `int` | `600` |  | Seconds one assistant answer may run, and how long its delegated token lives. |
 | `LOOM_ASSISTANT_BUDGET_SHARE` | `float` | `0.5` |  | The share of a namespace's daily model cost cap the assistant may spend, so questions cannot spend what extraction and the conflict resolver need. |
 | `LOOM_ASSISTANT_CONCURRENT_ANSWERS` | `int` | `2` |  | Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it. |
-| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing. |
+| `LOOM_ASSISTANT_ANSWER_CEILING_USD` | `float` | `0.1` |  | USD reservation ceiling per answer. Unknown usage retains the reserved cost as an estimate; real unpriced models are refused before a send. Zero refuses calls. |
 
 ## Auth
 
@@ -1570,8 +1575,9 @@ Models: which model does each job.
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_LLM_MODEL` | `str` | `''` |  | The deployment's LLM: memory extraction, rerank and every job whose own model setting (the other *_model settings) is left "". Empty takes the resolved provider's default model (gpt-6-luna / claude-haiku-4-5 / qwen2.5:3b / fake-echo-1). |
-| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant agent's model, which Loom writes into the agent definition at boot. "" = the definition's own (integrations/librechat/agent.yaml), not llm_model. |
-| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'local'` | `''` |  | The LibreChat endpoint the agent runs on: "" = the definition's (anthropic), "local" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model). |
+| `LOOM_ASSISTANT_MODEL` | `str` | `''` |  | The assistant's model. Empty selects claude-haiku-4-5 on Anthropic or fake-echo-1 on the explicit fake route; every other provider requires a model. |
+| `LOOM_ASSISTANT_PRICE_MODEL` | `str` | `''` |  | Price-table model used for assistant route aliases (for example a Bedrock inference profile). Empty uses assistant_model. The operator verifies its rate. |
+| `LOOM_ASSISTANT_PROVIDER` | `'' \| 'anthropic' \| 'openai' \| 'bedrock' \| 'local' \| 'fake'` | `''` |  | Native streaming provider. Empty selects Anthropic; no fallback is used. |
 | `LOOM_LLM_FALLBACK_MODEL` | `str` | `''` |  | Model to answer with when a client's provider is still unavailable after its retries (429 / 5xx / transport / timeout) or rejected the request (400 / 413 / 422). Counted in `loom.llm.fallback`. 401 / 403 / 404 are configuration and never fall back. "" = fail the op. |
 | `LOOM_EMBEDDING_MODEL` | `str` | `'fake-ngram-3072'` |  | Embeddings for memories, queries and code chunks. fake-ngram-3072 needs no network or key; production uses text-embedding-3-* (OPENAI_API_KEY). Change it together with `embedding_dim`; a new embedding space needs a full re-embed. |
 | `LOOM_LOCAL_EMBEDDING_MODEL_DIR` | `str` | `'var/models'` |  | Where `local` models live (relative: under the working directory), one directory per alias and revision; a missing file is fetched there. The image sets it by env. |

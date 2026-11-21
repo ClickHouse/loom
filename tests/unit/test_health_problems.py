@@ -779,25 +779,18 @@ def test_a_full_sign_in_table_is_reported(monkeypatch: pytest.MonkeyPatch) -> No
     assert full.code == "oauth_signin_state_full"
 
 
-def test_an_assistant_still_being_set_up_raises_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Starting, or set up again after LibreChat refused the stored key, ends on its own:
-    only a failed setup try is a problem."""
+def test_native_assistant_configuration_failures_remain_visible(monkeypatch):
     from server.assistant.app import service
+    from server.settings import settings
 
-    s = _settings(monkeypatch)
-    assert "assistant_service_failing" not in _codes(collect_problems(s, HealthState(env={})))
-    # The state a key LibreChat no longer takes leaves behind.
-    monkeypatch.setattr(service, "_ready", True)
-    monkeypatch.setattr(service, "_problem", "")
-    monkeypatch.setattr(service, "_answering", ("agent_1", "sk-old"))
-    monkeypatch.setattr(service, "_loop", None)
-    monkeypatch.setattr(service, "start_setup_loop", lambda: None)
-    service.forget_answering()
+    configured = _settings(monkeypatch)
+    monkeypatch.setattr(settings, "assistant_enabled", False)
     ok, error = service.assistant_state()
-    again = HealthState(env={}, assistant_ok=ok, assistant_error=error)
-    assert "assistant_service_failing" not in _codes(collect_problems(s, again))
-    failed = HealthState(env={}, assistant_ok=False, assistant_error="connection refused")
-    assert "assistant_service_failing" in _codes(collect_problems(s, failed))
+    assert "assistant_service_failing" not in _codes(
+        collect_problems(configured, HealthState(env={}, assistant_ok=ok, assistant_error=error))
+    )
+    failed = HealthState(env={}, assistant_ok=False, assistant_error="provider_key_missing")
+    assert "assistant_service_failing" in _codes(collect_problems(configured, failed))
 
 
 @pytest.mark.parametrize(("live", "shown"), [(True, None), (False, "warn")])

@@ -51,7 +51,7 @@
           "maximum": 10,
           "minimum": 0,
           "type": "number",
-          "description": "USD charged for an answer cut before LibreChat reported its usage (a disconnect, a timeout) or on a model with no price; 0 charges nothing."
+          "description": "USD reservation ceiling per answer. Unknown usage retains the reserved cost as an estimate; real unpriced models are refused before a send. Zero refuses calls."
         },
         "assistant_answer_ttl_s": {
           "default": 600,
@@ -74,37 +74,82 @@
           "type": "integer",
           "description": "Answers one web process runs at once per namespace (a replica runs its web workers' count times this); bounds how far answers that each passed the cap check can overshoot it."
         },
-        "assistant_librechat_url": {
-          "default": "",
-          "type": "string",
-          "description": "LibreChat's internal address (http://librechat:3080), reachable only from Loom. \"\" = no assistant: no service setup at boot, and the panel's chat is off; its starters still read."
+        "assistant_enabled": {
+          "default": false,
+          "type": "boolean",
+          "description": "Serve the assistant with its explicitly configured provider; false refuses chat."
+        },
+        "assistant_max_context_bytes": {
+          "default": 100000,
+          "maximum": 1000000,
+          "minimum": 4096,
+          "type": "integer",
+          "description": "UTF-8 bytes of the complete context, tools and messages included."
+        },
+        "assistant_max_output_chars": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1000,
+          "type": "integer",
+          "description": "Characters of provisional answer text allowed across all model turns."
+        },
+        "assistant_max_output_tokens": {
+          "default": 2048,
+          "maximum": 16384,
+          "minimum": 64,
+          "type": "integer",
+          "description": "Output tokens requested from one model turn."
+        },
+        "assistant_max_steps": {
+          "default": 8,
+          "maximum": 32,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Model turns, including the final answer; tool calls share a separate total bound."
+        },
+        "assistant_max_tokens": {
+          "default": 100000,
+          "maximum": 1000000,
+          "minimum": 1024,
+          "type": "integer",
+          "description": "Total reported input and output tokens allowed across all turns."
+        },
+        "assistant_max_tool_calls": {
+          "default": 16,
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Total host-context and model-selected tool calls allowed in one answer."
+        },
+        "assistant_max_tool_result_chars": {
+          "default": 20000,
+          "maximum": 100000,
+          "minimum": 1000,
+          "type": "integer",
+          "description": "Characters allowed in one tool result; oversize results refuse."
         },
         "assistant_model": {
           "default": "",
           "type": "string",
-          "description": "The assistant agent's model, which Loom writes into the agent definition at boot. \"\" = the definition's own (integrations/librechat/agent.yaml), not llm_model."
+          "description": "The assistant's model. Empty selects claude-haiku-4-5 on Anthropic or fake-echo-1 on the explicit fake route; every other provider requires a model."
+        },
+        "assistant_price_model": {
+          "default": "",
+          "type": "string",
+          "description": "Price-table model used for assistant route aliases (for example a Bedrock inference profile). Empty uses assistant_model. The operator verifies its rate."
         },
         "assistant_provider": {
           "default": "",
           "enum": [
             "",
             "anthropic",
-            "local"
+            "openai",
+            "bedrock",
+            "local",
+            "fake"
           ],
           "type": "string",
-          "description": "The LibreChat endpoint the agent runs on: \"\" = the definition's (anthropic), \"local\" = LibreChat's local endpoint (a model server the operator runs; needs assistant_model)."
-        },
-        "assistant_service_email": {
-          "default": "loom-assistant@loom.invalid",
-          "type": "string",
-          "description": "Email of the LibreChat service user that owns the agent, read once, when the first boot writes loom.assistant_service; LibreChat sends it no mail."
-        },
-        "assistant_setup_retry_s": {
-          "default": 60.0,
-          "maximum": 3600,
-          "minimum": 60,
-          "type": "number",
-          "description": "Seconds before a failed assistant setup is tried again; each next failure doubles the wait, up to 16 times as long (docs/architecture/assistant.md#deployment)."
+          "description": "Native streaming provider. Empty selects Anthropic; no fallback is used."
         },
         "audit_checkpoint_grace_seconds": {
           "default": 600,

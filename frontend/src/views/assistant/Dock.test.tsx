@@ -170,7 +170,7 @@ describe("reasons, worded per reader", () => {
     const body = await unavailable();
     expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat isn't set up");
     expect(body).toHaveTextContent(
-      "Chat isn't set upAn operator sets up the assistant service for this deployment. Until then, Loom can still answer these from its own reads.",
+      "Chat isn't set upAn operator configures the assistant provider and model for this deployment. Until then, Loom can still answer these from its own reads.",
     );
     expect(body).not.toHaveTextContent("Models & keys");
     // No question field and no box: the starters under it are Loom's own reads.
@@ -179,7 +179,7 @@ describe("reasons, worded per reader", () => {
     expect(await screen.findByRole("list", { name: "Starters" })).toBeInTheDocument();
     await waitFor(() => expect(useDock.getState().reason).toEqual({ kind: "not_configured" }));
     // Every reader gets the docs that say how an operator sets the service up.
-    await userEvent.click(within(body).getByRole("button", { name: "How to set up the assistant service" }));
+    await userEvent.click(within(body).getByRole("button", { name: "How to configure the assistant" }));
     expect(useStore.getState().view).toBe("help");
     expect(window.location.search).toContain(`page=${encodeURIComponent(SETUP_DOCS.page)}`);
     expect(window.location.hash).toBe(`#${SETUP_DOCS.anchor}`);
@@ -190,15 +190,14 @@ describe("reasons, worded per reader", () => {
     signIn(who);
     show();
     const body = await unavailable();
-    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat configuration needs attention");
     // Someone who can open Admin › Health is sent there; anyone but a platform admin is
     // told who fixes it.
     const admin = who !== "viewer";
     const line: Partial<Record<Who, string>> = {
-      platform: "Loom retries the setup on its own; Admin › Health says why it fails.",
-      nsAdmin:
-        "Loom retries the setup on its own; Admin › Health says why it fails. An admin of this deployment fixes it.",
-      viewer: "Loom retries the setup on its own. An admin of this deployment fixes it.",
+      platform: "Check the assistant configuration in Admin › Health.",
+      nsAdmin: "Check the assistant configuration in Admin › Health. An admin of this deployment fixes it.",
+      viewer: "The assistant configuration needs attention. An admin of this deployment fixes it.",
     };
     expect(body).toHaveTextContent(`${line[who]} Until it works, Loom can still answer these from its own reads.`);
     expect(within(body).getByRole("button", { name: "Try again" })).toBeInTheDocument();
@@ -218,20 +217,22 @@ describe("reasons, worded per reader", () => {
     await screen.findByText("Ada owns billing.");
     act(() => useChat.setState({ hint: { kind: "failing" } }));
     const body = await unavailable();
-    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat's setup is failing");
+    expect(within(body).getByRole("heading", { level: 3 })).toHaveTextContent("Chat configuration needs attention");
     expect(
-      within(body).getByText("Loom retries the setup on its own. An admin of this deployment fixes it."),
+      within(body).getByText("The assistant configuration needs attention. An admin of this deployment fixes it."),
     ).toBeInTheDocument();
     expect(body).not.toHaveTextContent("own reads");
     expect(screen.queryByRole("list", { name: "Starters" })).toBeNull();
   });
 
-  it("starting, and readiness is read again while it sets up", async () => {
+  it("configuration failures are read again until repaired", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    check = { ok: false, reason: "starting", required: false };
+    check = { ok: false, reason: "failing", required: false };
     signIn("viewer");
     show();
-    expect(await unavailable()).toHaveTextContent("Setting up — usually under a minute. This updates on its own.");
+    expect(await unavailable()).toHaveTextContent(
+      "The assistant configuration needs attention. An admin of this deployment fixes it.",
+    );
     const reads = paths.filter((p) => p === "/v1/health/ready").length;
     check = { ok: true, required: false };
     await act(async () => {
@@ -241,13 +242,15 @@ describe("reasons, worded per reader", () => {
     await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).not.toBeInTheDocument());
   });
 
-  it("a route refusal that says setting up is read again, and goes once readiness reads ready", async () => {
+  it("a route configuration refusal is read again, and goes once readiness reads ready", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await askIt("Who owns billing?");
-    expect(await unavailable()).toHaveTextContent("Setting up — usually under a minute. This updates on its own.");
+    expect(await unavailable()).toHaveTextContent(
+      "The assistant configuration needs attention. An admin of this deployment fixes it.",
+    );
     const reads = paths.filter((p) => p === "/v1/health/ready").length;
     await act(async () => {
       vi.advanceTimersByTime(READINESS_POLL_MS + 10);
@@ -419,7 +422,7 @@ describe("Try again", () => {
   it("asks a refused question again once nothing stands in the way", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await askIt("Who owns billing?");
     await unavailable();
     chat.push(() => answer("Ada."));
@@ -435,7 +438,7 @@ describe("Try again", () => {
     await askIt("Who owns billing?");
     expect(await screen.findByText("Ada.")).toBeInTheDocument();
     await waitFor(() => expect(useChat.getState().answering).toBe(false));
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     // The turn is back as it was, its question waiting in the field as an edit.
@@ -447,7 +450,8 @@ describe("Try again", () => {
     expect(screen.queryByText("Ada.")).toBeNull();
   });
 
-  const starting = () => refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" });
+  const configurationFailure = () =>
+    refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" });
   async function answered(question: string, text: string) {
     chat.push(() => answer(text));
     await askIt(question);
@@ -460,7 +464,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     await answered("Who owns billing?", "Ada.");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await askIt("Since when?");
     await unavailable();
     const user = userEvent.setup();
@@ -507,7 +511,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     await answered("Who owns billing?", "Ada.");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await askIt("Since when?");
     await unavailable();
     const user = userEvent.setup();
@@ -523,7 +527,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     await answered("Who owns billing?", "Ada.");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await askIt("Since when?");
     await unavailable();
     const user = userEvent.setup();
@@ -539,7 +543,7 @@ describe("Try again", () => {
     await answered("Who owns billing?", "Ada.");
     const user = userEvent.setup();
     await user.type(screen.getByLabelText("Question"), "half typed");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     expect(screen.getByLabelText("Question")).toHaveValue("half typed");
@@ -554,7 +558,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     await answered("Who owns billing?", "Ada.");
-    chat.push(starting());
+    chat.push(configurationFailure());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
@@ -590,7 +594,7 @@ describe("Try again", () => {
     const user = userEvent.setup();
     // Text in the field: the refused question waits for Try again, not as an edit.
     await user.type(screen.getByLabelText("Question"), "half typed");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await user.click(await screen.findByRole("button", { name: "Ask again with sources" }));
     await unavailable();
     // The turn put back waits for Try again: no second attempt can replace its words.
@@ -610,7 +614,7 @@ describe("Try again", () => {
     show();
     await answered("Who owns billing?", "Ada.");
     act(() => useStore.setState({ view: "recall" }));
-    chat.push(starting());
+    chat.push(configurationFailure());
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
@@ -798,7 +802,7 @@ describe("Try again", () => {
   it("offers no Try again for a refused new question once its reason went: the question is in the field", async () => {
     signIn("viewer");
     show();
-    chat.push(starting());
+    chat.push(configurationFailure());
     await askIt("Who owns billing?");
     await unavailable();
     act(() => useChat.setState({ hint: null }));
@@ -838,7 +842,7 @@ describe("Try again", () => {
     signIn("viewer");
     show();
     await answered("Who owns billing?", "Ada.");
-    chat.push(starting());
+    chat.push(configurationFailure());
     await userEvent.setup().click(screen.getByRole("button", { name: /^Ask again, answer/ }));
     await unavailable();
     await act(async () => {
@@ -846,7 +850,7 @@ describe("Try again", () => {
     });
     await waitFor(() => expect(screen.queryByTestId("assistant-unavailable")).toBeNull());
     // The notice line, beside what the live region said.
-    const line = "Ask AI can't answer: setting up. The answer before it stays.";
+    const line = "Ask AI can't answer: configuration failed. The answer before it stays.";
     expect(screen.getAllByText(line).filter((el) => el.id !== "loom-assistant-status")).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
     expect(screen.getByText("Ada.")).toBeInTheDocument();
@@ -1514,7 +1518,11 @@ function held() {
   };
 }
 
-const startingRefusal = refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" });
+const configurationRefusal = refusal(503, {
+  code: "ASSISTANT_UNAVAILABLE",
+  message: "not set up yet",
+  reason: "failing",
+});
 // Saved now: a turn still answering an hour on reads as stopped (ANSWER_MAX_MS).
 const answering = (i: number): Turn => ({ ...done(i), answer: "", state: "answering", at: Date.now() });
 const status = () => document.getElementById("loom-assistant-status");
@@ -1641,7 +1649,7 @@ describe("one answer per conversation across tabs", () => {
     show();
     const user = userEvent.setup();
     await openSaved(user);
-    chat.push(startingRefusal);
+    chat.push(configurationRefusal);
     await user.type(screen.getByLabelText("Question"), "Who?");
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await unavailable();
@@ -1653,7 +1661,7 @@ describe("one answer per conversation across tabs", () => {
   it("a refused only question deletes its conversation, so no tab writes it back", async () => {
     signIn("viewer");
     show();
-    chat.push(startingRefusal);
+    chat.push(configurationRefusal);
     let id = "";
     const off = useChat.subscribe((s) => {
       if (s.id) id = s.id;
@@ -1839,7 +1847,7 @@ describe("a turn stored while it answered", () => {
     await openSaved(user);
     await waitFor(() => expect(useChat.getState().id).toBe("c1"));
     expect(screen.queryByText("Question 0")).toBeNull();
-    chat.push(startingRefusal);
+    chat.push(configurationRefusal);
     await user.type(screen.getByLabelText("Question"), "Who?");
     await user.click(screen.getByRole("button", { name: "Ask" }));
     await unavailable();
@@ -1927,12 +1935,14 @@ describe("a refused first question", () => {
   it("starts nothing: after a namespace switch, Ask and Try again both go to the namespace shown", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await askIt("Who owns billing?");
     await unavailable();
     expect(useChat.getState()).toMatchObject({ id: null, namespace: null, turns: [] });
     await waitFor(() =>
-      expect(document.getElementById("loom-assistant-status")).toHaveTextContent("Ask AI can't answer: setting up."),
+      expect(document.getElementById("loom-assistant-status")).toHaveTextContent(
+        "Ask AI can't answer: configuration failed.",
+      ),
     );
     act(() =>
       useStore.setState({
@@ -1959,7 +1969,7 @@ describe("a refused first question", () => {
   it("Try again keeps Ask's checks: on a namespace with no memories it sends nothing", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await askIt("Who owns billing?");
     await unavailable();
     act(() =>
@@ -2122,7 +2132,7 @@ describe("the page a question is asked from", () => {
   it("Try again from an emptied field, refused again, brings back the chip it was asked with", async () => {
     signIn("viewer");
     show();
-    const busy = { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" };
+    const busy = { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" };
     chat.push(refusal(503, busy));
     act(() => askAbout(item()));
     await waitFor(() => expect(chipText()).toBe("Includes: Memories · key user/pref/lang"));
@@ -2236,7 +2246,7 @@ describe("the page chip on a question that is not answered", () => {
   it("a refused question comes back with its item in the chip", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     act(() => askAbout(item()));
     await askIt("Who wrote it?");
     await unavailable();
@@ -2247,7 +2257,7 @@ describe("the page chip on a question that is not answered", () => {
   it("Try again sends what the chip shows now: removed since, nothing about the page", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     act(() => askAbout(item()));
     await askIt("Who wrote it?");
     await unavailable();
@@ -2330,7 +2340,7 @@ describe("Ask about this, the edge cases", () => {
   it("Try again sends nothing when the chip's line now pushes the question past the route's length", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     // Fits beside "Context: Memories page", not beside the item's longer line.
     const question = "x".repeat(19_970);
@@ -2354,7 +2364,7 @@ describe("Ask about this, the edge cases", () => {
   it("with other text in the field, Try again over the length keeps it and says why nothing was sent", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     act(() => useDock.setState({ draft: "x".repeat(19_970) }));
     const user = userEvent.setup();
@@ -2375,7 +2385,7 @@ describe("Ask about this, the edge cases", () => {
   it("a question waiting with sources counts their words in the length it says", async () => {
     signIn("viewer");
     show();
-    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "starting" }));
+    chat.push(refusal(503, { code: "ASSISTANT_UNAVAILABLE", message: "not set up yet", reason: "failing" }));
     await waitFor(() => expect(screen.queryByText("Getting Ask AI ready…")).not.toBeInTheDocument());
     act(() => useDock.setState({ draft: "x".repeat(19_970) }));
     const user = userEvent.setup();

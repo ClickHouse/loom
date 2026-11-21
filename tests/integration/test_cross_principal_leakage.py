@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT))
 # already covers, and some (namespace.register) would create rows.
 _SKIP_OPS = {
     # Not a read: a model-backed answer on the caller's behalf, which spends from the
-    # namespace's daily model cost cap (and, with no LibreChat, answers its
+    # namespace's daily model cost cap (and, with the assistant disabled, answers its
     # configuration refusal). Its isolation, the caller's `viewer` check before anything
     # runs and the answer token's reads after, is tested in tests/unit.
     "assistant.ask",

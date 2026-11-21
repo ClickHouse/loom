@@ -159,7 +159,7 @@ async def _page(request: Request) -> Response:
     sso = settings.oauth_login_provider == "oidc"
     signup_open = settings.self_signup_served()
     # Whether the assistant panel's chat is set up; its starters read Loom either way.
-    assistant_on = bool(settings.assistant_librechat_url)
+    assistant_on = bool(settings.assistant_enabled)
     nonce = secrets.token_urlsafe(16)
     boot_snippet = (
         f'<script nonce="{nonce}">'

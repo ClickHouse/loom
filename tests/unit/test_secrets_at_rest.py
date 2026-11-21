@@ -44,9 +44,11 @@ def _no_analysis_lease(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.insights.app import analysis
 
     monkeypatch.setattr(analysis, "lease", lambda ch=None: contextlib.nullcontext())
-    from server.assistant.app import service
+    from server.cli import secrets
 
-    monkeypatch.setattr(service, "lease", lambda ch=None: contextlib.nullcontext())
+    monkeypatch.setitem(
+        secrets._LEASED, "loom.assistant_service", lambda ch=None: contextlib.nullcontext()
+    )
 
 
 def test_purposes_do_not_open_each_other_and_empty_stays_empty(
@@ -426,3 +428,29 @@ def test_reseal_check_waits_for_sign_ins_in_flight_under_the_previous_root(
     assert "1 sign-in in flight" in out and "2030-03-17T17:46:40Z" in out
     keeper.pop(0)  # expired and swept
     assert cli._cmd_reseal(argparse.Namespace(dry_run=False, check=True)) == 0
+
+
+def test_assistant_reseal_statements_are_bounded_inside_the_retained_lease(monkeypatch):
+    import contextlib
+
+    from server.cli import secrets
+    from server.core import ch, leases
+
+    client = object()
+    calls = []
+
+    @contextlib.asynccontextmanager
+    async def held(name, *, ttl_s, wait_s, ch):
+        calls.append((name, ttl_s, wait_s, ch))
+        yield
+
+    monkeypatch.setattr(leases, "cluster_lease", held)
+    before = ch.statement_timeout_var.get()
+
+    async def run():
+        async with secrets._assistant_lease(client):
+            assert ch.statement_timeout_var.get() == leases.statement_bound(60)
+        assert ch.statement_timeout_var.get() == before
+
+    asyncio.run(run())
+    assert calls == [("assistant.service", 60, 120, client)]

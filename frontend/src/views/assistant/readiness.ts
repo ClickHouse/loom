@@ -1,7 +1,7 @@
 import type { AssistantReason } from "../../lib/assistantLayout";
 import { isRecord } from "../../lib/guards";
 
-export type AssistantCheck = "ready" | "not_configured" | "starting" | "failing";
+export type AssistantCheck = "ready" | "not_configured" | "failing";
 
 /** How long a readiness read may take before it counts as failed. */
 export const READINESS_TIMEOUT_MS = 10_000;
@@ -25,7 +25,7 @@ export async function readAssistantCheck(signal?: AbortSignal): Promise<Assistan
     if (a === undefined) return "not_configured";
     if (!isRecord(a)) return null;
     if (a.ok === true) return "ready";
-    return a.reason === "starting" ? "starting" : "failing";
+    return "failing";
   } catch {
     return null;
   } finally {

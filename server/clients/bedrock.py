@@ -89,7 +89,11 @@ def _signed(
     body = (
         request_body["body"] if operation == "invoke_model" else json.dumps(request_body).encode()
     )
-    suffix = "invoke" if operation == "invoke_model" else "converse"
+    suffix = {
+        "invoke_model": "invoke",
+        "converse": "converse",
+        "converse_stream": "converse-stream",
+    }[operation]
     # Session mutation and credential refresh are serialized; HTTP requests are not.
     # A credential snapshot lives for this signature, never for the client's lifetime.
     with _SIGN_LOCK:

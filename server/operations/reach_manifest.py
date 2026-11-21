@@ -240,7 +240,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "grants.approve": ("dashboard",),
     "grants.create": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "grants.list": (
@@ -252,20 +251,13 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "help.get": (
-        "plugin_hook",
-        "dashboard",
-    ),
-    "help.search": ("plugin_hook",),
+    "help.get": ("dashboard",),
     "inbox.list": ("dashboard",),
     "inbox.policy_list": ("dashboard",),
     "inbox.policy_set": ("dashboard",),
     "inbox.principals": ("dashboard",),
     "inbox.register": ("dashboard",),
-    "insights.query": (
-        "sdk_example",
-        "plugin_hook",
-    ),
+    "insights.query": ("sdk_example",),
     "knowledge.add": (
         "sdk_method",
         "sdk_example",
@@ -297,7 +289,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.gaps.list": ("dashboard",),
     "knowledge.get": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "knowledge.ingest": (
@@ -319,10 +310,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "knowledge.move": ("dashboard",),
-    "knowledge.outline": (
-        "sdk_method",
-        "plugin_hook",
-    ),
+    "knowledge.outline": ("sdk_method",),
     "knowledge.query_history.add": ("dashboard",),
     "knowledge.query_history.list": ("dashboard",),
     "knowledge.query_history.remove": ("dashboard",),
@@ -351,7 +339,6 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.update_metadata": ("dashboard",),
     "knowledge.upsert": (
         "sdk_method",
-        "plugin_hook",
         "dashboard",
     ),
     "learnings.list": (
@@ -429,14 +416,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.history": (
         "sdk_method",
         "sdk_example",
-        "plugin_hook",
         "dashboard",
     ),
     "memory.import_curated": ("dashboard",),
-    "memory.inspect": (
-        "plugin_hook",
-        "dashboard",
-    ),
+    "memory.inspect": ("dashboard",),
     "memory.lineage": (
         "sdk_method",
         "dashboard",
@@ -569,10 +552,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "namespace.guide_get": ("dashboard",),
     "namespace.guide_history": ("dashboard",),
     "namespace.guide_set": ("dashboard",),
-    "namespace.inventory": (
-        "plugin_hook",
-        "dashboard",
-    ),
+    "namespace.inventory": ("dashboard",),
     "namespace.join": ("dashboard",),
     "namespace.leave": ("dashboard",),
     "namespace.list": ("sdk_method",),
@@ -604,10 +584,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "dashboard",
     ),
-    "namespace.tune": (
-        "plugin_hook",
-        "dashboard",
-    ),
+    "namespace.tune": ("dashboard",),
     "namespace.validate": (
         "sdk_method",
         "plugin_hook",

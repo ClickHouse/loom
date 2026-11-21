@@ -11,11 +11,6 @@ from scripts.i18n.context import Label, SourceContext, project, protected
     [
         ("docs/features/integrations/frameworks.md", "n8n", ("n8n",)),
         ("docs/features/integrations/index.md", "Agent Substrate", ("Agent Substrate",)),
-        (
-            "docs/features/integrations/index.md",
-            "LibreChat v0.8.8",
-            ("LibreChat v0.8.8", "LibreChat"),
-        ),
         ("docs/benchmarks/results.md", "MemoryAgentBench samples", ("MemoryAgentBench",)),
         ("docs/reference/mcp.md", "OAuth", ("OAuth",)),
         ("docs/other.md", "Agent Substrate", ()),
@@ -166,7 +161,6 @@ def _table(rows: str) -> str:
     [
         ("docs/features/integrations/frameworks.md", "n8n"),
         ("docs/features/integrations/index.md", "Agent Substrate"),
-        ("docs/features/integrations/index.md", "LibreChat v0.8.8"),
         ("docs/benchmarks/results.md", "MemBench"),
         ("docs/benchmarks/results.md", "MemoryAgentBench"),
         ("docs/benchmarks/results.md", "MuSiQue-Ans"),

@@ -218,6 +218,9 @@ def emit_agent_event(
             )
             or {}
         )
+    if acc is not None and acc.cost_estimated:
+        args["out_cost_estimated"] = "true"
+        args["out_model_usage_status"] = "unknown"
     # A row with no request arguments of its own still names what it
     # returned: the deferred consistency verdict is such a
     # row, and its `out_consistency` is the label every analysis groups by.

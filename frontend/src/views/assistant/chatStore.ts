@@ -49,10 +49,8 @@ export function refusalReason(e: unknown): AssistantReason | null {
   const reason = typeof e.detail.reason === "string" ? e.detail.reason : "";
   if (e.code === "MODEL_CALLS_DISABLED") return { kind: "model_calls_off" };
   if (e.code === "ASSISTANT_UNAVAILABLE") {
-    if (reason === "auth_off" || reason === "starting" || reason === "failing") return { kind: reason };
-    // A refusal that names no reason (an older server) reads as not set up: the route says
-    // the assistant cannot answer, and an admin is who fixes it.
-    return { kind: "not_configured" };
+    if (reason === "auth_off" || reason === "failing") return { kind: reason };
+    return { kind: reason === "not_configured" ? "not_configured" : "failing" };
   }
   if (e.code === "AUTH_INSUFFICIENT") {
     if (reason === "org_wide") return { kind: "org_wide" };

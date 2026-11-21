@@ -8,15 +8,14 @@ import { readAssistantCheck, type AssistantCheck } from "../assistant/readiness"
 
 const SAID: Record<AssistantCheck, string> = {
   ready: "The assistant is ready.",
-  not_configured: "No LibreChat is configured for the assistant (LOOM_ASSISTANT_LIBRECHAT_URL).",
-  starting: "The assistant is setting up; this usually takes under a minute.",
-  failing: "The assistant's setup failed. Loom retries the setup on its own.",
+  not_configured: "The native assistant is disabled (LOOM_ASSISTANT_ENABLED).",
+  failing: "The native assistant cannot answer. Check its provider configuration in Health.",
 };
 
 /**
  * Health's Assistant row: this server's readiness check for the assistant and, when
  * `/v1/health` lists the assistant's problem, its fix. A platform admin sees it whenever
- * readiness can be read; anyone else only while the assistant sets up or fails. The
+ * readiness can be read; anyone else only while the assistant configuration fails. The
  * assistant panel's "see Health" links land on it (`data-focus-key="health-assistant"`);
  * while its read is in flight it marks itself pending, so the arrival waits for it rather
  * than for a timeout.
@@ -43,12 +42,12 @@ export function AssistantHealthRow() {
   }, []);
   if (check === "reading") return <span data-focus-pending="health-assistant" hidden />;
   if (check === null) return null;
-  const shown = platform || check === "starting" || check === "failing";
+  const shown = platform || check === "failing";
   if (!shown) return null;
   return (
     <section data-focus-key="health-assistant" tabIndex={-1} className="mb-5" aria-label="Assistant">
       <Alert
-        state={check === "ready" ? "success" : check === "starting" ? "info" : "warning"}
+        state={check === "ready" ? "success" : "warning"}
         text={
           <>
             <strong>Assistant:</strong> {SAID[check]}
