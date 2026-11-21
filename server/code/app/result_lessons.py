@@ -18,6 +18,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
+from server.code.api.models_grep import CodeGrepInput
 from server.code.api.models_search import CodeSearchInput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
@@ -48,10 +49,14 @@ def _searched_namespace(input: Any) -> str:
 
 def _bound_s(input: Any, started: float) -> float:
     """Seconds the read may take: `code_enrich_timeout_s`, and no more than what is left
-    of code.search's own `deadline_ms`, read as the search reads it."""
+    of the operation's own `deadline_ms`."""
     bound = settings.code_enrich_timeout_s
-    if isinstance(input, CodeSearchInput):  # the one wrapped op with a deadline
+    if isinstance(input, CodeSearchInput):
         budget = code_deadline.start(resolve_deadline_ms(input.deadline_ms), started=started)
+        if budget is not None:
+            bound = min(bound, budget.left_ms() / 1000)
+    elif isinstance(input, CodeGrepInput):
+        budget = code_deadline.start(input.deadline_ms, started=started)
         if budget is not None:
             bound = min(bound, budget.left_ms() / 1000)
     return bound
@@ -117,6 +122,13 @@ class WithLessons:
 
 
 # The files each code answer returns, best first.
+
+
+def grep_paths(input: Any, out: Any) -> list[str]:
+    if input.mode == "presence" or out.not_covered:
+        return []
+    rows = out.files if input.mode == "files" else out.matches
+    return [str(row.get("path") or "") for row in rows]
 
 
 def search_paths(input: Any, out: Any) -> list[str]:

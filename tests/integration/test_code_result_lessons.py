@@ -5,6 +5,7 @@ of the same name, a decision served whole."""
 from __future__ import annotations
 
 import asyncio
+import uuid
 from typing import Any
 
 import httpx
@@ -33,6 +34,64 @@ def _set(
         f"{base}/v1/memory.set", json=body, headers={"Authorization": f"Bearer {token}"}, timeout=10
     )
     assert r.status_code == 200, r.text
+
+
+async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    from server.settings import settings
+
+    org = unique_org("grep-lessons")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, writer, "notes/allowed", "Keep callback order.", [PATH])
+    ch_client.insert(
+        "loom.code_chunks",
+        [
+            [
+                org,
+                "code",
+                "m",
+                PATH,
+                uuid.uuid4(),
+                "function",
+                "run",
+                1,
+                2,
+                "def run():\n    return callback()\n",
+                [0.0] * settings.embedding_dim,
+                1,
+            ]
+        ],
+        column_names=[
+            "org",
+            "namespace",
+            "embedding_model",
+            "path",
+            "chunk_id",
+            "kind",
+            "scope",
+            "start_line",
+            "end_line",
+            "content",
+            "embedding",
+            "version",
+        ],
+    )
+    reader = mint_test_token(org=org, namespaces=["code", "dev"], roles=["viewer"])
+    body = dict(org=org, namespace="code", pattern="callback", lesson_namespaces=["dev"])
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, headers={"Authorization": f"Bearer {reader}"}, timeout=10
+    ) as client:
+        response = await client.post("/v1/code.grep", json=body)
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["matches"][0]["path"] == PATH
+        assert {row["memory_key"] for row in data["lessons"]} == {"notes/allowed"}
+        response = await client.post("/v1/code.grep", json={**body, "include_lessons": False})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert "lessons" not in payload.get("data", payload)
 
 
 async def test_lessons_match_the_result_file_by_path(

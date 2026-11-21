@@ -346,6 +346,11 @@ the C++ tier; `loom code scip-delta` runs one delta pass.
 Where both tiers hold the same row, reads prefer the compiler row, and every answer
 names the tier it read (`scip` or `treesitter`).
 
+Exact code grep answers can carry the caller's readable code-linked lessons for
+the matched files. Lessons are read after cached match data, within the request's
+remaining deadline. Presence queries and uncovered paths carry none;
+`include_lessons=false` skips the read.
+
 Python compiler conversion keeps callable and class descriptors distinct from
 parameters, type parameters and fields. Call edges require a containing function
 span; a reference at module or class scope does not belong to the preceding function.

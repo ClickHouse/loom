@@ -6537,6 +6537,8 @@ class CodeFirstBuildOutput(TypedDict, total=False):
 class CodeGrepInput(TypedDict, total=False):
     "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6562,6 +6564,8 @@ class CodeGrepInput(TypedDict, total=False):
 class CodeGrepBody(TypedDict, total=False):
     "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6585,6 +6589,8 @@ class CodeGrepBody(TypedDict, total=False):
 
 
 class CodeGrepOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
     next_cursor: NotRequired[str]
     has_more: NotRequired[bool]

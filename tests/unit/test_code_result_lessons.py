@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
 from server.code.api.models_navigation import CodeOutlineInput, CodeOutlineOutput
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import result_lessons, search_memo
@@ -535,6 +536,7 @@ async def test_the_op_handler_attaches_lessons_after_its_answer(
 @pytest.mark.parametrize(
     "name",
     [
+        "code.grep",
         "code.search",
         "code.callers",
         "code.callees",
@@ -615,12 +617,14 @@ async def test_the_search_memo_never_stores_lessons(monkeypatch: pytest.MonkeyPa
 
 def test_every_code_result_op_is_wrapped_with_its_files() -> None:
     from server.code.app.context import handle_code_context_pack
+    from server.code.app.grep import handle_code_grep
     from server.code.app.search.handler import handle_code_search
     from server.code.app.symbol.graph import handle_code_callees, handle_code_callers
     from server.code.app.symbol.impact import handle_code_impact
     from server.code.app.symbol.outline import handle_code_outline
 
     wanted = {
+        "code.grep": (handle_code_grep, result_lessons.grep_paths),
         "code.search": (handle_code_search, result_lessons.search_paths),
         "code.callers": (handle_code_callers, result_lessons.edge_paths),
         "code.callees": (handle_code_callees, result_lessons.edge_paths),
@@ -634,6 +638,55 @@ def test_every_code_result_op_is_wrapped_with_its_files() -> None:
         assert op.handler.paths_of is paths_of, name
         assert {"include_lessons", "lesson_namespaces"} <= set(op.input_model.model_fields)
         assert "lessons" in op.output_model.model_fields
+
+
+@pytest.mark.asyncio
+async def test_grep_lessons_use_matched_files_and_respect_opt_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    _stub_reads(monkeypatch, ["code-repo"], calls)
+
+    async def grep(inp: CodeGrepInput) -> CodeGrepOutput:
+        return CodeGrepOutput(
+            matches=[{"path": "src/a.py", "line": 1}], chunks_matched=1, truncated=False
+        )
+
+    wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
+    inp = CodeGrepInput(org="acme", namespace="code-repo", pattern="ab")
+    out = await wrapped(inp)
+    assert out.lessons[0]["memory_key"] == "k"
+    assert calls[0]["paths"] == ["src/a.py"]
+    calls.clear()
+    out = await wrapped(inp.model_copy(update={"include_lessons": False}))
+    assert calls == [] and "lessons" not in out.model_dump()
+
+
+def test_grep_presence_and_uncovered_paths_have_no_lessons():
+    inp = CodeGrepInput(pattern="ab")
+    out = CodeGrepOutput(matches=[{"path": "src/a.py"}], chunks_matched=1, truncated=False)
+    assert result_lessons.grep_paths(inp, out) == ["src/a.py"]
+    assert result_lessons.grep_paths(inp.model_copy(update={"mode": "presence"}), out) == []
+    assert result_lessons.grep_paths(inp, out.model_copy(update={"not_covered": True})) == []
+    files = out.model_copy(update={"files": [{"path": "src/b.py"}]})
+    assert result_lessons.grep_paths(inp.model_copy(update={"mode": "files"}), files) == [
+        "src/b.py"
+    ]
+
+
+def test_grep_enrichment_uses_only_the_remaining_deadline(monkeypatch: pytest.MonkeyPatch):
+    from types import SimpleNamespace
+
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    monkeypatch.setattr(result_lessons, "time", SimpleNamespace(monotonic=clock.monotonic))
+    inp = CodeGrepInput(pattern="ab", deadline_ms=200)
+    started = clock.monotonic()
+    clock.advance(0.15)
+    assert result_lessons._bound_s(inp, started) == pytest.approx(0.05)
+    clock.advance(0.10)
+    assert result_lessons._bound_s(inp, started) <= 0
 
 
 def test_each_answer_names_its_files_best_first() -> None:
