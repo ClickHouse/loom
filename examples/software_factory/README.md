@@ -170,8 +170,7 @@ Files are limited to 1 MiB. Display limits never truncate source authority.
 
 The historical test adapter builds a separate checkout for each invocation,
 overlays only allowlisted implementation files, and preserves tests and runner
-configuration. Hidden tests are applied only after the agent finishes. Test
-containers use an existing image digest, no network, a read-only root and source
+configuration. Test containers use an existing image digest, no network, a read-only root and source
 mount, a separate results mount, one CPU, 512 MiB and 64 processes. Tests cannot
 change their files. Only fixed focused pytest nodes are accepted. Missing tests,
 collection errors, skips and duplicate JUnit ids refuse diagnostic success.
