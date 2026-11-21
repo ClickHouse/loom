@@ -74,10 +74,11 @@ async def test_search_keeps_full_bodies_unless_a_budget_is_supplied(
     assert unlimited.tokens_returned > 3000
     assert all(u.body and not u.elided for u in unlimited.results)
 
-    monkeypatch.setattr(settings, "code_search_token_budget", 1000)
-    bounded = await handle_code_search(request)
-    assert bounded.tokens_returned <= 1000
-    assert any(u.elided for u in bounded.results)
+    for budget in (300, 1000):
+        monkeypatch.setattr(settings, "code_search_token_budget", budget)
+        bounded = await handle_code_search(request)
+        assert bounded.results and bounded.tokens_returned <= budget
+        assert any(u.elided for u in bounded.results)
     for budget in (0, 20000):
         overridden = await handle_code_search(request.model_copy(update={"token_budget": budget}))
         assert [u.body for u in overridden.results] == [u.body for u in unlimited.results]

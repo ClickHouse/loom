@@ -51,11 +51,16 @@ def page_plan(inp: Any) -> PagePlan:
         inp.token_budget if inp.token_budget is not None else _settings.code_search_token_budget
     )
     annotate = bool(inp.annotate and _settings.code_risk_annotations)
+    reserve = code_risk.reserve_for(inp.top_k) if annotate else 0
+    # Result heads take priority when a finite budget cannot fund annotations too.
+    if annotate and token_budget and token_budget < reserve + 200:
+        annotate = False
+        reserve = 0
     return PagePlan(
         token_budget=token_budget,
         bodies=inp.bodies or _settings.code_search_bodies_default,
         annotate=annotate,
-        reserve=code_risk.reserve_for(inp.top_k) if annotate else 0,
+        reserve=reserve,
     )
 
 

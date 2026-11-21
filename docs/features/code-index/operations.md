@@ -135,6 +135,7 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 `token_budget: 0` for an unlimited response. This applies to HTTP and MCP, cursor pages
 and searches across repositories. `top_k` still limits the number of results per page,
 and `bodies: "none"` still returns pointers without code bodies (the MCP default).
+Small finite budgets prioritize result heads over optional risk annotations.
 
 For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
 and recreate the server container after changing it.

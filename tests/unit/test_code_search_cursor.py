@@ -293,6 +293,22 @@ def test_last_page_has_no_cursor(monkeypatch: pytest.MonkeyPatch) -> None:
     assert not out.has_more and out.next_cursor == "" and "page_stale" not in out.as_of
 
 
+@pytest.mark.parametrize("budget,top_k", [(300, 5), (500, 10)])
+@pytest.mark.parametrize("use_default", [False, True])
+def test_small_page_budget_keeps_results_before_optional_annotations(
+    monkeypatch: pytest.MonkeyPatch, budget: int, top_k: int, use_default: bool
+) -> None:
+    monkeypatch.setattr(settings, "code_risk_annotations", True)
+    monkeypatch.setattr(settings, "code_search_token_budget", budget if use_default else 0)
+    inp = _inp(top_k=top_k, token_budget=None if use_default else budget)
+    cursor = paging.encode(kind="s", run_id="r", offset=1, params=_ph(inp), indexed_commit="")
+    row = {"payload": _payload(12), "indexed_commit": "", "created_at": None}
+    _drive(monkeypatch, inp, row)
+    out = asyncio.run(h.handle_code_search(inp.model_copy(update={"cursor": cursor})))
+    assert out.results and not out.abstain
+    assert out.tokens_returned <= budget
+
+
 @pytest.mark.parametrize("default", [0, 2400])
 def test_page_plan_uses_the_deployment_budget_and_honours_the_request(
     monkeypatch: pytest.MonkeyPatch, default: int

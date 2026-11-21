@@ -73,3 +73,13 @@ def test_default_is_unlimited_and_negative_budgets_are_refused(
     monkeypatch.setenv("LOOM_CODE_SEARCH_TOKEN_BUDGET", "-1")
     with pytest.raises(ValidationError):
         Settings()
+
+
+@pytest.mark.parametrize("budget,annotate", [(0, True), (300, False), (539, False), (540, True)])
+def test_annotations_leave_room_for_results(
+    monkeypatch: pytest.MonkeyPatch, budget: int, annotate: bool
+) -> None:
+    monkeypatch.setattr(settings, "code_risk_annotations", True)
+    plan = page_plan(CodeSearchInput(query="retry transport", top_k=5, token_budget=budget))
+    assert plan.annotate is annotate
+    assert bool(plan.reserve) is annotate
