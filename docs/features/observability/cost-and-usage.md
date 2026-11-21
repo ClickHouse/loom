@@ -117,16 +117,18 @@ older builds cannot enforce user caps or protect stored private warnings. Save t
 policies and reapply them after upgrading the whole fleet again.
 
 The guard (`namespace_over_cap` / `namespaces_over_cap` in
-`server/observability/budget.py`) gates LLM work. Over the cap, each of these skips its
-paid step:
+`server/observability/budget.py`) gates selected model work. Over the cap, guarded
+callers skip their paid step. Examples include:
 
 | Where        | Gated                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | workers      | entity extractor, code summarizer, code ingest                                                                             |
 | request path | `memory.ask` and `code.ask` synthesis (retrieval still answers), `knowledge.synthesize`, the `expand` leg of `code.search` |
 
-Embeddings (a `memory.set`, a search) are not gated. The guard is **fail-open**: if the
-spend read errors, the namespace reads as under its cap.
+Embeddings in direct `memory.set` and search requests do not check these caps.
+The guard defaults to **fail-open**: a failed spend read counts as under the cap.
+Conflict judgments and knowledge gap embeddings instead fail closed: a failed
+spend read skips that model work.
 
 `cost.budget_status` reports the same computation:
 
