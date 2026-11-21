@@ -21,6 +21,12 @@ def edge_key(row):
     )
 
 
+def remember_declarations(target, path, symbols):
+    for symbol in symbols:
+        # Conditional definitions share an identity; native ingest keeps the first.
+        target.setdefault((path, symbol.qualified_name, symbol.id), symbol)
+
+
 def check_chunks(rows, expected_chunks, expected_context, dimension):
     for row in rows:
         expected = expected_chunks.get(row["chunk_id"])
@@ -107,9 +113,7 @@ async def audit_index(request):
             expected_context.update(
                 {chunk.chunk_id(ns): text for chunk, text in zip(chunks, texts, strict=True)}
             )
-            expected_symbols.update(
-                {(path, symbol.qualified_name, symbol.id): symbol for symbol in pf.symbols}
-            )
+            remember_declarations(expected_symbols, path, pf.symbols)
             edges, _ = await _derive_edges(repo, org, ns, pf, path, FileIngestStats(path))
             expected_edges.update(
                 (edge.edge_kind, edge.from_symbol_id, edge.to_symbol_id, edge.path, edge.line)

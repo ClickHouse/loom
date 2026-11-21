@@ -42,6 +42,18 @@ class ProvisioningContracts(unittest.TestCase):
             instance.start()
         self.run.assert_not_called()
 
+    def test_audit_keeps_the_native_first_conditional_declaration(self):
+        from examples.software_factory.harbor.index_setup import remember_declarations
+
+        first = SimpleNamespace(qualified_name="View.as_view.view", id="binding", start_line=103)
+        alternative = SimpleNamespace(
+            qualified_name=first.qualified_name, id=first.id, start_line=112
+        )
+        declarations = {}
+        remember_declarations(declarations, "views.py", [first, alternative])
+        self.assertEqual(len(declarations), 1)
+        self.assertIs(declarations[("views.py", first.qualified_name, first.id)], first)
+
     def test_namespace_installer_and_attempt_tokens_use_distinct_claim_shapes(self):
         from examples.software_factory.harbor.native_setup import external
 
