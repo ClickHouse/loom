@@ -256,7 +256,10 @@ GENERIC_SQL_EXCLUSIONS = {
     },
     "server/knowledge/store/restore.py": {("unretire", "DELETE FROM", "{SUPERSESSIONS_TABLE}"): 1},
     # The stopped owner and namespace lease scope deletion to knowledge sources.
-    "server/knowledge/store/sources.py": {("erase_connected_owner", "DELETE FROM", "{TABLE}"): 1},
+    "server/knowledge/store/sources.py": {
+        ("erase_connected_owner", "DELETE FROM", "{TABLE}"): 1,
+        ("reseal_source_ciphertext", "UPDATE", "{column}"): 1,
+    },
     "server/memory/app/reembed.py": {
         ("in_database_sql", "INSERT INTO", "loom.{table}"): 1,
         ("delete_off_model", "DELETE FROM", "loom.{table}"): 1,
