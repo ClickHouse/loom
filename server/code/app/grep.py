@@ -267,19 +267,23 @@ async def _grep_lines(
 
     truncated = scan_capped or len(matches) > limit or len(chunks) >= min(200, limit * 3)
     trace_run_id = new_trace_run_id()
+    pool_matches = matches
+    matches = matches[:limit]
+    neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
+        repo, org, ns, input, matches, route, budget=budget
+    )
+    coverage = _line_coverage_fields(chunks, budget)
     next_cursor = _issue_grep_cursor(
         input,
         org,
         ns,
-        matches,
+        pool_matches,
         served=limit,
         run_id=trace_run_id,
         chunks_matched=len(chunks),
         truncated=truncated,
-    )
-    matches = matches[:limit]
-    neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
-        repo, org, ns, input, matches, route, budget=budget
+        partial=bool(coverage.get("partial")),
+        partial_reason=str(coverage.get("partial_reason") or ""),
     )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
@@ -331,7 +335,7 @@ async def _grep_lines(
         anchors=len(neighbours),
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
-        **_line_coverage_fields(chunks, budget),
+        **coverage,
     )
 
 
@@ -405,6 +409,7 @@ _CONTINUED_PREFIXES = ("// … continued from ", "# … continued from ", "/* �
 # LOOM_CODE_CHUNK_MAX_CHARS (6000) is 1.2 MB, so 2 MB leaves room for older, larger
 # chunks and still bounds the work one request can ask of a worker.
 _LINE_SCAN_MAX_CHARS = 2_000_000
+_GREP_LINE_MAPPING_VERSION = 1
 
 
 def _matching_lines(
@@ -503,6 +508,8 @@ def _issue_grep_cursor(
     run_id: str,
     chunks_matched: int,
     truncated: bool,
+    partial: bool = False,
+    partial_reason: str = "",
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
     pool positions) and return the cursor for the page after `served`;
@@ -523,6 +530,9 @@ def _issue_grep_cursor(
             "matches": matches,
             "chunks_matched": chunks_matched,
             "truncated": truncated,
+            "line_mapping": _GREP_LINE_MAPPING_VERSION,
+            "partial": partial,
+            "partial_reason": partial_reason,
         },
         indexed_commit="",
         route="grep",
@@ -549,6 +559,8 @@ async def _serve_grep_page(
     if row is None:
         return None, "pool_not_found", offset
     payload = row["payload"]
+    if payload.get("line_mapping") != _GREP_LINE_MAPPING_VERSION:
+        return None, "source_line_mapping_changed", offset
     pool = [dict(m) for m in (payload.get("matches") or [])]
     limit = input.effective_limit
     excluded = set(input.exclude_unit_ids)
@@ -619,6 +631,8 @@ async def _serve_grep_page(
                 await index_as_of(repo, org, ns), page_commit="", offset=offset, fallback=""
             ),
             trace_run_id=trace_run_id,
+            partial=bool(payload.get("partial")),
+            partial_reason=str(payload.get("partial_reason") or ""),
         ),
         "",
         offset,
@@ -635,6 +649,10 @@ async def _grep_page_by_rerun(input: CodeGrepInput, *, offset: int, reason: str)
     out = await handle_code_grep(fresh)
     out.matches = out.matches[offset : offset + limit]
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
+    if reason == "source_line_mapping_changed":
+        out.partial = True
+        out.partial_reason = _notes(out.partial_reason, "cursor offset used another source mapping")
+        out.note = _notes(out.note, "restart pagination for complete results")
     set_code_span_attributes(page_offset=offset, page_fallback=reason)
     return out
 
@@ -829,7 +847,11 @@ async def _grep_message(
         )
     if literal is not None and literal.matches:
         return literal.model_copy(
-            update={**verdict_fields, "note": _notes(note, _MESSAGE_FALLBACK_NOTE, literal.note)}
+            update={
+                **verdict_fields,
+                "note": _notes(note, _MESSAGE_FALLBACK_NOTE, literal.note),
+                **_line_coverage_fields(chunks, budget, previous=literal),
+            }
         )
     unit_spans = await _unit_spans(repo, org, ns, chunks) if ranked else {}
     matches = _statement_matches(ranked[:limit], unit_spans)
@@ -844,7 +866,7 @@ async def _grep_message(
             trace_run_id=literal.trace_run_id,
             fallback="literal",
             **verdict_fields,
-            **_partial_fields(budget),
+            **_line_coverage_fields(chunks, budget, previous=literal),
         )
     files = list(dict.fromkeys(m["path"] for m in matches))
     trace_run_id = new_trace_run_id()
@@ -954,15 +976,23 @@ def _notes(*parts: str) -> str:
 
 
 def _line_coverage_fields(
-    chunks: list[dict[str, Any]], budget: code_deadline.Budget | None
+    chunks: list[dict[str, Any]],
+    budget: code_deadline.Budget | None,
+    *,
+    previous: CodeGrepOutput | None = None,
 ) -> dict[str, Any]:
     fields = _partial_fields(budget)
+    reasons = [str(fields.get("partial_reason") or "")]
     if any(retained_source_lines(chunk) is None for chunk in chunks):
         fields["partial"] = True
-        fields["partial_reason"] = _notes(
-            fields.get("partial_reason", ""),
+        reasons.append(
             "some indexed chunks have no exact source line mapping; inspect the source file",
         )
+    if previous is not None and previous.partial:
+        fields["partial"] = True
+        reasons.append(previous.partial_reason)
+    if fields.get("partial"):
+        fields["partial_reason"] = _notes(*dict.fromkeys(reasons))
     return fields
 
 
