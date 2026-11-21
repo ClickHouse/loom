@@ -447,10 +447,7 @@ class DifyApplicationGuards(unittest.TestCase):
             with self.subTest(extra=extra.filename), self.assertRaises(RuntimeError):
                 smoke.validate_archive_members([*valid, extra])
 
-    def test_native_run_reaches_tool_workflow_without_optional_editor_defaults(self):
-        class WorkflowReached(Exception):
-            pass
-
+    def native_run_fixture(self):
         ctx = SimpleNamespace(
             env={"INIT_PASSWORD": "fixture-password"},
             secret=lambda value: value,
@@ -515,6 +512,13 @@ class DifyApplicationGuards(unittest.TestCase):
         console.json.side_effect = response
         child = Mock()
         child.poll.return_value = None
+        return ctx, console, child
+
+    def test_native_run_reaches_tool_workflow_without_optional_editor_defaults(self):
+        class WorkflowReached(Exception):
+            pass
+
+        ctx, console, child = self.native_run_fixture()
         with (
             patch.object(scenario, "Console", return_value=console),
             patch.object(scenario.subprocess, "Popen", return_value=child),
@@ -529,6 +533,67 @@ class DifyApplicationGuards(unittest.TestCase):
             ("remember", "user-a", {"memory_key": "seat", "value": scenario.FACT}, "remember"),
         )
         self.assertEqual(ctx.phase, "native-workflow")
+
+    def test_native_run_checks_exact_identity_and_json_storage_bytes(self):
+        expected = (
+            "fixture-org",
+            "fixture-namespace",
+            "fixture-agent",
+            "user-a",
+            "-",
+            "seat",
+            '"The application proof user prefers aisle seats."',
+        )
+        cases = [("valid", [expected])]
+        for index in range(len(expected)):
+            row = list(expected)
+            row[index] = "wrong"
+            cases.append(("wrong-field-" + str(index), [tuple(row)]))
+        cases.extend(
+            (
+                ("missing", []),
+                ("duplicate", [expected, expected]),
+                ("unencoded", [(*expected[:-1], scenario.FACT)]),
+            )
+        )
+        for label, rows in cases:
+            ctx, console, child = self.native_run_fixture()
+            ch = Mock()
+            ch.query.return_value.result_rows = rows
+            transport = Mock()
+            transport.__enter__ = Mock(return_value=transport)
+            transport.__exit__ = Mock(return_value=False)
+            transport.post.return_value.status_code = 200
+            with (
+                self.subTest(label=label),
+                patch.object(scenario, "Console", return_value=console),
+                patch.object(scenario.subprocess, "Popen", return_value=child),
+                patch.object(scenario.threading, "Thread"),
+                patch.object(scenario.httpx, "Client", return_value=transport),
+                patch("clickhouse_connect.get_client", return_value=ch),
+                patch.object(
+                    scenario,
+                    "workflow",
+                    side_effect=[
+                        {},
+                        {"text": scenario.FACT},
+                        {"results": []},
+                        {"source_uri": "application-guide", "content": scenario.DOCUMENT},
+                    ],
+                ) as workflow,
+            ):
+                if label == "valid":
+                    scenario.run(ctx)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "Stored Loom identity/value differs"):
+                        scenario.run(ctx)
+                self.assertEqual(workflow.call_count, 4)
+                self.assertEqual(ctx.phase, "native-stored-identity")
+                ch.close.assert_called_once_with()
+                self.assertEqual(
+                    ch.query.call_args.kwargs["parameters"], {"org": ctx.org, "ns": ctx.namespace}
+                )
+                ctx.record.assert_any_call("stored-identity.json", {"rows": rows})
 
     def test_native_graph_keeps_application_user_in_form_configuration(self):
         graph = scenario.build_graph(

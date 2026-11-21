@@ -422,6 +422,7 @@ def run(ctx):
     )
     if not has_shared_document(knowledge):
         raise RuntimeError("Native knowledge workflow did not return the shared document")
+    ctx.phase = "native-stored-identity"
     ch = clickhouse_connect.get_client(
         host="127.0.0.1",
         port=18471,
@@ -435,8 +436,9 @@ def run(ctx):
             "WHERE org=%(org)s AND namespace=%(ns)s AND tombstoned_at IS NULL",
             parameters={"org": org, "ns": namespace},
         ).result_rows
-        if rows != [(org, namespace, agent, "user-a", "-", "seat", FACT)]:
-            raise RuntimeError("Stored Loom identity/value differs from native workflow input")
         ctx.record("stored-identity.json", {"rows": rows})
+        # Direct storage reads return JSON text, including quotes around a string value.
+        if rows != [(org, namespace, agent, "user-a", "-", "seat", json.dumps(FACT))]:
+            raise RuntimeError("Stored Loom identity/value differs from native workflow input")
     finally:
         ch.close()
