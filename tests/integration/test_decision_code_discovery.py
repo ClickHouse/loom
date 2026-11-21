@@ -30,12 +30,15 @@ async def discovery_store(ch_client):
         await client.disconnect()
 
 
-async def test_prose_candidates_use_the_authorized_live_index(discovery_store, monkeypatch):
+async def test_prose_candidates_use_the_authorized_live_index(
+    discovery_store, ch_client, monkeypatch
+):
     from server.auth.context import current_auth_var
     from server.auth.jwt import AuthInfo
     from server.code.app import prose_candidates
     from server.code.app.index.ingest import ingest_file
     from server.code.app.index_status import STATUS_SNAPSHOT_KEY
+    from server.core.background import drain_task_sets
     from server.embedding import embedder
     from server.embedding.fake import FakeNGramEmbedder
     from server.operations.base import Role
@@ -128,3 +131,11 @@ async def test_prose_candidates_use_the_authorized_live_index(discovery_store, m
     )
     partial = await prose_candidates.discover_candidates(org, ns, quote)
     assert partial.status == "deferred" and not partial.candidates
+    assert await drain_task_sets(timeout_s=5)
+    # Source quotations must not be copied to the code namespace's query stores.
+    for table in ("code_search_trace", "code_search_memo"):
+        count = ch_client.query(
+            f"SELECT count() FROM loom.{table} WHERE org = {{org:String}} AND namespace = {{ns:String}}",
+            parameters={"org": org, "ns": ns},
+        ).first_row[0]
+        assert count == 0, table

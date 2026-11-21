@@ -529,7 +529,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
 
   Discovery runs for at most eight unresolved decisions per preview, with a three-second bound per decision and
   a 2000-character quotation query. Search uses the selected namespace only, without query expansion, model-backed
-  retrieval legs or reranking. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
+  retrieval legs or reranking. It does not copy document quotations into the code namespace's query traces or
+  cursor storage. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
   stale, changing or ungrounded index evidence says `deferred`. Later decisions past the preview limit also say
   `deferred`. Discovery also defers while a fetched revision is still being indexed, even if search has cached
   fresh metadata. These discovery states do not change the extraction command's exit code or its exact-link behavior.

@@ -7,12 +7,16 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from server.auth.authz import row_in_scope
-from server.code.api.models_search import CodeSearchInput
-from server.code.app.common import mirror_fetch_overdue
+from server.code.app import search
+from server.code.app.common import (
+    failing_tiers,
+    mirror_fetch_overdue,
+    require_code_intel,
+    resolve_code_thresholds,
+)
 from server.code.app.index.pass_stream import SLICE_KEY
 from server.code.app.index_status import published_clone_head
-from server.code.app.search import handler as search
-from server.code.domain.index.repos import repo_for_namespace
+from server.code.domain.index.repos import RepoConfig, repo_for_namespace
 from server.code.domain.index.state import STAGE_KEY, IndexState
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
@@ -60,10 +64,11 @@ async def discover_candidates(org: str, namespace: str, quote: str) -> CodeDisco
 
 async def _discover(org: str, result: CodeDiscovery) -> None:
     ns = result.namespace
-    # The single-namespace handler assumes transport authorization; this call is in-process.
+    # This in-process read gates access before fetching repository state.
     if not org or not ns or not await row_in_scope(org, ns, Role.VIEWER):
         result.note = "code index access unavailable"
         return
+    require_code_intel()
     cfg = repo_for_namespace(org, ns)
     if cfg is None:
         result.note = "no repository index configured for this namespace"
@@ -74,59 +79,53 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
     if not head:
         result.note = "code index has no published commit"
         return
-    if _settled_head(state, cfg.git_branch) != head:
+    if _settled_head(state, cfg) != head:
         result.status, result.note = "deferred", "code index publication is incomplete"
         return
-    model = get_embedder().model_name
-    out = await search.handle_code_search(
-        CodeSearchInput(
-            org=org,
-            namespace=ns,
-            query=result.quote,
-            top_k=3,
-            token_budget=1200,
-            legs="hybrid",
-            bodies="none",
-            fresh=True,
-            expand=False,
-            llm_legs="none",
-            rerank="none",
-            annotate=False,
-            include_lessons=False,
-            embedding_model=model,
-            deadline_ms=1500,
-            consumer="decision-preview",
-        )
+    embedder = get_embedder()
+    model = embedder.model_name
+    threshold, noise = await resolve_code_thresholds(org, ns)
+    # The public handler persists queries in code-scoped traces and cursor pools.
+    # Document quotations keep their source access boundary, even in a dry run.
+    out = await search.search(
+        repo,
+        org,
+        ns,
+        query=result.quote,
+        top_k=3,
+        token_budget=1200,
+        legs="hybrid",
+        bodies="none",
+        llm_legs="none",
+        rerank_endpoint="none",
+        embedder=embedder,
+        embedding_model=model,
+        abstain_threshold=threshold,
+        noise_floor=noise,
+        deadline_ms=1500,
     )
-    result.as_of = dict(out.as_of)
-    if (
-        out.partial
-        or out.epistemic == "partial"
-        or out.legs_timed_out
-        or out.as_of.get("commit") != head
-        or out.as_of.get("branch") != cfg.git_branch
-        or out.as_of.get("status") != "fresh"
-        or out.as_of.get("stale")
-        or out.as_of.get("failing_tiers")
-    ):
+    if out.partial or out.epistemic == "partial" or out.legs_timed_out:
         result.status, result.note = "deferred", "retrieval or index freshness is incomplete"
         return
-    if out.abstain:
-        result.status = "abstained"
-        result.note = out.abstain_reason or out.abstain_code or "search abstained"
-        return
-    units = [u for u in out.results[:3] if u.namespace in ("", ns) and governs(u.path)]
+    units = [
+        u for u in out.units[:3] if not out.abstain and u.namespace in ("", ns) and governs(u.path)
+    ]
     rows = await repo.chunks_by_keys(org, ns, model, [(u.path, u.unit_id) for u in units])
     current = {(str(r["path"]), str(r["chunk_id"])): r for r in rows}
     for unit in units:
         if candidate := _ground(unit, current.get((unit.path, unit.unit_id))):
             result.candidates.append(candidate)
-    if _settled_head(await repo.all_state(org, ns), cfg.git_branch) != head:
+    if _settled_head(await repo.all_state(org, ns), cfg) != head:
         result.candidates.clear()
         result.status, result.note = "deferred", "code index changed during discovery"
+        return
+    result.as_of = {"branch": cfg.git_branch, "commit": head, "status": "fresh"}
+    if out.abstain:
+        result.status = "abstained"
+        result.note = out.abstain_reason or out.abstain_code or "search abstained"
     elif result.candidates:
         result.status = "candidates"
-    elif out.results:
+    elif out.units:
         result.status, result.note = (
             "deferred",
             "retrieved candidates have no current code evidence",
@@ -135,15 +134,16 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
         result.status, result.note = "abstained", "no code candidates returned"
 
 
-def _settled_head(state: IndexState, branch: str) -> str:
+def _settled_head(state: IndexState, cfg: RepoConfig) -> str:
     """A completed index at its fetched branch tip, from uncached publication rows."""
     head = str((state.get("git_head") or {}).get("value") or "")
     clone = state.get("clone_head") or {}
     if (
-        published_clone_head(state, branch) != head
+        published_clone_head(state, cfg.git_branch) != head
         or (state.get(SLICE_KEY) or {}).get("value")
         or (state.get(STAGE_KEY) or {}).get("value", "") not in ("", "ready")
         or mirror_fetch_overdue(clone.get("updated_at"))
+        or failing_tiers(state, cfg, ingest_lag=0)
     ):
         return ""
     return head

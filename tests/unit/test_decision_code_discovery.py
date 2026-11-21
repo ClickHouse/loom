@@ -5,8 +5,10 @@ from types import SimpleNamespace
 import pytest
 
 from server.cli.decisions import print_report
-from server.code.api.models_search import CodeSearchOutput
+from server.code.app import prose_candidates as pc
+from server.code.app import search as retrieval
 from server.code.app.search import handler as search
+from server.code.app.search.state import CodeSearchResult
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.knowledge.app import document_reads
@@ -23,9 +25,9 @@ COMMIT = "a" * 40
 
 @pytest.fixture
 def index(monkeypatch):
-    result = CodeSearchOutput(
+    result = CodeSearchResult(
         route="hybrid",
-        results=[
+        units=[
             CodeUnit(
                 unit_id="chunk",
                 path=PATH,
@@ -35,9 +37,10 @@ def index(monkeypatch):
                 body=SOURCE,
             )
         ],
-        as_of={"branch": "main", "commit": COMMIT, "status": "fresh", "stale": False},
     )
     world = SimpleNamespace(
+        as_of={"branch": "main", "commit": COMMIT, "status": "fresh"},
+        branch="main",
         clone=COMMIT,
         slice="",
         stage="ready",
@@ -58,14 +61,17 @@ def index(monkeypatch):
         commit=COMMIT,
     )
 
-    async def retrieve(inp):
-        world.calls.append(inp)
+    async def retrieve(repo, org, namespace, **kwargs):
+        world.calls.append(SimpleNamespace(org=org, namespace=namespace, **kwargs))
         return world.result
+
+    async def thresholds(org, ns):
+        return 0.3, 0.22
 
     async def all_state(self, org, namespace):
         return {
             "git_head": {"value": world.commit},
-            "clone_head": {"value": world.clone, "detail": "main"},
+            "clone_head": {"value": world.clone, "detail": world.branch},
             "commit_slice": {"value": world.slice},
             "bootstrap_stage": {"value": world.stage},
         }
@@ -74,7 +80,9 @@ def index(monkeypatch):
         world.ground_reads.append((org, namespace, model, keys))
         return [r for r in world.rows if (r["path"], r["chunk_id"]) in keys]
 
-    monkeypatch.setattr(search, "handle_code_search", retrieve)
+    monkeypatch.setattr(retrieval, "search", retrieve)
+    monkeypatch.setattr(pc, "resolve_code_thresholds", thresholds)
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
     monkeypatch.setattr(CodeRepo, "all_state", all_state)
     monkeypatch.setattr(CodeRepo, "chunks_by_keys", chunks)
     monkeypatch.setattr(
@@ -145,10 +153,10 @@ async def test_unrelated_prose_keeps_search_abstention(monkeypatch, index, capsy
 
 @pytest.mark.asyncio
 async def test_ambiguous_high_similarity_hits_never_become_files(monkeypatch, index):
-    duplicate = index.result.results[0].model_copy(
+    duplicate = index.result.units[0].model_copy(
         update={"unit_id": "other", "path": "src/policy.py", "score": 1.0}
     )
-    index.result.results.append(duplicate)
+    index.result.units.append(duplicate)
     index.rows.append({**index.rows[0], "chunk_id": "other", "path": "src/policy.py"})
     report, _ = await preview(monkeypatch)
     assert len(report.records[0].code_discovery.candidates) == 2
@@ -165,7 +173,7 @@ async def test_ambiguous_high_similarity_hits_never_become_files(monkeypatch, in
 )
 @pytest.mark.asyncio
 async def test_candidates_outside_current_code_evidence_are_rejected(monkeypatch, index, change):
-    hit = index.result.results[0]
+    hit = index.result.units[0]
     if change == "deleted":
         index.rows.clear()
     elif change == "foreign_namespace":
@@ -193,16 +201,19 @@ async def test_candidates_outside_current_code_evidence_are_rejected(monkeypatch
 @pytest.mark.asyncio
 async def test_incomplete_retrieval_is_deferred_not_empty_success(monkeypatch, index, change):
     if change == "partial":
-        index.result.partial = True
+        index.result.retrieval_work["vector_leg_failed"] = 1
     elif change == "failed_leg":
         index.result.epistemic = "partial"
     elif change == "tier":
-        index.result.as_of["failing_tiers"] = ["chunk"]
+        monkeypatch.setattr(pc, "failing_tiers", lambda *args, **kwargs: [{"tier": "ingest"}])
     elif change == "stale":
-        index.result.as_of["stale"] = True
+        monkeypatch.setattr(pc, "mirror_fetch_overdue", lambda fetched: True)
+    elif change == "unknown":
+        index.clone = ""
+    elif change == "branch":
+        index.branch = "release"
     else:
-        field = {"unknown": "status", "branch": "branch", "commit": "commit"}[change]
-        index.result.as_of[field] = "unknown"
+        index.commit = "b" * 40
     report, _ = await preview(monkeypatch)
     discovery = report.records[0].code_discovery
     assert discovery.status == "deferred" and discovery.candidates == []
@@ -223,10 +234,10 @@ async def test_a_moving_code_head_discards_the_grounded_candidates(monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_unavailable_search_is_reported_without_changing_decision(monkeypatch, index):
-    async def failed(inp):
+    async def failed(*args, **kwargs):
         raise ConnectionError("unavailable")
 
-    monkeypatch.setattr(search, "handle_code_search", failed)
+    monkeypatch.setattr(retrieval, "search", failed)
     report, _ = await preview(monkeypatch)
     assert report.records[0].code_discovery.status == "unavailable"
     assert report.records[0].body["files"] == []
@@ -251,11 +262,11 @@ async def test_scope_and_resource_bounds_are_explicit(monkeypatch, index):
     result = await discover_candidates("o", "ns", PROSE * 200)
     assert result.status == "candidates"
     request = index.calls[0]
-    assert (request.org, request.namespace, request.namespaces) == ("o", "ns", [])
+    assert (request.org, request.namespace) == ("o", "ns")
     assert len(request.query) <= 2000
     assert request.top_k == 3 and request.deadline_ms == 1500
-    assert request.llm_legs == "none" and request.rerank == "none" and not request.expand
-    assert not request.include_lessons and request.fresh
+    assert request.llm_legs == "none" and request.rerank_endpoint == "none"
+    assert getattr(request, "extra_terms", None) is None
     assert all((org, ns) == ("o", "ns") for org, ns, model, keys in index.ground_reads)
 
 
@@ -307,7 +318,7 @@ async def test_missing_index_and_empty_retrieval_have_distinct_states(monkeypatc
     elif missing == "head":
         index.commit = ""
     else:
-        index.result.results.clear()
+        index.result.units.clear()
     result = await discover_candidates("o", ns, PROSE)
     assert result.status == ("abstained" if missing == "hits" else "unavailable")
     assert result.candidates == []
@@ -388,3 +399,72 @@ async def test_uncached_publication_must_be_complete(monkeypatch, index, incompl
         monkeypatch.setattr(CodeRepo, "all_state", wrong_branch)
     out = await discover_candidates("o", "ns", PROSE)
     assert out.status == "deferred" and out.candidates == [] and index.calls == []
+
+
+@pytest.mark.asyncio
+async def test_source_quotations_never_persist_in_code_namespace_telemetry(monkeypatch, index):
+    from server.code.app import search as retrieval
+    from server.code.app import search_cursor
+    from server.code.app.search.state import CodeSearchResult
+    from server.memory.domain.decision_extract import Candidate
+
+    traces, pools = [], []
+    result = CodeSearchResult(units=index.result.units, pool=index.result.units * 4)
+
+    async def as_of(*args):
+        return index.as_of
+
+    async def no_note(*args):
+        return ""
+
+    async def finish(inp):
+        return await search._finish_search(
+            inp,
+            "o",
+            "ns",
+            CodeRepo(),
+            result,
+            started=0,
+            embedding_model="fake-ngram-3072",
+            memo_key=None,
+        )
+
+    async def retrieve(*args, **kwargs):
+        return result
+
+    monkeypatch.setattr(search, "handle_code_search", finish)
+    monkeypatch.setattr(search, "index_as_of", as_of)
+    monkeypatch.setattr(search, "embedding_coverage_note", no_note)
+    monkeypatch.setattr(search, "schedule_code_trace", lambda **row: traces.append(row["query"]))
+    monkeypatch.setattr(
+        search_cursor,
+        "put_pool",
+        lambda org, ns, key, payload, **kw: pools.append(payload["query"]),
+    )
+    monkeypatch.setattr(settings, "code_search_cursor_enabled", True)
+    monkeypatch.setattr(retrieval, "search", retrieve)
+    candidate = Candidate("design:delivery", "retry policy", "stop after three", evidence=[PROSE])
+    target = de.Target("private-documents", "ns", "private-documents")
+    discovery = await de._discover_code("o", target, candidate, [PROSE], 0)
+    assert discovery.status == "candidates"
+    assert traces == [] and pools == [], (
+        "source text must remain outside code-namespace persistence"
+    )
+
+
+@pytest.mark.asyncio
+async def test_disabled_code_intelligence_does_not_retrieve(monkeypatch, index):
+    monkeypatch.setattr(settings, "code_intel_enabled", False)
+    result = await pc.discover_candidates("o", "ns", PROSE)
+    assert result.status == "unavailable" and index.calls == []
+
+
+@pytest.mark.asyncio
+async def test_index_movement_defers_even_an_empty_search(monkeypatch, index):
+    async def moving(repo, org, ns, **kwargs):
+        index.clone = "b" * 40
+        return CodeSearchResult(abstain=True, abstain_code="no_match")
+
+    monkeypatch.setattr(retrieval, "search", moving)
+    result = await pc.discover_candidates("o", "ns", PROSE)
+    assert result.status == "deferred" and result.candidates == []
