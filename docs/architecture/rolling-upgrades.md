@@ -1049,3 +1049,29 @@ without flags and then with `--apply`. It refuses recent worker activity and nev
 remaps a scratch restore target into the deployment client. Both paths fence all
 historical connection keys and verify physical owner-history deletion. Complete the
 separate mirror-content cleanup before serving; this account procedure does not replace it.
+
+## Independent proposal approval
+
+Stop and drain every older API, worker and command-line writer **before** applying
+`114_memory_proposal_review.sql`. Keep writes paused until the upgraded processes serve.
+The migration adds review state to current and historical memory rows, marking proposed
+and rejected rows pending. Older writers do not enforce approval and can reset the review
+flag when they rebuild a row without the added column. Rolling back restores the older
+authorization behavior.
+
+If older writers ran after migration, keep writes paused until an independent audit has
+identified every affected proposal lineage. Inspect historical proposal and rejection
+transitions and their later revisions by full identity and memory id, including currently
+active rows whose review flag is false or absent. A scan of `requires_review = 1` cannot
+find rows whose flag an older writer discarded. Under Postgres inspect the authoritative
+revision journal and `memory_current.row`; a ClickHouse projection can lag. If available
+history cannot establish the affected set, keep writes paused until the audit resolves it.
+Quarantine affected current rows with `memory.reject`, then write each complete value as
+a proposal with `memory.set(proposed=true)` for independent review. Do not clear the review
+bit or treat a passing grade as approval. Consolidation excludes pending sources.
+Legacy rejected native rows and snapshots without the review field conservatively require
+review; an explicit false field on an ordinary rejected fact preserves its correction path.
+
+Clients accepting proposals must send `approved_sha256` for each key and use an
+authenticated human administrator independent of the proposer. Automatic policies continue
+to reject failed proposals and leave passing proposals pending human review.

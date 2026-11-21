@@ -135,7 +135,12 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
     sparse = pg_memory.sparse_row(full)
     assert len(sparse) < len(full)
     assert sparse["value"] == full["value"]
-    assert all(c not in sparse for c, v in pg_memory.SPARSE_DEFAULTS.items() if full[c] == v)
+    assert all(
+        c not in sparse
+        for c, v in pg_memory.SPARSE_DEFAULTS.items()
+        if full[c] == v and c != "requires_review"
+    )
+    assert sparse["requires_review"] == 0
     assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")

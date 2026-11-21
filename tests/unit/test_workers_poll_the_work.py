@@ -7,8 +7,8 @@
   exact, reads the full rows by exact key only for what the scan returned,
   writes one insert per table per round, and scans from 0 on its slow clock;
 - entity_extractor reads the cost cap once per pass for every namespace of
-  its rows and writes the pass's rows in one batch (five statements, not
-  five per row); the batch write emits the same rows as N single writes;
+  its rows and writes the pass's rows in one batch (six statements, not
+  six per row); the batch write emits the same rows as N single writes;
 - the cost-cap verdict for N namespaces is one statement, fail-open;
 - embedding_worker marks itself idle only when all three legs found nothing;
 - every pass records its counts as outcome scalars.
@@ -557,19 +557,38 @@ async def test_a_busy_pass_does_not_mark_idle(ee_env) -> None:
 
 
 class _CH:
-    """query_all answers from a queue; inserts captured."""
+    """Queued business reads and a current-head view for commit admission."""
 
     def __init__(self, answers: list[list[dict[str, Any]]]) -> None:
         self.answers = list(answers)
         self.queries: list[str] = []
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.heads: dict[Any, Any] = {}
 
     async def query_all(self, sql, params=None):
+        from server.memory.store.rows import identity_key
+
         self.queries.append(" ".join(sql.split()))
-        return self.answers.pop(0) if self.answers else []
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if (
+            "FROM loom.memory FINAL" in sql
+            and "PREWHERE (org, namespace" in sql
+            and "WHERE tombstoned_at IS NULL" not in sql
+        ):
+            return [self.heads[key] for key in params["keys"] if key in self.heads]
+        rows = self.answers.pop(0) if self.answers else []
+        for row in rows:
+            if "memory_id" in row and "value" in row:
+                self.heads[identity_key(row)] = row
+        return rows
 
     async def insert(self, table, rows, settings=None):
+        from server.memory.store.rows import identity_key
+
         self.inserts.append((table, list(rows)))
+        if table == "loom.memory":
+            self.heads.update({identity_key(row): row for row in rows})
 
 
 def _mem_row(key: str) -> dict[str, Any]:
@@ -637,7 +656,7 @@ def _item(
     }
 
 
-def test_apply_entities_batch_is_five_statements_for_n_rows_and_emits_the_same_rows_as_n_single_writes() -> (
+def test_apply_entities_batch_is_six_statements_for_n_rows_and_emits_the_same_rows_as_n_single_writes() -> (
     None
 ):
     from server.memory import store as mr
@@ -684,7 +703,7 @@ def test_apply_entities_batch_is_five_statements_for_n_rows_and_emits_the_same_r
         mr.apply_entities_batch([_item("k1", ["alice"]), _item("k2", ["bob", "eve"])], ch=ch)
     )
     assert written == {"memory": 2, "memory_embeddings": 3}
-    assert len(ch.queries) == 3 and [t for t, _ in ch.inserts] == [
+    assert len(ch.queries) == 4 and [t for t, _ in ch.inserts] == [
         "loom.memory",
         "loom.memory_embeddings",
     ]
@@ -693,10 +712,13 @@ def test_apply_entities_batch_is_five_statements_for_n_rows_and_emits_the_same_r
         and "FROM loom.memory FINAL PREWHERE (org, namespace, agent, user_id, session_id, memory_key) IN"
         in ch.queries[0]
     )
-    assert ch.queries[1].startswith(
+    assert (
+        "PREWHERE (org, namespace" in ch.queries[1]
+    )  # Review state is checked under the write fence.
+    assert ch.queries[2].startswith(
         "SELECT DISTINCT org, namespace, agent, user_id, session_id, memory_key, scope, embedding_model FROM loom.memory_embeddings"
     )
-    assert ch.queries[2].startswith(
+    assert ch.queries[3].startswith(
         "SELECT * FROM loom.memory_embeddings FINAL PREWHERE (org, namespace, agent, user_id, session_id, scope, embedding_model, memory_key) IN"
     )
     mem = {r["memory_key"]: r for r in ch.inserts[0][1]}
@@ -1031,7 +1053,7 @@ def test_apply_entities_batch_retries_the_mirror_once_for_the_keys_whose_memory_
     written = asyncio.run(mr.apply_entities_batch([_item("k1", ["a"]), _item("k2", ["b"])], ch=ch))
     assert slept == [mr.ENTITY_MIRROR_RETRY_DELAY_S], "exactly one bounded retry for the batch"
     assert written == {"memory": 2, "memory_embeddings": 2}
-    assert len(ch.queries) == 5 and len(ch.inserts) == 2
+    assert len(ch.queries) == 6 and len(ch.inserts) == 2
     assert [r["memory_key"] for r in ch.inserts[1][1]] == ["k1", "k2"]
 
 
