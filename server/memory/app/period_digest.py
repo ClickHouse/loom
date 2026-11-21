@@ -22,10 +22,9 @@ the pass is idempotent and additive and never writes back a period taken out.
 Under Postgres the authority's heads decide which periods are written, so one committed
 but not yet in ClickHouse is not written again. Nothing is tombstoned.
 
-The rows are plain memories: they compete in the vector legs like any fact,
-keep out of the session-digest leg (whose keys start with `summary:`) and
-out of the digest chain, and read back through `memory.list`
-and `memory.evidence` like every other derived row.
+The rows are proposals. Independent approval admits them to ordinary fact retrieval;
+explicit proposal reads can inspect them before approval. They keep out of the
+session-digest leg (whose keys start with `summary:`) and out of the digest chain.
 """
 
 from __future__ import annotations

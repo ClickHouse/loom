@@ -134,21 +134,17 @@ async def handle_memory_export_evidence(
         params["sid"] = input.session_id
 
     if input.kind == "digests":
-        rows = await ch.query_all(
-            f"""
-            SELECT session_id, agent, user_id, summary_text, key_facts, derived_from,
-                   valid_at, created_at
-            FROM loom.session_summaries FINAL
-            WHERE {" AND ".join(where)}
-            ORDER BY session_id ASC, version DESC
-            LIMIT 1 BY session_id
-            LIMIT {{lim:UInt32}}
-            """,
-            params=params,
-        )
-        from server.memory.store.summary_sources import current_summary_sources
+        from server.memory.store.summary_pages import verified_summary_page
 
-        rows = await current_summary_sources(ch, rows, org=input.org, namespace=input.namespace)
+        rows = await verified_summary_page(
+            ch,
+            org=input.org,
+            namespace=input.namespace,
+            where=" AND ".join(where),
+            params=params,
+            limit=input.limit,
+            order="session",
+        )
         digests = [
             EvidenceDigest(
                 session_id=str(r["session_id"]),

@@ -89,6 +89,11 @@ from the authoritative current heads and withhold any digest whose source is mis
 changed, retired, expired, sensitive, incomplete or awaiting review. A metadata touch
 keeps an unchanged fact valid. A legacy digest without a complete proof is withheld.
 
+Digest listing, outline and evidence export scan past withheld candidates to fill their
+requested rows. Each query reads at most 256 candidates. After 256 full queries without
+enough verified rows, the operation returns `BACKEND_UNAVAILABLE` rather than claiming
+the listing is complete.
+
 Period and contrast synthesis remain proposals. A model-generated restatement therefore
 waits for independent review before ordinary fact retrieval serves it.
 

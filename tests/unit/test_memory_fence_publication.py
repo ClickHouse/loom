@@ -411,8 +411,6 @@ async def test_unacknowledged_restore_leaves_its_mirror_for_retry(monkeypatch):
         async def query_all(self, sql, params):
             if "FROM loom.memory_refusals" in sql:
                 return []
-            if "FROM loom.memory_refusals" in sql:
-                return []
             if "PREWHERE (org, namespace" in sql:
                 return [source.model_dump()]
             assert "AS search_deleted" in sql

@@ -275,6 +275,38 @@ _CLUSTER_ROWS = rows_by_substring(
 )
 
 
+async def _summary_pages(ch: RecordingCH, c: dict[str, Any]) -> None:
+    from server.memory.store.summary_pages import verified_summary_page
+
+    await verified_summary_page(
+        ch,
+        org=ORG,
+        namespace=NS,
+        where="org={org:String} AND namespace={ns:String}",
+        params={"org": ORG, "ns": NS},
+        limit=1,
+        order=c["order"],
+    )
+
+
+def _summary_page_rows(sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+    if params.get("after") is not None:
+        return []
+    return [
+        dict(
+            agent="bot",
+            user_id="alice",
+            session_id="s1",
+            embedding_model="fake",
+            created_at=datetime(2026, 1, 1),
+            d=datetime(2026, 1, 1),
+            summary_text="legacy",
+            key_facts=[],
+            derived_from=[],
+        )
+    ] * params["lim"]
+
+
 async def _period_sources(ch: RecordingCH, c: dict[str, Any]) -> None:
     """The facts a period's digests compressed: their ids and entities."""
     from types import SimpleNamespace
@@ -446,6 +478,13 @@ async def _refusal_publication(ch: RecordingCH, c: dict[str, Any]) -> None:
 
 def cases() -> list[Case]:
     return [
+        Case(
+            "memory.summary_pages",
+            "server.memory.store.summary_pages",
+            _summary_pages,
+            {"order": ("oldest", "newest", "session")},
+            rows=_summary_page_rows,
+        ),
         Case(
             "memory.refusal_publication", "server.memory.store.refusals", _refusal_publication, {}
         ),

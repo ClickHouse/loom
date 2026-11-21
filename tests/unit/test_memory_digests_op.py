@@ -21,7 +21,21 @@ class _FakeCH:
         self, sql: str, params: dict[str, Any] | None = None
     ) -> list[dict[str, Any]]:
         self.sql, self.params = sql, dict(params or {})
-        return self.rows[: int(self.params["lim"])]
+        rows = self.rows
+        if after := self.params.get("after"):
+            rows = [
+                row
+                for row in rows
+                if (
+                    row["created_at"],
+                    row["session_id"],
+                    row.get("agent", "-"),
+                    row.get("user_id", "-"),
+                    row.get("embedding_model", ""),
+                )
+                > after
+            ]
+        return rows[: int(self.params["lim"])]
 
 
 def _wire_sources(monkeypatch, rows):
@@ -105,3 +119,26 @@ async def test_a_digest_that_reads_as_a_credential_is_withheld(
     monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(rows))
     out = await cur.handle_memory_digests(MemoryDigestsInput(org="o", namespace="n", agent="a"))
     assert [r.summary_text for r in out.rows] == ["Planned the retreat."]
+
+
+@pytest.mark.parametrize("withheld", [2, 270])
+@pytest.mark.parametrize("qualified", [1, 2])
+async def test_withheld_pages_do_not_hide_current_digests(monkeypatch, withheld, qualified):
+    rows = [
+        {
+            "session_id": f"s{i:04}",
+            "agent": "a",
+            "user_id": "-",
+            "embedding_model": "test",
+            "created_at": datetime(2026, 1, 1),
+            "summary_text": f"fact {i}",
+        }
+        for i in range(withheld + qualified)
+    ]
+    _wire_sources(monkeypatch, rows[withheld:])
+    monkeypatch.setattr("server.core.ch.get_client", lambda: _FakeCH(rows))
+    out = await cur.handle_memory_digests(
+        MemoryDigestsInput(org="o", namespace="n", agent="a", limit=1)
+    )
+    assert [row.session_id for row in out.rows] == [rows[withheld]["session_id"]]
+    assert out.truncated is (qualified > 1)

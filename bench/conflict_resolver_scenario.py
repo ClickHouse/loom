@@ -196,8 +196,7 @@ FACTS: list[Fact] = [
 SESSIONS = 12
 SOLO = {f.key for f in FACTS if f.at[0][0].startswith("solo")}
 
-# The key deleted in a session, and the session whose Undo brings it back (after
-# each session's writes).
+# The key deleted in a session, and the later session that checks its continued absence.
 DELETE_IN, CHECK_DELETED_IN = {4: "badge"}, {6: "badge"}
 DELETED = set(DELETE_IN.values())
 
