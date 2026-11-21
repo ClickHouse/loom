@@ -1657,6 +1657,9 @@ class CodeSettings(BaseModel):
     # code.search `bodies` when the request omits it: "auto" fills bodies into
     # the budget; "none" serves handles only.
     code_search_bodies_default: Literal["auto", "none"] = "auto"
+    # code.search response budget in tokens when the request omits token_budget;
+    # 0 = unlimited. An explicit request budget overrides this default.
+    code_search_token_budget: int = Field(default=0, ge=0)
     # Memoise served code.search responses per (org, namespace, request shape)
     # in loom.code_search_memo and replay within the TTL (route "+memo");
     # `fresh=true` bypasses it.

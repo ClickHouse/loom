@@ -1,5 +1,5 @@
-"""Over MCP, code.index_status defaults to the brief answer and code.search to a
-1,500-token budget; HTTP keeps the ops' own defaults."""
+"""MCP defaults keep index status brief and code search bodyless, while
+code search shares HTTP's deployment token budget."""
 
 from __future__ import annotations
 
@@ -20,10 +20,10 @@ def test_index_status_is_brief_over_mcp_unless_asked_otherwise() -> None:
     )
 
 
-def test_code_search_answers_within_1500_tokens_over_mcp_unless_asked_otherwise() -> None:
+def test_code_search_uses_the_deployment_token_budget_over_mcp() -> None:
     from server.code.api.models_search import CodeSearchInput
 
-    assert mcp_default_arguments("code.search", {"query": "x"})["token_budget"] == 1500
+    assert "token_budget" not in mcp_default_arguments("code.search", {"query": "x"})
     assert (
         mcp_default_arguments("code.search", {"query": "x", "token_budget": 4000})["token_budget"]
         == 4000

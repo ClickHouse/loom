@@ -35,6 +35,7 @@ from server.code.app.spans import (
     with_stage_ms,
 )
 from server.code.domain import deadline as code_deadline
+from server.code.domain.units import remaining_token_budget
 from server.code.store.index import CodeRepo
 from server.core.ch import caller_shaped
 from server.core.llm_free import reads_llm_free
@@ -177,7 +178,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         query=input.query,
         extra_terms=extra_terms,
         top_k=input.top_k,
-        token_budget=max(200, token_budget - reserve),
+        token_budget=remaining_token_budget(token_budget, reserve),
         path_prefix=input.path_prefix,
         exclude_unit_ids=input.exclude_unit_ids or None,
         user_recent_dirs=recent_dirs or None,
@@ -585,7 +586,7 @@ async def _serve_search_page(
     # the plan page 1 resolved
     plan = page_plan(input)
     units, tokens = budget_units(
-        units, max(200, plan.token_budget - plan.reserve), bodies=plan.bodies
+        units, remaining_token_budget(plan.token_budget, plan.reserve), bodies=plan.bodies
     )
     if plan.annotate and units:
         try:
@@ -686,23 +687,25 @@ async def _page_by_research(
     offset, and disclose why. The recomputed call issues its own cursor
     for the page after this one."""
     from server.code.app import search_cursor as paging
-    from server.code.app.search import _POOL_KEEP, classify_query_shape
-    from server.code.domain.units import estimate_unit_tokens
+    from server.code.app.search import _POOL_KEEP
+    from server.code.domain.units import budget_units
 
     size = input.top_k
     want = max(size, min(_POOL_KEEP, offset + size))
-    budget = input.token_budget or (1200 if classify_query_shape(input.query) == "symbol" else 3000)
+    plan = page_plan(input)
+    budget = plan.token_budget
     fresh = input.model_copy(
         update={
             "cursor": "",
             "top_k": want,
             "fresh": True,
-            "token_budget": min(12000, int(budget * want / size)),
+            "token_budget": budget * want // size,
         }
     )
     out = await handle_code_search(fresh)
-    out.results = out.results[offset : offset + size]
-    out.tokens_returned = sum(estimate_unit_tokens(u) for u in out.results)
+    out.results, out.tokens_returned = budget_units(
+        out.results[offset : offset + size], budget, bodies=plan.bodies
+    )
     out.route = f"{out.route}+page_fallback"
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     set_code_span_attributes(page_offset=offset, page_fallback=reason)
@@ -734,6 +737,9 @@ async def _escalate_top_to_file(
 ) -> None:
     """The whole-file escalation of the top hit when at least 2000 tokens of the budget
     survive body-fill and the request's time budget has room; never fails the search."""
+    # Unlimited unit bodies do not request a broader whole-file result.
+    if not token_budget:
+        return
     leftover = token_budget - res.tokens_returned
     if leftover < 2000 or not _budget_allows(res.budget, "whole-file expansion", _LATE_READ_MS):
         return

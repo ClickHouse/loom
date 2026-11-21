@@ -129,6 +129,16 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
 
+`code.search` has no response token cap by default. Set
+`LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
+`0` means unlimited. A request's `token_budget` overrides that default, including
+`token_budget: 0` for an unlimited response. This applies to HTTP and MCP, cursor pages
+and searches across repositories. `top_k` still limits the number of results per page,
+and `bodies: "none"` still returns pointers without code bodies (the MCP default).
+
+For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
+and recreate the server container after changing it.
+
 ## Follow a specification to code and back
 
 Repository Markdown and imported knowledge documents take different paths. An indexed

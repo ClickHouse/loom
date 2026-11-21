@@ -2164,6 +2164,12 @@
           "type": "number",
           "description": "Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights."
         },
+        "code_search_token_budget": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer",
+          "description": "code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default."
+        },
         "code_search_vector_model_default": {
           "default": "",
           "type": "string",
