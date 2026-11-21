@@ -826,11 +826,11 @@ class Owner:
                         "resource process birth changed",
                     )
                     observed[pid] = before
-                    need(
-                        self.owned.rss(pid) * 1024 <= POLICY["stop_process_rss_bytes"],
-                        "process RSS",
-                    )
                     try:
+                        need(
+                            self.owned.rss(pid) * 1024 <= POLICY["stop_process_rss_bytes"],
+                            "process RSS",
+                        )
                         children = self.owned.children(pid)
                     except (FileNotFoundError, ProcessLookupError):
                         need(
