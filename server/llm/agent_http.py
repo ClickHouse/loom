@@ -121,7 +121,7 @@ class HTTPAgentModel:
                 headers=headers,
                 timeout=settings.llm_request_timeout_s,
                 follow_redirects=False,
-                extensions={"loom_identity_retried": True},
+                extensions={"loom_identity_retried": True, "loom_bounded_refusal": True},
             ) as response:
                 # A streaming refusal's body may be endless or contain credentials.
                 response.raise_for_status()
