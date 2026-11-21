@@ -40,6 +40,9 @@ class _CH:
     def __init__(self) -> None:
         self.inserted: list[tuple[str, list[dict[str, Any]], dict[str, Any] | None]] = []
 
+    async def query_all(self, sql, params=None):
+        return []
+
     async def insert(self, table, rows, settings=None):
         self.inserted.append((table, rows, settings))
 
@@ -91,7 +94,7 @@ def _schema_columns(table: str) -> list[str]:
 def test_memory_persisted_cols_equal_the_schema_and_the_versions_mirror() -> None:
     memory = _schema_columns("loom.memory")
     versions = _schema_columns("loom.memory_versions")
-    assert len(memory) == 61
+    assert len(memory) == 62
     assert set(mr.MEMORY_PERSISTED_COLS) == set(memory), set(mr.MEMORY_PERSISTED_COLS) ^ set(memory)
     assert set(versions) == set(memory), set(versions) ^ set(memory)
     assert len(set(mr.MEMORY_PERSISTED_COLS)) == len(mr.MEMORY_PERSISTED_COLS)

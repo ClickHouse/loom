@@ -57,3 +57,43 @@ async def test_promoting_a_high_row_is_refused_before_anything_is_written(
     assert e.value.status_code == 422
     assert e.value.detail["code"] == "HIGH_SENSITIVITY_PROMOTION_REFUSED"
     assert writes == []
+
+
+@pytest.mark.parametrize("status", ["proposed", "rejected", "superseded"])
+async def test_a_pending_proposal_cannot_be_published_to_shared_search(monkeypatch, status):
+    from server.core.errors import AuthInsufficientError
+
+    async def get(*args, **kwargs):
+        return _row("").model_copy(update={"status": status, "requires_review": True})
+
+    monkeypatch.setattr(memory_repo, "get_by_key", get)
+    with pytest.raises(AuthInsufficientError):
+        await promote.handle_memory_promote(
+            MemoryPromoteInput(org="o", namespace="n", agent="a", memory_key="k")
+        )
+
+
+async def test_promotion_rechecks_the_source_after_preparing_its_projection(monkeypatch):
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    source = _row("")
+    changed = source.model_copy(
+        update={"requires_review": True, "status": "proposed", "version": 2}
+    )
+    reads = iter([source, changed])
+    writes = []
+
+    async def get(*args, **kwargs):
+        return next(reads)
+
+    async def write(*args, **kwargs):
+        writes.append(args)
+
+    monkeypatch.setattr(memory_repo, "get_by_key", get)
+    monkeypatch.setattr(promote, "get_embedder", lambda: None)
+    monkeypatch.setattr(shared, "insert_shared_row", write)
+    with pytest.raises(AdmissionContendedError):
+        await promote.handle_memory_promote(
+            MemoryPromoteInput(org="o", namespace="n", agent="a", memory_key="k")
+        )
+    assert writes == []

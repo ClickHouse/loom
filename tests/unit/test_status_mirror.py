@@ -667,5 +667,12 @@ def _wire_sessions(monkeypatch: pytest.MonkeyPatch, ch: _CH) -> None:
     async def _get_by_id(memory_id: str, **_: Any) -> Any:
         return heads[memory_id]
 
+    async def _current(keys, **kwargs):
+        from server.memory.store.rows import MemoryRow, identity_key
+
+        rows = [MemoryRow.from_snapshot(vars(row)) for row in heads.values()]
+        return {identity_key(row): row for row in rows if identity_key(row) in keys}
+
     monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
+    monkeypatch.setattr("server.memory.store.write_fence.memory_rows_by_identity_keys", _current)
     monkeypatch.setattr("server.core.ch.get_client", lambda: ch)

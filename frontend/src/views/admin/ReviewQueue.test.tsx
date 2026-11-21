@@ -93,6 +93,7 @@ const conflict = (key: string): ConflictRow => ({
 const proposal: MemoryProposal = {
   memory_key: "deploy_window",
   memory_id: "m1",
+  content_sha256: "a".repeat(64),
   agent: "a",
   value_preview: "Tuesdays",
   sensitivity: "",
