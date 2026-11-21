@@ -110,7 +110,7 @@ def applied_purge(scope_type: str, scope_value: str, requested: bool) -> bool:
     """Whether a saga of this scope deletes rather than tombstones: a user's as requested,
     a namespace list's from its scope (`requested` when the scope does not say), a
     single namespace's never. A scope that holds a mirror is purged whatever this says
-    (`saga_steps.with_mirrors`)."""
+    (`saga_steps.erased_scope`)."""
     if scope_type == "user_id":
         return requested
     if scope_type == "namespace_list":

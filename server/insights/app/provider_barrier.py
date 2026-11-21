@@ -319,19 +319,33 @@ def participant_lifespan[T](
     return wrapped
 
 
-async def retire_participant(participant: UUID, *, ch: Any = None) -> str:
+async def retire_reaped_process(host_proof: str) -> None:
+    """Retire only the one recorded process matching its owner's captured birth."""
+    rows = await participants(host_proof=host_proof)
+    if len(rows) != 1 or rows[0].get("host_proof") != host_proof:
+        return
+    await retire_participant(UUID(str(rows[0]["participant_id"])), expected_proof=host_proof)
+
+
+async def retire_participant(
+    participant: UUID, *, ch: Any = None, expected_proof: str | None = None
+) -> str:
     """`retired`, `absent` (no row), or `live` (not proved stopped).
 
     Retirement needs the recorded identity proved absent in the same host, boot
     and PID namespace, with tagged queries known zero. Unknown evidence blocks;
     heartbeat expiry alone proves nothing.
     """
-    row = next(
-        (r for r in await participants(ch=ch) if str(r["participant_id"]) == str(participant)),
-        None,
+    rows = (
+        await participants(ch=ch)
+        if expected_proof is None
+        else await participants(ch=ch, host_proof=expected_proof)
     )
+    row = next((r for r in rows if str(r["participant_id"]) == str(participant)), None)
     if row is None:
         return "absent"
+    if expected_proof is not None and (len(rows) != 1 or row.get("host_proof") != expected_proof):
+        return "live"
     if str(participant) == str(process_identity()):
         return "live"
     if not proves_stopped(str(row.get("host_proof") or "")):

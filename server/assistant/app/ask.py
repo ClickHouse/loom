@@ -18,6 +18,7 @@ async def handle_assistant_ask(inp: AssistantAskInput) -> AssistantAskOutput:
     messages = [m.model_dump() for m in inp.history] + [{"role": "user", "content": inp.question}]
     answer = await bridge.ask(auth, inp.org, inp.namespace, messages)
     return AssistantAskOutput(
+        mirrored=answer.mirrored,
         answer="".join(answer.text),
         run_id=answer.run_id,
         citations=answer.citations,

@@ -34,10 +34,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import nullcontext
 from typing import Any, cast
 
 from server.core import pg
-from server.core.datetimes import naive_utc_now
+from server.core.datetimes import naive_utc_now, to_naive_utc_second
+from server.core.diagnostics import private_work
 from server.core.errors import BACKEND_NOT_NOW
 from server.embedding import get_embedder
 from server.identity.api.models_namespace_catalog import NamespaceAuditInput
@@ -66,7 +68,7 @@ from server.knowledge.api.models_inspect import (
     MemoryFindingRef,
     SourceJobs,
 )
-from server.knowledge.app import ingest_jobs
+from server.knowledge.app import ingest_jobs, source_access, source_publication, source_titles
 from server.knowledge.app.ingest_run import JOB_LEASE_S
 from server.knowledge.domain.ingest_states import OPEN_STATES
 from server.knowledge.store import documents as documents_repo
@@ -977,6 +979,48 @@ def _document_chunks(c: dict[str, Any] | None) -> DocumentChunks:
 
 
 async def handle_knowledge_inspect(input: KnowledgeInspectInput) -> KnowledgeInspectOutput:
+    plan = await source_access.prepare(input.org, [input.namespace])
+    with private_work() if plan.marked else nullcontext():
+        output = await _ordinary_inspect(input)
+        if not plan.marked:
+            return output
+        titles = (
+            await source_titles.collect(plan, input.namespace, limit=input.sample_limit)
+            if input.sample_limit
+            else []
+        )
+        private = [
+            (
+                InspectDocument(
+                    source_uri=title.source_uri,
+                    title=title.title,
+                    format=title.format,
+                    source_scheme=title.source_scheme,
+                    version=title.version,
+                    revision=title.revision,
+                    ingested_at=title.ingested_at,
+                ),
+                title.proof,
+            )
+            for title in titles
+        ]
+        output.listed = sorted(
+            [
+                *output.listed,
+                *(doc for doc, _proof in private),
+            ],
+            key=lambda doc: (to_naive_utc_second(doc.ingested_at), doc.source_uri),
+            reverse=True,
+        )[: input.sample_limit]
+        selected = {id(doc) for doc in output.listed}
+        for doc, proof in private:
+            if id(doc) in selected:
+                source_publication.retain(proof)
+        output.listed_complete = False
+        return output
+
+
+async def _ordinary_inspect(input: KnowledgeInspectInput) -> KnowledgeInspectOutput:
     run = _Inspect(input)
     computed_at = naive_utc_now()
     model = await run.guarded("embedder", _embedder_model, "")

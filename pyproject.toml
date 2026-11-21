@@ -98,6 +98,11 @@ dev = [
   "types-PyYAML>=6.0",
   "ruff==0.16.9",
   "build>=1.0",
+  # Translation table verification uses the documentation site's parser.
+  "Markdown==3.11.2",
+  "mdx-truly-sane-lists==1.3",
+  "pymdown-extensions==12.3",
+  "markdown-it-py==4.0.0",
 ]
 # Operator CLI extra — needed only by `dev/loom_ingest.py` to fetch an S3
 # source. Not a server dep; the CLI lazy-imports it with an actionable error
@@ -263,14 +268,24 @@ module = [
   "pydantic_ai.*",
   "ag2",
   "ag2.*",
+  "agno",
+  "agno.*",
+  "haystack",
+  "haystack.*",
   "agent_framework",
   "agent_framework.*",
   "anthropic",
   "anthropic.*",
+  "google.adk",
+  "google.adk.*",
+  "google.genai",
+  "google.genai.*",
   "langgraph",
   "langgraph.*",
   "strands",
   "strands.*",
+  "pipecat",
+  "pipecat.*",
 ]
 ignore_missing_imports = true
 

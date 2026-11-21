@@ -489,11 +489,26 @@ LEFT JOIN loom.memory_deliveries d
   ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
 """
 
+# Lock each exact head only after its six-column key has been sorted.
+# FOR UPDATE keeps the lateral probe separate from the batch's join planning.
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
-{_EXACT_KEYS}
+FROM (
+    SELECT *
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+      AS k(org, namespace, agent, user_id, session_id, memory_key)
+    ORDER BY k.org COLLATE "C", k.namespace COLLATE "C", k.agent COLLATE "C",
+             k.user_id COLLATE "C", k.session_id COLLATE "C", k.memory_key COLLATE "C"
+) k
+CROSS JOIN LATERAL (
+    SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
+    FROM loom.memory_current c
+    WHERE c.org = k.org AND c.namespace = k.namespace AND c.agent = k.agent
+      AND c.user_id = k.user_id AND c.session_id = k.session_id
+      AND c.memory_key = k.memory_key
+    FOR UPDATE OF c
+) c
 {_KEY_ORDER}
-FOR UPDATE OF c
 """
 
 _UPSERT_HEADS = """
@@ -1730,13 +1745,15 @@ async def history_target(org: str, memory_id: str, version: int) -> dict[str, An
     r = await pg.fetchrow(
         f"SELECT org, memory_id::text AS memory_id, namespace, {_meta('agent')} AS agent, "
         f"user_id, {_meta('session_id')} AS session_id, {_meta('memory_key')} AS memory_key, "
-        "version, content_sha256 "
+        "version, content_sha256, row->'tags' AS tags "
         "FROM loom.memory_revisions WHERE org = $1 AND memory_id = $2 AND version = $3 LIMIT 1",
         org,
         mid,
         version,
     )
-    return None if r is None else dict(r)
+    if r is None:
+        return None
+    return dict(r)
 
 
 async def status_before(key: IdentityKey, memory_id: str, version: int) -> str:
@@ -2086,6 +2103,41 @@ async def live_key_heads(
         *args,
     )
     return [decode_row(r["row"]) for r in rows]
+
+
+async def update_key_candidates(
+    org: str,
+    namespace: str,
+    memory_key: str,
+    *,
+    scope: Any,
+    agent: str | None = None,
+    user_id: str | None = None,
+    session_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """At most ten live revision candidates, including expired heads, without values."""
+    if pg.unstorable((org, namespace, memory_key, agent or "", user_id or "", session_id or "")):
+        return []  # no head holds what Postgres cannot store
+    args: list[Any] = [org, namespace, memory_key]
+    where = (
+        "org = $1 AND namespace = $2 AND memory_key = $3 "
+        "AND row->>'tombstoned_at' IS NULL "
+        "AND coalesce(row->>'status', 'active') IN ('active', 'duplicate', 'conflicted')"
+    )
+    for column, value in (("agent", agent), ("user_id", user_id), ("session_id", session_id)):
+        if value is not None:
+            args.append(value)
+            where += f" AND {column} = ${len(args)}"
+    where += _scope_sql(scope, args)
+    rows = await pg.fetch(
+        "SELECT memory_id, agent, user_id, session_id, version, "
+        "coalesce(row->>'status', 'active') AS status FROM loom.memory_current "
+        f"WHERE {where} ORDER BY version DESC LIMIT 10",
+        *args,
+    )
+    return [
+        {**dict(r), "memory_id": str(r["memory_id"]), "version": int(r["version"])} for r in rows
+    ]
 
 
 async def live_heads_of(

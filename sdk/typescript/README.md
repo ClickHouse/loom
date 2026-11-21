@@ -420,7 +420,38 @@ import { loomTools } from "@clickhouse/loom/integrations/mastra";
 const tools = loomTools(bot, { userId: "u-42" }); // new Agent({ id, name, model, instructions, tools }) from @mastra/core/agent
 ```
 
-Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83 or a later 1.x, which needs Node 22.13 or later).
+Loom's agent verbs (`AgentTools`) as Mastra tools keyed by name, built with `createTool` from `@mastra/core`, an optional peer dependency (1.83.x, which needs Node 22.13 or later).
+
+`LoomMemoryStorage` implements Mastra's native memory storage domain for one resource:
+
+```ts
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { Memory } from "@mastra/memory";
+import { LoomMemoryStorage } from "@clickhouse/loom/integrations/mastra";
+
+const memory = new Memory({
+  storage: new MastraCompositeStore({
+    id: "loom",
+    domains: { memory: new LoomMemoryStorage(bot, { resourceId: "u-42" }) },
+  }),
+  options: {
+    semanticRecall: false,
+    observationalMemory: false,
+    workingMemory: { enabled: true, scope: "resource" },
+  },
+});
+```
+
+Install `@mastra/memory` next to the SDK. Construct a separate storage and `Memory`
+instance for each end-user: `resourceId` is the actual Loom `user_id`, so user erasure
+includes all threads, messages and working memory. Keep the same Loom agent and optional
+`storeId` when resuming in another process. Resource reassignment, observational memory,
+run fencing, atomic working-memory merges and cloning are unsupported. Data stays in
+your Loom deployment; the adapter adds no database, vector store or cache. First
+resource patches require server support for `memory.set.if_match_sha256="absent"`;
+older servers refuse creation without an unconditional fallback. Deletion targets the
+exact observed version and rejects concurrent rewrites. See
+[the memory contract and limits](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#mastra).
 
 ## OpenAI Agents SDK
 

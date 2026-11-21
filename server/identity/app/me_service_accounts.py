@@ -201,6 +201,7 @@ async def save_token(
     *,
     created_by: str,
     now: datetime,
+    personal: bool = False,
 ) -> None:
     """List the token in its owner's token list (`loom.service_accounts`).
     Called under the name's claim."""
@@ -234,7 +235,7 @@ async def save_token(
                 "revoked_at": None,
                 "revoked_by": "",
                 "version": version,
-                "kind": "service_account",
+                "kind": "personal_agent" if personal else "service_account",
                 "client": "",
                 # The gate and the namespace listings read this flag: a token
                 # reads through its creator's live grants (server/auth/service_accounts.py).
@@ -299,8 +300,46 @@ def dev_parent(request: Request, payload: dict[str, object]) -> AuthInfo:
 
 @router.post("/v1/me/service_accounts.create")
 async def me_service_accounts_create(
-    request: Request,
-    payload: dict[str, object],
+    request: Request, payload: dict[str, object]
+) -> dict[str, object]:
+    """Mint a general service-account token under the caller's live grants."""
+    return await _create_token(request, payload)
+
+
+@router.post("/v1/me/personal_tokens.create")
+async def me_personal_tokens_create(
+    request: Request, payload: dict[str, object]
+) -> dict[str, object]:
+    """Mint a token that reads mirrored documents as its signed-in creator."""
+    from server.auth.reader_identity import reader_subject
+
+    if not settings.auth_actually_required():
+        raise _personal_session_required()
+    parent = me_callers.require_authed_info(request)
+    if (
+        not parent.first_party
+        or not parent.session_id
+        or parent.creator
+        or parent.is_service_account
+        or not reader_subject(parent)
+        or request.headers.get("X-Loom-On-Behalf-Of") is not None
+    ):
+        raise _personal_session_required()
+    return await _create_token(request, payload, personal_parent=parent)
+
+
+def _personal_session_required() -> HTTPException:
+    return HTTPException(
+        status_code=403,
+        detail={
+            "code": "AUTH_INSUFFICIENT",
+            "message": "connect your own agent from your signed-in dashboard session",
+        },
+    )
+
+
+async def _create_token(
+    request: Request, payload: dict[str, object], *, personal_parent: AuthInfo | None = None
 ) -> dict[str, object]:
     """Mint a token for the caller's own tools, agents, scripts and CI jobs,
     never wider than the caller's grants, and hand it over with the setup of
@@ -337,8 +376,11 @@ async def me_service_accounts_create(
     Returns the JWT exactly once, with where calls that name no namespace
     save (`caller_home.default_namespace`).
     """
+    personal = personal_parent is not None
     caller: AuthInfo | None = None  # auth off: a mint writes no audit row
-    if settings.auth_actually_required():
+    if personal_parent is not None:
+        parent = caller = personal_parent
+    elif settings.auth_actually_required():
         parent = caller = me_callers.require_authed_info(request)
     else:
         parent = dev_parent(request, payload)
@@ -379,10 +421,12 @@ async def me_service_accounts_create(
         )
         is_code = await token_grants.code_namespace_predicate(org, list(restricted_roles))
         sa_subject = new_token_subject(org, name, subject)
-        minted = delegated.mint(sa_subject)
+        minted = delegated.mint(sa_subject, reads_as_creator=personal)
         now = naive_utc_now_seconds()  # after the mint: the row is never older than the token's iat
         expires_at = delegated.expires_at(now)
-        await save_token(name, sa_subject, delegated, created_by=subject, now=now)
+        await save_token(
+            name, sa_subject, delegated, created_by=subject, now=now, personal=personal
+        )
     # A restricted namespace named here is read only when the token's own subject holds a
     # direct grant: write it now, capped, revoked with the token; a name in the claim alone
     # would have every read of it refused.
@@ -391,7 +435,7 @@ async def me_service_accounts_create(
     )
     await note_restricted_grants(
         caller,
-        op="me.service_accounts.create",
+        op="me.personal_tokens.create" if personal else "me.service_accounts.create",
         org=org,
         namespaces=restricted_granted,
         granted_to=sa_subject,

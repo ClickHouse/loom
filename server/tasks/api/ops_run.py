@@ -25,6 +25,7 @@ from server.tasks.app.run import (
 
 run_begin = Operation(
     name="run.begin",
+    session_content=True,
     input_model=RunBeginInput,
     output_model=RunBeginOutput,
     handler=handle_run_begin,
@@ -36,6 +37,7 @@ run_begin = Operation(
 
 run_complete = Operation(
     name="run.complete",
+    session_content=True,
     input_model=RunCompleteInput,
     output_model=RunCompleteOutput,
     handler=handle_run_complete,

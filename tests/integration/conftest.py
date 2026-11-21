@@ -251,6 +251,16 @@ def _record_loom_requests() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def isolated_retirement_gate() -> Iterator[None]:
+    """Each test owns a fresh process gate; shutdown stays permanent within it."""
+    from server.core import retirement
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(retirement, "_gate", retirement.RetirementGate())
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _code_registry_read() -> Iterator[None]:
     """In-process code ops answer only once the self-service registry has been read
     (`repos.configured_repos`); the server under test reads it at boot, these tests

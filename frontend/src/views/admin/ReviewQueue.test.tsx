@@ -882,6 +882,61 @@ describe("ReviewQueue", () => {
     await waitFor(() => expect(listLearnings).toHaveBeenCalledTimes(2), WAIT);
   });
 
+  it.each(["query_history", "knowledge_gap"])(
+    "definition draft inspector exposes all content before promotion (%s)",
+    async (source_kind) => {
+      const body = "Count only completed orders. ".repeat(20) + "Do not count refunded orders.";
+      const evidence = {
+        ...(source_kind === "knowledge_gap"
+          ? { gap_id: "gap-orders" }
+          : { sql: "SELECT count() FROM orders WHERE status = ?" }),
+        tables: ["orders", "refunds"],
+        columns: ["orders.status", "orders.total", "refunds.order_id"],
+      };
+      const value = { term: "Completed orders", aliases: ["Finished orders"], body, rests_on: evidence };
+      vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+      vi.mocked(listLearnings).mockResolvedValue({
+        rows: [{ ...learning("definition/orders"), memory_type: "definition", source_kind, proposed_value: value }],
+      });
+      vi.mocked(reviewLearning).mockClear();
+      vi.mocked(reviewLearning).mockResolvedValue({
+        candidate_id: "c-definition/orders",
+        new_status: "promoted",
+        promoted_to_shared: true,
+        decided_at: learning("definition/orders").proposed_at,
+      });
+      seed("ns-a", "admin");
+      const user = userEvent.setup();
+      const { container } = render(<ReviewQueue />);
+      await user.click(await screen.findByRole("tab", { name: /Learnings/ }, WAIT));
+      const expand = screen.getByRole("button", { name: "Review full definition" });
+      expect(expand).toHaveAttribute("aria-expanded", "false");
+      await user.click(expand);
+      expect(screen.getByRole("button", { name: "Hide full definition" })).toHaveAttribute("aria-expanded", "true");
+      expect(screen.getByText((_, element) => element?.textContent === JSON.stringify(value, null, 2))).toBeVisible();
+      expect(
+        screen.getByText(
+          "Promote publishes this entire definition, including all evidence, to everyone who can read this namespace.",
+        ),
+      ).toBeVisible();
+      expect(await axeViolations(container)).toEqual([]);
+      await user.click(screen.getByRole("button", { name: "Hide full definition" }));
+      expect(screen.queryByText(/Do not count refunded orders/)).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Review full definition" }));
+      await user.click(screen.getByRole("button", { name: /^Promote$/ }));
+      await waitFor(
+        () =>
+          expect(reviewLearning).toHaveBeenCalledWith(
+            { org: ORG, namespace: "ns-a" },
+            "c-definition/orders",
+            "promote",
+            "",
+          ),
+        WAIT,
+      );
+    },
+  );
+
   it("shows a bot's rule with its agent, its users, sessions and writers, and what promoting it does", async () => {
     vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
     vi.mocked(listLearnings).mockResolvedValue({

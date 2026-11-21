@@ -322,7 +322,7 @@ def test_ch_setup_is_refused_before_it_writes_a_user_or_grant(
     monkeypatch.setattr(settings, "ch_user", "loom")
     monkeypatch.setattr(settings, "ch_reader_user", "")
     monkeypatch.setenv("LOOM_CH_READER_USER", "")
-    args = argparse.Namespace(print_analyst_sql=False, print_sql=False)
+    args = argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=False, print_sql=False)
     with pytest.raises(_ch.OrgNotHeld, match="first row names cell 'us-1'"):
         ch_setup._cmd_ch_setup(args)
 
@@ -367,7 +367,9 @@ def test_ch_setup_is_refused_on_another_deployments_clickhouse_before_it_writes(
     monkeypatch.setenv("LOOM_CH_READER_USER", "")
     monkeypatch.setattr(settings, "ch_reader_user", "")
     with pytest.raises(pg.AuthorityMismatch):
-        ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False))
+        ch_setup._cmd_ch_setup(
+            argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=False, print_sql=False)
+        )
     assert armed == [("dep-other", 1)]
 
 
@@ -405,7 +407,12 @@ def test_ch_setup_on_a_fresh_clickhouse_passes_the_gate_and_sets_up(
     monkeypatch.setattr(settings, "ch_user", "loom")
     monkeypatch.setenv("LOOM_CH_READER_USER", "")
     monkeypatch.setattr(settings, "ch_reader_user", "")
-    assert ch_setup._cmd_ch_setup(argparse.Namespace(print_analyst_sql=False, print_sql=False)) == 0
+    assert (
+        ch_setup._cmd_ch_setup(
+            argparse.Namespace(print_analyst_sql=False, apply_analyst_sql=False, print_sql=False)
+        )
+        == 0
+    )
     assert set_up == [1]
 
 

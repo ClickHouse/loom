@@ -357,8 +357,7 @@ def test_a_cell_name_no_cell_can_have_is_refused_before_the_credential_is_sent(
 
 @pytest.mark.parametrize("command", ["which", "limit"])
 def test_a_page_that_is_not_the_routers_answer_fails(monkeypatch, capsys, command) -> None:
-    """A URL that serves something else (an HTML page, with 200) is not read as the
-    router's answer; for a change, it may have been made."""
+    """A malformed initial router answer refuses before sending a mutation."""
     page = httpx.Response(
         200, text="<html>not the router</html>", request=httpx.Request("GET", "https://x/")
     )

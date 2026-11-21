@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Icon } from "@clickhouse/click-ui/Icon";
@@ -509,7 +509,21 @@ export function RecallLab() {
   }, [query, identity, attempt]);
 
   const showResults = !abstain || showWeak;
-  const topScore = Math.max(0, ...(rows ?? []).map((row) => row.hit?.rank_score ?? 0));
+  const scoresTable = useMemo(() => {
+    if (rows == null || rows.length === 0 || !showResults) return null;
+    const topScore = Math.max(0, ...rows.map((row) => row.hit?.rank_score ?? 0));
+    return (
+      <Table
+        aria-label="Recall scores"
+        aria-busy={loading || undefined}
+        size="sm"
+        // Ask about this on every row; a role the assistant's route does not admit sees
+        // it unavailable, with the role it needs.
+        headers={ASK_HEADERS}
+        rows={rows.map((row, i) => scoreRow(row, i, topScore, open, rowsQuery))}
+      />
+    );
+  }, [rows, rowsQuery, open, loading, showResults]);
   const count =
     rows != null && rows.length > 0 && showResults && error == null
       ? `${rows.length} row${rows.length === 1 ? "" : "s"}${model ? ` · ${model}` : ""}`
@@ -593,17 +607,7 @@ export function RecallLab() {
                   )}
                 </div>
               )}
-              {showResults && (
-                <Table
-                  aria-label="Recall scores"
-                  aria-busy={loading || undefined}
-                  size="sm"
-                  // Ask about this on every row; a role the assistant's route does not admit sees
-                  // it unavailable, with the role it needs.
-                  headers={ASK_HEADERS}
-                  rows={rows.map((row, i) => scoreRow(row, i, topScore, open, rowsQuery))}
-                />
-              )}
+              {scoresTable}
             </>
           )}
         </Tabs.Content>

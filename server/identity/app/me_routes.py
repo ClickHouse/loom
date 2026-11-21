@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.grant_sql import LIVE_GRANT
 from server.identity.app import me_callers, me_service_accounts
+from server.observability.store.event_reads import MASKED_EVENTS
 from server.settings import settings
 
 me_router = APIRouter()
@@ -196,7 +197,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
                countIf(operation IN {{rops:Array(String)}}) AS recalls,
                countIf(operation IN {{rops:Array(String)}}
                        AND args['namespace_scope'] = 'all_mine') AS cross_ns
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE org = {{org:String}}
           AND namespace IN ({grant_subq})
           AND ts > now() - INTERVAL 7 DAY
@@ -267,18 +268,20 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
 
         # 3. Per-namespace activity (writes + recalls last 7d).
         ns_activity_rows = await ch.query_all(
-            """
+            (
+                """
             SELECT
                 namespace,
                 sum(if(operation IN {wops:Array(String)}, 1, 0)) AS writes,
                 sum(if(operation IN {rops:Array(String)}, 1, 0)) AS recalls
-            FROM loom.agent_events
+            FROM {masked_events}
             WHERE org = {org:String}
               AND namespace IN {ns:Array(String)}
               AND ts > now() - INTERVAL 7 DAY
               AND success = true
             GROUP BY namespace
-            """,
+            """
+            ).replace("{masked_events}", MASKED_EVENTS),
             params={"org": org, "ns": my_ns_set, "wops": write_ops, "rops": recall_ops},
         )
         ns_activity = {r["namespace"]: r for r in ns_activity_rows}

@@ -148,13 +148,22 @@ test-integration:
 # may pin one package incompatibly. SDK_ADAPTERS_RESOLUTION=lowest-direct installs
 # every direct requirement (the SDK's own, the extra's, pytest) at its lower bound.
 # mypy is the [dev] pin. `make test-sdk-adapter-crewai` runs one.
-SDK_ADAPTER_EXTRAS := langchain llamaindex openai-agents crewai autogen pydantic-ai ag2 agent-framework claude-memory
+SDK_ADAPTER_EXTRAS := agno haystack langchain llamaindex openai-agents crewai autogen pydantic-ai ag2 agent-framework claude-memory google-adk pipecat
 SDK_ADAPTERS_VENV ?= .venv-sdk-adapters
 SDK_ADAPTERS_PYTHON ?= 3.12
 SDK_ADAPTERS_RESOLUTION ?= highest
 # The adapters typed through structural twins need no extra: every venv checks them too.
 SDK_ADAPTERS_NO_EXTRA = $(addprefix sdk/python/loom/integrations/,__init__.py langgraph.py strands.py)
 test-sdk-adapters: $(addprefix test-sdk-adapter-,$(SDK_ADAPTER_EXTRAS))
+.PHONY: test-sdk-mastra-memory test-sdk-mastra-memory-live
+test-sdk-mastra-memory:
+	npm --prefix sdk/typescript run test -- src/integrations/mastra-memory.test.ts
+
+test-sdk-mastra-memory-live:
+	@test -n "$(LOOM_BASE_URL)" || (echo "LOOM_BASE_URL must name the task's Loom server"; exit 1)
+	@test -n "$(LOOM_API_KEY)" || (echo "LOOM_API_KEY must authorize the test namespace"; exit 1)
+	npm --prefix sdk/typescript run test:integ -- test/integ/mastra-memory.test.ts
+
 test-sdk-adapter-%: PY = $(abspath $(SDK_ADAPTERS_VENV))/$*/bin/python
 test-sdk-adapter-%: MODULE = $(subst -,_,$*)
 test-sdk-adapter-%:

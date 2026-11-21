@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from server.core.hashing import canonical_document_text
+from server.core.hashing import query_text, valid_unicode
 
 # The other queries merged into a gap that it shows, at most.
 MAX_SAMPLES = 5  # not a setting: the size of the tile's sample list
@@ -31,12 +31,9 @@ def normalize_query(query: str) -> str | None:
     together. A combining mark stays with the letter or number before it; a mark with
     none before it counts as punctuation. None for text that is not valid Unicode (a
     lone surrogate), which records no miss."""
-    try:
-        query.encode("utf-8")
-    except UnicodeEncodeError:
+    if not valid_unicode(query):
         return None
-    text = "".join(c for c in query if unicodedata.category(c) != "Cf")
-    text = canonical_document_text(text).casefold()
+    text = query_text(query).casefold()
     out: list[str] = []
     after_base = False  # the last kept character is a letter or number, or a mark on one
     for char in text:

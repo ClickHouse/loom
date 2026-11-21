@@ -3,6 +3,7 @@ and the re-verify CLI read, and the checkpoint every step appends."""
 
 from __future__ import annotations
 
+import time
 from datetime import datetime
 from typing import Any, cast
 
@@ -10,6 +11,7 @@ from server.core.ch import sequential_reads
 from server.core.naming import mirror_name_sql
 from server.core.repo_base import _CHClient, _default_client
 from server.erasure.domain.failure_reason import ABANDONED_REASON_PREFIX, REPLAY_PENDING_REASON
+from server.erasure.domain.receipts import receipt_version
 from server.erasure.store.rows import (
     CheckpointRow,
     LedgerRow,
@@ -49,7 +51,7 @@ async def list_stuck_in_progress(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason, residue
         FROM loom.erasure_requests FINAL
         WHERE status IN ('in_progress', 'failed') AND """
@@ -86,7 +88,7 @@ async def list_unabandoned_exhausted(
     ch = ch or _default_client()
     rows = await ch.query_all(
         """
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
@@ -128,7 +130,7 @@ async def list_failed_requests(
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
@@ -158,7 +160,7 @@ async def list_completed_requests(
         params["org"] = org
     rows = await ch.query_all(
         f"""
-        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge,
+        SELECT id, org, scope_type, scope_value, requester, actor, urgency, purge, mirror_marked,
                attempts, steps_completed, requested_at, failure_reason,
                residue_count, residue, verified_at, census
         FROM loom.erasure_requests FINAL
@@ -183,7 +185,7 @@ async def fetch_request_status(
         """
         SELECT id, org, scope_type, scope_value, requester, status,
                current_step, failure_reason, requested_at, completed_at,
-               residue_count, verified_at, residue, census, purge
+               residue_count, verified_at, residue, census, purge, mirror_marked
         FROM loom.erasure_requests FINAL
         WHERE id = {id:UUID} AND """
         + LIVE_LEDGER
@@ -261,11 +263,12 @@ async def list_requests(
                e.failure_reason AS failure_reason,
                length(e.steps_completed) AS steps_completed_count,
                coalesce(r.n, 0) AS reversals_count,
-               e.residue_count AS residue_count, e.verified_at AS verified_at
+               e.residue_count AS residue_count, e.verified_at AS verified_at,
+               e.mirror_marked AS mirror_marked
         FROM (
             SELECT id, scope_type, scope_value, requester, status,
                    requested_at, completed_at, failure_reason, steps_completed,
-                   residue_count, verified_at
+                   residue_count, verified_at, mirror_marked
             FROM loom.erasure_requests FINAL
             WHERE {where}
             ORDER BY requested_at DESC
@@ -374,9 +377,39 @@ async def open_namespace_erasures(org: str, *, ch: _CHClient | None = None) -> l
 
 
 _LEDGER_ROW = (
-    "SELECT id, org, scope_type, scope_value, requester, urgency, purge, requested_at, "
+    "SELECT id, org, scope_type, scope_value, requester, urgency, purge, mirror_marked, "
+    "requested_at, "
     "completed_at, steps_completed, attempts FROM loom.erasure_requests FINAL "
 )
+
+
+async def mirror_mark(org: str, erasure_id: str, *, ch: _CHClient | None = None) -> bool:
+    """Privacy is independent of which checkpoint a restore trusts for deletion."""
+    ch = ch or _default_client()
+    row = await ch.query_one(
+        "SELECT max(mirror_marked) AS marked FROM loom.erasure_requests "
+        "WHERE org = {org:String} AND id = {id:UUID} AND " + LIVE_LEDGER,
+        params={"org": org, "id": erasure_id},
+    )
+    return bool(row and row["marked"])
+
+
+async def promote_mirror_mark(org: str, erasure_id: str, *, ch: _CHClient | None = None) -> None:
+    """Promote privacy while preserving a restore's fence and the receipt it protects."""
+    ch = ch or _default_client()
+    await ch.execute(
+        "INSERT INTO loom.erasure_requests "
+        "SELECT * REPLACE (true AS mirror_marked, {version:UInt64} AS version) FROM ("
+        "SELECT * FROM loom.erasure_requests FINAL "
+        "WHERE org = {org:String} AND id = {id:UUID} AND NOT mirror_marked AND "
+        + LIVE_LEDGER
+        + ")",
+        params={
+            "org": org,
+            "id": erasure_id,
+            "version": receipt_version(time.time_ns(), mirror_marked=True),
+        },
+    )
 
 
 async def completed_since(point: datetime, *, ch: _CHClient | None = None) -> list[dict[str, Any]]:
@@ -421,7 +454,8 @@ async def trusted_row(
         "argMax(completed_at, version) AS completed_at, "
         "argMax(failure_reason, version) AS failure_reason, "
         "argMax(steps_completed, version) AS steps_completed, "
-        "argMax(residue, version) AS residue, any(scope_type) AS scope_type "
+        "argMax(residue, version) AS residue, any(scope_type) AS scope_type, "
+        "max(mirror_marked) AS mirror_marked "
         "FROM loom.erasure_requests WHERE id = {id:UUID} AND org = {org:String} "
         "AND (last_checkpoint_at < {before:DateTime} OR actor = {actor:String}) AND "
         + LIVE_LEDGER
@@ -441,7 +475,12 @@ async def trusted_row(
         status = "abandoned"
     scope = "user_id" if row["scope_type"] == "user_id" else "namespace"
     done = set(row["steps_completed"]) - steps_to_reopen(row["residue"], scope)
-    return {"status": status, "completed_at": row["completed_at"], "done": done}
+    return {
+        "status": status,
+        "completed_at": row["completed_at"],
+        "done": done,
+        "mirror_marked": bool(row.get("mirror_marked")),
+    }
 
 
 async def still_open(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:

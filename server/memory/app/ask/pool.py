@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from dataclasses import field as dc_field
 from typing import Any
 
+from server.core.errors import VectorInputTooLargeError
 from server.memory.app.ask.completion import (
     _bridge_complete_memories,
     _facet_complete_memories,
@@ -55,6 +56,7 @@ from server.memory.app.ask.supersession import (
     superseded_rows_for_pool,
 )
 from server.memory.app.ask.synthesis import _publish_window_keys
+from server.memory.domain.search_types import governed_after_computed
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +290,8 @@ async def _widen_by_question(
         for _part in _parts[1:]:
             try:
                 _sub = await handle_memory_search(_with(search_input, query=_part))
+            except VectorInputTooLargeError:
+                raise
             except Exception:  # noqa: BLE001 — additive
                 continue
             run.ranked.extend(h for h in _sub.results or [] if pooled.add(h))
@@ -344,6 +348,8 @@ async def _widen_by_question(
                         )
                     )
                     _sub_hits = list(_sub.results or [])
+                except VectorInputTooLargeError:
+                    raise
                 except Exception:  # noqa: BLE001 — additive
                     continue
             added = 0
@@ -671,8 +677,10 @@ async def _ground_and_cut(run: _AskRun, window_rel_floor: float | None) -> None:
     if rel_floor > 0:
         from server.memory.domain.relevance_gate import similarity_floor_cut
 
+        # A governed definition is not cut: its similarity says nothing about whether the
+        # admin's definition answers the question.
         knee = similarity_floor_cut(
-            run.synth_pool,
+            [m for m in run.synth_pool if not getattr(m, "governed", None)],
             rel_floor=rel_floor,
             min_keep=int(_settings.memory_ask_relevance_gate_min_keep or 3),
         )
@@ -683,7 +691,7 @@ async def _ground_and_cut(run: _AskRun, window_rel_floor: float | None) -> None:
         if knee.dropped:
             _knee_ids = {id(m) for m in knee.dropped}
             run.ranked = [m for m in run.ranked if id(m) not in _knee_ids]
-            run.synth_pool = knee.kept
+            run.synth_pool = [m for m in run.synth_pool if id(m) not in _knee_ids]
 
 
 async def _settle_window(run: _AskRun, *, token_budget: int | None) -> bool:
@@ -691,6 +699,8 @@ async def _settle_window(run: _AskRun, *, token_budget: int | None) -> bool:
     superseded/stale pass over it. Returns whether the reader gets the record
     note (something superseded was dropped or masked)."""
     search_input, _settings = run.search_input, run.settings
+    # Grounding can prepend code records after retrieval restored this order.
+    run.synth_pool = governed_after_computed(run.synth_pool, str(search_input.namespace))
     run.memories = _publish_window_keys(run.synth_pool)  # The cache's key axis
 
     # Synthesis-window token budget (memory.domain.ask_budget): the caller fixes the

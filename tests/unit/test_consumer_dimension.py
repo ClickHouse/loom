@@ -414,7 +414,7 @@ def test_admin_consumers_joins_calls_and_outcome_feedback_per_window(
     seen: list[tuple[str, int]] = []
 
     async def _consumers(
-        since: int, limit: int, *, org: str | None = None, ch: Any = None
+        since: int, limit: int, *, org: str | None = None, operator: bool = False, ch: Any = None
     ) -> list[dict[str, Any]]:
         seen.append(("c", since))
         return [

@@ -25,15 +25,21 @@ async def database() -> AsyncIterator[tuple[Any, Any]]:
 
     admin = os.environ.get("LOOM_PG_DSN") or pytest.skip("LOOM_PG_DSN not set")
     name, dsn = await create_database(admin)
-    conn = await asyncpg.connect(dsn, server_settings={"statement_timeout": "10000"})
-    observer = await asyncpg.connect(dsn)
-    try:
-        await conn.execute("CREATE TABLE probe(id int PRIMARY KEY); INSERT INTO probe VALUES(1)")
-        yield conn, observer
-    finally:
-        await conn.close(timeout=1)
-        await observer.close(timeout=1)
-        await drop_database(admin, name)
+    async with contextlib.AsyncExitStack() as cleanup:
+        try:
+            cleanup.push_async_callback(drop_database, admin, name)
+            conn = await asyncpg.connect(dsn, server_settings={"statement_timeout": "10000"})
+            cleanup.push_async_callback(conn.close, timeout=1)
+            observer = await asyncpg.connect(dsn)
+            cleanup.push_async_callback(observer.close, timeout=1)
+            await conn.execute(
+                "CREATE TABLE probe(id int PRIMARY KEY); INSERT INTO probe VALUES(1)"
+            )
+            yield conn, observer
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 async def sleeping(observer: Any, pid: int) -> None:

@@ -431,15 +431,28 @@ def misses(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     return calls
 
 
-_EMPTY: dict[str, Any] = {"memory": {"results": []}, "knowledge": {"results": []}}
+_EMPTY: dict[str, Any] = {
+    "memory": {"term_leg": "empty", "results": []},
+    "knowledge": {"results": []},
+}
 
 
 @pytest.mark.parametrize(
     ("extra", "payload", "repo_namespace", "recorded"),
     [
         ({}, _EMPTY, "", True),
-        ({}, {"memory": {"results": [{}]}, "knowledge": {"results": []}}, "", False),
-        ({}, {"memory": {"results": []}, "knowledge": {"results": [{}]}}, "", False),
+        (
+            {},
+            {"memory": {"term_leg": "empty", "results": [{}]}, "knowledge": {"results": []}},
+            "",
+            False,
+        ),
+        (
+            {},
+            {"memory": {"term_leg": "empty", "results": []}, "knowledge": {"results": [{}]}},
+            "",
+            False,
+        ),
         ({}, {"memory": {"error": "X", "results": []}, "knowledge": {}}, "", False),
         ({}, {**_EMPTY, "conversations": {"results": [{}]}}, "", False),
         ({}, {**_EMPTY, "profile": {"results": [{}]}}, "", False),
@@ -448,9 +461,39 @@ _EMPTY: dict[str, Any] = {"memory": {"results": []}, "knowledge": {"results": []
         ({"page": "p2"}, _EMPTY, "", False),
         ({}, {**_EMPTY, "tracker": {"verdict": "duplicate"}}, "", False),
         ({}, {**_EMPTY, "namespaces_skipped": ["other"]}, "", False),
-        ({}, {**_EMPTY, "memory": {"results": [], "pending_extraction": 2}}, "", False),
-        ({}, {**_EMPTY, "memory": {"results": [], "stale_dropped": 1}}, "", False),
-        ({}, {**_EMPTY, "memory": {"results": [], "degraded": ["x"]}}, "", False),
+        # a governed definition answers; a term leg that did not finish may have held one
+        (
+            {},
+            {
+                **_EMPTY,
+                "memory": {
+                    "term_leg": "complete",
+                    "results": [{"governed": True}, {}],
+                    "retrieval_risk": "high",  # of the hits that are not governed
+                },
+            },
+            "",
+            False,
+        ),
+        ({}, {**_EMPTY, "memory": {"term_leg": "capped", "results": []}}, "", False),
+        (
+            {},
+            {**_EMPTY, "memory": {"term_leg": "empty", "results": [], "pending_extraction": 2}},
+            "",
+            False,
+        ),
+        (
+            {},
+            {**_EMPTY, "memory": {"term_leg": "empty", "results": [], "stale_dropped": 1}},
+            "",
+            False,
+        ),
+        (
+            {},
+            {**_EMPTY, "memory": {"term_leg": "empty", "results": [], "degraded": ["x"]}},
+            "",
+            False,
+        ),
         # An answer that led withholds the rest: not a gap.
         ({}, {**_EMPTY, "withheld": {"memory": 2, "reason": "home_fact_leads"}}, "", False),
         # Rows dropped below the precision floor are nothing found: a gap.
@@ -459,28 +502,62 @@ _EMPTY: dict[str, Any] = {"memory": {"results": []}, "knowledge": {"results": []
         # A memory leg that abstained keeps its flagged hits: it missed, as memory.search does.
         (
             {},
-            {**_EMPTY, "memory": {"results": [{}], "abstain": True, "retrieval_risk": "abstain"}},
+            {
+                **_EMPTY,
+                "memory": {
+                    "term_leg": "empty",
+                    "results": [{}],
+                    "abstain": True,
+                    "retrieval_risk": "abstain",
+                },
+            },
             "",
             True,
         ),
-        ({}, {**_EMPTY, "memory": {"results": [{}], "retrieval_risk": "high"}}, "", True),
+        (
+            {},
+            {**_EMPTY, "memory": {"term_leg": "empty", "results": [{}], "retrieval_risk": "high"}},
+            "",
+            True,
+        ),
         # A decision the repository pass merged in answers, though the home search came back weak.
         (
             {},
-            {**_EMPTY, "memory": {"results": [{"namespace": "code-kj"}], "retrieval_risk": "high"}},
+            {
+                **_EMPTY,
+                "memory": {
+                    "term_leg": "empty",
+                    "results": [{"namespace": "code-kj"}],
+                    "retrieval_risk": "high",
+                },
+            },
             "code-kj",
             False,
         ),
         # Not when the repository is the home namespace, or the weak hit is another namespace's.
         (
             {},
-            {**_EMPTY, "memory": {"results": [{"namespace": "ns"}], "retrieval_risk": "high"}},
+            {
+                **_EMPTY,
+                "memory": {
+                    "term_leg": "empty",
+                    "results": [{"namespace": "ns"}],
+                    "retrieval_risk": "high",
+                },
+            },
             "ns",
             True,
         ),
         (
             {},
-            {**_EMPTY, "memory": {"results": [{"namespace": "else"}], "retrieval_risk": "high"}},
+            {
+                **_EMPTY,
+                "memory": {
+                    "term_leg": "empty",
+                    "results": [{"namespace": "else"}],
+                    "retrieval_risk": "high",
+                },
+            },
             "code-kj",
             True,
         ),
@@ -558,7 +635,14 @@ def test_memory_search_records_a_miss_only_of_a_namespace_wide_read(
         from server.memory.api.models_search import MemorySearchOutput
 
         return MemorySearchOutput(
-            results=[], embedding_model="m", abstain=abstain, retrieval_risk=risk, **kw
+            **{
+                "results": [],
+                "embedding_model": "m",
+                "abstain": abstain,
+                "retrieval_risk": risk,
+                "term_leg": "empty",
+                **kw,
+            }
         )
 
     def q(**kw: Any) -> Any:
@@ -579,6 +663,21 @@ def test_memory_search_records_a_miss_only_of_a_namespace_wide_read(
     output._record_gap_miss(q(), out(True, "abstain", namespaces_skipped=["x"]))
     output._record_gap_miss(q(), out(True, "abstain", stale_dropped=1))
     output._record_gap_miss(q(), out(True, "abstain", degraded=["rerank: timeout"]))
+    # A governed definition answers, however weak the other hits are.
+    from server.memory.api.models_search import _MemorySearchHit
+
+    governed = _MemorySearchHit(
+        memory_key="definition/arr",
+        memory_type="definition",
+        content_excerpt="ARR",
+        distance=1.0,
+        similarity=0.0,
+        governed=True,
+    )
+    output._record_gap_miss(q(), out(False, "high", term_leg="complete", results=[governed]))
+    # A term leg that did not finish may have held a governed definition.
+    for leg in ("capped", "timed_out", "failed", "off"):
+        output._record_gap_miss(q(), out(True, "abstain", term_leg=leg))
     monkeypatch.setattr(gaps_app, "reads_whole_namespace", lambda: False)
     output._record_gap_miss(q(), out(True, "abstain"))
     assert len(misses) == 2
@@ -970,7 +1069,7 @@ def test_namespace_defaults_and_soft_tags_still_record_a_memory_miss(
     from server.memory.app.search.request import _apply_role_tags
 
     out = MemorySearchOutput(
-        results=[], embedding_model="m", abstain=True, retrieval_risk="abstain"
+        results=[], embedding_model="m", abstain=True, retrieval_risk="abstain", term_leg="empty"
     )
     plain = MemorySearchInput(org="o", namespace="ns", query="what is arr")
     defaulted = namespace_retrieval_defaults.apply(plain, {"min_similarity": 0.4})

@@ -80,4 +80,40 @@ writes at least 60 seconds old and passes run every 60 seconds, so once trunk is
 `code.symbol` on that definition returns the lesson under `lessons` within about two
 minutes.
 
+## Check a lesson after a code edit
+
+On the repository's indexed trunk, save a lesson such as `` `fetch_page()` retries on code 115 ``
+with the repository tag or in its code namespace, as above. Use a name that resolves to
+one definition. After the link pass, read that definition with `code.symbol` and look for
+the saved memory under `lessons`. When included, it carries `code_state: "fresh"`.
+Include the memory's namespace in `lesson_namespaces` when the call needs it.
+
+Change an expression in the function's body, such as `return url` to `return url.strip()`,
+and commit it on trunk. After the index and link worker process that commit, read the
+definition again in the same trunk namespace. Under the default policy, a returned
+lesson carries `code_state: "changed"`; `changed_since` names the indexed
+commit. This marks changed code, not a judgment that the lesson is false. Read the
+current body before applying it. Uncommitted editor changes do not trigger this check.
+
+Symbol cards cap the lessons they return and can omit the saved lesson. If it is absent,
+use `memory.get` to inspect that memory's `code` links and their states.
+
+The existing `test_memories_follow_their_code`
+[integration regression](https://github.com/ClickHouse/loom/blob/main/tests/integration/test_memory_code_links.py)
+checks these states across commits. It also checks a pure move (`moved`), removed code
+(`missing`) and a release branch whose unchanged definition still reads `fresh`.
+
+The packaged [MCP smoke](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_code_smoke.py)
+saves a lesson, verifies `fresh`, commits a body edit and waits for the indexing and link
+workers to return `changed` with that exact commit. The
+[quickstart harness](https://github.com/ClickHouse/loom/blob/main/scripts/gates/docker_quickstart_smoke.py)
+restarts the Loom service, checks the link again and deletes the test memory.
+[CI](https://github.com/ClickHouse/loom/actions/workflows/docker-smoke.yml) runs these checks
+on amd64 and arm64 with authentication off, a local embedder and a fake model provider.
+These checks verify code-link state; authenticated clients, answer quality and agent
+tool selection are not tested.
+
+For removal, held-memory exceptions and model-backed revision, see the
+[link policies](../concepts/memory.md#memories-linked-to-code).
+
 Some ops on this page are marked experimental on the [status page](../reference/status.md).

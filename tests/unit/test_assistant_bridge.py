@@ -80,6 +80,8 @@ class _World:
         self.denied = False
         # Another answer for LibreChat to give, in place of the stream above.
         self.override: Any = None
+        self.mirror_sources: list[dict[str, str]] = []
+        self.source_queries = 0
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         if self.override is not None:
@@ -93,6 +95,7 @@ class _World:
 def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     w = _World()
     real_client = httpx.AsyncClient
+    w.client_factory = real_client
 
     async def check_authorized(auth: Any, role: Role, org: str, ns: str) -> None:
         if w.denied:
@@ -107,9 +110,26 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
             raise ConnectionError("ClickHouse is down")
         return w.over_cap
 
+    async def active_sources(org: str, namespaces: list[str]) -> list[dict[str, str]]:
+        assert org == ORG and len(namespaces) == 1
+        w.source_queries += 1
+        return list(w.mirror_sources)
+
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+            session_protection: bool = False,
+            answer_mirrors: bool = False,
+        ) -> str:
             w.delegated["minted"] = (subject, consumer)
+            w.delegated["answer_mirrors"] = answer_mirrors
             return "answer-token"
 
     async def delegate(parent: AuthInfo, **kw: Any) -> _Delegated:
@@ -131,6 +151,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     monkeypatch.setattr(bridge, "_place", lambda org, ns: "namespace")
     monkeypatch.setattr(bridge, "switched_off", switched_off)
     monkeypatch.setattr(bridge, "operation_over_share", over_cap)
+    monkeypatch.setattr(bridge.source_access.store, "active_sources", active_sources)
     # The answer's tool calls found nothing (a test may say otherwise).
     monkeypatch.setattr(bridge.support.ledger, "run_rows", _found_nothing)
     monkeypatch.setattr(bridge.support, "_wait", _no_wait)
@@ -224,6 +245,7 @@ def test_the_answer_token_is_viewer_on_the_namespace_for_one_answer(world: _Worl
         "is_service_account": False,
         "ends_with_session": True,
         "minted": ("alice", "loom-assistant"),
+        "answer_mirrors": False,
     }
 
 
@@ -1254,7 +1276,18 @@ def test_an_answer_token_carries_the_id_its_children_are_told_by(
     minted: dict[str, Any] = {}
 
     class _Delegated:
-        def mint(self, subject: str, *, consumer: str | None = None, jti: str | None = None) -> str:
+        creator = "alice"
+
+        def mint(
+            self,
+            subject: str,
+            *,
+            consumer: str | None = None,
+            jti: str | None = None,
+            reads_as_creator: bool = False,
+            session_protection: bool = False,
+            answer_mirrors: bool = False,
+        ) -> str:
             minted.update(subject=subject, consumer=consumer, jti=jti)
             return "answer-token"
 
@@ -1728,3 +1761,261 @@ def test_the_step_poll_names_its_reads(world: _World, monkeypatch: pytest.Monkey
     monkeypatch.setattr(bridge.ledger, "live_rows", live_rows)
     _streamed(world, live=True)
     assert tags and set(tags) == {"assistant.steps"}
+
+
+@pytest.mark.asyncio
+async def test_signed_personal_answer_and_its_child_are_refused_by_the_chat_route(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.assistant.app import routes
+    from server.auth.bearer import verify_bearer_header
+    from server.auth.delegation import Delegated
+    from server.auth.jwt import verify_token
+
+    # Use real mint/verification with fixed delegated bounds: the HTTP route must
+    # refuse both the signed answer and its child before any provider work.
+    async def delegate(parent: AuthInfo, **kwargs: Any) -> Delegated:
+        return Delegated(
+            org=ORG,
+            namespaces=[NS],
+            roles=["viewer"],
+            ns_roles=None,
+            write_namespaces=None,
+            read_scope="",
+            read_user_id="",
+            ttl_seconds=60,
+            parents=[*parent.parents, parent.token_id],
+            parent_subjects=[*parent.parent_subjects, parent.subject],
+            parent_iats=[*parent.parent_iats, parent.issued_at or 0],
+            creator=parent.creator or parent.subject,
+            is_service_account=False,
+        )
+
+    monkeypatch.setattr(bridge, "delegate", delegate)
+    monkeypatch.setattr(routes, "verify_bearer_header", verify_bearer_header)
+    parent = _caller(session_id="sid", first_party=True)
+    answer = await bridge.answer_token(parent, ORG, NS)
+    answer_auth = verify_token(answer)
+    assert answer_auth.reads_as_creator
+    delegated = await delegate(answer_auth)
+    child = delegated.mint("sa:answer-child")
+    assert not verify_token(child).reads_as_creator
+    http, rows = client
+    for token in (answer, child):
+        response = http.post(
+            ROUTE,
+            headers={**HEADERS, "Authorization": f"Bearer {token}"},
+            json={"messages": QUESTION},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "ASSISTANT_SELF_CALL"
+    assert len(rows) == 2 and world.librechat_body == {}
+
+
+def _mirrored_namespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def active(org: str, namespaces: list[str]) -> list[dict[str, str]]:
+        assert org == ORG and namespaces == [NS]
+        return [{"namespace": NS, "source_id": "source"}]
+
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(bridge.source_access.store, "active_sources", active)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+def test_marked_chat_has_a_server_owned_first_flag(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch, streamed: bool
+) -> None:
+    _mirrored_namespace(monkeypatch)
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": streamed})
+    assert response.status_code == 200
+    if streamed:
+        assert response.content.startswith(b'data: {"mirrored":true}\n\n')
+        assert b"Seven " in response.content and b"data: [DONE]" in response.content
+    else:
+        assert response.content.startswith(b'{"mirrored":true,')
+        assert response.json()["choices"][0]["message"]["content"] == "Seven memories."
+    assert len(rows) == 1 and bridge._running == {}
+    # No declaration on this request: the model's tools cannot read mirrors.
+    assert world.delegated["answer_mirrors"] is False
+
+
+def test_a_marked_pre_stream_refusal_keeps_its_first_flag(
+    client: Any, world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _mirrored_namespace(monkeypatch)
+    world.over_cap = True
+    http, rows = client
+    response = http.post(ROUTE, headers=HEADERS, json={"messages": QUESTION, "stream": True})
+    assert response.status_code == 429
+    assert response.content.startswith(b'{"mirrored":true,')
+    assert world.librechat_body == {} and len(rows) == 1
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_marked_stream_commits_real_ledger_delivery_before_done(
+    world: _World, monkeypatch: pytest.MonkeyPatch, failure: bool
+) -> None:
+    import contextlib
+
+    from server.assistant.app import routes
+    from server.core import request_work
+    from server.core.request_tail import RequiredTailError
+    from server.observability import events
+
+    _mirrored_namespace(monkeypatch)
+    committed: list[Any] = []
+    sent: list[bytes] = []
+
+    async def commit(event: Any) -> None:
+        await asyncio.sleep(0)
+        assert event.mirror_marked and event.input_tokens == 1000 and event.output_tokens == 100
+        if failure:
+            raise ConnectionError("private cost store unavailable")
+        committed.append(event)
+
+    monkeypatch.setattr(events, "write_marked_request_event", commit)
+
+    async def run() -> None:
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, contextlib.ExitStack())
+            response = routes._AnswerStream(
+                routes._streamed(bridge.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message: dict[str, Any]) -> None:
+                body = message.get("body", b"")
+                if body == b"data: [DONE]\n\n":
+                    assert len(committed) == 1
+                if body:
+                    sent.append(body)
+
+            async def receive() -> dict[str, Any]:
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            if failure:
+                with pytest.raises(RequiredTailError):
+                    await response(scope, receive, send)
+            else:
+                await response(scope, receive, send)
+
+    asyncio.run(run())
+    assert sent[0] == b'data: {"mirrored":true}\n\n'
+    assert (b"data: [DONE]\n\n" in sent) is (not failure)
+    assert len(committed) == (0 if failure else 1)
+    assert bridge._running == {}
+
+
+def test_a_source_activated_after_an_ordinary_answer_cannot_add_a_mirror_leg(
+    world: _World,
+) -> None:
+    from server.auth.context import current_auth_var
+    from server.auth.session_protection import request_declaration
+    from server.core import request_work
+    from server.knowledge.app import source_access
+
+    async def run() -> None:
+        bag = request_work.begin()
+        with request_declaration({"headers": [(b"x-loom-session-protection", b"v1")]}):
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+        try:
+            assert not ticket.mirrored and not bag.mirror_marked
+            world.mirror_sources = [{"namespace": NS, "source_id": "activated"}]
+            auth = _caller(
+                token_id=f"{bridge.ANSWER_JTI_PREFIX}ordinary",
+                session_protection=True,
+                answer_mirrors=world.delegated["answer_mirrors"],
+            )
+            token = current_auth_var.set(auth)
+            try:
+                plan = await source_access.prepare(ORG, [NS])
+            finally:
+                current_auth_var.reset(token)
+            assert not plan.marked and not plan.sources and not bag.mirror_marked
+            assert world.source_queries == 1  # preflight only, no later mirror discovery
+        finally:
+            ticket.release()
+
+    asyncio.run(run())
+
+
+def test_marked_repeated_cancellation_joins_upstream_before_its_private_row(
+    world: _World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import contextlib
+
+    from server.assistant.app import routes
+    from server.core import request_work
+    from server.observability import events
+
+    _mirrored_namespace(monkeypatch)
+
+    async def run() -> None:
+        text_seen, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        closed: list[str] = []
+        committed: list[Any] = []
+
+        class Body(httpx.AsyncByteStream):
+            async def __aiter__(self) -> Any:
+                try:
+                    yield b'data: {"id":"partial","choices":[{"delta":{"content":"text"}}]}\n\n'
+                    await asyncio.Event().wait()
+                finally:
+                    closed.append("reader")
+
+            async def aclose(self) -> None:
+                closing.set()
+                await release.wait()
+                closed.append("response")
+
+        class Upstream(httpx.MockTransport):
+            async def aclose(self) -> None:
+                closed.append("client")
+
+        world.override = lambda request: httpx.Response(200, stream=Body())
+        monkeypatch.setattr(
+            bridge.httpx,
+            "AsyncClient",
+            lambda **kw: world.client_factory(transport=Upstream(world.handle), **kw),
+        )
+
+        async def commit(event: Any) -> None:
+            assert "reader" in closed and "response" in closed and "client" in closed
+            assert event.mirror_marked and event.error_code == "HTTP_499"
+            assert event.upstream_cost_usd == pytest.approx(settings.assistant_answer_ceiling_usd)
+            committed.append(event)
+
+        monkeypatch.setattr(events, "write_marked_request_event", commit)
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+        with request_work.http_owner(scope):
+            row = routes._Row(_caller(), ORG, NS)
+            ticket = await bridge.open_answer(_caller(), ORG, NS)
+            held = routes._Held(ticket, row, contextlib.ExitStack())
+            response = routes._AnswerStream(
+                routes._streamed(bridge.stream(ticket, QUESTION, held.answer), held), held
+            )
+
+            async def send(message: dict[str, Any]) -> None:
+                if b'"partial"' in message.get("body", b""):
+                    text_seen.set()
+
+            async def receive() -> dict[str, Any]:
+                pytest.fail("ASGI 2.4 unexpectedly waited for disconnect")
+
+            task = asyncio.create_task(response(scope, receive, send))
+            await text_seen.wait()
+            task.cancel()
+            await closing.wait()
+            task.cancel()
+            await asyncio.sleep(0)
+            assert not task.done() and committed == []
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert len(committed) == 1 and bridge._running == {}
+            assert not (asyncio.all_tasks() - {asyncio.current_task()})
+
+    asyncio.run(run())

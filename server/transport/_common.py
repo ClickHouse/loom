@@ -53,8 +53,7 @@ def ledger_identity(args: dict[str, Any]) -> dict[str, str]:
     from server.core.naming import SENTINEL, present
 
     out = request_identity(args)
-    bag = request_work.current()
-    admitted = bag.admitted if bag is not None else None
+    admitted = request_work.admitted_scope()
     auth = current_auth()
     token_org = present(auth.org) if auth is not None else None
     for k, fill in zip(("org", "namespace"), admitted or (SENTINEL, SENTINEL), strict=True):

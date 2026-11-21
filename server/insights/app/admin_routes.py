@@ -120,6 +120,11 @@ org_admin_router = APIRouter(dependencies=[Depends(require_org_admin)])
 # ============================================================
 
 
+def _raw_event_diagnostics(auth: AuthInfo | None) -> bool:
+    """Missing auth, including auth-off admin routes, grants no raw private evidence."""
+    return auth is not None and auth.has_role(Role.PLATFORM_ADMIN) and not auth.has_ns_roles()
+
+
 @admin_router.get("/v1/admin/schema.status")
 async def admin_schema_status() -> SchemaStatusOutput:
     """Report the gap between what migrations expect and what's in CH.
@@ -133,7 +138,9 @@ async def admin_schema_status() -> SchemaStatusOutput:
     from server.core.schema.migrate_lease import RUNNER_TABLES
 
     expected = live_objects(MIGRATIONS_DIR.glob("*.sql")) if MIGRATIONS_DIR.exists() else set()
-    expected |= RUNNER_TABLES
+    from server.insights.domain.analysis import EVENTS_VIEW
+
+    expected |= RUNNER_TABLES | {EVENTS_VIEW}
 
     # Skip internal MV inner_id.* tables — repo helper filters them.
     present = set(await admin_repo.list_loom_tables())
@@ -238,7 +245,9 @@ async def admin_audit_summary(input: AuditSummaryInput) -> AuditSummaryOutput:
 
 
 @admin_router.post("/v1/admin/events.tail")
-async def admin_events_tail(input: EventsTailInput) -> EventsTailOutput:
+async def admin_events_tail(
+    input: EventsTailInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> EventsTailOutput:
     """Recent rows from `loom.agent_events` for live debugging."""
     _refuse_mirror(input.namespace)
     filters: dict[str, str | bool] = {}
@@ -252,6 +261,7 @@ async def admin_events_tail(input: EventsTailInput) -> EventsTailOutput:
         input.since_seconds,
         input.limit,
         filters=filters,
+        operator=_raw_event_diagnostics(auth),
     )
     return EventsTailOutput.model_validate(
         {
@@ -333,7 +343,9 @@ def _attribution_label(name: str, calls: int, claimed: int) -> str:
 
 
 @admin_router.post("/v1/admin/consumers")
-async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
+async def admin_consumers(
+    input: ConsumersInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> ConsumersOutput:
     """Per-consumer calls, error rate, p50, spend and outcome feedback over
     each requested window — read-only aggregates over
     agent_events and code_search_outcome, joined by consumer name."""
@@ -342,14 +354,18 @@ async def admin_consumers(input: ConsumersInput) -> ConsumersOutput:
     windows: list[ConsumersWindow] = []
     for since in input.windows_seconds:
         rows, outcomes = await asyncio.gather(
-            admin_repo.consumers(since, input.limit, org=input.org),
+            admin_repo.consumers(
+                since, input.limit, org=input.org, operator=_raw_event_diagnostics(auth)
+            ),
             admin_repo.consumer_outcomes(since, input.limit, org=input.org),
         )
         # Tagged / untagged per token identity; additive, so a
         # failed read leaves the window's rows intact.
         tagging_rows: list[dict[str, Any]] = []
         try:
-            tagging_rows = await admin_repo.consumer_tagging(since, input.limit, org=input.org)
+            tagging_rows = await admin_repo.consumer_tagging(
+                since, input.limit, org=input.org, operator=_raw_event_diagnostics(auth)
+            )
         except Exception as e:  # noqa: BLE001 — the split is additive
             log.warning("admin/consumers: tagging read failed (non-fatal): %s", e)
         by_name: dict[str, dict[str, Any]] = {}
@@ -599,12 +615,16 @@ async def admin_settings_history(input: SettingsHistoryInput) -> SettingsHistory
 
 
 @admin_router.post("/v1/admin/fleet.cost")
-async def admin_fleet_cost(input: FleetCostInput) -> FleetCostOutput:
+async def admin_fleet_cost(
+    input: FleetCostInput, auth: Annotated[Any, Depends(require_admin)] = None
+) -> FleetCostOutput:
     """Top-N tenants by attributed cost over a window."""
     since_seconds = input.since_seconds
     top_n = input.top_n
     group_by = input.group_by
-    rows = await admin_repo.fleet_cost(since_seconds, top_n, group_by)
+    rows = await admin_repo.fleet_cost(
+        since_seconds, top_n, group_by, operator=_raw_event_diagnostics(auth)
+    )
     return FleetCostOutput.model_validate(
         {
             "rows": [

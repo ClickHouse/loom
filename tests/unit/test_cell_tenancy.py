@@ -392,7 +392,7 @@ async def test_the_middleware_checks_a_raw_routes_token_org(
 # Every route outside the op registry, and how the org it acts in is checked:
 #   "token": it acts only in the verified token's own org, which the middleware checks;
 #   "named": its request names the org, and its module checks that org itself
-#            (check_authorized, admit_org or tenancy.ensure_held);
+#            (check_authorized, admit_org, ensure_held or a fail-closed is_held);
 #   anything else: why it acts in no org.
 _ORG_FREE_MODULES = {
     "server.identity.app.dashboard_routes": "the dashboard's pages and assets: no data",
@@ -401,6 +401,7 @@ _ORG_FREE_MODULES = {
 ROUTES: dict[str, str] = {
     "/.well-known/oauth-authorization-server GET": "discovery document: no data",
     "/assets WS": "the dashboard's static assets",
+    "/hooks/knowledge/{namespace}/{source_id}/{generation} POST": "named",
     "/mcp DELETE": "ends an MCP session: no org's data",
     "/mcp POST": "op transport: the op gate checks each call's org",
     "/oauth/agent-claim GET": "the claim page: no data",
@@ -480,6 +481,7 @@ ROUTES: dict[str, str] = {
     "/v1/knowledge.upload POST": "named",
     "/v1/me/service_accounts GET": "token",
     "/v1/me/service_accounts.create POST": "token",
+    "/v1/me/personal_tokens.create POST": "token",
     "/v1/me/service_accounts.revoke POST": "token",
     "/v1/me/set-default-namespace POST": "token",
     "/v1/me/sharing-summary GET": "token",
@@ -490,7 +492,7 @@ ROUTES: dict[str, str] = {
 # SCIM's user routes, mounted only with SCIM on: the accounts are this cell's, in the
 # org it was attached with (`oidc_jit_org`, placed at attach).
 SCIM_USERS = "server.auth.scim_routes"
-_CHECKS = {"check_authorized", "admit_org", "ensure_held"}
+_CHECKS = {"check_authorized", "admit_org", "ensure_held", "is_held"}
 
 
 def _routes(routes: list[Any], prefix: str = "") -> list[tuple[str, str]]:
@@ -581,6 +583,36 @@ def test_every_route_is_tenancy_checked_or_org_free() -> None:
     endpoints = {key: ep for key, ep in _endpoints(app.routes)}
     missing = [key for key, how in ROUTES.items() if how == "named" and not _checks(endpoints[key])]
     assert not missing, f"these routes name an org but check none: {missing}"
+
+
+@pytest.mark.parametrize("mode", ["recording", "enforced"])
+@pytest.mark.parametrize("state", ["held", "unheld", "unread"])
+def test_provider_callback_requires_an_already_held_org_without_placement(
+    cell_pg: _PG, monkeypatch: pytest.MonkeyPatch, mode: str, state: str
+) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from server.knowledge.app import source_push_routes
+
+    cell_pg.mode = mode
+    cell_pg.down = state == "unread"
+    org = "held" if state == "held" else "new"
+    calls = _router(monkeypatch, {"cell": "eu-1", "deployment_id": "dep-eu-1"})
+    receive = AsyncMock()
+    monkeypatch.setattr(source_push_routes, "receive", receive)
+    app = FastAPI()
+    source_push_routes.attach(app)
+    url = (
+        "/hooks/knowledge/docs/12345678-1234-1234-1234-123456789abc/"
+        f"22345678-1234-1234-1234-123456789abc?org={org}"
+    )
+    with TestClient(app) as client:
+        result = client.post(url, content=b"provider signal")
+    assert result.status_code == (200 if state == "held" else 403)
+    assert receive.await_count == int(state == "held")
+    assert cell_pg.writes == []
+    assert calls == []
 
 
 def test_scim_user_routes_act_in_the_cells_own_accounts() -> None:

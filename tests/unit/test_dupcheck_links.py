@@ -323,12 +323,23 @@ async def test_a_failed_links_read_or_a_failed_pr_search_leave_the_answer_as_it_
     assert (await h._with_links(unavailable, ORG, PUB, None)) is unavailable
 
 
-def test_the_search_legs_budget_has_no_room_for_the_pr_search() -> None:
-    import inspect
+@pytest.mark.asyncio
+async def test_the_search_legs_budget_has_no_room_for_the_pr_search(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
 
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
     from server.memory.app.loom_search import tracker_leg
 
-    assert "related_prs=False" in inspect.getsource(tracker_leg.tracker_leg)
+    prepare = AsyncMock(return_value=types.SimpleNamespace(targets=(PUB,)))
+    monkeypatch.setattr("server.tracker.app.dupcheck.prepare_duplicate_check", prepare)
+    monkeypatch.setattr("server.identity.app.request_scope.request_scope", lambda: WHOLE_NAMESPACE)
+    monkeypatch.setattr("server.code.domain.scope.current_code_scope", lambda: (ORG, PUB))
+    plan = await tracker_leg.prepare_tracker_search(
+        "LOGICAL_ERROR crash — already reported?", org=ORG
+    )
+    assert plan is not None
+    prepare.assert_awaited_once()
+    assert prepare.await_args.args[0].related_prs is False
     sec = tracker_leg.lean_tracker_section(
         _output(
             verdict="duplicate_of",

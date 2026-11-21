@@ -122,7 +122,8 @@ def _stub_handler(
         async def embed(self, text: str) -> list[float]:
             return [1.0]
 
-    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any):
+    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any, *, checked: Any):
+        assert checked is None
         if pools is not None:
             pools.append(pool)
 
@@ -190,7 +191,9 @@ async def test_each_chunk_shows_its_own_namespaces_context(monkeypatch) -> None:
         for ns, d in (("n", 0.1), ("m", 0.2))
     ]
 
-    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any):
+    def _search(input: Any, embedder: Any, vec: Any, pool: int, dropped: Any, *, checked: Any):
+        assert checked is None
+
         async def _run(namespaces: list[str]) -> list[tuple[str, list[Any]]]:
             return per_ns
 

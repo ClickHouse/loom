@@ -257,11 +257,12 @@ async def definition_rows(
 
 
 async def shared_definitions(
-    org: str, namespace: str, limit: int, *, ch: _CHClient | None = None
+    org: str, namespace: str, limit: int, *, strong: bool = True, ch: _CHClient | None = None
 ) -> list[dict[str, Any]]:
-    """The live shared definitions' keys with the `term` and `aliases` their values hold, at
-    most `limit`, read strongly; only those two fields leave the store, whatever a value's
-    size.
+    """The live shared definitions' keys with the `term` and `aliases` their values hold and
+    their `promoted_from`, `promoted_at` and `promotion_event`, the most recently promoted
+    first, at most `limit`; only those fields leave the store, whatever a value's size.
+    `strong` reads with sequential consistency.
 
     A term that is not a string reads as '', aliases that are not an array as [], and an
     alias that is not a string as its JSON text."""
@@ -270,15 +271,16 @@ async def shared_definitions(
         """
         SELECT memory_key,
                if(JSONType(value, 'term') = 'String', JSONExtractString(value, 'term'), '') AS term,
-               JSONExtract(value, 'aliases', 'Array(String)') AS aliases
+               JSONExtract(value, 'aliases', 'Array(String)') AS aliases,
+               promoted_from, promoted_at, promotion_event
         FROM loom.shared FINAL
         WHERE org = {org:String} AND namespace = {ns:String}
           AND memory_type = {type:String} AND startsWith(memory_key, {prefix:String})
           AND tombstoned_at IS NULL
-        ORDER BY memory_key
+        ORDER BY promoted_at DESC, toString(promotion_event) DESC
         LIMIT {lim:UInt32}
         """
-        + _SEQUENTIAL,
+        + (_SEQUENTIAL if strong else ""),
         params={
             "org": org,
             "ns": namespace,
@@ -287,3 +289,21 @@ async def shared_definitions(
             "prefix": DEFINITION_KEY_PREFIX,
         },
     )
+
+
+async def definition_values(
+    org: str, namespace: str, keys: list[str], *, ch: _CHClient | None = None
+) -> dict[str, str]:
+    """The stored `value` of each live shared definition under `keys`."""
+    if not keys:
+        return {}
+    ch = ch or _default_client()
+    rows = await ch.query_all(
+        """
+        SELECT memory_key, value FROM loom.shared FINAL
+        WHERE org = {org:String} AND namespace = {ns:String}
+          AND memory_key IN {keys:Array(String)} AND tombstoned_at IS NULL
+        """,
+        params={"org": org, "ns": namespace, "keys": keys},
+    )
+    return {r["memory_key"]: r["value"] for r in rows}

@@ -47,6 +47,7 @@ const RotateSourceDialog = lazy(() =>
 const SourceDetailsDialog = lazy(() =>
   import("../flows/SourceDetailsDialog").then((m) => ({ default: m.SourceDetailsDialog })),
 );
+const SourcePushDialog = lazy(() => import("../flows/SourcePushDialog").then((m) => ({ default: m.SourcePushDialog })));
 const RetireSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RetireSourceDialog })),
 );
@@ -60,7 +61,7 @@ type State =
   | { kind: "refused" }
   | { kind: "error"; error: unknown };
 
-type Verb = "check" | "sync" | "rotate" | "retire";
+type Verb = "check" | "sync" | "rotate" | "retire" | "push";
 
 function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
   const badge = syncBadge(s.sync);
@@ -182,6 +183,9 @@ export function SourcesList({
     // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
     const closed = state.kind === "ready" && !state.accepts;
     const items = closed ? [check, retire] : [check, sync, rotate, retire];
+    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind)) {
+      items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
+    }
     return items.map((item) => ({ ...item, disabled: busy }));
   };
   const close = (v: boolean) => {
@@ -263,6 +267,15 @@ export function SourcesList({
       )}
       {acting && (
         <Suspense fallback={null}>
+          {acting.verb === "push" && (
+            <SourcePushDialog
+              org={org}
+              namespace={namespace}
+              name={acting.source.name}
+              kind={acting.source.kind}
+              onClose={() => setActing(null)}
+            />
+          )}
           {acting.verb === "check" && (
             <CheckSourceDialog open org={org} namespace={namespace} name={acting.source.name} onOpenChange={close} />
           )}

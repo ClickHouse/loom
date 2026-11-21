@@ -128,7 +128,8 @@ async def test_reads_count_agent_opens_not_the_dashboards(monkeypatch) -> None:
     assert params["skip"] == ["loom-ui", "loom-assistant"]
     assert params == {**params, "org": "acme", "ns": "code-kj", "days": 7, "uris": []}
     # the ledger's sort key leads with (org, namespace): the read is a key range
-    assert sql.index("org = {org:String}") < sql.index("operation")
+    where = sql.rsplit("WHERE", 1)[1]
+    assert where.index("org = {org:String}") < where.index("operation")
 
 
 def test_the_reads_window_is_bounded() -> None:

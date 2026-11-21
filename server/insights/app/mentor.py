@@ -38,6 +38,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from server.core.background import create_deferred_task
+from server.core.diagnostics import public_diagnostics
 from server.insights.app.mentor_rules import (
     CALL_RULES,
     GETS,
@@ -491,6 +492,8 @@ def call_hint(
     only on a call about the agent's work. Cheap: the call's own arguments
     and result, plus the cached profile — never a read. Never raises."""
     try:
+        if not public_diagnostics():
+            return None
         if _ttl() <= 0:
             return None
         if not org or not namespace:

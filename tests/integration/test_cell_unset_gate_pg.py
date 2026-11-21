@@ -245,22 +245,68 @@ async def test_loom_cell_removes_check_reads_the_first_cells_postgres_alone(
 ) -> None:
     """`loom cell remove`'s check of a first cell: one session from LOOM_PG_DSN, open and
     recording the row's deployment id, or it refuses."""
+    import argparse
+
     import asyncpg
+    import httpx
 
     from server.cli import cell as cell_cli
+    from server.cli.cell_ch import Refused
 
     async with own_database() as dsn:
         monkeypatch.setattr(settings, "pg_dsn", dsn)
+        monkeypatch.setattr(settings, "cell", "eu-1")
+        monkeypatch.setattr(settings, "document_s3_bucket", "")
         monkeypatch.setattr(pg, "_expected", None)
+        row = {
+            "cell": "eu-1",
+            "is_first": True,
+            "host": "cell.example.test",
+            "state": "attaching",
+            "placed_orgs": 0,
+            "deployment_id": "dep-1",
+            "bucket": "",
+            "bucket_prefix": "",
+            "probe_url": "",
+            "upstream_url": "",
+            "current_fp": None,
+            "next_fp": None,
+            "mutation_generation": "00000000-0000-0000-0000-000000000001",
+        }
+        calls = []
+
+        def router(request: httpx.Request) -> httpx.Response:
+            calls.append(request.method)
+            if request.method == "GET" or request.url.path.endswith("/claim"):
+                return httpx.Response(200, json=row)
+            assert request.method == "DELETE"
+            return httpx.Response(200, json={"cell": "eu-1", "removed": True})
+
+        args = argparse.Namespace(cell="eu-1")
+        url = httpx.URL("https://router.example.test")
+        transport = httpx.MockTransport(router)
         conn = await asyncpg.connect(dsn)
         try:
             await conn.execute(
                 "INSERT INTO loom.authority (authority, epoch, deployment_id) "
                 "VALUES ('postgres', 1, 'dep-1')"
             )
-            assert await cell_cli._first_cell_refusal("dep-1") == ""
-            assert "records deployment id 'dep-1'" in await cell_cli._first_cell_refusal("dep-2")
+            assert await cell_cli._remove_locked(args, url, transport) == {
+                "cell": "eu-1",
+                "removed": True,
+            }
+            assert calls == ["GET", "POST", "DELETE"]
+            calls.clear()
+            row["deployment_id"] = "dep-2"
+            with pytest.raises(Refused, match="do not match the directory registration"):
+                await cell_cli._remove_locked(args, url, transport)
+            assert calls == ["GET"]
+            assert await conn.fetchval("SELECT deployment_id FROM loom.authority") == "dep-1"
+            calls.clear()
+            row["deployment_id"] = "dep-1"
             await _write_state(conn, {"tenancy"})
-            assert "reads `partial`" in await cell_cli._first_cell_refusal("dep-1")
+            with pytest.raises(Refused, match="reads partial"):
+                await cell_cli._remove_locked(args, url, transport)
+            assert calls == ["GET"]
         finally:
             await conn.close()

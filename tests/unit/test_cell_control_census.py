@@ -155,6 +155,10 @@ EXEMPT_WRITERS = {
 # pg_migrate writes only its named migration ledger, and prepare's nonce writes only
 # the probe lock table. None is a cell acceptance or directory control write.
 GENERIC_SQL_EXCLUSIONS = {
+    # The allowlisted feed tables belong to the separate verified record database.
+    "server/tracker/store/github_feed.py": {
+        ("create_table", "CREATE TABLE IF NOT EXISTS", "{name}"): 1
+    },
     "server/cli/cell_prepare.py": {("_write_nonces", "INSERT INTO", "{leases.LOCK_TABLE}"): 1},
     "server/code/store/index/prefix_twin.py": {("fill_sql", "INSERT INTO", "{table}"): 1},
     "server/core/ch.py": {("_fenced_statement", "INSERT INTO", "{qualify(table)}"): 1},

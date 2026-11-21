@@ -41,6 +41,7 @@ async def _saga_row(
         # The column is DateTime: whole seconds.
         requested_at=datetime.now(UTC).replace(tzinfo=None, microsecond=0),
         attempts=attempts,
+        mirror_marked=True,
     )
     failure_reason = "step broke" if status == "failed" else ""
     await checkpoint(
@@ -81,4 +82,11 @@ async def test_every_resume_read_returns_the_actor(ch: Any) -> None:
         # Every column the checkpoint wrote, as the read returns it.
         got = {k: (str(v) if k == "id" else v) for k, v in row.items() if k in written}
         assert got == {k: written[k] for k in got}, name
-        assert {"actor", "requester", "purge", "attempts", "steps_completed"} <= got.keys(), name
+        assert {
+            "actor",
+            "requester",
+            "purge",
+            "mirror_marked",
+            "attempts",
+            "steps_completed",
+        } <= got.keys(), name

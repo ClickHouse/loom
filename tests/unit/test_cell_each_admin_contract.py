@@ -71,27 +71,49 @@ async def test_authoff_cannot_admit_cell_administration(
 
 
 @pytest.mark.parametrize(
-    "fields",
+    "fields,expected_status",
     [
-        {"service_account": False, "subject": "person@example.com"},
-        {"creator": "person@example.com"},
-        {"agent_principal": "agent:worker"},
-        {"ns_roles": (("work", "admin"),)},
-        {"namespaces": ("work",)},
-        {"impersonated_by": "person@example.com"},
+        ({"service_account": False}, 403),
+        ({"subject": "person@example.com"}, 403),
+        ({"creator": "person@example.com"}, 403),
+        ({"agent_principal": "agent:worker"}, 403),
+        ({"ns_roles": (("work", "admin"),)}, 403),
+        ({"namespaces": ("work",)}, 403),
+        ({"impersonated_by": "person@example.com"}, 403),
+        ({}, 422),
     ],
-    ids=["human", "delegated", "agent", "scoped-role", "namespace", "impersonated"],
+    ids=[
+        "human",
+        "subject",
+        "delegated",
+        "agent",
+        "scoped-role",
+        "namespace",
+        "impersonated",
+        "healthy",
+    ],
 )
 async def test_verified_platform_role_does_not_replace_the_positive_bot_guard(
     fields: dict[str, Any],
+    expected_status: int,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from fastapi import FastAPI
 
     from server.insights.app.admin_routes import require_admin
+    from server.settings import settings
     from tests.unit.principals import principal
 
+    monkeypatch.setattr(settings, "auth_required", True)
+    monkeypatch.setattr(settings, "identity_provider", "")
+
     routes = importlib.import_module("server.insights.app.cell_admin_routes")
-    options = {"subject": "sa:automation-alpha", "namespaces": (), **fields}
+    options = {
+        "subject": "sa:automation-alpha",
+        "namespaces": (),
+        "token_id": "automation-token",
+        **fields,
+    }
     auth = principal("platform_admin", **options)
 
     async def verified_admin() -> Any:
@@ -104,7 +126,7 @@ async def test_verified_platform_role_does_not_replace_the_positive_bot_guard(
         transport=httpx.ASGITransport(app=app), base_url="https://cell.example.com"
     ) as client:
         response = await client.post("/v1/admin/cell.settings_set", json={})
-    assert response.status_code == 403
+    assert response.status_code == expected_status
 
 
 @pytest.mark.parametrize(

@@ -55,8 +55,8 @@ Approve or reject a pending learning.
 | `candidate_id` | `str` | required | The queued candidate to decide; one unknown in `namespace` answers 404. |
 | `decision` | `Literal['promote', 'reject']` | required | `promote` writes it to `destination` and marks it promoted; `reject` only marks it rejected. |
 | `reason` | `str` | `''` | Why; stored as `decision_reason` and carried into the promoted row's provenance. |
-| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands: 'memory' (loom.shared for a supporters candidate, else a memory row), 'knowledge' (knowledge.upsert) or 'both'; unset is 'knowledge' for an assistant_turn rule and 'memory' otherwise. |
-| `approver` | `str` | `'learnings-reviewer'` | Captured into the audit subject + shared.promoted_by. |
+| `destination` | `Literal['memory', 'knowledge', 'both'] \| None` | `None` | Where a promotion lands: 'memory', 'knowledge' or 'both', but query_history and knowledge_gap drafts allow only 'memory'; unset is 'knowledge' for an assistant_turn rule and 'memory' otherwise. |
+| `approver` | `str` | `'learnings-reviewer'` | Promotion label for other candidates (default 'learnings-reviewer'); query_history and knowledge_gap use the authenticated actor instead, and the audit subject always records the authenticated actor. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

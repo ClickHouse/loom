@@ -25,8 +25,9 @@ Then it writes from each build and reads from the other, and checks:
 
 The rules these check are docs/architecture/rolling-upgrades.md. ClickHouse
 runs in a throwaway container on its default config, so custom settings take
-`SQL_`. The gate needs docker; without it, or `git`, it skips with exit 0, or
-fails with `--require` (CI).
+`SQL_`. `LOOM_CH_CONTAINER` gives the throwaway container an isolated name,
+as in `dev/ci_start_clickhouse.sh`. The gate needs docker; without it, or `git`,
+it skips with exit 0, or fails with `--require` (CI).
 
     python scripts/gates/mixed_version.py [--base REV] [--keep] [--require]
 """
@@ -36,6 +37,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -59,7 +61,7 @@ if str(ROOT) not in sys.path:  # run as a file: this checkout's server, not an i
 from server.core.sql_literal import sql_string  # noqa: E402
 from server.insights.domain import analysis as boundary  # noqa: E402
 
-CH_IMAGE = "clickhouse/clickhouse-server:26.5.1.882"
+CH_IMAGE = os.environ.get("LOOM_CLICKHOUSE_IMAGE", "clickhouse/clickhouse-server:26.10.4.207")
 CH_PASSWORD = "loomdev"
 JWT_SECRET = "mixed-version-gate-secret-" + "0" * 32
 # How long the carrying processes may take to acknowledge a new column
@@ -93,7 +95,7 @@ def _skip(why: str, *, required: bool) -> int:
 @contextlib.contextmanager
 def clickhouse(keep: bool) -> Iterator[int]:
     port = _free_port()
-    name = f"loom-mixed-{os.getpid()}"
+    name = os.environ.get("LOOM_CH_CONTAINER") or f"loom-mixed-{os.getpid()}"
     cfg = ROOT / "deploy" / "clickhouse-config"
     mounts = [
         (ROOT / "deploy" / "lemmagen3", "/var/lib/clickhouse/lemmagen3"),
@@ -364,6 +366,7 @@ class Scenario:
     def run_all(self) -> list[str]:
         self.all_ready()
         ids = self.memories_read_across()
+        self.absence_precondition_across()
         for a, b in (("N", "N-1"), ("N-1", "N")):
             self.run_completes_across(a, b)
             self.verdict_survives(a, b)
@@ -394,6 +397,64 @@ class Scenario:
             self.check(got.get("value") == f"by {other}", f"{label} reads what {other} wrote")
         return ids
 
+    def absence_precondition_across(self) -> None:
+        for label in ("N", "N-1"):
+            body = {
+                **self.ident,
+                "memory_key": f"conditional/{label}",
+                "memory_type": "episodic",
+                "value": {"first": True},
+                "if_match_sha256": "absent",
+                "clear_expiry": True,
+            }
+            srv = self.builds[label]
+            reply = httpx.post(
+                f"{srv.url}/v1/memory.set",
+                json=body,
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=60,
+            )
+            self.check(
+                reply.status_code == 200 if label == "N" else reply.status_code in (200, 409),
+                f"{label} accepts absence or refuses it without an unconditional write",
+            )
+            if reply.status_code == 409:
+                self.check(
+                    reply.json().get("detail", {}).get("code") == "PRECONDITION_FAILED",
+                    f"{label} refuses unsupported absence as a precondition failure",
+                )
+                self.check(
+                    not self.get("N", body["memory_key"])["found"],
+                    f"{label} leaves the absent key untouched on refusal",
+                )
+                self.call("N", "memory.set", body)
+            changed = httpx.post(
+                f"{srv.url}/v1/memory.set",
+                json={**body, "value": {"clobbered": True}},
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=60,
+            )
+            self.check(changed.status_code == 409, f"{label} refuses absence when a row exists")
+            other = "N-1" if label == "N" else "N"
+            row = self.get(other, body["memory_key"])
+            self.check(
+                row.get("value") == {"first": True},
+                f"{other} reads the conditional creation unchanged",
+            )
+            self.call(
+                other,
+                "memory.set",
+                {
+                    **body,
+                    "value": {"revised": True},
+                    "if_match_sha256": row["content_sha256"],
+                },
+            )
+            self.check(
+                self.get(label, body["memory_key"]).get("value") == {"revised": True},
+                f"{label} reads the other build's hash-conditional revision",
+            )
+
     def analysis_across(self) -> None:
         if not (self.builds["N-1"].tree / "server/insights/domain/analysis.py").exists():
             print("  skip  insights.query: N-1 has no analysis plane")
@@ -401,6 +462,7 @@ class Scenario:
         # N first: it answers only once its own entities are written and probed.
         for label in ("N", "N-1"):
             self.check(self.answers_insights(label), f"{label} answers insights.query")
+        self.ordinary_events_across()
         names = boundary.SettingNames("SQL_")  # the gate runs the default config
         version = sql(
             self.ch_port,
@@ -427,6 +489,95 @@ class Scenario:
         # server log: its search starts now.
         since = sql(self.ch_port, "SELECT now()")
         self.logs_hold_no_key(since, {"k": "[" + ", ".join(map(sql_string, secrets)) + "]"})
+
+    def ordinary_events_across(self) -> None:
+        """Actual requests from each build retain every ordinary catalog value."""
+        table = next(t for t in boundary.TABLES if t.name == "agent_events")
+        columns = ", ".join(f"toString({c.name})" for c in table.columns)
+        for writer in self.builds:
+            agent = "event_" + uuid.uuid4().hex
+            key = "events/" + writer
+            self.call(
+                writer,
+                "memory.set",
+                {
+                    **self.ident,
+                    "agent": agent,
+                    "memory_key": key,
+                    "value": {"writer": writer},
+                },
+            )
+            where = (
+                f"org = {sql_string(self.org)} AND namespace = 'mixed' "
+                f"AND agent = {sql_string(agent)} AND operation = 'memory.set' "
+                f"AND memory_key = {sql_string(key)}"
+            )
+            statement = f"SELECT {columns} FROM loom.agent_events WHERE {where}"
+            deadline = time.monotonic() + SETTLE_S
+            while True:
+                raw = sql(self.ch_port, statement + " FORMAT JSONCompactEachRow")
+                if raw or time.monotonic() > deadline:
+                    break
+                time.sleep(0.1)
+            expected = [json.loads(line) for line in raw.splitlines()]
+            self.check(len(expected) == 1, f"{writer} emits one real ordinary event")
+            for reader in self.builds:
+                result = self.call(
+                    reader,
+                    "insights.query",
+                    {
+                        "org": self.org,
+                        "namespace": "mixed",
+                        "sql": statement,
+                    },
+                )
+                self.check(
+                    result["rows"] == expected,
+                    f"{reader} reads all ordinary fields written by {writer}",
+                )
+                aggregate = (
+                    "SELECT toString(count()), toString(sum(input_tokens)), "
+                    "toString(sum(upstream_cost_usd)) FROM loom.agent_events "
+                    f"WHERE {where}"
+                )
+                wanted = json.loads(sql(self.ch_port, aggregate + " FORMAT JSONCompactEachRow"))
+                result = self.call(
+                    reader,
+                    "insights.query",
+                    {
+                        "org": self.org,
+                        "namespace": "mixed",
+                        "sql": aggregate,
+                    },
+                )
+                self.check(
+                    result["rows"] == [wanted],
+                    f"{reader} aggregates {writer}'s ordinary event exactly",
+                )
+        self.private_event_grants_across()
+
+    def private_event_grants_across(self) -> None:
+        marker = "event_private_" + uuid.uuid4().hex
+        sql(
+            self.ch_port,
+            "INSERT INTO loom.agent_events_private "
+            "(org, namespace, agent, request_id, mirror_marked, model, input_tokens) VALUES ("
+            f"{sql_string(self.org)}, 'mixed', 'gate', {sql_string(marker)}, 1, 'private', 987)",
+        )
+        for label in self.builds:
+            response = httpx.post(
+                f"{self.builds[label].url}/v1/insights.query",
+                json={
+                    "org": self.org,
+                    "namespace": "mixed",
+                    "sql": "SELECT count() FROM loom.agent_events_private",
+                },
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=60,
+            )
+            self.check(
+                response.status_code != 200, f"{label} cannot read the private physical event store"
+            )
 
     def answers_insights(self, label: str) -> bool:
         """Whether `label` answers insights.query within SETTLE_S: a process

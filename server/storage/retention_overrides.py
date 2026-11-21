@@ -62,6 +62,12 @@ TARGETS: tuple[RetentionTarget, ...] = (
         lambda s: s.tiering_agent_events_warm_days,
     ),
     RetentionTarget(
+        "loom.agent_events_private",
+        "ts",
+        lambda s: s.retention_agent_events_days,
+        lambda s: s.tiering_agent_events_warm_days,
+    ),
+    RetentionTarget(
         "loom.memory",
         "coalesce(expires_at, created_at)",
         lambda s: s.retention_memory_days,

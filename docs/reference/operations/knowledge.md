@@ -194,6 +194,22 @@ The document formats this deployment reads, as `knowledge.ingest` sends them to 
 | `refused_extensions` | `list[str]` | Extensions the upload refuses by name (`doc`, `xls`, `ppt`). |
 | `default_format` | `str` | The format of a file whose name and media type name none. |
 
+## `knowledge.gaps.draft`
+
+Draft a definition from a knowledge gap for an admin to review.
+
+`POST /v1/knowledge.gaps.draft` · MCP `loom_knowledge_gaps_draft` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `gap_id` | `str` | required | The gap to draft, as returned by knowledge.gaps.list. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `candidate_id` | `str` | Stable review-queue id; a repeat makes no new model call. |
+
 ## `knowledge.gaps.list`
 
 The questions people keep asking in a namespace that nothing answers.
@@ -451,6 +467,72 @@ Calculate over the live snapshots of ingested datasets with a typed plan: filter
 | `incomplete` | `list[str]` | Why the result is not complete, one reason per dataset. |
 | `receipt` | `QueryReceipt` | What was read and how. |
 
+## `knowledge.query_history.add`
+
+Register a read-only ClickHouse query-history source for definition drafts.
+
+`POST /v1/knowledge.query_history.add` · MCP `loom_knowledge_query_history_add` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `name` | `str` | required | Registration name within this namespace. |
+| `host` | `str` | required | ClickHouse host; follows the tracker's host-vetting policy. |
+| `port` | `int` | `8443` | The ClickHouse HTTP interface port; default 8443. |
+| `secure` | `bool` | `True` | Whether the HTTP connection uses TLS; default true. |
+| `user` | `str` | required | Read-only ClickHouse account with SELECT on system.query_log. |
+| `password` | `str` | required | Sealed at rest and never returned. |
+| `databases` | `list[str]` | required | Only queries whose databases all belong to this allowlist are considered. |
+| `cluster` | `str` | `''` | Optional configured ClickHouse cluster, read through clusterAllReplicas. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `name` | `str` |  |
+| `source_id` | `str` |  |
+| `kind` | `Literal['clickhouse_queries']` |  |
+| `host` | `str` |  |
+| `port` | `int` |  |
+| `secure` | `bool` |  |
+| `user` | `str` |  |
+| `databases` | `list[str]` |  |
+| `cluster` | `str` |  |
+| `created_at` | `datetime` |  |
+
+## `knowledge.query_history.list`
+
+List the namespace's registered query-history sources.
+
+`POST /v1/knowledge.query_history.list` · MCP `loom_knowledge_query_history_list` · role `admin` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `fields` | `list[str] \| None` | `None` |  |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `limit` | `int` | `50` | Registered sources to return, at most; default 50. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` | Whether the operator permits new registrations and query-history turns. |
+| `sources` | `list[QueryHistorySource]` |  |
+
+## `knowledge.query_history.remove`
+
+Remove a query-history source registration from the namespace.
+
+`POST /v1/knowledge.query_history.remove` · MCP `loom_knowledge_query_history_remove` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `name` | `str` | required | The registration name of the query-history source to remove. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `removed` | `bool` |  |
+
 ## `knowledge.reads`
 
 How often agents opened each document over the last `days` (`knowledge.get` ledger rows; dashboard, assistant and bench traffic left out).
@@ -637,6 +719,89 @@ Read pasted links as a source's items, with no request to any store and nothing 
 | --- | --- | --- |
 | `links` | `list[KnowledgeSourceParsedLink]` | Each link, in the order given. |
 
+## `knowledge.source.push_configure`
+
+Enable provider sync hints for an existing source, or disable its setup.
+
+`POST /v1/knowledge.source.push_configure` · MCP `loom_knowledge_source_push_configure` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `enabled` | `bool` | `True` | Enable a fresh setup; false disables push. |
+| `agent` | `str` | `'-'` | The configuring agent, default '-'. |
+| `user_id` | `str` | `'-'` | The configuring user, default '-'. |
+| `session_id` | `str` | `'-'` | The configuring session, default '-'. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
+## `knowledge.source.push_confirm`
+
+Activate the exact pending setup.
+
+`POST /v1/knowledge.source.push_confirm` · MCP `loom_knowledge_source_push_confirm` · role `admin` · write · audited · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `generation` | `str` | required | The pending setup generation. |
+| `challenge_fingerprint` | `str` | `''` | The inspected Notion challenge's SHA-256 fingerprint; empty for Linear. |
+| `signing_secret` | `str` | `''` | The Linear webhook signing secret; empty for Notion. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
+## `knowledge.source.push_status`
+
+Read push setup as a namespace admin.
+
+`POST /v1/knowledge.source.push_status` · MCP `loom_knowledge_source_push_status` · role `admin` · write · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The org. |
+| `namespace` | `str` | required | The source's namespace. |
+| `name` | `str` | required | The registered source name. |
+| `reveal_challenge` | `bool` | `False` | Reveal a pending Notion challenge, default false. |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `enabled` | `bool` |  |
+| `status` | `str` |  |
+| `provider` | `str` |  |
+| `generation` | `str` |  |
+| `callback_url` | `str` |  |
+| `provider_id` | `str` |  |
+| `challenge_fingerprint` | `str` |  |
+| `verification_token` | `str` |  |
+| `channels` | `int` |  |
+| `expires_at` | `float` |  |
+
 ## `knowledge.source.remove`
 
 Retire a registered document source: its registry row goes inactive and its credential is cleared.
@@ -649,12 +814,12 @@ Retire a registered document source: its registry row goes inactive and its cred
 | `namespace` | `str` | required | The namespace the source's documents live in. |
 | `name` | `str` | required | The source name. |
 | `confirm` | `str` | required | Type the source name to confirm. |
-| `delete_documents` | `bool` | `False` | Record a request to retire the source's documents (default keep them). |
+| `delete_documents` | `bool` | `False` | Retire a namespace source's documents (default keep); implied for mirrored sources. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `name` | `str` | The source retired. |
-| `documents_pending` | `int` | Live documents the recorded delete request covers (none retired yet), 0 without `delete_documents`. |
+| `documents_pending` | `int` | Live documents queued for retirement; always zero for a mirrored source because its counts are withheld, or without `delete_documents` for a namespace source. |
 
 ## `knowledge.source.rotate`
 
@@ -730,6 +895,7 @@ Complete a task over WHOLE documents, not a search slice: every active chunk of 
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | required | The namespace the op reads or writes. |
+| `user_id` | `str` | `'-'` | Named user whose synthesis spend is checked; a token's user pin takes precedence. |
 | `source_uris` | `list[str]` | *(computed)* | The documents to read in full (up to 50; this, `datasets` or both); unknown URIs contribute nothing. |
 | `datasets` | `list[QueryDataset]` | *(computed)* | Datasets to calculate over (up to 4, as knowledge.query takes them); one plan is proposed for the task, checked against their schemas and run over every row. |
 | `task` | `str` | required | What to do with the documents and datasets: a question to answer or a summary to write. |

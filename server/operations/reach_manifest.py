@@ -290,6 +290,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "knowledge.formats": ("dashboard",),
+    "knowledge.gaps.draft": ("dashboard",),
     "knowledge.gaps.list": ("dashboard",),
     "knowledge.get": (
         "sdk_method",
@@ -319,6 +320,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
+    "knowledge.query_history.add": ("dashboard",),
+    "knowledge.query_history.list": ("dashboard",),
+    "knowledge.query_history.remove": ("dashboard",),
     "knowledge.reads": ("dashboard",),
     "knowledge.restore": (
         "sdk_method",
@@ -334,6 +338,9 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "knowledge.source.check": ("dashboard",),
     "knowledge.source.inspect": ("dashboard",),
     "knowledge.source.list": ("dashboard",),
+    "knowledge.source.push_configure": ("dashboard",),
+    "knowledge.source.push_confirm": ("dashboard",),
+    "knowledge.source.push_status": ("dashboard",),
     "knowledge.source.remove": ("dashboard",),
     "knowledge.source.rotate": ("dashboard",),
     "knowledge.source.sync_now": ("dashboard",),
@@ -577,6 +584,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "namespace.mark_seen": ("dashboard",),
     "namespace.register": (
         "sdk_method",
+        "sdk_example",
         "dashboard",
     ),
     "namespace.register_category": (

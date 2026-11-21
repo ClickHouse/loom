@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -52,62 +53,81 @@ from server.tracker.domain.errors import TrackerUnavailable
 logger = logging.getLogger(__name__)
 
 
-async def handle_tracker_duplicate_check(
-    input: TrackerDuplicateCheckInput,
-) -> TrackerDuplicateCheckOutput:
+@dataclass(frozen=True)
+class DuplicateCheckPlan:
+    """Resolved tracker targets; executing a plan never discovers another namespace."""
+
+    input: TrackerDuplicateCheckInput
+    targets: tuple[str, ...]
+    code_namespace: str
+    explicit: bool
+    cache: bool
+
+
+async def prepare_duplicate_check(input: TrackerDuplicateCheckInput) -> DuplicateCheckPlan:
     from server.core.errors import ValidationError
     from server.tracker.app.dupcheck_fanout import readable_tracker_namespaces
     from server.tracker.domain.namespaces import tracker_namespace
 
     input = common._with_default_org(input)
-    # A tracker namespace addressed by name is a single read; a code namespace (or
-    # `namespaces`) reads every tracker record the caller may.
     requested = list(input.namespaces or [])
-    # Read before anything the answer is built from: one computed before the code
-    # registry's first read is narrower, and is not kept.
+    # A registry read may discover more bindings; resolve before remembering an answer.
     cache = not registry_unread()
     explicit = tracker_namespace(input.org, input.namespace) is not None and not requested
     linked = [] if explicit else await common.linked_trackers(input.org, input.namespace)
-    # the code namespace the call named (pr_check reads it)
     code_ns = "" if explicit or tracker_namespace(input.org, input.namespace) else input.namespace
     input = await common._bound_input(input)
-    title, body = str(input.title or "").strip(), str(input.body or "").strip()
-    if not title and not body and int(input.issue_number or 0) <= 0:
+    if (
+        not str(input.title or "").strip()
+        and not str(input.body or "").strip()
+        and int(input.issue_number or 0) <= 0
+    ):
         raise ValidationError("title, body or issue_number is required")
-    wall = parse_as_of(input.as_of)
-    # The PRs that may already address the draft are searched while the checks run, on the
-    # code namespace the call was addressed at.
-    wants_prs = bool(input.related_prs) and not explicit
-    pr_task = _start_pr_check(input.org, code_ns, title, body) if wants_prs else None
-    deadline = dl.start_deadline()
-    try:
-        if explicit:
-            out = await _checked([input], wall, int(input.top_k))
-            return await _with_links(
-                out, input.org, input.namespace, pr_task, wall, code_ns, title, cache=cache
-            )
+    if explicit:
+        targets = [input.namespace]
+    else:
         bound = input.namespace if tracker_namespace(input.org, input.namespace) is not None else ""
-        cap = int(settings.tracker_dupcheck_fanout_namespaces)
-        # A namespace with no tracker of its own (unbound, unlinked) widens to nobody's:
-        # another repository's record is not this one's, so its `none` would read as
-        # clearance. It answers `tracker_unavailable`, and a caller searches elsewhere.
-        anchored = bool(bound or linked or requested)
+        # An unbound repository must not receive clearance from an unrelated tracker.
         targets = (
-            await readable_tracker_namespaces(input.org, bound, requested, cap, linked=linked)
-            if anchored
+            await readable_tracker_namespaces(
+                input.org,
+                bound,
+                requested,
+                int(settings.tracker_dupcheck_fanout_namespaces),
+                linked=linked,
+            )
+            if bound or linked or requested
             else []
         )
-        if len(targets) <= 1:
-            one = input.model_copy(update={"namespace": targets[0]}) if targets else input
-            out = await _checked([one], wall, int(input.top_k))
-            return await _with_links(
-                out, input.org, one.namespace, pr_task, wall, code_ns, title, cache=cache
-            )
-        out = await _checked(
-            [input.model_copy(update={"namespace": ns}) for ns in targets], wall, int(input.top_k)
-        )
+    return DuplicateCheckPlan(input, tuple(targets), code_ns, explicit, cache)
+
+
+async def handle_tracker_duplicate_check(
+    input: TrackerDuplicateCheckInput,
+) -> TrackerDuplicateCheckOutput:
+    return await execute_duplicate_check(await prepare_duplicate_check(input))
+
+
+async def execute_duplicate_check(plan: DuplicateCheckPlan) -> TrackerDuplicateCheckOutput:
+    """Run only the targets prepared before the caller narrowed capture consent."""
+    input = plan.input
+    title, body = str(input.title or "").strip(), str(input.body or "").strip()
+    wall = parse_as_of(input.as_of)
+    wants_prs = bool(input.related_prs) and not plan.explicit
+    pr_task = _start_pr_check(input.org, plan.code_namespace, title, body) if wants_prs else None
+    deadline = dl.start_deadline()
+    try:
+        inputs = [input.model_copy(update={"namespace": ns}) for ns in plan.targets] or [input]
+        out = await _checked(inputs, wall, int(input.top_k))
         return await _with_links(
-            out, input.org, targets[0], pr_task, wall, code_ns, title, cache=cache
+            out,
+            input.org,
+            inputs[0].namespace,
+            pr_task,
+            wall,
+            plan.code_namespace,
+            title,
+            cache=plan.cache,
         )
     finally:
         dl.end_deadline(deadline)

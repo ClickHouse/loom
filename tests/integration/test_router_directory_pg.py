@@ -7,6 +7,7 @@ Needs LOOM_ROUTER_PG_DSN: a database of its own, never a cell's."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -41,11 +42,15 @@ async def dsn(monkeypatch: pytest.MonkeyPatch):
     name, value = await create_database(admin_dsn)
     monkeypatch.setattr(settings, "router_pg_dsn", value)
     monkeypatch.setattr(directory, "_pool", None)
-    try:
-        yield value
-    finally:
-        await directory.close()
-        await drop_database(admin_dsn, name)
+    async with contextlib.AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(drop_database, admin_dsn, name)
+        cleanup.push_async_callback(directory.close)
+        try:
+            yield value
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 @pytest.fixture

@@ -563,7 +563,7 @@ diff <(jq -S . /tmp/summary.json) <(jq -S . bench/code_ask_cache_threshold/summa
 ```
 
 Embedding APIs are not bit-stable across provider revisions: expect cosines to agree to a
-few thousandths. A threshold is robust only when its margin exceeds that drift.
+few thousandths. A threshold's margin must exceed that drift.
 
 **With the guard on** (`sweep_with_guard`: paraphrase hits of 42 and false hits of 65
 different pairs):
@@ -1244,7 +1244,11 @@ end-to-end gate is established by these measurements.
 
 `bench/cell_trigger_gate.py` measures the acceptance workload on an independently owned,
 attached scratch fixture with explicit fake providers, enforced mode and an already held
-org. Each API run has 50 unmeasured warmups and 2,000 sequential measured requests with
+org. Its namespace uses `append_only` for independent writes: sibling values do not
+rewrite one another's heads. The fixture verifies the stored policy before every arm,
+and the row proof requires each exact returned version and active status. This measures
+trigger cost for independent writes, not semantic conflict resolution. Each API run has
+50 unmeasured warmups and 2,000 sequential measured requests with
 4,096-byte values, with five runs per arm in counterbalanced order. Each delivery block
 times five complete `pg_delivery.run_pass` calls at the unchanged configured batch size,
 with five blocks per arm. The latency gate is `median(p99_on) - median(p99_off) <= 10 ms`;
@@ -1260,9 +1264,11 @@ PYTHONPATH=$PWD .venv/bin/python bench/cell_trigger_gate.py \
 
 The fixture owner supplies the exact source, launch, configuration and ownership receipts,
 excludes competing controllers and workers, and stops its processes before deleting its
-exact scratch databases. The output path must not exist. The driver verifies those
-receipts and the live fixture before native setup and every arm, restores the org triggers
-within its cleanup bound and emits a final verdict only after cleanup and artifact sync.
+exact scratch databases. The output path must not exist. The driver verifies source,
+launch and configuration identities and the live fixture before native setup and every
+arm, restores the org triggers within its cleanup bound and emits a final verdict only
+after cleanup and artifact sync. It records the ownership-receipt digest supplied by
+the fixture owner.
 Source tests and the diagnostic figures above are not evidence that this workload passes.
 
 ## Reference computations

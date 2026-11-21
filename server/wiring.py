@@ -26,10 +26,13 @@ def wire() -> None:
     from server.memory.app import provenance, recent_writes
     from server.memory.store import pg_publish
     from server.memory.store.usage import AGENT_LABEL_EVENT_TYPES
+    from server.observability.budget_notifications import use_observer
     from server.observability.state_inputs import StateInputs, use_state_inputs
+    from server.tasks.app.budget_notifications import schedule
 
     add_insert_observer(recent_writes.observe_insert)
     use_directory(IdentityDirectory())
+    use_observer(schedule)
     pg_publish.use_writer(provenance.writer_actor)
     use_state_inputs(
         StateInputs(

@@ -65,6 +65,14 @@ export function takeDropped(items: DataTransferItemList | ArrayLike<DataTransfer
   return { entries, files };
 }
 
+/** Capture files and folder entries before the browser clears a drop, including sources
+ *  that offer only a file list. */
+export function captureFileDrop(transfer: Pick<DataTransfer, "items" | "files">): ReturnType<typeof takeDropped> {
+  const captured = takeDropped(transfer.items ?? []);
+  if (!transfer.items?.length) captured.files.push(...Array.from(transfer.files ?? []));
+  return captured;
+}
+
 /** Files read from a folder before the dialog says it is too large to read here. */
 export const MAX_READ = 2000;
 

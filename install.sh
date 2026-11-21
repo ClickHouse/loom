@@ -814,7 +814,10 @@ main() {
     if [ "$(uname -s)" = Darwin ] && command -v open >/dev/null 2>&1; then
       open "$dashboard" >/dev/null 2>&1 || true
     elif [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] && command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "$dashboard" >/dev/null 2>&1 &
+      # The opener inherits this before fork, so terminal hangup cannot race its startup.
+      trap '' HUP
+      xdg-open "$dashboard" </dev/null >/dev/null 2>&1 &
+      trap on_interrupt HUP
     fi
   fi
   exit 0

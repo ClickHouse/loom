@@ -84,7 +84,11 @@ def _merge_similar(namespaces: list[str], outs: list[Any], top_k: int) -> Tracke
 
 
 async def _similar_one(input: TrackerSimilarInput) -> TrackerSimilarOutput:
-    input = await common._bound_input(input)
+    return await similar_in_namespace(await common._bound_input(input))
+
+
+async def similar_in_namespace(input: TrackerSimilarInput) -> TrackerSimilarOutput:
+    """Read one resolved tracker namespace without following repository bindings."""
     if (
         not input.text.strip()
         and input.issue_number <= 0

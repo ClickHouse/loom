@@ -29,5 +29,31 @@ For memory read by a model instead of a whole chat history, see
 - **Saved context instead of rediscovery.** Decisions and findings a session saves are
   loaded at the next session's start. [Shared memory](agent-memory.md)
 
+## Request code in smaller steps
+
+For an indexed repository on the `coding` toolset, ask the agent to call
+`loom_code_search` with:
+
+```json
+{
+  "namespace": "<indexed namespace>",
+  "query": "where are request quotas enforced?",
+  "top_k": 3,
+  "bodies": "none",
+  "token_budget": 1200
+}
+```
+
+`bodies: "none"` withholds code bodies. Choose a hit by its path, span and tier, when
+present. If its `next` is `code.symbol name=...`, pass that name to `loom_code_symbol`
+in the same namespace with `include_body: true` to request source. A name can resolve
+to several definitions, so check their paths and tiers before using one.
+
+Read `elided`, `granularity` and `next`: a card or class skeleton is not the complete
+implementation. Follow the [definition and revision check](code-intelligence.md#a-coding-agent-that-reads-the-definition-it-needs)
+before relying on the source; missing bodies or freshness metadata need a local read.
+The budget estimates the code answer's size, not the model's whole context or bill.
+Measure cost and task quality for the complete workflow on your own repository.
+
 Loom also records what it spends on embedding and LLM calls per operation.
 [Cost and usage](../features/observability/cost-and-usage.md)

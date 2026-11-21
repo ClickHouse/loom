@@ -1503,11 +1503,19 @@ def _opened(log: Path, wait: float = 1) -> list[str]:
 def test_a_new_install_on_a_desktop_opens_the_dashboard_once(installer_env: dict[str, str]) -> None:
     _start_stubs(installer_env)
     env, log = _desktop(installer_env)
-    _on_terminal(env, [], None)
-    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"]
+    opener = log.parent / "xdg-open"
+    attempts = log.with_suffix(".attempts")
+    # HUP must be ignored before fork, even before the opener can install a trap.
+    opener.write_text(
+        f'#!/bin/sh\necho invoked >> "{attempts}"\nkill -HUP "$$"\necho "$*" >> "{log}"\n'
+    )
+    transcript = _on_terminal(env, [], None)
+    assert _opened(log, wait=60) == ["http://127.0.0.1:7777/"], transcript
+    assert attempts.read_text().splitlines() == ["invoked"]
     log.unlink()
     _on_terminal(env, [], None)  # a rerun keeps its .env
     assert _opened(log) == []
+    assert attempts.read_text().splitlines() == ["invoked"]
 
 
 def test_the_first_run_that_starts_loom_opens_the_dashboard(installer_env: dict[str, str]) -> None:

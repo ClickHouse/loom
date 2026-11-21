@@ -161,7 +161,7 @@ export function useReadableCollections(org: string, showing: string | null = nul
           const byName = new Map<string, CollectionEntry>();
           let cursor: string | null = null;
           for (let page = 0; page < COLLECTIONS_PAGES; page++) {
-            const r = await listCollections(org, { cursor, signal });
+            const r = await listCollections(org, { cursor, signal, includeDocumentCounts: true });
             for (const c of r.collections) if (!byName.has(c.namespace)) byName.set(c.namespace, c);
             cursor = r.next_cursor;
             if (!cursor) break;

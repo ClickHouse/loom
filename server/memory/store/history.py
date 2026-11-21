@@ -98,6 +98,7 @@ class HistoryTarget:
     org: str
     memory_id: str
     content_sha256: str  # the hash of the version's text, which its search rows carry too
+    tags: tuple[str, ...] = ()
 
     @classmethod
     def from_row(cls, r: Mapping[str, Any]) -> HistoryTarget:
@@ -111,6 +112,7 @@ class HistoryTarget:
             memory_key=str(r.get("memory_key") or ""),
             version=int(r.get("version") or 0),
             content_sha256=str(r.get("content_sha256") or ""),
+            tags=tuple(r.get("tags") or ()),
         )
 
 
@@ -243,13 +245,13 @@ async def find_history_target(
     ch = ch or _default_client()
     cols = (
         "org, memory_id, namespace, agent, user_id, session_id, memory_key, version, "
-        "toStringCutToZero(content_sha256) AS content_sha256"
+        "toStringCutToZero(content_sha256) AS content_sha256, tags"
     )
     at = "org = {org:String} AND memory_id = {mid:UUID} AND version = {v:UInt64}"
     r = await ch.query_one(
         f"""
         SELECT org, toString(memory_id) AS memory_id, namespace, agent, user_id, session_id,
-               memory_key, version, content_sha256
+               memory_key, version, content_sha256, tags
         FROM (
             SELECT {cols} FROM loom.memory_versions WHERE {at}
             UNION ALL

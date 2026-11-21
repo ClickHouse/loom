@@ -310,4 +310,4 @@ def test_the_lifespan_reads_the_workers_lease_on_each_beat() -> None:
 
     from server import main
 
-    assert "on_beat=_leader.read_holder" in inspect.getsource(main.lifespan)
+    assert "on_beat=boot.refresh_instance_state" in inspect.getsource(main.lifespan)

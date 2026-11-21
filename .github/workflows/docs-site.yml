@@ -12,6 +12,7 @@ on:
     branches: [main]
     paths:
       - "docs/**"
+      - "i18n/**"
       - "mkdocs.yml"
       - "llms.txt"
       - "llms-install.md"

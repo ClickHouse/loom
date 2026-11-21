@@ -477,6 +477,10 @@ def _fenced_client(monkeypatch: pytest.MonkeyPatch, before_send: Any) -> tuple[A
     monkeypatch.setattr(type(ch_mod.CHClient()), "client", property(lambda self: driver))
 
     async def _stray(self: Any, sql: str, params: Any = None) -> Any:
+        if "toUnixTimestamp64Milli(now64(3))" in sql:
+            now = rmt_carry.server_now()
+            assert now is not None
+            return {"ms": int(now * 1000)}
         assert "system.columns" in sql
         return {"n": driver.stray}
 
@@ -569,6 +573,56 @@ def test_a_guarded_batch_that_landed_nothing_after_an_alter_is_refused(
     # The next write reads the lists again instead of meeting the same refusal.
     assert rmt_carry._TABLES[TABLE].stored is None
     # The server answered that query (its own refusal): nothing is held back.
+    assert not rmt_carry._pinned and not rmt_carry._inflight
+
+
+@pytest.mark.parametrize(("request_s", "response_s"), [(28.0, 0.0), (0.0, 28.0), (14.0, 14.0)])
+async def test_a_sampled_clock_bounds_leased_sends_and_uncertain_pins(
+    monkeypatch: pytest.MonkeyPatch, request_s: float, response_s: float
+) -> None:
+    from server.core import lease_writes, leases
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000.0)
+    monkeypatch.setattr(rmt_carry, "time", clock)
+    started, server_start = clock.monotonic(), 10_000.0
+
+    async def query_one(sql: str) -> dict[str, int]:
+        assert sql == "SELECT toUnixTimestamp64Milli(now64(3)) AS ms"
+        clock.advance(request_s)
+        sampled = server_start + clock.monotonic() - started
+        clock.advance(response_s)
+        return {"ms": round(sampled * 1000)}
+
+    await rmt_carry.measure_server_clock(SimpleNamespace(query_one=query_one))
+    ttl = lease_writes.lease_ttl_s(rmt_carry.send_bound_s())
+    work_s = ttl * leases._WORK_SHARE
+    takeover = server_start + ttl
+    # Both a last admitted send and one delayed past the work window keep its bound.
+    for send_at in (56.5, work_s + 0.25):
+        clock.t = started + send_at
+        with rmt_carry.under_lease(started + work_s):
+            deadline = rmt_carry.send_deadline()
+        actual_deadline = server_start + min(send_at, work_s) + rmt_carry._TRANSIT_S
+        assert deadline + ch_mod.write_limit_s() + rmt_carry._RELEASE_MARGIN_S < takeover, (
+            request_s,
+            response_s,
+            send_at,
+            deadline,
+            takeover,
+        )
+        assert deadline <= actual_deadline, (deadline, actual_deadline)
+
+    rmt_carry._gen, rmt_carry._prints[1] = 1, {TABLE: "old"}
+    await _cut_off_write(deadline=deadline)
+    [pin] = rmt_carry._pinned
+    ch = _ProcessesCH(running=None)
+    # An unreadable process list proves no end; only the receiving clock can release it.
+    clock.t = started + pin.release_at - server_start - 0.1
+    await rmt_carry._settle(ch)
+    assert rmt_carry._pinned and rmt_carry._inflight
+    clock.advance(request_s + response_s + 0.2)
+    await rmt_carry._settle(ch)
     assert not rmt_carry._pinned and not rmt_carry._inflight
 
 

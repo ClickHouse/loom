@@ -34,3 +34,11 @@ export async function listKnowledgeGaps(
     opts.signal,
   );
 }
+
+/** Queue a private definition draft for an admin to review. */
+export async function draftKnowledgeGap(
+  id: Pick<Identity, "org" | "namespace">,
+  gapId: string,
+): Promise<{ candidate_id: string }> {
+  return post("/v1/knowledge.gaps.draft", { ...id, gap_id: gapId });
+}

@@ -1,11 +1,8 @@
 """A repository's documents.
 
-A document a repository depends on — a design note, a runbook, an internal
-spec — is a knowledge document in the repository's trunk code namespace
-(`server/code/app/repo_scope.py`). It is written there by a maintainer
-(admin on the code namespace, so `knowledge.add` passes the ordinary WRITER
-gate) and read by whoever may read the repository, so a restricted
-repository's documents are as restricted as its code.
+Repository documents live in the trunk code namespace
+(`server/code/app/repo_scope.py`). Ordinary documents inherit the repository's
+access. Mirrored documents keep their source's permissions for each reader.
 
 Under a code scope the repository's documents join `loom_search`'s knowledge
 section, and `code.context_pack` returns them as its `docs` section. Every
@@ -16,56 +13,233 @@ failure answers nothing, never an error — the leg is additive.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import time
-from typing import TypedDict
+from contextlib import nullcontext
+from typing import TYPE_CHECKING, TypedDict
 
+from server.core.background import gather_or_cancel
+from server.core.diagnostics import private_work
 from server.knowledge.api.models_knowledge import (
     KnowledgeListInput,
     KnowledgeSearchInput,
     KnowledgeSearchOutput,
     _SearchHit,
 )
+from server.knowledge.app import source_publication
 from server.settings import settings
 
 log = logging.getLogger("loom.repo_docs")
 
 
-async def search_repo_docs(
-    org: str, repo_namespace: str, query: str, top_k: int, *, timeout_s: float | None = None
-) -> list[_SearchHit]:
-    """Hits for `query` over the documents in `repo_namespace`, a namespace that
-    passed the caller's gate (`repo_namespace_in_scope`); [] on any failure."""
-    if timeout_s is None:
-        timeout_s = settings.knowledge_repo_docs_timeout_s
-    if not query.strip():
-        return []
-    try:
-        from server.knowledge.app.knowledge_search import handle_knowledge_search
+if TYPE_CHECKING:
+    from server.knowledge.app.knowledge_search import CheckedSearch, SearchRequest
+    from server.knowledge.app.source_access import ReadPlan
+    from server.knowledge.app.source_list_proofs import ListProofs
+    from server.knowledge.app.source_search_proofs import SearchProofs
 
-        out = await asyncio.wait_for(
-            handle_knowledge_search(
-                KnowledgeSearchInput(
-                    org=org,
-                    namespace=repo_namespace,
-                    query=query,
-                    top_k=max(1, min(int(top_k), 20)),
-                    namespace_scope="this",
-                    # An additive leg under a short timeout: a reranker's model call
-                    # would outlast it.
-                    rerank="none",
-                )
-            ),
-            timeout=timeout_s,
+
+@dataclasses.dataclass(frozen=True)
+class RepoSearchRequest:
+    base: SearchRequest
+    extra: SearchRequest | None
+    repo_namespace: str
+    extra_deadline: float
+
+    @property
+    def namespaces(self) -> list[str]:
+        return list(
+            dict.fromkeys((*self.base.namespaces, *(self.extra.namespaces if self.extra else ())))
         )
-    except Exception as e:  # noqa: BLE001 — an additive leg never fails the caller
-        log.info("repo docs search on %s/%s did not answer: %s", org, repo_namespace, e)
-        return []
-    hits = list(out.results)
-    for h in hits:
-        if not h.namespace:
-            h.namespace = repo_namespace
-    return hits
+
+    def wider(self, top_k: int) -> RepoSearchRequest:
+
+        def resize(request: SearchRequest, size: int) -> SearchRequest:
+            return dataclasses.replace(
+                request, input=request.input.model_copy(update={"top_k": size}, deep=True)
+            )
+
+        return RepoSearchRequest(
+            resize(self.base, top_k),
+            resize(self.extra, max(1, min(top_k, 20))) if self.extra is not None else None,
+            self.repo_namespace,
+            asyncio.get_running_loop().time() + settings.knowledge_repo_docs_timeout_s,
+        )
+
+
+@dataclasses.dataclass
+class RepoSearch:
+    request: RepoSearchRequest
+    base: CheckedSearch
+    extra: CheckedSearch | None
+
+    _lost: bool = dataclasses.field(default=False, init=False)
+    _base_used: bool = dataclasses.field(default=False, init=False)
+    _extra_used: bool = dataclasses.field(default=False, init=False)
+    _checking: asyncio.Lock = dataclasses.field(
+        default_factory=asyncio.Lock, init=False, repr=False
+    )
+
+    @property
+    def lost(self) -> bool:
+        return self._lost or any(child.lost for child in self.children)
+
+    def fresh(self) -> bool:
+        """Check retained permissions and additive timing without another await."""
+        if self.lost:
+            return False
+        if (
+            self.extra is not None
+            and self.extra.proofs is not None
+            and asyncio.get_running_loop().time() >= self.request.extra_deadline
+        ):
+            return False
+        return all(child.proofs is None or child.proofs.fresh() for child in self.children)
+
+    async def _renew_extra(self, *, ordinary: bool = False) -> None:
+        extra = self.extra
+        if extra is None:
+            return
+        try:
+            if extra.proofs is None:
+                # A cached ordinary reply needs no further permission or provider work.
+                await extra.ordinary() if ordinary else await extra.current()
+            else:
+                if asyncio.get_running_loop().time() >= self.request.extra_deadline:
+                    raise TimeoutError()
+                async with asyncio.timeout_at(self.request.extra_deadline):
+                    if ordinary:
+                        await extra.ordinary()
+                    else:
+                        await extra.current()
+        except Exception:  # noqa: BLE001 — an additive renewal failure leaves the base search intact
+            self._lost |= extra.lost
+            self.extra = None
+            log.info("repo docs search did not answer")
+
+    def _drop_expired_extra(self) -> None:
+        if (
+            self.extra is not None
+            and self.extra.proofs is not None
+            and asyncio.get_running_loop().time() >= self.request.extra_deadline
+        ):
+            self._lost |= self.extra.lost
+            self.extra = None
+
+    async def _ordinary(self) -> KnowledgeSearchOutput:
+        self._lost = True
+        await gather_or_cancel(self.base.ordinary(), self._renew_extra(ordinary=True))
+        self._drop_expired_extra()
+        return self.output
+
+    async def ordinary(self) -> KnowledgeSearchOutput:
+        async with self._checking:
+            with private_work() if self.base.marked else nullcontext():
+                return await self._ordinary()
+
+    async def current(self) -> KnowledgeSearchOutput:
+        """Renew both legs without charging the base to the additive deadline."""
+        async with self._checking:
+            with private_work() if self.base.marked else nullcontext():
+                if self.lost:
+                    return await self._ordinary()
+                await self._renew_extra()
+                await self.base.current()
+                if self.lost or any(
+                    child.proofs is not None and not child.proofs.fresh() for child in self.children
+                ):
+                    return await self._ordinary()
+                self._drop_expired_extra()
+                return self.output
+
+    @property
+    def children(self) -> tuple[CheckedSearch, ...]:
+        return (self.base, self.extra) if self.extra is not None else (self.base,)
+
+    @property
+    def publication_proofs(self) -> tuple[SearchProofs, ...]:
+        children = ((self.base,) if self._base_used else ()) + (
+            (self.extra,) if self._extra_used and self.extra is not None else ()
+        )
+        return tuple(child.proofs for child in children if child.proofs is not None)
+
+    @property
+    def output(self) -> KnowledgeSearchOutput:
+        extra = (
+            []
+            if self.extra is None
+            else [
+                hit
+                if hit.namespace
+                else hit.model_copy(update={"namespace": self.request.repo_namespace})
+                for hit in self.extra.output.results
+            ]
+        )
+        output = _merge_output(self.base.output, extra, int(self.request.base.input.top_k))
+        selected = {id(hit) for hit in output.results}
+        self._base_used = self.base.metadata_uses_mirrors or any(
+            id(hit) in selected for hit in self.base.output.results
+        )
+        self._extra_used = any(id(hit) in selected for hit in extra)
+        return output
+
+
+async def resolve_repo_search(
+    input: KnowledgeSearchInput, *, repo_namespace: str
+) -> RepoSearchRequest:
+    from server.knowledge.app.knowledge_search import resolve_search
+
+    input = input.model_copy(deep=True)
+    base = await resolve_search(input)
+    extra = None
+    deadline = asyncio.get_running_loop().time() + settings.knowledge_repo_docs_timeout_s
+    if repo_namespace and input.query.strip():
+        try:
+            async with asyncio.timeout_at(deadline):
+                extra = await resolve_search(
+                    KnowledgeSearchInput(
+                        org=input.org,
+                        namespace=repo_namespace,
+                        query=input.query,
+                        top_k=max(1, min(int(input.top_k), 20)),
+                        namespace_scope="this",
+                        # A model reranker would outlast this additive leg's deadline.
+                        rerank="none",
+                    )
+                )
+        except Exception:  # noqa: BLE001 — an additive scope failure leaves the base search intact
+            log.info("repo docs search did not answer")
+    return RepoSearchRequest(base, extra, repo_namespace, deadline)
+
+
+async def search_repo_docs(request: RepoSearchRequest, plan: ReadPlan) -> CheckedSearch | None:
+    """Run the resolved additive leg within its remaining scope-and-search budget."""
+    from server.knowledge.app.knowledge_search import run_checked_search
+
+    if request.extra is None:
+        return None
+    try:
+        if asyncio.get_running_loop().time() >= request.extra_deadline:
+            raise TimeoutError()
+        async with asyncio.timeout_at(request.extra_deadline):
+            return await run_checked_search(request.extra, plan)
+    except Exception:  # noqa: BLE001 — a failed additive search cannot expose private details
+        log.info("repo docs search did not answer")
+        return None
+
+
+async def run_repo_search(request: RepoSearchRequest, plan: ReadPlan) -> RepoSearch:
+    from server.knowledge.app.knowledge_search import run_checked_search
+
+    if any(child.input.org != plan.org for child in (request.base, request.extra) if child):
+        raise ValueError("document read scope changed")
+    with private_work() if plan.marked else nullcontext():
+        base, extra = await gather_or_cancel(
+            run_checked_search(request.base, plan), search_repo_docs(request, plan)
+        )
+        assert base is not None
+        return RepoSearch(request, base, extra)
 
 
 def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> list[_SearchHit]:
@@ -91,28 +265,29 @@ def merge_hits(base: list[_SearchHit], extra: list[_SearchHit], top_k: int) -> l
 async def knowledge_with_repo_docs(
     know_input: KnowledgeSearchInput, *, repo_namespace: str
 ) -> KnowledgeSearchOutput:
-    """`loom_search`'s knowledge leg: the knowledge search, and — when the
-    code scope names a repository the caller may read (`repo_namespace`,
-    from `repo_namespace_in_scope`; "" for none) — its documents, merged
-    into the one section. Raises only what the base search raises."""
-    from server.knowledge.app.knowledge_search import handle_knowledge_search, noise_last
+    """Merge checked base and repository searches after their final shared barrier."""
+    from server.knowledge.app.source_access import prepare
 
-    if not repo_namespace:
-        return await handle_knowledge_search(know_input)
-    base, extra = await asyncio.gather(
-        handle_knowledge_search(know_input),
-        search_repo_docs(
-            know_input.org, repo_namespace, str(know_input.query), int(know_input.top_k)
-        ),
-    )
+    request = await resolve_repo_search(know_input, repo_namespace=repo_namespace)
+    plan = await prepare(know_input.org, request.namespaces)
+    with private_work() if plan.marked else nullcontext():
+        result = await run_repo_search(request, plan)
+        output = await result.current()
+        for proof in result.publication_proofs:
+            source_publication.retain(proof)
+        return output
+
+
+def _merge_output(
+    base: KnowledgeSearchOutput, extra: list[_SearchHit], top_k: int
+) -> KnowledgeSearchOutput:
+    from server.knowledge.app.knowledge_search import noise_last
+
     if not extra:
         return base
-    top_k = int(know_input.top_k)
     picked = merge_hits(list(base.results), extra, top_k)
     if base.reranked_by:
-        # The fused scores still decide which repository hits earn a place; a reranked
-        # answer keeps its own order, those hits follow it, and noise sections go below
-        # the close ones of both (`noise_last`).
+        # Scores select repository hits; the base reranker's order stays intact.
         listed = {(h.namespace, h.source_uri, h.chunk_idx) for h in base.results}
         repo = [h for h in picked if (h.namespace, h.source_uri, h.chunk_idx) not in listed]
         results = noise_last([*base.results[: top_k - len(repo)], *repo])
@@ -131,53 +306,69 @@ DOCS_SECTION_MAX_DOCS = 12
 _LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[RepoDoc]]] = {}
 
 
+@dataclasses.dataclass(frozen=True)
+class RepoListing:
+    namespace: str
+    docs: list[RepoDoc]
+    proof: ListProofs | None = None
+
+
 async def list_repo_docs(
     org: str,
     code_namespace: str,
     *,
     limit: int = DOCS_SECTION_MAX_DOCS,
     timeout_s: float | None = None,
-) -> tuple[str, list[RepoDoc]]:
-    """(docs namespace, [{source_uri, title, description}]) — the
-    repository's live documents, newest first as `knowledge.list` orders
-    them; ("", []) when there is nothing the caller may read, or on failure."""
+) -> RepoListing:
+    """Return repository titles with the physical owners of the selected page."""
     if timeout_s is None:
         timeout_s = settings.knowledge_repo_docs_timeout_s
     from server.code.app.repo_scope import readable_repo_namespace
 
     ns = await readable_repo_namespace(org, code_namespace)
     if not ns:
-        return "", []
-    # the gate ran for this caller above; the listing itself is the same for
-    # every reader of the namespace, so it is cached briefly per namespace
-    hit = _LIST_CACHE.get((org, ns, limit))
-    if hit is not None and hit[0] > time.monotonic():
-        return ns, list(hit[1])
+        return RepoListing("", [])
     try:
-        from server.knowledge.app.document_reads import handle_knowledge_list
+        from server.knowledge.app.document_reads import resolve_list, run_checked_list
+        from server.knowledge.app.source_access import prepare
+        from server.knowledge.app.source_read_results import settle
 
-        out = await asyncio.wait_for(
-            handle_knowledge_list(
+        async with asyncio.timeout(timeout_s):
+            request = await resolve_list(
                 KnowledgeListInput(
                     org=org,
                     namespace=ns,
                     limit=max(1, min(int(limit), 50)),
                     fields=["source_uri", "title", "description"],
                 )
-            ),
-            timeout=timeout_s,
-        )
-    except Exception as e:  # noqa: BLE001 — additive
-        log.info("repo docs listing on %s/%s did not answer: %s", org, ns, e)
-        return ns, []
+            )
+            plan = await prepare(org, list(request.namespaces))
+            if not plan.marked:
+                hit = _LIST_CACHE.get((org, ns, limit))
+                if hit is not None and hit[0] > time.monotonic():
+                    return RepoListing(ns, list(hit[1]))
+            checked = await run_checked_list(request, plan)
+            await settle([checked])
+        # Check retained deadlines after the timeout context has finished its cleanup.
+        if checked.proofs is not None and not checked.proofs.fresh():
+            await checked.ordinary()
+    except Exception:  # noqa: BLE001 — a failed additive listing cannot expose private details
+        log.info("repo docs listing did not answer")
+        return RepoListing(ns, [])
     docs = [
-        RepoDoc(source_uri=r.source_uri, title=r.title, description=r.description) for r in out.rows
+        RepoDoc(source_uri=r.source_uri, title=r.title, description=r.description)
+        for r in checked.output.rows
     ]
-    _LIST_CACHE[(org, ns, limit)] = (
-        time.monotonic() + settings.knowledge_repo_docs_list_ttl_s,
-        docs,
-    )
-    return ns, list(docs)
+    if not plan.marked:
+        _LIST_CACHE[(org, ns, limit)] = (
+            time.monotonic() + settings.knowledge_repo_docs_list_ttl_s,
+            docs,
+        )
+    proof = checked.proofs
+    if proof is not None:
+        # The docs section uses page rows/counts, never knowledge.list's cursor.
+        proof = proof.selected({(ns, row.source_uri) for row in checked.output.rows})
+    return RepoListing(ns, list(docs), proof)
 
 
 def reset_cache_for_tests() -> None:

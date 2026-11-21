@@ -15,6 +15,7 @@ from server.erasure.app import saga_steps
 from server.erasure.store import census as erasure_census
 from server.erasure.store import mutations as erasure_mutations
 from server.erasure.store import steps_ledgers as ledger_steps
+from tests.unit.definition_queue_fake import install
 
 
 class _StubCH:
@@ -66,6 +67,17 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
         assert "user_id = {uid:String}" in sql and params["uid"] == "alice"
 
 
+def test_query_history_registration_leaves_with_its_namespace(monkeypatch) -> None:
+    install(monkeypatch)
+    ch = _StubCH()
+    count = asyncio.run(ledger_steps.delete_query_history_by_namespace("o", ["a", "b"], ch=ch))
+    assert count == 1
+    [(sql, params)] = ch.commands
+    assert "loom.query_history_sources" in sql
+    assert "org = {org:String}" in sql and params["org"] == "o"
+    assert "namespace IN {ns:Array(String)}" in sql and params["ns"] == ["a", "b"]
+
+
 @pytest.mark.parametrize(
     ("fn", "tables"),
     [
@@ -86,7 +98,11 @@ def test_conversations_user_scope_uses_the_user_column() -> None:
         (ledger_steps.delete_projection_failures_by_namespace, ["loom.memory_projection_failures"]),
     ],
 )
-def test_delete_steps_are_keyed_alter_deletes_over_the_namespace_list(fn, tables) -> None:
+def test_delete_steps_are_keyed_alter_deletes_over_the_namespace_list(
+    fn, tables, monkeypatch
+) -> None:
+    if fn is ledger_steps.delete_learnings_queue_by_namespace:
+        install(monkeypatch)
     ch = _StubCH(count=3)
     n = asyncio.run(fn("o", ["a", "b"], ch=ch))
     assert n == 3 * len(tables)

@@ -1142,6 +1142,14 @@ recovery](../architecture/failure-and-recovery.md#knowledge-restore).
 
 ### Moving documents
 
+In the dashboard, **Move to…** on a document row or selection offers places the
+person writes. **Add to collection…** offers only those collections, including **My
+files**. Both move the documents: each document lives in one place. Before confirmation,
+**Add to collection…** says the documents leave their source, and both actions say who
+can read them at the destination. In **All documents** or an everywhere search, a selection
+must come from one place; each row uses its own place. Cancelling before confirmation
+leaves the documents where they are.
+
 `knowledge.move` moves up to 50 documents a call from `namespace` to `to_namespace` in the
 same org: a collection, `@me` (an end user's own collection) or a namespace. The caller
 needs writer on both; one it cannot write answers `found: false` and moves nothing, so the
@@ -1180,6 +1188,18 @@ the replay cache cannot answer under the ClickHouse authority, runs the move aga
 document that moved the first time answers `not_found`. Under the Postgres authority each of
 the two writes is its own commit. The ordering and what a cut-off move leaves are in
 [failure and recovery](../architecture/failure-and-recovery.md#knowledge-move).
+
+## Collection document counts
+
+The Library's collection tree shows how many live documents each collection holds
+directly; documents in child collections count beside those children. Zero means the
+collection has no live documents. A dash means the count is unavailable, and an ellipsis
+means it is being refreshed. Adding, moving, deleting or restoring documents refreshes
+the counts. Counts read the same document metadata as the document list, so a write
+awaiting publication can take a moment to appear.
+
+Clients request counts with `include_document_counts=true` on
+[`collection.list`](../reference/operations/collection.md#collectionlist).
 
 ## Ingesting files
 
@@ -1300,6 +1320,11 @@ print(status["state"], status["revision"], status["coverage"])
 ```
 
 ### Many files from the dashboard
+
+An empty collection the person writes also accepts files and folders in its **Drop files
+or folders here** area. Dropping opens the same **Add document** preview for that
+collection; the person confirms before any upload starts. A folder keeps its nesting as
+[below](#a-folder-from-the-dashboard).
 
 The Library's **Add document** takes several files at once, picked together or dropped
 on it, and names the place they go to. Each file is its own upload and ingest, as above,

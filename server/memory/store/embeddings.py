@@ -950,11 +950,13 @@ async def live_vectors(
     idents: list[KeyInNamespace],
     *,
     model: str,
+    sequential: bool = True,
     ch: _CHClient | None = None,
 ) -> dict[KeyInNamespace, list[float]]:
     """The live vector of `model` of each (agent, user_id, session_id, memory_key), read
     with sequential consistency: what a semantic admission measures a gap's rows by. A key
-    keeps a live row per model; another model's is in another space."""
+    keeps a live row per model; another model's is in another space. `sequential` off reads
+    without it, for a caller that tolerates a replica's lag."""
     from server.memory.store.sql import _SEQUENTIAL
 
     if not idents:
@@ -970,7 +972,7 @@ async def live_vectors(
           AND embedding_model = {{model:String}}
           AND (agent, user_id, session_id, memory_key)
               IN {{ids:Array(Tuple(String, String, String, String))}}
-        WHERE tombstoned_at IS NULL {_SEQUENTIAL}
+        WHERE tombstoned_at IS NULL {_SEQUENTIAL if sequential else ""}
         """,
         {"org": org, "ns": namespace, "ids": idents, "model": model},
         "ids",

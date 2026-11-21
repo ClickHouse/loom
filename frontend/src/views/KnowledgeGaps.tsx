@@ -5,9 +5,11 @@
  * it. Read once per namespace shown.
  */
 import { useState } from "react";
-import { listKnowledgeGaps, type KnowledgeGap } from "../api/knowledgeGaps";
+import { draftKnowledgeGap, listKnowledgeGaps, type KnowledgeGap } from "../api/knowledgeGaps";
 import { ApiError } from "../lib/errors";
 import { humanizeError } from "../lib/errorWords";
+import { BusyButton } from "../components/ui/BusyButton";
+import { useMounted } from "../lib/hooks";
 import { useAbortableEffect } from "../lib/hooks";
 import { isOpAbsent } from "../lib/trackerSources";
 
@@ -70,6 +72,7 @@ export function KnowledgeGaps({ org, namespace }: { org: string; namespace: stri
               <span className="text-xs text-text-muted tabular">
                 {g.askers} askers · {g.asks} times · last asked {g.last_at.slice(0, 10)}
               </span>
+              <GapDraftAction key={`${org}/${namespace}/${g.gap_id}`} org={org} namespace={namespace} gap={g} />
               {g.samples.length > 0 && (
                 <span className="block truncate text-xs text-text-muted">also: {g.samples.join(" · ")}</span>
               )}
@@ -78,5 +81,49 @@ export function KnowledgeGaps({ org, namespace }: { org: string; namespace: stri
         </ul>
       )}
     </section>
+  );
+}
+
+function GapDraftAction({ org, namespace, gap }: { org: string; namespace: string; gap: KnowledgeGap }) {
+  const mounted = useMounted();
+  const [busy, setBusy] = useState(false);
+  const [queued, setQueued] = useState(false);
+  const [error, setError] = useState("");
+  async function draft() {
+    if (busy || queued) return;
+    setBusy(true);
+    setError("");
+    try {
+      await draftKnowledgeGap({ org, namespace }, gap.gap_id);
+      if (mounted.current) setQueued(true);
+    } catch (e) {
+      if (mounted.current) setError(humanizeError(e, { bare: true }));
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2">
+      <BusyButton
+        busy={busy}
+        type="secondary"
+        htmlType="button"
+        aria-label={`Draft definition for ${gap.head}`}
+        onClick={() => void draft()}
+        disabled={queued}
+      >
+        {queued ? "Draft queued" : "Draft definition"}
+      </BusyButton>
+      {queued && (
+        <span role="status" className="text-xs text-text-muted">
+          Review the draft in Review queue → Learnings.
+        </span>
+      )}
+      {error && (
+        <span role="alert" className="text-xs text-text-muted">
+          Couldn't draft this definition — {error}
+        </span>
+      )}
+    </div>
   );
 }

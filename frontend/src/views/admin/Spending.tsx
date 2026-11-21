@@ -244,7 +244,7 @@ export function Spending() {
   );
 
   // The share of the daily cap spent, in percent; past 100 once over the cap.
-  const pct = Math.round((budget?.pct_of_cap ?? 0) * 100);
+  const pct = budget?.pct_of_cap == null ? null : Math.round(budget.pct_of_cap * 100);
 
   return (
     <PageContainer>
@@ -252,7 +252,7 @@ export function Spending() {
         <ScopeBadge kind="namespace" value={identity.namespace} />
       </PageHeader>
 
-      {orgBudget && orgBudget.spent_24h_usd > 0 && (
+      {orgBudget && orgBudget.spent_24h_usd !== null && orgBudget.spent_24h_usd > 0 && (
         <div className="mb-4 rounded-xl border border-border bg-surface p-4 flex items-baseline justify-between gap-3">
           <div>
             <div className="text-xs text-text-muted mb-1">Org-wide 24h spend</div>
@@ -280,21 +280,24 @@ export function Spending() {
           <div className="flex items-baseline justify-between gap-3 mb-2">
             <div className="text-sm font-medium">Daily cost cap</div>
             <div className="text-xs tabular text-text-muted">
-              ${budget.spent_24h_usd.toFixed(4)} / ${budget.cap_usd.toFixed(2)} ({budget.cap_source})
+              {budget.spent_24h_usd === null ? "Spend withheld" : `$${budget.spent_24h_usd.toFixed(4)}`} / $
+              {budget.cap_usd.toFixed(2)} ({budget.cap_source})
             </div>
           </div>
           {/* Click UI's ProgressBar sets no role or value, so the meter's ARIA is passed in.
               Past the cap the bar stays full and the value text says by how much. */}
-          <ProgressBar
-            type="small"
-            progress={Math.min(100, pct)}
-            role="progressbar"
-            aria-label="Daily cost cap used"
-            aria-valuenow={Math.min(100, pct)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuetext={`${pct}% — $${budget.spent_24h_usd.toFixed(4)} of the $${budget.cap_usd.toFixed(2)} cap`}
-          />
+          {pct !== null && budget.spent_24h_usd !== null && (
+            <ProgressBar
+              type="small"
+              progress={Math.min(100, pct)}
+              role="progressbar"
+              aria-label="Daily cost cap used"
+              aria-valuenow={Math.min(100, pct)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuetext={`${pct}% — $${budget.spent_24h_usd.toFixed(4)} of the $${budget.cap_usd.toFixed(2)} cap`}
+            />
+          )}
           <div className="mt-2 flex items-baseline justify-between gap-3">
             <div className="text-xs text-text-muted leading-relaxed">
               Rolling 24h sum of upstream model and embedding cost on this namespace. {COST_CAP_EFFECT}

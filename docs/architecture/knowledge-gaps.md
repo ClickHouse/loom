@@ -3,9 +3,12 @@
 Loom records the searches that found nothing a caller could use and groups them, once a
 day, into knowledge gaps: the questions several people asked that the namespace's memory
 and documents do not answer. An admin reads them with `knowledge.gaps.list` and on the
-Library page. Gaps are the first part of the curation loop; drafting a definition for a
-gap and governed definitions are designed in the [curation loop
-design](../development/curation-loop-design.md).
+Library page. The **Draft definition** action queues a private candidate from currently eligible
+questions. An admin reviews it before publication; [definition drafts](definition-drafts.md)
+describes the claim, privacy and promotion rules.
+
+[Governed definitions in search](../concepts/identities-and-namespaces.md#governed-definitions-in-search)
+describes how a published definition is served.
 
 ```mermaid
 flowchart LR
@@ -41,6 +44,9 @@ No miss is recorded:
 - for a query that reads or grades as `medium` or `high` (`reads_high` and the grader in
   `server/memory/domain/sensitivity.py`), so a pasted credential or an email never becomes
   a gap;
+- for a `memory.search` or `loom_search` that served a governed definition, or whose term
+  leg did not report `complete` or `empty` (`off` included: also a search with a field that
+  turns the leg off, such as `recent_first` or `as_of`);
 - for a query that is not valid Unicode;
 - for a query longer than 500 characters (`_MAX_QUERY_CHARS`), a pasted page rather than
   a question, which is never cut.

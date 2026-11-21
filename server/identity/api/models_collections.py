@@ -106,6 +106,10 @@ class CollectionListInput(BaseModel):
 
     org: str
     limit: int = Field(default=500, ge=1, le=10_000, description="Collections per page.")
+    include_document_counts: bool = Field(
+        default=False,
+        description="Include the live document count directly in each collection; default false.",
+    )
     cursor: str | None = Field(
         default=None, description="The `next_cursor` of the previous page; none for the first."
     )
@@ -118,6 +122,11 @@ class _CollectionEntry(BaseModel):
     role: str  # the caller's role there: viewer, writer or admin
     description: str = ""  # what it holds, as `collection.create` was given it
     title: str = ""  # what it is called on screen; '' for none (then its name)
+    document_count: int | None = Field(
+        default=None,
+        description="Live documents directly in this collection, excluding children; "
+        "null unless requested.",
+    )
 
 
 class CollectionListOutput(BaseModel):

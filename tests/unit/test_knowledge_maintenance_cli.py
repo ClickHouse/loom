@@ -182,3 +182,18 @@ def test_rechunk_walks_the_pages_with_the_namespace_in_its_position(
     monkeypatch.setattr(documents_repo, "list_with_chunk_counts", _list)
     asyncio.run(ops.rechunk_namespace("o", "ns", page_size=1, dry_run=True))
     assert seen == [(["ns"], None), (["ns"], (at, "ns", "kb://a"))]
+
+
+def test_lexical_stats_rebuild_never_reads_or_writes_mirror_statistics() -> None:
+    from server.memory.store.term_freq import rebuild
+
+    class NoPrivateReads(_FakeCH):
+        async def query_one(self, *args, **kwargs):
+            raise AssertionError("mirror statistics must not be read")
+
+    ch = NoPrivateReads({})
+    assert asyncio.run(rebuild(ch, org="o", namespace="acl-" + "1" * 24)) == {
+        "knowledge": 0,
+        "memory": 0,
+    }
+    assert ch.executed == []

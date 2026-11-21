@@ -3,26 +3,42 @@ its memory reads (`loom.memory_exposures`)."""
 
 from __future__ import annotations
 
+from typing import Any
+
 from server.assistant.domain.support import RUN_ROWS, CallRow
 from server.core.repo_base import _CHClient, _default_client
 from server.memory.domain.set_chunk_session import SESSION_PREFIX
 from server.observability.consumer import ASSISTANT_CONSUMER
+from server.observability.store.event_reads import MASKED_EVENTS
+
+
+def _evidence(row: dict[str, Any] | None, column: str) -> set[str] | None:
+    if not isinstance(row, dict):
+        return None
+    protected = row.get("protected")
+    if type(protected) not in (bool, int) or protected != 0:
+        return None
+    values = row.get(column)
+    if not isinstance(values, list) or any(not isinstance(value, str) for value in values):
+        return None
+    return {value for value in values if value}
 
 
 async def query_digests(
     org: str, namespace: str, run_id: str, subject: str, *, ch: _CHClient | None = None
-) -> set[str]:
-    """The `sql_digest` each `insights.query` call of the answer's run returned (its
-    ledger row's `out_sql_digest`): the answer's tool calls, made under the caller's
-    subject as consumer `loom-assistant`."""
+) -> set[str] | None:
+    """SQL evidence under the answer's identity, or unknown protected participation."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        "SELECT DISTINCT args['out_sql_digest'] AS digest FROM loom.agent_events "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND run_id = {run:String} "
-        "AND subject = {subject:String} AND consumer = {consumer:String} "
-        "AND operation = 'insights.query' AND success AND ts > now() - INTERVAL 1 DAY "
-        # An answer makes a handful of tool calls.
-        "LIMIT 100",
+    row = await ch.query_one(
+        f"""
+        SELECT max(mirror_marked) AS protected,
+               groupUniqArrayIf(100)(args['out_sql_digest'],
+                   success AND args['out_sql_digest'] != '') AS digests
+        FROM {MASKED_EVENTS}
+        WHERE org = {{org:String}} AND namespace = {{ns:String}} AND run_id = {{run:String}}
+          AND subject = {{subject:String}} AND consumer = {{consumer:String}}
+          AND operation = 'insights.query' AND ts > now() - INTERVAL 1 DAY
+        """,
         {
             "org": org,
             "ns": namespace,
@@ -31,7 +47,7 @@ async def query_digests(
             "consumer": ASSISTANT_CONSUMER,
         },
     )
-    return {str(r["digest"]) for r in rows if r.get("digest")}
+    return _evidence(row, "digests")
 
 
 async def returned_keys(
@@ -42,37 +58,49 @@ async def returned_keys(
     keys: list[str],
     *,
     ch: _CHClient | None = None,
-) -> set[str]:
-    """Which of `keys` the answer's tool calls were returned (`loom.memory_exposures`,
-    which memory.search, ask, get, list and inspect record under the request's run and
-    subject); a search hit on one of a key's chunks (`chunk:memory.set:<key>:<n>`) counts
-    as its key."""
+) -> set[str] | None:
+    """Returned cited keys, or unknown when a protected call can leave no exposure."""
     ch = ch or _default_client()
-    rows = await ch.query_all(
-        # A chunk id is `chunk:memory.set:<key>:<index>`: its key is what lies between the
-        # prefix and the last `:<digits>`, compared exactly (a key may hold `:` itself).
-        "SELECT DISTINCT if(startsWith(key, {chunk:String}), "
-        "replaceRegexpOne(substring(key, length({chunk:String}) + 1), ':[0-9]+$', ''), key) "
-        "AS cited FROM loom.memory_exposures ARRAY JOIN returned_keys AS key "
-        "WHERE org = {org:String} AND namespace = {ns:String} AND actor = {subject:String} "
-        "AND ts > now() - INTERVAL 1 DAY AND run_id = {run:String} "
-        "AND has({keys:Array(String)}, cited) "
-        # At most one row per cited key.
-        "LIMIT 100",
+    row = await ch.query_one(
+        f"""
+        WITH (
+            SELECT max(mirror_marked)
+            FROM {MASKED_EVENTS}
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND run_id = {{run:String}}
+              AND subject = {{subject:String}} AND consumer = {{consumer:String}}
+              AND ts > now() - INTERVAL 1 DAY
+        ) AS protected
+        SELECT protected, groupUniqArray(100)(cited) AS keys
+        FROM (
+            SELECT DISTINCT if(startsWith(key, {{chunk:String}}),
+                replaceRegexpOne(substring(key, length({{chunk:String}}) + 1), ':[0-9]+$', ''), key)
+                AS cited
+            FROM loom.memory_exposures ARRAY JOIN returned_keys AS key
+            WHERE org = {{org:String}} AND namespace = {{ns:String}}
+              AND actor = {{subject:String}}
+              AND ts > now() - INTERVAL 1 DAY AND run_id = {{run:String}}
+              AND has({{keys:Array(String)}}, cited)
+            LIMIT 100
+        )
+        """,
         {
             "org": org,
             "ns": namespace,
             "run": run_id,
             "subject": subject,
             "keys": keys,
-            # A chunk hit's key: `chunk:` and the chunk's session (`memory.set:<key>`).
             "chunk": f"chunk:{SESSION_PREFIX}",
+            "consumer": ASSISTANT_CONSUMER,
         },
     )
-    return {str(r["cited"]) for r in rows if r.get("cited")}
+    return _evidence(row, "keys")
 
 
-_ROW_COLUMNS = "operation, success, args['out_found'] AS out_found, args['out_hits'] AS out_hits"
+_ROW_COLUMNS = (
+    "operation, success, args['out_found'] AS out_found, "
+    "args['out_hits'] AS out_hits, mirror_marked"
+)
 
 
 def _rows(rows: list[dict[str, object]]) -> list[CallRow]:
@@ -82,6 +110,7 @@ def _rows(rows: list[dict[str, object]]) -> list[CallRow]:
             bool(r.get("success")),
             str(r.get("out_found") or ""),
             str(r.get("out_hits") or ""),
+            protected=bool(r.get("mirror_marked")),
         )
         for r in rows
     ]
@@ -96,7 +125,7 @@ async def run_rows(
     under the sentinel; the org keeps the read inside the tenant."""
     ch = ch or _default_client()
     rows = await ch.query_all(
-        f"SELECT {_ROW_COLUMNS} FROM loom.agent_events "
+        f"SELECT {_ROW_COLUMNS} FROM {MASKED_EVENTS} "
         "WHERE org = {org:String} AND run_id = {run:String} AND subject = {subject:String} "
         "AND consumer = {consumer:String} AND ts > now() - INTERVAL 1 DAY "
         # request_id breaks a tie of two calls in one millisecond, so each read lists them alike.
@@ -133,7 +162,7 @@ async def live_rows(
     since_ms = int(started * 1000) - (60_000 if run_id else 1000)
     scope = "run_id = {run:String}" if run_id else "namespace = {ns:String}"
     rows = await ch.query_all(
-        f"SELECT {_ROW_COLUMNS} FROM loom.agent_events "
+        f"SELECT {_ROW_COLUMNS} FROM {MASKED_EVENTS} "
         f"WHERE org = {{org:String}} AND {scope} AND subject = {{subject:String}} "
         "AND consumer = {consumer:String} "
         "AND ts >= fromUnixTimestamp64Milli({since:Int64}) "

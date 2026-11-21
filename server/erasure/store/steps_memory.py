@@ -165,22 +165,25 @@ async def scrub_events_by_user(
     *,
     ch: _CHClient | None = None,
 ) -> int:
-    """Replace user_id with '<erased>' on loom.agent_events, and the
+    """Replace user_id with '<erased>' on both physical event streams, and the
     `memory_key` column and the identifier entries of `args` that named the
     subject's rows; on an end user's own calls, the `subject` that
     names them (`user:<user_id>`) too. Preserves aggregate cost rollups;
     removes the identity and what it pointed at."""
     where = "org = {org:String} AND (user_id = {uid:String} OR subject = {p:String})"
-    return await count_then_mutate(
-        "loom.agent_events",
-        count_where=where,
-        mutation=EVENTS_SCRUB_MUTATION
-        + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
-        mutation_where=where,
-        params={"org": org, "uid": user_id, "p": "user:" + user_id},
-        final=False,
-        ch=ch,
-    )
+    total = 0
+    for table in ("loom.agent_events", "loom.agent_events_private"):
+        total += await count_then_mutate(
+            table,
+            count_where=where,
+            mutation=EVENTS_SCRUB_MUTATION
+            + f", subject = if(subject = {{p:String}}, '{ERASED}', subject)",
+            mutation_where=where,
+            params={"org": org, "uid": user_id, "p": "user:" + user_id},
+            final=False,
+            ch=ch,
+        )
+    return total
 
 
 async def delete_last_seen_by_user(

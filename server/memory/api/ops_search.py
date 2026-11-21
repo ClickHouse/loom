@@ -27,6 +27,7 @@ from server.operations.base import Operation, Role
 
 memory_search = Operation(
     name="memory.search",
+    session_content=True,
     input_model=MemorySearchInput,
     output_model=MemorySearchOutput,
     handler=records_served(search_keys)(handle_memory_search),
