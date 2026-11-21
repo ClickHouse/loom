@@ -132,9 +132,10 @@ nothing. Active runs are skipped.
 
 Every memory in a graded run's `memories_used` is counted against the grade. Those
 counts are what `memory.proposals` shows beside each fact on trial (a
-`memory.set(proposed=true)` row). Loom decides a proposal on them only when the
-namespace owner set `proposal_policy.mode` to `auto`; any writer decides with
-`memory.proposal_decide` under either mode. See [writing memory](memory/writing.md).
+`memory.set(proposed=true)` row). Pass counts mark a proposal ready for independent human review. When the namespace owner
+sets `proposal_policy.mode` to `auto`, failed counts can reject a proposal. Acceptance
+requires an independent human administrator using `memory.proposal_decide` with the hash
+of the reviewed content. See [writing memory](memory/writing.md).
 
 `run.list(grade="ungraded")` lists the closed runs still owed a verdict.
 

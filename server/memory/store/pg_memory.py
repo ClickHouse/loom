@@ -17,7 +17,8 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +36,7 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.proposal_review import enforce_review
 from server.memory.domain.redaction_lineage import (
     REDACTED_VALUE,
     Version,
@@ -730,6 +732,7 @@ async def commit_versions(
         recheck = admission.recheck if admission is not None else None
         locked = await conn.fetch(_LOCK_HEADS, *_key_arrays(keys))
         current = {identity_key(h): decode_row(h["row"]) for h in locked}
+        enforce_review(stored, current)
         for k in keys:
             head = current.get(k)
             if recheck is not None:
@@ -1612,6 +1615,22 @@ async def heads_by_keys(
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
     rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
+
+
+@asynccontextmanager
+async def locked_source(source: MemoryRow) -> AsyncIterator[None]:
+    """Hold an unchanged durable source while its shared projection is published."""
+    key = identity_key(source)
+    durable = await heads_by_keys([key], include_tombstoned=True, durable=True)
+    if not unchanged(source, durable.get(key)):
+        raise AdmissionContendedError("The promotion's source changed")
+    async with pg.rolled_back() as conn:
+        await _bound_lock_waits(conn)
+        rows = await conn.fetch(_LOCK_HEADS, *_key_arrays([key]))
+        current = decode_row(rows[0]["row"]) if rows else None
+        if not unchanged(source, current):
+            raise AdmissionContendedError("The promotion's source changed")
+        yield
 
 
 async def heads_owing(

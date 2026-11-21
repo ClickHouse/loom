@@ -55,6 +55,7 @@ class _StubCH:
         self.candidates = candidates
         self.inserts: list[Any] = []
         self.queries: list[tuple[str, dict[str, Any]]] = []
+        self.head: MemoryRow | None = None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
@@ -63,6 +64,20 @@ class _StubCH:
         self, sql: str, params: dict[str, Any] | None = None, **_: Any
     ) -> list[dict[str, Any]]:
         self.queries.append((sql, dict(params or {})))
+        if "FROM loom.memory_refusals" in sql:
+            return []
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            from server.memory.store import build_memory_version_row, identity_key
+
+            heads = (
+                {}
+                if self.head is None
+                else {identity_key(self.head): build_memory_version_row(self.head)}
+            )
+            for table, rows in self.inserts:
+                if table == "loom.memory":
+                    heads.update({identity_key(row): row for row in rows})
+            return [heads[key] for key in params["keys"] if key in heads]
         return list(self.candidates)
 
     async def execute(self, *_: Any, **__: Any) -> None:
@@ -84,6 +99,7 @@ def _cand(memory_id: str, agent: str = "cursor", version: int = 100) -> dict[str
 def wired(monkeypatch: pytest.MonkeyPatch):
     def _wire(candidates: list[dict[str, Any]], row: MemoryRow | None) -> _StubCH:
         ch = _StubCH(candidates)
+        ch.head = row
         monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
         monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
         monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)
