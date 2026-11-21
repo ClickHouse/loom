@@ -73,3 +73,29 @@ def test_rendered_message_grep_uses_the_same_source_coordinates() -> None:
         message_grep.split_message("Cannot bind public endpoint name"), [row]
     )
     assert ranked and ranked[0].line == 11
+
+
+def test_coverage_validation_does_not_parse_a_chunk_past_the_scan_bound(monkeypatch) -> None:
+    from server.code.app import grep
+
+    row = {
+        "path": "large.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 1,
+        "content": "target " * 100,
+    }
+    calls = []
+    retained = grep.retained_source_lines
+
+    def tracked(chunk):
+        calls.append(chunk)
+        return retained(chunk)
+
+    monkeypatch.setattr(grep, "_LINE_SCAN_MAX_CHARS", 10)
+    monkeypatch.setattr(grep, "retained_source_lines", tracked)
+    matches, capped = grep._matching_lines([row], {}, CodeGrepInput(pattern="target"), None, 20)
+    assert not matches and capped and not calls
+    coverage = grep._line_coverage_fields([row], None)
+    assert coverage["partial"] and "scan limit" in coverage["partial_reason"]
+    assert not calls

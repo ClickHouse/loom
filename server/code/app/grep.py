@@ -272,7 +272,7 @@ async def _grep_lines(
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
     )
-    coverage = _line_coverage_fields(chunks, budget)
+    coverage = await asyncio.to_thread(_line_coverage_fields, chunks, budget)
     next_cursor = _issue_grep_cursor(
         input,
         org,
@@ -845,12 +845,13 @@ async def _grep_message(
         literal = await _message_literal_fallback(
             repo, org, ns, input, route=route, started=started, scope=scope, budget=budget
         )
+    coverage = await asyncio.to_thread(_line_coverage_fields, chunks, budget, previous=literal)
     if literal is not None and literal.matches:
         return literal.model_copy(
             update={
                 **verdict_fields,
                 "note": _notes(note, _MESSAGE_FALLBACK_NOTE, literal.note),
-                **_line_coverage_fields(chunks, budget, previous=literal),
+                **coverage,
             }
         )
     unit_spans = await _unit_spans(repo, org, ns, chunks) if ranked else {}
@@ -866,7 +867,7 @@ async def _grep_message(
             trace_run_id=literal.trace_run_id,
             fallback="literal",
             **verdict_fields,
-            **_line_coverage_fields(chunks, budget, previous=literal),
+            **coverage,
         )
     files = list(dict.fromkeys(m["path"] for m in matches))
     trace_run_id = new_trace_run_id()
@@ -913,7 +914,7 @@ async def _grep_message(
         note=note.strip().rstrip(";"),
         trace_run_id=trace_run_id,
         **verdict_fields,
-        **_line_coverage_fields(chunks, budget),
+        **coverage,
     )
 
 
@@ -983,11 +984,19 @@ def _line_coverage_fields(
 ) -> dict[str, Any]:
     fields = _partial_fields(budget)
     reasons = [str(fields.get("partial_reason") or "")]
-    if any(retained_source_lines(chunk) is None for chunk in chunks):
-        fields["partial"] = True
-        reasons.append(
-            "some indexed chunks have no exact source line mapping; inspect the source file",
-        )
+    scanned = 0
+    for chunk in chunks:
+        scanned += len(str(chunk.get("content") or ""))
+        if scanned > _LINE_SCAN_MAX_CHARS:
+            fields["partial"] = True
+            reasons.append("source line coverage validation stopped at the scan limit")
+            break
+        if retained_source_lines(chunk) is None:
+            fields["partial"] = True
+            reasons.append(
+                "some indexed chunks have no exact source line mapping; inspect the source file",
+            )
+            break
     if previous is not None and previous.partial:
         fields["partial"] = True
         reasons.append(previous.partial_reason)

@@ -110,6 +110,27 @@ def test_unmapped_skeleton_is_disclosed_without_a_guessed_line() -> None:
     assert "no exact source line mapping" in out.partial_reason
 
 
+def test_source_coverage_validation_runs_off_the_event_loop(monkeypatch) -> None:
+    import threading
+
+    from server.code.app import grep
+
+    main_thread = threading.get_ident()
+    calls = []
+    validate = grep._line_coverage_fields
+
+    def tracked(*args, **kwargs):
+        calls.append(threading.get_ident())
+        return validate(*args, **kwargs)
+
+    monkeypatch.setattr(grep, "_line_coverage_fields", tracked)
+    _run(
+        [{"path": "m.py", "scope": "", "start_line": 1, "end_line": 1, "content": "target = 1\n"}],
+        pattern="target",
+    )
+    assert calls and all(thread != main_thread for thread in calls)
+
+
 def test_hit_carries_enclosing_unit_span_without_a_symbol_lookup() -> None:
     """ClickGap ask: a hit says how big the function around it is, so the
     client can decide about (or skip) code.enclosing. A chunk that IS the
