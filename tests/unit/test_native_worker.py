@@ -12,6 +12,7 @@ import signal
 import stat
 import subprocess
 import sys
+from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
@@ -125,6 +126,7 @@ def test_launcher_preserves_normal_exit_codes_and_keeps_arguments_private(
 
     class Debugger:
         def __init__(self, command, **kwargs):
+            assert kwargs["stdin"] is subprocess.PIPE
             assert kwargs["stdout"] is subprocess.DEVNULL
             assert kwargs["stderr"] is subprocess.DEVNULL
             assert canary not in command
@@ -189,54 +191,16 @@ def test_forged_same_uid_records_cannot_authorize_cleanup(session, monkeypatch, 
     assert session.finish() == {"event": "native_cleanup", "already_finished": True}
 
 
-def test_debugger_permission_refusal_is_reported_without_fallback(session, monkeypatch):
-    class DebuggerError(Exception):
-        pass
+class FakeGDB:
+    VERSION = "synthetic-gdb"
+    TYPE_CODE_VOID = 0
 
-    commands = []
-
-    def execute(command, **kwargs):
-        commands.append(command)
-        if command == "run":
-            raise DebuggerError("ptrace: Operation not permitted private-error-canary")
-        return ""
-
-    fake = SimpleNamespace(
-        VERSION="synthetic-gdb",
-        error=DebuggerError,
-        SignalEvent=type("SignalEvent", (), {}),
-        events=SimpleNamespace(stop=SimpleNamespace(connect=lambda callback: None)),
-        execute=execute,
-    )
-    directory = session.root / "synthetic-debugger"
-    directory.mkdir(mode=0o700)
-    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
-    monkeypatch.setitem(sys.modules, "gdb", fake)
-    monkeypatch.setitem(sys.modules, "_native_worker", native)
-    monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
-    runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
-    assert commands[-1] == "run"
-    result = native.read_record(directory / "result.json")
-    assert result == {
-        "kind": "unavailable",
-        "reason": "trace_refused",
-        "observed_fatal_stops": 0,
-        "captured_stops": 0,
-        "trap_stops": 0,
-        "gdb_version": "synthetic-gdb",
-    }
-    assert all("private-error-canary" not in path.read_text() for path in directory.iterdir())
-
-
-@pytest.mark.parametrize("failure", ["unwind", "write"])
-def test_collector_failure_still_continues_and_preserves_terminal_signal(
-    session, monkeypatch, failure
-):
-    class DebuggerError(Exception):
+    class error(Exception):
         pass
 
     class SignalEvent:
-        stop_signal = "SIGSEGV"
+        def __init__(self, received):
+            self.stop_signal = received
 
     class Value:
         def __init__(self, value):
@@ -246,23 +210,100 @@ def test_collector_failure_still_continues_and_preserves_terminal_signal(
         def __int__(self):
             return self.value
 
-    commands, callbacks = [], []
-    inferior = SimpleNamespace(pid=1)
+    def __init__(self):
+        self.commands, self.value_reads = [], []
+        self.pending = deque()
+        self.stop_handlers, self.exit_handlers = [], []
+        self.events = SimpleNamespace(
+            stop=SimpleNamespace(connect=self.stop_handlers.append),
+            exited=SimpleNamespace(connect=self.exit_handlers.append),
+        )
+        self.inferior = SimpleNamespace(pid=1)
+        self.on_command = {}
+        self.exit_code = self.exit_signal = None
 
-    def execute(command, **kwargs):
-        commands.append(command)
-        if command == "run":
-            callbacks[0](SignalEvent())
-        elif command == "continue":
-            inferior.pid = 0
+    def post_event(self, callback):
+        self.pending.append(callback)
+
+    def execute(self, command, **kwargs):
+        self.commands.append(command)
+        action = self.on_command.get(command)
+        if isinstance(action, Exception):
+            raise action
+        if action is not None:
+            action()
         return ""
 
-    def no_unwind():
-        raise DebuggerError("private-unwind-canary")
+    def selected_inferior(self):
+        return self.inferior
 
-    directory = session.root / "failed-collector"
+    def selected_thread(self):
+        raise self.error("private-unwind-canary")
+
+    def parse_and_eval(self, expression):
+        self.value_reads.append(expression)
+        return self.Value(
+            {"$_exitcode": self.exit_code, "$_exitsignal": self.exit_signal}[expression]
+        )
+
+    def stop(self, received="SIGSEGV"):
+        for callback in self.stop_handlers:
+            callback(self.SignalEvent(received))
+
+    def exit(self, *, code=None, received=None):
+        self.inferior.pid = 0
+        for callback in self.exit_handlers:
+            callback(SimpleNamespace(inferior=self.inferior))
+        # GDB updates terminal convenience variables after the native callback returns.
+        self.exit_code, self.exit_signal = code, received
+
+    def drain(self):
+        while self.pending:
+            self.pending.popleft()()
+
+
+@pytest.fixture
+def debugger(session, monkeypatch):
+    fake = FakeGDB()
+    directory = session.root / "synthetic-debugger"
     directory.mkdir(mode=0o700)
     native.write_record(directory / "inferior.json", {"pid": 1})
+    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
+    monkeypatch.setitem(sys.modules, "gdb", fake)
+    monkeypatch.setitem(sys.modules, "_native_worker", native)
+    monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
+    module = runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
+    return SimpleNamespace(api=fake, collector=module["collector"], directory=directory)
+
+
+def test_debugger_permission_refusal_is_reported_without_fallback(debugger):
+    fake = debugger.api
+    fake.on_command["run &"] = fake.error("ptrace: Operation not permitted private-error-canary")
+    fake.drain()
+    assert fake.commands[-2:] == ["run &", "quit"]
+    assert fake.value_reads == []
+    result = native.read_record(debugger.directory / "result.json")
+    assert result == {
+        "kind": "unavailable",
+        "reason": "trace_refused",
+        "observed_fatal_stops": 0,
+        "captured_stops": 0,
+        "trap_stops": 0,
+        "gdb_version": "synthetic-gdb",
+    }
+    assert all(
+        "private-error-canary" not in path.read_text() for path in debugger.directory.iterdir()
+    )
+
+
+@pytest.mark.parametrize("failure", ["unwind", "write"])
+@pytest.mark.parametrize("exit_code,exit_signal", [(None, 11), (139, None)])
+def test_collector_failure_still_continues_and_preserves_terminal_event(
+    debugger, monkeypatch, failure, exit_code, exit_signal
+):
+    fake = debugger.api
+    fake.on_command["run &"] = fake.stop
+    fake.on_command["continue &"] = lambda: fake.exit(code=exit_code, received=exit_signal)
     original_write = native.write_record
 
     def write(path, record):
@@ -270,29 +311,93 @@ def test_collector_failure_still_continues_and_preserves_terminal_signal(
             raise OSError("private-write-canary")
         original_write(path, record)
 
-    fake = SimpleNamespace(
-        VERSION="synthetic-gdb",
-        error=DebuggerError,
-        SignalEvent=SignalEvent,
-        TYPE_CODE_VOID=0,
-        events=SimpleNamespace(stop=SimpleNamespace(connect=callbacks.append)),
-        execute=execute,
-        selected_inferior=lambda: inferior,
-        selected_thread=no_unwind,
-        parse_and_eval=lambda expression: Value(None if expression == "$_exitcode" else 11),
-    )
     monkeypatch.setattr(native, "write_record", write)
-    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
-    monkeypatch.setitem(sys.modules, "gdb", fake)
-    monkeypatch.setitem(sys.modules, "_native_worker", native)
-    monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
-    runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
-    result = native.read_record(directory / "result.json")
-    assert result["kind"] == "signal" and result["signal"] == 11
+    fake.drain()
+    result = native.read_record(debugger.directory / "result.json")
+    if exit_signal is not None:
+        assert result["kind"] == "signal" and result["signal"] == exit_signal
+    else:
+        assert result["kind"] == "exit" and result["code"] == exit_code
     assert result["observed_fatal_stops"] == 1
-    assert "handle SIGSEGV stop print pass" in commands
-    assert commands[-1] == "continue"
-    assert all("canary" not in path.read_text() for path in directory.iterdir())
+    assert "handle SIGSEGV stop print pass" in fake.commands
+    assert fake.commands[-3:] == ["run &", "continue &", "quit"]
+    assert all("canary" not in path.read_text() for path in debugger.directory.iterdir())
+
+
+def test_queued_resume_is_ignored_after_native_exit_event(debugger):
+    fake = debugger.api
+    fake.drain()  # Dispatch startup, then deliver a stop followed by the native exit event.
+    fake.stop()
+    fake.exit(received=11)
+    fake.drain()
+    assert "continue &" not in fake.commands
+    assert fake.commands[-1] == "quit"
+    assert debugger.collector.terminal_seen is True
+    result = native.read_record(debugger.directory / "result.json")
+    assert result["kind"] == "signal" and result["signal"] == 11
+    fake.stop()
+    fake.drain()
+    assert fake.commands.count("quit") == 1
+    assert "continue &" not in fake.commands
+
+
+@pytest.mark.parametrize("failure", ["gdb", "value"])
+def test_failed_terminal_variable_read_stays_unknown_and_quits(debugger, monkeypatch, failure):
+    fake = debugger.api
+    fake.drain()
+
+    def unavailable(expression):
+        error = fake.error if failure == "gdb" else ValueError
+        raise error("private-terminal-read-canary")
+
+    monkeypatch.setattr(fake, "parse_and_eval", unavailable)
+    fake.exit(received=11)
+    fake.drain()
+    result = native.read_record(debugger.directory / "result.json")
+    assert result["kind"] == "unavailable"
+    assert result["reason"] == "terminal_status_unknown"
+    assert "signal" not in result and "code" not in result
+    assert debugger.collector.finalized is True
+    assert fake.commands[-1] == "quit"
+    assert "continue &" not in fake.commands
+    assert all(
+        "private-terminal-read-canary" not in path.read_text()
+        for path in debugger.directory.iterdir()
+    )
+
+
+def test_other_inferior_exit_event_does_not_finalize_worker(debugger):
+    fake = debugger.api
+    fake.drain()
+    for callback in fake.exit_handlers:
+        callback(SimpleNamespace(inferior=SimpleNamespace(pid=2)))
+    assert not fake.pending
+    assert fake.value_reads == []
+    assert debugger.collector.terminal_seen is False
+    assert not (debugger.directory / "result.json").exists()
+
+
+def test_register_esrch_without_exit_event_is_incomplete_not_a_terminal_signal(debugger):
+    fake = debugger.api
+    fake.on_command["run &"] = fake.stop
+    fake.on_command["continue &"] = fake.error(
+        "Could not read registers: No such process private-error-canary"
+    )
+    fake.drain()
+    assert fake.commands[-2:] == ["run &", "continue &"]
+    assert fake.commands.count("continue &") == 1
+    assert not fake.pending
+    assert fake.value_reads == []
+    assert debugger.collector.finalized is False
+    assert debugger.collector.terminal_seen is False
+    assert not (debugger.directory / "result.json").exists()
+    assert native.read_record(debugger.directory / "awaiting-native-exit.json") == {
+        "kind": "incomplete",
+        "reason": "register_esrch",
+    }
+    assert all(
+        "private-error-canary" not in path.read_text() for path in debugger.directory.iterdir()
+    )
 
 
 def _mechanism_start(root, source, arguments=(), *, environment=None):

@@ -63,12 +63,13 @@ refusal stop startup. No tracing policy or capability changes are made. Each hel
 sets its own parent-death signal so forced launcher termination also stops its debugger
 and worker. Registrations never authorize controller signals to another process.
 
-Private session artifacts under `.pytest_cache/worker-status/` contain bounded native
+Session artifacts under `.pytest_cache/worker-status/` contain bounded native
 PCs, symbols, module identities and offsets for up to eight threads and 24 frames per
 thread. Up to eight observed fatal-signal stops are retained. A stop may be handled by
 the worker; the separate terminal result records whether it eventually exited or died
 from a signal. A bounded fault-thread summary also appears in the job log. Missing
-symbols or mappings remain unresolved. Raw debugger output is discarded; core dumps,
+symbols or mappings remain unresolved. CI retains these sanitized records in its
+existing test artifacts. Raw debugger output is discarded; core dumps,
 arguments, locals, environment values and memory bytes are not collected.
 
 ## Integration tests

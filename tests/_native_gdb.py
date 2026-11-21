@@ -128,15 +128,84 @@ def signature(received: str) -> dict[str, Any]:
     return result
 
 
-def run() -> None:
-    context = native.read_context()
-    directory = Path(context["directory"])
-    stops = 0
-    trap = False
-    trap_stops = 0
+class NativeDebugger:
+    def __init__(self) -> None:
+        self.directory = Path(native.read_context()["directory"])
+        self.inferior = gdb.selected_inferior()
+        self.stops = 0
+        self.trap_stops = 0
+        self.finalized = False
+        self.terminal_seen = False
+        gdb.events.stop.connect(self.on_stop)
+        gdb.events.exited.connect(self.on_exit)
+        # Native async execution leaves exit-event dispatch with GDB's main loop.
+        gdb.post_event(lambda: self.execute("run &"))
 
-    def on_stop(event: Any) -> None:
-        nonlocal stops, trap, trap_stops
+    def finish(self, result: dict[str, Any]) -> None:
+        if self.finalized:
+            return
+        self.finalized = True
+        result.update(
+            observed_fatal_stops=self.stops,
+            captured_stops=min(self.stops, native.MAX_STOPS),
+            trap_stops=self.trap_stops,
+            gdb_version=gdb.VERSION[:64],
+        )
+        try:
+            native.write_record(self.directory / "result.json", result)
+        finally:
+            gdb.post_event(lambda: gdb.execute("quit", to_string=False))
+
+    def on_exit(self, event: Any) -> None:
+        if event.inferior == self.inferior:
+            self.terminal_seen = True
+            # Convenience variables are final only after the native exit event completes.
+            gdb.post_event(self.terminal_result)
+
+    def terminal_result(self) -> None:
+        try:
+            exit_code, exit_signal = integer("$_exitcode"), integer("$_exitsignal")
+        except (gdb.error, ValueError, TypeError):
+            self.finish({"kind": "unavailable", "reason": "terminal_status_unknown"})
+            return
+        if not (self.directory / "inferior.json").exists():
+            result = {"kind": "unavailable", "reason": "inferior_not_started"}
+        elif exit_signal is not None:
+            result = {"kind": "signal", "signal": exit_signal}
+        elif exit_code is not None:
+            result = {"kind": "exit", "code": exit_code}
+        else:
+            result = {"kind": "unavailable", "reason": "terminal_status_unknown"}
+        self.finish(result)
+
+    def execute(self, command: str) -> None:
+        if self.finalized or self.terminal_seen:
+            return
+        try:
+            gdb.execute(command, to_string=False)
+        except gdb.error as error:
+            detail = str(error).lower()
+            if self.stops and "register" in detail and "no such process" in detail:
+                # A dead thread can precede the queued native process-exit event.
+                # This marker proves no terminal outcome; never retry or infer a signal.
+                try:
+                    native.write_record(
+                        self.directory / "awaiting-native-exit.json",
+                        {"kind": "incomplete", "reason": "register_esrch"},
+                    )
+                except OSError:
+                    pass
+                return
+            refused = any(
+                token in detail for token in ("ptrace", "not permitted", "permission denied")
+            )
+            self.finish(
+                {"kind": "unavailable", "reason": "trace_refused" if refused else "debugger_error"}
+            )
+
+    def on_stop(self, event: Any) -> None:
+        if self.finalized or self.terminal_seen:
+            return
         trap = isinstance(event, gdb.SignalEvent) and event.stop_signal == "SIGTRAP"
         if not isinstance(event, gdb.SignalEvent):
             # Some targets report a user SIGTRAP as StopEvent rather than SignalEvent.
@@ -145,22 +214,30 @@ def run() -> None:
             except gdb.error:
                 pass
         if trap:
-            trap_stops += 1
-        if isinstance(event, gdb.SignalEvent) and event.stop_signal in FATAL:
-            stops += 1
-            if stops > native.MAX_STOPS:
-                return
-            path = directory / f"signature-{stops}.json"
-            try:
-                native.write_record(path, {"observed_stop": stops, **signature(event.stop_signal)})
-            except Exception:  # noqa: BLE001 — a collector failure must still deliver the signal
-                try:
-                    native.write_record(path, {"observed_stop": stops, "capture": "unavailable"})
-                except OSError:
-                    pass
+            self.trap_stops += 1
+        try:
+            if isinstance(event, gdb.SignalEvent) and event.stop_signal in FATAL:
+                self.capture(event.stop_signal)
+        finally:
+            command = "signal SIGTRAP" if trap else "continue &"
+            gdb.post_event(lambda: self.execute(command))
 
-    gdb.events.stop.connect(on_stop)
-    # Preserve ASLR and all delivered signals, including GDB's special defaults.
+    def capture(self, received: str) -> None:
+        self.stops += 1
+        if self.stops > native.MAX_STOPS:
+            return
+        path = self.directory / f"signature-{self.stops}.json"
+        try:
+            native.write_record(path, {"observed_stop": self.stops, **signature(received)})
+        except Exception:  # noqa: BLE001 — a collector failure must still deliver the signal
+            try:
+                native.write_record(path, {"observed_stop": self.stops, "capture": "unavailable"})
+            except OSError:
+                pass
+
+
+def install() -> NativeDebugger:
+    # Preserve ASLR and delivered signals, including GDB's special defaults.
     for command in (
         "set pagination off",
         "set confirm off",
@@ -169,67 +246,12 @@ def run() -> None:
         "set follow-exec-mode same",
         "handle all nostop noprint pass",
         "handle SIGINT nostop noprint pass",
-        # Internal exec traps stay with GDB; the loop delivers actual inferior SIGTRAPs.
+        # Internal exec traps stay with GDB; on_stop delivers actual inferior SIGTRAPs.
         "handle SIGTRAP stop print nopass",
         *(f"handle {name} stop print pass" for name in sorted(FATAL)),
     ):
         gdb.execute(command, to_string=True)
-    result: dict[str, Any]
-    try:
-        gdb.execute("run", to_string=False)
-        while gdb.selected_inferior().pid:
-            # stop handlers only collect; this resumes with the original signal policy.
-            command = "signal SIGTRAP" if trap else "continue"
-            trap = False
-            gdb.execute(command, to_string=False)
-        exit_code, exit_signal = integer("$_exitcode"), integer("$_exitsignal")
-        if not (directory / "inferior.json").exists():
-            result = {
-                "kind": "unavailable",
-                "reason": "inferior_not_started",
-                "exit_code": exit_code,
-                "exit_signal": exit_signal,
-            }
-        elif exit_signal is not None:
-            result = {"kind": "signal", "signal": exit_signal}
-        elif exit_code is not None:
-            result = {"kind": "exit", "code": exit_code}
-        else:
-            result = {"kind": "unavailable", "reason": "terminal_status_unknown"}
-    except gdb.error as error:
-        detail = str(error).lower()
-        refused = any(token in detail for token in ("ptrace", "not permitted", "permission denied"))
-        result = {"kind": "unavailable", "reason": "trace_refused" if refused else "debugger_error"}
-        result["error_categories"] = [
-            category
-            for category in (
-                "register",
-                "no such process",
-                "not being run",
-                "thread",
-                "running",
-                "breakpoint",
-                "memory",
-                "signal",
-                "exited",
-            )
-            if category in detail
-        ]
-        result["error_digest"] = hashlib.sha256(detail.encode()).hexdigest()
-        try:
-            result["inferior_pid"] = gdb.selected_inferior().pid
-        except gdb.error:
-            result["inferior_pid"] = None
-        for key, expression in (("exit_code", "$_exitcode"), ("exit_signal", "$_exitsignal")):
-            try:
-                result[key] = integer(expression)
-            except (gdb.error, TypeError, ValueError):
-                result[key] = None
-    result["observed_fatal_stops"] = stops
-    result["captured_stops"] = min(stops, native.MAX_STOPS)
-    result["trap_stops"] = trap_stops
-    result["gdb_version"] = gdb.VERSION[:64]
-    native.write_record(directory / "result.json", result)
+    return NativeDebugger()
 
 
-run()
+collector = install()

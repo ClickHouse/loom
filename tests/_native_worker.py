@@ -251,7 +251,6 @@ def launch(root: Path, arguments: list[str]) -> int:
         "-q",
         "-nx",
         "-nh",
-        "-batch",
         "-iex",
         "set auto-load off",
         "-iex",
@@ -270,7 +269,7 @@ def launch(root: Path, arguments: list[str]) -> int:
     try:
         with subprocess.Popen(
             [sys.executable, str(Path(__file__).resolve()), "--debugger-bootstrap", *command],
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             pass_fds=descriptors,
