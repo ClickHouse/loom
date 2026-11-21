@@ -110,8 +110,8 @@ class NativeSession:
         self.finished = False
         write_record(self.root / "config.json", {"debugger": debugger})
 
-    def configure(self, specs: list[Any], max_restarts: int | None = None) -> None:
-        restarts = 4 * len(specs) if max_restarts is None else max_restarts
+    def configure(self, specs: list[Any], max_restarts: int | str | None = None) -> None:
+        restarts = 4 * len(specs) if max_restarts is None else int(max_restarts)
         if restarts < 0 or len(specs) + restarts > MAX_WORKERS:
             raise ValueError("native diagnostic worker limit exceeded")
         for spec in specs:
