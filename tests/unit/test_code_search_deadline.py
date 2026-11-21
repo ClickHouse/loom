@@ -15,7 +15,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
+from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -630,3 +633,138 @@ def test_a_failed_leg_is_partial_on_the_wire_and_never_memoized(monkeypatch) -> 
     assert data["epistemic"] == "partial"
     assert data["retrieval_work"]["vector_leg_failed"] == 1
     assert puts == []
+
+
+@contextmanager
+def _first_content_clock():
+    from server.code.domain import deadline as code_deadline
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock(t=1000.0)
+    real_asyncio = asyncio
+
+    def loop_factory():
+        loop = real_asyncio.new_event_loop()
+        selector = loop._selector
+        real_select = selector.select
+
+        def select(timeout=None):
+            events = real_select(0)
+            if not events and timeout is not None:
+                clock.advance(max(0.0, timeout))
+            return events
+
+        loop.time = clock.monotonic
+        selector.select = select
+        return loop
+
+    async def checked(coro):
+        before = real_asyncio.all_tasks()
+        try:
+            return await coro
+        finally:
+            leaked = real_asyncio.all_tasks() - before - {real_asyncio.current_task()}
+            for task in leaked:
+                task.cancel()
+            await real_asyncio.gather(*leaked, return_exceptions=True)
+            assert not leaked, "search deadline leaves no task on its private loop"
+
+    def run(coro):
+        with real_asyncio.Runner(loop_factory=loop_factory) as runner:
+            return runner.run(checked(coro))
+
+    # Fake leg sleeps and request budgets share idle time, independently of CPU scheduling.
+    timers = SimpleNamespace(
+        **{**vars(time), "monotonic": clock.monotonic, "perf_counter": clock.monotonic}
+    )
+    with (
+        patch.object(
+            sys.modules[__name__], "asyncio", SimpleNamespace(**{**vars(real_asyncio), "run": run})
+        ),
+        patch.object(sys.modules[__name__], "time", timers),
+        patch.object(code_deadline, "time", timers),
+        patch.object(legs, "time", timers),
+    ):
+        yield clock
+
+
+@pytest.fixture(autouse=True)
+def _first_content_deadline_clock(request):
+    if request.node.name != "test_the_deadline_waits_for_the_first_content_leg":
+        yield
+        return
+    with _first_content_clock():
+        yield
+
+
+@pytest.mark.parametrize("jump", [0.0, 0.12])
+def test_first_content_clock_ignores_unrelated_pre_leg_time(jump):
+    from server.code.domain import deadline as code_deadline
+
+    offset = 0.0
+    calls = []
+    real_monotonic = time.monotonic
+    actual_budget = cs_gather._leg_budget
+
+    def leg_budget(*args, **kwargs):
+        nonlocal offset
+        offset += jump
+        calls.append(offset)
+        return actual_budget(*args, **kwargs)
+
+    with (
+        patch.object(
+            code_deadline, "time", SimpleNamespace(monotonic=lambda: real_monotonic() + offset)
+        ),
+        patch.object(cs_gather, "_leg_budget", leg_budget),
+        _first_content_clock(),
+    ):
+        test_the_deadline_waits_for_the_first_content_leg()
+    assert calls == [jump]
+
+
+def test_first_content_clock_still_drops_and_cancels_genuinely_blocked_legs():
+    cancelled = []
+
+    class BlockedRepo(_Repo):
+        async def lexical_search_chunks(self, *args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append("lexical")
+
+        async def vector_search_chunks(self, *args, **kwargs):
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cancelled.append("vector")
+
+    with _first_content_clock() as clock:
+        _, res, wall = _run(BlockedRepo(), llm_legs="none", deadline_ms=400)
+        assert clock.t == pytest.approx(1000.4, abs=0.001)
+    assert 0.399 <= wall <= 0.401
+    assert res.units == [] and res.abstain and res.partial and res.epistemic == "partial"
+    assert set(res.legs_timed_out) == {"lexical", "vector"}
+    assert sorted(cancelled) == ["lexical", "vector"]
+
+
+def test_first_content_clock_drains_and_rejects_an_orphan_task():
+    cancelled = []
+
+    async def orphan():
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    async def leak():
+        asyncio.create_task(orphan())
+        await asyncio.sleep(0)
+
+    real_asyncio, real_time = asyncio, time
+    real_run, real_monotonic = asyncio.run, time.monotonic
+    with _first_content_clock(), pytest.raises(AssertionError, match="leaves no task"):
+        asyncio.run(leak())
+    assert cancelled == [True]
+    assert asyncio is real_asyncio and asyncio.run is real_run
+    assert time is real_time and time.monotonic is real_monotonic
