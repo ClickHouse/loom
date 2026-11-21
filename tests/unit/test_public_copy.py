@@ -4,7 +4,8 @@ The repository describes techniques, not products, people or its own history:
 
 1. Public copy (README, quickstart, memory) names no adjacent product, even as a
    category example.
-2. The whole source tree names no competitor memory or vector-store product, no
+2. Apart from the exact names allowed in the sourced architecture comparison,
+   the whole source tree names no competitor memory or vector-store product, no
    person, contributor handle, personal address, internal host, repository,
    project or namespace, and not the tracker source's product name; it cites no
    paper and no design-decision record (the PR and the docs carry the why).
@@ -34,6 +35,44 @@ PUBLIC_COPY_FILES = (
     "i18n/zh-CN/README.md",
     "docs/getting-started/quickstart.md",
     "docs/concepts/memory.md",
+)
+
+# This one sourced comparison names the architectures it compares. Keep every
+# other name and every privacy/citation check in force, including on this page.
+COMPARISON_PAGE = "docs/guides/compare-agent-memory.md"
+COMPARISON_PAGES = frozenset(
+    {COMPARISON_PAGE}
+    | {f"i18n/{locale}/{COMPARISON_PAGE}" for locale in ("zh-CN", "ja", "ko", "pt-BR", "es")}
+)
+COMPARISON_NAME_DIGESTS = frozenset(
+    {
+        "093c76bd1fbdb3a8",
+        "0c52ce0ffa591ba8",
+        "0ddf11199f912d49",
+        "1321e95ab8255216",
+        "3320129ca98837c9",
+        "4f7ea3389d31f27b",
+        "523ee360e4484d69",
+        "662d060cc3fa6a18",
+        "67a0b06fbad7ad0e",
+        "7ddb7327ebc3251b",
+        "92acaee9c4397a15",
+        "af96b890924d1287",
+    }
+)
+# Publisher identifiers are permitted only in these exact primary citations.
+COMPARISON_PRIMARY_CITATIONS = frozenset(
+    {
+        "[graphiti]: https://github.com/getzep/graphiti/blob/9b8a4630092084734b080f2e6f409c2c23bdcc3a/README.md",
+        "[supermemory]: https://github.com/supermemoryai/supermemory/blob/9547bd0f571c7e03d679bade5513876119048945/README.md",
+        "[cognee]: https://github.com/topoteretes/cognee/blob/1961133d0c68b450fe8e71941a756371e94f7c04/README.md",
+        "[claude-mem]: https://github.com/thedotmack/claude-mem/blob/f1bb834527637231e23575e2a70c57375efdac04/README.md",
+        "[cipher]: https://github.com/campfirein/byterover-cli/blob/1052ac1a5dd0fde4da8693d4712064f7876c269c/README.md",
+        "[serena]: https://github.com/oraios/serena/blob/7f7d6245bf96b60fdf4e752a779917372fd1ee6e/README.md",
+        "[chunkhound]: https://github.com/chunkhound/chunkhound/blob/70c1cac3d11b286a515660e518cabc60ea8918b1/README.md",
+        "[codanna]: https://github.com/bartolli/codanna/blob/639917d868eda7dc789774c9c9d69b3753dd1b75/README.md",
+        "[sourcegraph]: https://sourcegraph.com/docs/getting-started",
+    }
 )
 
 # The names the repository must not carry: adjacent products, people, contributor
@@ -125,7 +164,7 @@ def _is_banned(window: str) -> bool:
     return hit
 
 
-def _banned_in(line: str) -> str:
+def _banned_in(line: str, *, allowed: frozenset[str] = frozenset()) -> str:
     """The first banned name in `line`, as the words it was found as, or ""."""
     for run in _RUN.findall(line.lower()):
         parts = re.split(r"([-_. ])", run)
@@ -135,9 +174,18 @@ def _banned_in(line: str) -> str:
             for j in range(i, min(i + _WINDOW, len(words))):
                 if j > i:
                     window += seps[j - 1] + words[j]
-                if _is_banned(window):
+                if _is_banned(window) and (
+                    hashlib.sha256(_SALT + window.encode()).hexdigest()[:16] not in allowed
+                ):
                     return window
     return ""
+
+
+def _source_name_violation(rel: str, line: str) -> str:
+    if rel in COMPARISON_PAGES and line.strip() in COMPARISON_PRIMARY_CITATIONS:
+        return ""
+    allowed = COMPARISON_NAME_DIGESTS if rel in COMPARISON_PAGES else frozenset()
+    return _banned_in(line, allowed=allowed)
 
 
 PATTERNS = {
@@ -278,7 +326,7 @@ def test_source_tree_names_no_product_person_or_host() -> None:
         f"{rel}:{i}: {line.strip()[:120]!r}"
         for rel, lines in _scanned()
         for i, line in enumerate(lines, start=1)
-        if _banned_in(line)
+        if _source_name_violation(rel, line)
     ]
     assert not violations, (
         "a product, person or internal name; describe the technique or use a neutral "
@@ -349,3 +397,32 @@ def test_a_digest_catches_its_name_in_every_shape_and_nothing_else(monkeypatch) 
     assert _banned_in("acme_cloud is an identifier") == ""
     assert _banned_in("an acme cloud deployment") == ""
     _seen.clear()
+
+
+def test_comparison_names_are_allowed_only_at_the_exact_page() -> None:
+    import sys
+    from unittest.mock import patch
+
+    def digest(name: str) -> str:
+        return hashlib.sha256(_SALT + name.encode()).hexdigest()[:16]
+
+    with patch.multiple(
+        sys.modules[__name__],
+        _seen={},
+        BANNED_DIGESTS=BANNED_DIGESTS | {digest("acmedb"), digest("privatehost")},
+        COMPARISON_NAME_DIGESTS=frozenset({digest("acmedb")}),
+        COMPARISON_PRIMARY_CITATIONS=frozenset({"[source]: https://privatehost/acmedb/README.md"}),
+    ):
+        for path in COMPARISON_PAGES:
+            assert _source_name_violation(path, "AcmeDB architecture") == ""
+            assert _source_name_violation(path, "AcmeDB at privatehost") == "privatehost"
+            citation = "[source]: https://privatehost/acmedb/README.md"
+            assert _source_name_violation(path, citation) == ""
+            assert _source_name_violation(path, citation + " privatehost") == "privatehost"
+            assert _source_name_violation(path, citation.replace("README.md", "other.md"))
+            assert _source_name_violation("docs/guides/other.md", citation) == "privatehost"
+        assert _source_name_violation("docs/guides/other.md", "AcmeDB") == "acmedb"
+        assert _source_name_violation("i18n/ja/docs/guides/other.md", "AcmeDB") == "acmedb"
+        assert _source_name_violation("i18n/fr/" + COMPARISON_PAGE, "AcmeDB") == "acmedb"
+        assert _source_name_violation(COMPARISON_PAGE + ".bak", "AcmeDB") == "acmedb"
+        assert _banned_in("AcmeDB architecture") == "acmedb"

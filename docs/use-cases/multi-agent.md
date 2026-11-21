@@ -111,7 +111,8 @@ benchmark. A reported completion is not a passing test, an accepted patch or pro
 memory helped. Your orchestrator remains responsible for enforcing those gates.
 
 For a single coding assistant, start with [coding-agent memory](agent-memory.md#choosing-a-memory-tool-for-coding-agents)
-and its cross-session check. For architecture trade-offs, read [Choosing memory for a software factory](https://github.com/ClickHouse/loom/discussions/939).
+and its cross-session check. For deployment, sharing, provenance and staleness trade-offs,
+read [Compare agent memory architectures](../guides/compare-agent-memory.md).
 Use the [code-linked lesson example](memory-linked-to-code.md#check-a-lesson-after-a-code-edit)
 to evaluate source freshness separately from recall.
 

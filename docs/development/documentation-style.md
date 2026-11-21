@@ -45,6 +45,9 @@ When a feature needs an operator switch or an external system, say so in the pag
 - **Short.** Short sentences, short paragraphs, tables for options. No metaphors, no marketing.
 - **Present tense, current behaviour.** Write what Loom does. History, dates and the reasons for a change go in the pull request.
 - **Name techniques, not products.** Repository text names no adjacent product, no person, no internal host or namespace, and cites no paper or design-decision record. `tests/unit/test_public_copy.py` enforces the lists. Compare architectures ("a separate vector store beside the relational store"), never brands.
+- The [agent-memory comparison](../guides/compare-agent-memory.md) has a narrow exception
+  for its sourced product names. The exception applies only to that page, its translations and those
+  names and the exact primary-source citation lines; privacy and citation checks still apply.
 - **No unmeasured adjectives.** "Fast", "scalable", "accurate" need a number and the command that reproduces it, or a mechanism.
 - **Say why.** A design choice comes with the problem it solves and what it costs.
 - **Link, don't repeat.** One page owns each explanation and each table; others link to its heading.
