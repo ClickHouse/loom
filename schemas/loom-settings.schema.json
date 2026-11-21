@@ -4593,6 +4593,19 @@
           "type": "integer",
           "description": "Characters one extraction read takes: a shorter document is read whole, a longer one in windows of whole sections. Sized so a dense window's reply fits the decision_extract cap."
         },
+        "memory_digest_listing_max_pages": {
+          "default": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE."
+        },
+        "memory_digest_listing_page_size": {
+          "default": 256,
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Raw digest candidates per query while filling listing, outline and export rows."
+        },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
           "minimum": 1,

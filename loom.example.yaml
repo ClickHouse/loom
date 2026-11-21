@@ -3241,6 +3241,14 @@ settings:
   # the built-in 3000. Facts are never clipped to fit. [restart]
   # memory_session_digest_max_input_chars: 3000
 
+  # Raw digest candidates per query while filling listing, outline and export rows.
+  # [restart]
+  # memory_digest_listing_page_size: 256
+
+  # Queries allowed to find enough proven digests; exhaustion answers
+  # BACKEND_UNAVAILABLE. [restart]
+  # memory_digest_listing_max_pages: 256
+
   # content_excerpt ceiling for answer-bearing facts (question_topic set) when
   # memory_capture_structured_answers is on, so an enumerated answer is not clipped
   # mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars). [restart]

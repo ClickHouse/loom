@@ -84,3 +84,62 @@ async def test_digest_listings_scan_past_withheld_sources(
             assert result["truncated"] is True
         if op == "memory.export_evidence":
             assert result["has_more"] is True
+
+
+@pytest.mark.parametrize("page_size", [1, 2])
+async def test_period_pages_choose_latest_model_before_applying_the_cursor(ch_client, page_size):
+    from server.core.ch import get_client
+    from server.memory.app.period_digest import _fetch_digests
+
+    org, now = unique_org("period-pages"), naive_utc_now()
+    columns = [
+        "org",
+        "namespace",
+        "agent",
+        "user_id",
+        "session_id",
+        "embedding_model",
+        "summary_text",
+        "key_facts",
+        "derived_from",
+        "created_at",
+        "version",
+        "summary_embedding",
+    ]
+    rows = [
+        [
+            org,
+            "facts",
+            "a",
+            "subject",
+            sid,
+            model,
+            text,
+            [text],
+            ["k"],
+            now + timedelta(seconds=offset),
+            version,
+            [0.0] * 3072,
+        ]
+        for sid, model, text, offset, version in (
+            ("s1", "old", "retired fact", 10, 1),
+            ("s1", "middle", "intermediate fact", 5, 2),
+            ("s1", "current", "current fact", 0, 3),
+            ("s2", "current", "second fact", 1, 1),
+            ("s3", "current", "third fact", 2, 1),
+        )
+    ]
+    ch_client.insert(
+        "loom.session_summaries", rows, column_names=columns, settings={"async_insert": 0}
+    )
+    ch = get_client()
+    await ch.connect()
+    try:
+        identity = dict(org=org, namespace="facts", agent="a", user_id="subject")
+        found = [
+            row async for page in _fetch_digests(ch, identity, page_size=page_size) for row in page
+        ]
+    finally:
+        await ch.disconnect()
+    assert [row["session_id"] for row in found] == ["s1", "s2", "s3"]
+    assert found[0]["summary_text"] == "current fact" and found[0]["version"] == 3

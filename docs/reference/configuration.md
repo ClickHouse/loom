@@ -1105,6 +1105,8 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | `LOOM_MEMORY_REINFORCEMENT_CLOSER_CACHE_SECONDS` | `int` | `300` |  | Seconds one (org, consumer) closer answer is cached per worker. |
 | `LOOM_MEMORY_LIST_VIEWER_LIMIT` | `int` | `100` |  | memory.list rows per call for a token below writer on the namespace; it pages with `offset` (wire cap stays 1000). 0 = no viewer cap. |
 | `LOOM_MEMORY_SESSION_DIGEST_MAX_INPUT_CHARS` | `int` | `3000` |  | Characters of complete source facts included in an extractive session digest; 0 = the built-in 3000. Facts are never clipped to fit. |
+| `LOOM_MEMORY_DIGEST_LISTING_PAGE_SIZE` | `int` | `256` |  | Raw digest candidates per query while filling listing, outline and export rows. |
+| `LOOM_MEMORY_DIGEST_LISTING_MAX_PAGES` | `int` | `256` |  | Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE. |
 | `LOOM_MEMORY_STRUCTURED_ANSWER_EXCERPT_LIMIT` | `int` | `4096` |  | content_excerpt ceiling for answer-bearing facts (question_topic set) when memory_capture_structured_answers is on, so an enumerated answer is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars). |
 | `LOOM_MEMORY_VALUE_ADVISORY_CHARS` | `int` | `30000` |  | A searchable memory.set value serializing longer than this many chars gets one advisory line (the write still lands): only the first EXCERPT_LIMIT chars are embedded, and past the embedder's 8,191-token cap nothing is. 30,000 chars ≈ 8k tokens. 0 disables. |
 

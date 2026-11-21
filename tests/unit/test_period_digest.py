@@ -173,7 +173,15 @@ class _FakeCH:
                 {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-", "sessions": sessions}
             ]
         if "FROM loom.session_summaries FINAL" in sql:
-            ordered = sorted(self._digests, key=lambda d: (d["at"], d["session_id"]))
+            rows = self._digests
+            if "LIMIT 1 BY session_id" in sql:
+                latest = {}
+                for row in sorted(
+                    rows, key=lambda d: (-d.get("version", 1), d.get("embedding_model", ""))
+                ):
+                    latest.setdefault(row["session_id"], row)
+                rows = list(latest.values())
+            ordered = sorted(rows, key=lambda d: (d["at"], d["session_id"]))
             after = params.get("after")
             if after:
                 ordered = [d for d in ordered if (d["at"], d["session_id"]) > after]
@@ -731,6 +739,19 @@ async def test_unqualified_session_text_never_reaches_the_period_model(monkeypat
         ch, {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"}, _CFG
     ) == ([], 0)
     qualification.assert_awaited_once()
+
+
+async def test_period_paging_selects_one_latest_digest_per_session_before_its_cursor():
+    from server.memory.app.period_digest import _fetch_digests
+
+    rows = [dict(_digest(1), embedding_model=f"m{i}", version=i) for i in (1, 2, 3)]
+    rows.extend(_digests(2, 3))
+    identity = {"org": "o", "namespace": "ns", "agent": "a", "user_id": "-"}
+    found = [
+        row async for page in _fetch_digests(_FakeCH(rows), identity, page_size=2) for row in page
+    ]
+    assert [row["session_id"] for row in found] == [f"ns:session_{i}" for i in (1, 2, 3)]
+    assert found[0]["embedding_model"] == "m3"
 
 
 @pytest.mark.asyncio

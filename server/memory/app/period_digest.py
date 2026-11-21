@@ -351,22 +351,21 @@ async def _fetch_digests(
     page_size: int = 256,
     after: tuple[datetime, str] | None = None,
 ) -> AsyncIterator[list[dict[str, Any]]]:
-    """Stream ordered raw windows without retaining the identity's whole history."""
+    """Page one latest live digest per session before cutting period windows."""
     from server.core.ch import set_query_tag
 
     while True:
         set_query_tag("cli.period_digest.sources")
-        cursor = (
-            " AND (coalesce(valid_at, created_at), session_id) > {after:Tuple(DateTime,String)}"
-            if after
-            else ""
-        )
+        cursor = " WHERE (at, session_id) > {after:Tuple(DateTime,String)}" if after else ""
         rows = await ch.query_all(
-            "SELECT org, namespace, agent, user_id, session_id, summary_text, key_facts, "
-            "derived_from, coalesce(valid_at, created_at) AS at "
+            "SELECT org, namespace, agent, user_id, session_id, embedding_model, version, "
+            "summary_text, key_facts, derived_from, at FROM ("
+            "SELECT org, namespace, agent, user_id, session_id, embedding_model, version, "
+            "summary_text, key_facts, derived_from, coalesce(valid_at, created_at) AS at "
             "FROM loom.session_summaries FINAL "
             "WHERE org={org:String} AND namespace={ns:String} "
             "AND agent={agent:String} AND user_id={uid:String} AND tombstoned_at IS NULL "
+            "ORDER BY session_id, version DESC, embedding_model LIMIT 1 BY session_id)"
             + cursor
             + " ORDER BY at, session_id LIMIT {limit:UInt32}",
             params={
@@ -652,8 +651,8 @@ async def _plan_identity(
         org=ident["org"],
         namespace=ident["namespace"],
     )
-    allowed = {str(d["session_id"]) for d in qualified}
-    verified = [p for p in writable if all(str(d["session_id"]) in allowed for d in p.digests)]
+    allowed = {id(d) for d in qualified}
+    verified = [p for p in writable if all(id(d) in allowed for d in p.digests)]
     return verified[: max(0, cfg.max_periods_per_identity)], skipped
 
 

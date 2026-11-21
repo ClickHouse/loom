@@ -8,9 +8,8 @@ from server.core.ch import set_query_tag
 from server.core.errors import BackendUnavailableError
 from server.core.repo_base import _CHClient
 from server.memory.store import summary_sources
+from server.settings import settings
 
-_PAGE_SIZE = 256
-_MAX_PAGES = 256
 Order = Literal["oldest", "newest", "session"]
 
 
@@ -36,9 +35,11 @@ async def verified_summary_page(
     key, ordering, comparison = _ordering(order)
     after: Any = None
     found: list[dict[str, Any]] = []
-    for page in range(_MAX_PAGES):
+    for page in range(settings.memory_digest_listing_max_pages):
         set_query_tag("memory.verified_digest_page")
-        size = min(_PAGE_SIZE, limit + 1) if page == 0 else _PAGE_SIZE
+        size = settings.memory_digest_listing_page_size
+        if page == 0:
+            size = min(size, limit + 1)
         cursor_type = (
             "String" if order == "session" else "Tuple(DateTime,String,String,String,String)"
         )

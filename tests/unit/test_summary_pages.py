@@ -106,7 +106,7 @@ async def test_pages_fill_from_current_sources(monkeypatch, order, withheld, qua
 
 
 async def test_scan_budget_refuses_instead_of_reporting_no_more_digests(monkeypatch):
-    monkeypatch.setattr(summary_pages, "_MAX_PAGES", 2)
+    monkeypatch.setattr(summary_pages.settings, "memory_digest_listing_max_pages", 2)
     rows = candidates(300, "oldest")
     for row in rows:
         row["derived_from"] = []

@@ -101,6 +101,26 @@ async def test_a_missing_source_and_a_forged_sentence_do_not_hide_a_valid_neighb
     ) == [valid]
 
 
+async def test_a_current_model_digest_does_not_qualify_a_stale_model_row(sources):
+    from server.memory.app.period_digest import PeriodDigestConfig, _plan_identity
+
+    source = sources["source"] = sources["source"].model_copy(update={"session_id": "session"})
+    scope = {c: getattr(source, c) for c in ("org", "namespace")}
+    stale = digest(
+        source,
+        **scope,
+        embedding_model="old",
+        summary_text="retired fact",
+        key_facts=["retired fact"],
+    )
+    current = digest(source, **scope, embedding_model="current")
+    ch = SimpleNamespace(query_all=AsyncMock(return_value=[]))
+    identity = {c: getattr(source, c) for c in ("org", "namespace", "agent", "user_id")}
+    assert await _plan_identity(
+        ch, [stale, current], identity, PeriodDigestConfig(sessions_per_period=2)
+    ) == ([], 0)
+
+
 async def test_source_state_failure_withholds_the_summary(monkeypatch: Any) -> None:
     source = _row(value="current fact", memory_key="source")
 

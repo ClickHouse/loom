@@ -90,9 +90,14 @@ changed, retired, expired, sensitive, incomplete or awaiting review. A metadata 
 keeps an unchanged fact valid. A legacy digest without a complete proof is withheld.
 
 Digest listing, outline and evidence export scan past withheld candidates to fill their
-requested rows. Each query reads at most 256 candidates. After 256 full queries without
-enough verified rows, the operation returns `BACKEND_UNAVAILABLE` rather than claiming
-the listing is complete.
+requested rows. `memory_digest_listing_page_size` bounds candidates per query and
+`memory_digest_listing_max_pages` bounds queries per call; both default to 256. If that
+budget cannot find enough verified rows or prove exhaustion, the operation returns
+`BACKEND_UNAVAILABLE` rather than claiming the listing is complete.
+
+Period planning selects the newest live digest per session before pagination. Source
+verification applies to each digest row; a valid row cannot admit another model's stale
+digest from the same session.
 
 Period and contrast synthesis remain proposals. A model-generated restatement therefore
 waits for independent review before ordinary fact retrieval serves it.

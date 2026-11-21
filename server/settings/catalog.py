@@ -2783,6 +2783,10 @@ class MemorySettings(BaseModel):
     # Characters of complete source facts included in an extractive session digest;
     # 0 = the built-in 3000. Facts are never clipped to fit.
     memory_session_digest_max_input_chars: int = 3000
+    # Raw digest candidates per query while filling listing, outline and export rows.
+    memory_digest_listing_page_size: int = Field(default=256, ge=1, le=2000)
+    # Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE.
+    memory_digest_listing_max_pages: int = Field(default=256, ge=1)
     # content_excerpt ceiling for answer-bearing facts (question_topic set)
     # when memory_capture_structured_answers is on, so an enumerated answer
     # is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars).
