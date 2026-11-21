@@ -553,6 +553,7 @@ class _SnapshotMemoryRow(BaseModel):
     status: Literal[
         "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
     ] = "active"
+    requires_review: bool | None = None
     conflict_with: list[str] = Field(default_factory=list)
     duplicate_of: str = ""
     evidence_count: UInt32 = 1

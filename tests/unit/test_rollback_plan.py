@@ -124,6 +124,12 @@ async def test_apply_reinstates_the_historical_row_and_tombstones_the_newborn(
     inserted: list[dict] = []
 
     class _CH:
+        async def query_all(self, sql: str, params: dict | None = None) -> list:
+            return [
+                store.build_memory_version_row(row)
+                for row in (await _live_heads((params or {}).get("keys", []))).values()
+            ]
+
         async def insert(self, table: str, rows: list[dict], **_: object) -> None:
             assert table == "loom.memory"
             inserted.extend(rows)
