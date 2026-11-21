@@ -744,7 +744,7 @@ jobs:
         if: matrix.part == '1'
         run: |
           uv pip install --python "$PWD/.venv/bin/python" --target "$RUNNER_TEMP/loom-adk-client" './sdk/python[google-adk]'
-          npm --prefix sdk/typescript ci --no-audit --no-fund
+          npm --prefix sdk/typescript ci --ignore-scripts --no-audit --no-fund
       # Provider staging tests create private, UUID-owned copies and run before
       # the web process starts, against this job's disposable migrated database.
       - name: Provider rebuild storage and recovery
