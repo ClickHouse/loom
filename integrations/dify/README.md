@@ -41,7 +41,11 @@ dify plugin package . -o loom-0.1.0.difypkg
 
 Tests use the actual SDK against a fake HTTP transport, concurrent native tool calls
 against a loopback HTTP server, and a local Loom server when configured.
-No local Dify application or Dify Cloud runtime has been tested.
+The hosted application check pins Dify Community Edition 1.20.0 and uses a Loom
+server and SDK wheel built from the same commit. It exercises ordinary setup,
+remote plugin registration, native tool workflows, user isolation, persisted identity
+and owned resource cleanup. Its result and retained evidence report the outcome.
+Dify Cloud and the full supported version and architecture matrix remain untested.
 
 Source: [ClickHouse/loom](https://github.com/ClickHouse/loom/tree/main/integrations/dify).
 See [privacy](PRIVACY.md).
