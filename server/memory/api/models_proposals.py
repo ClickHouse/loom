@@ -6,8 +6,8 @@ it only under `include_proposed`. `memory.proposals` answers "which facts are
 on trial and how are they doing": each row carries the graded runs that
 relied on it (from `run.grade`), the self-reported usage counters, and what
 the namespace owner's policy thresholds say (`ready`). `memory.proposal_decide`
-is the decision — a person's or an agent's; loom takes it on its own only
-under an owner-set `proposal_policy.mode = "auto"`.
+requires an administrator; acceptance requires an authenticated human independent
+of the proposer. An automatic policy may reject, but cannot accept.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ class MemoryProposalsInput(BaseModel):
 class MemoryProposal(BaseModel):
     memory_key: str
     memory_id: str
+    content_sha256: str = ""
     agent: str = ""
     memory_type: str = ""
     # The first 400 characters of the value; "" for a high row, read by key (memory.get).
@@ -75,6 +76,8 @@ class MemoryProposalDecideInput(BaseModel):
     # `accept` makes each proposal live (`active`, or `conflicted` when contradicted
     # on trial); `reject` sets it `rejected`.
     decision: Literal["accept", "reject"]
+    # Acceptance binds the content the reviewer saw, one canonical hash per key.
+    approved_sha256: dict[str, str] = Field(default_factory=dict, max_length=500)
     # Why; stored as the rejection reason on `reject` ("proposal rejected" when empty).
     reason: str = Field(default="", max_length=512)
 

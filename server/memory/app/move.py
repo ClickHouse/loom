@@ -96,6 +96,11 @@ def _destination_input(input: MemoryMoveInput, source: MemoryRow) -> Any:
     when the source's class is one a caller may declare (external / imported
     / derived); the server stamps every other class from the token and the
     op, so an `asserted` source lands `asserted` again."""
+    from server.core.errors import AuthInsufficientError
+    from server.memory.domain.proposal_review import pending_review
+
+    if pending_review(source):
+        raise AuthInsufficientError("An unreviewed proposal must be reviewed before it is moved")
     source_class = str(getattr(source, "source_class", "") or "")
     return MemorySetInput(
         org=source.org,
