@@ -35,6 +35,16 @@ class _RoutedCH:
         return []
 
 
+@pytest.fixture
+def qualified_outline_sources(monkeypatch):
+    """Outline formatting receives qualified rows; source proof has separate cases."""
+
+    async def qualified(ch, rows, **kwargs):
+        return rows
+
+    monkeypatch.setattr("server.memory.store.summary_sources.current_summary_sources", qualified)
+
+
 def test_ops_are_registered_for_viewers_and_classed_as_reads() -> None:
     from server.insights.app.op_mix import classify
 
@@ -49,12 +59,13 @@ def test_ops_are_registered_for_viewers_and_classed_as_reads() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("qualified_outline_sources")
 async def test_outline_composes_counts_sessions_hubs_communities_and_profile(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ch = _RoutedCH(
         {
-            "loom.session_summaries FINAL WHERE org = {o:String} AND namespace = {n:String} AND tombstoned_at IS NULL ORDER BY": [
+            "coalesce(valid_at, created_at)": [
                 {
                     "session_id": "ns:s4",
                     "summary_text": "Discussed the parish workshop. Then planned the retreat.",
@@ -116,6 +127,15 @@ async def test_outline_skips_the_profile_read_for_the_dash_user(
     out = await cur.handle_memory_outline(MemoryOutlineInput(org="o", namespace="n", agent="a"))
     assert out.profile_chars == 0 and out.sessions == [] and out.rows_by_type == {}
     assert not any("memory_type = 'profile'" in sql for sql, _ in ch.calls)
+
+
+async def test_outline_withholds_a_legacy_digest_without_source_proof(monkeypatch):
+    ch = _RoutedCH(
+        {"coalesce(valid_at, created_at)": [{"session_id": "s", "summary_text": "An old claim"}]}
+    )
+    monkeypatch.setattr("server.core.ch.get_client", lambda: ch)
+    out = await cur.handle_memory_outline(MemoryOutlineInput(org="o", namespace="n", agent="a"))
+    assert out.sessions == []
 
 
 def test_headline_takes_the_first_sentence_or_clips() -> None:
@@ -187,6 +207,7 @@ async def test_backlinks_of_an_unknown_key_is_empty_not_an_error(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("qualified_outline_sources")
 async def test_outline_shows_no_headline_for_a_digest_that_reads_as_a_credential(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

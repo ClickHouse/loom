@@ -538,7 +538,7 @@ Fields for every `memory` op: [operations/memory.md](operations/memory.md).
 | [`memory.reject`](operations/memory.md#memoryreject) | Mark a memory as explicitly rejected (extractor / user review decided the candidate fact is wrong), so it isn't re-extracted. | writer | idempotent | no | yes |
 | [`memory.related`](operations/memory.md#memoryrelated) | Find memories sharing entities with the source memory. | viewer | read | no |  |
 | [`memory.resolve_orphan_duplicates`](operations/memory.md#memoryresolve_orphan_duplicates) | Scan (org, namespace) for orphaned duplicate rows and re-activate them. | writer | idempotent | yes | yes |
-| [`memory.restore`](operations/memory.md#memoryrestore) | Bring back a deleted memory (within 14 days) or one Loom retired on its own. | writer | idempotent | yes | yes |
+| [`memory.restore`](operations/memory.md#memoryrestore) | Reverse automatic retirement when no deletion or erasure refusal blocks the value. | writer | idempotent | yes | yes |
 | [`memory.search`](operations/memory.md#memorysearch) | Semantic search over the agent's own memory. | viewer | read | no |  |
 | [`memory.search_trace`](operations/memory.md#memorysearch_trace) | Same shape as memory.search; returns the vector leg's per-candidate scoring breakdown (no fusion, assembly or reranker). | viewer | read | no |  |
 | [`memory.search_trace_log`](operations/memory.md#memorysearch_trace_log) | Read loom.search_trace_log for a namespace (requires the telemetry flag). | viewer | read | yes |  |

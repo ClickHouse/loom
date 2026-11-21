@@ -199,8 +199,9 @@ the rows agents write (`memory.promote` / `memory.demote`, table `loom.shared`).
 **Tier** — which extractor produced a code-index fact (parser or compiler); answers say
 which tier backs them.
 
-**Tombstone** — a higher-version row marking a memory deleted. `memory.restore` can undo
-it within the grace window; nothing is physically deleted by `memory.delete`.
+**Tombstone** — a higher-version row marking a memory deleted. Automatic tombstones can
+be reversed within the grace window when no refusal exists. Explicit deletion also records
+permanent refusal; its historical rows remain until physical erasure.
 
 **Toolset** — the MCP listing a client asks for (`core`, `coding`, `atomic`, `tasks`,
 `tracker`, `readonly`, `all`); it changes what is listed, not what the token may call.

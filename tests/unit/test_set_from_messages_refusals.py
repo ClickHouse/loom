@@ -12,10 +12,17 @@ async def test_a_schema_request_without_a_key_writes_no_evidence(
 ) -> None:
     """The 400 comes before the evidence write starts, so a refused request leaves no
     evidence rows behind."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
     from fastapi import HTTPException
 
     from server.memory.api.models_bulk import MemorySetFromMessagesInput
     from server.memory.app.extract import handler as hm
+
+    monkeypatch.setattr(
+        hm, "get_client", lambda: SimpleNamespace(query_all=AsyncMock(return_value=[]))
+    )
 
     started: list[object] = []
 

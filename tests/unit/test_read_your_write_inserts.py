@@ -147,7 +147,7 @@ BATCHED_TABLES = [
     ("server/observability/audit.py", "loom.audit_log", "switched"),
     ("server/observability/events.py", "loom.agent_events", "switched"),
     ("server/memory/store/webhooks.py", "loom.memory_webhook_outbox", "switched"),
-    ("server/memory/app/evidence.py", "loom.memory_evidence", "switched"),
+    ("server/memory/store/refusals.py", "loom.memory_evidence", "switched"),
     ("server/memory/app/evidence.py", "loom.memory_belief_sources", "switched"),
     ("server/core/rmt_carry.py", "loom.carry_acks", "request"),
     ("server/auth/attempts.py", "loom.auth_attempts", "request"),

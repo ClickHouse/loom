@@ -164,13 +164,13 @@ answer confidently with a fact it has reason to doubt.
 
 Five operations cover the memory lifecycle:
 
-| Lens      | Operation             | Effect                                                                     |
-| --------- | --------------------- | -------------------------------------------------------------------------- |
-| Expand    | `memory.set`          | Learn a fact under a key.                                                  |
-| Revise    | `memory.update_by_id` | Correct one row by id (`memory.update` does the same by key).              |
-| Contract  | `memory.delete`       | Tombstone a key. `memory.restore` revives it within 14 days of the delete. |
-| Reinforce | `memory.pin`          | Store and pin: no later write that does not itself pin replaces it.        |
-| Refuse    | `blacklist.add`       | Refuse every future write matching a substring or regex.                   |
+| Lens      | Operation             | Effect                                                              |
+| --------- | --------------------- | ------------------------------------------------------------------- |
+| Expand    | `memory.set`          | Learn a fact under a key.                                           |
+| Revise    | `memory.update_by_id` | Correct one row by id (`memory.update` does the same by key).       |
+| Contract  | `memory.delete`       | Tombstone a key and refuse later intake of its removed value.       |
+| Reinforce | `memory.pin`          | Store and pin: no later write that does not itself pin replaces it. |
+| Refuse    | `blacklist.add`       | Refuse every future write matching a substring or regex.            |
 
 A searchable `memory.set` runs these checks in order:
 
@@ -264,7 +264,7 @@ stateDiagram-v2
     active --> superseded: newer write (newest_wins, refines, conflict resolver)
     superseded --> active: memory.restore
     active --> tombstoned: memory.delete, blacklist sweep, expiry
-    tombstoned --> active: memory.restore (within 14 days)
+    tombstoned --> active: memory.restore (automatic retirement, no refusal)
 ```
 
 Every arrow is a new version; the old one stays in `loom.memory_versions`.
@@ -570,8 +570,8 @@ ahead of the durable sections, so an agent sees its own state first.
 Loom deletes only what its writer asked for. No memory table has a default TTL and no
 sweep retires rows by age. A row leaves the served set when its writer deletes or
 supersedes it, when its writer gave it an expiry (`ttl_seconds`, `valid_to`), or when the
-namespace owner or operator configured a retention window. `memory.restore` revives a
-tombstone within 14 days.
+namespace owner or operator configured a retention window. `memory.restore` reverses an automatic
+tombstone within 14 days when no permanent refusal exists.
 [Retention and erasure](../features/memory/retention-and-erasure.md) covers the settings
 and the erasure saga.
 

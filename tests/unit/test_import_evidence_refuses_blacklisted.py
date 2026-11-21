@@ -24,6 +24,11 @@ class _CH:
     def __init__(self) -> None:
         self.inserts: dict[str, list[dict[str, Any]]] = {}
 
+    async def query_all(self, sql, params=None):
+        if "memory_refusals" in sql:
+            return []
+        raise AssertionError(sql)
+
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.setdefault(table, []).extend(rows)
 
@@ -33,7 +38,21 @@ def wired(monkeypatch: pytest.MonkeyPatch) -> tuple[_CH, list[str]]:
     from server import embedding
     from server.memory.app import blacklist_guard as blacklist
     from server.memory.app import evidence_transfer as mod
+    from tests.unit.memory_store import seed_summary_sources
 
+    seed_summary_sources(
+        monkeypatch,
+        [
+            {
+                "org": "acme",
+                "namespace": "ns",
+                "agent": "a",
+                "user_id": "-",
+                "session_id": "s1",
+                "summary_text": "a parade happened",
+            }
+        ],
+    )
     ch = _CH()
     hits: list[str] = []
 
@@ -85,7 +104,12 @@ async def test_blacklisted_chunks_and_digests_are_dropped_not_written(wired) -> 
                 ),
             ],
             digests=[
-                EvidenceDigest(session_id="s1", summary_text="a parade happened"),
+                EvidenceDigest(
+                    session_id="s1",
+                    summary_text="a parade happened",
+                    key_facts=["a parade happened"],
+                    derived_from=["source:s1"],
+                ),
                 EvidenceDigest(session_id="s2", summary_text=f"key {SECRET} shared"),
                 # key_facts are stored on the row too, so they are checked as well.
                 EvidenceDigest(session_id="s3", summary_text="ok", key_facts=[SECRET]),
@@ -121,3 +145,22 @@ async def test_a_chunk_the_blacklist_could_not_check_is_counted_apart(wired) -> 
         )
     )
     assert (out.chunks_written, out.skipped, out.unchecked) == (0, 2, 1)
+
+
+async def test_an_unproven_plain_digest_is_counted_as_skipped(wired):
+    from server.memory.api.models_evidence_transfer import EvidenceDigest, MemoryImportEvidenceInput
+    from server.memory.app.evidence_transfer import handle_memory_import_evidence
+
+    ch, hits = wired
+    output = await handle_memory_import_evidence(
+        MemoryImportEvidenceInput(
+            org="acme",
+            namespace="ns",
+            agent="a",
+            digests=[
+                EvidenceDigest(session_id="missing", summary_text="A plain but unproven passage")
+            ],
+        )
+    )
+    assert (output.digests_written, output.skipped) == (0, 1)
+    assert not ch.inserts and not hits

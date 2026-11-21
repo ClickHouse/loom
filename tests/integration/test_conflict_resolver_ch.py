@@ -3253,14 +3253,16 @@ async def test_memory_statuses_says_which_retirements_still_stand(ch, wired) -> 
         MemoryStatusesInput(org=org, namespace="elsewhere", memory_ids=[loser])
     )
     assert other.rows == [], "another namespace holds none of them"
-    # A delete, then its restore: the row reads deleted, then live again.
+    # Explicit deletion remains deleted when restoration is refused.
     key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s2"}
     await handle_memory_delete(MemoryDeleteInput(**key, memory_key="office_location"))
     assert (await statuses())[winner][0] == "deleted"
-    assert (
+    from server.core.errors import ValidationError
+
+    with pytest.raises(ValidationError) as refused:
         await handle_memory_restore(MemoryRestoreInput(**key, memory_key="office_location"))
-    ).restored
-    assert (await statuses())[winner] == ("active", "")
+    assert refused.value.extra["reason"] == "forgotten"
+    assert (await statuses())[winner][0] == "deleted"
 
 
 async def test_a_retried_undo_finishes_a_restore_that_landed_after_its_503(
@@ -3710,6 +3712,28 @@ async def test_a_pass_stopped_by_the_lease_store_pauses_the_worker(ch, wired, mo
     assert len(llm.calls) > before, "the pause ended: rows are judged again"
 
 
+async def _undelete_after_uncertain_sends_settle(input: Any) -> Any:
+    from server.core import lease_writes, rmt_carry
+    from server.core.ch import write_limit_s
+    from server.core.lease_writes import FenceUnavailableError
+    from server.memory.app import restore
+    from tests.integration._eventually import eventually
+
+    async def retry() -> Any:
+        try:
+            return await restore.handle_memory_restore(input)
+        except FenceUnavailableError:
+            return None
+
+    # Visibility of the canonical row cannot certify that duplicate sends have ended.
+    return await eventually(
+        retry,
+        max_wait=lease_writes.lease_ttl_s(rmt_carry.send_bound_s()) + 2 * write_limit_s(),
+        interval=1.0,
+        description="the uncertain restore's writers to settle",
+    )
+
+
 async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monkeypatch) -> None:
     """The undelete's insert lands with its answer lost: the re-read finds it, so the
     search row and the facts come back as on any undelete, and it answers restored."""
@@ -3717,13 +3741,13 @@ async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monk
 
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
     from server.memory.app import restore
-    from server.memory.app.handlers import handle_memory_delete
+    from tests.integration._memory import retire_reversibly
 
     org, _ = wired
     key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
     await _set(org, "s1", "home2", "Ana lives in Porto", relations=[("ana", "lives_in", "porto")])
     await asyncio.sleep(1.0)
-    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home2"))
+    await retire_reversibly(MemoryDeleteInput(**key, memory_key="home2"))
     await asyncio.sleep(1.0)
     real = ch.insert
 
@@ -3736,6 +3760,7 @@ async def test_an_undelete_whose_insert_answer_was_lost_finishes(ch, wired, monk
         m.setattr(ch, "insert", lands_then_fails)
         out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home2"))
     assert out.restored and out.from_status == "tombstoned"
+    await _undelete_after_uncertain_sends_settle(MemoryRestoreInput(**key, memory_key="home2"))
     search = await ch.query_all(
         "SELECT tombstoned_at FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
         " AND memory_key = 'home2' SETTINGS select_sequential_consistency = 1",
@@ -3839,13 +3864,13 @@ async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
     from server.core.errors import BackendUnavailableError
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
     from server.memory.app import restore
-    from server.memory.app.handlers import handle_memory_delete
+    from tests.integration._memory import retire_reversibly
 
     org, _ = wired
     key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
     await _set(org, "s1", "home3", "Ana lives in Braga")
     await asyncio.sleep(1.0)
-    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="home3"))
+    await retire_reversibly(MemoryDeleteInput(**key, memory_key="home3"))
     await asyncio.sleep(1.0)
     real = ch.insert
 
@@ -3863,7 +3888,9 @@ async def test_an_undelete_whose_answer_and_reread_were_lost_finishes_on_retry(
         with pytest.raises(BackendUnavailableError) as lost:
             await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
         assert lost.value.extra["outcome_unknown"]
-    out = await restore.handle_memory_restore(MemoryRestoreInput(**key, memory_key="home3"))
+    out = await _undelete_after_uncertain_sends_settle(
+        MemoryRestoreInput(**key, memory_key="home3")
+    )
     assert out.restored and out.from_status == "tombstoned"
     search = await ch.query_all(
         "SELECT tombstoned_at FROM loom.memory_embeddings FINAL WHERE org = {o:String}"
@@ -3920,13 +3947,13 @@ async def test_a_high_row_restored_after_a_lost_undelete_answers_not_restored(
     from server.core.errors import BackendUnavailableError
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
     from server.memory.app import restore
-    from server.memory.app.handlers import handle_memory_delete
+    from tests.integration._memory import retire_reversibly
 
     org, _ = wired
     key = {"org": org, "namespace": NS, "agent": "bot", "user_id": USER, "session_id": "s1"}
     await _set(org, "s1", "vault4", "The vault code is 4417", sensitivity="high")
     await asyncio.sleep(1.0)
-    await handle_memory_delete(MemoryDeleteInput(**key, memory_key="vault4"))
+    await retire_reversibly(MemoryDeleteInput(**key, memory_key="vault4"))
     await asyncio.sleep(1.0)
     real = ch.insert
 

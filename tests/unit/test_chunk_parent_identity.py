@@ -9,7 +9,7 @@ from server.memory.app import chunk_projection
 
 
 async def _project(monkeypatch, user, session):
-    ch = SimpleNamespace(insert=AsyncMock())
+    ch = SimpleNamespace(insert=AsyncMock(), query_all=AsyncMock(return_value=[]))
 
     async def embedded(text, ranges, chunks, embed):
         return [SimpleNamespace(written=True, vector=[1.0, 0.0]) for _ in chunks]

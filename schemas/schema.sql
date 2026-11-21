@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 196 tables + 5 views + 19 materialized views.
+-- Counts: 197 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (196)
+-- Tables (197)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -1609,7 +1609,8 @@ CREATE TABLE IF NOT EXISTS loom.delete_version_checks
     `tombstone` UInt64,
     `done` UInt8 DEFAULT 0,
     `created_at` DateTime DEFAULT now(),
-    `updated_at` DateTime64(3) DEFAULT now64(3)
+    `updated_at` DateTime64(3) DEFAULT now64(3),
+    `checked_state_sha256` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (org, namespace, agent, user_id, session_id, memory_key, tombstone)
@@ -3031,6 +3032,27 @@ CREATE TABLE IF NOT EXISTS loom.memory_records
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, schema_name, memory_key, record_id)
 SETTINGS index_granularity = 8192, non_replicated_deduplication_window = 1000;
+
+-- loom.memory_refusals
+CREATE TABLE IF NOT EXISTS loom.memory_refusals
+(
+    `org` String,
+    `namespace` String,
+    `agent` String DEFAULT '-',
+    `user_id` String DEFAULT '-',
+    `session_id` String DEFAULT '-',
+    `scope_kind` LowCardinality(String) DEFAULT 'identity',
+    `scope_value` String,
+    `actor` String,
+    `source_class` LowCardinality(String) DEFAULT 'derived',
+    `kind` LowCardinality(String),
+    `units` UInt32,
+    `digest` FixedString(64),
+    `created_at` DateTime DEFAULT now()
+)
+ENGINE = MergeTree
+ORDER BY (org, scope_kind, scope_value, user_id, kind, units, digest)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
 -- loom.memory_reinforcement
 CREATE TABLE IF NOT EXISTS loom.memory_reinforcement

@@ -982,14 +982,21 @@ An ALTER alone does not settle old pipelines. Missing writers, changed topology,
 unknown metadata, a deadline or any surviving forbidden row refuses provisioning;
 existing rows remain untouched. Writers continue accepting valid ordinary inserts.
 
-Negative observations use a checked administrative HTTP session on each writer.
-The configured service origin is included; `LOOM_CH_ANALYSIS_OBSERVER_URLS` adds
-explicit trusted HTTP origins using the same existing service credentials. Every
-writer UUID needs exactly one route. Missing routes, aliases to the same backend,
-redirects, backend changes and incomplete replies refuse. Routes must preserve
-non-replaying POST semantics, including any intermediary. HTTPS cannot downgrade.
-The proof never discovers another credential or derives HTTP ports from native
-cluster addresses.
+Negative observations use one checked administrative HTTP session per writer UUID.
+Loom opens independent sessions through the configured service origin until it
+reaches every expected replica. A shared endpoint does not need separate replica
+addresses. A successful session that reaches an already covered replica is closed;
+its bootstrap is never replayed. Discovery is bounded by five seconds and eight
+times the larger of the writer and configured origin counts in additional attempts,
+within the complete proof deadline. An endpoint
+that cannot reach every replica refuses provisioning.
+
+`LOOM_CH_ANALYSIS_OBSERVER_URLS` can add explicit trusted HTTP origins using the
+same existing service credentials. Missing or unexpected writer UUIDs, redirects,
+backend changes and incomplete replies refuse. Each checked session must stay on
+its original backend, and routes must preserve non-replaying POST semantics,
+including any intermediary. HTTPS cannot downgrade. The proof never discovers
+another credential or derives HTTP ports from native cluster addresses.
 
 Each writer supplies its complete native `SHOW CREATE ROW POLICIES` catalog. A
 SELECT from `system.row_policies` cannot establish visibility because policies can

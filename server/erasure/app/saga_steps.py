@@ -21,6 +21,7 @@ from server.core.naming import is_mirror_name
 from server.core.principals import personal_name
 from server.core.repo_base import _CHClient
 from server.erasure.store import census as erasure_census
+from server.erasure.store import refusals as refusal_steps
 from server.erasure.store import steps_graph as graph_steps
 from server.erasure.store import steps_ledgers as ledger_steps
 from server.erasure.store import steps_memory as memory_steps
@@ -327,6 +328,7 @@ def authority_steps[StepT: tuple[str, Any]](steps: tuple[StepT, ...]) -> list[St
 # The step names are stored in the ledger's `steps_completed`: renaming one
 # makes a resumed saga run it again.
 USER_STEPS: tuple[UserStep, ...] = (
+    ("memory.refusals", refusal_steps.capture_user),
     # First: the authority's copy, then the wait for its publishers, so every
     # ClickHouse copy the steps below look for has landed.
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_user),
@@ -386,6 +388,7 @@ USER_STEPS: tuple[UserStep, ...] = (
 # The loom-side steps of a namespace erasure over (org, namespace or list), in
 # saga order. Names as for USER_STEPS.
 NAMESPACE_STEPS: tuple[NamespaceStep, ...] = (
+    ("memory.refusals", refusal_steps.capture_namespace),
     ("knowledge_sources.retire", _step_retire_knowledge_sources_by_ns),
     ("knowledge_source_push.delete", ledger_steps.delete_source_push_by_namespace),
     ("pg_memory.delete", pg_steps.delete_pg_memory_by_namespace),

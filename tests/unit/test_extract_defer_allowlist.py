@@ -67,6 +67,7 @@ def test_star_means_service_accounts_only(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_handler_takes_the_queue_path_for_an_allowlisted_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

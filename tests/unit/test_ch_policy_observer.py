@@ -249,6 +249,7 @@ def owner(monkeypatch):
             self.guarded = guarded
             self.closed = False
             instances.append(self)
+            self.server_uuid = f"00000000-0000-0000-0000-{len(instances):012x}"
 
         async def bootstrap(self):
             if self.bootstrap_failure:
@@ -268,7 +269,11 @@ async def test_core_preserves_bootstrap_cancellation_across_missing_session_clea
     channel.bootstrap_failure = asyncio.CancelledError()
     channel.close_failure = ObservationUnavailable()
     with pytest.raises(asyncio.CancelledError):
-        async with client.policy_observers():
+        async with client.policy_observers(
+            frozenset(
+                {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+            )
+        ):
             pytest.fail("Cancelled bootstrap cannot authorize an observer")
     assert len(channels) == 1 and channels[0].closed
 
@@ -277,7 +282,11 @@ async def test_core_cleanup_failure_cannot_authorize_a_successful_proof(owner):
     client, config, channels, channel = owner
     channel.close_failure = ObservationUnavailable()
     with pytest.raises(ObservationUnavailable):
-        async with client.policy_observers():
+        async with client.policy_observers(
+            frozenset(
+                {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+            )
+        ):
             pass
     assert len(channels) == 2 and all(item.closed for item in channels)
 
@@ -296,7 +305,11 @@ async def test_core_closes_all_owned_routes_concurrently(owner, monkeypatch):
 
     monkeypatch.setattr(channel, "close", close)
     async with asyncio.timeout(5):
-        async with client.policy_observers():
+        async with client.policy_observers(
+            frozenset(
+                {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+            )
+        ):
             pass
     assert len(channels) == 2 and all(item.closed for item in channels)
 
@@ -309,7 +322,9 @@ async def test_core_refuses_changed_owner_configuration_before_any_send(owner, m
     async def send():
         sent.append(True)
 
-    async with client.policy_observers() as observers:
+    async with client.policy_observers(
+        frozenset({"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"})
+    ) as observers:
         if drift == "driver":
             client._client = object()
         elif drift == "generation":
@@ -327,6 +342,218 @@ async def test_an_analyst_override_cannot_bootstrap_an_administrative_observer(o
     client, config, channels, channel = owner
     with ch_module.as_analyst("loom_analyst", "password", {}):
         with pytest.raises(ObservationUnavailable):
-            async with client.policy_observers():
+            async with client.policy_observers(
+                frozenset(
+                    {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+                )
+            ):
                 pytest.fail("Analyst context cannot acquire observation authority")
     assert not channels
+
+
+@pytest.mark.parametrize("replicas", [1, 2, 3])
+async def test_shared_endpoint_discovers_all_replicas_before_event_proof(
+    owner, monkeypatch, replicas
+):
+    from uuid import UUID
+
+    from server.insights.store.event_cutover import _observed, _Writers
+
+    client, config, channels, channel = owner
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", [])
+    identities = frozenset(str(UUID(int=index)) for index in range(1, replicas + 1))
+    backends = iter([1, 1, *range(2, replicas + 1)] if replicas > 1 else [1])
+
+    async def bootstrap(self):
+        self.server_uuid = str(UUID(int=next(backends)))
+        self.user = "service"
+        self.roles = ()
+
+    async def policies(self):
+        return []
+
+    async def verify(self):
+        assert frozenset(observer.server_uuid for observer in self.observers) == identities
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    monkeypatch.setattr(channel, "policies", policies, raising=False)
+    monkeypatch.setattr(_Writers, "verify", verify)
+    writers = _Writers("default", (), identities, ())
+    async with _observed(writers, client) as observed:
+        assert frozenset(observer.server_uuid for observer in observed.observers) == identities
+        assert len(observed.observers) == replicas
+    assert all(instance.closed for instance in channels)
+
+
+async def test_distinct_existing_routes_cover_each_replica(owner, monkeypatch):
+    from uuid import UUID
+
+    from server.insights.store.event_cutover import _observed, _Writers
+
+    client, config, channels, channel = owner
+    identities = frozenset(str(UUID(int=index)) for index in (1, 2))
+    backends = iter((1, 2))
+
+    async def bootstrap(self):
+        self.server_uuid = str(UUID(int=next(backends)))
+        self.user = "service"
+        self.roles = ()
+
+    async def policies(self):
+        return []
+
+    async def verify(self):
+        assert frozenset(observer.server_uuid for observer in self.observers) == identities
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    monkeypatch.setattr(channel, "policies", policies, raising=False)
+    monkeypatch.setattr(_Writers, "verify", verify)
+    async with _observed(_Writers("default", (), identities, ()), client):
+        pass
+    assert len(channels) == 2 and all(instance.closed for instance in channels)
+
+
+async def test_shared_endpoint_does_not_invent_a_missing_replica(owner, monkeypatch):
+    client, config, channels, channel = owner
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", [])
+    expected = frozenset(
+        {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+    )
+    bootstrapped = []
+
+    async def bootstrap(self):
+        bootstrapped.append(id(self))
+        self.server_uuid = "00000000-0000-0000-0000-000000000001"
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    with pytest.raises(ObservationUnavailable):
+        async with client.policy_observers(expected):
+            pytest.fail("An unobserved replica cannot authorize a proof")
+    assert 1 < len(channels) <= 64
+    assert len(bootstrapped) == len(set(bootstrapped)) == len(channels)
+    assert all(item.closed for item in channels)
+
+
+async def test_shared_endpoint_rejects_an_unexpected_backend(owner, monkeypatch):
+    client, config, channels, channel = owner
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", [])
+    expected = frozenset(
+        {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+    )
+
+    async def bootstrap(self):
+        if len(channels) == 2:
+            self.server_uuid = "00000000-0000-0000-0000-000000000009"
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    with pytest.raises(ObservationUnavailable):
+        async with client.policy_observers(expected):
+            pytest.fail("A backend outside the expected topology cannot authorize a proof")
+    assert len(channels) == 2 and all(item.closed for item in channels)
+
+
+async def test_successful_duplicate_sessions_are_closed_once(owner, monkeypatch):
+    client, config, channels, channel = owner
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", [])
+    expected = frozenset(
+        {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+    )
+    identities = iter([*sorted(expected)[:1], *sorted(expected)])
+    close_counts = {}
+    original_close = channel.close
+
+    async def bootstrap(self):
+        self.server_uuid = next(identities)
+
+    async def close(self):
+        close_counts[id(self)] = close_counts.get(id(self), 0) + 1
+        await original_close(self)
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    monkeypatch.setattr(channel, "close", close)
+    async with client.policy_observers(expected) as observers:
+        assert {item.server_uuid for item in observers} == expected
+        assert len(channels) == 3 and channels[1].closed
+    assert list(close_counts.values()) == [1, 1, 1]
+
+
+async def test_discovery_cancellation_closes_retained_duplicate_and_pending_sessions(
+    owner, monkeypatch
+):
+    client, config, channels, channel = owner
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", [])
+    expected = frozenset(
+        {"00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"}
+    )
+    pending = asyncio.Event()
+
+    async def bootstrap(self):
+        self.server_uuid = "00000000-0000-0000-0000-000000000001"
+        if len(channels) == 3:
+            pending.set()
+            await asyncio.Event().wait()
+
+    async def discover():
+        async with client.policy_observers(expected):
+            pytest.fail("Cancelled discovery cannot authorize a proof")
+
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    task = asyncio.create_task(discover())
+    await pending.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert len(channels) == 3 and all(item.closed for item in channels)
+
+
+async def test_discovery_resamples_an_additional_shared_endpoint(owner, monkeypatch):
+    client, config, channels, channel = owner
+    expected = frozenset(f"00000000-0000-0000-0000-{index:012x}" for index in (1, 2, 3))
+    secondary = iter(sorted(expected)[1:])
+    secondary_visits = []
+
+    def create(origin, *args):
+        observer = channel(origin, *args)
+        observer.origin = origin
+        return observer
+
+    async def bootstrap(self):
+        if self.origin == "http://other:8123/":
+            secondary_visits.append(True)
+            self.server_uuid = next(secondary)
+        else:
+            self.server_uuid = min(expected)
+
+    monkeypatch.setattr(ch_module, "PolicyObserver", create)
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    async with client.policy_observers(expected) as observers:
+        assert {observer.server_uuid for observer in observers} == expected
+        assert len(secondary_visits) == 2
+    assert all(observer.closed for observer in channels)
+
+
+async def test_discovery_resamples_the_last_of_many_configured_origins(owner, monkeypatch):
+    client, config, channels, channel = owner
+    origins = [f"http://writer-{index}:8123" for index in range(32)]
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", origins)
+    first, last = (f"00000000-0000-0000-0000-{index:012x}" for index in (1, 2))
+    visits = []
+
+    def create(origin, *args):
+        observer = channel(origin, *args)
+        observer.origin = origin
+        return observer
+
+    async def bootstrap(self):
+        self.server_uuid = first
+        if self.origin == origins[-1] + "/":
+            visits.append(True)
+            if len(visits) == 2:
+                self.server_uuid = last
+
+    monkeypatch.setattr(ch_module, "PolicyObserver", create)
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    async with client.policy_observers(frozenset({first, last})) as observers:
+        assert {observer.server_uuid for observer in observers} == {first, last}
+        assert len(visits) == 2
+    assert all(observer.closed for observer in channels)

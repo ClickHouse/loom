@@ -757,7 +757,7 @@ The raw chunks and session digests behind a namespace's memories, as portable ro
 | `session_id` | `str` | `''` | optional: one session only; "" or "-" = every session |
 | `limit` | `int` | `500` | Rows per page (1–2000); `has_more` says whether another page follows. |
 | `cursor` | `str` | `''` | opaque keyset cursor from a previous page |
-| `include_high` | `bool` | `False` | Also export the chunks and digests behind a 'high' row or whose text holds a high shape (a credential, card number, SSN or stated PIN), and the chunks stored without a vector (one may hold part of a key). |
+| `include_high` | `bool` | `False` | Include high chunks and history-held digests. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1105,7 +1105,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `chunks` | `list[EvidenceChunk]` | *(computed)* | Chunks to re-embed and insert (≤256); empty-content or session-less ones are skipped, one that reads as high is inserted without a vector, and a key cut between two calls' chunks is not found. |
-| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); empty summaries are skipped, and one whose text reads as high is inserted without a vector. |
+| `digests` | `list[EvidenceDigest]` | *(computed)* | Session digests to re-embed and insert (≤256); only exact extractive summaries with complete, currently eligible source proof are written. |
 | `source_trace` | `str` | `'okf-import'` | Stamped into memory_chunks.source_url when the chunk carries none. |
 
 | Output field | Type | Meaning |
@@ -1116,7 +1116,7 @@ Write exported evidence chunks and digests into a namespace, re-embedded here an
 | `embedding_model` | `str` | The server embedder the imported rows were re-embedded with. |
 | `embedding_dim` | `int` | Vector length of the written embeddings; 0 when nothing was embedded (every item read as high, or none was written). |
 | `edited` | `list[str]` | Chunks whose body did not hash to the content_sha256 they arrived with. |
-| `skipped` | `int` | Items not written: empty, unembeddable, or refused by a blacklist pattern (Refuse). |
+| `skipped` | `int` | Items not written: empty, unembeddable, refused, or missing eligible source proof. |
 | `unchecked` | `int` | Of the skipped, those the blacklist could not check: the request's values are too long for its regexes; sent in a smaller request they are checked, unless one is too long alone, which must be shortened. |
 
 ## `memory.inspect`
@@ -1842,7 +1842,7 @@ Scan (org, namespace) for orphaned duplicate rows and re-activate them.
 
 ## `memory.restore`
 
-Bring back a deleted memory (within 14 days) or one Loom retired on its own.
+Reverse automatic retirement when no deletion or erasure refusal blocks the value.
 
 `POST /v1/memory.restore` · MCP `loom_memory_restore` · role `writer` · idempotent · audited
 

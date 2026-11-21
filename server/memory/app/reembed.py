@@ -22,7 +22,7 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from server.core.ch import sequential_reads
+from server.core.ch import sequential_reads, set_query_tag
 from server.core.ch_params import chunks
 from server.llm import customer
 from server.memory.app.model_attribution import attribution_for, memory_writers
@@ -148,6 +148,16 @@ def in_database_sql(
     the column type, model/dim columns are rewritten, the version column is
     bumped the way `rewrite_row` bumps it, every other column is copied. Pure
     so it can be tested without a server."""
+    insert_cols, select = _database_projection(table, cols, model, dim, credentials)
+    return (
+        f"INSERT INTO loom.{table} ({', '.join(insert_cols)})\n"
+        f"SELECT {', '.join(select)}\nFROM loom.{table} FINAL\nWHERE {where_sql}"
+    )
+
+
+def _database_projection(
+    table: str, cols: list[str], model: str, dim: int, credentials: str
+) -> tuple[list[str], list[str]]:
     cfg = _TABLES[table]
     m = model.replace("'", "\\'")
     cred = credentials.replace("'", "\\'")
@@ -185,10 +195,70 @@ def in_database_sql(
             select.append("version + 1")  # as rewrite_row: never above a later write
         else:
             select.append(c)
-    return (
-        f"INSERT INTO loom.{table} ({', '.join(insert_cols)})\n"
-        f"SELECT {', '.join(select)}\nFROM loom.{table} FINAL\nWHERE {where_sql}"
+    return insert_cols, select
+
+
+def _database_memory_page_sql(
+    cols: list[str], model: str, dim: int, credentials: str, where: str
+) -> str:
+    names, expressions = _database_projection("memory_embeddings", cols, model, dim, credentials)
+    projected = ", ".join(
+        f"{expression} AS {name}" for name, expression in zip(names, expressions, strict=True)
     )
+    order = ", ".join(_KEYS["memory_embeddings"])
+    # Filtering uses the original model; the outer aliases cannot shadow its predicate.
+    return (
+        f"SELECT {projected}, _k FROM (SELECT *, tuple({order}) AS _k "
+        f"FROM loom.memory_embeddings FINAL WHERE {where} "
+        f"ORDER BY {order} LIMIT {{page:UInt32}}) ORDER BY _k"
+    )
+
+
+def _memory_vector_row(row: dict[str, Any]) -> dict[str, Any]:
+    from server.memory.store.rows import EMBEDDING_PERSISTED_COLS, build_embedding_row
+
+    known = {key: value for key, value in row.items() if key in EMBEDDING_PERSISTED_COLS}
+    # Carry columns added by a newer build alongside the complete known row.
+    return {**row, **build_embedding_row(**known)}
+
+
+async def _publish_database_memory(
+    ch: Any,
+    cols: list[str],
+    model: str,
+    dim: int,
+    credentials: str,
+    where: str,
+    params: dict[str, Any],
+    left_orgs: set[str] | None,
+) -> int:
+    from server.memory.store import insert_embedding_rows
+
+    after = None
+    written = 0
+    order = ", ".join(_KEYS["memory_embeddings"])
+    while True:
+        set_query_tag("memory.reembed")
+        page_where = where
+        page_params = {**params, "page": 200}
+        if after is not None:
+            marks = ", ".join(f"{{k{i}:String}}" for i in range(len(after)))
+            page_where += f" AND ({order}) > ({marks})"
+            page_params.update({f"k{i}": str(value) for i, value in enumerate(after)})
+        rows = await ch.query_all(
+            _database_memory_page_sql(cols, model, dim, credentials, page_where),
+            params=page_params,
+            settings=in_database_settings(200),
+        )
+        if not rows:
+            return written
+        out = [_memory_vector_row(_without_key(row)) for row in rows]
+        admitted = await insert_embedding_rows(out, ch=ch)
+        _held_publications(out, admitted, left_orgs)
+        written += len(admitted)
+        after = rows[-1]["_k"]
+        if len(rows) < 200:
+            return written
 
 
 def in_database_settings(rows: int) -> dict[str, Any]:
@@ -220,11 +290,12 @@ async def reembed_table_in_database(
     namespace: str | None = None,
     dry_run: bool = False,
     exclude_orgs: frozenset[str] = frozenset(),
+    left_orgs: set[str] | None = None,
     log: Callable[..., None] = print,
 ) -> int:
-    """Re-embed one table's off-model rows inside ClickHouse.
-    One INSERT … SELECT per table; ClickHouse batches the embedding calls.
-    Returns the off-model row count the statement covered."""
+    """Re-embed off-model rows with aiEmbed. Memory vectors publish through admission
+    in bounded pages; other tables use one INSERT … SELECT. Return acknowledged memory
+    vectors, or the off-model row count covered for the other tables."""
     cfg = _TABLES[table]
     cols = await _cols(ch, table)
     where = [f"embedding_model != '{model}'", "embedding_dim > 0"]
@@ -252,6 +323,10 @@ async def reembed_table_in_database(
     )
     if dry_run or total == 0:
         return 0
+    if table == "memory_embeddings":
+        return await _publish_database_memory(
+            ch, cols, model, dim, credentials, where_sql, params, left_orgs
+        )
     _ = cfg
     sql = in_database_sql(
         table, cols, model=model, dim=dim, credentials=credentials, where_sql=where_sql
@@ -365,10 +440,7 @@ async def reembed_table(
         if left:
             if left_orgs is not None:
                 left_orgs.update(left)
-            log(
-                f"  {table}: {sum(left.values())} rows of an org switched off during the run "
-                "left for later"
-            )
+            log(f"  {table}: {sum(left.values())} unpublished rows left for later")
         after = [str(x) for x in rows[-1]["_k"]]
         progress = f"{written}/{total}" + (f" ({held} held as high)" if held else "")
         progress += f" ({changed} removed or rewritten since read, skipped)" if changed else ""
@@ -491,10 +563,34 @@ async def _rewrite_page(
         for i, r in kept.items()
     ]
     if out:
-        await ch.insert(
-            f"loom.{table}", out, settings={"async_insert": 0, "wait_for_async_insert": 1}
-        )
+        if table == "memory_embeddings":
+            from server.memory.store import insert_embedding_rows
+
+            out = [_memory_vector_row(row) for row in out]
+            admitted = await insert_embedding_rows(out, ch=ch)
+            for org, count in _held_publications(out, admitted).items():
+                left_by_org[org] = left_by_org.get(org, 0) + count
+        else:
+            await ch.insert(
+                f"loom.{table}", out, settings={"async_insert": 0, "wait_for_async_insert": 1}
+            )
     return left_by_org
+
+
+def _held_publications(
+    rows: list[dict[str, Any]],
+    admitted: list[dict[str, Any]],
+    left_orgs: set[str] | None = None,
+) -> dict[str, int]:
+    keys = _KEY_COLUMNS["memory_embeddings"]
+    accepted = {tuple(row.get(key) for key in keys) for row in admitted}
+    held: dict[str, int] = {}
+    for row in rows:
+        if tuple(row.get(key) for key in keys) not in accepted:
+            held[row["org"]] = held.get(row["org"], 0) + 1
+    if left_orgs is not None:
+        left_orgs.update(held)
+    return held
 
 
 # Each table's sort key, the keyset a run pages through and resumes after, and the
@@ -649,6 +745,7 @@ async def reembed_all(
                 namespace=namespace,
                 dry_run=dry_run,
                 exclude_orgs=off,
+                left_orgs=left_orgs,
                 log=log,
             )
         else:

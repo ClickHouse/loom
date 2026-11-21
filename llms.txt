@@ -167,6 +167,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Live connected-source search](docs/architecture/live-source-search.md): `search.query(live=true)` adds an ephemeral section from the asker's own connected Drive and Notion registrations.
 - [LLM and embedding architecture](docs/architecture/llm-architecture.md): Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into vectors, and an LLM client (`server/llm/`) that completes prompts.
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
+- [Memory consent and derived text](docs/architecture/memory-consent.md): A deletion contracts memory and records content refusal before its tombstone commits.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
 - [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
 - [Pipecat demonstration recording](docs/architecture/pipecat-demo-recording.md): The optional `pipecat-demo.yml` workflow renders a timestamped execution visualization of an authenticated native Pipecat text-memory check.

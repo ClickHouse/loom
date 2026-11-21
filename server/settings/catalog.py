@@ -674,8 +674,8 @@ class ClickHouseSettings(BaseModel):
     ch_cluster: Annotated[str, Field(pattern=r"^[A-Za-z0-9_.-]*$")] = "default"
     # Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off).
     ch_secure: bool | None = None
-    # Additional trusted writer HTTP origins for analyst setup policy observations.
-    # Uses the configured service credentials; missing or duplicate writers refuse.
+    # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
+    # Analyst setup discovers checked replica sessions with the service credentials.
     ch_analysis_observer_urls: list[str] = Field(default_factory=list, max_length=32)
     # Append `sql:<shape12> <first 200 chars>` of each statement to its
     # `log_comment` ("<op> <request_id>"), so query_log rows group by shape.
@@ -2780,9 +2780,13 @@ class MemorySettings(BaseModel):
     # memory.list rows per call for a token below writer on the namespace; it
     # pages with `offset` (wire cap stays 1000). 0 = no viewer cap.
     memory_list_viewer_limit: int = 100
-    # Transcript characters the session-digest call reads (~4 chars a token);
-    # 0 = the built-in 3000.
+    # Characters of complete source facts included in an extractive session digest;
+    # 0 = the built-in 3000. Facts are never clipped to fit.
     memory_session_digest_max_input_chars: int = 3000
+    # Raw digest candidates per query while filling listing, outline and export rows.
+    memory_digest_listing_page_size: int = Field(default=256, ge=1, le=2000)
+    # Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE.
+    memory_digest_listing_max_pages: int = Field(default=256, ge=1)
     # content_excerpt ceiling for answer-bearing facts (question_topic set)
     # when memory_capture_structured_answers is on, so an enumerated answer
     # is not clipped mid-list; every other fact keeps EXCERPT_LIMIT (1,200 chars).
@@ -4443,7 +4447,7 @@ class ObservabilitySettings(BaseModel):
     # "off" records none (the default; consent is given, not withdrawn); "query" only
     # the legs whose prompt is the user's own search text (hyde, query_rewrite,
     # enrichment, …); "all" also the legs carrying retrieved memories or conversation
-    # turns (inline_rerank, iterative_judge, extract, session_summary, …).
+    # turns (inline_rerank, iterative_judge, extract, …).
     # A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒
     # all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token
     # counts, cost, latency and quality scores are never gated.
@@ -6793,8 +6797,6 @@ LLM_MAX_TOKENS: dict[str, int] = {
     # session.brief: one window's revision (about 600-1,500 tokens); a cut-off answer is
     # salvaged key by key.
     "session_brief_revision": 3000,
-    # The session summary: one to three dated sentences.
-    "session_summary": 160,
     # memory.ask: the judge of an answer against its evidence.
     "ask_consistency": 200,
     # memory.ask: the split of a question into sub-questions.

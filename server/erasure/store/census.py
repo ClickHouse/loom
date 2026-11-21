@@ -530,6 +530,8 @@ CODE_INDEX_STEP_ONLY_TABLES: tuple[str, ...] = (
 )
 
 STEP_ONLY_TABLES: dict[str, tuple[str, ...]] = {
+    # Captures retained hash-only consent policy; this auxiliary step erases no table.
+    "memory.refusals": (),
     "entity_canonical_map.tombstone": ("loom.entity_canonical_map",),
     "agent_events.scrub": ("loom.agent_events", "loom.agent_events_private"),
     "subject_last_seen.delete": ("loom.subject_last_seen",),
@@ -767,6 +769,10 @@ NO_MEMORY_CONTENT: dict[str, str] = {
         "profile built from one is a loom.memory row."
     ),
     "loom.blacklist": "consent patterns authored by admins; policy, not subject data.",
+    "loom.memory_refusals": (
+        "durable deletion consent fingerprints; no removed plaintext or TTL. "
+        "Retained so erasure cannot permit the same value to be learned again."
+    ),
     # -- tracker plane: org-shared reference data mirrored from CI, not anyone's
     # memory; rebuilt from the source, never read into a memory answer.
     "loom.qa_test_daily": (

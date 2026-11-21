@@ -451,7 +451,8 @@ async def test_a_promotion_racing_a_demote_leaves_the_row_and_its_vector_agreein
         " AND memory_key = {k:String}",
         parameters=params,
     ).result_rows[0]
-    assert vectors[1] and bool(vectors[0]) == bool(live_row), (live_row, vectors)
+    # Retired mirrors may be physically removed when their source is absent.
+    assert bool(vectors[0]) == bool(live_row), (live_row, vectors)
 
 
 @pytest.mark.asyncio

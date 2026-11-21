@@ -52,7 +52,7 @@ class WriterWorld:
         self.observer_servers = list(self.servers)
 
     @asynccontextmanager
-    async def policy_observers(self):
+    async def policy_observers(self, servers):
         world = self
 
         class Observer:

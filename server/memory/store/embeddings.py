@@ -13,7 +13,9 @@ from typing import Any
 from server.core import pg
 from server.core.ch_writes import committed_insert_settings, partition_blocks
 from server.core.datetimes import naive_utc_now
+from server.core.hashing import hash_text
 from server.core.repo_base import _CHClient, _default_client, query_all_sliced
+from server.memory.domain.redaction_lineage import is_content_hash
 from server.memory.domain.temporal_sql import SERVED_STATUSES
 from server.memory.store.inserts import insert_embedding_rows
 from server.memory.store.rows import (
@@ -125,7 +127,7 @@ async def mirror_status_to_embeddings(
             overrides["tombstoned_at"] = m.get("tombstoned_at")
         if judged:
             overrides["version"] = drawn
-            shas[key] = str(m.get("content_sha256") or "")
+            shas[key] = hash_text(m.get("content_sha256"))
         elif m.get("version"):
             overrides["version"] = int(m["version"])
         wanted[key] = overrides
@@ -143,7 +145,11 @@ async def mirror_status_to_embeddings(
             continue
         for r in rows:
             want = wanted.get(identity_key(r))
-            if judged and str(r.get("content_sha256") or "") != shas.get(identity_key(r)):
+            if (
+                judged
+                and hash_text(r.get("content_sha256")) != shas.get(identity_key(r))
+                and not _unproven_retirement(r, want)
+            ):
                 continue  # another revision's vector
             if judged and str(r.get("status") or "") not in SERVED_STATUSES:
                 continue  # a retire (a refines supersede) won meanwhile
@@ -160,7 +166,10 @@ async def mirror_status_to_embeddings(
         return len(out)
     if out:
         try:
-            await insert_embedding_rows(out, ch=ch)
+            candidates = out
+            out = await insert_embedding_rows(candidates, ch=ch)
+            if not judged:
+                out += await _retire_held_status_copies(candidates, out, wanted, ch=ch)
             await retire_copies_under_unembedded_heads(out, ch=ch)
         except Exception as e:  # a mirror, never the write; strict re-raises
             if strict:
@@ -168,6 +177,34 @@ async def mirror_status_to_embeddings(
             _log.warning("status mirror: embeddings re-emit failed (%d rows): %s", len(out), e)
             return 0
     return len(out)
+
+
+async def _retire_held_status_copies(
+    candidates: list[dict[str, Any]],
+    written: list[dict[str, Any]],
+    wanted: Mapping[IdentityKey, dict[str, Any]],
+    *,
+    ch: _CHClient,
+) -> list[dict[str, Any]]:
+    """Retire an older, unpublishable vector at its canonical retirement's pin."""
+
+    def receipt(row: Mapping[str, Any]) -> tuple[Any, ...]:
+        return tuple(row[c] for c in (*_BARE_TOMBSTONE_KEPT, "version"))
+
+    acknowledged = {receipt(r) for r in written}
+    now = naive_utc_now()
+    bare = []
+    for row in candidates:
+        overrides = wanted[identity_key(row)]
+        pin = overrides.get("version")
+        if (
+            pin is not None
+            and int(row["version"]) == int(pin)
+            and overrides.get("status", "active") not in SERVED_STATUSES
+            and receipt(row) not in acknowledged
+        ):
+            bare.append(_bare_tombstone(row, int(pin), now))
+    return await insert_embedding_rows(bare, ch=ch) if bare else []
 
 
 def status_divergence_sql() -> str:
@@ -380,7 +417,7 @@ async def reemit_embedding_rows_for_keys(
             if row is not None:
                 out.append(row)
         if out:
-            await insert_embedding_rows(out, ch=ch)
+            out = await insert_embedding_rows(out, ch=ch)
             await retire_copies_under_unembedded_heads(out, ch=ch)
             written += len(out)
     return written
@@ -446,6 +483,14 @@ async def _live_rows_for_keys(
     )
 
 
+def _unproven_retirement(row: Mapping[str, Any], overrides: Mapping[str, Any] | None) -> bool:
+    return bool(
+        overrides is not None
+        and overrides.get("status", "active") not in SERVED_STATUSES
+        and not is_content_hash(hash_text(row.get("content_sha256")))
+    )
+
+
 def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | None:
     """A new version of read row `r` with `overrides`: at read + 1, or at the `version`
     the overrides pin (a retire's, or the expiry sweep's demote). None when the row is
@@ -454,7 +499,10 @@ def _copy_row(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any] | 
     pinned = overrides.get("version")
     if pinned is not None and int(r.get("version") or 0) >= int(pinned):
         return None
-    return _reemitted(r, overrides)
+    copy = _reemitted(r, overrides)
+    if _unproven_retirement(r, overrides):
+        return _bare_tombstone(r, int(copy["version"]), naive_utc_now())
+    return copy
 
 
 def _reemitted(r: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
@@ -475,7 +523,7 @@ async def reemit_rows(
     the rows written."""
     out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
-        await insert_embedding_rows(out, ch=ch)
+        out = await insert_embedding_rows(out, ch=ch)
         await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
@@ -528,8 +576,7 @@ async def retire_copies_under_unembedded_heads(
             for r in copies
             if identity_key(r) in stale
         ]
-        await insert_embedding_rows(tombstones, ch=ch)
-        return len(tombstones)
+        return len(await insert_embedding_rows(tombstones, ch=ch))
     except Exception as e:  # noqa: BLE001 — the copy landed; a missed check is logged, not raised
         _log.warning("vector copy: head re-check failed for %d rows: %s", len(copies), e)
         return 0
@@ -719,8 +766,7 @@ async def _bare_tombstones(items: list[tuple[IdentityKey, int]], *, ch: _CHClien
         ]
         # A retirement across many keys can span more partitions than an insert takes.
         for block in partition_blocks(out, created_month):
-            await insert_embedding_rows(block, ch=ch)
-        n += len(out)
+            n += len(await insert_embedding_rows(block, ch=ch))
     return n
 
 
@@ -752,8 +798,7 @@ async def reject_embedding_rows(
                 out.append(_reemitted(r, {"status": "rejected", "version": version}))
         # A retirement across many keys can span more partitions than an insert takes.
         for block in partition_blocks(out, created_month):
-            await insert_embedding_rows(block, ch=ch)
-        n += len(out)
+            n += len(await insert_embedding_rows(block, ch=ch))
     return n
 
 
@@ -789,8 +834,8 @@ async def fence_vectors(
         )
         for key, version in items
     ]
-    await insert_embedding_rows(rows, ch=ch)
-    return len(rows)
+    admitted = await insert_embedding_rows(rows, ch=ch)
+    return len(admitted)
 
 
 def version_second(version: int) -> datetime:
@@ -892,7 +937,7 @@ async def unsupersede_embeddings(
         if r.get("status") != status or r.get("invalid_at") is not None
     ]
     if out:
-        await insert_embedding_rows(out, ch=ch)
+        out = await insert_embedding_rows(out, ch=ch)
         await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 
@@ -939,7 +984,7 @@ async def restamp_embedding_rows(
     overrides = {"status": status, "version": int(version)}
     out = [row for r in rows if (row := _copy_row(r, overrides)) is not None]
     if out:
-        await insert_embedding_rows(out, ch=ch)
+        out = await insert_embedding_rows(out, ch=ch)
         await retire_copies_under_unembedded_heads(out, ch=ch)
     return len(out)
 

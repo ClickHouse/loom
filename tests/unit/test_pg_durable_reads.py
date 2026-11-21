@@ -112,8 +112,11 @@ _CALLERS = {
     "server/memory/store/records.py": "a retirement reads its writers durably; "
     "`live_writer_record` filters a request's read, which commits through `memory.set`",
     "server/memory/store/redaction.py": "decides a redaction, which commits",
-    "server/memory/store/source_review.py": "holds the exact source after a durable read "
-    "through shared publication",
+    "server/memory/store/refusals.py": "reads durable sources before publication, then "
+    "rechecks their heads on the admission transaction's connection",
+    "server/memory/store/shared.py": "qualifies a durable source before its fenced promotion",
+    "server/memory/store/summary_sources.py": "reads durable source proofs before publication, "
+    "then rechecks them under the same transaction's admission locks",
     "server/memory/workers/pg_payload_clear.py": "clears through its own commit, and only "
     "revisions delivered a horizon ago that ClickHouse holds",
 }

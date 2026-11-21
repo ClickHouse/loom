@@ -126,6 +126,13 @@ class KeptCH:
 
     def create(self, *statements: str) -> None:
         """Run DDL (with any session `SET` it needs) in one session."""
+        created = {m.group(1) for statement in statements for m in _CREATED.finditer(statement)}
+        if "loom.memory" in created:
+            # Canonical writers read consent and erasure state even when both are empty.
+            dependencies = ("memory_refusals", "erasure_requests")
+            statements += tuple(
+                ddl(table) for table in dependencies if f"loom.{table}" not in created | self.tables
+            )
         run(list(statements), "SELECT 1", path=self.path)
         self.tables |= {m.group(1) for s in statements for m in _CREATED.finditer(s)}
 

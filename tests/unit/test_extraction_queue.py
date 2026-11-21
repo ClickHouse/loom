@@ -49,6 +49,11 @@ class StubCH:
 
     async def query_all(self, sql, params=None):
         self.query_all_calls.append((sql, params or {}))
+        if "memory_refusals" in sql:
+            return []
+        if params and "source_version" in params:
+            # Transition tests supply a stored source; missing and changed sources have dedicated cases.
+            return [{"found": 1}]
         return self.query_all_returns.pop(0) if self.query_all_returns else []
 
     async def query_one(self, sql, params=None):
@@ -130,6 +135,7 @@ async def test_enqueue_writes_one_full_pending_row() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_handler_defer_short_circuits_before_extraction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,6 +159,7 @@ async def test_handler_defer_short_circuits_before_extraction(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("no_blacklisted_values")
 async def test_handler_defer_enqueue_failure_is_503(monkeypatch: pytest.MonkeyPatch) -> None:
     import server.memory.app.extract.handler as mx
 
@@ -429,8 +436,9 @@ async def test_worker_replays_claimed_rows_and_marks_state(
     assert res.done_count == 1 and res.written_memories == 3
     assert res.failures == ["bad: failed"]
     assert all(inp.defer is False for inp in seen)
-    # inserts: 1 claim (2 rows) + done + failed
-    statuses = [r["status"] for _, rows, _ in ch.inserts[1:] for r in rows]
+    statuses = [
+        r["status"] for _, rows, _ in ch.inserts for r in rows if r["status"] != q.STATUS_RUNNING
+    ]
     assert statuses == [q.STATUS_DONE, q.STATUS_FAILED]
     snap = get_registry().snapshot()["extraction_queue"]
     assert snap["last_outcome"]["done"] == 1
@@ -994,6 +1002,11 @@ class _Queue:
 
     async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
         params = params or {}
+        if "memory_refusals" in sql:
+            return []
+        if "source_version" in params:
+            row = self.rows.get(params["queue_id"])
+            return [{"found": 1}] if row and row["version"] == params["source_version"] else []
         self.sql.append(sql)
         now = datetime.now(UTC)
         held = {
@@ -1070,7 +1083,7 @@ async def test_a_payload_only_enqueuer_waits_without_holding_another_enqueuer(
         pytest.skip("clickhouse binary not installed")
     a, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="process:sa:t:agent-a")
     b, _, _ = q.payload_for(_input(), scope=WHOLE_NAMESPACE, enqueued_by="process:sa:t:agent-b")
-    setup = [ddl("memory_extraction_queue")]
+    setup = [ddl("memory_extraction_queue"), ddl("memory_refusals"), ddl("erasure_requests")]
     for qid, payload, status, lease, age, column in (
         ("a-held", a, "running", "now64(3) + INTERVAL 10 MINUTE", 3, held_column),
         ("a-next", a, "pending", "toDateTime64(0, 3)", 2, ""),
@@ -1119,7 +1132,7 @@ async def test_a_request_still_waiting_on_its_last_day_is_dropped_with_a_record(
         ([("o", "n", "h")], "extraction_queue", "held_past_ttl"),
         ([("o", "n", "p")], "extraction_queue", "waited_past_ttl"),
     ]
-    marked = ch.inserts[-1][1]
+    marked = [r for _, rows, _ in ch.inserts for r in rows]
     assert [r["status"] for r in marked] == [q.STATUS_FAILED, q.STATUS_FAILED]
     assert "(held: refused)" in marked[0]["last_error"]
 
@@ -1152,7 +1165,7 @@ async def test_a_dropped_request_quotes_its_earlier_error_without_the_text(
 
     monkeypatch.setattr(drops, "write_drops", write_drops)
     assert await q.drop_expiring(ch=ch) == 4
-    quoted = [r["last_error"].rsplit(" (", 1)[1] for r in ch.inserts[-1][1]]
+    quoted = [r["last_error"].rsplit(" (", 1)[1] for _, rows, _ in ch.inserts for r in rows]
     assert quoted == [
         "RuntimeError)",
         "unreachable: ConnectError)",

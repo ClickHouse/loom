@@ -135,6 +135,14 @@ async def _erase_once(
     # A large scope takes longer than a request's statement budget, on the client's
     # timeout as on the server's: its own connection, with neither. The scope's writes wait.
     async with pg.dedicated() as conn, conn.transaction():
+        from server.erasure.store.consent import current_policy
+
+        refusals = current_policy()
+
+        for value in sorted(set(namespaces or [])) if user_id is None else [user_id]:
+            await refusals.lock_postgres(
+                conn, [], erasure=("namespace" if user_id is None else "user_id", org, value)
+            )
         # Advancing each generation locks it: the scope's commits wait for this
         # transaction, and an admission that captured the old one checks again.
         scoped: list[str] | None = None  # a user's scope reads the org's evidence
@@ -170,6 +178,7 @@ async def _erase_once(
             "ORDER BY d.org, d.namespace, d.seq FOR UPDATE OF d",
             *args,
         )
+        await _capture_history(conn, where_r, where_c, args, user_id)
         # The deliveries go with their revisions (ON DELETE CASCADE). This statement locks
         # them and reads their leases, any committed since the locks above included, and
         # moves the audit rows ClickHouse lacks to the outbox: the audit trail outlives the
@@ -204,6 +213,50 @@ async def _erase_once(
         )
         await _mark_step(conn, org)
     return int(revisions or 0) + int(heads or 0), [float(x) for x in leases]
+
+
+async def _capture_history(
+    conn: Any, where_r: str, where_c: str, args: list[Any], user_id: str | None
+) -> None:
+    """Keep payload fingerprints and dependent keys before native history is removed.
+
+    Delivered revisions may retain only typed metadata. Their plaintext is captured
+    from ClickHouse history by the refusal step; their keys still find raw dependents.
+    """
+    from server.erasure.store.consent import current_policy
+    from server.erasure.store.refusals import capture_native_chunks
+
+    refusals = current_policy()
+
+    async def capture(batch: list[dict[str, Any]]) -> None:
+        payloads = [source["row"] for source in batch if source["row"] is not None]
+        await refusals.record_postgres(
+            conn,
+            payloads,
+            scope_kind="namespace" if user_id is None else "user_id",
+            scope_value=user_id,
+        )
+        if user_id is not None:
+            await capture_native_chunks(
+                conn,
+                [{key: value for key, value in row.items() if key != "row"} for row in batch],
+                user_id,
+            )
+
+    batch: list[dict[str, Any]] = []
+    async for source in conn.cursor(
+        "SELECT r.row, r.org, r.namespace, coalesce(r.agent, r.row->>'agent', '') AS agent, "
+        "r.user_id, coalesce(r.memory_key, r.row->>'memory_key', '') AS memory_key "
+        f"FROM loom.memory_revisions r WHERE {where_r} "
+        "UNION ALL SELECT row, org, namespace, agent, user_id, memory_key "
+        f"FROM loom.memory_current WHERE {where_c}",
+        *args,
+    ):
+        batch.append(dict(source))
+        if len(batch) >= 1000:
+            await capture(batch)
+            batch = []
+    await capture(batch)
 
 
 async def _mark_step(conn: Any, org: str) -> None:
@@ -517,6 +570,7 @@ PG_CENSUS: dict[str, str] = {
 }
 # The Postgres tables that hold none, with the reason.
 PG_NO_MEMORY_CONTENT: dict[str, str] = {
+    "loom.memory_refusals": "durable consent fingerprints, no removed plaintext; survives erasure",
     "loom.authority": "the deployment's recorded authority and epoch; no tenant data.",
     "loom.cell_first": "whether this cell is the deployment's first, and its name; no tenant data.",
     "loom.tenancy_mode": "the cell's tenancy mode (recording or enforced); no tenant data.",

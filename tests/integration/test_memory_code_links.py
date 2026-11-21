@@ -1988,7 +1988,7 @@ async def test_a_link_written_after_an_erasure_is_dropped(env, monkeypatch, ch_c
         await _pass()
     assert queue.erased.status == "completed" and _all_links(ch_client) == []
     # the recheck: moving a link after the erasure
-    await _remember(MEM, "e", "`erased_value` returns one")
+    await _remember(MEM, "e", "`erased_value` yields one")
     await _pass()
     assert _all_links(ch_client)
     with monkeypatch.context() as m:
@@ -2580,15 +2580,15 @@ async def test_imports_and_member_assignments_in_a_rename(env, path, before, aft
 async def test_a_delayed_cleanup_keeps_links_made_after_a_restore(env) -> None:
     from server.core.ch import get_client
     from server.memory.api.models_crud import MemoryDeleteInput, MemoryRestoreInput
-    from server.memory.app.handlers import handle_memory_delete
     from server.memory.app.restore import handle_memory_restore
     from server.memory.store import code_links as store
+    from tests.integration._memory import retire_reversibly
 
     await _drop_fetch_rows(env, TRUNK)
     ident = {"org": ORG, "namespace": MEM, "agent": "claude-code", "memory_key": "back"}
     mid = await _remember(MEM, "back", "`fetch_rows` returns n")
     await _pass()
-    await handle_memory_delete(MemoryDeleteInput(**ident))
+    await retire_reversibly(MemoryDeleteInput(**ident))
 
     class _RestoreBeforeDelete:
         def __init__(self, real: Any) -> None:

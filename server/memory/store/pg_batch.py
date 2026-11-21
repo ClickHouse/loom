@@ -437,14 +437,22 @@ async def _publish(group: list[_Entry]) -> None:
     deadline = min(e.committed.deadline for e in group)
     rows = [r for e in group if not e.rows_sent for r in e.committed.rows]
     docs = [d for e in group for d in served.get(id(e), {}).values()]
+    acknowledged: set[tuple[Any, ...]] = set()
+    rows_finished = asyncio.Event()
 
     async def send_rows() -> None:
-        for block in partition_blocks(rows, created_month):
-            await inserts.insert_memory_versions(block, ch=ch, published=True)
+        try:
+            for block in partition_blocks(rows, created_month):
+                await inserts.insert_memory_versions(block, ch=ch, published=True)
+        finally:
+            rows_finished.set()
 
     async def send_documents() -> None:
+        # Both sends acquire the same consent fences; competing can split their claims.
+        await rows_finished.wait()
         for block in partition_blocks(docs, created_month):
-            await inserts.insert_embedding_rows(block, ch=ch)
+            admitted = await inserts.insert_embedding_rows(block, ch=ch)
+            acknowledged.update(_doc_key(row) for row in admitted)
 
     with pg_lease.leased(deadline):
         rows_error, audit_error, docs_error = await asyncio.gather(
@@ -464,6 +472,18 @@ async def _publish(group: list[_Entry]) -> None:
         )
     rows_in = not isinstance(rows_error, BaseException)
     documents_in = not isinstance(docs_error, BaseException)
+    if documents_in:
+        for e in group:
+            attempted = served.get(id(e), {})
+            served[id(e)] = {
+                key: row for key, row in attempted.items() if _doc_key(row) in acknowledged
+            }
+            withheld = attempted.keys() - served[id(e)].keys()
+            e.stale.extend(
+                seq
+                for seq, row in zip(e.committed.seqs, e.committed.rows, strict=True)
+                if _doc_key(row) in withheld
+            )
     await pg_memory.complete_each(
         _landed(
             group,

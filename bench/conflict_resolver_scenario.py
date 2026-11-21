@@ -10,8 +10,8 @@ server, its embedder and its judge).
   key and in new words. The last value is current (`CURRENT`); every earlier
   one should end superseded behind the next (`OLDER`).
 - Four facts are restated, four elaborated, four sit near a different fact, one
-  pinned fact is contradicted later, one fact is deleted and brought back with
-  Undo, and eighteen stand alone. All of them should stay live and unflagged
+  pinned fact is contradicted later, one fact is permanently deleted, and eighteen
+  stand alone. The other facts stay live and unflagged
   (`KEPT`).
 - `JUDGE` holds the right verdict for every pair a cluster should hold, except
   for the scripted judge's deliberate mistakes: two wrong answers at low
@@ -170,7 +170,7 @@ FACTS: list[Fact] = [
     # Pinned, and contradicted later: a pinned row is never retired.
     F(3, "code_freeze", "Code freeze starts every Friday at noon", alone("freeze"), pinned=True),
     F(9, "freeze_change", "Code freeze now starts on Thursday evening", near("freeze", 0.75)),
-    # Deleted in session 4, brought back with Undo in session 6, elaborated in 9.
+    # Deleted in session 4; session 6 checks its key stays absent.
     F(3, "badge", "The user's badge number is 4471", alone("badge")),
     F(9, "badge_lab", "Badge 4471 also opens the third-floor lab", near("badge", 0.75)),
     # Unrelated, each in its own direction: no peer, never judged.
@@ -196,9 +196,9 @@ FACTS: list[Fact] = [
 SESSIONS = 12
 SOLO = {f.key for f in FACTS if f.at[0][0].startswith("solo")}
 
-# The key deleted in a session, and the session whose Undo brings it back (after
-# each session's writes).
-DELETE_IN, RESTORE_IN = {4: "badge"}, {6: "badge"}
+# The key deleted in a session, and the later session that checks its continued absence.
+DELETE_IN, CHECK_DELETED_IN = {4: "badge"}, {6: "badge"}
+DELETED = set(DELETE_IN.values())
 
 # The relations are not single-valued, so no write closes a fact on its own.
 ATTRIBUTES: dict[str, Attribute] = {
@@ -240,7 +240,6 @@ JUDGE: dict[frozenset[str], Verdict] = {
     frozenset({"marathon", "marathon_plan"}): ("elaboration", 0.96, True, True),
     frozenset({"rust", "rust_plan"}): ("elaboration", 0.95, True, False),
     frozenset({"guitar", "guitar_band"}): ("elaboration", 0.96, True, True),
-    frozenset({"badge", "badge_lab"}): ("elaboration", 0.96, True, False),
     frozenset({"sister_city", "home_city"}): ("unrelated", 0.97, False, False),
     frozenset({"skip_level", "manager"}): ("related", 0.95, False, False),
     frozenset({"car", "partner_car"}): ("unrelated", 0.97, False, True),
@@ -262,7 +261,7 @@ FLAGGED_AT_WRITE = {
 
 CURRENT = {a.keys[-1] for a in ATTRIBUTES.values()}
 OLDER = {k for a in ATTRIBUTES.values() for k in a.keys[:-1]}
-KEPT = {f.key for f in FACTS} - CURRENT - OLDER
+KEPT = {f.key for f in FACTS} - CURRENT - OLDER - DELETED
 BY_KEY = {f.key: f for f in FACTS}
 
 

@@ -37,14 +37,16 @@ other kinds. See [namespaces and sharing](../namespaces-and-sharing.md).
 A tombstone is a new version with `tombstoned_at` set. Reads stop serving it at once, but
 the row and its prior versions in `loom.memory_versions` stay on disk:
 
-- `memory.restore` revives a tombstoned key within 14 days (after that it answers
-  `expired=true`). It also reverses an automatic supersession.
+- Explicit deletion records permanent content refusal. `memory.restore` and snapshot
+  restoration cannot publish a refused value again. `memory.restore` still reverses an
+  automatic supersession or expiry when no refusal applies. See
+  [memory consent](../../architecture/memory-consent.md).
 - `memory.clear` (admin) tombstones every memory for an agent or user in a namespace;
   `confirm_subject` must repeat the concrete `user_id` or `agent` (neither `'*'` nor `'-'`
   confirms). `agent="*"` with a `user_id` clears that user's rows under every agent, and
   `user_id="*"` with an `agent` that agent's rows for every user. A scope that names nobody
   but `'-'` is refused, as a namespace-wide clear is. Locked rows stay and are counted in
-  `locked_skipped`. Cleared keys revive the same way.
+  `locked_skipped`. Cleared values receive the same permanent refusal as a point deletion.
 
 To remove the bytes, use an [erasure](#erasure). To strip one value but keep the row and
 audit trail, use [`memory.redact`](./history-and-provenance.md#scrubbing-history-memoryredact).
@@ -172,17 +174,16 @@ flowchart TD
   hosts with Keeper, within one process without it. It waits up to 15 minutes for a pass
   to finish; past that the step fails with `LeaseBusy` and `erasure_recovery` retries it.
 - **Tombstone or purge.** By default the soft-delete tables (memory, embeddings, chunks,
-  summaries, links) are tombstoned, and `memory.restore` can still revive them inside
-  the window; `erasure.list` reports such revivals as `reversals_count`. `purge=true`
-  deletes the rows instead (a lightweight `DELETE FROM` on the wide tables). A scope
+  summaries, links) are tombstoned. Permanent refusal prevents publishing the captured
+  values again, including through `memory.restore`. `purge=true` deletes the rows instead
+  (a lightweight `DELETE FROM` on the wide tables). A scope
   that holds a namespace that has ever had a mirror is purged whole, every namespace in
   it, so none of them has such a window ([document
   sources](../../architecture/document-sources.md#the-mirror)). A user erasure finds
   what the user's memories fed through their keys, so in a purge its `loom.memory` rows,
   and the consolidated summaries built from them, are tombstoned first and deleted in
-  `memory.retire`, after every step that reads those keys; until then `memory.restore`
-  can revive them (the user's own rows count as a reversal, the summaries do not), and
-  `memory.retire` deletes what `memory.restore` revived.
+  `memory.retire`, after every step that reads those keys. Refusal fingerprints are
+  recorded before this content is removed and survive the erasure.
 - **Uploaded originals** of knowledge documents: the namespace's rows of
   `loom.document_blobs` are deleted first, and `blob_erased_at` is stamped. A user erasure
   deletes the originals that user uploaded and no other writer's live document shares,
@@ -336,12 +337,13 @@ What the receipt does not cover:
 - backups, point-in-time recovery, WAL and standbys of either service;
 - copies made outside Loom, such as a table built in an org's own Postgres from the
   [SQL surface](../../reference/sql-surface.md);
-- rows a worker writes after the census from a read it made before it
-  ([storage authority](../../architecture/storage-authority.md#erasure));
-- a `namespace.restore` from a snapshot taken before the erasure, which brings rows back:
-  run the erasure again, and its census is the new receipt;
+- an unrelated row written after the census, outside its erasure scope;
 - for a user scope, document originals in the bucket, which the census counts for a
   namespace scope only.
+
+Consent checks fence delayed memory publishers and refuse removed values in later
+snapshot restoration. See [memory consent](../../architecture/memory-consent.md) for
+the matching rules and the rollout required to enforce them.
 
 The erased id stays where the proof of erasure needs it: in the ledger row (until the
 table's TTL drops it, 90 days after the request), in audit, in `loom.erasure_reversals`, and

@@ -124,16 +124,25 @@ def test_version_row_builders_carry_files() -> None:
 
 
 class _CH:
-    def __init__(self) -> None:
+    def __init__(self, existing=None) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.heads = {}
+        if existing is not None:
+            row = memory_repo.build_memory_version_row(existing)
+            self.heads[memory_repo.identity_key(row)] = row
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
+        if table == "loom.memory":
+            self.heads.update((memory_repo.identity_key(r), dict(r)) for r in rows)
 
     async def query_one(self, *_: Any, **__: Any) -> dict[str, Any] | None:
         return None
 
-    async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql, params=None) -> list[dict[str, Any]]:
+        if "FROM loom.memory FINAL" in sql:
+            keys = set((params or {}).get("keys", self.heads))
+            return [r for key, r in self.heads.items() if key in keys]
         return []
 
     async def execute(self, *_: Any, **__: Any) -> None:
@@ -151,7 +160,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, existing: memory_repo.MemoryRow | Non
     from server.memory.app import restore as _restore_mod
     from server.memory.app import stack as _stack_mod
 
-    ch = _CH()
+    ch = _CH(existing)
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
     monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)

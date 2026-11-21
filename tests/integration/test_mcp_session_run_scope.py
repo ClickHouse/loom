@@ -70,6 +70,19 @@ async def _require_auth(c: httpx.AsyncClient) -> None:
         pytest.skip("the server does not enforce auth")
 
 
+async def _published_memories(ch_client: Any, org: str, expected: int) -> None:
+    async def published() -> bool:
+        return (
+            ch_client.query(
+                "SELECT count() FROM loom.memory FINAL WHERE org = {org:String}",
+                parameters={"org": org},
+            ).result_rows[0][0]
+            == expected
+        )
+
+    await eventually(published, description="the MCP memories to be published")
+
+
 @pytest.mark.asyncio
 async def test_a_session_scoped_tokens_run_is_filed_under_its_session(
     control_plane_url: str, ch_client: Any
@@ -92,6 +105,7 @@ async def test_a_session_scoped_tokens_run_is_filed_under_its_session(
     assert len(runs) == 1
     run_id, user, row_session, status = runs[0]
     assert (user, row_session, status) == (USER, APP_SESSION, "completed")
+    await _published_memories(ch_client, org, 3)
     stamped = ch_client.query(
         "SELECT DISTINCT run_id FROM loom.memory FINAL WHERE org = {org:String}",
         parameters={"org": org},
@@ -120,6 +134,7 @@ async def test_two_tokens_sending_one_session_id_hold_two_runs(
         ).result_rows
     )
     assert runs == {"ns-a": "active", "ns-b": "completed"}
+    await _published_memories(ch_client, org, 4)
     stamped = ch_client.query(
         "SELECT namespace, uniqExact(run_id) FROM loom.memory FINAL WHERE org = {org:String} "
         "GROUP BY namespace ORDER BY namespace",

@@ -80,9 +80,9 @@ async def test_diagnostic_failure_preserves_refusal_cancellation_and_observer_cl
     cancelled = False
 
     @asynccontextmanager
-    async def observed():
+    async def observed(servers):
         try:
-            async with original_observers() as observers:
+            async with original_observers(servers) as observers:
                 yield observers
         finally:
             closed.append(True)

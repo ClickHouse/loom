@@ -307,6 +307,10 @@ def test_a_reflection_judges_a_session_for_its_writer(writers: _Directory, monke
         "key_facts": [],
     }
 
+    from tests.unit.memory_store import seed_summary_sources
+
+    seed_summary_sources(monkeypatch, [summary])
+
     class _CH:
         async def query_all(self, sql: str, params: Any = None) -> list[dict[str, Any]]:
             return [summary]

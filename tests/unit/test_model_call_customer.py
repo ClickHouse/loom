@@ -366,19 +366,29 @@ def test_the_fakes_check_the_customer_as_a_metered_provider_would(metered) -> No
         asyncio.run(FakeNGramEmbedder(dim=8).embed_many(["text"]))
 
 
-def test_a_reflection_is_written_for_the_org_of_its_pair(metered) -> None:
+def test_a_reflection_is_written_for_the_org_of_its_pair(metered, monkeypatch) -> None:
     # The contrast call and the reflection's write (which embeds) are both that org's.
     from server.memory.app import session_outcomes as so
 
     seen: list[tuple[str, str]] = []
-    neg = {"org": "acme", "namespace": "ns", "session_id": "s1", "summary_embedding": [0.1]}
+    from tests.unit.memory_store import seed_summary_sources
+
+    neg = {
+        "org": "acme",
+        "namespace": "ns",
+        "session_id": "s1",
+        "summary_embedding": [0.1],
+        "summary_text": "failed step",
+    }
+    pos = {**neg, "session_id": "s2", "similarity": 0.99, "summary_text": "ok"}
+    seed_summary_sources(monkeypatch, [neg, pos])
 
     class _CH:
         async def query_all(self, sql: str, params: Any) -> list[Any]:
             return [neg]
 
         async def query_one(self, sql: str, params: Any) -> Any:
-            return {"session_id": "s2", "similarity": 0.99, "summary_text": "ok"}
+            return pos
 
     class _LLM:
         async def complete(self, *a: Any, **k: Any) -> Any:
@@ -1084,11 +1094,15 @@ def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -
         return None
 
     monkeypatch.setattr("server.memory.app.evidence.link_belief_sources", link)
+    from tests.unit.memory_store import seed_summary_sources
+
+    digests = _digests(1, 5)
+    seed_summary_sources(monkeypatch, digests)
     cfg = PeriodDigestConfig(sessions_per_period=5, namespace_filter="ns", require_opt_in=False)
     res = asyncio.run(
         run_period_digest(
             cfg,
-            ch=_FakeCH(_digests(1, 5)),
+            ch=_FakeCH(digests),
             llm=_MeteredLLM("Between 2023-07-01 and 2023-07-05, Caroline painted."),
             embedder=FakeNGramEmbedder(dim=3),
         )

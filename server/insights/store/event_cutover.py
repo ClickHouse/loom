@@ -46,7 +46,9 @@ _TOPOLOGY = (
 
 
 class _ObserverClient(_CHClient, Protocol):
-    def policy_observers(self) -> AbstractAsyncContextManager[tuple[PolicyObserver, ...]]: ...
+    def policy_observers(
+        self, servers: frozenset[str]
+    ) -> AbstractAsyncContextManager[tuple[PolicyObserver, ...]]: ...
 
 
 class EventCutoverUnavailable(RuntimeError):
@@ -234,7 +236,7 @@ async def _writers(ch: _CHClient) -> _Writers:
 
 @asynccontextmanager
 async def _observed(writers: _Writers, ch: _ObserverClient) -> AsyncIterator[_Writers]:
-    async with ch.policy_observers() as observers:
+    async with ch.policy_observers(writers.servers) as observers:
         if (
             len(observers) != len(writers.servers)
             or frozenset(observer.server_uuid for observer in observers) != writers.servers

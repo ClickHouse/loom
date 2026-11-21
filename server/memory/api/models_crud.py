@@ -569,7 +569,7 @@ class MemoryDeleteVersionOutput(BaseModel):
 
 
 class MemoryRestoreInput(_Identity):
-    """Bring back a deleted memory (within 14 days) or one Loom retired on its own."""
+    """Reverse automatic retirement when no deletion or erasure refusal blocks the value."""
 
     # The key to restore, under this exact identity (no namespace-wide fallback).
     memory_key: str

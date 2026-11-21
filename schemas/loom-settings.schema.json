@@ -330,7 +330,7 @@
           },
           "maxItems": 32,
           "type": "array",
-          "description": "Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse."
+          "description": "Extra trusted HTTP origins if the service endpoint cannot reach every writer. Analyst setup discovers checked replica sessions with the service credentials."
         },
         "ch_analysis_probe_interval_s": {
           "default": 60.0,
@@ -3606,7 +3606,7 @@
             "all"
           ],
           "type": "string",
-          "description": "How much LLM prompt and completion text is recorded, by what the prompt holds: \"off\" records none (the default; consent is given, not withdrawn); \"query\" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); \"all\" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, session_summary, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
+          "description": "How much LLM prompt and completion text is recorded, by what the prompt holds: \"off\" records none (the default; consent is given, not withdrawn); \"query\" only the legs whose prompt is the user's own search text (hyde, query_rewrite, enrichment, …); \"all\" also the legs carrying retrieved memories or conversation turns (inline_rerank, iterative_judge, extract, …). A namespace's `capture_generation_io` overrides it (false ⇒ off, true ⇒ all, NULL ⇒ this). It also gates loom.search_trace_log.query. Token counts, cost, latency and quality scores are never gated."
         },
         "langfuse_circuit_cooldown_s": {
           "default": 30.0,
@@ -4593,6 +4593,19 @@
           "type": "integer",
           "description": "Characters one extraction read takes: a shorter document is read whole, a longer one in windows of whole sections. Sized so a dense window's reply fits the decision_extract cap."
         },
+        "memory_digest_listing_max_pages": {
+          "default": 256,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Queries allowed to find enough proven digests; exhaustion answers BACKEND_UNAVAILABLE."
+        },
+        "memory_digest_listing_page_size": {
+          "default": 256,
+          "maximum": 2000,
+          "minimum": 1,
+          "type": "integer",
+          "description": "Raw digest candidates per query while filling listing, outline and export rows."
+        },
         "memory_durability_verifier_max_facts_per_call": {
           "default": 60,
           "minimum": 1,
@@ -5347,7 +5360,7 @@
         "memory_session_digest_max_input_chars": {
           "default": 3000,
           "type": "integer",
-          "description": "Transcript characters the session-digest call reads (~4 chars a token); 0 = the built-in 3000."
+          "description": "Characters of complete source facts included in an extractive session digest; 0 = the built-in 3000. Facts are never clipped to fit."
         },
         "memory_set_chunk_max_chunks": {
           "default": 48,
