@@ -18,9 +18,7 @@ def support(text: str, receipts: list[Receipt], citations: list[AssistantCitatio
     for receipt in receipts:
         projected = project_result(receipt.result, op_name=receipt.op)
         rows.append(
-            rule.CallRow(
-                receipt.op, True, projected.get("out_found", ""), projected.get("out_hits", "")
-            )
+            rule.CallRow(receipt.op, projected.get("out_found", ""), projected.get("out_hits", ""))
         )
     return rule.support_of(
         [rule.VERIFIED if c.verified else rule.UNREAD for c in citations],

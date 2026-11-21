@@ -857,3 +857,93 @@ def test_code_citation_metadata_without_a_body_does_not_count_as_a_source_read(o
     container = "definitions" if operation == "code.symbol" else "results"
     receipt = Receipt(operation, {}, {container: [delivered]}, "model_tool", 1)
     assert not evidence.verify("[code:app.py:9]", [receipt])[0].verified
+
+
+@pytest.mark.parametrize("origin", ["host_context", "model_tool"])
+def test_tool_failure_records_no_receipt_and_withholds_done(offline, monkeypatch, origin):
+    attempted = []
+    turns = []
+
+    async def request(self, name, args):
+        attempted.append(name)
+        if origin == "host_context" or name == "loom_memory_get":
+            raise AssistantUpstreamError("injected tool failure")
+        return {"results": []}
+
+    class Followup:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turns.append(1)
+            turn.sent = turn.usage_complete = True
+            turn.usage, turn.stop = model.Usage(100, 1), "tool_calls"
+            turn.calls = [model.ToolCall("next", "loom_memory_get", '{"memory_key":"policy"}')]
+            if False:
+                yield ""
+
+    monkeypatch.setattr(tools.Tools, "_request", request)
+    monkeypatch.setattr(model, "model_for", lambda *_: Followup())
+
+    async def scenario():
+        answer = runtime.Answer()
+        received = []
+        with pytest.raises(AssistantUpstreamError, match="injected tool failure"):
+            async for frame in runtime.stream(
+                runtime.Ticket("org", "ns", "t", 1, "viewer"),
+                [{"role": "user", "content": "policy"}],
+                answer,
+                live=True,
+            ):
+                received.append(frame)
+        assert b"data: [DONE]\n\n" not in received
+        assert answer.state is not None
+        expected = [] if origin == "host_context" else ["memory.search", "knowledge.search"]
+        assert [receipt.op for receipt in answer.state.receipts] == expected
+        labels = ["Searched memories", "Searched documents"][: len(expected)]
+        assert runtime._steps(answer) == [
+            {"op": op, "text": label, "ok": True}
+            for op, label in zip(expected, labels, strict=True)
+        ]
+
+    asyncio.run(scenario())
+    assert len(attempted) == (1 if origin == "host_context" else 3)
+    assert len(turns) == (0 if origin == "host_context" else 1)
+
+
+@pytest.mark.parametrize(
+    ("reads", "text", "expected"),
+    [
+        (
+            [("memory.search", {"results": []}), ("namespace.inventory", {})],
+            "A claim from the inventory.",
+            "unchecked",
+        ),
+        (
+            [
+                ("memory.search", {"results": [{"memory_key": "policy"}]}),
+                ("namespace.inventory", {}),
+            ],
+            "A claim without its memory citation.",
+            "unsupported",
+        ),
+        (
+            [("memory.get", {"found": False}), ("namespace.inventory", {})],
+            "A claim from the inventory.",
+            "unchecked",
+        ),
+        (
+            [("memory.get", {"found": True}), ("namespace.inventory", {})],
+            "A claim without its memory citation.",
+            "unsupported",
+        ),
+        ([("mentor.guide", {})], "Write one claim per key.", "none"),
+        ([("namespace.inventory", {})], "An uncitable count.", "unchecked"),
+        (
+            [("memory.get", {"found": True, "canonical_key": "policy", "version": 7})],
+            "A cited claim [memory:policy@v7].",
+            "supported",
+        ),
+    ],
+)
+def test_successful_receipt_support_uses_delivered_found_signals(reads, text, expected):
+    receipts = [Receipt(op, {}, result, "model_tool", 1) for op, result in reads]
+    citations = evidence.verify(text, receipts)
+    assert evidence.support(text, receipts, citations) == expected

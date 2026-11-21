@@ -26,7 +26,7 @@ from server.assistant.api.models import AssistantCitation
 from server.assistant.app import agent, citations, evidence, service
 from server.assistant.domain.limits import MAX_HISTORY, MAX_MESSAGE_CHARS
 from server.assistant.domain.steps import steps_of
-from server.assistant.domain.support import UNCHECKED, CallRow
+from server.assistant.domain.support import UNCHECKED
 from server.auth import fail_closed, sharing
 from server.auth.answer_tokens import ANSWER_JTI_PREFIX, is_answer_token
 from server.auth.authz import CachedGate, check_authorized
@@ -359,8 +359,7 @@ def _event(obj: str, run_id: str, **fields: Any) -> bytes:
 
 def _steps(answer: Answer) -> list[dict[str, Any]]:
     receipts = answer.state.receipts if answer.state else []
-    steps, _ = steps_of([CallRow(receipt.op, True) for receipt in receipts])
-    return [asdict(step) for step in steps]
+    return [asdict(step) for step in steps_of([receipt.op for receipt in receipts])]
 
 
 async def stream(

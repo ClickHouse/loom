@@ -32,61 +32,32 @@ def is_abstention(text: str) -> bool:
 
 @dataclass(frozen=True)
 class RunCalls:
-    """What an answer's tool calls left: the ops whose calls found data, the ops whose calls
-    ran (found or not), whether any call failed or was refused, and whether the run held
-    more rows than one read takes (`cut`: what was read is a part of it)."""
+    """The successful operations that returned data and those that ran, including misses."""
 
     returned: frozenset[str]
-    failed: bool
     ran: frozenset[str]
-    cut: bool = False
-    unknown: bool = False
-
-
-# Maximum receipt rows considered for support; an extra row marks truncated evidence.
-RUN_ROWS = 200  # not a setting: a wire evidence bound, not a behaviour to tune
 
 
 @dataclass(frozen=True)
 class CallRow:
-    """One receipt of an answer's tool call: its
-    op, whether it succeeded, and what its output said it found (`out_found`, `out_hits`,
-    "" when the row has none)."""
+    """A successful tool receipt and its projected found/hit signals, empty when absent."""
 
     operation: str
-    success: bool
     out_found: str = ""
     out_hits: str = ""
-    protected: bool = False
 
     @property
     def found(self) -> bool:
         """The call found data unless its row says it found nothing (a miss, an empty list,
         an abstention)."""
-        return (
-            not self.protected
-            and self.success
-            and self.out_found != "false"
-            and self.out_hits != "0"
-        )
-
-
-def kept_rows(rows: list[CallRow]) -> tuple[list[CallRow], bool]:
-    """The rows a run is judged on, and whether it was cut: a read takes RUN_ROWS + 1, and
-    more than RUN_ROWS is a cut run, judged on its first RUN_ROWS (its label and its steps
-    alike)."""
-    return rows[:RUN_ROWS], len(rows) > RUN_ROWS
+        return self.out_found != "false" and self.out_hits != "0"
 
 
 def derive(rows: list[CallRow]) -> RunCalls:
-    """The run's calls from its rows (kept_rows)."""
-    kept, cut = kept_rows(rows)
+    """The outcomes of the answer's request-owned successful receipts."""
     return RunCalls(
-        frozenset(r.operation for r in kept if r.found),
-        any(not r.success and not r.protected for r in kept),
-        frozenset(r.operation for r in kept if r.success and not r.protected),
-        cut=cut,
-        unknown=any(r.protected for r in kept),
+        frozenset(r.operation for r in rows if r.found),
+        frozenset(r.operation for r in rows),
     )
 
 
@@ -94,28 +65,26 @@ def support_of(
     codes: list[str],
     *,
     text: str,
-    calls: RunCalls | None,
+    calls: RunCalls,
     citable: frozenset[str],
     no_data: frozenset[str],
     unknown_names: list[str] | None = None,
 ) -> str:
     """The answer's support. `codes` are its citations' receipt verdicts; `calls` are
-    outcomes derived from this answer's bounded tool receipts (None when unavailable);
+    outcomes derived from this answer's successful tool receipts;
     `citable` the ops
     whose rows an answer can cite; `no_data` the ops that return no namespace data;
     `unknown_names` the op and setting names it writes that the build neither serves nor
     documents.
 
     - none: no text; or it cites nothing and is an abstention, or its calls were read and
-      none was citable, found data or failed;
+      none was citable or found data;
     - supported: a citation verified;
     - unsupported: it names an op or setting the build neither serves nor documents (one
       it may have invented), whatever it cites; a citation failed for a reason of its
       own; or it cites nothing although a citable op's call found data, or ran and found
-      nothing while no other call found data or failed (a claim nothing backs);
-    - unchecked: otherwise (its checks could not say, what it read has no citation form, a
-      call failed, an outcome is protected, or its run was cut, unless a citable
-      op's call found data).
+      nothing while no other call found data (a claim nothing backs);
+    - unchecked: what it read has no citation form.
     """
     if not text.strip():
         return NONE
@@ -125,13 +94,10 @@ def support_of(
         return SUPPORTED if VERIFIED in codes else UNSUPPORTED
     if is_abstention(text):
         return NONE
-    if calls is None:
-        return UNCHECKED
     found = calls.returned - no_data
     if found & citable:
         return UNSUPPORTED
-    # A cut run is a part of the run: only a decided outcome holds.
-    if found or calls.failed or calls.cut or calls.unknown:
+    if found:
         return UNCHECKED
     if (calls.ran - no_data) & citable:
         return UNSUPPORTED
