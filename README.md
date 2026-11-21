@@ -228,8 +228,10 @@ Start a new session; the first one connects to `http://localhost:7777`. In Codex
 `codex` interactively once and approve the plugin's hooks; until then only the tools
 work. Tell the agent something worth keeping, then ask about it in the next session.
 
-For Cursor, on a Teams or Enterprise plan, a team admin can import this repository as a
-team marketplace; its [Cursor plugin](./docs/features/integrations/cursor.md#plugin),
+Cursor lists Loom as a [plugin](https://cursor.com/marketplace/clickhouse/clickhouse-loom)
+and an [MCP server](https://cursor.com/marketplace/mcp/loom).
+For a team marketplace on a Teams or Enterprise plan, a team admin can also import this
+repository; its [Cursor plugin](./docs/features/integrations/cursor.md#plugin),
 untested in Cursor, installs the MCP entry and Loom's skills. On the machine running a
 personal installation, the button below adds the [local MCP
 entry](./docs/features/integrations/cursor.md#mcp-tools), which needs no token:
