@@ -418,9 +418,8 @@ async def resolve_entities_for_write(
             self_evidence[m_text] = max(
                 self_evidence.get(m_text, 0), int(row.get("evidence_count") or 0)
             )
-    # The rows are normalized once; ranking still receives the same sorted,
-    # distinct names and uses the same length and character-overlap indexes.
-    prepared_candidates = _prepare_canonical_candidates(candidates)
+    # Existing mappings need no candidate indexes. Prepare once for the first unseen mention.
+    prepared_candidates: PreparedCandidates | None = None
 
     decisions: list[EntityResolutionDecision] = []
     redirects: dict[str, str] = {}  # flipped canonical -> new canonical
@@ -447,6 +446,8 @@ async def resolve_entities_for_write(
                 )
             )
             continue
+        if prepared_candidates is None:
+            prepared_candidates = _prepare_canonical_candidates(candidates)
         decision = choose_canonical_candidate(mention, prepared_candidates)
         if decision.strategy == "fuzzy" and self_evidence.get(decision.canonical_text, 0) < 1:
             # The matched canonical was never directly observed as a

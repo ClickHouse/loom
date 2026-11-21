@@ -317,6 +317,7 @@ async def test_normalized_map_preserves_duplicate_rows_and_attestation(
 ) -> None:
     from copy import deepcopy
     from datetime import datetime
+    from unittest.mock import Mock
 
     from server.core.ch_writes import committed_insert_settings
     from server.memory.app import entity_resolution as owner
@@ -366,6 +367,8 @@ async def test_normalized_map_preserves_duplicate_rows_and_attestation(
     before = deepcopy(rows)
     ch = StubCH()
     ch.query_all_returns.append(rows)
+    prepare = Mock(wraps=owner._prepare_canonical_candidates)
+    monkeypatch.setattr(owner, "_prepare_canonical_candidates", prepare)
     monkeypatch.setattr(owner, "naive_utc_now", lambda: now)
     resolved = await owner.resolve_entities_for_write(
         ch, org="clickhouse", namespace="private-agent", entity_texts=["Naomi Alderman"]
@@ -404,6 +407,7 @@ async def test_normalized_map_preserves_duplicate_rows_and_attestation(
             for born in (created, duplicate_created)
         )
     assert ch.insert_calls == [("loom.entity_canonical_map", expected, committed_insert_settings())]
+    assert prepare.call_count == 0
     assert rows == before
     assert ch.query_all_calls[0][1] == {"org": "clickhouse", "ns": "private-agent", "lim": 5000}
     fuzzy = owner.choose_canonical_candidate("Northwind AI", ["northwindai", "unrelated product"])
@@ -636,6 +640,7 @@ def test_generic_similarity_keeps_raw_normalization_contract(monkeypatch, left, 
 async def test_prepared_scoring_preserves_complete_resolver_rows(monkeypatch, self_evidence):
     from copy import deepcopy
     from datetime import datetime
+    from unittest.mock import Mock
 
     from server.core.ch_writes import committed_insert_settings
     from server.memory.app import entity_resolution as owner
@@ -661,9 +666,12 @@ async def test_prepared_scoring_preserves_complete_resolver_rows(monkeypatch, se
     actual, reference = StubCH(), StubCH()
     actual.query_all_returns.append(rows)
     reference.query_all_returns.append(deepcopy(rows))
+    prepare = Mock(wraps=owner._prepare_canonical_candidates)
+    monkeypatch.setattr(owner, "_prepare_canonical_candidates", prepare)
     monkeypatch.setattr(owner, "naive_utc_now", lambda: now)
     args = dict(org="clickhouse", namespace="private-agent", entity_texts=["Northwind AI"])
     resolved = await owner.resolve_entities_for_write(actual, **args)
+    assert prepare.call_count == 1
     with monkeypatch.context() as control:
         control.setattr(owner, "choose_canonical_candidate", _frozen_raw_entity_decision)
         control.setattr(owner, "entity_similarity", _frozen_raw_entity_similarity)
@@ -802,3 +810,81 @@ def test_gap_bound_leaves_room_for_later_perfect_candidate(monkeypatch, gap):
     )
     if gap != "above":
         assert pairs == [(mention, candidate) for candidate in raw]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("known", [None, "aster known", "zulu known"])
+@pytest.mark.parametrize("attested", [False, True], ids=["self", "fuzzy"])
+async def test_candidate_index_is_reused_across_missing_and_existing_mentions(
+    monkeypatch, known, attested
+):
+    from copy import deepcopy
+    from datetime import datetime
+    from unittest.mock import Mock
+
+    from server.core.ch_writes import committed_insert_settings
+    from server.memory.app import entity_resolution as owner
+
+    created, now = datetime(2024, 1, 2), datetime(2025, 1, 2)
+    rows = []
+    if attested:
+        rows.append(
+            {
+                "mention_text": "northwindai",
+                "canonical_text": "northwindai",
+                "confidence": 1.0,
+                "evidence_count": 2,
+                "created_at": created,
+            }
+        )
+    if known is not None:
+        rows.append(
+            {
+                "mention_text": known,
+                "canonical_text": known,
+                "confidence": 0.8,
+                "evidence_count": 3,
+                "created_at": created,
+            }
+        )
+    before = deepcopy(rows)
+    ch = StubCH()
+    ch.query_all_returns.append(rows)
+    prepare = Mock(wraps=owner._prepare_canonical_candidates)
+    monkeypatch.setattr(owner, "_prepare_canonical_candidates", prepare)
+    monkeypatch.setattr(owner, "naive_utc_now", lambda: now)
+    mentions = ["Unrelated Galaxy", "Northwind AI", "Northwind AI"]
+    if known is not None:
+        mentions.insert(1, known.upper())
+    resolved = await owner.resolve_entities_for_write(
+        ch, org="clickhouse", namespace="private-agent", entity_texts=mentions
+    )
+
+    canonical = "northwindai" if attested else "northwind ai"
+    expected = {
+        "northwind ai": (canonical, 1.0, "fuzzy" if attested else "self", 1, now),
+        "unrelated galaxy": ("unrelated galaxy", 1.0, "self", 1, now),
+    }
+    if known is not None:
+        expected[known] = (known, 0.8, "existing", 4, created)
+    assert resolved == {mention: fields[0] for mention, fields in expected.items()}
+    written = [
+        {
+            "org": "clickhouse",
+            "namespace": "private-agent",
+            "mention_text": mention,
+            "canonical_text": fields[0],
+            "confidence": fields[1],
+            "strategy": fields[2],
+            "evidence_count": fields[3],
+            "created_at": fields[4],
+            "updated_at": now,
+            "tombstoned_at": None,
+        }
+        for mention, fields in sorted(expected.items())
+    ]
+    assert ch.insert_calls == [("loom.entity_canonical_map", written, committed_insert_settings())]
+    assert prepare.call_count == 1
+    assert len(ch.query_all_calls) == 1
+    assert ch.query_all_calls[0][1] == {"org": "clickhouse", "ns": "private-agent", "lim": 5000}
+    assert rows == before
