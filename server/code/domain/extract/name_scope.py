@@ -67,6 +67,7 @@ _CLASS_BY_LANG: dict[str, str] = {
     "rust": NATIVE,
     # Protobuf and Go-template names are module-scoped `<path>::Name` like Python's
     "proto": SCRIPT,
+    "thrift": SCRIPT,
     "gotemplate": SCRIPT,
     "hcl": SCRIPT,  # Dotted directory scopes
     "k8s": SCRIPT,  # Dotted file scopes
