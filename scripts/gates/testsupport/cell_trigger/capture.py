@@ -131,10 +131,10 @@ class Codec:
     def __init__(self, specification):
         self.p = specification
         need(
-            len(self.p["memory_fields"]) == 61
-            and len(set(self.p["memory_fields"])) == 61
+            len(self.p["memory_fields"]) == 62
+            and len(set(self.p["memory_fields"])) == 62
             and set(self.p["memory_types"]) == set(self.p["memory_fields"])
-            and len(self.p["sparse_defaults"]) == 43
+            and len(self.p["sparse_defaults"]) == 44
             and len(self.p["audit_fields"]) == 13,
             "closed protocol",
         )
