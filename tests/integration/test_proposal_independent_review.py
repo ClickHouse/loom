@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from server.settings import settings
 from tests.integration._resources import unique_org
 
 
@@ -49,7 +50,9 @@ async def test_proposal_acceptance_requires_an_independent_human_administrator(
             "decision": "accept",
             "approved_sha256": {"candidate": wrote.json()["content_sha256"]},
         }
-        for bearer in (None, author, token("reviewer", human=True, role="writer")):
+        anonymous = await post("memory.proposal_decide", decision, None)
+        assert anonymous.status_code == (401 if settings.auth_required else 403), anonymous.text
+        for bearer in (author, token("reviewer", human=True, role="writer")):
             refused = await post("memory.proposal_decide", decision, bearer)
             assert refused.status_code == 403, refused.text
         self_approval = await post(

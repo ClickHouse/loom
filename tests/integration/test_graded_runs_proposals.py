@@ -228,9 +228,13 @@ async def test_proposal_lifecycle_on_graded_runs(control_plane_url: str, mint_te
 
 
 @pytest.mark.asyncio
-async def test_run_grade_needs_exactly_one_target(control_plane_url: str) -> None:
-    async with httpx.AsyncClient(base_url=control_plane_url, timeout=30) as c:
-        base = {"org": "grades-test", "namespace": "grades-x", "grade": "pass"}
+async def test_run_grade_needs_exactly_one_target(control_plane_url: str, mint_test_token) -> None:
+    org = unique_org("grades-test")
+    token = mint_test_token(org=org, roles=["admin"])
+    async with httpx.AsyncClient(
+        base_url=control_plane_url, timeout=30, headers={"Authorization": f"Bearer {token}"}
+    ) as c:
+        base = {"org": org, "namespace": "grades-x", "grade": "pass"}
         await _call(c, "run.grade", base, expect=422)
         await _call(c, "run.grade", {**base, "run_id": "a", "session_id": "b"}, expect=422)
         await _call(c, "run.grade", {**base, "run_id": "no-such-run"}, expect=404)
