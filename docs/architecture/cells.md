@@ -153,6 +153,11 @@ against that cell's current bot registrations. It uses the existing native cell
 control owner, registration comparison and directory generation claim. The directory
 stores only the two purposes, names and public thumbprints in `break_glass`, with an
 operator audit in the same transaction. Registration reruns preserve this pair.
+A prepared later cell may provision before attach only when it is enforced, has no
+placements or started attach, and its complete local accepted pair matches the exact
+registration. Its separate canonical main and probe origins must already be published.
+The fenced directory mutation repeats these checks and requires the first cell serving
+and enforced. This does not admit an attaching cell to `loom cell each`.
 
 Each action awaits a strict started audit, its owning business helper, and a strict
 completed audit. Correlation fields do not provide idempotency. Before a mutating

@@ -12702,7 +12702,7 @@
            "nargs": null,
            "type": null,
            "required": true,
-           "help": "The serving cell to provision",
+           "help": "The serving or prepared later cell to provision",
            "metavar": null
           },
           {
