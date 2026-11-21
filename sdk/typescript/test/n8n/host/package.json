@@ -1,0 +1,10 @@
+{
+  "name": "loom-n8n-test-host",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "@langchain/core": "1.4.0",
+    "n8n-workflow": "2.47.2",
+    "zod": "3.25.76"
+  }
+}

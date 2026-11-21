@@ -329,6 +329,18 @@
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
+    "sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts:memory.delete:35563d10bb38c8de76ef:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored conversation messages by their fixed prefix and bound user/session identity; message content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts:memory.get:251edad74953d61b17b9:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored conversation messages by their fixed prefix and bound user/session identity; message content writes remain classified."
+    },
+    "sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts:memory.list:7821831ef62e011eafb0:1": {
+      "category": "reference",
+      "reason": "Reads or removes stored conversation messages by their fixed prefix and bound user/session identity; message content writes remain classified."
+    },
     "sdk/typescript/src/integrations/openai-agents.ts:memory.delete:2867fea41a6f183773a4:1": {
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
@@ -413,6 +425,9 @@
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
     "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
+    "sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts": "e256eaac1dbd68eb944cf30c48e62395145077a9803282979d717d2289fd9092",
+    "sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomMemory.node.ts": "96eaf38c3c23a72d2cb9a182ea620b5dac69eeadf99fa928da8dc05eb96e0130",
+    "sdk/typescript/src/integrations/n8n/nodes/client.ts": "1bc5155968b0ef956f8ea1ff058dacc59e1ca2267ae36aba291fd63b188649b7",
     "sdk/typescript/src/integrations/openai-agents.ts": "f185d90da6512833c590c4729aaf2bfb140ff469e4864fad6d761e29a66c1b0a",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }

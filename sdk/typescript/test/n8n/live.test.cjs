@@ -2,9 +2,11 @@ const assert = require("node:assert/strict");
 const { randomUUID } = require("node:crypto");
 const { test } = require("node:test");
 const { Agent } = require("@clickhouse/loom");
+const { dirname, join } = require("node:path");
+const root = dirname(require.resolve("@clickhouse/loom/package.json"));
 const { HumanMessage, AIMessage } = require("@langchain/core/messages");
-const { LoomChatHistory } = require("../dist/nodes/LoomMemory/LoomChatHistory.js");
-const { LoomMemory } = require("../dist/nodes/LoomMemory/LoomMemory.node.js");
+const { LoomChatHistory } = require(join(root, "dist/integrations/n8n/nodes/LoomMemory/LoomChatHistory.js"));
+const { LoomMemory } = require(join(root, "dist/integrations/n8n/nodes/LoomMemory/LoomMemory.node.js"));
 
 test("conversation messages are stored, resumed and cleared in a local Loom deployment", {
   skip: !process.env.LOOM_BASE_URL,

@@ -279,7 +279,8 @@ jobs:
           python -m build sdk/python --outdir release/python
       - name: npm ci
         working-directory: sdk/typescript
-        run: npm ci --no-audit --no-fund
+        # Host expression engines are not needed to build or test adapters.
+        run: npm ci --ignore-scripts --no-audit --no-fund
       # Lint, types, version across sources, README examples and unit tests
       # gate a registry publish.
       - name: npm run check (before a registry publish)

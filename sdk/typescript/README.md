@@ -13,7 +13,7 @@ The SDK's version is the server release's; which servers it works with is in
 A release not yet on npm installs from its assets
 ([installing from a GitHub Release](https://github.com/ClickHouse/loom/blob/main/docs/development/release-process.md#installing-from-a-github-release)).
 For a clone at `<clone>`, build it with
-`npm --prefix <clone>/sdk/typescript ci && npm --prefix <clone>/sdk/typescript run build`,
+`npm --prefix <clone>/sdk/typescript ci --ignore-scripts && npm --prefix <clone>/sdk/typescript run build`,
 then run `npm install <clone>/sdk/typescript` in your project.
 
 ## Quick start — an agent that remembers
@@ -512,6 +512,27 @@ const memories = await new LoomMemoryRetriever(bot, { scope: { userId: "u-42" } 
 
 Both extend `BaseRetriever` from `@langchain/core` (install it next to the SDK; it is an optional peer dependency) and return one `Document` per document chunk (`knowledge.search`) or memory (`memory.search`). The memory retriever returns nothing when loom abstains, and leaves out memories below the floor, unless `honourAbstain: false`.
 
+## n8n
+
+The SDK includes the Loom action node, Loom Chat Memory node and Loom API credential
+for self-hosted n8n. Their classes are exported by `@clickhouse/loom/integrations/n8n`.
+The native CommonJS files and icons are in `dist/integrations/n8n` inside this package.
+The `n8n-workflow` package is an optional peer supplied by the n8n host; importing the
+SDK's main entry does not load the adapter.
+
+Install the SDK in the npm project running n8n and set the custom-node directory
+before starting n8n:
+
+```sh
+npm install @clickhouse/loom
+export N8N_CUSTOM_EXTENSIONS="$(node -p 'require("node:path").join(require("node:path").dirname(require.resolve("@clickhouse/loom/package.json")), "dist/integrations/n8n")')"
+npx --no-install n8n start
+```
+
+The adapter is tested with `n8n-workflow` 2.47.2. Use n8n's custom-node loader;
+its Community Nodes settings installer requires a different package naming format.
+See [configuration and memory scope](https://github.com/ClickHouse/loom/blob/main/docs/features/integrations/frameworks.md#n8n).
+
 ## Mastra
 
 ```ts
@@ -591,7 +612,7 @@ No dependency on the Strands package: the `MemoryStore` shape (`name`, `writable
 ## Development
 
 ```bash
-npm install
+npm ci --ignore-scripts
 npm run check                 # biome lint + tsc --noEmit + version check + README examples + vitest
 npm run check:dist            # tsdown build (ESM + CJS) + dist tests + publint + arethetypeswrong
 npm run docs                  # typedoc → docs/api
@@ -599,4 +620,6 @@ LOOM_BASE_URL=… LOOM_API_KEY=… LOOM_ORG=dev npm run test:integ   # against a
 python ../../scripts/codegen/sdk_ts_gen.py     # regenerate the types after a server change
 ```
 
-The package ships ESM (`dist/index.mjs`) and CommonJS (`dist/index.cjs`) with their own declaration files, has no side effects, and imports no Node built-in (it runs on `fetch`). `test/package/exports.test.ts` lists every runtime export; adding one is a deliberate API change. `src/types.test-d.ts` holds the type-level contract (what `call`, the group accessors and `Body<K>` infer and reject), checked by `vitest --typecheck` inside `npm test`. `prepublishOnly` runs both check scripts.
+Development installs skip dependency lifecycle scripts because the SDK build does not use the n8n expression engine.
+
+The core SDK ships ESM (`dist/index.mjs`) and CommonJS (`dist/index.cjs`) with their own declaration files, has no side effects, and imports no Node built-ins (it runs on `fetch`). The n8n entry uses Node.js built-ins and requires its host runtime. `test/package/exports.test.ts` lists every runtime export; adding one is a deliberate API change. `src/types.test-d.ts` holds the type-level contract (what `call`, the group accessors and `Body<K>` infer and reject), checked by `vitest --typecheck` inside `npm test`. `prepublishOnly` runs both check scripts.

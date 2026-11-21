@@ -30,6 +30,7 @@ Every step others see is the owner's to start, as AGENTS.md has it: opening or m
 ## 1. The version
 
 - One version for the server, both images, the web app, both SDKs, the root skills and the chart's `appVersion`; `prepare.py` moves all of them and the chart's own `version`.
+- One public npm package, `@clickhouse/loom`, contains the SDK and every JavaScript adapter, including n8n. Include adapter artifacts and tests in the SDK build; `release.yml` is its sole npm publisher. Do not create an adapter package, version tag or trusted publisher.
 - The coding-agent plugins keep their own version, bumped in the pull request that changes them. Raise their `MIN_SERVER_VERSION` as the [release process](../../../docs/development/release-process.md#cutting-the-release) step 2 says.
 - A minor for features, a patch for fixes only (on a release branch, §7), a major for a break beyond the N−1 rule. A field or op to be removed is announced one minor ahead, by hand under the notes' "What changed for clients" (the generated wire diff lists only what has changed), and served until the removal; after it, a removed field is named in `ignored_args` and a removed op answers `NotFound` ([unknown and removed fields](../../../docs/reference/http-api.md#unknown-and-removed-fields)).
 

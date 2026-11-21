@@ -198,7 +198,6 @@ def test_tool_projects_never_run_vendor_lifecycle_scripts() -> None:
         ".devcontainer/start-loom.sh",
         "examples/course-starter/.devcontainer/start-loom.sh",
         ".github/workflows/plugin-platforms.yml",
-        ".github/workflows/n8n-publish.yml",
     ]
     for filename in paths:
         commands = [

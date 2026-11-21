@@ -328,6 +328,8 @@ signature](#a-failed-tag-or-signature) recovers.
 
 **Why publish the verified files.** A job that rebuilt its own artifact could ship unchecked bytes. Publishing what `verify` passed means the GitHub Release and the registries carry the same bytes.
 
+All JavaScript adapters, including n8n, ship inside `@clickhouse/loom` at the SDK version. Its build checks the adapter artifacts before packing the tarball. `release.yml` is the sole npm publisher; adapters have no separate package, release tag or trusted publisher.
+
 **Why the server is not on PyPI.** The server is deployed against ClickHouse, not imported as a library; it ships as the image. The root `pyproject.toml` is marked `Private :: Do Not Upload`, and PyPI carries only the SDK. The `pypi` and `npm` jobs need trusted publishers registered for this repository (their GitHub environments).
 
 **Why SDK publishing is manual.** A registry publish cannot be undone: PyPI never accepts
