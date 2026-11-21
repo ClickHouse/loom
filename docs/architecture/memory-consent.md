@@ -54,6 +54,11 @@ owed for another pass. Receipts match the complete identity and published versio
 a newer metadata copy settles its original revision's delivery. Copy follow-ups confirm
 the exact document in ClickHouse before settling debt.
 
+Each native publication batch finishes its canonical send before sending its vectors.
+Both sends acquire the same consent fences; ordering them prevents competing partial
+claims from blocking the batch. Audit publication runs alongside them. A failed canonical
+send still permits the independently checked vector send and preserves each target's debt.
+
 Shared canonical retirement holds admission through its final send. It checks the
 promoted source identities against erasure policy and requires the shared head to remain
 present. Missing heads, erased content and unproven legacy sources are removed below the

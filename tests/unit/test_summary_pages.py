@@ -79,7 +79,10 @@ def candidates(count, order):
 @pytest.mark.parametrize("order", ["oldest", "newest", "session"])
 @pytest.mark.parametrize("withheld", [2, 270])
 @pytest.mark.parametrize("qualified", [0, 1, 2])
-async def test_pages_fill_from_current_sources(monkeypatch, order, withheld, qualified):
+@pytest.mark.parametrize("page_size", [1, 256])
+async def test_pages_fill_from_current_sources(monkeypatch, order, withheld, qualified, page_size):
+    monkeypatch.setattr(summary_pages.settings, "memory_digest_listing_page_size", page_size)
+    monkeypatch.setattr(summary_pages.settings, "memory_digest_listing_max_pages", 512)
     rows = candidates(withheld + qualified, order)
     heads = [
         _row(

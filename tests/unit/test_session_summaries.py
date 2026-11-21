@@ -5,9 +5,9 @@ Two halves:
     loom.session_summaries INSERT rows. Guards the RMT(version) silent-data-loss
     class (a write omits a column -> FINAL surfaces the schema DEFAULT over a
     prior real value).
-  - _write_session_summary — the inline ingest writer. Stubs the LLM, embedder,
-    and CH client so the row shape (mirror-every-column), the date-label carriage,
-    and the fail-open skips run CH-free / network-free.
+  - _write_session_summary — the inline ingest writer. Stubs authoritative source
+    heads, the embedder and the CH client to check complete fact rendering,
+    row shape, date labels and skipped writes without network access.
 """
 
 from __future__ import annotations

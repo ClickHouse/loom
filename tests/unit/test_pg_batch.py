@@ -178,6 +178,34 @@ class _Batching:
         await pg_batch.submit(committed, documents=docs, ch=self.ch, wait=wait)
 
 
+async def test_canonical_and_vector_sends_do_not_compete_for_the_same_fences(monkeypatch):
+    batch = _Batching(monkeypatch)
+    memory_send = pg_batch.inserts.insert_memory_versions
+    document_send = pg_batch.inserts.insert_embedding_rows
+    publishing_memory = False
+    overlap = []
+
+    async def memory(rows, **kwargs):
+        nonlocal publishing_memory
+        publishing_memory = True
+        try:
+            await asyncio.sleep(0)
+            return await memory_send(rows, **kwargs)
+        finally:
+            publishing_memory = False
+
+    async def documents(rows, **kwargs):
+        overlap.append(publishing_memory)
+        return await document_send(rows, **kwargs)
+
+    monkeypatch.setattr(pg_batch.inserts, "insert_memory_versions", memory)
+    monkeypatch.setattr(pg_batch.inserts, "insert_embedding_rows", documents)
+    await batch.submit("k", 1)
+    assert overlap == [False]
+    assert batch.memory == batch.documents == [["k"]]
+    assert batch.landed == [(("o", "n", 1), _FULL)]
+
+
 async def test_commits_queued_together_are_one_insert_per_table(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

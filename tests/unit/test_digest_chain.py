@@ -195,7 +195,7 @@ async def test_digest_insert_then_chain_edges(monkeypatch) -> None:
 async def test_chain_failure_leaves_the_digest(monkeypatch) -> None:
     from server.memory.app.session_summary import _write_session_summary
 
-    class _NoQuery:
+    class _ChainUnavailable:
         async def query_all(self, sql, params=None):
             if "FROM loom.memory_refusals" in sql:
                 return []
@@ -207,7 +207,7 @@ async def test_chain_failure_leaves_the_digest(monkeypatch) -> None:
         async def insert(self, table, rows, settings=None):
             self.inserts.append((table, list(rows)))
 
-    ch = _NoQuery()  # no query_all at all: the chain raises, the digest stays
+    ch = _ChainUnavailable()
     state = _wire_writer(monkeypatch, ch)
     await _write_session_summary(_FakeInput(), state)
     assert [t for t, _ in ch.inserts] == ["loom.session_summaries"]

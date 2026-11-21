@@ -835,8 +835,7 @@ async def test_a_plain_delete_of_a_same_value_write_is_copied_with_its_metadata(
 async def test_a_deleted_version_refuses_restore_and_retains_its_marker(
     ch: KeptCH, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The marker stays on delete_version's tombstone; the row memory.restore brings back,
-    # and every version after it, drops it.
+    # Refused restoration preserves the deletion marker.
     from server.memory.api.models_crud import MemoryRestoreInput
     from server.memory.app import restore as restore_mod
 
@@ -1809,9 +1808,6 @@ async def test_a_503_writes_its_audit_row_and_the_worker_none(
         request_id_var.reset(rid)
     setup_receipts = [row for event, row in emitted if event == "memory.set"]
     assert setup_receipts == []
-    if setup_receipts:
-        assert setup_receipts[0]["subject"]["memory_key"] == _KEY
-    emitted[:] = [(event, row) for event, row in emitted if event != "memory.set"]
     calls = 2 if failure == "a retry" else 1
     assert len(emitted) == calls
     expected = MemoryDeleteVersionInput(**_ID, memory_key=_KEY, version=head).model_dump(

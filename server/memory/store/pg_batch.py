@@ -438,12 +438,18 @@ async def _publish(group: list[_Entry]) -> None:
     rows = [r for e in group if not e.rows_sent for r in e.committed.rows]
     docs = [d for e in group for d in served.get(id(e), {}).values()]
     acknowledged: set[tuple[Any, ...]] = set()
+    rows_finished = asyncio.Event()
 
     async def send_rows() -> None:
-        for block in partition_blocks(rows, created_month):
-            await inserts.insert_memory_versions(block, ch=ch, published=True)
+        try:
+            for block in partition_blocks(rows, created_month):
+                await inserts.insert_memory_versions(block, ch=ch, published=True)
+        finally:
+            rows_finished.set()
 
     async def send_documents() -> None:
+        # Both sends acquire the same consent fences; competing can split their claims.
+        await rows_finished.wait()
         for block in partition_blocks(docs, created_month):
             admitted = await inserts.insert_embedding_rows(block, ch=ch)
             acknowledged.update(_doc_key(row) for row in admitted)

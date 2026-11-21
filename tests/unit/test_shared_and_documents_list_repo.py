@@ -261,11 +261,7 @@ async def test_fetch_shared_none_when_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_tombstone_shared_embedding_deletes_older_cached_versions() -> None:
-    """memory.search(scope='shared') filters on tombstoned_at IS NULL; the
-    demote path lands the tombstone as a committed re-emit of the live shared
-    rows (every column carried, tombstoned_at set, fresh version) so the next
-    search does not see the row — and never as an ALTER UPDATE, whose patch
-    part would cost the fact leg its codes-first read."""
+    """Shared retirement deletes older cache versions without publishing another copy."""
 
     ch = StubCH()
     when = datetime(2026, 5, 17, tzinfo=UTC)

@@ -1,9 +1,6 @@
-"""The session digest is drafted while the extractor runs, and
-the post-extraction projections are awaited together.
+"""Extraction commits before overlapping projection writes.
 
-CH-free and model-free: every projection is a stub that records when it ran.
-The assertions are about ORDER and OVERLAP, not about row shapes (those are
-covered by test_session_summaries.py and the chunk/evidence tests).
+Projection stubs record execution order, overlap and isolated failures.
 """
 
 from __future__ import annotations
@@ -43,7 +40,6 @@ class _Log:
         self.spans: dict[str, tuple[float, float]] = {}
         self.calls: list[str] = []
         self.failures: list[str] = []
-        self.drafts_written: list[Any] = []
 
     def stage(self, name: str, *, seconds: float = 0.05, result: Any = None, raises: bool = False):
         async def _run(*args: Any, **kwargs: Any) -> Any:
@@ -53,8 +49,6 @@ class _Log:
             self.spans[name] = (t0, time.perf_counter())
             if raises:
                 raise RuntimeError(f"{name} exploded")
-            if name == "summary":
-                self.drafts_written.append(kwargs.get("draft"))
             return result
 
         return _run

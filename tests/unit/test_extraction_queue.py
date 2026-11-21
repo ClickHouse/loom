@@ -436,7 +436,6 @@ async def test_worker_replays_claimed_rows_and_marks_state(
     assert res.done_count == 1 and res.written_memories == 3
     assert res.failures == ["bad: failed"]
     assert all(inp.defer is False for inp in seen)
-    # inserts: 1 claim (2 rows) + done + failed
     statuses = [
         r["status"] for _, rows, _ in ch.inserts for r in rows if r["status"] != q.STATUS_RUNNING
     ]
