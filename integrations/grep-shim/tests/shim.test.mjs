@@ -230,16 +230,49 @@ test("grep: a 401, unparseable JSON or a server past the timeout all give native
   const dir = checkout();
   const want = await runRaw(NATIVE.grep, ["-rn", "foo", "src"], { cwd: dir });
   for (const mode of [401, "garbage", "hang"]) {
-    await withServer(mode, async (url, seen) => {
+    await withServer(mode, async (url) => {
       const got = await shim("grep", ["-rn", "foo", "src"], {
         cwd: dir,
         env: { LOOM_API_KEY: "t", LOOM_BASE_URL: url, LOOM_GREP_SHIM_TIMEOUT_MS: "300" },
       });
       assert.equal(got.code, 0, String(mode));
       assert.equal(got.out.equals(want.out), true, String(mode));
-      assert.equal(seen.length > 0, true, String(mode));
+      // The deadline can expire before HTTP dispatch; response handling is checked below.
       assert.ok(got.ms < 3000, `${mode} took ${got.ms} ms`);
     });
+  }
+});
+
+test("grep: a received 401 or malformed JSON takes the response fallback path", {
+  skip: !NATIVE.grep && "no native grep on PATH",
+}, async () => {
+  const dir = checkout();
+  try {
+    const want = await runRaw(NATIVE.grep, ["-rn", "foo", "src"], { cwd: dir });
+    for (const mode of ["401", "garbage"]) {
+      const record = path.join(dir, `response-${mode}.json`);
+      const got = await shim("grep", ["-rn", "foo", "src"], {
+        cwd: dir,
+        env: {
+          LOOM_API_KEY: "t",
+          LOOM_BASE_URL: "http://response.invalid",
+          LOOM_GREP_SHIM_TIMEOUT_MS: "300",
+          NODE_OPTIONS: `--import=${new URL("./response-fixture.mjs", import.meta.url).href}`,
+          LOOM_TEST_RESPONSE_MODE: mode,
+          LOOM_TEST_RESPONSE_RECORD: record,
+        },
+      });
+      assert.equal(got.code, 0, mode);
+      assert.equal(got.out.equals(want.out), true, mode);
+      const seen = JSON.parse(fs.readFileSync(record, "utf8"));
+      assert.equal(seen.requests.length > 0, true, mode);
+      assert.equal(seen.requestValidated, true, mode);
+      assert.equal(seen.jsonCalls, mode === "garbage" ? 1 : 0, mode);
+      assert.equal(seen.jsonRejected, mode === "garbage", mode);
+      assert.ok(got.ms < 3000, `${mode} took ${got.ms} ms`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
