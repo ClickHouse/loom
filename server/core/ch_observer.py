@@ -28,8 +28,9 @@ _SESSION_TTL_S = 15
 _REQUEST_TIMEOUT_S = 10
 # not a setting: all owned sessions close concurrently within one second.
 _CLOSE_TIMEOUT_S = 1
-# not settings: bounded replica discovery shares the ten-second authority proof.
+# not a setting: reserve half the fixed authority proof for the drain and census.
 _DISCOVERY_TIMEOUT_S = 5
+# not a setting: cap session creation inside that fixed discovery deadline.
 _DISCOVERY_ATTEMPTS_PER_REPLICA = 8
 # not a setting: a larger access catalog refuses instead of returning a partial proof.
 _BODY_BYTES = 4 * 1024 * 1024
