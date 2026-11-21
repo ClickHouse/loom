@@ -40,12 +40,13 @@ async def _search(ch: RecordingCH, c: dict[str, Any]) -> None:
     repo = _repo(ch)
     scope = _scope(c["scope"])
     prefix = "src/" if c["path_prefix"] else ""
+    tokens = ["__"] if c["token_gate"] == "underscores" else ["quota", "key"]
     await repo.lexical_search_chunks(
         ORG,
         NS,
         MODEL,
-        ["quota", "key"],
-        [1.5, 0.7],
+        tokens,
+        [1.0] * len(tokens),
         path_prefix=prefix,
         scope=scope,
     )
@@ -421,6 +422,7 @@ def cases() -> list[Case]:
             {
                 "scope": ("none", "globs", "regex"),
                 "path_prefix": (False, True),
+                "token_gate": ("words", "underscores"),
             },
         ),
         Case(

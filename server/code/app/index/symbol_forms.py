@@ -35,6 +35,11 @@ table holds them; `resolved_by` on the payload discloses the form that bound.
      after rules 1 and 2, for bare names too: a bare SQL name is not an
      over-qualification but a different vocabulary, and the class it names
      is one class — the ambiguity guard is skipped for these rows.
+
+Python import spellings bind through the same bounded bare-name read. A dotted
+module remains one stored scope segment, and a package's `__init__.py` is implicit
+in its import name. Only Python rows participate; ties and incomplete candidate
+sets decline (`resolved_by: python_module`). Stored names and ids stay intact.
 """
 
 from __future__ import annotations
@@ -47,6 +52,7 @@ ANON_SCIP_PREFIX = "$anonymous_namespace"
 RESOLVED_ANON = "anonymous_namespace"
 RESOLVED_TAIL = "tail"
 RESOLVED_REGISTRATION = "registration"
+RESOLVED_PYTHON = "python_module"
 # Bare-name definitions read for the tail rule; a hub name past this many
 # rows is not bound (the rule needs the whole candidate set to call a match unique).
 TAIL_READ_LIMIT = 400
@@ -167,39 +173,74 @@ def dropped_segments(written: str, rows: list[dict[str, Any]]) -> set[str]:
     return out
 
 
+def python_bind(written: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Bind an import spelling to one retained Python definition name."""
+    spelling = ".".join(segments(written))
+    if "." not in spelling:
+        return []
+    best: dict[str, list[dict[str, Any]]] = {}
+    best_rank = 0
+    for row in rows:
+        path = str(row.get("path") or "")
+        if not path.endswith(".py"):
+            continue
+        qualified = str(row.get("qualified_name") or "")
+        parts = segments(qualified)
+        if len(parts) < 2:
+            continue
+        forms = [".".join(parts)]
+        # Only the file's module scope is implicit in a package import. A class's
+        # constructor and a directory named __init__ keep their names.
+        if path.endswith("/__init__.py") and parts[0].endswith(".__init__"):
+            forms.append(".".join([parts[0].removesuffix(".__init__"), *parts[1:]]))
+        rank = max(
+            (2 if form == spelling else int(form.endswith("." + spelling))) for form in forms
+        )
+        if rank > best_rank:
+            best_rank, best = rank, {}
+        if rank and rank == best_rank:
+            best.setdefault(qualified, []).append(row)
+    return next(iter(best.values())) if len(best) == 1 else []
+
+
 async def resolve_tolerant(
     repo: Any,
     org: str,
     ns: str,
     name: str,
 ) -> tuple[list[dict[str, Any]], str]:
-    """The two rules over the repository, after an exact miss: (rows,
-    resolved_by). ([], "") when neither binds. Rule 1 runs for any name with
-    an anonymous segment (the rest may be bare and is looked up as such);
-    rule 2 only for a qualified name."""
+    """Read-side name forms after an exact miss: (rows, resolved_by).
+    Anonymous scopes, Python imports and namespace tails precede registration;
+    every binding retains the stored identity."""
     stripped = strip_anonymous(name)
     if stripped:
         rows = await repo.symbols_by_name(org, ns, stripped)
         if rows:
             return rows, RESOLVED_ANON
-    if is_qualified(name):
-        bound = await _tail(repo, org, ns, name)
+    if is_qualified(name) or "." in name:
+        bound, resolved_by = await _qualified(repo, org, ns, name)
         if bound:
-            return bound, RESOLVED_TAIL
+            return bound, resolved_by
     return await _registration(repo, org, ns, name)
 
 
-async def _tail(repo: Any, org: str, ns: str, name: str) -> list[dict[str, Any]]:
+async def _qualified(repo: Any, org: str, ns: str, name: str) -> tuple[list[dict[str, Any]], str]:
     bare = _named(name)[-1]
+    if "::" not in name:
+        bare = bare.rsplit(".", 1)[-1]
     rows = await repo.symbols_by_name(org, ns, bare, limit=TAIL_READ_LIMIT)
     if not rows or len(rows) >= TAIL_READ_LIMIT:
-        return []
+        return [], ""
+    bound = python_bind(name, rows)
+    if bound:
+        return bound, RESOLVED_PYTHON
     classes: set[str] = set()
     for seg in sorted(dropped_segments(name, rows)):
         hits = await repo.symbols_by_name(org, ns, seg, limit=5)
         if any(str(h.get("kind") or "") in {"class", "struct"} for h in hits):
             classes.add(seg)
-    return tail_bind(name, rows, class_names=classes)
+    bound = tail_bind(name, rows, class_names=classes)
+    return bound, RESOLVED_TAIL if bound else ""
 
 
 async def _registration(

@@ -33,6 +33,12 @@ unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
 Every op, grouped by task, is on [operations.md](operations.md).
 
+Python symbol lookups accept dotted import names such as `package.encoder.dumps`
+and package names such as `package::dumps` for a definition in
+`package/__init__.py`. A unique match reports `resolved_by: python_module` and
+retains the stored qualified name and symbol id. Ambiguous matches remain unresolved.
+This name matching reads the existing index and requires no reindexing.
+
 ## One namespace is one branch
 
 A code namespace tracks one repository branch. Each index tier advances its own commit

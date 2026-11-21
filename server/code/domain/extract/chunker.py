@@ -7,7 +7,7 @@ the model can reason about, plus a file:line pointer to verify):
   * every class/struct         -> one `class_skeleton` chunk: the class text
     with method BODIES elided to `{ ... }` (methods get their own chunks)
   * leading comments+includes  -> one `file_header` chunk
-  * anything left at top level -> grouped `other` chunks
+  * uncovered source, including class documentation and data -> `other` chunks
   * a function larger than max_chars splits at top-level statement
     boundaries inside its body (the AST's fresh-line child starts), each
     piece re-prefixed with the signature header so no piece ever floats
@@ -507,6 +507,7 @@ def chunk_file(
     cls_syms = [s for s in pf.symbols if s.kind in kinds]
 
     covered = [False] * (len(src_lines) + 2)
+    container_source = [False] * len(covered)
 
     # function chunks (whole definitions, with the doc comment attached)
     for fn in sorted(fn_syms, key=lambda s: (s.start_line, -s.end_line)):
@@ -608,14 +609,19 @@ def chunk_file(
             )
         for i in range(cls.start_line, cls.end_line + 1):
             if i < len(covered):
-                covered[i] = True
+                if cls.kind in _BASE_CONTAINER_KINDS:
+                    # Skeletons cannot establish physical source coordinates.
+                    # Keep source outside the method chunks for exact reads.
+                    container_source[i] = True
+                else:
+                    covered[i] = True
 
     # file header: leading run of comments/includes/imports/blank lines
     header_chunk = _file_header_chunk(pf, src_lines, covered, max_chars)
     if header_chunk is not None:
         chunks.append(header_chunk)
 
-    # leftovers: uncovered top-level runs (blank lines and covered lines end
+    # leftovers: uncovered source runs (blank lines and covered lines end
     # a run), optionally merged across blank lines up to merge_target_chars
     runs: list[tuple[int, int]] = []
     run_start = None
@@ -630,7 +636,9 @@ def chunk_file(
             run_start = None
     for run_start, run_end in _merge_runs(runs, src_lines, covered, merge_target_chars):
         content = "".join(src_lines[run_start - 1 : run_end])
-        if len(content.strip()) < _MIN_CHUNK_CHARS:
+        if len(content.strip()) < _MIN_CHUNK_CHARS and not any(
+            container_source[run_start : run_end + 1]
+        ):
             continue
         for piece, s_ln, e_ln in (
             [(content, run_start, run_end)]
