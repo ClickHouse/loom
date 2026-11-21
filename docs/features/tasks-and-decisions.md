@@ -531,7 +531,8 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   a 2000-character quotation query. Search uses the selected namespace only, without query expansion, model-backed
   retrieval legs or reranking. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
   stale, changing or ungrounded index evidence says `deferred`. Later decisions past the preview limit also say
-  `deferred`. These discovery states do not change the extraction command's exit code or its exact-link behavior.
+  `deferred`. Discovery also defers while a fetched revision is still being indexed, even if search has cached
+  fresh metadata. These discovery states do not change the extraction command's exit code or its exact-link behavior.
   With `--repo`, discovery reads the repository's trunk as exact mention resolution does; without it, it reads the
   document's namespace and needs a configured code index there. Applied extraction and native source synchronization
   do not discover or persist inferred links. Run the preview again after the document or code changes; suggestions

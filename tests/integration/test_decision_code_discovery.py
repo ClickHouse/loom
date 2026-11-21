@@ -113,3 +113,18 @@ async def test_prose_candidates_use_the_authorized_live_index(discovery_store, m
         assert denied.status == "unavailable" and not denied.candidates
     finally:
         current_auth_var.reset(token)
+
+    # The cached search envelope still says A while fetched B is partly visible.
+    await repo.set_state(org, ns, "clone_head", "b" * 40, "main")
+    await ingest_file(
+        repo,
+        org,
+        ns,
+        path="src/delivery.py",
+        source=source.replace("2 ** attempt", "3 ** attempt").encode(),
+        commit_sha="b" * 40,
+        embedding_model=fake.model_name,
+        embedder=fake,
+    )
+    partial = await prose_candidates.discover_candidates(org, ns, quote)
+    assert partial.status == "deferred" and not partial.candidates

@@ -8,8 +8,12 @@ from typing import Any, Literal
 
 from server.auth.authz import row_in_scope
 from server.code.api.models_search import CodeSearchInput
+from server.code.app.common import mirror_fetch_overdue
+from server.code.app.index.pass_stream import SLICE_KEY
+from server.code.app.index_status import published_clone_head
 from server.code.app.search import handler as search
 from server.code.domain.index.repos import repo_for_namespace
+from server.code.domain.index.state import STAGE_KEY, IndexState
 from server.code.domain.units import CodeUnit
 from server.code.store.index import CodeRepo
 from server.embedding.embedder import get_embedder
@@ -65,9 +69,13 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
         result.note = "no repository index configured for this namespace"
         return
     repo = CodeRepo()
-    head = await repo.get_state(org, ns, "git_head")
+    state = await repo.all_state(org, ns)
+    head = str((state.get("git_head") or {}).get("value") or "")
     if not head:
         result.note = "code index has no published commit"
+        return
+    if _settled_head(state, cfg.git_branch) != head:
+        result.status, result.note = "deferred", "code index publication is incomplete"
         return
     model = get_embedder().model_name
     out = await search.handle_code_search(
@@ -113,7 +121,7 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
     for unit in units:
         if candidate := _ground(unit, current.get((unit.path, unit.unit_id))):
             result.candidates.append(candidate)
-    if await repo.get_state(org, ns, "git_head") != head:
+    if _settled_head(await repo.all_state(org, ns), cfg.git_branch) != head:
         result.candidates.clear()
         result.status, result.note = "deferred", "code index changed during discovery"
     elif result.candidates:
@@ -125,6 +133,20 @@ async def _discover(org: str, result: CodeDiscovery) -> None:
         )
     else:
         result.status, result.note = "abstained", "no code candidates returned"
+
+
+def _settled_head(state: IndexState, branch: str) -> str:
+    """A completed index at its fetched branch tip, from uncached publication rows."""
+    head = str((state.get("git_head") or {}).get("value") or "")
+    clone = state.get("clone_head") or {}
+    if (
+        published_clone_head(state, branch) != head
+        or (state.get(SLICE_KEY) or {}).get("value")
+        or (state.get(STAGE_KEY) or {}).get("value", "") not in ("", "ready")
+        or mirror_fetch_overdue(clone.get("updated_at"))
+    ):
+        return ""
+    return head
 
 
 def _ground(unit: CodeUnit, row: dict[str, Any] | None) -> CodeCandidate | None:

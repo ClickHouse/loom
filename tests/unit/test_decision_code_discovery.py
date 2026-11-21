@@ -38,6 +38,9 @@ def index(monkeypatch):
         as_of={"branch": "main", "commit": COMMIT, "status": "fresh", "stale": False},
     )
     world = SimpleNamespace(
+        clone=COMMIT,
+        slice="",
+        stage="ready",
         ground_reads=[],
         result=result,
         calls=[],
@@ -59,15 +62,20 @@ def index(monkeypatch):
         world.calls.append(inp)
         return world.result
 
-    async def state(self, org, namespace, key):
-        return world.commit
+    async def all_state(self, org, namespace):
+        return {
+            "git_head": {"value": world.commit},
+            "clone_head": {"value": world.clone, "detail": "main"},
+            "commit_slice": {"value": world.slice},
+            "bootstrap_stage": {"value": world.stage},
+        }
 
     async def chunks(self, org, namespace, model, keys):
         world.ground_reads.append((org, namespace, model, keys))
         return [r for r in world.rows if (r["path"], r["chunk_id"]) in keys]
 
     monkeypatch.setattr(search, "handle_code_search", retrieve)
-    monkeypatch.setattr(CodeRepo, "get_state", state)
+    monkeypatch.setattr(CodeRepo, "all_state", all_state)
     monkeypatch.setattr(CodeRepo, "chunks_by_keys", chunks)
     monkeypatch.setattr(
         settings,
@@ -279,10 +287,10 @@ async def test_deadline_covers_stalled_metadata_reads(monkeypatch, index):
     timeout = asyncio.timeout
     monkeypatch.setattr(candidates.asyncio, "timeout", lambda seconds: timeout(0))
 
-    async def stalled(self, org, namespace, key):
+    async def stalled(self, org, namespace, *keys):
         await asyncio.Event().wait()
 
-    monkeypatch.setattr(CodeRepo, "get_state", stalled)
+    monkeypatch.setattr(CodeRepo, "all_state", stalled)
     result = await candidates.discover_candidates("o", "ns", PROSE)
     assert result.status == "deferred" and result.candidates == []
     assert "deadline" in result.note and index.calls == []
@@ -333,3 +341,50 @@ async def test_a_document_preview_defers_decisions_after_its_search_budget(monke
     assert len(index.calls) == 8
     assert [r.code_discovery.status for r in report.records] == ["candidates"] * 8 + ["deferred"]
     assert all(r.body["files"] == [] for r in report.records)
+
+
+@pytest.mark.parametrize("phase", ["before_first_round", "before", "during"])
+@pytest.mark.asyncio
+async def test_cached_freshness_never_labels_partial_ingest_as_published_commit(
+    monkeypatch, index, phase
+):
+    # Fetch publishes the next tip before chunk writes; git_head advances only last.
+    async def partial_ingest(self, org, namespace, model, keys):
+        index.clone = "b" * 40
+        index.slice = f"{COMMIT}..{index.clone}:1"
+        return [{**index.rows[0], "content": SOURCE + "\n# revision two"}]
+
+    if phase.startswith("before"):
+        index.clone = "b" * 40
+        if phase == "before":
+            index.slice = f"{COMMIT}..{index.clone}:1"
+    else:
+        monkeypatch.setattr(CodeRepo, "chunks_by_keys", partial_ingest)
+    report, _ = await preview(monkeypatch)
+    discovery = report.records[0].code_discovery
+    assert discovery.status == "deferred" and discovery.candidates == []
+    assert report.records[0].body["files"] == []
+
+
+@pytest.mark.parametrize("incomplete", ["unpublished_tip", "slice", "bootstrap", "wrong_branch"])
+@pytest.mark.asyncio
+async def test_uncached_publication_must_be_complete(monkeypatch, index, incomplete):
+    from server.code.app.prose_candidates import discover_candidates
+
+    if incomplete == "unpublished_tip":
+        index.clone = ""
+    elif incomplete == "slice":
+        index.slice = f"{COMMIT}..{COMMIT}:1"
+    elif incomplete == "bootstrap":
+        index.stage = "indexing"
+    else:
+
+        async def wrong_branch(self, org, ns):
+            return {
+                "git_head": {"value": COMMIT},
+                "clone_head": {"value": COMMIT, "detail": "release"},
+            }
+
+        monkeypatch.setattr(CodeRepo, "all_state", wrong_branch)
+    out = await discover_candidates("o", "ns", PROSE)
+    assert out.status == "deferred" and out.candidates == [] and index.calls == []
