@@ -15,6 +15,7 @@ import json
 import time
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Iterator
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from server.cli.cell_ch import Refusal, Refused
@@ -853,15 +854,17 @@ async def _wait_transactions(conn: Any, xmax: int, wait: Wait) -> None:
 # -- the tenancy rows -------------------------------------------------------------------
 
 
-async def write_tenancy(orgs: Iterable[str]) -> int:
-    """The tenancy rows of `orgs`, on a marked session, as one statement per thousand; the
-    rows written."""
+async def write_tenancy(owner: Owner, orgs: Iterable[str]) -> int:
+    """Write each thousand-org batch on the exact ATTACH backend, returning rows added."""
     batch = sorted(orgs)
     written = 0
     for i in range(0, len(batch), 1000):
-        status = await pg.execute(
-            "INSERT INTO loom.tenancy (org) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING",
-            batch[i : i + 1000],
+        status = await owner.transaction(
+            partial(
+                owner.conn.execute,
+                "INSERT INTO loom.tenancy (org) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING",
+                batch[i : i + 1000],
+            )
         )
         written += int(status.split()[-1])
     return written

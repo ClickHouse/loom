@@ -95,7 +95,12 @@ async def test_certified_retirement_survives_old_beat_and_prunes_only_certified_
             )
             stopped, legacy = uuid4(), uuid4()
             process = await asyncio.create_subprocess_exec(sys.executable, "-c", "pass")
-            await asyncio.wait_for(process.wait(), timeout=10)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=10)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
             fields = provider_process.host_proof().split("|")
             fields[4:6] = [str(process.pid), "1"]
             identity = "|".join(fields)

@@ -36,6 +36,7 @@ from server.erasure.api.erasure import (
 )
 from server.erasure.app.saga import audit_namespace, begin_erasure, run_saga
 from server.erasure.domain.failure_reason import caller_audit_subject, shown_reason
+from server.erasure.domain.receipts import codes_only
 from server.erasure.domain.scopes import applied_purge, names_mirror, only_mirrors, shown_scope
 from server.erasure.store import exports as erasure_exports
 from server.erasure.store import ledger as erasure_ledger
@@ -92,12 +93,17 @@ async def handle_erasure_request(input: ErasureRequestInput) -> ErasureRequestOu
             )
 
     input, row, erasure_id, now = await begin_erasure(input)
-    return await run_saga(
+    out = await run_saga(
         input=input,
         row=row,
         erasure_id=erasure_id,
         requested_at=now,
         previously_completed=set(),
+    )
+    return (
+        ErasureRequestOutput.model_validate(codes_only(out.model_dump()))
+        if row.get("mirror_marked")
+        else out
     )
 
 
@@ -114,8 +120,13 @@ async def erase_namespace(org: str, namespace: str, *, requester: str) -> Erasur
         purge=True,
     )
     input, row, erasure_id, now = await begin_erasure(input)
-    return await run_saga(
+    out = await run_saga(
         input=input, row=row, erasure_id=erasure_id, requested_at=now, previously_completed=set()
+    )
+    return (
+        ErasureRequestOutput.model_validate(codes_only(out.model_dump()))
+        if row.get("mirror_marked")
+        else out
     )
 
 
@@ -415,7 +426,7 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
     if not await _authorize_status_read(row):
         return ErasureStatusOutput(found=False, erasure_id=input.erasure_id)
     auth = auth_context.current_auth()
-    return ErasureStatusOutput(
+    out = ErasureStatusOutput(
         found=True,
         erasure_id=str(row["id"]),
         org=row["org"],
@@ -436,6 +447,10 @@ async def handle_erasure_status(input: ErasureStatusInput) -> ErasureStatusOutpu
             str(row["scope_type"]), str(row["scope_value"]), bool(row.get("purge"))
         ),
     )
+
+    if row.get("mirror_marked") and not _is_flat_platform_admin(auth):
+        return ErasureStatusOutput.model_validate(codes_only(out.model_dump()))
+    return out
 
 
 def _parse_counts(raw: str | None) -> dict[str, int] | None:
@@ -506,6 +521,8 @@ async def handle_erasure_list(input: ErasureListInput) -> ErasureListOutput:
         scope_where=scope[0],
         scope_params=scope[1],
     )
+    if not _is_flat_platform_admin(auth):
+        rows = [codes_only(r) if r.get("mirror_marked") else r for r in rows]
     return ErasureListOutput(
         rows=[
             ErasureListRow(

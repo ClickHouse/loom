@@ -1,4 +1,5 @@
 import { useState, type DragEvent, type HTMLAttributes } from "react";
+import { useDragHold } from "../../lib/useDragHold";
 import type { TaskListRow } from "../../api/tasks";
 import { ACTION_LABEL, dropAction, type Group } from "../../lib/tasks";
 
@@ -9,22 +10,17 @@ import { ACTION_LABEL, dropAction, type Group } from "../../lib/tasks";
  * panel's buttons are the keyboard path to the same moves.
  */
 export function useTaskDrag(canWrite: boolean, onDrop: (r: TaskListRow, to: Group) => void) {
-  const [held, setHeld] = useState<TaskListRow | null>(null);
+  // Held a tick after the drag starts: the list reveals its empty groups then.
+  const { held, start, end } = useDragHold<TaskListRow>();
   const [over, setOver] = useState<Group | null>(null);
   const release = () => {
-    setHeld(null);
+    end();
     setOver(null);
   };
 
   const source = (r: TaskListRow): HTMLAttributes<HTMLElement> & { draggable: boolean } => ({
     draggable: canWrite,
-    onDragStart: (e: DragEvent) => {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("text/plain", r.task_id);
-      // Chrome aborts a drag whose dragstart reshapes the page (the list reveals its empty
-      // groups), so the held row lands a tick later.
-      window.setTimeout(() => setHeld(r), 0);
-    },
+    onDragStart: (e: DragEvent) => start(e, r),
     onDragEnd: release,
   });
 

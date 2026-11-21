@@ -155,6 +155,7 @@ async def handle_policy_delete(input: PolicyDeleteInput) -> PolicyDeleteOutput:
 async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
     """Dry run: the gate's evaluator against a hypothetical call. Never
     blocks anything; `would_enforce` says what `enforce` mode would do."""
+    from server.auth.context import current_auth
     from server.core.ch import get_client
     from server.identity.app.policy_gate import is_write_shaped
     from server.observability.event_args import project_args
@@ -169,6 +170,7 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
     else:
         rules = await _policy.rules_for(input.org, input.namespace)
 
+    auth = current_auth()
     ctx = policy_rules.CallContext(
         org=input.org,
         namespace=input.namespace,
@@ -178,6 +180,7 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
         operation=input.operation,
         args=project_args(input.args),
         now=input.at,
+        actor=str(getattr(auth, "subject", "") or "") if auth is not None else "",
     )
     from server.observability.events import get_emitter
 
@@ -186,7 +189,12 @@ async def handle_policy_check(input: PolicyCheckInput) -> PolicyCheckOutput:
 
     op = next((o for o in ALL_OPERATIONS if o.name == input.operation), None)
     write_shaped = is_write_shaped(op) if op is not None else None
-    would_enforce = decision.decision == "deny" or (bool(decision.errors) and bool(write_shaped))
+    ordinary_errors = any(v.errors and not v.protected_history for v in decision.verdicts)
+    would_enforce = (
+        decision.decision == "deny"
+        or decision.enforcing_protected_history
+        or (ordinary_errors and bool(write_shaped))
+    )
     return PolicyCheckOutput(
         decision="deny" if would_enforce else "allow",
         would_enforce=would_enforce,

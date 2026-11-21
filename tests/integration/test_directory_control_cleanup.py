@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 from collections.abc import AsyncIterator
@@ -24,16 +25,22 @@ async def directory_database(monkeypatch) -> AsyncIterator[Any]:
 
     admin = os.environ.get("LOOM_PG_DSN") or pytest.skip("LOOM_PG_DSN not set")
     name, dsn = await create_database(admin)
-    monkeypatch.setattr(settings, "router_pg_dsn", dsn)
-    monkeypatch.setattr(directory, "_pool", None)
-    observer = await asyncpg.connect(dsn)
-    await observer.execute("CREATE TABLE probe(id int PRIMARY KEY); INSERT INTO probe VALUES(1)")
-    try:
-        yield observer
-    finally:
-        await directory.close()
-        await observer.close(timeout=1)
-        await drop_database(admin, name)
+    async with contextlib.AsyncExitStack() as cleanup:
+        try:
+            cleanup.push_async_callback(drop_database, admin, name)
+            monkeypatch.setattr(settings, "router_pg_dsn", dsn)
+            monkeypatch.setattr(directory, "_pool", None)
+            observer = await asyncpg.connect(dsn)
+            cleanup.push_async_callback(observer.close, timeout=1)
+            cleanup.push_async_callback(directory.close)
+            await observer.execute(
+                "CREATE TABLE probe(id int PRIMARY KEY); INSERT INTO probe VALUES(1)"
+            )
+            yield observer
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 async def locked(conn):
@@ -300,8 +307,13 @@ asyncio.run(main())
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
-    assert process.returncode == 0, (stdout.decode(), stderr.decode())
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), 10)
+        assert process.returncode == 0, (stdout.decode(), stderr.decode())
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
 
 
 @pytest.mark.parametrize("kind", ["ordinary", "cancel", "exit", "keyboard"])

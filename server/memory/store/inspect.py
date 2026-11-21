@@ -16,6 +16,7 @@ from typing import Any, Literal
 from server.core.repo_base import _CHClient, _default_client
 from server.identity.domain.read_scope import ReadFilters, scope_and
 from server.memory.store.lifecycle import served_rows
+from server.observability.store.event_reads import MASKED_EVENTS
 
 # The identity column each subject is matched on.
 SUBJECT_COLUMN: dict[str, str] = {"user": "user_id", "agent": "agent", "session": "session_id"}
@@ -221,7 +222,7 @@ async def subject_calls(
         f"""
         SELECT operation, count() AS calls, countIf(success) AS succeeded,
                min(ts) AS first_at, max(ts) AS last_at
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
           AND {col} = {{id:String}} AND kind != 'worker'

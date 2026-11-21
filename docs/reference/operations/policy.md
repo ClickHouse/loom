@@ -28,13 +28,13 @@ A hypothetical call: what would the rules decide right now?
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
-| `decision` | `Literal['allow', 'deny']` | `deny` when a rule denies the call, or a rule errored on a write-shaped operation; `allow` otherwise. |
+| `decision` | `Literal['allow', 'deny']` | Rule denials, ordinary write errors or enforcing protected UNKNOWN deny; otherwise allow. |
 | `would_enforce` | `bool` | The same verdict as a boolean: true when an enforcing gate would block the call. |
-| `mode` | `str` | The deployment's `LOOM_POLICY_MODE`; the dry run evaluates as if every rule enforced. |
-| `write_shaped` | `bool \| None` | Whether the operation writes (a rule error then fails closed); null when the operation name is unknown. |
+| `mode` | `str` | The deployment's `LOOM_POLICY_MODE`; dry runs evaluate inherited rules in enforce mode. |
+| `write_shaped` | `bool \| None` | Whether the operation writes, which controls ordinary backend-error refusal; null when the operation name is unknown. |
 | `determining_rules` | `list[str]` | Ids of the rules that deny the call; empty when none does. |
-| `errors` | `list[str]` | Leaf evaluation errors; a rule that errored neither allows nor denies. |
-| `rules` | `list[dict[str, Any]]` | Per applicable rule: effect, mode, whether the condition held, whether it denies, and each leaf's value. |
+| `errors` | `list[str]` | Leaf errors, including fixed protected-history UNKNOWN without a leaf value. |
+| `rules` | `list[dict[str, Any]]` | Per applicable rule: effect, mode, whether the condition held, whether it denies, and each ordinary leaf's value (null for protected UNKNOWN). |
 | `latency_ms` | `int` | Milliseconds the evaluation took. |
 
 ## `policy.decisions`

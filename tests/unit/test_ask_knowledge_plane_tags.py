@@ -15,6 +15,10 @@ import pytest
 from server.memory.api.models_ask import MemoryAskInput
 from server.memory.app.ask.context_blocks import knowledge_passages
 from server.memory.app.ask.handler import _hard_tags
+from tests.unit.ask_knowledge_fake import checked_reply, route_scope
+from tests.unit.ask_knowledge_fake import ordinary_knowledge_scope as ordinary_knowledge_scope
+
+pytestmark = pytest.mark.usefixtures("ordinary_knowledge_scope")
 
 
 def test_hard_tags_follow_tags_soft() -> None:
@@ -33,12 +37,13 @@ async def test_knowledge_passages_forward_the_asks_tags(monkeypatch) -> None:
     seen: list[list[str]] = []
     reranks: list[str] = []
 
-    async def ok(inp):
+    async def ok(request, _plan):
+        inp = request.input
         seen.append(list(inp.tags))
         reranks.append(inp.rerank)
-        return SimpleNamespace(results=[])
+        return checked_reply(SimpleNamespace(results=[]))
 
-    monkeypatch.setattr(kh, "handle_knowledge_search", ok)
+    monkeypatch.setattr(kh, "run_checked_search", ok)
     hard = SimpleNamespace(org="o", namespace="n", agent="*", query="q", tags=["workflow:x"])
     soft = SimpleNamespace(
         org="o", namespace="n", agent="*", query="q", tags=["workflow:x"], tags_soft=True
@@ -58,14 +63,15 @@ async def test_synthesize_route_forwards_the_asks_tags(monkeypatch) -> None:
     monkeypatch.setattr(ask_routing, "is_corpus_task", lambda q: True)
     seen: list[list[str]] = []
 
-    async def ok(inp):
+    async def ok(request, _plan):
+        inp = request.input
         seen.append(list(inp.tags))
         assert inp.rerank == "none"
-        return SimpleNamespace(results=[])
+        return checked_reply(SimpleNamespace(results=[]))
 
-    monkeypatch.setattr(kh, "handle_knowledge_search", ok)
+    monkeypatch.setattr(kh, "run_checked_search", ok)
     inp = MemoryAskInput(
         org="o", namespace="n", agent="a", query="summarise the reports", tags=["workflow:x"]
     )
-    assert await ma._maybe_route_to_synthesize(inp) is None  # no documents → not routed
+    assert await ma._maybe_route_to_synthesize(inp, await route_scope(inp)) is None
     assert seen == [["workflow:x"]]

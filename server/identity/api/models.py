@@ -143,6 +143,10 @@ class NamespaceRegisterInput(BaseModel):
     consolidation_enabled: bool | None = None  # background memory.consolidate
     # 0.0 inherits the global cap.
     daily_cost_cap_usd: float | None = Field(default=None, ge=0.0)
+    # Separate rolling-24h cap for each named user_id, USD; 0 inherits the server default.
+    daily_user_cost_cap_usd: float | None = Field(default=None, ge=0.0)
+    # Existing task inbox owned by this namespace for budget warnings; empty disables them.
+    budget_alert_inbox: str | None = Field(default=None, max_length=128)
     # Omitted keeps the stored threshold; an explicit null inherits LOOM_CONFLICT_THRESHOLD.
     conflict_threshold: float | None = None
     # Days rows are kept, except memory, document and chunk rows under the Postgres
@@ -226,6 +230,8 @@ class _NamespaceEntry(BaseModel):
     active: bool
     consolidation_enabled: bool = False
     daily_cost_cap_usd: float = 0.0
+    daily_user_cost_cap_usd: float = 0.0
+    budget_alert_inbox: str = ""
     conflict_threshold: float | None = None
     retention_days: int = 0
     warm_days: int = 0
@@ -268,6 +274,10 @@ class NamespaceGetOutput(BaseModel):
     consolidation_enabled: bool | None = None
     # Upstream spend cap per rolling 24 hours, in USD; 0 inherits the global cap.
     daily_cost_cap_usd: float | None = None
+    # Separate rolling-24h cap for each named user_id, USD; 0 inherits the server default.
+    daily_user_cost_cap_usd: float | None = None
+    # Task inbox owned by this namespace for budget warnings; empty disables them.
+    budget_alert_inbox: str | None = None
     # Cosine at which a write is flagged `conflicted`; None inherits the server threshold.
     conflict_threshold: float | None = None
     # Rows older than this many days are deleted, except memory, document and chunk rows

@@ -12,6 +12,10 @@ on:
         "server/**",
         "schemas/**",
         "scripts/gates/docker*",
+        "scripts/gates/cell_trigger_acceptance.py",
+        "scripts/gates/testsupport/cell_trigger/**",
+        "bench/cell_trigger_gate.py",
+        "tests/unit/test_cell_trigger_ci_creator.py",
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
@@ -33,6 +37,9 @@ on:
         "tests/unit/test_scip_checkout_fetch_ref.py",
         "install.sh",
         "pyproject.toml",
+        "uv.lock",
+        "dev/clickhouse-ci/log_queries_readonly.xml",
+        "dev/clickhouse-ci/custom_settings_prefixes.xml",
         ".github/workflows/docker-smoke.yml",
       ]
   pull_request:
@@ -45,6 +52,10 @@ on:
         "server/**",
         "schemas/**",
         "scripts/gates/docker*",
+        "scripts/gates/cell_trigger_acceptance.py",
+        "scripts/gates/testsupport/cell_trigger/**",
+        "bench/cell_trigger_gate.py",
+        "tests/unit/test_cell_trigger_ci_creator.py",
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
@@ -66,6 +77,9 @@ on:
         "tests/unit/test_scip_checkout_fetch_ref.py",
         "install.sh",
         "pyproject.toml",
+        "uv.lock",
+        "dev/clickhouse-ci/log_queries_readonly.xml",
+        "dev/clickhouse-ci/custom_settings_prefixes.xml",
         ".github/workflows/docker-smoke.yml",
       ]
   # Weekly, so a critical CVE fixed upstream fails here before a release's scan.
@@ -255,3 +269,49 @@ jobs:
             -v "$RUNNER_TEMP/pylib:/pylib:ro" -e PYTHONPATH=/pylib -e PYTHONDONTWRITEBYTECODE=1 \
             -e LOOM_ENV_FILE= -e LOOM_TEST_REQUIRE_OWNER_CHECK=1 --entrypoint python loom:sandbox-ci \
             -m pytest -q -p no:cacheprovider tests/unit/test_scip_checkout_fetch_ref.py
+
+  cell-trigger-acceptance:
+    name: Cell trigger end-to-end acceptance
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    needs: clickhouse
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      LOOM_ENV_FILE: ""
+      LOOM_SETTINGS_FILE: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked native dependencies
+        run: uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+      - name: Check native tools
+        run: |
+          command -v docker
+          command -v openssl
+          docker info >/dev/null
+      - name: Check triggers against real API writes and delivery passes
+        env:
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/trigger-bytecode
+        run: .venv/bin/python -B scripts/gates/cell_trigger_acceptance.py --clickhouse-image "$CLICKHOUSE_IMAGE"
+      - name: Remove only this attempt's created stores
+        if: always()
+        run: .venv/bin/python -B scripts/gates/cell_trigger_acceptance.py --cleanup-only
+      - name: Retain sanitized trigger acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cell-trigger-acceptance
+          path: ${{ runner.temp }}/cell-trigger-artifacts
+          retention-days: 7

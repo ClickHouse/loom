@@ -9,6 +9,7 @@ operations→handlers layering acyclic.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -27,7 +28,6 @@ from server.insights.api.models_cost import (
     CostSummaryRow,
 )
 from server.insights.store import cost as cost_store
-from server.observability.budget import effective_cap
 
 log = logging.getLogger(__name__)
 
@@ -40,8 +40,41 @@ _SCAN_DIMS = ("memory_key", "user_id", "model", "traffic_class", "instance_label
 _AHEAD_SLACK = timedelta(seconds=5)
 
 
+def _flat_platform_admin() -> bool:
+    """A narrowed token or missing auth grants no private spend detail."""
+    from server.auth.context import current_auth
+    from server.operations.base import Role
+
+    auth = current_auth()
+    return auth is not None and auth.has_role(Role.PLATFORM_ADMIN) and not auth.has_ns_roles()
+
+
+def _marked_costs_allowed(input: CostSummaryInput) -> bool:
+    """Only a verified operator or complete namespace-day totals include marked spend."""
+    if _flat_platform_admin():
+        return True
+    dims = set(input.group_by)
+    return (
+        bool(dims)
+        and dims <= {"namespace", "day"}
+        and (bool(input.namespace) or "namespace" in dims)
+        and (input.from_date == input.to_date or "day" in dims)
+        and all(
+            value is None
+            for value in (
+                input.agent,
+                input.operation,
+                named(input.user_id),
+                input.traffic_class,
+                input.instance_label,
+            )
+        )
+    )
+
+
 def _summary_row(r: dict[str, Any], *, scan: bool) -> CostSummaryRow:
-    lat_q = r["lat_q"]  # tuple/array of (p50, p95, p99)
+    # A marked-only total has no ordinary latency samples.
+    lat_q = [float(q) if math.isfinite(float(q)) else 0.0 for q in (r["lat_q"] or [])]
     dims = {d: r.get(d) for d in _SCAN_DIMS} if scan else {}
     return CostSummaryRow(
         namespace=r.get("namespace"),
@@ -114,6 +147,7 @@ async def handle_cost_summary(input: CostSummaryInput) -> CostSummaryOutput:
         dims=dim_cols,
         scan=needs_events_scan,
         include_cache=input.include_cache,
+        include_marked=_marked_costs_allowed(input),
         ch=ch,
     )
 
@@ -158,18 +192,31 @@ async def handle_budget_status(input: BudgetStatusInput) -> BudgetStatusOutput:
     """
     ch = get_client()
 
+    from server.core.errors import ValidationError
+    from server.observability.budget import budget_snapshot, named_user
+
+    user_id = named_user(input.user_id)
+    if user_id and not input.namespace:
+        raise ValidationError("namespace is required for a user budget")
     if input.namespace:
-        spent = await cost_store.namespace_spend_24h(input.org, input.namespace, ch=ch)
-        cap, source = effective_cap(
-            await cost_store.namespace_cap(input.org, input.namespace, ch=ch)
+        snapshot = await budget_snapshot(
+            input.org, input.namespace, user_id=user_id, read_uncapped=True, ch=ch
         )
+        cap = snapshot.user_cap if user_id else snapshot.cap
+        spent = snapshot.user_spent if user_id else snapshot.spent
+        source = snapshot.user_cap_source if user_id else snapshot.cap_source
+        disclose_spend = not user_id or _flat_platform_admin()
         return BudgetStatusOutput(
             namespace=input.namespace,
-            spent_24h_usd=round(spent, 6),
+            user_id=user_id or None,
+            namespace_over_cap=(snapshot.cap > 0 and snapshot.spent >= snapshot.cap)
+            if user_id
+            else None,
+            spent_24h_usd=round(spent, 6) if disclose_spend else None,
             cap_usd=round(cap, 4),
             cap_source=source,
             over_cap=(cap > 0 and spent >= cap),
-            pct_of_cap=(round(min(1.0, spent / cap), 4) if cap > 0 else None),
+            pct_of_cap=(round(min(1.0, spent / cap), 4) if cap > 0 and disclose_spend else None),
         )
 
     # Org-wide rollup. Same scoping as cost.summary: a regular user

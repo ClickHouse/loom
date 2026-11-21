@@ -40,47 +40,74 @@ def emit_worker_event(
     success: bool = True,
     error_code: str = "",
     args: dict[str, str] | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     """One `kind='worker'` AgentEvent carrying `snap`'s spend (a drained
     accumulator, or None for none), and the same spend on the cost counters.
     Raises what the emitter raises; callers are fail-quiet."""
     from server.observability import metrics
-    from server.observability.events import AgentEvent, get_emitter
+    from server.observability.events import get_emitter
+
+    event = _worker_event(
+        snap,
+        org=org,
+        namespace=namespace,
+        operation=operation,
+        started=started,
+        success=success,
+        error_code=error_code,
+        args=args,
+        latency_ms=latency_ms,
+    )
+    get_emitter().emit(event)
+    metrics.record_cost(
+        operation,
+        namespace=namespace,
+        cost_usd=event.upstream_cost_usd,
+        embed_tokens=event.embedding_tokens,
+        llm_input_tokens=event.input_tokens,
+        llm_output_tokens=event.output_tokens,
+    )
+
+
+def _worker_event(
+    snap: Any,
+    *,
+    org: str,
+    namespace: str,
+    operation: str,
+    started: float,
+    success: bool = True,
+    error_code: str = "",
+    args: dict[str, str] | None = None,
+    latency_ms: int | None = None,
+) -> Any:
+    from server.observability.events import AgentEvent
 
     cost = float(getattr(snap, "cost_usd", 0.0) or 0.0)
     embed_tokens = int(getattr(snap, "embed_tokens", 0) or 0)
     llm_in = int(getattr(snap, "llm_input_tokens", 0) or 0)
     llm_out = int(getattr(snap, "llm_output_tokens", 0) or 0)
-    get_emitter().emit(
-        AgentEvent(
-            ts=datetime.now(UTC),
-            org=org,
-            namespace=namespace,
-            agent="-",
-            user_id="-",
-            session_id="-",
-            operation=operation,
-            request_id="",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            success=success,
-            error_code=error_code,
-            kind="worker",
-            args=dict(args or {}),
-            input_tokens=llm_in,
-            output_tokens=llm_out,
-            embedding_tokens=embed_tokens,
-            upstream_cost_usd=cost,
-            model=snap.dominant_model() if snap is not None else "",
-            llm_calls=int(getattr(snap, "llm_calls", 0) or 0),
-        )
-    )
-    metrics.record_cost(
-        operation,
+    return AgentEvent(
+        ts=datetime.now(UTC),
+        org=org,
         namespace=namespace,
-        cost_usd=cost,
-        embed_tokens=embed_tokens,
-        llm_input_tokens=llm_in,
-        llm_output_tokens=llm_out,
+        agent="-",
+        user_id="-",
+        session_id="-",
+        operation=operation,
+        request_id="",
+        latency_ms=int((time.monotonic() - started) * 1000) if latency_ms is None else latency_ms,
+        success=success,
+        error_code=error_code,
+        kind="worker",
+        args=dict(args or {}),
+        input_tokens=llm_in,
+        output_tokens=llm_out,
+        embedding_tokens=embed_tokens,
+        upstream_cost_usd=cost,
+        model=snap.dominant_model() if snap is not None else "",
+        llm_calls=int(getattr(snap, "llm_calls", 0) or 0),
     )
 
 
@@ -106,3 +133,28 @@ def emit_worker_cost_event_for(
         emit_worker_event(snap, org=org, namespace=namespace, operation=operation, started=started)
     except Exception:
         log.warning("cost-event emit failed for %s", operation, exc_info=True)
+
+
+async def write_private_cost_event_for(
+    *, org: str, namespace: str, operation: str, started: float
+) -> None:
+    """Drain one mirror's spend directly to its ledger, with bounded best-effort I/O."""
+    import asyncio
+
+    from server.observability import cost_accumulator
+    from server.observability.events import write_private_event
+
+    acc = cost_accumulator.current()
+    snap = acc.drain() if acc is not None else None
+    if not spent(snap):
+        return
+    try:
+        # not a setting: best-effort private accounting cannot delay turn cleanup indefinitely.
+        async with asyncio.timeout(5.0):
+            await write_private_event(
+                _worker_event(
+                    snap, org=org, namespace=namespace, operation=operation, started=started
+                )
+            )
+    except Exception:  # noqa: BLE001 — telemetry failure must not fail a private turn
+        pass

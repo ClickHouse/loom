@@ -23,8 +23,8 @@ Shape:
    role-tagged and labelled with the memory key it supports so citations
    keep working.
 
-Every step is fail-open: a CH or LLM error yields an empty block and the
-caller keeps its excerpt-level answer. Nothing here writes.
+Ordinary CH or LLM failures remain best effort. Lost access propagates so the
+caller discards the generated answer. Nothing here writes.
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from typing import Any
 
 from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
+from server.knowledge.app.source_corpus import LostCorpus
 from server.memory.domain.sensitivity import without_high
 from server.settings.budgets import llm_max_tokens
 
@@ -153,6 +154,8 @@ async def select_candidates(
         picks = parse_picks(
             str(getattr(res, "text", "") or ""), len(memories), max_picks=max_memories
         )
+    except LostCorpus:
+        raise
     except Exception as e:  # noqa: BLE001 — the pass is best-effort
         log.warning("deep-evidence selector failed (fail-open to top ranked): %s", e)
         picks = []
@@ -521,7 +524,7 @@ async def deep_evidence_pass(
     max_chars_total: int,
     ch: Any | None = None,
 ) -> DeepEvidence:
-    """Select, fetch, render. Never raises; an empty block means "nothing to add"."""
+    """Select, fetch, render; ordinary failures remain best effort, access loss propagates."""
 
     picked, fallback = await select_candidates(llm, question, candidates, max_memories=max_memories)
     keys: list[str] = []

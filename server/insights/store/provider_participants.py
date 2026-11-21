@@ -20,12 +20,24 @@ TABLE = "loom._provider_participants"
 # Heartbeat age is diagnostic; it never establishes permanent retirement.
 STALE_AFTER_S = 60
 
+# This conservative certificate subset never hides unknown retirement evidence.
+# Bounded ASCII PIDs also exclude proofs the Python integer parser must refuse.
+_CERTIFIED_RETIRED = (
+    "state = 'retired' AND isValidUTF8(host_proof) "
+    "AND length(splitByChar('|', host_proof)) = 9 "
+    "AND arrayElement(splitByChar('|', host_proof), 9) = 'cell-retirement-v1' "
+    "AND arrayAll(i -> notEmpty(arrayElement(splitByChar('|', host_proof), i)), [1,2,4,5,6]) "
+    "AND length(arrayElement(splitByChar('|', host_proof), 5)) <= 20 "
+    "AND match(arrayElement(splitByChar('|', host_proof), 5), '^[1-9][0-9]*$') "
+    "AND match(arrayElement(splitByChar('|', host_proof), 6), '^[0-9]+$')"
+)
+
 # `expired` is decided on the server's clock, like the leases.
 PARTICIPANTS_SQL = (
     "SELECT participant_id, transition_id, state, version, heartbeat_at, "
     "host_proof, "
     "heartbeat_at + toIntervalSecond(stale_after_s) < now64(3) AS expired "
-    f"FROM {TABLE} FINAL"
+    f"FROM {TABLE} FINAL WHERE NOT ({_CERTIFIED_RETIRED})"
 )
 ONE_SQL = (
     "SELECT state, version, "
@@ -64,20 +76,24 @@ def running_sql(*, inserts: bool = False) -> str:
 # Retired participants whose last row is older than this are deleted.
 PRUNE_AFTER_H = 24
 _PRUNE_IDS_SQL = (
-    f"SELECT participant_id, state, version, host_proof FROM {TABLE} FINAL WHERE state = 'retired' "
-    "AND length(splitByChar('|', host_proof)) = 9 "
-    "AND arrayElement(splitByChar('|', host_proof), 9) = 'cell-retirement-v1' "
-    "AND arrayAll(i -> notEmpty(arrayElement(splitByChar('|', host_proof), i)), [1,2,4,5,6]) "
-    "AND match(arrayElement(splitByChar('|', host_proof), 5), '^[1-9][0-9]*$') "
-    "AND match(arrayElement(splitByChar('|', host_proof), 6), '^[0-9]+$') "
+    f"SELECT participant_id, state, version, host_proof FROM {TABLE} FINAL "
+    f"WHERE {_CERTIFIED_RETIRED} "
     "AND heartbeat_at < now64(3) - toIntervalHour({hours:UInt32}) LIMIT 1000"
 )
 _PRUNE_SQL = f"ALTER TABLE {TABLE} DELETE WHERE participant_id IN {{ids:Array(UUID)}}"
 
 
-async def participants(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
+async def participants(
+    *, ch: _CHClient | None = None, host_proof: str | None = None
+) -> list[dict[str, Any]]:
     with sequential_reads():
-        rows = await (ch or _default_client()).query_all(PARTICIPANTS_SQL)
+        if host_proof is None:
+            rows = await (ch or _default_client()).query_all(PARTICIPANTS_SQL)
+        else:
+            rows = await (ch or _default_client()).query_all(
+                PARTICIPANTS_SQL + " AND host_proof = {proof:String} LIMIT 2",
+                {"proof": host_proof},
+            )
     return [
         r
         for r in rows

@@ -10,7 +10,7 @@ from typing import Any
 from server.core.ch import sequential_reads
 from server.embedding import get_embedder
 from server.memory.api.models_search import MemorySearchInput, MemorySearchOutput
-from server.memory.app.search import pg_validation
+from server.memory.app.search import pg_validation, term_leg
 from server.memory.app.search.anchor_pool import _run_anchor_pool
 from server.memory.app.search.assemble import _assemble_final_hits
 from server.memory.app.search.budget import SearchBudget
@@ -190,8 +190,8 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
     embedder = get_embedder()
     actual_work, _clock = await _start_actual_work(input)
     run = _launch_scope_reads(input)
-    # Every task this pass launches is cancelled on the way out if it is still running.
-    try:
+    # Every task this pass launches is joined on the way out.
+    async with run:
         (
             obs_date,
             parsed_intent,
@@ -236,7 +236,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         )
 
         await _resolve_entity_scope(input, run, llm_query_entities, actual_work)
-        await _admit(input, run, search_budget)
+        await _admit(input, run, search_budget, query_vec, embedder.model_name)
 
         (
             input,
@@ -344,7 +344,7 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
             ctx, run, final_hits
         )
 
-        calibration, abstain_verdict = _calibrate_final_hits(
+        final_hits, calibration, abstain_verdict = await _verdict(
             ctx, run, final_hits, evidence_support_count
         )
 
@@ -361,14 +361,35 @@ async def handle_memory_search(input: MemorySearchInput) -> MemorySearchOutput:
         )
         await _finish_search_output(ctx, _output, final_hits)
         return _output
-    finally:
-        run.close()
 
 
-async def _admit(input: MemorySearchInput, run: _SearchRun, search_budget: SearchBudget) -> None:
-    """The Postgres barrier (`pg_validation.admit`). A re-entrant pass (a fallback, a
-    re-read) waits no longer than its parent's time left, a first pass the barrier's own
-    bound; a search that waited reads sequentially for the rest of the pass."""
+async def _verdict(
+    ctx: SearchContext, run: _SearchRun, final_hits: list[Any], evidence_support_count: int
+) -> tuple[list[Any], Any, tuple[bool, str, str]]:
+    """Phase 21: the verdict, then the term leg's governed hits placed first. The verdict
+    and every floor read only the hits that are not governed."""
+    calibration, abstain_verdict = _calibrate_final_hits(
+        ctx, run, final_hits, evidence_support_count
+    )
+    final_hits, abstain_verdict = await term_leg.join(
+        ctx, run.term_task, final_hits, abstain_verdict
+    )
+    return final_hits, calibration, abstain_verdict
+
+
+async def _admit(
+    input: MemorySearchInput,
+    run: _SearchRun,
+    search_budget: SearchBudget,
+    query_vec: list[float] | None,
+    model: str,
+) -> None:
+    """The Postgres barrier (`pg_validation.admit`), then the term leg's launch. A
+    re-entrant pass (a fallback, a re-read) waits no longer than its parent's time left, a
+    first pass the barrier's own bound; a search that waited reads sequentially for the
+    rest of the pass."""
     cap_s = search_budget.wall_left_s() if getattr(input, "_pass_depth", 0) else None
     if await pg_validation.admit(input.org, run.namespaces, cap_s):
         run.sequential_scope.enter_context(sequential_reads())
+    # Launched here, so its reads are sequential when the barrier waited.
+    run.term_task = term_leg.launch(input, query_vec, model)

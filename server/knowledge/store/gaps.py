@@ -181,3 +181,30 @@ async def delete_builds(org: str, namespace: str, *, ch: _CHClient | None = None
         {"org": org, "ns": namespace},
         settings={"lightweight_deletes_sync": 0},
     )
+
+
+async def gap_for_draft(org: str, namespace: str, gap_id: str) -> dict[str, Any] | None:
+    return await _default_client().query_one(
+        f"SELECT head, samples FROM {GAPS} "
+        "WHERE org = {org:String} AND namespace = {ns:String} "
+        f"AND gap_id = {{gap:String}} AND build = (SELECT max(build) FROM {GAPS} "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND gap_id = '' "
+        "AND built_at > now() - toIntervalDay({days:UInt32})) LIMIT 1",
+        params={"org": org, "ns": namespace, "gap": gap_id, "days": BUILD_DAYS},
+    )
+
+
+async def draft_queries(org: str, namespace: str, queries: list[str], min_askers: int) -> list[str]:
+    rows = await _default_client().query_all(
+        f"SELECT normalized FROM {MISSES} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+        "AND normalized IN {queries:Array(String)} AND ts > now() - toIntervalDay({days:UInt32}) "
+        "GROUP BY normalized HAVING uniqExact(asker) >= {k:UInt32} ORDER BY normalized",
+        params={
+            "org": org,
+            "ns": namespace,
+            "queries": queries,
+            "days": MISS_DAYS,
+            "k": min_askers,
+        },
+    )
+    return [str(r["normalized"]) for r in rows]

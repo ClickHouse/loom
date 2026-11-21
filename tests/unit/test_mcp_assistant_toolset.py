@@ -378,7 +378,7 @@ async def test_namespace_summary_counts_a_dashboard_write_but_no_inspector_read(
         async def query_all(self, sql: str, params: dict[str, Any] | None = None) -> Any:
             if "FROM loom.agent_events" not in sql:
                 return []
-            return run([ddl("agent_events"), *rows], sql, params)
+            return run([ddl("agent_events"), ddl("agent_events_private"), *rows], sql, params)
 
         async def query_one(self, sql: str, params: dict[str, Any] | None = None) -> Any:
             found = await self.query_all(sql, params)

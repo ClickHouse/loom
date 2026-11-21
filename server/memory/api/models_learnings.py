@@ -38,6 +38,8 @@ class _LearningEntry(BaseModel):
     supporters: list[str]
     rationale: str
     source_kind: str = "memory_supporters"
+    # The gap id or query-history group that produced a definition draft; empty otherwise.
+    source_resource_id: str = ""
     # The agent an `assistant_turn` candidate is a rule for; '' for other producers.
     agent: str = ""
     status: LearningStatus
@@ -65,11 +67,13 @@ class LearningsReviewInput(BaseModel):
     decision: ReviewDecision
     # Why; stored as `decision_reason` and carried into the promoted row's provenance.
     reason: str = ""
-    # Where a promotion lands: 'memory' (loom.shared for a supporters candidate, else a
-    # memory row), 'knowledge' (knowledge.upsert) or 'both'; unset is 'knowledge' for an
+    # Where a promotion lands: 'memory', 'knowledge' or 'both', but query_history
+    # and knowledge_gap drafts allow only 'memory'; unset is 'knowledge' for an
     # assistant_turn rule and 'memory' otherwise.
     destination: PromotionDestination | None = None
-    # Captured into the audit subject + shared.promoted_by.
+    # Promotion label for other candidates (default 'learnings-reviewer'); query_history
+    # and knowledge_gap use the authenticated actor instead, and the audit subject
+    # always records the authenticated actor.
     approver: str = "learnings-reviewer"
 
 

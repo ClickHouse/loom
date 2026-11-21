@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core import bm25
+from server.core.naming import is_mirror_name
 from server.knowledge.domain.live_chunks import LIVE_CHUNK_SQL
 
 PLANES = ("knowledge", "memory")
@@ -62,6 +63,8 @@ async def rebuild(
 ) -> dict[str, int]:
     """Delete-then-reinsert the term-frequency aggregate of (org, namespace) for
     each plane from its live rows. Returns the aggregate rows deleted per plane."""
+    if is_mirror_name(namespace):
+        return dict.fromkeys(planes, 0)  # private candidates contribute no corpus statistics
     deleted: dict[str, int] = {}
     params = {"org": org, "ns": namespace}
     for plane in planes:

@@ -17,6 +17,7 @@ MODULES = (
     "code",
     "erasure",
     "planes",
+    "knowledge_sources",
     "workers",
     "tracker",
     "auth",

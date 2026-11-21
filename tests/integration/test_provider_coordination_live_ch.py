@@ -1,6 +1,8 @@
 """Real participant rows and Keeper recovery on an opt-in disposable database."""
 
+import contextlib
 import os
+import sys
 from uuid import uuid4
 
 import pytest
@@ -56,6 +58,78 @@ async def test_participant_ack_is_full_row_and_expiry_is_on_the_server_clock(mon
             )
         finally:
             await ch.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_participant_census_excludes_certified_history_before_returning_rows():
+    _live()
+    from server.core.ch import query_tag, sequential_reads
+    from server.core.provider_process import certified, has_certificate
+    from server.insights.store import provider_participants as store
+
+    legacy = "test|boot||pidns|7|99||"
+    proof = certified(legacy)
+    invalid_pid = proof.replace("|7|99|", "|0|99|")
+    oversized_pid = proof.replace("|7|99|", "|" + "5" * 5000 + "|99|")
+    assert has_certificate(proof)
+    assert not has_certificate(invalid_pid)
+    assert not has_certificate(oversized_pid)
+    blockers = {
+        uuid4(): (state, identity)
+        for state, identity in (
+            ("running", proof),
+            ("drained", proof),
+            ("retired", ""),
+            ("retired", legacy),
+            ("retired", legacy + "|unknown"),
+            ("retired", proof + "|unknown"),
+            ("retired", invalid_pid),
+            ("retired", oversized_pid),
+        )
+    }
+    history = {uuid4(): ("retired", proof) for _ in range(256)}
+    created = {**history, **blockers}
+    expected = {str(identity): value for identity, value in blockers.items()}
+    ids = [str(identity) for identity in created]
+    ch = _default_client()
+    with query_tag("test.provider_participant_census"):
+        await ch.connect()
+        try:
+            await ch.insert(
+                store.TABLE,
+                [
+                    {"participant_id": identity, "state": state, "version": 1, "host_proof": value}
+                    for identity, (state, value) in created.items()
+                ],
+            )
+            with sequential_reads():
+                raw = await ch.query_all(
+                    "SELECT participant_id, state, host_proof FROM ("
+                    + store.PARTICIPANTS_SQL
+                    + ") WHERE participant_id IN {ids:Array(UUID)}",
+                    {"ids": ids},
+                )
+            assert {
+                str(row["participant_id"]): (row["state"], row["host_proof"]) for row in raw
+            } == expected, "ClickHouse must exclude certified history before returning census rows"
+            kept = await store.participants(ch=ch)
+            assert {
+                str(row["participant_id"]): (row["state"], row["host_proof"])
+                for row in kept
+                if str(row["participant_id"]) in ids
+            } == expected
+        finally:
+            with (
+                contextlib.suppress(BaseException) if sys.exception() else contextlib.nullcontext()
+            ):
+                try:
+                    await ch.execute(
+                        f"ALTER TABLE {store.TABLE} DELETE WHERE participant_id IN {{ids:Array(UUID)}} "
+                        "SETTINGS mutations_sync=2",
+                        {"ids": ids},
+                    )
+                finally:
+                    await ch.disconnect()
 
 
 @pytest.mark.asyncio

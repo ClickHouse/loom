@@ -1203,7 +1203,7 @@ def test_remove_tells_an_older_router_from_an_unknown_cell_on_the_delete(
     cli_router: _Router, capsys: Any
 ) -> None:
     """A replica of an earlier build behind the same URL answers the DELETE alone."""
-    cli_router.row = {**cli_router.row, "is_first": False}  # no Postgres read
+    cli_router.row = {**cli_router.row, "is_first": False}
     cli_router.deleted = (404, {"error": "the router answers no such path"})
     assert cell_cli._cmd_remove(_remove_args()) == 1
     assert "not upgraded" in capsys.readouterr().err

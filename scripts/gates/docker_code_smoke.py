@@ -2,8 +2,8 @@
 
 Local Git fixtures enter the same registry/bootstrap path used after code.repo.add
 validates a remote. This keeps compiler tests independent of a public repo changing.
-The stock worker configuration is retained; passes are triggered explicitly to avoid
-waiting ten minutes for the compiler polling interval in a release gate.
+Initial compiler passes run explicitly. The smoke then enables code ingest with
+normal worker intervals; MCP memory links and the later edit wait for workers.
 """
 
 from __future__ import annotations
@@ -16,7 +16,11 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
+from typing import Any
+
+import httpx
 
 from server.code.app.index.repo_registry import refresh_db_repos
 from server.code.app.repo_admin import _register
@@ -139,7 +143,10 @@ async def seed(repo: CodeRepo) -> list[dict[str, str]]:
             scip_producer=producer,
             exclude_generated=False,
         )
-        entries.append({"namespace": ns, "head": head, "producer": producer})
+        entry = {"namespace": ns, "head": head, "producer": producer}
+        if name == "python":
+            entry["source"] = str(source)
+        entries.append(entry)
     MANIFEST.write_text(json.dumps(entries))
     # Trigger the same worker passes that the supervisor schedules, with real IO. A pass
     # hands a missing mirror's clone to a background job and moves on, so an entry's
@@ -163,6 +170,136 @@ async def seed(repo: CodeRepo) -> list[dict[str, str]]:
         if worker is scip_go_delta:
             assert not result.modules_skipped, result.modules_skipped
     return entries
+
+
+async def mcp(client: httpx.AsyncClient, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    response = await client.post(
+        "/mcp?toolset=coding",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": {"org": "dev", **arguments}},
+        },
+    )
+    response.raise_for_status()
+    envelope = response.json()
+    assert "error" not in envelope, envelope
+    result = envelope["result"]
+    assert not result.get("isError"), result
+    return dict(result["structuredContent"])
+
+
+async def wait_for_link(
+    client: httpx.AsyncClient, entry: dict[str, str], state: str, deadline: float
+) -> None:
+    identity = {"namespace": entry["namespace"], "memory_key": entry["memory_key"]}
+    while True:
+        memory = await mcp(client, "loom_memory_get", identity)
+        assert memory.get("found") and memory["value"] == "`greet()` adds a greeting.", memory
+        links = [
+            link
+            for link in memory.get("code", [])
+            if link["path"] == "example.py" and link["code_namespace"] == entry["namespace"]
+        ]
+        if len(links) == 1 and links[0]["state"] == state:
+            if state == "changed":
+                assert links[0]["changed_since"] == entry["head"], links
+            symbol = await mcp(
+                client,
+                "loom_code_symbol",
+                {"namespace": entry["namespace"], "name": "greet", "include_body": False},
+            )
+            definitions = symbol.get("definitions", [])
+            assert len(definitions) == 1 and definitions[0]["path"] == "example.py", symbol
+            status = await mcp(
+                client, "loom_code_index_status", {"namespace": entry["namespace"], "brief": True}
+            )
+            # Status can return its cached head after the link has changed.
+            if status["git_head"] != entry["head"]:
+                assert time.monotonic() < deadline, status
+                await asyncio.sleep(SEED_POLL_S)
+                continue
+            lessons = definitions[0].get("lessons", [])
+            for lesson in lessons:
+                if lesson["memory_key"] == entry["memory_key"]:
+                    assert lesson["code_state"] == state, lesson
+                    if state == "changed":
+                        assert lesson["changed_since"] == entry["head"], lesson
+            print(f"PASS MCP code link: {state}, commit={entry['head']}", flush=True)
+            return
+        assert time.monotonic() < deadline, f"MCP code link did not become {state}: {memory}"
+        await asyncio.sleep(SEED_POLL_S)
+
+
+async def code_link_lifecycle(repo: CodeRepo, entries: list[dict[str, str]]) -> None:
+    entry = next(e for e in entries if e["producer"] == "python")
+    assert settings.code_ingest_enabled and settings.memory_code_links_enabled
+    deadline = time.monotonic() + (
+        SEED_TIMEOUT_S
+        + settings.code_ingest_interval_seconds
+        + settings.code_scip_py_delta_interval_seconds
+        + settings.memory_code_links_interval_seconds
+        + settings.memory_code_links_settle_seconds
+    )
+    async with (
+        asyncio.timeout_at(deadline),
+        httpx.AsyncClient(base_url="http://127.0.0.1:7777", timeout=30) as client,
+    ):
+        if "--verify-only" in sys.argv:
+            await wait_for_link(client, entry, "changed", deadline)
+            await mcp(
+                client,
+                "loom_memory_delete",
+                {"namespace": entry["namespace"], "memory_key": entry["memory_key"]},
+            )
+            gone = await mcp(
+                client,
+                "loom_memory_get",
+                {"namespace": entry["namespace"], "memory_key": entry["memory_key"]},
+            )
+            assert not gone.get("found"), gone
+            return
+        entry["memory_key"] = f"docker/code-link/{uuid.uuid4().hex}"
+        await mcp(
+            client,
+            "loom_memory_set",
+            {
+                "namespace": entry["namespace"],
+                "memory_key": entry["memory_key"],
+                "value": "`greet()` adds a greeting.",
+            },
+        )
+        await wait_for_link(client, entry, "fresh", deadline)
+        source = Path(entry["source"])
+        path = source / "example.py"
+        before = path.read_text()
+        assert before.count('return "Hello " + name') == 1, before
+        path.write_text(before.replace('return "Hello " + name', 'return "Hello " + name.strip()'))
+        await asyncio.to_thread(run, source, "git", "add", "example.py")
+        await asyncio.to_thread(
+            run,
+            source,
+            "git",
+            "-c",
+            "user.name=smoke",
+            "-c",
+            "user.email=smoke@example.com",
+            "commit",
+            "-qm",
+            "change greeting",
+        )
+        entry["head"] = await asyncio.to_thread(run, source, "git", "rev-parse", "HEAD")
+        while any(
+            [
+                await repo.get_state("dev", entry["namespace"], watermark) != entry["head"]
+                for watermark in ("git_head", "scip_commit_py")
+            ]
+        ):
+            assert time.monotonic() < deadline, "The workers did not index the source edit"
+            await asyncio.sleep(SEED_POLL_S)
+        await wait_for_link(client, entry, "changed", deadline)
+        MANIFEST.write_text(json.dumps(entries))
 
 
 async def verify(repo: CodeRepo, entries: list[dict[str, str]]) -> None:
@@ -215,9 +352,12 @@ async def main() -> None:
     try:
         await refresh_db_repos(force=True)
         repo = CodeRepo()
-        entries = (
-            json.loads(MANIFEST.read_text()) if "--verify-only" in sys.argv else await seed(repo)
-        )
+        lifecycle = "--link-lifecycle" in sys.argv or "--verify-only" in sys.argv
+        if not lifecycle:
+            assert not settings.code_ingest_enabled, "Seed before starting scheduled ingest"
+        entries = json.loads(MANIFEST.read_text()) if lifecycle else await seed(repo)
+        if lifecycle:
+            await code_link_lifecycle(repo, entries)
         await verify(repo, entries)
     finally:
         await client.disconnect()

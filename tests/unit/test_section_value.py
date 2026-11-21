@@ -21,6 +21,7 @@ from server.knowledge.domain.extract.structural import StructuralChunk
 from server.knowledge.domain.section_value import is_noise
 from server.knowledge.store.chunks import build_chunk_rows
 from server.settings import settings
+from tests.unit.checked_pack_fakes import install_pack_knowledge, install_pack_target
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "section_values.json"
 
@@ -698,8 +699,10 @@ def test_the_repository_docs_merge_keeps_noise_after_the_close_hits() -> None:
 def test_a_reranked_page_keeps_noise_below_an_admitted_repository_hit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from types import SimpleNamespace
+
     from server.knowledge.api.models_knowledge import KnowledgeSearchInput, KnowledgeSearchOutput
-    from server.knowledge.app import repo_docs
+    from server.knowledge.app import knowledge_search, repo_docs, source_access
 
     async def _search(inp: KnowledgeSearchInput) -> KnowledgeSearchOutput:
         if inp.namespace == "code-kj":
@@ -707,7 +710,20 @@ def test_a_reranked_page_keeps_noise_below_an_admitted_repository_hit(
         hits = [_hit("kb://sync", 0.95, noise=True), _hit("kb://design", 0.6)]
         return KnowledgeSearchOutput(results=hits, embedding_model="m", reranked_by="builtin:x")
 
-    monkeypatch.setattr("server.knowledge.app.knowledge_search.handle_knowledge_search", _search)
+    async def resolve(inp):
+        return knowledge_search.SearchRequest(inp, (inp.namespace,), ())
+
+    async def run(request, plan):
+        return knowledge_search.CheckedSearch(
+            await _search(request.input), None, SimpleNamespace(marked=False), [], 0
+        )
+
+    async def prepare(org, namespaces):
+        return source_access.ReadPlan(org)
+
+    monkeypatch.setattr(knowledge_search, "resolve_search", resolve)
+    monkeypatch.setattr(knowledge_search, "run_checked_search", run)
+    monkeypatch.setattr(source_access, "prepare", prepare)
     page = KnowledgeSearchInput(org="o", namespace="ns", query="the cache", top_k=3)
     out = asyncio.run(repo_docs.knowledge_with_repo_docs(page, repo_namespace="code-kj"))
     assert [h.source_uri for h in out.results] == ["kb://design", "doc://adr", "kb://sync"]
@@ -755,7 +771,7 @@ def _only_knowledge(monkeypatch: pytest.MonkeyPatch) -> None:
         "server.memory.app.procedure.handle_procedure_match",
         "server.knowledge.app.conversations.handle_conversation_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
 
 @pytest.mark.usefixtures("_only_knowledge")
@@ -771,7 +787,7 @@ def test_a_context_pack_leaves_noise_out_with_the_filter_on(
     async def _knowledge(*a: Any, **k: Any) -> Any:
         return SimpleNamespace(results=[_hit("kb://design", 0.9), _hit("kb://sync", 0.8, True)])
 
-    monkeypatch.setattr("server.knowledge.app.knowledge_search.handle_knowledge_search", _knowledge)
+    install_pack_knowledge(monkeypatch, _knowledge)
     monkeypatch.setattr(settings, "knowledge_noise_filter", filter_on)
     out = asyncio.run(
         handle_context_pack(
@@ -797,7 +813,7 @@ def test_a_context_pack_fills_the_places_noise_took(monkeypatch: pytest.MonkeyPa
 
         return SimpleNamespace(results=hits[: inp.top_k])
 
-    monkeypatch.setattr("server.knowledge.app.knowledge_search.handle_knowledge_search", _knowledge)
+    install_pack_knowledge(monkeypatch, _knowledge)
     out = asyncio.run(
         handle_context_pack(
             ContextPackInput(
@@ -821,7 +837,7 @@ def test_a_failed_wider_read_still_serves_the_first_pass(monkeypatch: pytest.Mon
             raise RuntimeError("the wider read failed")
         return SimpleNamespace(results=[_hit("kb://sync", 0.9, True), _hit("kb://a", 0.8)])
 
-    monkeypatch.setattr("server.knowledge.app.knowledge_search.handle_knowledge_search", _knowledge)
+    install_pack_knowledge(monkeypatch, _knowledge)
     out = asyncio.run(
         handle_context_pack(
             ContextPackInput(
@@ -839,8 +855,9 @@ def test_a_memory_stack_leaves_noise_out_with_the_filter_on(
     # The stack reads chunks itself (and context.pack serves its knowledge entries).
     from server.knowledge.app import search as knowledge_store
     from server.knowledge.app.search import ChunkHit
+    from server.knowledge.app.source_access import ReadPlan
     from server.memory.api.models_lifecycle import MemoryStackInput
-    from server.memory.app import stack
+    from server.memory.app import stack, stack_knowledge
 
     class _Embedder:
         model_name = "m"
@@ -860,15 +877,20 @@ def test_a_memory_stack_leaves_noise_out_with_the_filter_on(
     monkeypatch.setattr(knowledge_store, "hybrid_search", _search)
     monkeypatch.setattr(settings, "knowledge_noise_filter", filter_on)
     fill = stack._StackFill(budget=10_000)
-    asyncio.run(
-        stack._stack_knowledge(
-            MemoryStackInput(
-                org="o", namespace="ns", agent="a", include_knowledge=True, knowledge_top_k=2
-            ),
-            fill,
+    knowledge_input = MemoryStackInput(
+        org="o", namespace="ns", agent="a", include_knowledge=True, knowledge_top_k=2
+    )
+    knowledge = asyncio.run(
+        stack_knowledge.collect(
+            knowledge_input.org,
+            knowledge_input.namespace,
+            knowledge_input.agent,
             "the cache",
+            int(knowledge_input.knowledge_top_k),
+            ReadPlan(knowledge_input.org),
         )
     )
+    fill = stack._render(fill, knowledge.hits)
     served = [e.memory_key for e in fill.entries]
     assert served == (["kb://a", "kb://b"] if filter_on else ["kb://sync", "kb://a"])
 

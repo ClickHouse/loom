@@ -124,21 +124,29 @@ class CostSummaryOutput(BaseModel):
 class BudgetStatusInput(BaseModel):
     org: str
     namespace: str | None = None
+    # Named end user's rolling-24h budget within namespace; omitted returns namespace totals.
+    user_id: str | None = None
 
 
 class BudgetStatusOutput(BaseModel):
     namespace: str
-    # Upstream spend over the last 24 hours (rolling, not calendar day), in USD.
-    spent_24h_usd: float
-    # Effective cap: per-namespace override if set, else global default.
+    # The selected logical end user, or None for namespace and org totals.
+    user_id: str | None = None
+    # Rolling 24h upstream spend in USD; user mode returns null unless the caller is a
+    # platform admin without namespace-role restrictions.
+    spent_24h_usd: float | None
+    # Effective namespace or named-user cap: namespace override, else server default.
     # 0.0 means uncapped; org-wide rollups are always uncapped.
     cap_usd: float
-    # Where `cap_usd` came from: `namespace` (its own cap), `global` (the server default),
-    # `uncapped` (neither is set) or `org` (an org-wide rollup, which has no cap).
-    cap_source: Literal["namespace", "global", "uncapped", "org"]
-    # True when a cap is set and `spent_24h_usd` has reached it; always false org-wide.
+    # `namespace` / `global` for namespace caps, `namespace_user` / `global_user`
+    # for user caps, `uncapped` when disabled, or `org` for an org-wide rollup.
+    cap_source: Literal["namespace", "global", "namespace_user", "global_user", "uncapped", "org"]
+    # True when real spend reaches the selected cap, even if withheld; false org-wide.
     over_cap: bool
-    pct_of_cap: float | None = None  # 0..1, None when uncapped
+    # In user mode, namespace spend can independently prevent new work.
+    namespace_over_cap: bool | None = None
+    # Fraction spent, clamped to 0..1; null when uncapped or user spend is withheld.
+    pct_of_cap: float | None = None
     namespaces_with_spend: int = 0  # org-wide mode only
 
 

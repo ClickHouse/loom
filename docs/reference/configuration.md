@@ -155,6 +155,7 @@ ClickHouse connection, query shaping and vector storage.
 | `LOOM_CH_TELEMETRY_DATABASE` | `str` | `'loom_telemetry'` |  | The database the telemetry Loom derives from its own tables lives in (`sli_minute`), outside the schema so a reader can be granted it alone. A schema outside `loom` names its own: two schemas never share one. |
 | `LOOM_CH_CLUSTER` | `str` | `'default'` |  | The cluster `clusterAllReplicas` reads to find a stopped Loom process's queries on every node (`default` on ClickHouse Cloud). A server without it answers for itself; '' reads only the connected server. |
 | `LOOM_CH_SECURE` | `bool \| None` | `None` |  | Connect over HTTPS. Unset infers TLS from the port (8443 on, anything else off). |
+| `LOOM_CH_ANALYSIS_OBSERVER_URLS` | `list[str]` | `[]` |  | Additional trusted writer HTTP origins for analyst setup policy observations. Uses the configured service credentials; missing or duplicate writers refuse. |
 | `LOOM_CH_LOG_COMMENT_STATEMENT_DIGEST` | `bool` | `False` |  | Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment` ("<op> <request_id>"), so query_log rows group by shape. A statement that carries a secret, or one run as the analyst, gets its shape alone. Off by default: readers that split log_comment on spaces gain tokens. |
 | `LOOM_CH_CAPTURE_STATEMENTS` | `str` | `''` |  | A file path: append one JSON line (`digest`, `sql`) per executed statement, to collect the shapes an acceptance run executes for the analyzer corpus. '' = off; never set it in production. |
 | `LOOM_CH_POOL_MAXSIZE` | `int` | `64` |  | HTTP connection pool size: request concurrency plus 3 x the batched-insert bound (inserts a second x wait / 1000; docs/architecture/clickhouse.md#batched-inserts). |
@@ -908,6 +909,21 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_GAPS_MAX_IN_FLIGHT` | `int` | `256` | live | Miss recordings in flight in one process, at most; past it a miss is dropped and counted, so a burst of abstentions cannot pile up background reads. |
 | `LOOM_KNOWLEDGE_GAPS_MAX_NAMESPACES` | `int` | `500` | live | Namespaces one pass groups, at most; the ones with the most misses first. |
 
+### Query-history definitions
+
+| Variable | Type | Default | Live | Meaning |
+| --- | --- | --- | --- | --- |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_ENABLED` | `bool` | `False` |  | Permit opt-in ClickHouse query-history sources to queue definition drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MIN_USERS` | `int` | `3` | live | Distinct initial ClickHouse accounts required before drafting a query group. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_DRAFTS` | `int` | `20` | live | Drafts one source may queue in a worker turn, at most. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_GROUPS` | `int` | `200` | live | Most-used query groups inspected per source turn before skipping existing drafts. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_WINDOW_DAYS` | `int` | `7` | live | Days of finished SELECT query history a turn groups. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_READ_TIMEOUT_S` | `float` | `30` | live | Seconds allowed for one query-history source read. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_PASS_SECONDS` | `float` | `120.0` |  | Deadline of one query-history pass; it starts no new group after half this budget. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_INTERVAL_SECONDS` | `int` | `3600` |  | Seconds between query-history passes. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_SOURCES` | `int` | `100` | live | Sources one pass reads, at most; each turn is separately time bounded. |
+| `LOOM_KNOWLEDGE_QUERY_HISTORY_MAX_BREAKERS` | `int` | `1000` |  | Query-history circuit states kept per process, at most; older sources are evicted first. |
+
 ### Chunking
 
 | Variable | Type | Default | Live | Meaning |
@@ -955,10 +971,20 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |
 | `LOOM_KNOWLEDGE_SOURCE_PROBE_TIMEOUT_S` | `float` | `20.0` | live | Seconds a document source's probe (add, update, check, rotate) or tracker short-id lookup may take in all; past it add, update and rotate answer SOURCE_UNREACHABLE and check answers reachable: false. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED` | `bool` | `False` |  | The knowledge_source_sync worker: pulls each registered document source's changed files into its namespace's documents. Off by default: it needs each source's credential, spends embedding calls on every changed document and model calls mining it for decisions. |
+| `LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED` | `bool` | `False` |  | Require protected automatic session capture and persist deployment privacy state. Off does not lift protection while the deployment latch remains set. |
+| `LOOM_KNOWLEDGE_SOURCE_ACL_STALE_SECONDS` | `int` | `3600` |  | Mirrored reads require a complete listing and group observation within this many seconds; missing or older evidence admits nobody. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_ENABLED` | `bool` | `False` |  | Enable optional source push setup, callbacks and Drive renewal; false keeps polling only. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_INTERVAL_SECONDS` | `int` | `300` |  | Seconds between bounded channel-renewal pages; channels renew a day before expiry. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_PROVIDER_TIMEOUT_S` | `float` | `40.0` |  | Seconds one push setup or Drive renewal may spend on provider work, before cleanup. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_STOP_TIMEOUT_S` | `float` | `2.0` |  | Seconds allowed to stop one superseded or unpublished Drive channel. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_CLEANUP_TIMEOUT_S` | `float` | `5.0` |  | Seconds allowed for the whole Drive channel cleanup; at least the per-channel wait. |
+| `LOOM_KNOWLEDGE_SOURCE_PUSH_MAX_PASS_SECONDS` | `float` | `120.0` |  | Seconds a renewal pass may run; reserve one provider attempt and two cleanup windows. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS` | `int` | `900` |  | Seconds between sync passes while there are sources. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS` | `int` | `1800` |  | Seconds between passes that found no source to sync; one idle sleep plus one pass stays under three intervals, so the worker never reads as stalled. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_PASS_SECONDS` | `int` | `600` |  | Seconds one sync pass may run before it is cancelled; it stops starting sources at three quarters of it. At least 180: 90 for the sync, then 60 of read time for one document's extraction and 30 for its writes before the deadline. |
-| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across all sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_SYNC_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes, retires or mines for decisions across the namespace sources; the rest wait for the next pass. |
+| `LOOM_KNOWLEDGE_SOURCE_MIRROR_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents one pass fetches, writes and retires for the mirrored sources, apart from the namespace sources' per-pass bound, so a mirror's size never takes their share. |
+| `LOOM_KNOWLEDGE_SOURCE_RETIRE_DOCUMENTS_PER_PASS` | `int` | `40` | live | Documents of stopped mirrored sources retired per cleanup pass, independently of the content-sync budget. Cleanup continues while syncing is switched off. |
 | `LOOM_KNOWLEDGE_SOURCE_MAX_DOCUMENTS` | `int` | `50000` | live | Documents one source holds: its stored ones plus the new ones a turn writes. At it a turn tries no new file, notes how many as `too_many_documents`, and still updates and retires. At most 200,000: each read of the stored copies grows with its square. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_FULL_INTERVAL_SECONDS` | `int` | `86400` | live | Seconds after which a source's next pass lists every file, not only those changed since the last one: what finds a file trashed or moved out of a folder. |
 | `LOOM_KNOWLEDGE_SOURCE_SYNC_MAX_FILE_BYTES` | `int` | `67108864` | live | Bytes of one file a sync downloads or exports; a larger file is not ingested. |
@@ -996,6 +1022,7 @@ The memory plane outside search/ask/extraction: writes, conflicts, lifecycle, wo
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_MEMORY_SHARED_DEFINITIONS_MAX` | `int` | `500` | live | Most shared definitions a namespace holds; a promotion past it is refused (docs/concepts/identities-and-namespaces.md). |
+| `LOOM_MEMORY_TERM_LEG_WAIT_MS` | `int` | `100` | live | How much longer memory.search waits for its term leg once the other legs are done; past it the leg adds nothing (docs/concepts/identities-and-namespaces.md). |
 
 ### Prompt safety and search priors
 
@@ -1727,6 +1754,8 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_EVENTS_STREAM_FLUSH_BATCH` | `int` | `500` |  | Queued telemetry rows that trigger a flush before the interval elapses. |
 | `LOOM_TRAFFIC_CLASS_REGISTRY_TTL_SECONDS` | `int` | `300` |  | How long a namespace's registry class is kept in the process cache. |
 | `LOOM_DEFAULT_DAILY_COST_CAP_USD` | `float` | `1.0` |  | Daily LLM spend cap per namespace, USD: extraction workers skip a namespace whose rolling 24 h cost reached it. Overridden per namespace by loom.namespaces.daily_cost_cap_usd; 0.0 disables on both tiers. |
+| `LOOM_DEFAULT_DAILY_USER_COST_CAP_USD` | `float` | `0.0` | live | Separate rolling-24h cap per named user_id within a namespace, USD; 0 disables it. A namespace's daily_user_cost_cap_usd overrides this default when positive. |
+| `LOOM_COST_BUDGET_ALERT_SHARE` | `float` | `0.8` | live | Fraction of a cap that warns its namespace's configured inbox on the next check. |
 | `LOOM_READS_LLM_FREE` | `bool` | `False` |  | True: reads call no LLM (ask synthesis: 409), skip the spelling-fix and set-expansion embeddings, and rerank only as named, since a reranker is a model call. |
 | `LOOM_REPLICA_COUNT` | `int` | `1` |  | The rate limiter divides every cap by the deployment's replica count so the replicas' sum matches the target (approximate, not cluster-strict). The count is the hosts with a live serving loom.instances row; this is its floor, and the count while those rows cannot be read. |
 | `LOOM_SERVES_TRAFFIC` | `bool` | `True` |  | False for a process no load balancer routes to (a workers-only container): its instance row does not count as a replica. |
@@ -1737,6 +1766,7 @@ Process shape, deployment, event stream and cost budgets.
 | `LOOM_SUPERVISOR_LEASE_TTL_S` | `int` | `30` |  | auto mode: seconds a lease holder that stops renewing keeps the workers before another process takes them over (failover time). At least 24: below that a renewal blocked for its 2 s timeout leaves no retry before the holder must give up (server/workers/leader.py has the timings). |
 | `LOOM_KEEPER_SWEEP_INTERVAL_SECONDS` | `float` | `3600.0` |  | Seconds between passes of the always-on sweep that deletes the KeeperMap keys (leases, claims, graph slots) a stopped process left behind. |
 | `LOOM_WORKERS_PROCESS` | `'child' \| 'inline'` | `'child'` |  | auto mode: where the lease holder runs the workers. child = a separate process it starts and stops with the lease, so the passes do not share the event loop that serves requests; inline = in the serving process. |
+| `LOOM_WORKERS_CHILD_RETIREMENT_TIMEOUT_S` | `float` | `1.0` |  | At most this many seconds to certify a reaped worker child; also bounded by the remaining stop or restart delay. Expiry leaves its participant unretired. |
 | `LOOM_SHUTDOWN_READY_DELAY_S` | `float` | `15.0` |  | Seconds a process keeps serving after SIGTERM while /v1/health/ready answers 503, so the load balancer stops routing to it before its port closes. Size it to the LB's probe interval × failure threshold. 0 = stop at once. |
 | `LOOM_NATIVE_COMMAND_DRAIN_TIMEOUT_S` | `float` | `15.0` |  | Seconds a native CLI command allows its producers, deferred writes and participant retirement to finish. Expiry leaves the participant unretired. |
 | `LOOM_BOOT_WARMUP_TIMEOUT_S` | `float` | `30.0` |  | Seconds boot waits for the first load of the tracker registry and the runtime overrides, and the first publish of the dashboard bundle, before it serves; readiness stays false until the first two load. |

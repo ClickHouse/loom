@@ -309,3 +309,53 @@ async def test_secondary_abort_never_replaces_first_or_skips_owned_task_settleme
         assert result is first
     assert began.is_set()
     conn.terminate.assert_called_once_with()
+
+
+@pytest.mark.parametrize("ending", ["timeout", "cancel", "healthy"])
+async def test_integration_fatal_child_reaps_its_process_after_interruption(monkeypatch, ending):
+    from tests.integration import test_directory_control_cleanup as native
+
+    original = {
+        "timeout": TimeoutError("owned child communication timed out"),
+        "cancel": asyncio.CancelledError("owned child communication cancelled"),
+        "healthy": None,
+    }[ending]
+    observer = Mock(fetchval=AsyncMock(return_value="owned_fake"))
+    process = Mock(returncode=None)
+
+    async def communicate():
+        if original is not None:
+            raise original
+        process.returncode = 0
+        return b"", b""
+
+    async def wait():
+        process.returncode = -9
+        return process.returncode
+
+    process.communicate = AsyncMock(side_effect=communicate)
+    process.wait = AsyncMock(side_effect=wait)
+    create = AsyncMock(return_value=process)
+    monkeypatch.setenv("LOOM_PG_DSN", "postgresql://u:test-only@127.0.0.1:15432/admin")
+    monkeypatch.setattr(native.asyncio, "create_subprocess_exec", create)
+    if original is None:
+        await native.test_directory_fatal_child_is_inert_until_owned_cleanup(
+            observer, "work", "exit"
+        )
+    else:
+        with pytest.raises(type(original)) as caught:
+            await native.test_directory_fatal_child_is_inert_until_owned_cleanup(
+                observer, "work", "exit"
+            )
+        assert caught.value is original
+    observer.fetchval.assert_awaited_once_with("SELECT current_database()")
+    create.assert_awaited_once()
+    process.communicate.assert_awaited_once()
+    if original is None:
+        assert process.returncode == 0
+        process.kill.assert_not_called()
+        process.wait.assert_not_awaited()
+    else:
+        process.kill.assert_called_once_with()
+        process.wait.assert_awaited_once_with()
+        assert process.returncode == -9

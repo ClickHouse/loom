@@ -31,10 +31,10 @@ async def unfinished_since(
     return await ledger.unfinished_since(org, since_s, margin_s, limit=limit)
 
 
-async def open_namespace_erasures(org: str) -> list[dict[str, Any]]:
+async def open_namespace_erasures(org: str, *, ch: Any = None) -> list[dict[str, Any]]:
     """The org's namespace erasures that will still run (`ledger.open_namespace_erasures`):
     a source add waits for them."""
-    return await ledger.open_namespace_erasures(org)
+    return await ledger.open_namespace_erasures(org, ch=ch)
 
 
 async def unfinished_reaching(

@@ -1736,6 +1736,24 @@ textarea[aria-invalid="true"]:focus-visible {
   .library-tree-row[data-selected] {
     background: var(--click-table-row-color-background-active);
   }
+  /* While documents or a collection are dragged, the places that take them are outlined, and
+     the one under the pointer is filled too; a place that refuses them stays as it is. */
+  .library-tree-row[data-drop="ok"] {
+    outline: 1px dashed var(--color-accent);
+    outline-offset: -1px;
+  }
+  .library-tree-row[data-drop="over"] {
+    outline: 1px solid var(--color-accent);
+    outline-offset: -1px;
+    background: var(--color-surface-2);
+  }
+  /* Its words start where the titles do, past the show/hide button's box. */
+  .library-tree-top {
+    padding-inline-start: calc(1.5rem + var(--spaces-1));
+    padding-block: var(--click-sidebar-navigation-item-default-space-y);
+    font: var(--click-sidebar-navigation-item-typography-default);
+    color: var(--color-text-muted);
+  }
   /* The place's link fills its row: the row is what a pointer aims at. */
   .library-tree-link {
     display: flex;
@@ -1751,6 +1769,12 @@ textarea[aria-invalid="true"]:focus-visible {
   }
   .library-tree-row[data-selected] .library-tree-link {
     font: var(--click-sidebar-navigation-item-typography-active);
+  }
+  /* A sidebar row's trailing count; Click UI's navigation has no nested rows. */
+  .library-tree-count {
+    color: var(--color-text-muted);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
   }
   /* The show/hide button's box comes from IconButton's `minTarget` (24 px for a mouse, 44 px
      for a thumb); a row with nothing inside holds an empty box of the same size, so the titles

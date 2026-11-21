@@ -349,14 +349,13 @@ def note_send(query_id: str, deadline: float = 0.0, max_s: float = 0.0) -> None:
 
 
 async def _measure_skew(ch: Any) -> None:
-    """The server's clock against this host's, from one round trip's midpoint."""
+    """A server-clock lower bound: its sampled stamp precedes receipt of the reply."""
     global _server_anchor, _skew_at
-    sent = time.monotonic()
     row = await ch.query_one("SELECT toUnixTimestamp64Milli(now64(3)) AS ms")
     back = time.monotonic()
     if row is None:
         raise BackendUnavailableError("rmt carry: the server's clock cannot be read; retry")
-    _server_anchor = (int(row["ms"]) / 1000, (sent + back) / 2)
+    _server_anchor = (int(row["ms"]) / 1000, back)
     _skew_at = back
 
 
@@ -410,6 +409,26 @@ def send_deadline() -> float:
     now = server_now()
     if now is None:
         raise BackendUnavailableError("rmt carry: the server's clock is not measured yet; retry")
+    return _deadline_at(now)
+
+
+async def measure_send_clock(ch: Any) -> tuple[float, float]:
+    """A receiving client's clock, independent of the deployment's carry watcher."""
+    row = await ch.query_one("SELECT toUnixTimestamp64Milli(now64(3)) AS ms")
+    back = time.monotonic()
+    if row is None:
+        raise BackendUnavailableError("leased write: the target's clock cannot be read; retry")
+    # The sample precedes receipt; this anchor cannot overstate the receiver's clock.
+    return int(row["ms"]) / 1000, back
+
+
+def clock_send_deadline(anchor: tuple[float, float]) -> float:
+    """Advance an insert's receiving-server clock to this send's monotonic time."""
+    server_s, measured = anchor
+    return _deadline_at(server_s + time.monotonic() - measured)
+
+
+def _deadline_at(now: float) -> float:
     lease = _lease_end.get()
     start = now if lease is None else min(now, now + lease - time.monotonic())
     return start + _TRANSIT_S

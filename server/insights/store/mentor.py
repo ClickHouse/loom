@@ -17,6 +17,7 @@ from server.memory.domain.namespace_shapes import STRUCTURED_TYPES
 from server.memory.domain.temporal_sql import served_status_sql
 from server.memory.domain.transcript_rows import TRANSCRIPT_ROW_SQL as _TRANSCRIPT_ROW
 from server.observability.consumer import INSPECTOR_CONSUMERS
+from server.observability.store.event_reads import MASKED_EVENTS
 
 _TRACKER_TAG_RE = "(^|[^a-z])(test|tests|flaky|ci|regression|crash|failure|failing)([^a-z]|$)"
 _KEY_ID_RE = r"\d{2,}$"
@@ -33,11 +34,11 @@ _WIN = "ts >= now() - INTERVAL {win:UInt32} SECOND"
 # they are not the agent's own use of Loom.
 _AGENT_CALL = "consumer NOT IN {inspectors:Array(String)}"
 _LEDGER_AGENT = (
-    f"FROM loom.agent_events WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
+    f"FROM {MASKED_EVENTS} WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} "
     f"AND kind != 'worker' AND {_AGENT_CALL}"
 )
 _LEDGER_NS = (
-    f"FROM loom.agent_events WHERE {_SCOPE} AND {_WIN} AND kind != 'worker' AND {_AGENT_CALL}"
+    f"FROM {MASKED_EVENTS} WHERE {_SCOPE} AND {_WIN} AND kind != 'worker' AND {_AGENT_CALL}"
 )
 # A session the client named. '-' and '*' are what the transports write
 # when a call names none; a week of such calls is not one session.
@@ -132,7 +133,7 @@ class ProfileReads:
         r = await self._one(
             f"""
             SELECT groupUniqArray(20)(args['out_hint_code']) AS codes
-            FROM loom.agent_events
+            FROM {MASKED_EVENTS}
             WHERE {_SCOPE} AND agent = {{agent:String}}
               AND ts >= now() - INTERVAL {{ttl:UInt32}} SECOND
               AND args['out_hint_code'] != '' AND {_AGENT_CALL}
@@ -392,7 +393,7 @@ async def top_writers(
     ch = ch or _default_client()
     rows = await ch.query_all(
         f"""
-        SELECT agent, count() AS n FROM loom.agent_events
+        SELECT agent, count() AS n FROM {MASKED_EVENTS}
         WHERE org = {{org:String}} AND namespace = {{ns:String}}
           AND ts >= now() - INTERVAL {{win:UInt32}} SECOND AND kind != 'worker'
           AND operation IN {_in(write_ops)} AND agent NOT IN {{anon:Array(String)}}
@@ -427,7 +428,7 @@ async def hints_shown(
         await ch.query_all(
             f"""
             SELECT session_id, args['out_hint_code'] AS code, min(ts) AS first_ts
-            FROM loom.agent_events
+            FROM {MASKED_EVENTS}
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
               AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
               AND args['out_hint_code'] != '' AND session_id NOT IN ('', '-', '*')
@@ -464,7 +465,7 @@ async def last_calls(
         await ch.query_all(
             f"""
             SELECT session_id, operation, max(ts) AS last_ts
-            FROM loom.agent_events
+            FROM {MASKED_EVENTS}
             WHERE org = {{org:String}} AND namespace = {{ns:String}} AND agent = {{agent:String}}
               AND ts >= now() - INTERVAL {{win:UInt32}} SECOND
               AND session_id IN {{sessions:Array(String)}} AND {_AGENT_CALL}
@@ -519,7 +520,7 @@ async def call_evidence(
                    OR (operation IN {_in(gets)} AND (args['out_found'] = 'true'
                        OR toUInt64OrZero(args['out_found_n']) > 0)))) AS returned_hits,
                minOrNull(ts) AS oldest_row
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN}
         """,
         params={
@@ -595,7 +596,7 @@ async def reported_keys(
             -- A memory's key never changes across its versions, so any version answers.
             SELECT memory_key AS k FROM loom.memory
             WHERE {_SCOPE} AND memory_id IN (
-                SELECT toUUIDOrZero(args['memory_id']) FROM loom.agent_events
+                SELECT toUUIDOrZero(args['memory_id']) FROM {MASKED_EVENTS}
                 WHERE {_SCOPE} AND agent = {{agent:String}} AND {_WIN} AND {_COUNTED_CALL}
                   AND success AND operation = 'memory.outcome'
                   AND args['out_recorded'] = 'true' AND args['outcome'] IN ('used', 'positive')

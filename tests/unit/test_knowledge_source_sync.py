@@ -331,7 +331,8 @@ def world(monkeypatch: pytest.MonkeyPatch) -> _World:
     async def _extract(data: bytes, **kw: Any) -> Artifact:
         if w.extract_error is not None:
             raise w.extract_error
-        file_id = kw["name"].removesuffix(" title")
+        downloaded = next(r for r in reversed(w.requests) if r.url.params.get("alt") == "media")
+        file_id = downloaded.url.path.rsplit("/", 1)[-1]
         if file_id in w.extract_errors:
             raise w.extract_errors[file_id]
         return Artifact(

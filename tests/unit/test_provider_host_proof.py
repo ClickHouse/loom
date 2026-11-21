@@ -160,3 +160,65 @@ async def test_this_host_retires_its_dead_participants_once_their_queries_ended(
     assert proof.participant == dead and proof.after == 5
     assert proof.host_proof == pp.certified(gone)
     assert await barrier.retire_dead_here(now=100.0 + barrier.HERE_S / 2) == 0  # throttled
+
+
+def _fresh_process_stat(
+    monkeypatch: pytest.MonkeyPatch, text: str, error: type[Exception] | None = None
+) -> str:
+    """Hold the first birth check steady and supply the subsequent kernel record."""
+    from io import StringIO
+
+    monkeypatch.setattr(pp.socket, "gethostname", lambda: "host")
+    monkeypatch.setattr(pp, "_boot_and_pidns", lambda: ("boot", "77"))
+    monkeypatch.setattr(pp.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(pp, "_start_ticks", lambda pid: "900")
+
+    def fresh_open(path: str, *args: Any, **kwargs: Any) -> StringIO:
+        assert path == "/proc/424242/stat"
+        if error is not None:
+            raise error("uninspectable fresh process record")
+        return StringIO(text)
+
+    monkeypatch.setattr(pp, "open", fresh_open, raising=False)
+    return "host|boot|container|77|424242|900||"
+
+
+def _process_stat_record(state: str = "Z", threads: str = "1", start: str = "900") -> str:
+    fields = ["0"] * 20
+    fields[0], fields[17], fields[19] = state, threads, start
+    return "424242 (owned child) " + " ".join(fields)
+
+
+def test_an_exact_single_thread_zombie_record_proves_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    proof = _fresh_process_stat(monkeypatch, _process_stat_record())
+    assert pp.proves_stopped(proof)
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        _process_stat_record(threads="0"),
+        _process_stat_record(threads="2"),
+        _process_stat_record(threads="-1"),
+        _process_stat_record(threads="unknown"),
+        _process_stat_record(threads="1.0"),
+        *[_process_stat_record(state=state) for state in ("S", "D", "R", "T", "t", "X")],
+        _process_stat_record(start="901"),
+        _process_stat_record(start="unknown"),
+        "424242 (owned child) Z",
+        "unparseable kernel record",
+    ],
+)
+def test_fresh_kernel_record_must_prove_the_same_single_thread_exit(
+    monkeypatch: pytest.MonkeyPatch, record: str
+) -> None:
+    proof = _fresh_process_stat(monkeypatch, record)
+    assert not pp.proves_stopped(proof)
+
+
+@pytest.mark.parametrize("error", [PermissionError, OSError, IndexError])
+def test_unreadable_fresh_kernel_record_never_proves_exit(
+    monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    proof = _fresh_process_stat(monkeypatch, _process_stat_record(), error)
+    assert not pp.proves_stopped(proof)

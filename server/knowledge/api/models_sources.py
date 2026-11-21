@@ -440,12 +440,14 @@ class KnowledgeSourceRotateOutput(BaseModel):
 
 class KnowledgeSourceRemoveInput(BaseModel):
     """Retire a registered document source: its registry row goes inactive and its
-    credential is cleared. Its documents stay; with `delete_documents` true the
+    credential is cleared. A namespace source's documents stay; with `delete_documents` true the
     request to retire them is recorded on the row, and the sync worker retires them
     over its next passes. With `delete_documents` true it also takes a source already
     retired (removed keeping its documents, or retired with its namespace), so those
     documents can still go; without it such a source answers SOURCE_NOT_FOUND. A
-    namespace admin may; `confirm` must equal the name."""
+    namespace admin may; `confirm` must equal the name. A mirrored source always
+    queues retirement of its own copies, regardless of `delete_documents`, and
+    answers no document count."""
 
     org: str = Field(..., description="The org.")
     namespace: str = Field(..., description="The namespace the source's documents live in.")
@@ -453,15 +455,17 @@ class KnowledgeSourceRemoveInput(BaseModel):
     confirm: str = Field(..., description="Type the source name to confirm.")
     delete_documents: bool = Field(
         False,
-        description="Record a request to retire the source's documents (default keep them).",
+        description=(
+            "Retire a namespace source's documents (default keep); implied for mirrored sources."
+        ),
     )
 
 
 class KnowledgeSourceRemoveOutput(BaseModel):
     # The source retired.
     name: str
-    # Live documents the recorded delete request covers (none retired yet), 0 without
-    # `delete_documents`.
+    # Live documents queued for retirement; always zero for a mirrored source because its
+    # counts are withheld, or without `delete_documents` for a namespace source.
     documents_pending: int = 0
 
 

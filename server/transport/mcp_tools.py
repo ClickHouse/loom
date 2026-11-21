@@ -131,8 +131,9 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
             "description": (
                 "**Unified search across the user's Loom content** — memory "
                 "(facts, preferences, decisions), profile (always-loaded "
-                "persona sections), knowledge (uploaded documents) and past "
-                "conversations — four searches, one round-trip; under a code "
+                "persona sections), knowledge (uploaded documents), past "
+                "conversations and readable issues and pull requests — one round-trip; "
+                "under a code "
                 "scope, also the repository's docs and decisions. This is THE "
                 "search tool: call "
                 "it before answering any 'what do I / what did we decide / "
@@ -147,9 +148,9 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                 "list, a count), call again with "
                 "`page` = `memory.next_page` to read the next slice. Stop when "
                 "next_page is empty or the answer is complete.\n\n"
-                "Namespaces are selected server-side (your own memory-kind "
-                "namespaces, up to a cap; code/QA indexes have their "
-                "own tools); no namespace argument. Do NOT call for general "
+                "Memory namespaces and readable trackers are selected server-side; "
+                "no namespace argument. Under a code scope, defect reports also "
+                "receive a duplicate verdict. Do NOT call for general "
                 "knowledge, arithmetic, or code/syntax help."
             ),
             "inputSchema": {
@@ -171,10 +172,9 @@ def _synthetic_tool_descriptors_core() -> list[dict[str, Any]]:
                         "type": "array",
                         "items": {"type": "string"},
                         "description": (
-                            "Keep only rows carrying ANY of these tags. A coding session's "
-                            "rows carry `project:<folder>` and `repo:<id>` (the id the "
-                            "session primer names); pass the repo tag to "
-                            "stay within this repository."
+                            "Filter memory and knowledge by ANY supplied tag; profile, "
+                            "conversations and tracker search ignore tags. Coding rows carry "
+                            "`project:<folder>` and `repo:<id>` (the id in the session primer)."
                         ),
                     },
                     "recipe": {

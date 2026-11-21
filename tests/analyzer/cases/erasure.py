@@ -137,6 +137,8 @@ async def _census_and_reads(ch: RecordingCH, c: dict[str, Any]) -> None:
     await erasure_health.orphan_graph_namespaces(ch=ch)
     await erasure_health.integrity_counts(ch=ch)
     await erasure_ledger.fetch_request_status("erasure-1", ch=ch)
+    await erasure_ledger.mirror_mark(ORG, _ID, ch=ch)
+    await erasure_ledger.promote_mirror_mark(ORG, _ID, ch=ch)
     await erasure_mutations.find_pending_mutation("loom.memory", "tag", ch=ch)
 
 

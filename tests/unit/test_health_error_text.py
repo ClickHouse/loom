@@ -169,7 +169,11 @@ def test_an_extra_analyst_grant_names_no_database(
     from server.observability import problems
 
     async def run(sql: str, **_: Any) -> Any:
-        if sql.startswith("SELECT count()") and "system." not in sql:
+        if (
+            sql.startswith("SELECT count()")
+            and "system." not in sql
+            and ".agent_events_private" not in sql
+        ):
             return [], [], [(1,)] if boundary.CANARY_TABLE in sql else [(0,)]
         raise RuntimeError("Code: 497. DB::Exception: Not enough privileges")
 

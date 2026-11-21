@@ -99,3 +99,25 @@ def test_snake_case_non_entity_still_ignored():
     known = frozenset({"00084_external_aggregation"})
     out = seed("what is the memory_limit_exceeded remedy", [], known_entities=known)
     assert out == []
+
+
+def test_summary_seed_accepts256_in_original_order_with_cross_source_duplicates():
+    existing = [f"entity{i:03d}" for i in range(254)]
+    assert seed(
+        "@entity000 @handle known known @HANDLE",
+        existing,
+        known_entities=frozenset({"entity000", "handle", "known"}),
+    ) == [*existing, "handle", "known"]
+    assert existing == [f"entity{i:03d}" for i in range(254)]
+
+
+def test_summary_seed257_refuses_before_returning_a_truncated_union():
+    import pytest
+
+    from server.core.errors import VectorInputTooLargeError
+
+    existing = [f"entity{i:03d}" for i in range(255)]
+    with pytest.raises(VectorInputTooLargeError, match="256") as raised:
+        seed("@handle known", existing, known_entities=frozenset({"known"}))
+    assert raised.value.code == "VECTOR_INPUT_TOO_LARGE"
+    assert existing == [f"entity{i:03d}" for i in range(255)]

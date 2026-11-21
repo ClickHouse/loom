@@ -559,3 +559,12 @@ def test_marked_fields_are_unlisted_but_still_accepted():
     # memory.pin forces pinned on; memory.set (same model) still lists it
     assert "pinned" not in listed["loom_memory_pin"]["inputSchema"]["properties"]
     assert "pinned" in listed["loom_memory_set"]["inputSchema"]["properties"]
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "atomic"])
+def test_memory_set_explains_repository_tags_without_tagging_unrelated_facts(toolset):
+    tools = {t["name"]: t for t in _listing(toolset, False)}
+    description = tools["loom_memory_set"]["description"]
+    assert "For a fact about the primer's repository" in description
+    assert "`repo:<id>` tag" in description
+    assert "omit that tag for unrelated facts" in description

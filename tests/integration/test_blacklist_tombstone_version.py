@@ -80,7 +80,7 @@ async def test_tombstone_dominates_version_and_preserves_selected_fields(
     set_query_tag("test.blacklist.tombstone_version")
     now = datetime.now(UTC).replace(tzinfo=None, microsecond=0)
     row = _row(
-        unique_org("blacklist_version"), str(uuid4()), now + timedelta(seconds=ahead_seconds)
+        unique_org("blacklist-version"), str(uuid4()), now + timedelta(seconds=ahead_seconds)
     )
     try:
         await insert_row(row, ch=pattern_store)
@@ -108,7 +108,7 @@ async def test_tombstone_refuses_unrepresentable_successor_without_changing_row(
 ) -> None:
     set_query_tag("test.blacklist.tombstone_overflow")
     maximum = datetime(1970, 1, 1) + timedelta(seconds=2**32 - 1)
-    row = _row(unique_org("blacklist_version"), str(uuid4()), maximum)
+    row = _row(unique_org("blacklist-version"), str(uuid4()), maximum)
     try:
         await insert_row(row, ch=pattern_store)
         before = await _stored(pattern_store, row)

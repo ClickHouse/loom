@@ -49,6 +49,7 @@ from server.cli.tracker import (
     register_tracker_embed_reset,
     register_tracker_probe,
 )
+from server.cli.tracker_feed import register_tracker_feed
 from server.core.env_file import env_file_path
 from server.wiring import wire
 
@@ -84,6 +85,7 @@ _TRACKER_REGISTRARS = (
     register_tracker_contract_check,
     register_tracker_dupcheck_fit,
     register_tracker_embed_reset,
+    register_tracker_feed,
 )
 
 

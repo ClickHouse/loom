@@ -7,6 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from server.core.repo_base import _CHClient, _default_client
+from server.observability.store.event_reads import MASKED_EVENTS
 
 
 async def active_parts_by_table(*, ch: _CHClient | None = None) -> list[dict[str, Any]]:
@@ -86,7 +87,7 @@ async def memory_op_counts(
         await ch.query_all(
             f"""
         SELECT operation, count() AS c, groupUniqArray(50)(agent) AS agents
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE org = {{org:String}}
           {ns_filter}
           AND ts > now() - INTERVAL {{days:UInt16}} DAY

@@ -49,6 +49,14 @@ _CODE_LINKS = (
 _SOURCES_RETIRE = ("knowledge_sources.retire", (("OTHER", "INSERT"), (D, "loom._migration_lock")))
 
 
+def _push_delete(namespaces: int) -> tuple[str, tuple[tuple[str, str], ...]]:
+    return (
+        "knowledge_source_push.delete",
+        (("OTHER", "INSERT"), (D, "loom.knowledge_source_push"), (D, "loom._migration_lock"))
+        * namespaces,
+    )
+
+
 USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory.tombstone", ((U, "loom.memory"),)),
     ("memory_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
@@ -60,7 +68,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("working_memory.tombstone", ((U, "loom.working_memory"),)),
     ("shared_embeddings.tombstone", ((U, "loom.memory_embeddings"),)),
     ("shared.tombstone", ((U, "loom.shared"),)),
-    ("agent_events.scrub", ((U, "loom.agent_events"),)),
+    ("agent_events.scrub", ((U, "loom.agent_events"), (U, "loom.agent_events_private"))),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
     ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
     ("raw_evidence.delete", ((D, "loom.memory_evidence"), (D, "loom.memory_extraction_queue"))),
@@ -137,6 +145,7 @@ USER_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("personal.retire", (("OTHER", "INSERT"),)),
     ("collections.forget_owner", (("OTHER", "INSERT"), ("OTHER", "INSERT"))),
     ("subject_last_seen.delete", ((D, "loom.subject_last_seen"),)),
+    ("tasks.delete", (("OTHER", "INSERT"), (D, "loom.task_events"), (D, "loom._migration_lock"))),
     (
         "conversations.tombstone",
         (
@@ -253,9 +262,25 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
+    (
+        "learnings_queue.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.learnings_supporters"),
+            (D, "loom.learnings_queue"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("namespace_guides.delete", ((D, "loom.namespace_guides"),)),
-    ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
+    (
+        "tasks.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.tasks"),
+            (D, "loom.task_events"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (
         "curation.tombstone",
@@ -266,6 +291,7 @@ NS_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
     ("knowledge_source_listings.delete", ((D, "loom.knowledge_source_listings"),)),
+    ("knowledge_group_members.delete", ((D, "loom.knowledge_group_members"),)),
     ("knowledge_mirrors.forget", ()),
 ]
 
@@ -361,9 +387,25 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("memory_drops.delete", ((D, "loom.memory_drops"),)),
     ("delete_version_checks.delete", ((D, "loom.delete_version_checks"),)),
     ("memory_webhook_outbox.delete", ((D, "loom.memory_webhook_outbox"),)),
-    ("learnings_queue.delete", ((D, "loom.learnings_supporters"), (D, "loom.learnings_queue"))),
+    (
+        "learnings_queue.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.learnings_supporters"),
+            (D, "loom.learnings_queue"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("namespace_guides.delete", ((D, "loom.namespace_guides"),)),
-    ("tasks.delete", ((D, "loom.tasks"), (D, "loom.task_events"))),
+    (
+        "tasks.delete",
+        (
+            ("OTHER", "INSERT"),
+            (D, "loom.tasks"),
+            (D, "loom.task_events"),
+            (D, "loom._migration_lock"),
+        ),
+    ),
     ("agent_runs.delete", ((D, "loom.agent_run_claims"), (D, "loom.agent_runs"))),
     (
         "curation.tombstone",
@@ -374,6 +416,7 @@ NS_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("idempotency.delete", ((D, "loom.idempotency"), (L, "loom.embedding_cache"))),
     ("code_index.purge", ()),
     ("knowledge_source_listings.delete", ((D, "loom.knowledge_source_listings"),)),
+    ("knowledge_group_members.delete", ((D, "loom.knowledge_group_members"),)),
     ("knowledge_mirrors.forget", ()),
 ]
 
@@ -395,7 +438,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
     ("working_memory.tombstone", ((D, "loom.working_memory"),)),
     ("shared_embeddings.tombstone", ((L, "loom.memory_embeddings"),)),
     ("shared.tombstone", ((D, "loom.shared"),)),
-    ("agent_events.scrub", ((U, "loom.agent_events"),)),
+    ("agent_events.scrub", ((U, "loom.agent_events"), (U, "loom.agent_events_private"))),
     ("derived_facts.delete", ((D, "loom.derived_facts"),)),
     ("memory_reinforcement.delete", ((D, "loom.memory_reinforcement"),)),
     (
@@ -512,6 +555,7 @@ USER_PURGE_TRACE: list[tuple[str, tuple[tuple[str, str], ...]]] = [
         ),
     ),
     ("subject_last_seen.delete", ((D, "loom.subject_last_seen"),)),
+    ("tasks.delete", (("OTHER", "INSERT"), (D, "loom.task_events"), (D, "loom._migration_lock"))),
     (
         "conversations.tombstone",
         (
@@ -580,7 +624,19 @@ async def test_user_purge_saga_trace(run: Any) -> None:
 async def test_namespace_saga_trace(
     run: Any, scope_type: str, scope_value: str, backends: list[str]
 ) -> None:
-    want = [_SOURCES_RETIRE, *_with_tail(NS_TRACE, backends)]
+    want = [
+        _SOURCES_RETIRE,
+        _push_delete(1 if scope_type == "namespace" else 2),
+        (
+            "query_history_sources.delete",
+            (
+                ("OTHER", "INSERT"),
+                (D, "loom.query_history_sources"),
+                (D, "loom._migration_lock"),
+            ),
+        ),
+        *_with_tail(NS_TRACE, backends),
+    ]
     assert await run(scope_type, scope_value) == want
 
 
@@ -589,7 +645,19 @@ async def test_namespace_purge_saga_trace(run: Any, external: bool) -> None:
     """Under purge every tombstone becomes a delete: the wide tables by a
     lightweight DELETE, the narrow ones by an ALTER DELETE. Same steps."""
     got = await run("namespace_list", _ns_list(purge=True, external=external))
-    assert got == [_SOURCES_RETIRE, *_with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else [])]
+    assert got == [
+        _SOURCES_RETIRE,
+        _push_delete(2),
+        (
+            "query_history_sources.delete",
+            (
+                ("OTHER", "INSERT"),
+                (D, "loom.query_history_sources"),
+                (D, "loom._migration_lock"),
+            ),
+        ),
+        *_with_tail(NS_PURGE_TRACE, NS_BACKENDS if external else []),
+    ]
 
 
 @pytest.mark.parametrize(("scope_type", "scope_value"), [("user_id", "alice"), ("namespace", "a")])

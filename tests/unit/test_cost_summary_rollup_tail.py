@@ -55,16 +55,17 @@ def test_rollup_read_unions_the_live_tail_and_merges(monkeypatch) -> None:
     )
     assert cost_store.ROLLUP_STATES in sql
     # ... UNION ALL the view's aggregation over the events newer than the mark ...
-    assert "UNION ALL" in sql
+    assert sql.count("UNION ALL") == 2
+    assert "FROM loom.agent_events UNION ALL" in sql
     assert (
-        "FROM loom.agent_events WHERE org = {org:String} AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)"
+        "FROM loom.agent_events_private) WHERE org = {org:String} AND ts > (SELECT max(ts_hwm) FROM loom.agent_cost_rollup_daily)"
         in sql
     )
     assert "toDate(ts) BETWEEN {from_d:Date} AND {to_d:Date}" in sql
     assert cost_store.TAIL_STATES in sql and f"GROUP BY {cost_store.ROLLUP_DIMS}" in sql
     # ... merged once, grouped by the caller's dimension
     assert sql.count("sumMerge(cost_usd_state)") == 1 and "countMerge(ops_state)" in sql
-    assert sql.rstrip().endswith("GROUP BY operation ORDER BY ops DESC LIMIT 5000")
+    assert sql.rstrip().endswith("GROUP BY operation HAVING ops > 0 ORDER BY ops DESC LIMIT 5000")
     assert "PREWHERE" not in sql
     assert params["ns"] == "n" and sql.count("namespace = {ns:String}") == 2  # both legs scoped
     assert out.total_ops == 7 and out.total_errors == 1 and out.total_cost_usd == 1.25
@@ -78,14 +79,15 @@ def test_every_filter_reaches_both_legs(monkeypatch) -> None:
     for pred in ("agent = {agent:String}", "operation = {op:String}"):
         assert sql.count(pred) == 2, pred
     assert params["agent"] == "a" and params["op"] == "memory.set"
-    assert "GROUP BY namespace, day ORDER BY" in sql
+    assert "GROUP BY namespace, day HAVING ops > 0 ORDER BY" in sql
 
 
 def test_events_only_dimensions_keep_the_direct_scan(monkeypatch) -> None:
     ch = _CH([])
     _run(monkeypatch, ch, group_by=["model"])
     sql, _ = ch.calls[0]
-    assert "agent_cost_rollup_daily" not in sql and "UNION ALL" not in sql
+    assert "agent_cost_rollup_daily" not in sql and sql.count("UNION ALL") == 1
+    assert "FROM loom.agent_events_private)" in sql
     assert "FROM loom.agent_events" in sql
 
 
@@ -121,7 +123,7 @@ def test_process_dimensions_scan_events_and_name_the_writer(monkeypatch) -> None
     out = _run(monkeypatch, ch, group_by=["instance_label", "build_commit"])
     sql, _params = ch.calls[0]
     assert "agent_cost_rollup_daily" not in sql and "FROM loom.agent_events" in sql
-    assert "GROUP BY instance_label, build_commit ORDER BY" in sql
+    assert "GROUP BY instance_label, build_commit HAVING ops > 0 ORDER BY" in sql
     assert [r.instance_label for r in out.rows] == ["deploy:web:blue", "iso:w6m1:7864"]
     assert out.rows[0].build_commit == "f679c4076" and out.total_cost_usd == 40.2
 

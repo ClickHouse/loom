@@ -19,6 +19,7 @@ from server.erasure.store.rows import (
     ConversationThreadExportRow,
     MemoryExportRow,
 )
+from server.observability.store.event_reads import MASKED_EVENTS
 
 # Export-side reads (data subject access request).
 
@@ -335,7 +336,7 @@ async def export_agent_events(
     shown: Shown = _EVERY,
     ch: _CHClient | None = None,
 ) -> list[AgentEventExportRow]:
-    """Read loom.agent_events rows in one scope, newest-first."""
+    """Read masked event rows in one scope, newest-first."""
     ch = ch or _default_client()
     shown_sql, shown_params = shown.clause()
     scope_clause = (
@@ -347,7 +348,7 @@ async def export_agent_events(
                trace_id, latency_ms, input_tokens,
                output_tokens, embedding_tokens, upstream_cost_usd, bytes_written,
                success, error_code, kind, args
-        FROM loom.agent_events
+        FROM {MASKED_EVENTS}
         WHERE org = {{org:String}} AND {scope_clause}{shown_sql}
         ORDER BY ts DESC
         LIMIT {{lim:UInt64}}

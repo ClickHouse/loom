@@ -22,7 +22,12 @@ flowchart LR
   `loom.collections` naming its parent. `collection.create` makes one (the creator holds
   `admin`), `collection.move` puts it under another collection or detaches it,
   `collection.list` lists the ones the caller can read, each with the caller's role there
-  and its title and description (the dashboard's Library shows them), and
+  and its title and description (the dashboard's Library shows them). With
+  `include_document_counts=true`, each returned collection also carries its direct live
+  document count, excluding child collections. Counts read the same current document
+  metadata as `knowledge.list`, which can lag a commit awaiting publication. Without
+  that option, `document_count` is null. Only namespaces authorized for the returned
+  page are counted, in one grouped query.
   `collection.delete` takes one out of the directory and the tree (its children become
   top-level) once a purging erasure of it has taken what it holds off disk
   (`namespace.delete` refuses a collection). A

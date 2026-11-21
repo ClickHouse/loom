@@ -54,7 +54,7 @@ class FakeCH:
     async def query_all(self, sql, params=None):
         if self.fail:
             raise RuntimeError("clickhouse unreachable")
-        return [{"n": self.n}]
+        return [{"protected_history": 0, "n": self.n}]
 
 
 def ctx(op="memory.set"):

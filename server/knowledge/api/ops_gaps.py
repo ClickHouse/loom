@@ -3,7 +3,13 @@
 
 from __future__ import annotations
 
-from server.knowledge.api.models_gaps import KnowledgeGapsListInput, KnowledgeGapsListOutput
+from server.knowledge.api.models_gaps import (
+    KnowledgeGapsDraftInput,
+    KnowledgeGapsDraftOutput,
+    KnowledgeGapsListInput,
+    KnowledgeGapsListOutput,
+)
+from server.knowledge.app.gap_drafts import handle_gap_draft
 from server.knowledge.app.gaps import handle_knowledge_gaps_list
 from server.operations.base import Operation, Role
 
@@ -18,4 +24,14 @@ knowledge_gaps_list = Operation(
     required_role=Role.ADMIN,
 )
 
-OPERATIONS = [knowledge_gaps_list]
+knowledge_gaps_draft = Operation(
+    name="knowledge.gaps.draft",
+    maturity="experimental",
+    input_model=KnowledgeGapsDraftInput,
+    output_model=KnowledgeGapsDraftOutput,
+    handler=handle_gap_draft,
+    required_role=Role.ADMIN,
+    idempotent=True,
+    audit=True,
+)
+OPERATIONS = [knowledge_gaps_list, knowledge_gaps_draft]

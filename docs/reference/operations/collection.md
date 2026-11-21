@@ -58,6 +58,7 @@ List the collections the caller can read, by name.
 | --- | --- | --- | --- |
 | `org` | `str` | required | The tenant (first element of the identity tuple). |
 | `limit` | `int` | `500` | Collections per page. |
+| `include_document_counts` | `bool` | `False` | Include the live document count directly in each collection; default false. |
 | `cursor` | `str \| None` | `None` | The `next_cursor` of the previous page; none for the first. |
 
 | Output field | Type | Meaning |

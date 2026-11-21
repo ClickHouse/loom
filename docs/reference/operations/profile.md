@@ -128,7 +128,7 @@ WHAT: Create or replace a profile section at `label`.
 | `value` | `str` | required | The section's whole new text. |
 | `char_limit` | `int` | `8192` | The section's size cap, measured on the JSON-encoded value; a longer value is a 422. |
 | `source_trace` | `str` | `''` | Where the section came from; a trace starting with `memory.delete_version:` is refused (that op's tombstone marker). |
-| `if_match_sha256` | `str` | `''` | Write only if the section's current content hash equals this (409 otherwise); empty = no check. |
+| `if_match_sha256` | `str` | `''` | Require this content hash, or 'absent' for no unexpired section under the exact identity (concrete agent required); mismatch is 409, empty skips checking. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |

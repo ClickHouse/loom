@@ -44,6 +44,7 @@ cost_budget_status = Operation(
 
 cost_record_turns = Operation(
     name="cost.record_turns",
+    session_content=True,
     maturity="experimental",
     input_model=CostRecordTurnsInput,
     output_model=CostRecordTurnsOutput,

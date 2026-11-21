@@ -130,22 +130,21 @@ class PolicyCheckInput(BaseModel):
 
 
 class PolicyCheckOutput(BaseModel):
-    # `deny` when a rule denies the call, or a rule errored on a write-shaped
-    # operation; `allow` otherwise.
+    # Rule denials, ordinary write errors or enforcing protected UNKNOWN deny; otherwise allow.
     decision: Literal["allow", "deny"]
     # The same verdict as a boolean: true when an enforcing gate would block the call.
     would_enforce: bool
-    # The deployment's `LOOM_POLICY_MODE`; the dry run evaluates as if every rule enforced.
+    # The deployment's `LOOM_POLICY_MODE`; dry runs evaluate inherited rules in enforce mode.
     mode: str
-    # Whether the operation writes (a rule error then fails closed); null when the
-    # operation name is unknown.
+    # Whether the operation writes, which controls ordinary backend-error refusal;
+    # null when the operation name is unknown.
     write_shaped: bool | None
     # Ids of the rules that deny the call; empty when none does.
     determining_rules: list[str]
-    # Leaf evaluation errors; a rule that errored neither allows nor denies.
+    # Leaf errors, including fixed protected-history UNKNOWN without a leaf value.
     errors: list[str]
     # Per applicable rule: effect, mode, whether the condition held, whether it denies,
-    # and each leaf's value.
+    # and each ordinary leaf's value (null for protected UNKNOWN).
     rules: list[dict[str, Any]]
     # Milliseconds the evaluation took.
     latency_ms: int

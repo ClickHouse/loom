@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import os
@@ -28,34 +29,38 @@ async def control_stores(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[Any]:
 
     dsn = os.environ.get("LOOM_ROUTER_PG_DSN") or pytest.skip("LOOM_ROUTER_PG_DSN not set")
     admin = await asyncpg.connect(dsn)
-    name = f"loom_fence_{uuid.uuid4().hex[:12]}"
-    await admin.execute(f'CREATE DATABASE "{name}"')
-    own = urlunsplit(urlsplit(dsn)._replace(path=f"/{name}"))
-    monkeypatch.setattr(settings, "router_pg_dsn", own)
-    monkeypatch.setattr(
-        settings, "router_operator_sha256", hashlib.sha256(TOKEN.encode()).hexdigest()
-    )
-    monkeypatch.setattr(directory, "_pool", None)
-    conn = await asyncpg.connect(own)
-    try:
-        await directory.migrate()
-        await conn.execute(
-            "INSERT INTO loom_router.cells (cell, is_first, host, deployment_id, credential_sha256, state) "
-            "VALUES ('first', true, 'first.example.test', 'dep-first', $1, 'attaching')",
-            "a" * 64,
-        )
-        transport = httpx.ASGITransport(app=app.build_app())
-        async with httpx.AsyncClient(
-            transport=transport,
-            base_url="http://test",
-            headers={"Authorization": f"Bearer {TOKEN}"},
-        ) as client:
-            yield client, conn, own
-    finally:
-        await conn.close()
-        await directory.close()
-        await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
-        await admin.close()
+    async with contextlib.AsyncExitStack() as cleanup:
+        try:
+            cleanup.push_async_callback(admin.close)
+            name = f"loom_fence_{uuid.uuid4().hex[:12]}"
+            await admin.execute(f'CREATE DATABASE "{name}"')
+            cleanup.push_async_callback(admin.execute, f'DROP DATABASE "{name}" WITH (FORCE)')
+            own = urlunsplit(urlsplit(dsn)._replace(path=f"/{name}"))
+            monkeypatch.setattr(settings, "router_pg_dsn", own)
+            monkeypatch.setattr(
+                settings, "router_operator_sha256", hashlib.sha256(TOKEN.encode()).hexdigest()
+            )
+            monkeypatch.setattr(directory, "_pool", None)
+            cleanup.push_async_callback(directory.close)
+            conn = await asyncpg.connect(own)
+            cleanup.push_async_callback(conn.close)
+            await directory.migrate()
+            await conn.execute(
+                "INSERT INTO loom_router.cells (cell, is_first, host, deployment_id, credential_sha256, state) "
+                "VALUES ('first', true, 'first.example.test', 'dep-first', $1, 'attaching')",
+                "a" * 64,
+            )
+            transport = httpx.ASGITransport(app=app.build_app())
+            async with httpx.AsyncClient(
+                transport=transport,
+                base_url="http://test",
+                headers={"Authorization": f"Bearer {TOKEN}"},
+            ) as client:
+                yield client, conn, own
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 def expected(row: dict[str, Any], *, generation: bool = True) -> dict[str, Any]:
