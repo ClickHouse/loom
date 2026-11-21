@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from examples.software_factory.factory.anthropic_provider import wire_messages
 from examples.software_factory.factory.model import digest, tool_schemas
-from examples.software_factory.harbor.fairness import audit_fairness
+from examples.software_factory.harbor.fairness import _wire_identity, audit_fairness
 from examples.software_factory.harbor.index import TABLES, fingerprint, select_snapshot
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.scopes import selected_scopes
@@ -19,6 +19,34 @@ from examples.software_factory.harbor.scopes import selected_scopes
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value))
+
+
+class WireJournalReplay(unittest.TestCase):
+    def test_object_key_order_is_not_a_conversation_change(self):
+        def messages(content):
+            return [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "one",
+                            "content": content,
+                        }
+                    ],
+                }
+            ]
+
+        expected = _wire_identity(messages('{"body": "source", "paths": ["a", "b"]}'))
+        self.assertEqual(
+            expected, _wire_identity(messages('{"paths": ["a", "b"], "body": "source"}'))
+        )
+        self.assertNotEqual(
+            expected, _wire_identity(messages('{"paths": ["b", "a"], "body": "source"}'))
+        )
+        self.assertNotEqual(
+            expected, _wire_identity(messages('{"paths": ["a", "b"], "body": "changed"}'))
+        )
 
 
 def journal(path, rows):

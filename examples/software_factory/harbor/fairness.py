@@ -89,6 +89,17 @@ def _prompt(protocol, slot, start, initial, public):
     )
 
 
+def _wire_identity(messages):
+    messages = json.loads(json.dumps(messages))
+    for message in messages:
+        if message["role"] == "user":
+            for block in message["content"]:
+                if block.get("type") == "tool_result":
+                    # Journals sort object keys; wire tool results serialize the original order.
+                    block["content"] = json.loads(block["content"])
+    return messages
+
+
 def _conversation(events, dispatches):
     messages, number, active_loom = [], 0, None
     host_free = True
@@ -101,7 +112,7 @@ def _conversation(events, dispatches):
                 return False, False
             payload = dispatches[number]["payload"]
             if (
-                payload["messages"] != wire_messages(messages)
+                _wire_identity(payload["messages"]) != _wire_identity(wire_messages(messages))
                 or row["messages_sha256"] != digest(messages)
                 or row["tools_sha256"] != digest(payload["tools"])
             ):
