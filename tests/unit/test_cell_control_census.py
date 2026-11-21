@@ -116,6 +116,7 @@ GUARDED_WRITERS = {
     },
     "server/router/directory.py": {
         ("update_addresses.change", "UPDATE", "loom_router.cells"): 1,
+        ("set_administration.change_locked", "UPDATE", "loom_router.cells"): 1,
         ("set_limit.change", "UPDATE", "loom_router.cells"): 1,
         ("rotate_credential.change", "UPDATE", "loom_router.cells"): 1,
         ("claim.change_locked", "UPDATE", "loom_router.cells"): 1,
@@ -354,6 +355,19 @@ def function(path: str, name: str) -> ast.AST:
             ["_attach_change(cell_name, expected, read)"],
         ),
         (
+            "server/cli/cell_automation.py",
+            "command",
+            ['cell_control.run("automation", lambda owner: provision(owner, router, args))'],
+        ),
+        (
+            "server/cli/cell_automation.py",
+            "provision",
+            [
+                "cell_control.claim(owner.conn, call, row)",
+                'cell_control.mutate(owner.conn, call, row, "/administration", {"bots": bots})',
+            ],
+        ),
+        (
             "server/cli/cell_prepare.py",
             "prepare",
             [
@@ -498,6 +512,7 @@ def function(path: str, name: str) -> ast.AST:
                 ["_attach_change(cell_name, expected, change_locked)"],
             )
             for name in (
+                "set_administration",
                 "attach_begin",
                 "attach_place",
                 "attach_enforced",

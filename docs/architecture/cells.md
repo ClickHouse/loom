@@ -112,11 +112,67 @@ What spans orgs becomes per cell:
   and overrides, policy rules, rate-limit and budget overrides, signing-key rotation, a
   subject's revocation. `loom cell each -- <command>` runs an org-free admin command in
   every cell with a short-lived credential per cell, records each cell's outcome,
-  resumes the cells that failed, and fails until all succeed; `loom doctor` compares the
+  resumes confirmed no-action failures, and stops on an uncertain mutation;
+  `loom doctor` compares the
   cells' settings and configuration fingerprints and names what differs;
 - the code and tracker orgs (`LOOM_CODE_ORG`, `LOOM_TRACKER_ORG`) are each cell's own:
   each cell indexes its own repositories, at the ingest cost of each;
 - an operator's platform view and the dashboard are per cell, at the cell's host.
+
+## Administration across cells
+
+`loom cell each` is a serial HTTP coordinator with a closed command list. It does not
+start a command in a cell or select a store. It supports live settings, signing keys,
+an exact subject's revocation, namespace-name rate limits, operation and consumer
+latency budgets, and global blacklist entries. Tenant policy and org-limit sweeps are
+outside this command. See [cell administration](../operations/cell-administration.md).
+
+The operator authenticates a bounded directory census once before the run, reads each
+target again before its attempt, and compares a final whole census. Every registered
+cell must be serving, enforced and supported; closing placements does not exclude a
+cell. Identity includes the deployment, public origin, control generation, complete
+configuration digests and separate automation and recovery public identities. A changed
+target refuses continuation. Fingerprint digests are SHA-256 over the complete stored
+Postgres JSONB text, rather than the shortened fingerprint printed for operators.
+
+The coordinator reads an explicitly named private key for each cell and proves that
+its public thumbprint matches the automation identity before signing an OAuth
+assertion. Each exchange requests a sixty-second access token. Credentials travel
+only to their exact HTTPS origin, with ordinary certificate verification and without
+redirects, proxy discovery or automatic retries. The recovery key is never a fallback.
+
+The cell applies its ordinary request lifecycle and authentication gates, then requires
+a current registered automation platform-admin bot. The bot has one approved public
+key and no alternate workload trust. A fresh read authenticated with that cell's own
+router credential supplies the authoritative public pair; request text cannot select
+an automation identity. Empty or malformed directory metadata refuses. This is a fresh
+admission check, not an atomic transaction with later directory changes.
+
+`loom cell automation` provisions the public pair after proving both explicit keys
+against that cell's current bot registrations. It uses the existing native cell
+control owner, registration comparison and directory generation claim. The directory
+stores only the two purposes, names and public thumbprints in `break_glass`, with an
+operator audit in the same transaction. Registration reruns preserve this pair.
+A prepared later cell may provision before attach only when it is enforced, has no
+placements or started attach, and its complete local accepted pair matches the exact
+registration. Its separate canonical main and probe origins must already be published.
+The fenced directory mutation repeats these checks and requires the first cell serving
+and enforced. This does not admit an attaching cell to `loom cell each`.
+
+Each action awaits a strict started audit, its owning business helper, and a strict
+completed audit. Correlation fields do not provide idempotency. Before a mutating
+request can leave the coordinator, its private durable state records `dispatching`.
+An ambiguous response becomes `UNSETTLED` and stops later cells. Resume refuses this
+uncertainty before reading credentials or opening a network connection. Completed
+outcomes remain immutable; an explicit correlated refusal before business work may be
+retried. There is no receipt lookup or automatic replay of an uncertain mutation.
+
+The census is limited to 4,096 cells and four MiB, with one KiB per public target.
+Individual action bodies are capped at 64 KiB before JSON parsing, including when the
+global request limit is disabled. A run has a one-hour deadline and each server action
+has thirty seconds. Local state is capped at 32 MiB, protected by one lifetime file
+lock, and replaced with file and directory synchronization. These bounds refuse excess
+work rather than silently truncating a fleet, result or security read.
 
 ## The router
 
@@ -188,7 +244,7 @@ included, to `attaching` and `serving` cells alike, in order:
 
 The router reaches a cell at the `upstream_url` its directory row records, an address
 inside the deployment's network (the first cell's is `LOOM_ROUTER_UPSTREAM_URL`, written
-by prepare, so registering it changes no route; a later cell's attach writes), never at
+by prepare, so registering it changes no route; a later cell names at prepare), never at
 the cell's public host, which names the router itself; before the first cell is
 registered, rule 4's cell is the deployment it was put in front of
 (`LOOM_ROUTER_UPSTREAM_URL`). The shared host is `LOOM_ROUTER_SHARED_HOST`, the first
@@ -451,7 +507,7 @@ with the operator credential); the router reads the probe listener itself and re
 the cell only when it answers the cell's deployment id, those nonces, and the bucket and
 prefix the registration names (so one naming no bucket cannot pass for a cell that has
 one). The router answers a listener past its rate (429) as `PROBE_BUSY`, and one it
-cannot reach or that cannot read a store, or a first cell's upstream main port it cannot
+cannot reach or that cannot read a store, or a cell's upstream main port it cannot
 reach yet, as `PROBE_UNREACHABLE`, both 503, and prepare waits for them within `--wait`.
 A rerun whose addresses differ from the row's is refused before the probe.
 
@@ -485,10 +541,32 @@ fingerprint gate:
   up is unreachable a while), and attach and `loom cell update --probe-url` a 429 from
   the listener they probe, for at most `--wait` (default 10 minutes), and then name it.
 
-A later cell's `probe_url` is given to prepare, normalised (`http` or `https`, no
-userinfo), and accepted only when it reports the deployment id prepare reads from the
-target stores; attach then checks that the cell's own host reports the same id. Prepare
-refuses a probe address argument for the first cell. `loom cell update --probe-url`
+A later cell requires both `--probe-url`, its separate probe listener, and
+`--upstream-url`, its internal main-port HTTP(S) origin. Both use the same address
+normalization: no userinfo, query, fragment or non-root path. The router verifies the
+three-store nonce response at the probe listener, then checks the proposed main port
+reports the same deployment id without listener-only nonce fields. It records the
+verified main origin in the registration transaction before any local prepared-row
+acknowledgment. The first cell accepts neither a caller-supplied upstream field nor a
+probe address; its addresses remain the router's configuration.
+
+Every router must support this registration input before preparing a later cell.
+An unknown field or a response missing the exact verified origin refuses; the client
+does not retry without the field. A rerun preserves the exact registered origin,
+including refusing a registered later cell whose origin is blank. It never fills or
+moves that address. Surviving local state is not cleared to bypass this refusal.
+Registration immediately invalidates this replica's credential and routing caches,
+even if the request is cancelled after commit. An in-flight older routing read cannot
+mark its table fresh after invalidation; the last table remains available during a
+directory outage. Other replicas retain their ordinary refresh bounds. Unknown commit or
+reply outcomes stop the invocation before local writes; a fresh normal prepare rerun reads
+and verifies the actual row.
+
+This preparation contract does not implement later-cell attach or a read-only attach
+preview. Those paths still require their own peer, automation and state-transition
+proofs. Preparing an origin is not an attach-success or public-readiness result.
+
+`loom cell update --probe-url`
 replaces a later cell's under the directory lock after the same check and a fresh nonce
 echo. The first cell's probe and upstream addresses are copied from the router's
 configuration at registration, and `loom cell update` replaces them from it, once every
@@ -586,24 +664,29 @@ refuses a placement call whose fields match neither value of the directory's row
 `loom doctor` names a mismatch, a cell whose OIDC client another cell shares, and a cell
 with SCIM off beside cells with it on.
 
-`loom cell prepare` writes `current` into `loom.cell_self` with the `first` and mode
-rows. Until the directory row holds a fingerprint (before attach), it writes, when the
-own row is missing, the fingerprint every live process reports in its heartbeat,
-refusing while any live process runs a build before N, which reports none, or while the
-fingerprints they report differ; a present own row stands, and a live process running
-neither its `current` nor its `next` refuses; every run, before it registers, refuses a
-live process whose deployment id, bucket name or prefix differs from prepare's own
-configuration (a field it does not report read at its default). Once the directory row
-holds a fingerprint, a rerun writes `current` and `next` from it, as `loom cell restore`
-does, refusing only while a live process's fingerprint matches neither. Either way the
-cell stays ready through the `LOOM_CELL` rollout. A later configuration change, while
-the cell is `attaching` or `serving`, goes through `loom cell update`; before attach has
-written the cell's fingerprint to the directory row it writes `next` only to
-`loom.cell_self`, reserving nothing (and `--finish` and `--revert` then touch only
-`loom.cell_self`), and a resumed attach runs its overlap refusals on, and writes to the
-directory, both values of `loom.cell_self`. A prepared cell's issuers and org patterns
-are reserved nowhere: the router routes no issuer to it and takes no placement from it
-until attach has run its overlap refusals and written its directory row.
+`loom cell prepare` validates every live process's deployment, bucket and prefix
+against its native configuration. Missing heartbeats or differing configurations
+refuse a new own row; a present own row requires every process to match its current
+or next value. The local first and mode rows retain their normal preparation rules.
+
+For the first cell, the pair stays local until first attach reserves it in the
+directory. For a later cell, prepare selects that same process/local pair before
+probing and publishes it in the normal registration transaction. Each non-null value
+must be readable, name the registered stores and public host, fit the placement envelope,
+and avoid every other cell's current and next issuer, OIDC, pattern and configured-org
+reservations. The bounded read admits at most 4096 registered cells including the
+new cell, 4 MiB of selected reservation JSON and 64 KiB per fingerprint. A bound or
+unreadable stored reservation refuses registration rather than omitting a cell.
+
+Later prepare requires the exact published pair in the registration response and
+the full row returned by its fresh control claim before local acknowledgment. Its
+second live-process census and local acceptance CAS remain required. A rerun cannot
+fill a blank directory pair or change a reservation; it refuses and retains state.
+Before first attach publishes its pair, first-cell updates remain local. A later
+cell's configuration changes use the existing directory-fenced `loom cell update` rules; a configured-org
+reservation is not a placement, and prepare creates neither placements nor tenancy.
+A prepared later cell remains attaching/enforced: its reserved issuers are not
+routed and its reservations do not admit fleet business actions.
 
 A change to what a cell accepts goes through `loom cell update --config <file>`
 ([operator procedure](../operations/cell-update.md)). The nonsecret settings file
@@ -772,16 +855,22 @@ heartbeat lacks `LOOM_CELL` or names another cell. Prepare does three things, in
    any other form. Prepare takes the hash as an argument, 64 lowercase hex characters,
    so no CLI needs the secret; any other value, the credential or its 128-character
    secret included, is refused, naming `loom cell credential new`, and stored nowhere.
-   No other cell's row may hold the hash, as its current or next one.
+   No other cell's row may hold the hash, as its current or next one. A later
+   registration also stores the verified current/next fingerprint pair in that same
+   transaction, after comparing both values against all other reservations. First
+   registration leaves the pair NULL. The later request names both fields explicitly;
+   the first request names neither. All routers must support the later fields before
+   prepare runs: an older strict parser refuses them, with no reduced-request retry.
 3. **It writes the cell's rows**: the mode (`recording` on the first cell, `enforced` on
    a later one), the `first` row and `current`.
 
 Prepare is resumable. A rerun for the directory row of the same name, deployment id and
 host writes whichever of the `first` row and the mode row is missing, from the
-directory's state, and `loom.cell_self` as above (before attach from the heartbeats when
-it is missing; once the directory holds the fingerprint, `current` and `next` from it,
-overwriting a present value that differs); before attach, a present own row stands, and
-a live process running neither its `current` nor its `next` refuses. The directory's
+directory's state, and `loom.cell_self` as above. First-cell preparation may derive
+an absent own row from the heartbeats before attach. Later preparation requires its
+submitted process/local pair to equal the already published directory pair; blank or
+changed pairs refuse without repair. Every process must match the acknowledged current
+or next value before local acceptance is written. The directory's
 state is the `first` value the unique index names and the highest mode it records for
 the cell: `recording` for the first cell or `enforced` for a later one at registration,
 in the same transaction as the row, then each mode attach raises, recorded in the
@@ -1490,6 +1579,7 @@ entry points and the named exceptions:
 | `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                                                                                                                                           |
 | `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend                                                                                                                |
 | `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend                                                                                                                     |
+| `cell_automation.provision`, `directory.set_administration`                             | Fresh claim, paired authority, two live bot proofs, fenced public metadata and operator audit                                                                                                                  |
 | `cell_update_pg.write.change`                                                           | Fresh directory claim; owner's bounded transaction on the exact ATTACH backend, paired registration and exact observed local identity/pair before tenancy repair and acceptance write                          |
 | `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                                                                                                                                 |
 | `directory.update_addresses`                                                            | Claimed generation, full registration and exact pair under directory/row locks; commit-time address check, audit and synchronous WAL acknowledgement in one bounded transaction                                |

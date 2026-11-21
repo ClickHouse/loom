@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
+from server.core import cell
 from server.router import directory, routing
 from server.settings import settings
 
@@ -380,13 +381,31 @@ async def test_prepare_registers_a_cell_once_and_refuses_what_another_holds(own_
             "bucket_prefix": f"cells/{name}",
             "probe_url": f"http://{name}.internal:7790",
             "is_first": name == first,
-            "upstream_url": "http://upstream.internal:7777" if name == first else "",
+            "upstream_url": (
+                "http://upstream.internal:7777" if name == first else f"http://{name}.internal:7777"
+            ),
             "tenancy_rows": 0,
             "state_rows": 0,
             "prefix_objects": 0,
             "processes_without_cell": 0,
         }
-        return directory.Registration(**{**fields, **over})
+        fields.update(over)
+        if not fields["is_first"]:
+            fields.setdefault(
+                "current_fp",
+                cell.as_value(
+                    {
+                        **cell.DEFAULTS,
+                        "deployment_id": fields["deployment_id"],
+                        "public_host": fields["host"],
+                        "oauth_issuer_host": fields["host"],
+                        "bucket": fields["bucket"],
+                        "bucket_prefix": fields["bucket_prefix"],
+                    }
+                ),
+            )
+            fields.setdefault("next_fp", None)
+        return directory.Registration(**fields)
 
     conn = await asyncpg.connect(own_dsn)
     try:

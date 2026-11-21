@@ -15,7 +15,8 @@ never runs beside an attach or another prepare:
    listener before it records anything. A busy or unreachable listener is retried within
    `--wait`.
 3. It deletes the nonces, checks that every live process runs a configuration the cell
-   accepts (judged from the router's answer: the directory's once attach wrote it), and
+   accepts, using the published directory pair when present, else its own row or the
+   live processes' configuration, and
    writes the missing `first` and mode rows and the own row where it differs, in one
    Postgres transaction.
 
@@ -41,6 +42,8 @@ from server.cli import cell as cell_cli
 from server.cli import cell_control
 from server.cli._ch import writes
 from server.core import cell
+from server.router import directory, routing
+from server.router.limits import MAX_BODY_BYTES
 from server.settings import settings
 
 # How long a run retries a busy or unreachable probe listener by default.
@@ -101,6 +104,12 @@ def _args_problem(args: argparse.Namespace) -> str:
             "--credential-sha256 takes the cell credential's sha256 (64 lowercase hex), never "
             "the credential: `loom cell credential new` prints both"
         )
+    if args.upstream_url is not None and (
+        not args.probe_url or routing.cell_address(args.upstream_url) is None
+    ):
+        return "--upstream-url names a later cell's main-port origin, with --probe-url"
+    if args.probe_url and args.upstream_url is None:
+        return "a later cell names --upstream-url with --probe-url"
     if not 0 <= args.wait <= _WAIT_MAX_S:
         return f"--wait is a number of seconds from 0 to {_WAIT_MAX_S}"
     return ""
@@ -291,6 +300,21 @@ def _register_timeout() -> httpx.Timeout:
     return httpx.Timeout(REGISTER_ANSWER_MAX_S + 10.0, connect=5.0)
 
 
+def _check_published_pair(answer: dict[str, Any], body: dict[str, Any]) -> None:
+    """Unknown or changed publication cannot acknowledge native acceptance."""
+    try:
+        same = {"current_fp", "next_fp"} <= answer.keys() and json.dumps(
+            (answer["current_fp"], answer["next_fp"]), sort_keys=True, allow_nan=False
+        ) == json.dumps((body["current_fp"], body["next_fp"]), sort_keys=True, allow_nan=False)
+    except (KeyError, TypeError, ValueError, RecursionError, UnicodeError):
+        same = False
+    if not same:
+        raise Refused(
+            "the router did not confirm the submitted later fingerprint pair; "
+            "stop and rerun prepare"
+        )
+
+
 async def _register(
     args: argparse.Namespace,
     router: httpx.URL,
@@ -330,6 +354,16 @@ async def _register(
                     f"{cell_cli.not_the_router(r)}; run {command} again once the router answers"
                 )
             if r.status_code == 200:
+                if command == "prepare" and "upstream_url" in body:
+                    if (
+                        answer.get("upstream_url") != body["upstream_url"]
+                        or answer.get("deployment_id") != body["deployment_id"]
+                        or answer.get("is_first") is not False
+                    ):
+                        raise Refused(
+                            "the router did not confirm the later upstream; upgrade all routers"
+                        )
+                    _check_published_pair(answer, body)
                 break
             code = answer.get("code")
             if code == "BACKEND_UNAVAILABLE":
@@ -365,7 +399,7 @@ def _own_rows(
     rows: _CellRows, answer: dict[str, Any], every: list[dict[str, Any]]
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """The `current` and `next` values the cell's own row should hold, from the directory
-    once attach wrote them, else the own row, else the processes' one configuration; each
+    when published, else the own row, else the processes' one configuration; each
     live process (`every`, its fingerprint fields) must run one of them, as a process
     judges itself (`cell.matches`: builds N-1 and N of one configuration agree)."""
     nxt: dict[str, Any] | None = None
@@ -478,13 +512,25 @@ async def prepare(
     router: httpx.URL,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> int:
-    """Prepare on one independently supervised ATTACH-lock backend."""
+    """Prepare on one ATTACH backend; later registration publishes its verified pair."""
     try:
         return await cell_control.run(
             "prepare", lambda owner: _prepare_locked(ch, args, router, transport, owner)
         )
     except cell_control.Refused as error:
         raise Refused(str(error)) from None
+
+
+def _add_registration_pair(
+    body: dict[str, Any], rows: _CellRows, every: list[dict[str, Any]], cell_name: str
+) -> None:
+    """Select the verified local/process pair before later registration writes."""
+    current, nxt = _own_rows(rows, {}, every)
+    body.update(current_fp=current, next_fp=nxt)
+    if reason := directory.registration_pair_refusal(
+        {**body, "cell": cell_name, "is_first": False}
+    ):
+        raise Refused(reason)
 
 
 async def _prepare_locked(
@@ -502,7 +548,7 @@ async def _prepare_locked(
         raise Refused(f"this cell's Postgres is cell {rows.first[1]!r}'s")
     # Refused before anything is written: a process this cell cannot take on its own.
     beats = await _read_beats(ch)
-    _beat_fields(beats, rows)
+    every = _beat_fields(beats, rows)
     body: dict[str, Any] = {
         "host": cell.normalise_host(args.host),
         "deployment_id": rows.deployment_id,
@@ -518,7 +564,16 @@ async def _prepare_locked(
     }
     if args.probe_url:
         body["probe_url"] = args.probe_url
+    if args.upstream_url is not None:
+        body["upstream_url"] = routing.cell_address(args.upstream_url)
+        _add_registration_pair(body, rows, every, args.cell)
     body["nonces"] = _new_nonces()
+    if args.upstream_url is not None:
+        size = 0
+        for chunk in json.JSONEncoder(allow_nan=False).iterencode(body):
+            size += len(chunk.encode("utf-8"))
+            if size > MAX_BODY_BYTES:
+                raise Refused("the later registration body exceeds 64 KiB")
     try:
         await _write_nonces(ch, body["nonces"])
         answer = await _register(args, router, body, transport)
@@ -539,7 +594,19 @@ async def _prepare_locked(
         return await cell_control.request(router, args.cell, transport, path, body)
 
     snapshot = await cell_control.request(router, args.cell, transport, "", method="GET")
+    if args.upstream_url is not None and (
+        snapshot.get("upstream_url") != body["upstream_url"]
+        or snapshot.get("deployment_id") != rows.deployment_id
+        or snapshot.get("host") != body["host"]
+        or snapshot.get("probe_url") != routing.cell_address(args.probe_url)
+        or snapshot.get("bucket") != body["bucket"]
+        or snapshot.get("bucket_prefix") != body["bucket_prefix"]
+        or snapshot.get("is_first") is not False
+    ):
+        raise Refused("the registered later upstream or identity changed; stop and rerun prepare")
     snapshot = await cell_control.claim(conn, call, snapshot)
+    if args.upstream_url is not None:
+        _check_published_pair(snapshot, body)
     # A queued earlier controller may have committed before this claim. Its returned
     # row, including the highest mode, supersedes the registration response.
     answer = {**answer, **snapshot}
@@ -613,6 +680,9 @@ def add_prepare_parser(csub: Any) -> None:
     )
     p.add_argument(
         "--probe-url", default="", help="A later cell's probe listener address (not the first's)"
+    )
+    p.add_argument(
+        "--upstream-url", help="A later cell's internal main-port origin (with --probe-url)"
     )
     p.add_argument(
         "--wait",

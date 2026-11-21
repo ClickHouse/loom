@@ -990,7 +990,7 @@ KNOWLEDGE_LOCK_KEY = "hashtextextended('loom.knowledge/' || $1::text || '/' || $
 POLICY_LOCK_KEY = "hashtextextended('loom.policy/' || k.org || '/' || k.scope, 0)"
 
 
-async def bump_policy(org: str, scope: str = "*") -> None:
+async def bump_policy(org: str, scope: str = "*", *, deadline: float | None = None) -> None:
     """Advance a policy generation (org '' for the deployment's): an admission that
     reached its verdict under the old policy starts over (`pg_memory.commit_versions`).
     Fails closed: the change answers 503 until the generation moves, and its retry
@@ -998,6 +998,8 @@ async def bump_policy(org: str, scope: str = "*") -> None:
     if not enabled():
         return
     async with transaction() as conn:
+        if deadline is not None:
+            await _bounded_policy_statement(conn, deadline)
         # After every commit that holds the policy shared (`pg_memory.commit_versions`).
         await conn.execute(
             f"SELECT pg_advisory_xact_lock({POLICY_LOCK_KEY}) "
@@ -1005,6 +1007,8 @@ async def bump_policy(org: str, scope: str = "*") -> None:
             org,
             scope,
         )
+        if deadline is not None:
+            await _bounded_policy_statement(conn, deadline)
         await conn.execute(
             "INSERT INTO loom.scope_generations (org, scope, generation) VALUES ($1, $2, 1) "
             "ON CONFLICT (org, scope) "
@@ -1012,3 +1016,14 @@ async def bump_policy(org: str, scope: str = "*") -> None:
             org,
             scope,
         )
+
+
+async def _bounded_policy_statement(conn: Any, deadline: float) -> None:
+    remaining_ms = int(min(2.0, deadline - time.monotonic()) * 1000)
+    if remaining_ms <= 0:
+        raise PostgresUnavailableError("policy change allowance exhausted")
+    await conn.execute(
+        "SELECT set_config('statement_timeout', $1, true)",
+        str(remaining_ms),
+        timeout=remaining_ms / 1000,
+    )

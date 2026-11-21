@@ -13,12 +13,14 @@ revoked in their token lists, freeing their names, as a SCIM deactivation does
 (`service_accounts.revoke_created_by`).
 
 `record` writes the revocation (or finds one that already covers it) and
-`finish` counts and marks what it ends and audits it: a failure in `record`
-wrote nothing, one in `finish` left the revocation in force.
+`finish` counts and marks what it ends and audits it. A bounded caller treats a
+lost write or claim-release acknowledgement as unsettled, even during `record`.
 """
 
 from __future__ import annotations
 
+import asyncio
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -64,11 +66,33 @@ async def audit_revocation(
     by: str,
     org: str,
     scim: bool = False,
+    deadline: float | None = None,
     **extra: Any,
 ) -> None:
     """The durable record of a revocation: identifiers only, never token
     material. A subject's revocation spans every org; `org` is where it is
     recorded ('-' for the deployment, an end user's own org for theirs)."""
+    if deadline is not None:
+        remaining = min(2.0, deadline - time.monotonic())
+        if remaining <= 0:
+            return  # This ordinary best-effort audit is not the feature's completion proof.
+        from server.core.ch import statement_timeout
+
+        try:
+            async with asyncio.timeout(remaining):
+                with statement_timeout(remaining):
+                    await audit_revocation(
+                        row,
+                        token_id=token_id,
+                        kind=kind,
+                        by=by,
+                        org=org,
+                        scim=scim,
+                        **extra,
+                    )
+        except TimeoutError:
+            return
+        return
     await audit.emit(
         "token.revoked",
         org=org,
@@ -104,33 +128,72 @@ class Revoked:
 
 
 async def record(
-    subject: str, *, by: str, reason: str = "", at: datetime | None = None
+    subject: str,
+    *,
+    by: str,
+    reason: str = "",
+    at: datetime | None = None,
+    deadline: float | None = None,
+    ch: Any = None,
+    progress: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Revoke `subject` for good: outright (`at` None), on its own key, unless
     that key already revokes it outright for good; or up to the cutoff `at` (from
     `cutoff`), on the cutoff key beside it, unless that key already holds a
     later cutoff. The subject's own row is never touched by a cutoff, so an
     outright revocation stays, a time-boxed one until it lapses. Returns the row
-    in force for the request and whether it was there already. Raises, having
-    written nothing that lands, when the revocation cannot be written."""
+    in force for the request and whether it was there already. A lost write or
+    release acknowledgement may leave the row in force."""
     subject = subject.strip()  # as `revocation.revoke` keys it
+    if deadline is not None and at is not None:
+        raise ValueError("A bounded subject action is outright only")
     if at is not None:
         return await revocation.record_cutoff(
             subject, issued_before=at, reason=reason, revoked_by=by
         )
-    async with revocation.subject_change(subject):
-        current = await revocation.stored(subject)
+    bounded: dict[str, Any] = {} if deadline is None else {"deadline": deadline, "ch": ch}
+    async with revocation.subject_change(subject, **bounded):
+        current = (
+            await revocation.stored(subject)
+            if deadline is None
+            else await revocation.stored_bounded(subject, **bounded)
+        )
         if (
             current is not None
             and current["issued_before"] is None
             and revocation.never_lapses(current)
         ):
-            revocation.remember_row(current)
+            if progress is not None:
+                progress["recorded"] = True
+            revocation.remember_row(current, **({} if deadline is None else {"bounded": True}))
             return current, True
-        return await revocation.revoke(subject, reason=reason, revoked_by=by), False
+        if deadline is None:
+            row = await revocation.revoke(subject, reason=reason, revoked_by=by)
+        else:
+            row = await revocation.revoke(
+                subject,
+                reason=reason,
+                revoked_by=by,
+                deadline=deadline,
+                ch=ch,
+                progress=progress,
+            )
+        if progress is not None:
+            progress["recorded"] = True
+        return row, False
 
 
-async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org: str) -> Revoked:
+async def finish(
+    subject: str,
+    row: dict[str, Any],
+    kept: bool,
+    *,
+    by: str,
+    org: str,
+    deadline: float | None = None,
+    ch: Any = None,
+    progress: dict[str, int] | None = None,
+) -> Revoked:
     """After `record`: count the sign-in sessions the subject's revocations end
     (a logout or a refusal ended some already; one refreshed since a cutoff
     lives on), mark revoked the tokens they end, and audit it. Raises, the
@@ -142,30 +205,64 @@ async def finish(subject: str, row: dict[str, Any], kept: bool, *, by: str, org:
     subject = subject.strip()
     outright, in_force, sessions, tokens = False, None, 0, 0
     try:
-        revoked = await revocation.cutoffs([subject])  # its own row, the cutoff's, SCIM's
+        revoked = (
+            await revocation.cutoffs([subject])
+            if deadline is None
+            else await revocation.cutoffs_bounded([subject], deadline=deadline, ch=ch)
+        )
         await stop_connections([subject], respect_cutoff=True)
         if subject in revoked:
             at = revoked[subject]
             outright = at is None
             in_force = None if at is None else datetime.fromtimestamp(at, UTC)
-            families = await oauth_store.session_families(subject)
+            families = (
+                await oauth_store.session_families(subject)
+                if deadline is None
+                else await oauth_store.session_families(subject, deadline=deadline, ch=ch)
+            )
             sessions = sum(
                 revocation.kills(at, newest) and not revocation.is_revoked(family)
                 for family, newest in families.items()
             )
-        tokens = len(await service_accounts.revoke_created_by([subject], revoked_by=by))
+            if progress is not None:
+                progress["sessions"] = sessions
+        if deadline is None:
+            tokens = len(await service_accounts.revoke_created_by([subject], revoked_by=by))
+        else:
+            tokens = len(
+                await service_accounts.revoke_created_by_bounded(
+                    subject,
+                    revoked_by=by,
+                    deadline=deadline,
+                    ch=ch,
+                    progress=progress if progress is not None else {},
+                )
+            )
     finally:  # a revocation that landed is recorded, even if the marking did not finish
         end_user_org = org_of_end_user_revocation(subject)
-        await audit_revocation(
-            row,
-            token_id=subject,
-            kind="subject",
-            by=by,
-            org=end_user_org or org,
-            sessions=sessions,
-            tokens=tokens,
-            kept=kept,
-        )
+        if deadline is None:
+            await audit_revocation(
+                row,
+                token_id=subject,
+                kind="subject",
+                by=by,
+                org=end_user_org or org,
+                sessions=sessions,
+                tokens=tokens,
+                kept=kept,
+            )
+        else:
+            await audit_revocation(
+                row,
+                token_id=subject,
+                kind="subject",
+                by=by,
+                org=end_user_org or org,
+                sessions=sessions,
+                tokens=tokens,
+                kept=kept,
+                deadline=deadline,
+            )
     return Revoked(
         row=row, kept=kept, outright=outright, cutoff=in_force, sessions=sessions, tokens=tokens
     )

@@ -12,15 +12,17 @@ header read:
   `413 PAYLOAD_TOO_LARGE` in the same `{"detail": {code, message}}` shape
   every other loom error uses — the body is never read;
 * a chunked / undeclared body is counted as it streams and cut off at the
-  cap with the same 413 (the handler's `await request.json()` then fails
-  closed as a 400, since the body was never delivered whole).
+  cap with the same 413; an overflow aborts the downstream body read
+  before a complete JSON prefix can reach a handler.
 
 The cap is `LOOM_MAX_REQUEST_BYTES` (32 MiB by default — a 400-message
 `memory.set_from_messages` is a few hundred KB, the largest `memory.import`
 about 10 MB of printable ASCII text, more when its text is non-ASCII or control
 characters). Websocket and lifespan scopes pass through untouched, and so do
 the paths in `own_limit`, whose route streams the body against a cap of its
-own (`POST /v1/knowledge.upload`, `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES`).
+own (`POST /v1/knowledge.upload`, `LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES`). Fixed cell
+administration caps still apply when the global cap is disabled; a positive
+global cap can only make those limits stricter.
 """
 
 from __future__ import annotations
@@ -32,9 +34,25 @@ from server.core.errors import classified
 
 CODE = "PAYLOAD_TOO_LARGE"
 
+_CELL_BODY_LIMITS = {
+    "/v1/admin/cell.capabilities": 1024,
+    "/v1/admin/cell.settings_list": 65536,
+    "/v1/admin/cell.settings_set": 65536,
+    "/v1/admin/cell.settings_history": 65536,
+    "/v1/admin/cell.signing_keys_list": 65536,
+    "/v1/admin/cell.signing_keys_rotate": 65536,
+    "/v1/admin/cell.signing_keys_retire": 65536,
+    "/v1/admin/cell.subject_revoke": 65536,
+    "/v1/admin/cell.ratelimit_namespace_set": 65536,
+    "/v1/admin/cell.budget_set": 65536,
+    "/v1/admin/cell.blacklist_global_add": 65536,
+    "/v1/admin/cell.blacklist_global_list": 65536,
+    "/v1/admin/cell.blacklist_global_remove": 65536,
+}
+
 
 def _too_large_response(limit: int, declared: int | None) -> tuple[dict[str, Any], bytes]:
-    msg = f"request body exceeds LOOM_MAX_REQUEST_BYTES ({limit} bytes)" + (
+    msg = f"request body exceeds limit ({limit} bytes)" + (
         f"; declared {declared}" if declared is not None else ""
     )
     detail = classified({"code": CODE, "message": msg, "limit_bytes": limit}, 413)
@@ -46,8 +64,12 @@ def _too_large_response(limit: int, declared: int | None) -> tuple[dict[str, Any
     return {"type": "http.response.start", "status": 413, "headers": headers}, body
 
 
+class _BodyTooLarge(Exception):
+    """Stop body parsing without exposing a valid truncated prefix."""
+
+
 class BodyLimitMiddleware:
-    """Refuse request bodies larger than `max_bytes`."""
+    """Refuse bodies above the global and fixed administration caps."""
 
     def __init__(self, app: Any, max_bytes: int, own_limit: tuple[str, ...] = ()) -> None:
         self.app = app
@@ -55,10 +77,14 @@ class BodyLimitMiddleware:
         self.own_limit = frozenset(own_limit)
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        limit = self.max_bytes
+        fixed_limit = _CELL_BODY_LIMITS.get(scope.get("path"))
+        if fixed_limit is not None:
+            limit = min(limit, fixed_limit) if limit > 0 else fixed_limit
         if (
             scope.get("type") != "http"
-            or self.max_bytes <= 0
-            or scope.get("path") in self.own_limit
+            or limit <= 0
+            or (fixed_limit is None and scope.get("path") in self.own_limit)
         ):
             await self.app(scope, receive, send)
             return
@@ -71,8 +97,8 @@ class BodyLimitMiddleware:
                 except ValueError:
                     declared = None
                 break
-        if declared is not None and declared > self.max_bytes:
-            start, body = _too_large_response(self.max_bytes, declared)
+        if declared is not None and declared > limit:
+            start, body = _too_large_response(limit, declared)
             await send(start)
             await send({"type": "http.response.body", "body": body})
             return
@@ -85,11 +111,9 @@ class BodyLimitMiddleware:
             message = await receive()
             if message.get("type") == "http.request":
                 seen += len(message.get("body") or b"")
-                if seen > self.max_bytes:
+                if seen > limit:
                     tripped = True
-                    # Starve the downstream reader: a truncated body with
-                    # more_body=False makes `request.json()` fail closed.
-                    return {"type": "http.request", "body": b"", "more_body": False}
+                    raise _BodyTooLarge
             return message
 
         sent_start = False
@@ -97,7 +121,7 @@ class BodyLimitMiddleware:
         async def guarded_send(message: Any) -> None:
             nonlocal sent_start
             if tripped and not sent_start and message.get("type") == "http.response.start":
-                start, body = _too_large_response(self.max_bytes, None)
+                start, body = _too_large_response(limit, None)
                 sent_start = True
                 await send(start)
                 await send({"type": "http.response.body", "body": body})
@@ -108,7 +132,13 @@ class BodyLimitMiddleware:
                 sent_start = True
             await send(message)
 
-        await self.app(scope, counting_receive, guarded_send)
+        try:
+            await self.app(scope, counting_receive, guarded_send)
+        except _BodyTooLarge:
+            if not sent_start:
+                start, body = _too_large_response(limit, None)
+                await send(start)
+                await send({"type": "http.response.body", "body": body})
 
 
 __all__ = ["CODE", "BodyLimitMiddleware"]

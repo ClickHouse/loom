@@ -611,8 +611,8 @@ class AuthSettings(BaseModel):
     # Comma-separated origin list. "*" allows all (acceptable when
     # auth_required=True). Empty disables CORS entirely.
     cors_origins: str = ""
-    # Request-body cap, bytes, enforced by ASGI middleware before any parser
-    # (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables.
+    # Global request-body cap, bytes, enforced by ASGI middleware before parsing
+    # (413 PAYLOAD_TOO_LARGE). 0 disables the global cap; fixed cell administration caps remain.
     max_request_bytes: int = 32 * 1024 * 1024
     # Strict-Transport-Security max-age, seconds; browsers ignore it over plain HTTP.
     # 0 sends no header.

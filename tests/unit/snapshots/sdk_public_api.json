@@ -2445,6 +2445,42 @@
             "budget_violations": [
               "body"
             ],
+            "cell_blacklist_global_add": [
+              "body"
+            ],
+            "cell_blacklist_global_list": [
+              "body"
+            ],
+            "cell_budget_set": [
+              "body"
+            ],
+            "cell_capabilities": [
+              "body"
+            ],
+            "cell_ratelimit_namespace_set": [
+              "body"
+            ],
+            "cell_settings_history": [
+              "body"
+            ],
+            "cell_settings_list": [
+              "body"
+            ],
+            "cell_settings_set": [
+              "body"
+            ],
+            "cell_signing_keys_list": [
+              "body"
+            ],
+            "cell_signing_keys_retire": [
+              "body"
+            ],
+            "cell_signing_keys_rotate": [
+              "body"
+            ],
+            "cell_subject_revoke": [
+              "body"
+            ],
             "claim_release": [
               "body"
             ],

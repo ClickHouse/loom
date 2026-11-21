@@ -108,9 +108,10 @@ HTTP answers with a status and a `detail` body, MCP with a result that carries `
 ### HTTP
 
 `build_router()` in `server/transport/http.py` adds one `POST /v1/<op>` route per op.
-`BodyLimitMiddleware` first refuses a body over `LOOM_MAX_REQUEST_BYTES` (32 MiB) with 413;
-0 disables the cap. Each request then passes these phases in order (`_make_endpoint`). A
-refusal ends the request.
+`BodyLimitMiddleware` refuses oversized bodies with 413. `LOOM_MAX_REQUEST_BYTES`
+(32 MiB) sets the global cap; 0 disables only that cap. Fixed cell administration
+caps remain. Each request then passes these phases in order (`_make_endpoint`).
+A refusal ends the request.
 
 | Phase                | Code                                   | Refusal                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

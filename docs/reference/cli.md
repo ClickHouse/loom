@@ -330,12 +330,14 @@ python scripts/codegen/docs_reference.py
 | `loom cell` | Operate a deployment's cells through the router's directory. |  |
 | `loom cell scim-token` | Generate a cell's SCIM token offline. |  |
 | `loom cell scim-token new` | Print a random token for the named cell. | `--cell` |
+| `loom cell each` | Run a supported admin command in every cell | `--router`, `--credentials`, `--state`, `--resume`, `<command>` |
+| `loom cell automation` | Prove and register distinct automation and recovery bot keys. | `--cell`, `--router`, `--automation-bot`, `--automation-thumbprint`, `--automation-key`, `--recovery-bot`, `--recovery-thumbprint`, `--recovery-key`, `--ca-file` |
 | `loom cell credential` | Make a router credential, or rotate a cell's. | `<action>`, `--cell`, `--next`, `--finish`, `--revert`, `--operator`, `--router` |
 | `loom cell limit` | Close, reopen or bound a cell to new orgs. | `--cell`, `--closed`, `--open`, `--placements-max`, `--router` |
 | `loom cell which` | Print the lookup's cell and host for an org (the first cell if not placed). | `--org`, `--router` |
 | `loom cell remove` | Remove the directory row of a cell attaching with no placement. | `--cell`, `--router` |
 | `loom cell place` | Place an org in this cell and record its tenancy. | `--cell`, `--org`, `--router` |
-| `loom cell prepare` | Register this cell in the router's directory and write its rows. | `--cell`, `--host`, `--credential-sha256`, `--probe-url`, `--wait`, `--router` |
+| `loom cell prepare` | Register this cell in the router's directory and write its rows. | `--cell`, `--host`, `--credential-sha256`, `--probe-url`, `--upstream-url`, `--wait`, `--router` |
 | `loom cell attach` | Attach the prepared first cell: place its orgs, serve. | `--cell`, `--wait`, `--scan-budget`, `--dry-run`, `--ch-allow-user`, `--ch-allow-user-directory`, `--ch-allow-object`, `--ch-allow-replica`, `--pg-allow-role`, `--revoke-unprovisioned`, `--router` |
 | `loom cell update` | Reserve configuration, finish or revert its rollout, or refresh verified addresses. | `--cell`, `--config`, `--finish`, `--revert`, `--probe-url`, `--revoke-unprovisioned`, `--router`, `--wait` |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |

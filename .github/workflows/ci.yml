@@ -989,6 +989,8 @@ jobs:
           tail -100 server.log
           exit 1
       - name: pytest (Postgres authority, memory, knowledge, isolation and the SQL surface)
+        env:
+          NATIVE_PREPARED_BOT_PROOF: ${{ runner.temp }}/native-prepared-bot-proof.json
         run: >-
           pytest -q
           tests/integration/test_pg_authority.py
@@ -1031,11 +1033,13 @@ jobs:
           tests/integration/test_sql_surface_live_ch.py
           tests/integration/test_pg_clickhouse_live_ch.py
           tests/integration/test_cell_tenancy_pg.py
+          tests/integration/test_cell_each_native.py
           tests/integration/test_router_directory_pg.py
           tests/integration/test_pg_online_index.py
           tests/integration/test_pg_owned_cleanup.py
           tests/integration/test_cell_unset_gate_pg.py
           tests/integration/test_cell_prepare.py
+          tests/integration/test_cell_prepared_bot_native.py
           tests/integration/test_cell_attach.py
           tests/integration/test_cell_place.py
           tests/integration/test_cell_update_directory.py
@@ -1068,6 +1072,12 @@ jobs:
           tests/integration/test_marked_rollup_migration_native.py
           tests/integration/test_marked_durable_folds_native.py
           tests/integration/test_marked_sql_surface_native.py
+      - name: Upload prepared bot proof
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-prepared-bot-proof-postgres-${{ matrix.postgres }}
+          path: ${{ runner.temp }}/native-prepared-bot-proof.json
       - name: pytest online-index durability on a private physical standby
         timeout-minutes: 8
         env:

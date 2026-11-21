@@ -160,16 +160,33 @@ async def _current_version() -> tuple[int, int]:
         return await _repo.version_watermark(ch=get_client())
 
 
-async def _bump_version(updated_by: str = "", *, org: str = "*") -> None:
+async def _bump_version(
+    updated_by: str = "",
+    *,
+    org: str = "*",
+    deadline: float | None = None,
+    ch: Any = None,
+) -> None:
     """Move the watermark for every replica: one insert, no read, so two
     concurrent add/remove calls cannot write the same version. Under the Postgres
     authority the pattern's policy generation moves too (its org's, or the
     deployment's for a global one, `org` '*'), so a write admitted against the old
     patterns starts over and is checked against the new ones."""
-    await _repo.insert_version(time.time_ns(), updated_by=updated_by, ch=get_client())
+    if deadline is None:
+        await _repo.insert_version(time.time_ns(), updated_by=updated_by, ch=get_client())
+    else:
+        await _repo.insert_version(
+            time.time_ns(),
+            updated_by=updated_by,
+            ch=ch or get_client(),
+            deadline=deadline,
+        )
     from server.core import pg
 
-    await pg.bump_policy("" if org == "*" else org)
+    if deadline is None:
+        await pg.bump_policy("" if org == "*" else org)
+    else:
+        await pg.bump_policy("" if org == "*" else org, deadline=deadline)
 
 
 def invalidate_cache() -> None:

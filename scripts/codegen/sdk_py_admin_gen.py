@@ -44,10 +44,12 @@ def _routers() -> list[tuple[Any, str]]:
     from server.identity.app import claim_release
     from server.identity.app.admin_account_routes import router as accounts
     from server.insights.app.admin_routes import admin_router, org_admin_router
+    from server.insights.app.cell_admin_routes import cell_admin_router
     from server.insights.app.provider_routes import provider_router
 
     return [
         (admin_router, "platform_admin"),
+        (cell_admin_router, "platform_admin automation bot"),
         (org_admin_router, "org_admin"),
         (provider_router, "platform_admin"),
         (accounts, "platform_admin"),

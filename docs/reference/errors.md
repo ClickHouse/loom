@@ -752,6 +752,10 @@ HTTP 503, raised as `server.core.pg.PostgresUnavailableError`. 503 — Postgres,
 
 HTTP 409, raised as `server.core.errors.PreconditionFailedError`. 409 — `if_match_sha256` mismatch, an `approved_sha256` that no longer matches the definition's text, or an erasure that landed while a `namespace.restore` ran. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
 
+#### `PREFLIGHT_REFUSED`
+
+Raised in `server/cli/cell_each_http.py`.
+
 #### `PROBE_BUSY`
 
 Raised in `server/router/app.py`. Category `capacity`, retryable: yes.
@@ -779,6 +783,10 @@ HTTP 429, raised as `server.core.errors.RateLimitedError`. 429 — the caller is
 #### `READS_LLM_FREE`
 
 HTTP 409, raised as `server.core.errors.ReadsLlmFreeError`. 409 — `memory.ask` or `code.ask` asked for a model's answer while `LOOM_READS_LLM_FREE` is on. Category `input`, retryable: no. What to do: [common errors](#common-errors-and-what-to-do).
+
+#### `READ_INCOMPLETE`
+
+Raised in `server/cli/cell_each_state.py`.
 
 #### `RECALL_REQUIRES_FILTER`
 
@@ -927,6 +935,10 @@ Raised in `server/knowledge/app/writes.py`.
 #### `SOURCE_UNREACHABLE`
 
 Raised in `server/knowledge/app/sources.py`, `server/tracker/app/sources.py`.
+
+#### `SUBJECT_REVOCATION_INCOMPLETE`
+
+Raised in `server/insights/app/cell_admin_security_actions.py`.
 
 #### `SUBSTRING_NOT_FOUND`
 

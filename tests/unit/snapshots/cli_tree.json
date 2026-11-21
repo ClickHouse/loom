@@ -12506,6 +12506,327 @@
           }
          ]
         },
+        "each": {
+         "prog": "loom cell each",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_each_run:_locked"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": [
+            "command"
+           ]
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "router",
+            "credentials",
+            "state",
+            "resume"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": true,
+           "dests": [
+            "state",
+            "resume"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "Trusted public router origin",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--credentials"
+           ],
+           "dest": "credentials",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": true,
+           "help": "Private automation key manifest",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--state"
+           ],
+           "dest": "state",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Create an exclusive private outcome file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--resume"
+           ],
+           "dest": "resume",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Resume an existing private outcome file",
+           "metavar": null
+          },
+          {
+           "option_strings": [],
+           "dest": "command",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": "...",
+           "type": null,
+           "required": null,
+           "help": "Supported command after --",
+           "metavar": null
+          }
+         ]
+        },
+        "automation": {
+         "prog": "loom cell automation",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_automation:command"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "router",
+            "automation_bot",
+            "automation_thumbprint",
+            "automation_key",
+            "recovery_bot",
+            "recovery_thumbprint",
+            "recovery_key",
+            "ca_file"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The serving or prepared later cell to provision",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--automation-bot"
+           ],
+           "dest": "automation_bot",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The automation bot's exact registered name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--automation-thumbprint"
+           ],
+           "dest": "automation_thumbprint",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The automation bot's approved public key thumbprint",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--automation-key"
+           ],
+           "dest": "automation_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": true,
+           "help": "The automation bot's private key file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--recovery-bot"
+           ],
+           "dest": "recovery_bot",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The recovery bot's exact registered name",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--recovery-thumbprint"
+           ],
+           "dest": "recovery_thumbprint",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The recovery bot's approved public key thumbprint",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--recovery-key"
+           ],
+           "dest": "recovery_key",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": true,
+           "help": "The recovery bot's private key file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--ca-file"
+           ],
+           "dest": "ca_file",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Private file containing an explicit CA certificate bundle",
+           "metavar": null
+          }
+         ]
+        },
         "credential": {
          "prog": "loom cell credential",
          "usage": null,
@@ -13070,6 +13391,7 @@
             "host",
             "credential_sha256",
             "probe_url",
+            "upstream_url",
             "wait",
             "router"
            ]
@@ -13151,6 +13473,21 @@
            "type": null,
            "required": false,
            "help": "A later cell's probe listener address (not the first's)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--upstream-url"
+           ],
+           "dest": "upstream_url",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A later cell's internal main-port origin (with --probe-url)",
            "metavar": null
           },
           {
@@ -13592,6 +13929,8 @@
        },
        "aliases_of": {
         "scim-token": "loom cell scim-token",
+        "each": "loom cell each",
+        "automation": "loom cell automation",
         "credential": "loom cell credential",
         "limit": "loom cell limit",
         "which": "loom cell which",
@@ -13606,6 +13945,16 @@
          "dest": "scim-token",
          "help": "Generate a cell's SCIM token offline.",
          "metavar": "scim-token"
+        },
+        {
+         "dest": "each",
+         "help": "Run a supported admin command in every cell",
+         "metavar": "each"
+        },
+        {
+         "dest": "automation",
+         "help": "Prove and register distinct automation and recovery bot keys.",
+         "metavar": "automation"
         },
         {
          "dest": "credential",

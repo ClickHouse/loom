@@ -715,6 +715,42 @@ class Limiter:
             reset_s=(lim.capacity - remaining) / max(lim.rate, 1e-9),
         )
 
+    def check_bounded_namespace_change(self, namespace: str, op_class: str, *, clear: bool) -> None:
+        """Bound adoption without opening or reconfiguring the shared bucket table."""
+        from server.core.ch_bounded import BoundedReadError
+
+        if len(DEFAULT_LIMITS) > 64 or op_class not in DEFAULT_LIMITS:
+            raise BoundedReadError("Unsupported rate-limit class")
+        if any(
+            len(buckets) > MAX_BUCKETS
+            for buckets in (
+                self._ns_buckets,
+                self._org_buckets,
+                self._actor_buckets,
+            )
+        ):
+            raise BoundedReadError("Rate-limit buckets exceed their allowance")
+        if len(self._ns_overrides) > 1024 or (
+            not clear
+            and (namespace, op_class) not in self._ns_overrides
+            and len(self._ns_overrides) == 1024
+        ):
+            raise BoundedReadError("Namespace rate overrides exceed their allowance")
+        mode, path, slots = (
+            str(settings.ratelimit_shared),
+            str(settings.ratelimit_shared_path),
+            int(settings.ratelimit_shared_slots),
+        )
+        workers = max(1, int(settings.web_workers))
+        expected = (mode, path, slots, workers)
+        if (
+            _wants_table(mode, workers)
+            and self._shared is None
+            or self._shared is not None
+            and self._shared_key != expected
+        ):
+            raise BoundedReadError("Rate-limit shared backend is not initialized")
+
     def set_namespace_limit(self, namespace: str, op_class: str, limit: Limit) -> None:
         """Install a per-namespace override for one op_class."""
         self._ns_overrides[(namespace, op_class)] = limit

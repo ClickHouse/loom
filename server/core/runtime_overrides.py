@@ -14,6 +14,7 @@ import logging
 import time
 from typing import Any
 
+from server.core.ch_bounded import BoundedReadError, decode_json, read_rows
 from server.core.ch_errors import error_code
 from server.core.errors import BackendUnavailableError, LoomServerError
 from server.core.repo_base import _CHClient, _default_client
@@ -65,31 +66,89 @@ class OverrideNotStoredError(LoomServerError):
     status_code = 409
 
 
-async def put(kind: str, key: tuple[str, ...], value: Any, *, ch: _CHClient | None = None) -> None:
-    version = await _write(kind, key, json.dumps(value), deleted=0, ch=ch)
+async def put(
+    kind: str,
+    key: tuple[str, ...],
+    value: Any,
+    *,
+    ch: _CHClient | None = None,
+    deadline: float | None = None,
+) -> None:
+    version = await _write(kind, key, json.dumps(value), deleted=0, ch=ch, deadline=deadline)
     _own[(kind, key)] = (value, version, time.monotonic_ns())
 
 
-async def clear(kind: str, key: tuple[str, ...], *, ch: _CHClient | None = None) -> None:
-    version = await _write(kind, key, "null", deleted=1, ch=ch)
+async def clear(
+    kind: str,
+    key: tuple[str, ...],
+    *,
+    ch: _CHClient | None = None,
+    deadline: float | None = None,
+) -> None:
+    version = await _write(kind, key, "null", deleted=1, ch=ch, deadline=deadline)
     _own[(kind, key)] = (None, version, time.monotonic_ns())
 
 
 async def _write(
-    kind: str, key: tuple[str, ...], value: str, *, deleted: int, ch: _CHClient | None
+    kind: str,
+    key: tuple[str, ...],
+    value: str,
+    *,
+    deleted: int,
+    ch: _CHClient | None,
+    deadline: float | None = None,
 ) -> int:
-    """Store one row; returns its version. A refused write raises `OverrideNotStoredError`,
-    one a retry may store `BackendUnavailableError`."""
+    """Store one row; return its version. Bounded callers never infer no write
+    from a lost acknowledgement."""
     global _last_version
     client = ch or _default_client()
     row = {"kind": kind, "key": json.dumps(list(key)), "value": value, "deleted": deleted}
     try:
-        stamp = await client.query_one(_VERSION_SQL)
+        if deadline is None:
+            stamp = await client.query_one(_VERSION_SQL)
+        else:
+            check_bounded_write(kind, key, value)
+            stamps = await read_rows(
+                _VERSION_SQL + " LIMIT 2 FORMAT JSONEachRow",
+                {},
+                ch=client,
+                deadline=deadline,
+                row_bytes=1024,
+                total_bytes=1024,
+                max_rows=1,
+                tag="cell.each.override_clock",
+            )
+            if len(stamps) != 1 or type(stamps[0].get("v")) is not int:
+                raise BoundedReadError("Malformed override clock")
+            stamp = stamps[0]
         version = max(int((stamp or {})["v"]), _last_version + 1)
-        await client.insert(TABLE, [{**row, "version": version}], settings={"async_insert": 0})
+        if deadline is None:
+            await client.insert(TABLE, [{**row, "version": version}], settings={"async_insert": 0})
+        else:
+            import asyncio
+
+            from server.core.ch import set_query_tag, statement_timeout
+
+            remaining = min(2.0, deadline - time.monotonic())
+            if remaining <= 0:
+                raise BoundedReadError("Override write allowance exhausted")
+            check_bounded_write(kind, key, value)
+            set_query_tag("cell.each.override_write")
+            async with asyncio.timeout(remaining):
+                with statement_timeout(remaining):
+                    await client.insert(
+                        TABLE,
+                        [{**row, "version": version}],
+                        settings={"async_insert": 0, "max_memory_usage": 128 * 1024**2},
+                    )
     except LoomServerError:
         raise  # already typed: unreachable or timed out
     except Exception as e:  # a refusal is the caller's 409, anything else a 503
+        if deadline is not None:
+            raise BackendUnavailableError(
+                "the bounded override change was not confirmed",
+                operation="runtime_overrides.write",
+            ) from e
         logger.warning("runtime override %s %s not stored: %s", kind, key, e)
         if error_code(e) in _REFUSED_CODES:
             raise OverrideNotStoredError(
@@ -102,6 +161,95 @@ async def _write(
         ) from e
     _last_version = version
     return version
+
+
+def check_bounded_write(kind: str, key: tuple[str, ...], value: str) -> None:
+    """Refuse unsupported local bookkeeping before a bounded point write."""
+    if len(_own) > 4096 or ((kind, key) not in _own and len(_own) == 4096):
+        raise BoundedReadError("Override bookkeeping exceeds its allowance")
+    maximum = 16384 if kind == SETTING else 1024
+    payload = {
+        "kind": kind,
+        "key": json.dumps(list(key)),
+        "value": value,
+        "deleted": 0,
+        "version": 2**64 - 1,
+    }
+    if len(json.dumps(payload).encode("utf-8")) > maximum:
+        raise BoundedReadError("Override key and value exceed their allowance")
+
+
+async def load_settings(
+    *,
+    deadline: float,
+    name: str | None = None,
+    ch: _CHClient | None = None,
+) -> Snapshot:
+    """Read setting-kind rows, or one exact setting, without a full override scan."""
+    from server.settings import Settings
+
+    if len(Settings.model_fields) > 4096:
+        raise BoundedReadError("Settings catalog exceeds its allowance")
+    maximum = 1024 if name is None else 1
+    params: dict[str, Any] = {"kind": SETTING, "limit": maximum + 1}
+    predicate = ""
+    if name is not None:
+        predicate = " AND key = {key:String}"
+        params["key"] = json.dumps([name])
+    rows = await read_rows(
+        "SELECT key, value, deleted, version FROM loom.runtime_overrides FINAL "
+        "WHERE kind = {kind:String}" + predicate + " LIMIT {limit:UInt32} FORMAT JSONEachRow",
+        params,
+        ch=ch or _default_client(),
+        deadline=deadline,
+        row_bytes=16384,
+        total_bytes=2 * 1024**2,
+        max_rows=maximum,
+        tag="cell.each.setting_overrides",
+    )
+    out: dict[tuple[str, ...], Any] = {}
+    seen: dict[tuple[str, ...], int] = {}
+    for row in rows:
+        if set(row) != {"key", "value", "deleted", "version"}:
+            raise BoundedReadError("Malformed setting override")
+        if type(row["key"]) is not str or type(row["value"]) is not str:
+            raise BoundedReadError("Malformed setting override")
+        decoded = decode_json(row["key"])
+        if not isinstance(decoded, list) or len(decoded) != 1 or type(decoded[0]) is not str:
+            raise BoundedReadError("Malformed setting override key")
+        key = (decoded[0],)
+        version, deleted = row["version"], row["deleted"]
+        if (
+            key in seen
+            or type(version) is not int
+            or version < 0
+            or type(deleted) is not int
+            or deleted not in (0, 1)
+            or name is not None
+            and key != (name,)
+        ):
+            raise BoundedReadError("Ambiguous setting override")
+        seen[key] = version
+        if not deleted:
+            out[key] = decode_json(row["value"])
+    # Point lookups retain own-write visibility without traversing other override kinds.
+    names = Settings.model_fields if name is None else (name,)
+    now = time.monotonic_ns()
+    for field in names:
+        key = (field,)
+        owned = _own.get((SETTING, key))
+        if owned is None:
+            continue
+        value, version, written = owned
+        if seen.get(key, -1) >= version or now - written > _OWN_HOLD_NS:
+            del _own[(SETTING, key)]
+        elif value is None:
+            out.pop(key, None)
+        else:
+            out[key] = value
+        if len(out) > maximum:
+            raise BoundedReadError("Setting overrides exceed their allowance")
+    return {SETTING: out}
 
 
 async def load(*, ch: _CHClient | None = None) -> Snapshot:
