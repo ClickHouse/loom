@@ -66,8 +66,8 @@ class CodeClient:
         `retrieval_risk`, and `as_of.stale` (index trails master by more
         than the configured commits — treat spans as approximate). Keep
         `trace_run_id` and call `outcome(...)`. `token_budget` / `bodies`
-        unset take the server's defaults (a route-aware budget, the
-        deployment's bodies setting); `bodies="none"` returns
+        unset take the deployment's budget and bodies settings;
+        `bodies="none"` returns
         spans and signatures only (cheapest); `annotate=False` drops the
         churn/amp/tested risk annotations. `pattern` (literal, or RE2 with
         `regex=True`) constrains BOTH legs to chunks containing it — one call
