@@ -41,6 +41,37 @@ class ProvisioningContracts(unittest.TestCase):
             instance.start()
         self.run.assert_not_called()
 
+    def test_runtime_uses_the_owned_local_model_tag_not_an_image_id_as_repository(self):
+        owner = self.provision.owner
+        images = {}
+
+        def run(command, **kwargs):
+            if command[:2] == ["docker", "build"]:
+                tag = command[command.index("--tag") + 1]
+                identifier = "sha256:" + ("d" if tag.endswith("local-models") else "e") * 64
+                images[tag] = images[identifier] = identifier
+                Path(command[command.index("--iidfile") + 1]).write_text(identifier)
+                if tag.endswith("runtime"):
+                    arg = command[command.index("--build-arg") + 1]
+                    self.assertEqual(
+                        arg, "LOCAL_MODELS_IMAGE=" + self.provision.prefix + "-local-models"
+                    )
+                    self.assertNotIn("sha256:", arg)
+                return SimpleNamespace(stdout="built", stderr="", returncode=0)
+            identifier = images[command[-1]]
+            return SimpleNamespace(
+                stdout=json.dumps(
+                    [{"Id": identifier, "Config": {"Labels": {"loom.factory.owner": owner}}}]
+                ),
+                stderr="",
+                returncode=0,
+            )
+
+        self.provision.run = run
+        result = self.provision._build_images(self.root)
+        self.assertEqual(result.read_text(), "sha256:" + "e" * 64)
+        self.assertEqual(len(list((self.provision.output / "logs").glob("build-*.json"))), 2)
+
     def test_cleanup_never_removes_a_resource_with_another_owner(self):
         self.provision._record("created", kind="container", name="exact-owned-name", id="c" * 64)
         self.run.return_value.stdout = json.dumps(

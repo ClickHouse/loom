@@ -122,9 +122,30 @@ class Provisioner:
         return row
 
     def _cmd(self, command, *, data=None, timeout=1800):
-        return self.run(
-            command, input=data, capture_output=True, text=True, check=True, timeout=timeout
+        try:
+            result = self.run(
+                command, input=data, capture_output=True, text=True, check=True, timeout=timeout
+            )
+        except subprocess.CalledProcessError as error:
+            if command[:2] == ["docker", "build"]:
+                self._build_log(command, error.stdout, error.stderr, error.returncode)
+            raise
+        if command[:2] == ["docker", "build"]:
+            self._build_log(command, result.stdout, result.stderr, result.returncode)
+        return result
+
+    def _build_log(self, command, stdout, stderr, returncode):
+        folder = self.output / "logs"
+        folder.mkdir(exist_ok=True)
+        content = json.dumps(
+            {"command": command, "stdout": stdout, "stderr": stderr, "returncode": returncode}
         )
+        for name in ("ANTHROPIC_API_KEY", "HTTPS_PROXY"):
+            if value := os.environ.get(name):
+                content = content.replace(value, "[redacted]")
+        path = folder / ("build-" + uuid.uuid4().hex + ".json")
+        path.write_text(content + "\n")
+        path.chmod(0o600)
 
     def _inspect(self, kind, identifier):
         noun = (
@@ -320,6 +341,48 @@ class Provisioner:
         save(self.output / "build-source-manifest.json", manifest)
         return context
 
+    def _build_images(self, context):
+        builder = self.output / "local-models.image"
+        image = self.output / "runtime.image"
+        for target, path, extra in [
+            ("local-models", builder, ["--target", "local-models"]),
+            ("runtime", image, []),
+        ]:
+            if target == "runtime":
+                identifier = builder.read_text().strip()
+                builder_image = self._owned("image", identifier)
+                require(
+                    self._inspect("image", self.prefix + "-local-models")["Id"]
+                    == builder_image["Id"],
+                    "Native model image tag differs from its recorded image ID",
+                )
+                extra = [
+                    "--file",
+                    str(context / "examples/software_factory/harbor/Provisioner.Dockerfile"),
+                    "--build-arg",
+                    "LOCAL_MODELS_IMAGE=" + self.prefix + "-local-models",
+                ]
+            self._record("intent", kind="image", name=self.prefix + "-" + target, iidfile=str(path))
+            self._cmd(
+                [
+                    "docker",
+                    "build",
+                    "--label",
+                    OWNER_LABEL + "=" + self.owner,
+                    "--tag",
+                    self.prefix + "-" + target,
+                    "--iidfile",
+                    str(path),
+                    *extra,
+                    str(context),
+                ],
+                timeout=3600,
+            )
+            identifier = path.read_text().strip()
+            self._owned("image", identifier)
+            self._record("created", kind="image", id=identifier, name=self.prefix + "-" + target)
+        return image
+
     def start(self):
         gateway = self.gateway or {}
         require(
@@ -418,47 +481,7 @@ class Provisioner:
             name=gateway["controller_container"],
             network=network,
         )
-        builder = self.output / "local-models.image"
-        image = self.output / "runtime.image"
-        for target, path, extra in [
-            ("local-models", builder, ["--target", "local-models"]),
-            (
-                "runtime",
-                image,
-                [
-                    "--file",
-                    str(context / "examples/software_factory/harbor/Provisioner.Dockerfile"),
-                    "--build-arg",
-                    "LOCAL_MODELS_IMAGE=" + builder.read_text().strip(),
-                ]
-                if builder.exists()
-                else [],
-            ),
-        ]:
-            if target == "runtime":
-                extra = [
-                    "--file",
-                    str(context / "examples/software_factory/harbor/Provisioner.Dockerfile"),
-                    "--build-arg",
-                    "LOCAL_MODELS_IMAGE=" + builder.read_text().strip(),
-                ]
-            self._record("intent", kind="image", name=self.prefix + "-" + target, iidfile=str(path))
-            self._cmd(
-                [
-                    "docker",
-                    "build",
-                    "--label",
-                    OWNER_LABEL + "=" + self.owner,
-                    "--iidfile",
-                    str(path),
-                    *extra,
-                    str(context),
-                ],
-                timeout=3600,
-            )
-            identifier = path.read_text().strip()
-            self._owned("image", identifier)
-            self._record("created", kind="image", id=identifier, name=self.prefix + "-" + target)
+        image = self._build_images(context)
         ch_secret = secrets.token_hex(24)
         jwt = secrets.token_hex(32)
         ch_env = self.output / "private/ch.env"
