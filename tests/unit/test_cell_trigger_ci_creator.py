@@ -1083,6 +1083,47 @@ def request_cost_api_case(keeper_config_case, tmp_path, monkeypatch):
     def invoke(mode):
         state["mode"] = mode
         pending = []
+
+        def begin(op, request, response):
+            return "request-id"
+
+        async def extract(request):
+            return marker
+
+        async def read_body(op, request, request_id, auth):
+            return marker
+
+        async def authorize(op, response, call, payload):
+            return marker
+
+        async def policy(op, request, call, target, payload):
+            return marker
+
+        async def replay(op, request, response, call, target, payload):
+            return marker
+
+        async def telemetry(op, response, call):
+            return marker
+
+        async def handler(op, payload, call):
+            return marker
+
+        async def finish(op, call, payload, result, elapsed_ms, idem):
+            return marker
+
+        originals = dict(
+            _begin_request=begin,
+            _extract_auth=extract,
+            _read_body=read_body,
+            _authorize=authorize,
+            _bind_context_and_policy=policy,
+            _idempotency_gate=replay,
+            _start_telemetry=telemetry,
+            _run_handler=handler,
+            _finish_success=finish,
+        )
+        http = SimpleNamespace(**originals)
+        monkeypatch.setitem(sys.modules, "server.transport.http", http)
         receive_message = {"type": "http.request", "body": b"private-request-value"}
 
         async def receive():
@@ -1108,6 +1149,25 @@ def request_cost_api_case(keeper_config_case, tmp_path, monkeypatch):
             index = state["calls"]
             ch.set_query_tag(f"memory.set request-{index}")
             selected = index in samples
+            if selected and mode == "phases":
+                assert http._begin_request(marker, marker, marker) == "request-id"
+                assert await http._extract_auth(marker) is marker
+                assert await http._read_body(marker, marker, marker, marker) is marker
+                assert await http._authorize(marker, marker, marker, marker) is marker
+                assert (
+                    await http._bind_context_and_policy(marker, marker, marker, marker, marker)
+                    is marker
+                )
+                assert (
+                    await http._idempotency_gate(marker, marker, marker, marker, marker, marker)
+                    is marker
+                )
+                assert await http._start_telemetry(marker, marker, marker) is marker
+                assert await http._run_handler(marker, marker, marker) is marker
+                assert (
+                    await http._finish_success(marker, marker, marker, marker, marker, marker)
+                    is marker
+                )
             count = 225 if mode == "cap" and index == samples[0] else 1
             for _ in range(count):
                 with otel.traced(
@@ -1143,6 +1203,10 @@ def request_cost_api_case(keeper_config_case, tmp_path, monkeypatch):
 
         async def exercise(factory):
             app = factory()
+            installed = {name: getattr(http, name) for name in originals}
+            assert all(installed[name] is not original for name, original in originals.items())
+            factory()
+            assert all(getattr(http, name) is installed[name] for name in originals)
             state["release"] = asyncio.Event()
             try:
                 for scope in (
@@ -1169,6 +1233,9 @@ def request_cost_api_case(keeper_config_case, tmp_path, monkeypatch):
                 "workers": 1,
                 "reload": False,
             }
+            if mode == "startup-error":
+                application_factory()
+                raise error
             asyncio.run(exercise(application_factory))
 
         monkeypatch.setattr(uvicorn, "run", run)
@@ -1202,6 +1269,7 @@ def request_cost_api_case(keeper_config_case, tmp_path, monkeypatch):
         except BaseException as caught:  # noqa: BLE001 — compare the exact fake delegate's failure, including cancellation
             state["error"] = caught
         assert otel.traced is delegate
+        assert vars(http) == originals
         path = folder / "request-costs.jsonl"
         state["raw"] = path.read_text() if path.exists() else ""
         state["rows"] = [json.loads(line) for line in state["raw"].splitlines()]
