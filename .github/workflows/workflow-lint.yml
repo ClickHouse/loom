@@ -42,4 +42,6 @@ jobs:
         env:
           # Reject shell errors and warnings without imposing style diagnostics.
           SHELLCHECK_OPTS: --severity=warning
-        run: '"$RUNNER_TEMP/actionlint" -color -shellcheck="$RUNNER_TEMP/shellcheck" -pyflakes='
+        run: |
+          test -x "$RUNNER_TEMP/shellcheck"
+          "$RUNNER_TEMP/actionlint" -color -shellcheck="$RUNNER_TEMP/shellcheck" -pyflakes=
