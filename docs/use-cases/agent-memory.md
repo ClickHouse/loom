@@ -3,7 +3,9 @@ title: Memory for coding agents across sessions and tools
 description: Choose and evaluate shared memory for coding agents with cross-session recall, scoped access, corrected facts and lessons linked to current code.
 ---
 
-# Long-term and shared memory for AI agents
+<a id="long-term-and-shared-memory-for-ai-agents"></a>
+
+# Memory for coding agents across sessions and tools
 
 Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they
 share: a fact one agent saves in a session can be found by the next session, by another
