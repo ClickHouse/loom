@@ -32,7 +32,8 @@ one-directional modules (none import back into this one):
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from functools import partial
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -57,6 +58,7 @@ from server.transport.mcp_auth import (
 )
 from server.transport.mcp_call import _call_tool
 from server.transport.mcp_config import (
+    _LOOM_ACTIVATE_TOOL_NAME,
     _TRANSPORT_ERROR_ID,
     INVALID_PARAMS,
     INVALID_REQUEST,
@@ -67,6 +69,7 @@ from server.transport.mcp_config import (
     METHOD_NOT_FOUND,
     PARSE_ERROR,
     SERVER_INFO,
+    UNSUPPORTED_PROTOCOL_VERSION,
     _err,
     _ok,
     cache_hints,
@@ -123,7 +126,66 @@ def _listing_params(request: Any) -> dict[str, str | None]:
     }
 
 
+def _call_operation(params: dict[str, Any]) -> str:
+    from server.operations.registry import OPERATIONS_BY_NAME
+    from server.transport.mcp_op import CATALOG_ALIASES, TOOLS_BY_NAME, resolve_op
+
+    name = params.get("name")
+    if name == _LOOM_ACTIVATE_TOOL_NAME:
+        return _LOOM_ACTIVATE_TOOL_NAME
+    op = TOOLS_BY_NAME.get(name) if isinstance(name, str) else None
+    if name == "loom_op":
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return "loom_op"
+        target = str(arguments.get("op") or "").strip()
+        if target.lower() in CATALOG_ALIASES:
+            return "loom_op.help"
+        op = resolve_op(target, OPERATIONS_BY_NAME)
+        return op.name if op else "loom_op"
+    return op.name if op else "tools/call"
+
+
+async def _observe_call(
+    payload: Any,
+    *,
+    headers: Mapping[str, str],
+    dispatch: Callable[[Any], Awaitable[dict[str, Any] | None]],
+    auth: Any = None,
+) -> dict[str, Any] | None:
+    from server.observability import prompt_context
+
+    if not isinstance(payload, dict) or payload.get("method") != "tools/call":
+        return await dispatch(payload)
+    params = payload.get("params")
+    params = params if isinstance(params, dict) else {}
+    with prompt_context.mcp_call(
+        params, headers=headers, operation=_call_operation(params)
+    ) as span:
+        prompt_context.authenticated(span, auth, _call_operation(params))
+        result = await dispatch(payload)
+        if result is not None:
+            prompt_context.outcome(span, result, protocol_refusals=(UNSUPPORTED_PROTOCOL_VERSION,))
+        return result
+
+
 async def _handle_request(
+    payload: dict[str, Any],
+    auth: Any = None,
+    client_name: str | None = None,
+    mcp_session_id: str = "",
+    schema_profile: str | None = None,
+    toolset: str | None = None,
+) -> dict[str, Any] | None:
+    async def dispatch(req: Any) -> dict[str, Any] | None:
+        return await _dispatch_request(
+            req, auth, client_name, mcp_session_id, schema_profile, toolset
+        )
+
+    return await _observe_call(payload, headers={}, dispatch=dispatch, auth=auth)
+
+
+async def _dispatch_request(
     payload: dict[str, Any],
     auth: Any = None,
     client_name: str | None = None,
@@ -226,19 +288,17 @@ async def _handle_request(
     if method == "tools/call":
         from server.transport.lean_results import single_channel
 
-        return single_channel(
-            classify_tool_errors(
-                await _call_tool(
-                    req_id,
-                    params,
-                    auth,
-                    client_name,
-                    mcp_session_id=mcp_session_id,
-                    toolset=toolset,
-                )
-            ),
-            _client_name_to_agent(client_name),
+        result = classify_tool_errors(
+            await _call_tool(
+                req_id,
+                params,
+                auth,
+                client_name,
+                mcp_session_id=mcp_session_id,
+                toolset=toolset,
+            )
         )
+        return single_channel(result, _client_name_to_agent(client_name))
 
     if method == "prompts/list":
         return _ok(
@@ -409,7 +469,7 @@ def attach(app: FastAPI) -> None:
                 message=f"missing bearer token ({gated} requires auth in mcp_auth_mode={mode!r})",
             )
 
-        async def _dispatch(req: Any) -> dict[str, Any] | None:
+        async def _dispatch_one(req: Any) -> dict[str, Any] | None:
             nonlocal session_id
             if not isinstance(req, dict):
                 return await _handle_request(req)  # Invalid Request, per entry
@@ -424,11 +484,7 @@ def attach(app: FastAPI) -> None:
                 if not session_id:
                     session_id = new_session_id(_initialize_client_name(req))
                 response.headers["Mcp-Session-Id"] = session_id
-                params = req.get("params")
-                if isinstance(params, dict):
-                    client_info = params.get("clientInfo")
-                    if isinstance(client_info, dict):
-                        _remember_client_for_session(session_id, client_info.get("name"))
+                _remember_client_for_session(session_id, _initialize_client_name(req))
             client_name = _resolve_client_name(req, session_id)
             # One read of the selectors, so routing, the screen and the call agree.
             listing = _listing_params(request)
@@ -445,13 +501,17 @@ def attach(app: FastAPI) -> None:
                 )
                 if screened is not None:
                     return classify_tool_errors(screened)
-            return await _handle_request(
+            return await _dispatch_request(
                 req,
                 auth,
                 client_name,
                 mcp_session_id=session_id or "",
                 **listing,
             )
+
+        _dispatch = partial(
+            _observe_call, headers=request.headers, dispatch=_dispatch_one, auth=auth
+        )
 
         if isinstance(payload, list):
             responses = await _dispatch_batch(payload, _dispatch)

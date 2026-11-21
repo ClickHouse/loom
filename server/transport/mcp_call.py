@@ -247,9 +247,9 @@ async def _call_tool(
     """One MCP `tools/call`, in phases (each below this function, in order):
     resolve the tool → session-content admission → bind the caller's identity →
     stamp the session run's id → argument refusal + validation → authorization → admission (traffic
-    class, policy, rate limit) → the session run begins → idempotency replay
-    (only for an admitted caller) → open the trace → span identity
-    (inline) → the handler → success telemetry → the response. Every phase
+    class, policy, rate limit) → the session run begins → stamp admitted trace
+    identity → idempotency replay (only for an admitted caller) → the handler →
+    success telemetry → the response. Every phase
     that can end the call returns its response and this function returns it
     at once, so no gate runs after a refusal and none runs after the
     handler."""
@@ -317,21 +317,8 @@ async def _call_tool(
 
     await _bind_session_run(op, defaults, mcp_session_id, run_caller)
 
-    # The replay cache is read only for an admitted caller.
-    replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
-    if replay is not None:
-        return replay  # IDEMPOTENT_CONFLICT refusal, or the cached result replayed
-
-    # Scope the span and publish the identity ContextVar BEFORE the handler runs.
-    # The two `set_loom_attributes` calls after `op.handler(...)` (in
-    # `_handler_failed` / `_record_success_telemetry`) happen once it
-    # returns, which is fine for span attributes but useless for the provider
-    # spans: here `set_loom_attributes` sets the identity, and every `llm.*` /
-    # `embed.*` span of this request is created INSIDE the handler.
-    # Set later, MCP generations would carry no loom.org/namespace/operation
-    # and no Langfuse session or user. In a JSON-RPC batch the ContextVar is
-    # task-scoped, so entry N's provider spans would carry entry N-1's tenant.
-    # Setting it here, once per entry before any LLM call, prevents both.
+    # Replays need the admitted tenant's tags for trace discovery and erasure.
+    # Provider children also read this identity before the handler returns.
     try:
         from server.observability import capture_consent as _consent
         from server.observability import otel as _otel_pre
@@ -353,6 +340,11 @@ async def _call_tool(
         # spans stay findable. Its model calls name no org, so they skip the model
         # caches and refuse.
         genai.set_identity(operation=op.name, capture_level="off")
+
+    # The replay cache is read only for an admitted caller.
+    replay, idem_scope, idem_body_hash = await _idempotency_gate(call, name, client_idem_key)
+    if replay is not None:
+        return replay  # IDEMPOTENT_CONFLICT refusal, or the cached result replayed
 
     with required_call_exit(
         op_name=op.name,

@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 // than that, and a shorter grace would kill a fire-and-forget post before it
 // left a slow link.
 import { DEFAULT_BOUND_MS, boundMs, rttCachePath } from "./hook-bounds.mjs";
+import { entrypointHeaders, promptHeaders } from "./prompt-context.mjs";
 import { readJsonFile, tmpStatePath, writeJsonFile } from "./tmp-state.mjs";
 
 let _rttCache;
@@ -717,6 +718,9 @@ export function truncate(text, max = 2000) {
   return s.slice(0, max - 14).trimEnd() + "\n…[truncated]";
 }
 
+const _hookEntryHeaders = entrypointHeaders(process.argv[1], fileURLToPath(new URL("../hooks/", import.meta.url)));
+let _hookPromptHeaders = { ..._hookEntryHeaders };
+
 // --- transport ----------------------------------------------------------------
 // Every request the plugin makes goes through requestJson: one bound, one
 // header set, one error shape. Nothing here throws or rejects.
@@ -736,6 +740,7 @@ export async function requestJson(
       headers: {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ..._hookPromptHeaders,
         ...headers,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -1088,8 +1093,15 @@ export function readStdinJson() {
       if (settled) return;
       settled = true;
       try {
-        resolve(normalizePayload(raw.trim() ? JSON.parse(raw) : {}));
+        const payload = normalizePayload(raw.trim() ? JSON.parse(raw) : {});
+        const candidate = { ..._hookEntryHeaders, ...promptHeaders(payload) };
+        // Identifiers still pass through redaction; no prompt or tool content is sent here.
+        _hookPromptHeaders = Object.fromEntries(
+          Object.entries(candidate).filter(([, value]) => redactSecrets(value) === value),
+        );
+        resolve(payload);
       } catch {
+        _hookPromptHeaders = { ..._hookEntryHeaders };
         resolve({});
       }
     };

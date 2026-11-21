@@ -511,3 +511,18 @@ Captures POST to the `observe.record` wire op and crystallization to
 `observe.crystallize`. A failed POST is swallowed — the primer (`context.pack`)
 and the safety model work regardless. See
 [Claude Code](https://clickhouse.github.io/loom/features/integrations/claude-code/).
+
+## Invocation attribution
+
+Needs the next server release for invocation-correlation headers. Hook requests
+declare hook origin and their entrypoint when known, including detached work.
+The event can independently supply a conversation ID, `prompt_id` or `turn_id`,
+tool-call ID and hook event. Missing IDs stay absent; conflicting prompt and
+turn IDs are omitted. There is no shared latest-prompt binding. Trace headers
+carry no prompt text, and identifiers pass through normal secret redaction.
+
+This labels requests the plugin sends. The host's separate MCP client may
+supply its own per-call metadata; absent origin stays unknown. Neither host
+prompt lifecycle tracing nor external host billing is required. See
+[Loom invocation observability](../../docs/operations/monitoring.md#loom-invocation-observability)
+for the optional benchmark fields, sampling limits and accounting rules.

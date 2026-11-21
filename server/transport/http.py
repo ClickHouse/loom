@@ -752,7 +752,7 @@ async def _finish_success(
 
 
 def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any]]:
-    async def endpoint(request: Request, response: Response) -> Any:
+    async def endpoint(request: Request, response: Response, span: Any) -> Any:
         # The phases run in this order and each refusal raises its own HTTP
         # error: token, session protection, body, validation, authorization, policy, rate limit,
         # idempotency replay, then the handler. Nothing after a gate runs
@@ -769,8 +769,10 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         # Bound before the body is read, as MCP binds it before validation:
         # a refusal's ledger row reads the token's org and pins from it.
         from server.auth.context import set_current_auth
+        from server.observability.prompt_context import authenticated
 
         set_current_auth(auth)
+        authenticated(span, auth, op.name, request_id)
         bind_claimed_class(auth)
         await gates.session_content(op, auth)
         body = await _read_body(op, request, request_id, auth)
@@ -792,10 +794,10 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
         payload = gates.with_target(op, payload, target)
         payload = await _bind_context_and_policy(op, request, call, target, payload)
         _rate_limit(op, response, call, target)
+        await _start_telemetry(op, response, call)
         replay = await _idempotency_gate(op, request, response, call, target, payload)
         if replay.hit is not None:
             return replay.hit.body
-        await _start_telemetry(op, response, call)
 
         with required_call_exit(
             op_name=op.name,
@@ -811,7 +813,17 @@ def _make_endpoint(op: Operation) -> Callable[[Request, Response], Awaitable[Any
                 op, call, payload, result, elapsed_ms, (replay.scope, replay.body_hash)
             )
 
-    return endpoint
+    async def with_prompt(request: Request, response: Response) -> Any:
+        from server.observability import prompt_context
+
+        with prompt_context.http_call(request.headers, getattr(op, "name", "http")) as span:
+            result = await endpoint(request, response, span)
+            prompt_context.http_outcome(
+                span, response.status_code, response.headers.get("X-Request-Id", "")
+            )
+            return result
+
+    return with_prompt
 
 
 def _success_headers(

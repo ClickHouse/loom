@@ -387,8 +387,11 @@ def stamp_identity(span: Any) -> None:
     `loom.org`, so a span carrying the user without the org could be erased for
     another org's user of the same id.
     """
+    from server.observability import prompt_context
+
     ident = _identity.get()
     if not ident:
+        prompt_context.stamp(span)
         return
     for key, attr in (
         ("operation", "loom.operation"),
@@ -419,6 +422,7 @@ def stamp_identity(span: Any) -> None:
         # sees first, and a batch that reaches it before the root would produce
         # a correct trace with an empty name.
         span.set_attribute("langfuse.trace.name", ident["operation"])
+    prompt_context.stamp(span)
 
 
 @contextlib.contextmanager
