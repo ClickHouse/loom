@@ -63,6 +63,12 @@ class AssistantCitation(BaseModel):
 
 
 class AssistantAskOutput(BaseModel):
+    mirrored: bool = Field(
+        default=False,
+        description=(
+            "True when this answer is private to the caller's protected session; false by default."
+        ),
+    )
     # The assistant's answer, with its citations as the agent wrote them.
     answer: str = ""
     # The answer's id: the run its tool calls are ledgered under (agent_events.run_id).

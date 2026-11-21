@@ -30,6 +30,7 @@ from typing import Any, cast
 
 from server.core.grant_sql import LIVE_GRANT
 from server.core.repo_base import _CHClient, _default_client
+from server.identity.domain.read_scope import ReadFilters, scope_where
 from server.tasks.domain.cursors import BACKFILLED
 from server.tasks.store.rows import (
     GrantSubjectRow,
@@ -73,7 +74,8 @@ TASK_COLS = (
 
 EVENT_COLS = (
     "org, inbox, namespace, task_id, seq, event, from_status, to_status, actor, "
-    "agent, from_subject, fence, version, reason, patch, note, ts"
+    "agent, from_subject, fence, version, reason, patch, note, ts, "
+    "user_id, session_id, source_class"
 )
 
 TASK_FIELDS: tuple[str, ...] = tuple(c.strip() for c in TASK_COLS.split(","))
@@ -697,6 +699,7 @@ async def events_since(
     *,
     since_seq: int,
     lag_s: int,
+    warning_scope: ReadFilters | None,
     inbox: str | None = None,
     from_subject: str | None = None,
     limit: int = 200,
@@ -705,7 +708,9 @@ async def events_since(
     """The cursor read. ``seq`` and ``ts`` are stamped from the server's clock
     (``server_version``); only rows older than ``lag_s`` by the server's clock
     are served, so a row still landing on another replica is not skipped for
-    ever. Sequentially consistent: every acknowledged insert is in the read."""
+    ever. Sequentially consistent: every acknowledged insert is in the read.
+    ``warning_scope=None`` excludes warnings when the caller's identity is incomplete;
+    ordinary task events retain the inbox's shared visibility."""
     ch = ch or _default_client()
     where = [
         "org = {org:String}",
@@ -724,6 +729,12 @@ async def events_since(
     if from_subject:
         where.append("from_subject = {subj:String}")
         params["subj"] = from_subject
+    if warning_scope is None:
+        where.append("event != 'budget.warning'")
+    else:
+        warning_where = scope_where(warning_scope, params)
+        if warning_where:
+            where.append(f"(event != 'budget.warning' OR ({' AND '.join(warning_where)}))")
     sql = (
         f"SELECT {EVENT_COLS} FROM loom.task_events WHERE {' AND '.join(where)} "
         "ORDER BY seq LIMIT {limit:UInt32} SETTINGS select_sequential_consistency = 1"

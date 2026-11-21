@@ -31,6 +31,8 @@ from server.insights.api import ops_ui as ui
 from server.knowledge.api import ops_conversations as conversations
 from server.knowledge.api import ops_gaps as knowledge_gaps
 from server.knowledge.api import ops_knowledge as knowledge
+from server.knowledge.api import ops_query_history as query_history
+from server.knowledge.api import ops_source_push as knowledge_source_push
 from server.knowledge.api import ops_sources as knowledge_sources
 from server.memory.api import ops_blacklist as blacklist
 from server.memory.api import ops_brief as memory_brief
@@ -64,7 +66,9 @@ _OPERATION_MODULES = (
     memory_records,
     knowledge,
     knowledge_sources,
+    knowledge_source_push,
     knowledge_gaps,
+    query_history,
     help_docs,
     conversations,
     context,

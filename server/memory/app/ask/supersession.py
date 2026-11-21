@@ -210,6 +210,8 @@ def resolve_templated_conflicts(hits: list[Any]) -> tuple[list[Any], list[Any]]:
         h
         for h in hits
         if str(getattr(h, "source", "fact") or "fact") == "fact"
+        # A governed definition is the admin's text: no other row retires it.
+        and not getattr(h, "governed", None)
         # A `duplicate` row whose value differs from its peer's is a mis-filed
         # update (the Darwin row filed under Dickens); it competes like an
         # active one and, written later, wins.

@@ -65,6 +65,12 @@ postgres:
   # (2 by default); a smaller pool fails at boot.
   poolMaxSize: 20
 
+# Private deployment-identity listener on web and workers Deployment pods.
+# 0 disables it; otherwise a whole number from 1 to 65535, except the HTTP port 7777.
+# Configure only here, including when external envFrom sources are used.
+cellProbe:
+  port: 0
+
 embedding:
   # Must match on every pod and cannot roll (see mustMatchChange below).
   # text-embedding-3-* needs OPENAI_API_KEY in secrets.extra; fake-ngram-3072

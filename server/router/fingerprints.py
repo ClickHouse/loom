@@ -168,12 +168,29 @@ _PLACEMENT_ORG_MAX = 6 * cell.ORG_MAX_BYTES  # not a setting: derived
 
 
 def placement_refusal(cell_name: str, name: str, value: dict[str, Any]) -> str:
-    """Why a fingerprint is too large for the cell's live placements ('' when it is not): a
-    placement body (`{org, cell, fingerprint}`, the org at its longest) past the router's
-    MAX_BODY_BYTES would refuse every new org; the largest fields are named."""
+    """Why a fingerprint cannot fit both live and operator placement bodies.
+
+    Reserve the longest escaped org in each envelope and name only the largest fields.
+    """
+    # Native callers materialize known defaults; retain unknown stored fields too.
+    value = {**value, "fields": {**cell.DEFAULTS, **value["fields"]}}
     # The default encoding is the longest: spaces after separators, non-ASCII escaped.
     size = (
-        len(json.dumps({"org": "", "cell": cell_name, "fingerprint": value})) + _PLACEMENT_ORG_MAX
+        max(
+            len(json.dumps({"org": "", "cell": cell_name, "fingerprint": value})),
+            len(
+                json.dumps(
+                    {
+                        "org": "",
+                        "deployment_id": value["fields"].get(
+                            "deployment_id", cell.DEFAULTS["deployment_id"]
+                        ),
+                        "fingerprint": value,
+                    }
+                )
+            ),
+        )
+        + _PLACEMENT_ORG_MAX
     )
     if size <= MAX_BODY_BYTES:
         return ""

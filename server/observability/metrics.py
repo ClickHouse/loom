@@ -35,6 +35,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from server.core.diagnostics import public_only
 from server.settings import settings as _settings
 
 log = logging.getLogger(__name__)
@@ -399,6 +400,7 @@ def auth_refusal_reason(error: BaseException | None) -> str:
     return reason if reason in AUTH_REFUSAL_REASONS else "invalid"
 
 
+@public_only
 def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:
     """One tick of `loom.auth.refusals`. Never raises."""
     if _auth_refusals is None:
@@ -415,6 +417,7 @@ def record_auth_refusal(error: BaseException | None, *, transport: str) -> None:
         pass
 
 
+@public_only
 def record_agent_provisioned(org: str, trust: str, *, outcome: str) -> None:
     """One tick of `loom.auth.agents_provisioned`; `outcome` is made or at_cap.
     Never raises."""
@@ -428,6 +431,7 @@ def record_agent_provisioned(org: str, trust: str, *, outcome: str) -> None:
         pass
 
 
+@public_only
 def record_search_quality(
     op_name: str,
     *,
@@ -628,6 +632,7 @@ def record_search_quality(
         pass
 
 
+@public_only
 def record_judged_relevance(
     *, relevance: float, verdict: str, namespace: str, scheme: str = ""
 ) -> None:
@@ -665,6 +670,7 @@ def record_judged_relevance(
         pass
 
 
+@public_only
 def record_cost(
     op_name: str,
     *,
@@ -721,6 +727,7 @@ def _tracker_instruments(meter: Any) -> tuple[Any, Any]:
     return sections, section_ms
 
 
+@public_only
 def record_tracker_section(*, template: str, status: str, ms: float, restricted: bool) -> None:
     """One tracker.answer section: its template, its status and the time its read
     took. Labels are bounded: templates come from the
@@ -760,6 +767,7 @@ def model_label(model: str) -> str:
     return UNLISTED_MODEL
 
 
+@public_only
 def record_llm_fallback(*, from_model: str, to_model: str, reason: str) -> None:
     """One LLM call answered by the fallback model. Bounded labels: models
     through `model_label`, `reason` from server/llm/fallback.py (an HTTP status
@@ -798,6 +806,7 @@ def _extraction_histograms(meter: Any) -> tuple[Any, Any]:
     return extraction_yield, cost_per_row
 
 
+@public_only
 def record_extract_cost_per_row(*, namespace_kind: str, cost_usd: float, rows: int) -> None:
     """One extraction's provider dollars per row written. A
     call that wrote nothing records its whole cost against one row, as the
@@ -814,6 +823,7 @@ def record_extract_cost_per_row(*, namespace_kind: str, cost_usd: float, rows: i
         pass
 
 
+@public_only
 def record_llm_response_cache(*, model: str, outcome: str) -> None:
     """One LLM call checked against the exact-prompt response cache. Bounded
     labels: the model through `model_label`, `outcome` is hit | miss."""
@@ -827,6 +837,7 @@ def record_llm_response_cache(*, model: str, outcome: str) -> None:
         pass
 
 
+@public_only
 def record_worker_pass(name: str, *, success: bool, duration_ms: float) -> None:
     """One tick of `loom.worker.passes` + `loom.worker.pass_duration_ms`.
 
@@ -845,6 +856,7 @@ def record_worker_pass(name: str, *, success: bool, duration_ms: float) -> None:
         pass
 
 
+@public_only
 def record_memory_drop(*, namespace: str, stage: str, reason: str, n: int = 1) -> None:
     """Count `n` dropped items at `stage` for `reason` (both bounded enums)."""
     if _memory_drops is None:
@@ -862,6 +874,7 @@ def record_memory_drop(*, namespace: str, stage: str, reason: str, n: int = 1) -
         pass
 
 
+@public_only
 def record_attribute_tagged(*, namespace: str, attribute: str) -> None:
     """Count one attribute:<class> label written."""
     if _attribute_tagged is None:
@@ -874,6 +887,7 @@ def record_attribute_tagged(*, namespace: str, attribute: str) -> None:
         pass
 
 
+@public_only
 def record_enumeration_shaped(*, namespace: str) -> None:
     """Count one enumeration-shaped memory.search query."""
     if _enumeration_shaped is None:
@@ -884,6 +898,7 @@ def record_enumeration_shaped(*, namespace: str) -> None:
         pass
 
 
+@public_only
 def record_policy_decision(*, namespace: str, mode: str, decision: str, errored: bool) -> None:
     """Count one history-policy gate decision (bounded labels)."""
     if _policy_decisions is None:
@@ -902,6 +917,7 @@ def record_policy_decision(*, namespace: str, mode: str, decision: str, errored:
         pass
 
 
+@public_only
 def record_procedure_run(*, namespace: str, ok: bool) -> None:
     """Count one reported procedure execution by outcome."""
     if _procedure_runs is None:
@@ -918,6 +934,7 @@ def record_procedure_run(*, namespace: str, ok: bool) -> None:
         pass
 
 
+@public_only
 def record_procedure_evolve(*, namespace: str, result: str) -> None:
     """Count one evolve call by result (changed / stable / template)."""
     if _procedure_evolve is None:
@@ -954,6 +971,7 @@ def messages_bucket(messages: int) -> str:
     return next((label for top, label in MESSAGES_BUCKETS if n <= top), MESSAGES_BUCKET_OVER)
 
 
+@public_only
 def record_extraction_build(
     *,
     namespace: str,
@@ -986,6 +1004,7 @@ def record_extraction_build(
         pass
 
 
+@public_only
 def record_paid_error(op_name: str, *, namespace: str, error_code: str) -> None:
     """Count a failed request that had already paid an upstream call."""
     if _paid_errors is None:
@@ -1003,6 +1022,7 @@ def record_paid_error(op_name: str, *, namespace: str, error_code: str) -> None:
         pass
 
 
+@public_only
 def record_memory_write(*, namespace: str, outcome: str) -> None:
     """Count a belief-revision outcome. `outcome` must be a bounded enum."""
     if _memory_writes is None:

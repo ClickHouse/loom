@@ -119,6 +119,7 @@ def test_a_5xx_is_backend_unavailable_and_a_429_rate_limited_whatever_the_code()
 # Every server error code and the SDK class a caller catches it as (docs/reference/python-sdk.md).
 _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "VALIDATION_FAILED": ValidationError,
+    "VECTOR_INPUT_TOO_LARGE": ValidationError,
     "BAD_CONFIG": ValidationError,  # a 422 a document source's config or item is refused with
     "AUTH_INSUFFICIENT": AuthInsufficient,
     "IDENTITY_INCOMPLETE": ValidationError,
@@ -126,6 +127,7 @@ _SERVER_CODE_CLASSES: dict[str, type[LoomError]] = {
     "PRECONDITION_FAILED": PreconditionFailed,
     "GRANT_WOULD_DOWNGRADE": PreconditionFailed,
     "READS_LLM_FREE": PreconditionFailed,
+    "SESSION_PROTECTION_REQUIRED": PreconditionFailed,
     "OVERLOADED": Overloaded,
     "RATE_LIMITED": RateLimited,
     "BACKEND_UNAVAILABLE": BackendUnavailable,

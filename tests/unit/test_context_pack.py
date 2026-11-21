@@ -4,6 +4,11 @@ import pytest
 
 from server.knowledge.api.models_knowledge import _SearchHit
 from server.memory.domain.context_layout import _ordered_section_names
+from tests.unit.checked_pack_fakes import (
+    install_pack_knowledge,
+    install_pack_stack,
+    install_pack_target,
+)
 
 
 def test_ordered_section_names_honors_valid_custom_order_and_appends_rest() -> None:
@@ -104,8 +109,8 @@ def test_context_pack_section_order_is_independent_of_completion_order(
             NS(rendered="<wm>x</wm>", blocks=[NS(block_key="b1", content="x")], block_count=1),
         ),
     )
-    monkeypatch.setattr(
-        "server.memory.app.stack.handle_memory_stack",
+    install_pack_stack(
+        monkeypatch,
         _stub(
             "memory_stack",
             NS(
@@ -180,8 +185,8 @@ def test_context_pack_section_order_is_independent_of_completion_order(
             ),
         ),
     )
-    monkeypatch.setattr(
-        "server.knowledge.app.knowledge_search.handle_knowledge_search",
+    install_pack_knowledge(
+        monkeypatch,
         _stub(
             "knowledge",
             NS(
@@ -250,7 +255,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
         "server.memory.app.procedure.handle_procedure_match",
         "server.knowledge.app.conversations.handle_conversation_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
     async def _knowledge(*a: Any, **k: Any) -> Any:
         return NS(
@@ -280,7 +285,7 @@ def test_context_pack_cites_the_knowledge_section_when_the_hit_carries_one(
             ]
         )
 
-    monkeypatch.setattr("server.knowledge.app.knowledge_search.handle_knowledge_search", _knowledge)
+    install_pack_knowledge(monkeypatch, _knowledge)
     out = asyncio.run(
         handle_context_pack(
             ContextPackInput(
@@ -318,8 +323,8 @@ def _stub_all_sections(monkeypatch: pytest.MonkeyPatch) -> None:
         "server.memory.app.profile.handle_profile_render",
         _stub(NS(rendered="<profile>p</profile>", labels=["p"], section_count=1)),
     )
-    monkeypatch.setattr(
-        "server.memory.app.stack.handle_memory_stack",
+    install_pack_stack(
+        monkeypatch,
         _stub(
             lambda inp: NS(
                 entries=[
@@ -482,7 +487,7 @@ def test_context_pack_marks_a_conflicted_memory_on_the_query_path(
         "server.knowledge.app.conversations.handle_conversation_search",
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
     from server.memory.api.models_search import MemorySearchOutput, _MemorySearchHit
 

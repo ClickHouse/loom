@@ -286,6 +286,9 @@ than `namespace`:
   token lists them under keys prefixed `~<user>~` (or `~<user>~<session>~`).
 - `code.search` breaks ties with the scope's own user's recent files, whatever
   `user_id` the body names.
+- `memory.search`'s term leg serves a governed definition under any read scope: an admin
+  published it for every reader of the namespace ([governed definitions in
+  search](#governed-definitions-in-search)).
 - A `context.pack` leg the scope cannot bound (conversations, which carry no user, and
   the runs manifest, which reads every session of a user) answers nothing.
 - `namespace.inventory` counts memories and runs, and the agents, authors and subjects on
@@ -388,6 +391,65 @@ carries its term and aliases, its `verdict` (`governed` or `lapsed`), the `lapse
 definition that holds it, as `name` and the `winner`'s key (the latest promotion wins, a
 tie settled by its promotion event). One past the ceiling is `capped`, and its source is
 not read.
+
+### Governed definitions in search
+
+`memory.search` serves a governed definition first when the query names its term or one of
+its aliases, marked `governed: true`. This term leg runs wherever `memory.search` runs:
+inside `memory.ask` and `context.pack`, and in `loom_search`'s memory section.
+
+- **What it reads.** The names of the live shared definitions of the addressed namespace
+  only, whatever `namespace_scope` fans out over, at most `memory_shared_definitions_max` of
+  them (past it, the most recently promoted, and `term_leg` is `capped`). It reads the full
+  values, and reads and grades the sources, of the definitions the query names and of those
+  that share a name with one, and no others, without sequential consistency: a promotion on
+  another replica a moment ago may miss a search. It runs beside the other legs, and once
+  they are done the search waits at most `memory_term_leg_wait_ms` more for it (a re-entrant
+  pass no longer than its time left). A fixed work budget also bounds normalization,
+  name comparisons and body decoding for validation. Excessive work withholds the
+  entire leg as `timed_out`; the stored definitions and promotion rules are unchanged.
+- **Matching.** The query and each name lose their format characters and go through NFKC
+  with whitespace collapsed; a combining mark joins the letter or number before it. A name
+  matches at whole characters with no neighbour that continues its edge: next to a Latin
+  letter, digit, `_`, `+` or `#`, another of those; next to a letter of another script
+  written with spaces (Cyrillic, Greek, Devanagari), any letter outside Latin or any digit;
+  before Hangul, a Hangul letter, and after it nothing, since particles follow; next to Han,
+  Kana, Thai, Lao, Khmer, Myanmar or punctuation, nothing. So `MRR` matches in "什么是ＭＲＲ" and
+  `ARR` in "ARR은", while `рост` does not match inside "простой". Case is decided per word of
+  a name: a word all in capitals, or with a capital after its first letter, matches only as
+  written (`IT` does not match "what is it"); any other matches case-folded.
+- **Placement.** Named definitions lead the served list in the order their names first
+  appear in the query, the longer name first where two start together, then the latest
+  promotion; a derived aggregate's computed row stays above them. Any other hit under the
+  same key in the addressed namespace is left out. They count within `top_k` and are cut
+  last; what is cut, a governed hit or one it pushed out, leads the next page. A parked
+  governed hit is checked again against the original query and current promotion and
+  source before it is served; an unread check withholds it. Whole bodies count within
+  `body_budget_tokens`; a definition that does not fit keeps an excerpt marked truncated.
+  No floor,
+  threshold or later stage drops or reorders them: not `min_similarity`, the calibration,
+  `loom_search`'s floors and answer-first rule, the tracker verdict's memory cap (within
+  which they count), `context.pack`'s packing or `memory.ask`'s check for restated values.
+- **Scores.** `similarity` and `distance` are the definition's shared embedding's (`0` and
+  `1` without one), `rank_score` is above every hit's but a computed row's and
+  `below_threshold` is never set. A response that serves one has `abstain` false;
+  `retrieval_confidence` and `retrieval_risk` describe the other hits.
+- **When it is off.** A page handle, and a field that asks for other rows: `memory_type`,
+  `tags` or `category` (not with `tags_soft` or `category_soft`), `as_of`, `min_body_chars`,
+  `recent_first` or `anchor_first` above 0, or `legs` without `memory`. An invalid Unicode
+  query turns it off when the bounded Unicode check reads it; a query beyond that check's
+  work bound reports `timed_out` before validation. A field that says whose rows to read
+  (`agent`, `user_id`, `session_id`, `session_ids`, `run_id`, `scope`) keeps it on, and
+  `exclude_keys` drops its keys.
+- **`term_leg`** on the response says what it did: `complete`, `empty` (no definitions),
+  `capped`, `timed_out`, `failed` (a read failed, so nothing was served) or `off`.
+- **Scope.** It serves governed definitions under any read scope and under `scope`
+  `private`, the default: an admin published them for every reader of the namespace.
+- **Misses.** A search that serves a governed definition, or whose leg did not report
+  `complete` or `empty` (`off` included), records no [knowledge
+  gap](../architecture/knowledge-gaps.md#recording-misses) miss.
+- **Stored answers.** A promotion and a demotion move the namespace's memory write mark, so
+  `memory.ask` reuses no answer from before them once the mark lands.
 
 Why two layers: agents write freely and often redundantly under their own identity,
 while a curated fact the whole namespace should rely on needs one canonical key, an

@@ -239,6 +239,16 @@ class FakeLLMClient:
             synthesized = json.dumps({"fields": fields})
         elif _STAGE3_ANCHOR in system or _SCHEMA_ANCHOR in system:
             synthesized = json.dumps(_synthesize_typed_record(system, user))
+        elif "Draft one metric definition from the evidence supplied as JSON data." in system:
+            synthesized = json.dumps(
+                {
+                    "term": "Example metric",
+                    "aliases": [],
+                    "body": "Metric described by the supplied evidence.",
+                    "tables": [],
+                    "columns": [],
+                }
+            )
         elif _PROFILE_ANCHOR in system:
             synthesized = json.dumps(_fill_profile(system, user))
         elif _DECISION_ANCHOR in system:

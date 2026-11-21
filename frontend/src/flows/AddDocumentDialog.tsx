@@ -21,7 +21,14 @@ import {
   tagsFrom,
   titleFromName,
 } from "../lib/fileIngest";
-import { FolderTooLarge, pickedFolder, type ReadSkips, readFolders, skipsLine, takeDropped } from "../lib/folderUpload";
+import {
+  FolderTooLarge,
+  pickedFolder,
+  type ReadSkips,
+  readFolders,
+  skipsLine,
+  captureFileDrop,
+} from "../lib/folderUpload";
 import { BatchUpload } from "./BatchUpload";
 import { AllowPartial, IngestProgress, PickedFile, readableFormats, useKnowledgeFormatsRead } from "./FileIngest";
 
@@ -38,6 +45,8 @@ interface Props {
   /** The Library has not listed all its collections yet (or holds too many to list): a
    *  folder is taken once it has. Without it and without `tree`, folders are not taken here. */
   foldersLater?: boolean;
+  /** Files captured by the Library drop that opened this dialog. */
+  initialDrop?: ReturnType<typeof captureFileDrop>;
   onAdded: () => void;
   /** When set, the dialog opens in Replace mode: the source_uri is
    *  locked to this value (the new file or text is the document's next
@@ -82,6 +91,7 @@ export function AddDocumentDialog({
   place,
   tree,
   foldersLater = false,
+  initialDrop,
   onAdded,
   replaceMode,
 }: Props) {
@@ -228,10 +238,7 @@ export function AddDocumentDialog({
     onPickFile(files[0] ?? null);
   };
 
-  // The entries are taken while the drop lasts: the browser empties the list once it returns.
-  const onDrop = (e: React.DragEvent) => {
-    const { entries, files } = takeDropped(e.dataTransfer.items ?? []);
-    if (!e.dataTransfer.items?.length) files.push(...Array.from(e.dataTransfer.files ?? []));
+  const onDropped = ({ entries, files }: ReturnType<typeof captureFileDrop>) => {
     if (entries.length === 0 || replaceMode || !tree) {
       if (entries.length && !files.length) {
         setError(
@@ -271,6 +278,11 @@ export function AddDocumentDialog({
     if (!sourceUri) setSourceUri(f.name);
     if (!title) setTitle(titleFromName(f.name));
   };
+
+  // A drop outside the dialog keeps the collections it opened with, as a drop inside does.
+  useEffect(() => {
+    if (initialDrop) onDropped(initialDrop);
+  }, [initialDrop]);
 
   const tags = () => tagsFrom(tagsInput);
   const canSubmit =
@@ -493,7 +505,7 @@ export function AddDocumentDialog({
                 <DropZone
                   data-testid="add-doc-drop"
                   busy={busy !== null || reading !== null}
-                  onDrop={onDrop}
+                  onDrop={(e) => onDropped(captureFileDrop(e.dataTransfer))}
                   className="space-y-2 p-3"
                 >
                   {file && verdict && <PickedFile file={file} verdict={verdict} />}

@@ -42,8 +42,8 @@ export interface ListToolbarProps {
  * A list page's toolbar, the one element on the page that stays at the top as the list
  * scrolls. It is one fixed 48 px row (a 32 px Click UI field and 8 px around it): while
  * rows are selected, the selection and its actions take the search's place in the same
- * row, so the bar never grows over the rows beneath it. On a phone the actions fold into
- * one "Actions" menu. Its bottom edge shows only once it is stuck, Click UI's 1 px
+ * row, so the bar never grows over the rows beneath it. Below 640 px of toolbar space,
+ * the actions fold into one "Actions" menu. Its bottom edge shows only once it is stuck, Click UI's 1 px
  * separator. `main` keeps a matching scroll padding (styles.css), so a row reached with
  * Tab is never hidden under it.
  */
@@ -61,6 +61,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
   // The selection's Clear button leaves with it (Clear itself, or a bulk action that empties
   // the selection): focus that fell to the page goes to the search the bar brings back.
   const bar = useRef<HTMLDivElement>(null);
+  const actionsTrigger = useRef<HTMLButtonElement>(null);
   const Bar = search ? "search" : "div";
   const selecting = !!selection && selection.count > 0;
   const reasons = menuReasons(selection?.actions.map((a) => a.reason) ?? [], "list-toolbar-actions");
@@ -81,7 +82,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
         role={search ? undefined : "group"}
         aria-label={label}
         data-stuck={stuck || undefined}
-        className="list-toolbar sticky top-0 z-[2] -mx-2 mb-3 flex h-12 items-center gap-3 bg-bg px-2"
+        className="list-toolbar @container sticky top-0 z-[2] -mx-2 mb-3 flex h-12 items-center gap-3 bg-bg px-2"
       >
         {selecting && selection ? (
           <>
@@ -99,7 +100,7 @@ export function ListToolbar({ label, search = true, children, count, selection }
             <Button type="empty" htmlType="button" onClick={selection.onClear} aria-label="Clear selection">
               Clear
             </Button>
-            <div className="ml-auto hidden items-center gap-2 sm:flex">
+            <div className="ml-auto hidden items-center gap-2 @min-[640px]:flex">
               {selection.actions.map((a) => (
                 <Unavailable key={a.label} reason={a.reason}>
                   <Button
@@ -115,10 +116,10 @@ export function ListToolbar({ label, search = true, children, count, selection }
                 </Unavailable>
               ))}
             </div>
-            <div className="ml-auto sm:hidden">
+            <div className="ml-auto @min-[640px]:hidden">
               <Dropdown modal={false}>
                 <MenuTrigger>
-                  <Button type="secondary" htmlType="button" iconRight="chevron-down">
+                  <Button ref={actionsTrigger} type="secondary" htmlType="button" iconRight="chevron-down">
                     Actions
                   </Button>
                 </MenuTrigger>
@@ -130,7 +131,11 @@ export function ListToolbar({ label, search = true, children, count, selection }
                       reason={a.reason}
                       describedBy={a.reason ? reasons.idOf(a.reason) : undefined}
                       disabled={a.disabled || a.loading}
-                      onSelect={a.onClick}
+                      onSelect={() => {
+                        // A dialog opened by the item returns to the button that stays mounted.
+                        actionsTrigger.current?.focus();
+                        a.onClick();
+                      }}
                     >
                       {a.label}
                     </GatedItem>

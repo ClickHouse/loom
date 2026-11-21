@@ -57,7 +57,8 @@ The embedding settings go through `embedding.*`, and the root secret and its pre
 value through `secrets.jwtSecret` and `secrets.jwtSecretPrevious`; the chart guards these
 (below). The root secret can instead live in the `secrets.existingSecret` Secret, whose
 contents the chart cannot check. The chart refuses all of them in `env`, `extraEnv`,
-`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. Every other
+`settingsFile` and `secrets.extra`, and an `envFrom` source must not carry them either. The
+deployment probe port goes through `cellProbe.port` below. Every other
 setting goes in `env` (plain values) or `secrets.extra` (keys), named as in
 the [configuration reference](../reference/configuration.md). `settingsFile` takes the same
 settings as the YAML settings file holds them, lowercase and typed:
@@ -78,6 +79,44 @@ in the same upgrade, but it refuses to start on a value only the new build accep
 new choice of an existing setting, a widened bound). Set such a value in the upgrade
 after the one that changes the image. A live setting can also change without a rollout
 ([runtime settings](./runtime-settings.md)). `values.yaml` documents the chart's own values.
+
+### Preparing a cell
+
+For [cell preparation](../architecture/cells.md#preparing-a-cell), enable the private
+deployment-identity listener in the release's values:
+
+```yaml
+cellProbe:
+  port: 8777
+```
+
+Upgrade the release and wait for the web and, when enabled, workers Deployments to
+finish rolling before running prepare. Both pod types run the listener; a separate
+workers child does not. The listener requires Postgres and authentication; this
+value does not configure those prerequisites.
+
+The chart creates a ClusterIP Service named `<fullname>-cell-probe`, shortening the
+fullname to keep the suffix within 63 characters. It publishes unready pod addresses
+and selects only those two workload types. Its configured origin is
+`http://<probe-service>.<namespace>.svc:<port>`. A later cell passes that origin as
+`--probe-url`; the router appends `/v1/health/deployment`. For the first cell, put the
+origin in the router's `LOOM_ROUTER_UPSTREAM_PROBE_URL` instead and omit `--probe-url`
+from prepare. The full direct diagnostic endpoint is
+`http://<probe-service>.<namespace>.svc:<port>/v1/health/deployment`.
+
+The default port is zero, which disables the listener and Service. Enabled ports
+must be whole numbers from 1 to 65535 except 7777. Set the port only through
+`cellProbe.port`: the chart refuses it in `env`, `extraEnv`, `secrets.extra` and
+`settingsFile`, and renders an explicit value, including zero, over `envFrom`.
+The endpoint membership label `loom.clickhouse.com/cell-probe` is chart-owned when
+enabled. Application traffic and health probes continue to use the HTTP port.
+
+ClusterIP supplies routing, not authentication. The listener is unauthenticated and
+returns nonsecret deployment identity. With the chart's ingress NetworkPolicy on,
+add a separate ingress policy allowing the probe port from router pods and the CLI's
+location; without ingress isolation, cluster peers can reach it. The chart does not
+add that rule. A load-balanced response does not prove every process was sampled;
+the cell preparation checks remain required.
 
 ### On a laptop
 

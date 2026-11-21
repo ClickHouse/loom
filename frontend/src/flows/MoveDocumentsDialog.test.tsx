@@ -44,6 +44,7 @@ function dialog(
   uris = ["doc://a.md", "doc://b.md"],
   places = PLACES,
   placesReading: "loading" | "failed" | "truncated" | null = null,
+  action: "move" | "add-to-collection" = "move",
 ) {
   const onMoved = vi.fn();
   const onClose = vi.fn();
@@ -55,6 +56,7 @@ function dialog(
       sourceUris={uris}
       places={places}
       placesReading={placesReading}
+      action={action}
       onMoved={onMoved}
       onClose={onClose}
     />,
@@ -93,6 +95,62 @@ describe("moveSummary", () => {
 });
 
 describe("MoveDocumentsDialog", () => {
+  it("adds to a collection by moving, explains relocation and sharing, and excludes namespace destinations", async () => {
+    answers({ found: true, results: [{ source_uri: "doc://a.md", moved: true, reason: "" }] });
+    const { onMoved, onClose } = dialog(["doc://a.md"], PLACES, null, "add-to-collection");
+    expect(screen.getByRole("dialog", { name: "Add 1 document to a collection" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Adding moves 1 document out of Ingest. Each document lives in one place."),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /To/ }));
+    expect(screen.queryByText("Namespace bench")).not.toBeInTheDocument();
+    expect(screen.getByText("My files")).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Engineering"));
+    expect(screen.getByText("They take Engineering's sharing: whoever reads it reads them.")).toBeInTheDocument();
+    expect(await axeViolations(screen.getByRole("dialog"))).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(api.moveKnowledge).toHaveBeenCalledWith(
+      { org: "acme", namespace: "col-ingest" },
+      "col-eng",
+      ["doc://a.md"],
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+    await waitFor(() => expect(onMoved).toHaveBeenCalledWith(["doc://a.md"]));
+    expect(toast).toHaveBeenCalledWith("Moved 1 document to Engineering", "ok");
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("offers no namespace when there is no collection destination", () => {
+    dialog(["doc://a.md"], [PLACES[0]], null, "add-to-collection");
+    expect(screen.getByText("There is no other collection you can add documents to.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Move" })).toBeDisabled();
+  });
+
+  it("keeps Add to collection open after a partial failure and retries only the remaining documents", async () => {
+    answers({
+      found: true,
+      results: [{ source_uri: "doc://a.md", moved: true, reason: "" }],
+      error: new Error("boom"),
+    });
+    const { onClose } = dialog(undefined, PLACES, null, "add-to-collection");
+    await pick("Engineering");
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("1 document moved before the call that failed.");
+    expect(
+      screen.getByText("Adding moves 1 document out of Ingest. Each document lives in one place."),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    answers({ found: true, results: [] });
+    await userEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(api.moveKnowledge).toHaveBeenLastCalledWith(
+      { org: "acme", namespace: "col-ingest" },
+      "col-eng",
+      ["doc://b.md"],
+      expect.any(AbortSignal),
+      expect.any(Function),
+    );
+  });
   it("moves to the place picked and says whose sharing they take", async () => {
     answers({
       found: true,

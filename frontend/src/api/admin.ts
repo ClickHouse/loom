@@ -260,6 +260,8 @@ export interface NamespaceInfo {
    *  to have its prompt/completion text captured. */
   capture_generation_io?: boolean | null;
   daily_cost_cap_usd?: number;
+  daily_user_cost_cap_usd?: number;
+  budget_alert_inbox?: string;
   consolidation_enabled: boolean;
   conflict_threshold: number | null;
   visibility?: "private" | "public";
@@ -307,6 +309,8 @@ export interface NamespaceRegisterFields {
   tags?: string[];
   active?: boolean;
   daily_cost_cap_usd?: number;
+  daily_user_cost_cap_usd?: number;
+  budget_alert_inbox?: string;
   consolidation_enabled?: boolean;
   conflict_threshold?: number | null;
   requires_approval?: boolean;
@@ -335,6 +339,12 @@ export async function registerNamespace(
     consolidation_enabled: opts.consolidation_enabled ?? false,
     requires_approval: opts.requires_approval ?? false,
   };
+  if (opts.daily_user_cost_cap_usd !== undefined) {
+    body["daily_user_cost_cap_usd"] = opts.daily_user_cost_cap_usd;
+  }
+  if (opts.budget_alert_inbox !== undefined) {
+    body["budget_alert_inbox"] = opts.budget_alert_inbox;
+  }
   if (opts.conflict_threshold !== undefined) {
     body["conflict_threshold"] = opts.conflict_threshold;
   }

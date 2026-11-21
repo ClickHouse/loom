@@ -20,6 +20,8 @@ export interface CollectionEntry {
   description?: string;
   /** What it is called on screen; "" for none (then its name is shown). */
   title?: string;
+  /** Live documents directly in this collection; unknown unless counts were requested. */
+  document_count?: number | null;
 }
 
 export interface CollectionListPage {
@@ -30,10 +32,11 @@ export interface CollectionListPage {
 /** The collections the caller can read, by name, one page at a time. */
 export async function listCollections(
   org: string,
-  opts: { cursor?: string | null; limit?: number } & RequestOpts = {},
+  opts: { cursor?: string | null; limit?: number; includeDocumentCounts?: boolean } & RequestOpts = {},
 ): Promise<CollectionListPage> {
   const body: Record<string, unknown> = { org, limit: opts.limit ?? COLLECTIONS_PAGE };
   if (opts.cursor) body["cursor"] = opts.cursor;
+  if (opts.includeDocumentCounts) body["include_document_counts"] = true;
   const r = await post<CollectionListPage>("/v1/collection.list", body, opts.signal);
   return { collections: r.collections ?? [], next_cursor: r.next_cursor ?? null };
 }

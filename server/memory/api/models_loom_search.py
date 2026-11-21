@@ -1,5 +1,5 @@
-"""search.query — one question over memory, profile, knowledge, conversations and,
-for a defect report under a code scope, the tracker record.
+"""search.query — one question over memory, profile, knowledge, conversations and
+authorized tracker records. A scoped defect report gets a duplicate verdict.
 
 The same fan-out the MCP `loom_search` tool answers with (the op's tool name
 is `loom_search`; MCP serves it through a synthetic descriptor that keeps its
@@ -28,12 +28,14 @@ class SearchInput(BaseModel):
     agent: str = "-"
     # The question, searched in every plane at once.
     query: str = Field(min_length=1)
-    # At most this many hits per section (1-100); the tracker leg caps it at 10.
+    # At most this many hits per section (1-100); tracker search caps it at 50,
+    # duplicate checks at 10.
     top_k: int = Field(default=5, ge=1, le=100)
     # Tag filter for the memory and knowledge legs; profile and conversations ignore it.
     tags: list[str] = Field(default_factory=list)
-    # `this` searches `namespace` only; `all_mine` (the default) also reads the
-    # caller's own memory-kind namespaces.
+    # Memory, knowledge, profile and conversation scope: `this` reads the addressed
+    # namespace; `all_mine` (default) adds readable memory-kind namespaces.
+    # Tracker search independently reads authorized tracker namespaces.
     namespace_scope: Literal["this", "all_mine"] = "all_mine"
     # Named `memory.search` preset for the memory leg (`fast`, `balanced`, `quality`, ...);
     # empty = the server's defaults.
@@ -52,7 +54,7 @@ class SearchInput(BaseModel):
 class SearchOutput(BaseModel):
     """The sections, each `{"results": [...], ...}` as its plane's search
     returns it, or `{"error": ..., "results": []}` when that leg failed.
-    `tracker` (the duplicate-check verdict) leads when the question was a
+    `tracker` carries similar issues and PRs; a duplicate-check verdict leads for a
     defect report; `withheld` counts what the answer-first rules held back
     and why."""
 
@@ -64,8 +66,9 @@ class SearchOutput(BaseModel):
                 data.pop(key, None)
         return data
 
-    # The duplicate-check verdict for a defect-shaped query under a code scope;
-    # absent otherwise, or when that leg failed or timed out.
+    # Cited issue/PR matches, or a duplicate-check verdict for a scoped defect report
+    # even with no matches; absent for empty general search or an unavailable, failed
+    # or timed-out tracker leg.
     tracker: dict[str, Any] | None = None
     # The `memory.search` result plus the scoped repository's decisions, rendered as a
     # reader block, without the hits the calibration flagged below its threshold

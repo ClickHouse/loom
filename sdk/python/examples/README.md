@@ -1,6 +1,6 @@
 # Examples
 
-Runnable, self-contained scripts for `clickhouse-loom`; each was executed against a live Loom before it landed here and the output below is the actual run. Every script reads `LOOM_BASE_URL`, `LOOM_API_KEY` and `LOOM_ORG` from the environment and registers a throwaway namespace. The TypeScript SDK ships the twin of `agent_memory.py` (and a session-resume example) under `sdk/typescript/examples/`.
+Runnable, self-contained scripts for `clickhouse-loom`. The memory example's output below was recorded against a live Loom; the handoff output illustrates its checked result. The memory example reads `LOOM_BASE_URL`, `LOOM_API_KEY` and `LOOM_ORG` from the environment and registers a throwaway namespace. The handoff example uses an existing namespace and two separate tokens. The TypeScript SDK ships the twin of `agent_memory.py` (and a session-resume example) under `sdk/typescript/examples/`.
 
 ## agent_memory.py
 
@@ -36,3 +36,59 @@ memory.search is idempotent: True; role viewer
 memory.get of a missing key → found=False
 unknown op → NotFound (RESOURCE_NOT_FOUND)
 ```
+
+## multi_agent_handoff.py
+
+A planner posts a task, a worker claims it with a lease fence and writes the result,
+and the planner reads that result with its writing principal and source class.
+The two agents calculate in Python without an agent LLM or extraction API call.
+Memory writes use the server's configured embedding provider.
+
+Start an auth-enabled Loom and register a namespace before running this example.
+Set `LOOM_BASE_URL`, `LOOM_ORG` and `LOOM_NAMESPACE` to that deployment and namespace.
+Run the token commands in an operator shell configured for the same deployment,
+then run the script from the repository root with `clickhouse-loom` installed:
+
+```bash
+export LOOM_PLANNER_API_KEY="$(loom mint-token --subject handoff-planner \
+  --org "$LOOM_ORG" --namespaces "$LOOM_NAMESPACE" --roles admin --ttl-days 1)"
+export LOOM_WORKER_API_KEY="$(loom mint-token --subject handoff-worker \
+  --org "$LOOM_ORG" --namespaces "$LOOM_NAMESPACE" --roles writer --ttl-days 1)"
+python sdk/python/examples/multi_agent_handoff.py
+```
+
+Both commands mint service-account tokens, the default. The subjects must match
+the commands: the script checks the planner's posting subject and the worker's
+complete `process:handoff-worker` actor. The planner needs admin to register the
+inbox; the worker needs writer on the same namespace.
+
+The inbox belongs to the worker's agent. Its random suffix is shared with the
+result memory key and task idempotency key. The worker sends the claim's fence
+with its heartbeat and completion. The planner reads `outcome.memory_key`, then
+verifies the stored value, agent, actor and `source_class`. It reads across the
+two agents within their shared namespace and default user/session scope; the
+example does not promote the memory to another namespace.
+
+The stored value includes the task id so separate calculations have distinct
+results. A write that reports no new memory cancels the task before completion;
+cleanup never follows or deletes a merged peer's key.
+
+Expected output with an auth-enabled server using fake embedding and LLM
+providers and distinct signed principals:
+
+```text
+inbox: handoff-dbeb0efa3cae3e9a (retained)
+task: done
+result: 7 squared is 49
+writer agent: handoff-worker
+writer actor: process:handoff-worker
+source class: asserted
+cleanup: result memory is missing
+```
+
+The example checks the task lifecycle, provenance and cleanup; it does not measure
+agent reasoning or retrieval quality. The suffix differs each run. In `finally`,
+the example cancels unfinished work with its current owner's token and deletes
+the result memory, then checks that the memory is missing. The inbox and task
+history remain; there is no inbox-delete operation. A failed check or API call
+raises an error.

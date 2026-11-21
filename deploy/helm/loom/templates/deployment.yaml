@@ -56,6 +56,9 @@ spec:
       labels:
         {{- include "loom.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: web
+        {{- if ne (include "loom.cellProbePort" .) "0" }}
+        loom.clickhouse.com/cell-probe: "true"
+        {{- end }}
         {{- with .Values.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

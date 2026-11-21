@@ -151,9 +151,14 @@ export function assistantChat(transport: Transport): AssistantChat {
         steps: [],
         stepsCut: false,
       };
+      let complete = false;
       try {
         for await (const data of events(res, transport.baseUrl, requestId, cut.signal, touch)) {
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") {
+            complete = true;
+            continue;
+          }
+          if (complete) continue;
           const event = parse(data);
           if (!event) continue;
           if (isObject(event.error)) {
@@ -173,6 +178,7 @@ export function assistantChat(transport: Transport): AssistantChat {
       }
       if (!answer.runId)
         throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before the answer began`, { requestId });
+      if (!complete) throw new LoomError(`${ASSISTANT_ROUTE}: the stream ended before completion`, { requestId });
       pause();
       yield { type: "answer", answer };
     } finally {

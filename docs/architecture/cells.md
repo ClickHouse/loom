@@ -36,6 +36,13 @@ setup; its optional analyst-row work opens a separate verified, enrolled scope
 and obtains fresh acceptance. That bootstrap exception admits no tenant or token
 work.
 
+Local physical-death evidence requires the same host, kernel boot and PID namespace.
+It accepts an absent PID, a different process birth, or the captured birth in a
+single fresh kernel process record showing a zombie with exactly one thread. A
+zombie leader with other threads is unproved. Known-zero tagged queries remain a
+separate requirement before retirement; kernel process exit does not settle a
+query still executing in a store.
+
 The capability identifies installed code; it does not prove that every older
 process or unsafe retirement client has disappeared.
 
@@ -792,8 +799,9 @@ it only while the mode is `recording`, reading the mode row `FOR SHARE`; it runs
 `READ COMMITTED` in its own transaction and commits before the request goes on. Attach's
 write of `enforced` and these inserts never cross: an insert already running when attach
 writes the mode is placed by step 4, one that starts after reads `enforced`, a stream of
-inserts cannot hold the write off, a new-org request waits on attach for a few seconds
-at most, and an attach that stalls holding the write's lock releases it within seconds.
+inserts cannot hold the write off. If attach stalls while holding the mode lock, it
+attempts bounded cleanup. A client abort does not prove that the lock was released;
+stop and verify the exact holder before retrying.
 Attach takes `LOCK TABLE loom.tenancy_mode IN EXCLUSIVE MODE` (which waits for running
 inserts and queues later ones behind it) in short tries, in one transaction with
 server-side timeouts, then writes the mode and commits on its exact ATTACH backend.
@@ -1538,7 +1546,7 @@ participate in this protocol.
 | A cell in `recording`, the directory unreadable                                                                                                                              | a new org answers 503; the orgs it holds keep serving                                                                                                                                                                                                                                                                                                                                                                                |
 | A process stuck during first attach                                                                                                                                          | before step 3, attach refuses after `--wait` and the cell stays `recording`; after it, attach refuses, leaving the cell `enforced` and `attaching`, and a rerun resumes                                                                                                                                                                                                                                                              |
 | A recording insert held open during first attach                                                                                                                             | the mode commit's tries wait behind its `FOR SHARE` lock within `--wait`; past it attach refuses and the cell stays `recording`; a rerun resumes                                                                                                                                                                                                                                                                                     |
-| Attach stalls while it holds the mode table's lock                                                                                                                           | Postgres ends its session within seconds and releases the lock; new orgs answer within their deadline                                                                                                                                                                                                                                                                                                                                |
+| Attach stalls while it holds the mode table's lock                                                                                                                           | the client attempts bounded cleanup; if backend or lock release is unproved, stop and verify the exact holder before retrying                                                                                                                                                                                                                                                                                                        |
 | A transaction open since before step 4's snapshot                                                                                                                            | attach refuses once `--wait` runs out (a prepared one at once), naming what it waited on, and leaves `enforced`                                                                                                                                                                                                                                                                                                                      |
 | A CLI command with `LOOM_CELL` unset, started before attach's step 3                                                                                                         | it read the state while the first cell was `recording` and keeps writing ClickHouse after `serving`; the runbook sets `LOOM_CELL` on every CLI before attach, and `loom doctor --stray-orgs` names the orgs it left without a tenancy row                                                                                                                                                                                            |
 | A CLI of a build before the state read                                                                                                                                       | it is not refused on an `enforced` cell; every CLI and CI image runs a build with the read before attach ([upgrades](../operations/upgrades.md#upgrade-procedure))                                                                                                                                                                                                                                                                   |

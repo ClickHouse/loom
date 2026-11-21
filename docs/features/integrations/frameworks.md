@@ -23,13 +23,19 @@ or needs another database, vector store or cache.
 | Claude API memory tool         | `LoomMemoryTool`, `AsyncLoomMemoryTool`         | Python, `loom.integrations.claude_memory`                 | `BetaAbstractMemoryTool`, `BetaAsyncAbstractMemoryTool` from `anthropic` |
 | Claude API memory tool         | `loomMemoryTool`                                | TypeScript, `@clickhouse/loom/integrations/claude-memory` | `betaMemoryTool` from `@anthropic-ai/sdk`                                |
 | Microsoft Agent Framework      | `LoomContextProvider`                           | Python, `loom.integrations.agent_framework`               | `agent_framework.ContextProvider`                                        |
+| Google ADK                     | `LoomMemoryService`                             | Python, `loom.integrations.google_adk`                    | `google.adk.memory.BaseMemoryService`                                    |
+| Google ADK (TypeScript)        | `LoomMemoryService`                             | TypeScript, `@clickhouse/loom/integrations/google-adk`    | `BaseMemoryService` from `@google/adk`                                   |
 | Pydantic AI                    | `loom_toolset`                                  | Python, `loom.integrations.pydantic_ai`                   | `FunctionToolset`                                                        |
-| Mastra                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool` from `@mastra/core`                                         |
+| Mastra                         | `loomTools`, `LoomMemoryStorage`                | TypeScript, `@clickhouse/loom/integrations/mastra`        | `createTool`, `MemoryStorage` from `@mastra/core`                        |
 | AI SDK                         | `loomTools`                                     | TypeScript, `@clickhouse/loom/integrations/ai-sdk`        | `tool()` from `ai`                                                       |
 | n8n                            | Loom Chat Memory, Loom                          | `@clickhouse/n8n-nodes-loom`                              | AI Memory sub-node and action/tool node                                  |
 | LangGraph                      | `LoomStore`                                     | Python, `loom.integrations.langgraph`                     | `BaseStore`                                                              |
 | Strands Agents                 | `LoomMemoryStore`                               | Python, `loom.integrations.strands`                       | the `MemoryStore` protocol                                               |
 | Strands Agents                 | `LoomMemoryStore`                               | TypeScript, `@clickhouse/loom/integrations/strands`       | the same protocol, structurally                                          |
+| Pipecat                        | `LoomMemoryService`                             | Python, `loom.integrations.pipecat`                       | recall and capture `FrameProcessor`s                                     |
+| Dify                           | Remember, Recall, Search knowledge              | `integrations/dify` standalone plugin                     | Native Dify tools                                                        |
+| Haystack                       | `LoomDocumentStore`, `LoomRetriever`            | Python, `loom.integrations.haystack`                      | `DocumentStore` protocol, retrieval component                            |
+| Agno                           | `LoomMemoryDb`                                  | Python, `loom.integrations.agno`                          | `BaseDb` user-memory methods                                             |
 
 Any other framework that can call an HTTP endpoint or an MCP server uses Loom directly:
 see [agent integration](../../guides/agent-integration.md) and
@@ -159,6 +165,61 @@ or `flush` is called, which may run a call on another event loop than the one an
 was opened on; an `Agent` serves `aget` and `aput` on its own loop. `Memory` keeps its
 short-term messages in its own chat store (in process by default); only what the block
 receives reaches Loom.
+
+## Haystack
+
+`LoomDocumentStore` implements Haystack 3.5's `DocumentStore` protocol, and
+`LoomRetriever` is a native retrieval component over Loom knowledge search. Install
+`pip install 'clickhouse-loom[haystack]'` (`haystack-ai>=3.5,<3.6`).
+
+```python
+from haystack import Document, Pipeline
+from haystack.components.writers import DocumentWriter
+from loom.integrations.haystack import LoomDocumentStore, LoomRetriever
+
+store = LoomDocumentStore("acme", "support")
+DocumentWriter(store).run(
+    documents=[Document(id="travel", content="Boarding starts 30 minutes before departure.")]
+)
+pipeline = Pipeline()
+pipeline.add_component("recall", LoomRetriever(store, top_k=5))
+result = pipeline.run({"recall": {"query": "When does boarding start?"}})
+```
+
+Set `LOOM_BASE_URL` and `LOOM_API_KEY` for the deployment. The token is a Haystack
+`Secret` referencing the environment by default, so `to_dict` and pipeline exports
+carry the variable name. A token supplied with `Secret.from_token` works at runtime
+but Haystack refuses to serialize it. The store accepts `base_url=`, `api_key=`,
+`agent=` (default `haystack`) and `store=` (default `default`). Explicit endpoint URLs
+cannot contain credentials, query strings or fragments.
+
+Each store maps a document id to a hashed URI under its own `haystack://` prefix and
+marks its rows with a store tag. Native document serialization preserves ids,
+metadata, embeddings and binary fields in Loom's original-file bytes; text is indexed
+for search. A document without text indexes its id. Data stays in the user's Loom
+deployment, with no additional database, vector store or cache. Documents are shared
+by the namespace; use separate namespaces and scoped tokens for untrusted apps.
+
+The store implements count, full-document filtering, writes with Haystack duplicate
+policies and deletion. `DuplicatePolicy.NONE` has the same behavior as `FAIL`.
+Filters use Haystack's native nested comparison and logic predicates over the full
+stored documents. Counting and filtering list and hydrate the store, so large stores
+incur a full read. Missing ids raise `MissingDocumentError`; writes and batched
+deletions can partially finish when a request fails. Concurrent writes can return a
+conflict from Loom; duplicate checks are not a transaction across writers.
+
+The retriever accepts `top_k` from 1 to 100 and `search_mode` of `hybrid` (default),
+`semantic` or `lexical`. It searches only this store in this namespace, then hydrates
+full documents and removes repeated chunk hits. Results are ranked by their first
+matching chunk among at most 100 candidates; repeated chunks or concurrent deletions
+can leave fewer than `top_k` documents. Use Haystack's native `FilterRetriever` over
+the same store when filtering all documents instead of ranking a query.
+
+Haystack's trusted-module policy also applies to serialized pipelines. Loading a
+pipeline containing this adapter requires the application to trust the installed
+`loom.integrations.haystack` module according to Haystack's configuration. The adapter
+does not change that policy or register trust automatically. A pipeline constructed
+directly from the imported component works as in the example.
 
 ## OpenAI Agents SDK
 
@@ -517,6 +578,164 @@ can miss that file.
 A store is not a boundary: every reader of the namespace can read every store's documents.
 Give each user their own namespace when users must not read each other's files.
 
+## Google ADK
+
+`LoomMemoryService` implements ADK's `BaseMemoryService`, which a `Runner` takes as
+`memory_service=`. ADK's own memory tools read it: `preload_memory` searches with the
+user's message before each model call and adds the matches to the prompt, and
+`load_memory` lets the model search. A callback saves each turn. Install with
+`pip install 'clickhouse-loom[google-adk]'` (`google-adk` 2.14.x).
+
+```python
+from google.adk.agents import LlmAgent
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.tools import preload_memory
+from google.genai import types
+from loom import Agent
+from loom.integrations.google_adk import LoomMemoryService
+
+
+async def save_turn(ctx):
+    turn = [e for e in ctx.session.events if e.invocation_id == ctx.invocation_id]
+    await ctx.add_events_to_memory(events=turn)
+
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    sessions = InMemorySessionService()
+    runner = Runner(
+        app_name="support",
+        agent=LlmAgent(
+            name="assistant",
+            model="gemini-flash-latest",
+            tools=[preload_memory],
+            after_agent_callback=save_turn,
+        ),
+        session_service=sessions,
+        memory_service=LoomMemoryService(loom_agent, app_name="support"),
+    )
+    session = await sessions.create_session(app_name="support", user_id="alice")
+    message = types.Content(role="user", parts=[types.Part(text="I prefer aisle seats")])
+    async for event in runner.run_async(
+        user_id="alice", session_id=session.id, new_message=message
+    ):
+        ...
+```
+
+ADK scopes memory by app and user. Loom's authorization boundary is the namespace:
+a write can merge with another agent's row for the same user, so apps sharing a
+namespace also share that user's memory context. A service therefore serves one ADK
+app, named by `app_name`, in the namespace of its Loom agent, and refuses a call for
+another app; give each app its own namespace and service. The ADK user is the Loom
+`user_id`; empty, `-`, `*` and whitespace-padded ids raise `ValueError`.
+Extraction runs under a Loom session derived from the user and the ADK session (`adk-`
+and a digest of the pair): Loom files a turn's verbatim chunks by session alone, and ADK
+makes a session id unique per user only. A search reads all of the user's memories in the
+namespace, from every session. Remaining result slots hold up to 100 knowledge documents shared by
+the app namespace; documents carry no fact-deletion id.
+
+| ADK                     | Loom                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `add_session_to_memory` | the text of the session's events, without the ones a rewind took back, sent to `memory.set_from_messages` (400 messages a call, the op's cap); Loom extracts the facts and resolves duplicates and conflicts. A session added again is extracted again, so a callback that runs every turn, as `after_agent_callback` does, saves that turn's events, as in the example                                                                                                                                                               |
+| `add_events_to_memory`  | the same for the events given, such as the latest turn; a call without a `session_id` raises `ValueError`, since Loom files a turn's verbatim chunks by session. A turn saved before a later rewind keeps its memories: the app deletes its facts by the ids a search returns, and its verbatim passages stay until [erasure](../memory/retention-and-erasure.md) removes them                                                                                                                                                        |
+| `add_memory`            | one `memory.set` per entry with text (an entry without text is skipped) under `<key_prefix>/<first 20 hex of sha256(user and text)>`, its `timestamp` as the memory's `valid_at` when it is ISO 8601 (one without a zone is read as local time, as ADK writes its own)                                                                                                                                                                                                                                                                |
+| `search_memory`         | `memory.search` of the user's memories, followed by `knowledge.search` for remaining slots; with `honour_abstain`, leaves out memories below Loom's floor and abstaining memory results; each entry's `custom_metadata` carries `similarity` and `source`, and its `timestamp` is `valid_at` when the row has one                                                                                                                                                                                                                     |
+| `delete_memory`         | the entry id carries its key, session, writer and searched version. `memory.delete_version` deletes that exact row only; a rewritten or missing version is a no-op. Passages, summaries, knowledge hits and facts without writer/version metadata have no deletion id. Use [erasure](../memory/retention-and-erasure.md) for their content. A call without an id does nothing. Adding the session again can extract the fact again; [`blacklist.add`](../memory/conflicts-and-refusal.md#refusal-the-blacklist) refuses future writes |
+
+Events keep their text parts only: the model's thoughts and tool calls and results are not
+sent, and neither is `custom_metadata` or an entry's `author` and `id`.
+
+| `LoomMemoryService` argument | Default  | Effect                                                                                         |
+| ---------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
+| `agent`                      | required | the `loom.Agent` the service calls; ADK awaits its memory service, so a `SyncAgent` is refused |
+| `app_name`                   | required | the ADK app the service serves; a call for another app raises `ValueError`                     |
+| `top_k`                      | 10       | memories per search, from 1 to 500                                                             |
+| `honour_abstain`             | `True`   | filter the memory leg below Loom's floor or on abstention; knowledge remains available         |
+| `defer`                      | `True`   | queue the extraction on the server instead of waiting for it                                   |
+| `key_prefix`                 | `adk`    | the prefix of `add_memory`'s keys; an empty one is refused                                     |
+
+The TypeScript service implements `@google/adk` 2.5's `BaseMemoryService` interface
+(`npm install @google/adk@~2.5`). It exposes `addSessionToMemory` and `searchMemory`;
+that interface has no individual-memory deletion or event-append method. Both SDKs
+use the same derived Loom session for the same user and ADK session id. TypeScript
+options are `appName`, `topK`, `honourAbstain` and `defer`, with the Python defaults.
+
+```ts
+import { InMemorySessionService, LlmAgent, PRELOAD_MEMORY, Runner } from "@google/adk";
+import { LoomMemoryService } from "@clickhouse/loom/integrations/google-adk";
+
+const sessions = new InMemorySessionService();
+const memory = new LoomMemoryService(loomAgent, { appName: "support" });
+const runner = new Runner({
+  appName: "support",
+  agent: new LlmAgent({ name: "assistant", model: "gemini-flash-latest", tools: [PRELOAD_MEMORY] }),
+  sessionService: sessions,
+  memoryService: memory,
+  autoCreateSession: true,
+});
+for await (const event of runner.runAsync({
+  userId: "alice",
+  sessionId: "travel",
+  newMessage: { role: "user", parts: [{ text: "I prefer aisle seats" }] },
+})) {
+  /* consume the turn */
+}
+const session = await sessions.getSession({
+  appName: "support",
+  userId: "alice",
+  sessionId: "travel",
+});
+if (session) await memory.addSessionToMemory(session);
+```
+
+Save a completed TypeScript session once. Saving it again extracts it again; the
+TypeScript interface has no per-turn append operation. ADK's in-memory session
+service in these examples holds the running conversation only; Loom stores the
+extracted memories and searchable documents in the user's deployment.
+
+## Agno
+
+`LoomMemoryDb` implements Agno 3.2's `BaseDb` user-memory methods for one user and
+store. Install `pip install 'clickhouse-loom[agno]'` (`agno>=3.2,<3.3`). Pass it to a
+`MemoryManager`; configure the agent's session database separately if needed.
+
+```python
+from agno.db.schemas.memory import UserMemory
+from agno.memory import MemoryManager
+from loom import SyncAgent
+from loom.integrations.agno import LoomMemoryDb
+
+with SyncAgent(org="acme", namespace="support", agent="assistant") as loom_agent:
+    manager = MemoryManager(db=LoomMemoryDb(loom_agent, user_id="alice"))
+    manager.add_user_memory(UserMemory(memory="Prefers aisle seats"), user_id="alice")
+    memories = manager.get_user_memories(user_id="alice")
+```
+
+The database stores each native memory, including its id, topics, agent/team attribution,
+input, feedback and timestamps, as an episodic Loom row. This keeps native identifiers
+and updates intact without fact extraction or semantic duplicate merging. The native
+JSON payload follows Loom's sensitivity classification; epoch timestamps can receive
+a contact-detail label. Rows stay in
+the user's Loom deployment; the adapter adds no database, cache or vector store.
+
+Use one `LoomMemoryDb` per end user. An omitted user in a database method means its
+bound user; a different user is refused. Agno's manager defaults an omitted user to
+`default`, so pass the user to manager calls as in the example. Optional `store=`
+(default `default`) separates applications sharing that user. Keys and the derived
+Loom session include both user and store digests. Separate namespaces and restricted
+tokens remain the boundary for mutually untrusted applications.
+
+The database implements single/bulk upsert, get, list, content/topic/agent/team filters,
+sorting, pagination, topic listing, statistics and deletion. Reads hydrate full values
+and page through the bound store. Filters and sorting run over those rows locally;
+large stores therefore incur a full read. `clear_memories` clears only this bound store
+and user. Concurrent writes of one native id keep the later write; a bulk write or
+clear can partially finish when a request fails. Other `BaseDb` capabilities, including
+sessions, tracing and evaluation storage, raise `NotImplementedError`.
+
+Agno's memory manager can make model calls when it extracts or edits memories. This
+adapter makes no model call itself; its tests supply native memory objects directly.
+
 ## Pydantic AI
 
 Pydantic AI extends an agent through tools and toolsets. `loom_toolset` returns Loom's
@@ -552,7 +771,7 @@ refuses a `SyncAgent`. Message history stays with the caller, who passes it to e
 
 `loomTools(agent, scope)` returns Loom's agent verbs as Mastra tools built with
 `createTool`, keyed by name as a Mastra `Agent` takes them: the same `AgentTools` as the
-[OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83 or a later 1.x is an
+[OpenAI Agents SDK](#openai-agents-sdk) adapter. `@mastra/core` 1.83.x is an
 optional peer dependency, and needs Node 22.13 or later.
 
 ```ts
@@ -568,15 +787,72 @@ const assistant = new MastraAgent({
 });
 ```
 
-Mastra's own memory keeps threads and messages in a storage adapter that edits and deletes
-them; Loom's conversations are append-only, so the adapter offers Loom as tools rather
-than as that store. A Mastra `Memory` can keep its thread history in its own store while
-the model reads and writes long-term memory in Loom through these tools. Mastra checks
+`LoomMemoryStorage` implements the native `MemoryStorage` domain. It keeps mutable
+threads, complete message payloads and resource working memory in Loom through the SDK.
+Install `@mastra/core` 1.83.x and `@mastra/memory` alongside `@clickhouse/loom`:
+
+```ts
+import { MastraCompositeStore } from "@mastra/core/storage";
+import { Memory } from "@mastra/memory";
+import { LoomMemoryStorage } from "@clickhouse/loom/integrations/mastra";
+
+const memory = new Memory({
+  storage: new MastraCompositeStore({
+    id: "loom",
+    domains: {
+      memory: new LoomMemoryStorage(agent, { resourceId: "alice", storeId: "assistant" }),
+    },
+  }),
+  options: {
+    semanticRecall: false,
+    observationalMemory: false,
+    workingMemory: { enabled: true, scope: "resource" },
+  },
+});
+```
+
+Construct one storage and `Memory` instance per authenticated end-user. The canonical
+`resourceId` is the actual Loom `user_id` on every thread, message and resource row, so
+[user erasure](../memory/retention-and-erasure.md) covers them together. Reads without a
+resource argument remain scoped to that bound user. Cross-resource writes are refused;
+cross-resource reads return missing or empty results. Keep the same Loom agent and
+`storeId` across processes to resume the same data. A store must not be shared across
+users, and resource reassignment is unsupported.
+
+Native listing supports thread/resource filters, date and metadata filters, ordering,
+pagination and included message context across that user's threads. Lists scan the
+store's scoped rows and retrieve full values by key before filtering; large histories
+cost multiple HTTP calls. Partial updates use Loom's hash precondition and retry a
+conflict up to three times. A missing resource is created with
+`memory.set.if_match_sha256="absent"`; this requires a server that supports the absence
+precondition. Older servers return `PRECONDITION_FAILED` instead of creating it, and the
+adapter never retries unconditionally. Concurrent partial resource patches preserve
+omitted working memory and merge metadata; whole-resource saves remain replacements.
+Writes clear the default expiry. Server retention policies, explicit deletion, user
+erasure and server policy refusals still apply.
+
+Deletes use `memory.delete_version` with the exact identity and lossless version from
+the validated read. A missing row is a no-op; a concurrent rewrite is preserved and
+returns an error. Thread deletion captures the parent before deleting its observed
+messages and still removes own orphan messages when that parent is missing. Deletes are
+logical Loom tombstones; later explicit saves can recreate an entity. Batches, thread
+timestamp updates and cascading deletes are separate operations: a failure can leave
+partial work and is returned to the caller. A cascade cannot prevent a new message
+after enumeration. The adapter provides no transaction, local fallback or additional
+storage.
+
+Semantic recall, observational memory, run fencing, atomic working-memory merges and
+thread cloning are unsupported. Other storage domains are absent. The existing tools
+remain available alongside native history and working memory. Mastra checks
 each call against Loom's schema first and answers one outside it (a missing argument, an
 extra key, a `top_k` above 20, a quoted number) with its own validation message; a call
 within the schema that Loom refuses, or a server error, reaches the model as Mastra's
 failed tool result with Loom's message. Either way the model reads the message and the run
 goes on.
+
+`make test-sdk-mastra-memory` runs the native tests with a fake Loom SDK transport.
+`make test-sdk-mastra-memory-live` uses `LOOM_BASE_URL` and `LOOM_API_KEY`, with optional
+`LOOM_ORG` and `LOOM_NAMESPACE`, to run the native memory lifecycle on a test deployment.
 
 ## AI SDK
 
@@ -629,6 +905,24 @@ Without a community package, n8n's MCP Client Tool node can connect to Loom's MC
 with `?toolset=core` and a bearer token, and expose `loom_memory_set` and `loom_search`
 to its AI Agent.
 [The MCP client setup](./mcp-clients.md#other-editors-and-agents) describes that route.
+
+## Dify
+
+The [Loom tools plugin](../../../integrations/dify/README.md) runs Remember, Recall and
+Search knowledge as native Dify tools. Install its `.difypkg` from a local package
+file and configure a reachable Loom URL, a scoped writer token and the deployment's
+organization, namespace and agent. Bind the User ID form field to your app's user;
+it is separate from model-generated arguments.
+
+Remember stores a fact, Recall searches that user's memories across agents, and
+Search knowledge searches shared app documents. Both searches stay in the configured
+namespace. The plugin calls the Python SDK, adds no store and keeps data in your Loom
+deployment. [Privacy](../../../integrations/dify/PRIVACY.md) describes credentials,
+network access, provider processing and retention. The package is tested through the
+native plugin SDK against Loom; a Dify application and Dify Cloud have not been tested.
+
+The [MCP/OpenAPI setup](mcp-clients.md#hosted-builders-and-chat-apps) also works without
+the package.
 
 ## LangGraph
 
@@ -719,6 +1013,64 @@ const store = new LoomMemoryStore(agent, { tags: ["customer"] });
 | `key_prefix` / `keyPrefix`                | `strands`  | key prefix                                                    |
 | — / `scope`                               | none       | TypeScript only: a per-store user, session or run scope       |
 
+## Pipecat
+
+`LoomMemoryService` owns two Pipecat `FrameProcessor`s that share one Loom `Agent` and
+user. The recall processor sits after the user context aggregator and before the LLM; the
+capture processor sits after the assistant aggregator. On each `LLMContextFrame` the recall
+processor runs `memory.search` with the turn's latest user text and inserts the matches into
+the shared `LLMContext`. Audio frames, and a second context frame for the same user text,
+pass through with no further Loom call. After the turn, the capture processor sends the
+turn's user and assistant text to `memory.set_from_messages` when it sees the assistant
+aggregator's `LLMContextAssistantTurnFrame`.
+
+```python
+from pipecat.pipeline.pipeline import Pipeline
+from pipecat.processors.aggregators.llm_context import LLMContext
+from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
+from loom import Agent
+from loom.integrations.pipecat import LoomMemoryService
+
+async with Agent(org="acme", namespace="support") as loom_agent:
+    memory = LoomMemoryService(loom_agent, user_id="alice")
+    context = LLMContext([{"role": "system", "content": "Be helpful."}])
+    user, assistant = LLMContextAggregatorPair(context)
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            user,
+            memory.recall_processor(),
+            llm,
+            tts,
+            transport.output(),
+            assistant,
+            memory.capture_processor(),
+        ]
+    )
+```
+
+Install with `pip install 'clickhouse-loom[pipecat]'` (`pipecat-ai` 1.16.x).
+
+| Pipecat                        | Loom                                                                                                                                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `LLMContextFrame` (recall)     | `memory.search` with the turn's latest user text; with `honour_abstain`, leaves out memories below Loom's floor and adds nothing when Loom abstains; the matches replace one developer block |
+| `LLMContextAssistantTurnFrame` | the user text of the new turn and the assistant text of its response, sent to `memory.set_from_messages` (400 messages a call, the op's cap); memory blocks and empty text are not sent      |
+
+Extraction runs under a Loom session derived from the user and the service's `session_id`
+(`pipecat-` and a digest of the pair): Loom files a turn's verbatim chunks by session alone,
+and a caller may choose its session ids. When `session_id` is omitted, the service mints one
+for its lifetime, so the turns of one call share a session.
+
+| `LoomMemoryService` argument | Default  | Effect                                                                                                                                                                                      |
+| ---------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent`                      | required | the `loom.Agent` the processors call; Pipecat awaits its processors, so a `SyncAgent` is refused                                                                                            |
+| `user_id`                    | none     | the end user the memories belong to; unset, recall reads all namespace memories the token permits and extraction writes shared rows; empty, `-` or whitespace-padded ids raise `ValueError` |
+| `session_id`                 | minted   | the caller's conversation id, folded into the Loom session; unset, a fresh id is used for this service instance                                                                             |
+| `top_k`                      | 5        | memories per turn, from 1 to 500                                                                                                                                                            |
+| `honour_abstain`             | `True`   | leave out memories below Loom's floor; nothing when Loom abstains                                                                                                                           |
+| `defer`                      | `True`   | queue the extraction on the server instead of waiting                                                                                                                                       |
+
 ## Agent orchestrators
 
 A harness that runs several agents gives them shared, durable memory by mounting Loom's
@@ -757,6 +1109,9 @@ client can speak for several agents.
   has answered: the run raises, a history provider that runs after Loom's (the agent's
   in-memory one) does not record the turn, any tool's effect stays, and a streamed reply has
   already been shown.
+- **ADK carries on without memory when `preload_memory`'s search fails.** It logs a
+  warning and the model call goes on; a failed `load_memory` search or save callback fails
+  the run.
 - **An AutoGen turn fails when Loom is unreachable.** `AssistantAgent` calls
   `update_context` once per turn, before its first model call, and does not catch its
   errors.
@@ -769,6 +1124,10 @@ client can speak for several agents.
   dashboard or with `conflicts.list` ([conflicts and refusal](../memory/conflicts-and-refusal.md)).
 - **One store per event loop** for LangGraph's sync API: mixing sync and async calls on
   one store runs the agent on two loops.
+- **A Pipecat turn continues when Loom is unreachable.** The recall and capture processors
+  still push the frame they were given: the context frame reaches the model, and audio
+  frames stay on their path. A failed capture leaves the turn in the conversation but not
+  in Loom.
 
 ## Related
 
@@ -779,3 +1138,4 @@ client can speak for several agents.
 - [Context-provider architecture](../../architecture/agent-framework-adapter.md).
 - [Memory-tool architecture](../../architecture/claude-memory-adapter.md).
 - [Session history architecture](../../architecture/openai-agents-sessions.md).
+- [ADK adapter architecture](../../architecture/google-adk-adapter.md).

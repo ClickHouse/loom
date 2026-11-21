@@ -12,6 +12,14 @@ from server.memory.app.loom_search import tracker_leg as ql
 from server.tracker.api.models import TrackerDuplicateCheckOutput
 from server.transport import mcp_tools
 
+
+async def _run(
+    query: str, *, org: str, top_k: int = 5, timeout_s: float | None = None
+) -> dict[str, Any] | None:
+    plan = await ql.prepare_tracker_search(query, org=org, top_k=top_k, timeout_s=timeout_s)
+    return await ql.tracker_leg(query, plan=plan, top_k=top_k)
+
+
 DRAFT = (
     "Is this already reported? LOGICAL_ERROR in MergeTreeData::renameTempPartAndAdd: added part covers "
     "existing parts\nAfter ALTER TABLE UPDATE under heavy inserts the replica restarted. "
@@ -73,28 +81,44 @@ def _out(**kw: Any) -> TrackerDuplicateCheckOutput:
 
 
 @pytest.mark.asyncio
-async def test_the_leg_runs_only_under_a_code_scope_for_a_defect_shape_and_fails_open(
+async def test_the_duplicate_verdict_runs_only_for_a_scoped_defect_and_fails_open(
     monkeypatch,
 ) -> None:
+    from unittest.mock import AsyncMock
+
+    from server.identity.domain.read_scope import WHOLE_NAMESPACE
+
+    monkeypatch.setattr("server.identity.app.request_scope.request_scope", lambda: WHOLE_NAMESPACE)
+    monkeypatch.setattr(
+        "server.tracker.app.dupcheck_fanout.readable_tracker_namespaces", AsyncMock(return_value=[])
+    )
+    from server.tracker.app.dupcheck import DuplicateCheckPlan
+
+    async def prepare(inp):
+        return DuplicateCheckPlan(
+            inp, ("tracker-example-private", "tracker-clickhouse"), inp.namespace, False, False
+        )
+
+    monkeypatch.setattr("server.tracker.app.dupcheck.prepare_duplicate_check", prepare)
     calls: list[dict[str, Any]] = []
 
-    async def _check(inp):
-        calls.append(inp.model_dump())
+    async def _check(plan):
+        calls.append(plan.input.model_dump())
         return _out()
 
-    monkeypatch.setattr("server.tracker.app.dupcheck.handle_tracker_duplicate_check", _check)
+    monkeypatch.setattr("server.tracker.app.dupcheck.execute_duplicate_check", _check)
     monkeypatch.setattr("server.code.domain.scope.current_code_scope", lambda: None)
-    assert await ql.tracker_leg(DRAFT) is None and calls == [], (
+    assert await _run(DRAFT, org="clickhouse") is None and calls == [], (
         "no checkout scope: memory answers alone"
     )
     monkeypatch.setattr(
         "server.code.domain.scope.current_code_scope",
         lambda: ("clickhouse", "code-example-private"),
     )
-    assert await ql.tracker_leg("what is my coffee type?") is None and calls == [], (
+    assert await _run("what is my coffee type?", org="clickhouse") is None and calls == [], (
         "not a defect shape"
     )
-    section = await ql.tracker_leg(DRAFT, top_k=3)
+    section = await _run(DRAFT, org="clickhouse", top_k=3)
     assert calls[0]["org"] == "clickhouse" and calls[0]["namespace"] == "code-example-private"
     assert calls[0]["frames"][0] == "MergeTreeData::renameTempPartAndAdd" and calls[0]["top_k"] == 3
     assert section == {
@@ -118,7 +142,7 @@ async def test_the_leg_runs_only_under_a_code_scope_for_a_defect_shape_and_fails
         ],
     }, "the lean section: verdict, records read, items a reader acts on — no fit bookkeeping"
 
-    async def _down(inp):
+    async def _down(plan):
         return _out(
             verdict="none",
             epistemic="unavailable",
@@ -127,25 +151,27 @@ async def test_the_leg_runs_only_under_a_code_scope_for_a_defect_shape_and_fails
             namespaces=[],
         )
 
-    monkeypatch.setattr("server.tracker.app.dupcheck.handle_tracker_duplicate_check", _down)
-    assert await ql.tracker_leg(DRAFT) is None, "an unavailable record is no section"
+    monkeypatch.setattr("server.tracker.app.dupcheck.execute_duplicate_check", _down)
+    assert await _run(DRAFT, org="clickhouse") is None, "an unavailable record is no section"
 
-    async def _boom(inp):
+    async def _boom(plan):
         raise RuntimeError("gate closed")
 
-    monkeypatch.setattr("server.tracker.app.dupcheck.handle_tracker_duplicate_check", _boom)
-    assert await ql.tracker_leg(DRAFT) is None, "an error is no section"
+    monkeypatch.setattr("server.tracker.app.dupcheck.execute_duplicate_check", _boom)
+    assert await _run(DRAFT, org="clickhouse") is None, "an error is no section"
 
-    async def _slow(inp):
+    async def _slow(plan):
         await asyncio.sleep(0.2)
         return _out()
 
-    monkeypatch.setattr("server.tracker.app.dupcheck.handle_tracker_duplicate_check", _slow)
-    assert await ql.tracker_leg(DRAFT, timeout_s=0.01) is None, "a timeout is no section"
+    monkeypatch.setattr("server.tracker.app.dupcheck.execute_duplicate_check", _slow)
+    assert await _run(DRAFT, org="clickhouse", timeout_s=0.01) is None, "a timeout is no section"
     from server.settings import settings
 
     monkeypatch.setattr(settings, "mcp_loom_search_tracker_timeout_s", 0.01)
-    assert await ql.tracker_leg(DRAFT) is None, "the setting bounds a leg that names no timeout"
+    assert await _run(DRAFT, org="clickhouse") is None, (
+        "the setting bounds a leg that names no timeout"
+    )
 
 
 def test_the_text_block_leads_with_the_verdict() -> None:
@@ -177,7 +203,9 @@ def test_the_handler_gathers_the_leg_and_leads_the_payload_with_it() -> None:
     from server.memory.app.loom_search import fanout
 
     fan = inspect.getsource(fanout.search_sections)
-    assert "tracker_leg(query, top_k=top_k)" in fan, "the fifth leg rides the same gather"
+    assert "tracker_leg(query, plan=tracker_plan, top_k=top_k)" in fan, (
+        "the fifth leg rides the same gather"
+    )
     assert '{"tracker": t_section} if isinstance(t_section, dict) else {}' in fan
     src = inspect.getsource(mcp_tools.search_answer)
     assert 'lines = tracker_text_lines(payload.get("tracker"), top_k) + [' in src, (

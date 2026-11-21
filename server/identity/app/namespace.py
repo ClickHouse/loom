@@ -216,6 +216,12 @@ def registry_row(
         "daily_cost_cap_usd": _set_or_stored(
             input.daily_cost_cap_usd, existing, "daily_cost_cap_usd", 0.0
         ),
+        "daily_user_cost_cap_usd": _set_or_stored(
+            input.daily_user_cost_cap_usd, existing, "daily_user_cost_cap_usd", 0.0
+        ),
+        "budget_alert_inbox": _set_or_stored(
+            input.budget_alert_inbox, existing, "budget_alert_inbox", ""
+        ),
         # Same tri-state rule: an explicit null inherits LOOM_CONFLICT_THRESHOLD.
         "conflict_threshold": _sent_or_stored(input, existing, "conflict_threshold"),
         "retention_days": _set_or_stored(input.retention_days, existing, "retention_days", 0),
@@ -393,6 +399,13 @@ async def handle_namespace_register(
             if await registration.refused_as_in_use(input.org, input.namespace, ch=ch):
                 raise registration.not_admin_error(input.org, input.namespace, caller)
 
+        if input.budget_alert_inbox:
+            from server.tasks.app.budget_notifications import inbox_owned_by
+
+            if not await inbox_owned_by(input.org, input.namespace, input.budget_alert_inbox):
+                raise ValidationError(
+                    "budget_alert_inbox must name an existing task inbox owned by this namespace"
+                )
         now = naive_utc_now_seconds()
         row = registry_row(input, existing, now)
         await ch.insert("loom.namespaces", [row])
@@ -485,7 +498,7 @@ async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutpu
                capture_generation_io,
                coverage_sweep,
                consolidation_enabled,
-               daily_cost_cap_usd,
+               daily_cost_cap_usd, daily_user_cost_cap_usd, budget_alert_inbox,
                conflict_threshold,
                retention_days, warm_days,
                toString(visibility) AS visibility,
@@ -508,6 +521,8 @@ async def handle_namespace_list(input: NamespaceListInput) -> NamespaceListOutpu
                 active=bool(r["active"]),
                 consolidation_enabled=bool(r.get("consolidation_enabled") or False),
                 daily_cost_cap_usd=float(r.get("daily_cost_cap_usd") or 0.0),
+                daily_user_cost_cap_usd=float(r.get("daily_user_cost_cap_usd") or 0.0),
+                budget_alert_inbox=str(r.get("budget_alert_inbox") or ""),
                 conflict_threshold=(
                     float(r["conflict_threshold"]) if r["conflict_threshold"] is not None else None
                 ),
@@ -531,7 +546,7 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
                capture_generation_io,
                coverage_sweep,
                consolidation_enabled,
-               daily_cost_cap_usd,
+               daily_cost_cap_usd, daily_user_cost_cap_usd, budget_alert_inbox,
                conflict_threshold,
                retention_days, warm_days,
                toString(visibility) AS visibility,
@@ -590,6 +605,8 @@ async def handle_namespace_get(input: NamespaceGetInput) -> NamespaceGetOutput:
         ),
         consolidation_enabled=bool(row.get("consolidation_enabled") or False),
         daily_cost_cap_usd=float(row.get("daily_cost_cap_usd") or 0.0),
+        daily_user_cost_cap_usd=float(row.get("daily_user_cost_cap_usd") or 0.0),
+        budget_alert_inbox=str(row.get("budget_alert_inbox") or ""),
         conflict_threshold=(
             float(row["conflict_threshold"]) if row["conflict_threshold"] is not None else None
         ),

@@ -512,7 +512,7 @@ class Run:
             listed = await cell_scan.list_tables(self.ch, self.lock_conn, topology, names)
             found = await self.scan(topology, listed)
             orgs = set(found.orgs)
-            self.report["tenancy_rows_written"] = await apg.write_tenancy(orgs)
+            self.report["tenancy_rows_written"] = await apg.write_tenancy(self.owner, orgs)
             placed = 0
             for batch in batches(orgs, self.row["deployment_id"]):
                 await self.confirm_lock()
@@ -600,7 +600,7 @@ class Run:
             found = await self.scan(topology, listed)
             if found.too_long:
                 raise Refused(_too_long(found))
-            written = await apg.write_tenancy(found.orgs)
+            written = await apg.write_tenancy(self.owner, found.orgs)
             self.log(f"step 2: {len(found.orgs)} orgs found, {written} tenancy rows written")
             await self.triggers()
             await self.precommit(found)

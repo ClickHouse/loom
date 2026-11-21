@@ -12,9 +12,13 @@ logger = logging.getLogger("loom.workers.knowledge_source_sync")
 
 
 async def run_pass() -> PassResult:
-    with record_pass(WORKER) as rec:
+    with record_pass(WORKER, trace_pass=False) as rec:
         result = await run_sync()
-        log_pass_errors(logger, WORKER, result.errors)
+        if result.private_work:
+            if result.errors:
+                logger.warning("%s: SYNC_FAILED", WORKER)
+        else:
+            log_pass_errors(logger, WORKER, result.errors)
         rec.outcome = outcome(result)
     return result
 

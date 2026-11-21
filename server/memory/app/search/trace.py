@@ -8,9 +8,11 @@ from typing import Any
 
 from server.core import pg
 from server.core.ch import get_client, sequential_reads
+from server.core.errors import VectorInputTooLargeError
 from server.core.naming import named
 from server.embedding import get_embedder
 from server.memory.api.models_search import (
+    SEARCH_ENTITY_FILTER_MAX,
     MemorySearchTraceInput,
     MemorySearchTraceOutput,
     SearchTraceLogInput,
@@ -37,6 +39,8 @@ async def handle_memory_search_trace(input: MemorySearchTraceInput) -> Any:
     from server.memory.app.retrieval import SearchQuery, vector_search_trace
     from server.observability.otel import traced
 
+    if len(input.entity_filter) > SEARCH_ENTITY_FILTER_MAX:
+        raise VectorInputTooLargeError("entity_filter accepts at most 64 raw names")
     input, _ = pin_read_filters(input, current_auth())
     input = input.model_copy(update={"run_id": named(input.run_id)})
     embedder = get_embedder()

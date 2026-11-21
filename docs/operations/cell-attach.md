@@ -115,9 +115,10 @@ and `attaching`, and the cell goes forward: fix the cause and rerun attach. Unse
 `LOOM_CELL` then gates every process, an outage, not a rollback. A row with `placed > 0`
 always goes forward.
 
-From `enforced` on, a `--platform-admin` mint that declares a new org and the admin account
-routes cannot bring in a new org (`WRONG_CELL`); an ordinary mint scoped to its org places
-the org on its first request. A direct call of the router's operator place route, or a live
+From `enforced` on, native minting requires the org to be held by this cell, with or
+without `--platform-admin`. Admin account routes cannot bring in a new org (`WRONG_CELL`).
+An already issued ordinary token scoped to its org places that org on its first request.
+A direct call of the router's operator place route, or a live
 placement with the cell's credential, cannot read the cell's Postgres and is accepted once
 the directory mode is `enforced`; the cell's credential is the servers' alone.
 

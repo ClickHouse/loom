@@ -206,6 +206,7 @@ class KnowledgeClient:
         window_chars: int = 24000,
         max_answer_chars: int = 8000,
         max_windows: int = 64,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
         """Complete `task` over whole documents by map-reduce and, with `datasets`
         (each `{"source_uri", "dataset_id", "alias"}`, as knowledge.query takes them),
@@ -217,6 +218,7 @@ class KnowledgeClient:
         body: dict[str, Any] = {
             "org": self._agent.org,
             "namespace": self._agent.namespace,
+            "user_id": user_id or self._agent.SENTINEL,
             "source_uris": list(source_uris or []),
             "task": task,
             "window_chars": window_chars,

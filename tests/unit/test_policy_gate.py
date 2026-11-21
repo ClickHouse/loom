@@ -1,5 +1,5 @@
-"""The policy gate: off / shadow / enforce, fail-closed for
-writes, fail-open for reads, exemptions, the ledger row, the 403 shape."""
+"""Ordinary history policies: modes, backend-error read/write posture,
+exemptions, the ledger row and the 403 shape."""
 
 from __future__ import annotations
 
@@ -59,7 +59,7 @@ class FakeCH:
         self.calls += 1
         if self.fail:
             raise RuntimeError("clickhouse unreachable")
-        return [{"n": self.n}]
+        return [{"protected_history": 0, "n": self.n}]
 
 
 @pytest.fixture
@@ -153,7 +153,7 @@ async def test_enforce_fails_closed_for_writes_when_history_cannot_be_read(monke
 
 
 @pytest.mark.asyncio
-async def test_a_gate_that_cannot_read_its_rules_names_the_error_kind_only(monkeypatch):
+async def test_a_gate_that_cannot_read_its_rules_names_the_error_kind_only(monkeypatch, rules):
     async def broken(*_a: Any, **_k: Any) -> Any:
         raise RuntimeError("SELECT * FROM loom.policies WHERE secret = 1")
 
@@ -164,6 +164,7 @@ async def test_a_gate_that_cannot_read_its_rules_names_the_error_kind_only(monke
         with pytest.raises(G.PolicyForbiddenError) as ei:
             await G.gate(WRITE_OP, IDENTITY, {}, ch=FakeCH(n=2))
     finally:
+        await G.drain()
         P.invalidate()
     detail = ei.value.to_detail()
     assert detail["errors"] == ["policy gate: RuntimeError"]

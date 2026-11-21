@@ -681,6 +681,12 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.
+- **Private definition redaction** scrubs all versions of a matching learnings candidate
+  in place, including status copies. A replacement version would leave the redacted text
+  stored in older versions. This runs with the source's historical redaction, under the
+  candidate review lease. An invalidated model attempt instead removes only its own
+  candidate versions through a lightweight `DELETE FROM`, bounded by the claim version,
+  so it cannot remove a later review decision.
 - **Extraction retries** (`memory.extraction_retry_mine`) update failed queue rows in
   place, asynchronously. The update targets the exact identity and version observed, with
   the caller's namespace, principal and read scope. Copying the transcript into a new

@@ -10,7 +10,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from server.core import llm_free
+from server.core import llm_free, request_work
 from server.core.naming import present
 from server.transport._common import ledger_identity
 from server.transport.lean_results import mcp_op_result
@@ -95,8 +95,15 @@ def _search_answer(call: _AdmittedCall, result: Any) -> dict[str, Any]:
     from server.transport.mcp_tools import search_answer
 
     answer = search_answer(result.model_dump(), call.arguments, call.rl_ns, call.mcp_session_id)
-    answer["structuredContent"] = _coerce_bigints(answer["structuredContent"])
-    return answer
+    answer["structuredContent"] = request_work.flag_response(
+        _coerce_bigints(answer["structuredContent"])
+    )
+    if request_work.mirror_marked():
+        answer["content"] = [
+            {"type": "text", "text": json.dumps({"mirrored": True})},
+            *answer["content"],
+        ]
+    return request_work.flag_response(answer)
 
 
 async def _success_response(
@@ -113,6 +120,8 @@ async def _success_response(
     auth, request_id, rl_ns, rl_org = call.auth, call.request_id, call.rl_ns, call.rl_org
     result_dict = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
     result_dict = _coerce_bigints(result_dict)
+    if isinstance(result_dict, dict):
+        result_dict = request_work.flag_response(result_dict)
 
     # Budget violation, audit and idempotency rows in one concurrent round,
     # not three awaited writes in a row.
@@ -137,7 +146,7 @@ async def _success_response(
     )
 
     if op.name == "search.query":
-        return _ok(req_id, _search_answer(call, result))
+        return request_work.flag_response(_ok(req_id, _search_answer(call, result)))
 
     # content[0].text is raw JSON (no prose prefix) — some clients parse it
     # for display and a prefix breaks the parse. structuredContent mirrors it
@@ -151,14 +160,18 @@ async def _success_response(
     if resolved and isinstance(lean_dict, dict):
         lean_dict = {**lean_dict, "namespace_resolved": resolved}
     if isinstance(lean_dict, dict):  # a non-home default says so
-        lean_dict = {**lean_dict, **default_namespace_note()}
-    return _ok(
-        req_id,
-        {
-            "content": [{"type": "text", "text": json.dumps(lean_dict)}],
-            "isError": False,
-            "structuredContent": lean_dict,
-        },
+        lean_dict = request_work.flag_response({**lean_dict, **default_namespace_note()})
+    return request_work.flag_response(
+        _ok(
+            req_id,
+            request_work.flag_response(
+                {
+                    "content": [{"type": "text", "text": json.dumps(lean_dict)}],
+                    "isError": False,
+                    "structuredContent": lean_dict,
+                }
+            ),
+        )
     )
 
 
@@ -185,6 +198,7 @@ def _handler_failed(
     HTTP's body and is recorded under its code; any other exception is one that
     says only "internal error" and is logged with its traceback."""
     from server.core.errors import handler_failure_detail
+    from server.core.request_work import flag_response
     from server.transport.mcp_refusals import refusal_body, refusal_text, server_failure
 
     refused = refusal_body(e)
@@ -192,6 +206,7 @@ def _handler_failed(
     if failure is not None:
         failure = handler_failure_detail(failure, failure["status"], op.idempotent)
     if refused is not None:
+        refused = flag_response(refused)
         log.info("mcp.refused %s request_id=%s: %s", op.name, request_id, refused.get("code"))
     elif failure is not None:  # the raiser logged its cause; no traceback for a named 5xx
         log.warning("mcp.unavailable %s request_id=%s: %s", op.name, request_id, failure["code"])
@@ -232,27 +247,40 @@ def _handler_failed(
     except Exception:  # noqa: BLE001 — telemetry must never mask the handler's error
         pass
     if refused is not None:
-        return _ok(
-            req_id,
-            {
-                "content": [{"type": "text", "text": refusal_text(refused)}],
-                "isError": True,
-                "structuredContent": refused,
-            },
+        return flag_response(
+            _ok(
+                req_id,
+                {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": json.dumps(refused)
+                            if refused.get("mirrored") is True
+                            else refusal_text(refused),
+                        }
+                    ],
+                    "isError": True,
+                    "structuredContent": refused,
+                },
+            )
         )
     if failure is not None:  # HTTP's 503/504 body, as the error's message and data
-        return _err(
-            req_id,
-            TOOL_EXEC_FAILED,
-            f"tool execution failed: {refusal_text(failure)}; request_id={request_id}",
-            data={**failure, "tool": name, "request_id": request_id},
+        return flag_response(
+            _err(
+                req_id,
+                TOOL_EXEC_FAILED,
+                f"tool execution failed: {refusal_text(failure)}; request_id={request_id}",
+                data=flag_response({**failure, "tool": name, "request_id": request_id}),
+            )
         )
     # The exception's text (ClickHouse / SQL) stays in the log line above.
-    return _err(
-        req_id,
-        TOOL_EXEC_FAILED,
-        f"tool execution failed: internal error; request_id={request_id}",
-        data={"code": "INTERNAL_ERROR", "tool": name, "request_id": request_id},
+    return flag_response(
+        _err(
+            req_id,
+            TOOL_EXEC_FAILED,
+            f"tool execution failed: internal error; request_id={request_id}",
+            data=flag_response({"code": "INTERNAL_ERROR", "tool": name, "request_id": request_id}),
+        )
     )
 
 

@@ -1,7 +1,7 @@
 /**
  * What a collection and the namespace are called on screen, how long a title may be and the name
  * it derives, the order collections are listed in, how many the Library reads, and what a new
- * one may sit in.
+ * one may sit in or a moved one may go under.
  *
  * A collection's name (`col-…`) is its address: grants, search scope and audit key on it,
  * and it is never used again once deleted. People see its title, which may repeat; the
@@ -139,4 +139,15 @@ export function titleTooLong(title: string): boolean {
 /** Whether a new collection can go inside `c`: one the person writes, not their own files. */
 export function canHold(c: CollectionEntry): boolean {
   return !c.personal && c.role !== "viewer";
+}
+
+/** Whether `name` is `root` or sits somewhere under it; `parentOf` maps a collection to its
+ *  parent ("" at the top). */
+export function isUnder(name: string, root: string, parentOf: Map<string, string>): boolean {
+  const seen = new Set<string>();
+  for (let at: string | undefined = name; at && !seen.has(at); at = parentOf.get(at)) {
+    if (at === root) return true;
+    seen.add(at);
+  }
+  return false;
 }

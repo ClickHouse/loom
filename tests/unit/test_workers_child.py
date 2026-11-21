@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -83,7 +84,7 @@ async def test_parent_sends_the_deadline_and_stops_the_child(monkeypatch, tmp_pa
     monkeypatch.setattr(
         child, "child_argv", lambda fd, _alive_fd: [sys.executable, "-c", _STUB, str(fd), str(out)]
     )
-    workers = child.ChildWorkers(_Lease())
+    workers = child.ChildWorkers(_Lease(), retire_child=AsyncMock())
     workers.start_all()
     await _until(lambda: out.exists() and bool(out.read_text()))
     deadline = float(out.read_text())
@@ -96,7 +97,7 @@ async def test_parent_sends_the_deadline_and_stops_the_child(monkeypatch, tmp_pa
 
 def test_the_deadline_stops_moving_once_the_lease_is_not_fresh() -> None:
     lease = _Lease(remaining=12.0)
-    workers = child.ChildWorkers(lease)
+    workers = child.ChildWorkers(lease, retire_child=AsyncMock())
     workers._send_deadline()
     sent = workers._deadline
     lease.remaining = 0.0  # lost
@@ -111,7 +112,7 @@ async def test_a_child_that_ignores_sigterm_is_killed_at_the_deadline_plus_the_d
 ) -> None:
     ready = _stubborn(monkeypatch, tmp_path)
     lease = _Lease(remaining=0.3)
-    workers = child.ChildWorkers(lease)
+    workers = child.ChildWorkers(lease, retire_child=AsyncMock())
     workers.start_all()
     await _until(ready.exists)
     lease.remaining = 0.0  # the lease is lost: the deadline stays where it was
@@ -124,7 +125,7 @@ async def test_a_child_that_ignores_sigterm_is_killed_at_the_deadline_plus_the_d
 @pytest.mark.asyncio
 async def test_a_cancelled_stop_kills_the_child(monkeypatch, tmp_path) -> None:
     ready = _stubborn(monkeypatch, tmp_path)
-    workers = child.ChildWorkers(_Lease(remaining=30.0))
+    workers = child.ChildWorkers(_Lease(remaining=30.0), retire_child=AsyncMock())
     workers.start_all()
     await _until(ready.exists)
     proc = workers._proc
@@ -139,7 +140,7 @@ async def test_a_cancelled_stop_kills_the_child(monkeypatch, tmp_path) -> None:
 async def test_a_child_that_exits_unasked_is_started_again(monkeypatch) -> None:
     monkeypatch.setattr(child, "RESTART_DELAY_S", 0.01)
     monkeypatch.setattr(child, "child_argv", lambda fd, _alive_fd: [sys.executable, "-c", "pass"])
-    workers = child.ChildWorkers(_Lease())
+    workers = child.ChildWorkers(_Lease(), retire_child=AsyncMock())
     workers.start_all()
     await _until(lambda: workers.restarts >= 2)
     await workers.stop_all()
@@ -153,7 +154,7 @@ async def test_a_child_that_keeps_failing_to_start_gives_the_lease_up(monkeypatc
         child, "child_argv", lambda fd, _alive_fd: [sys.executable, "-c", "exit(3)"]
     )
     lease = _Lease()
-    workers = child.ChildWorkers(lease)
+    workers = child.ChildWorkers(lease, retire_child=AsyncMock())
     workers.start_all()
     await _until(lambda: bool(lease.given_up))
     assert workers.failed_starts == 3 and workers.restarts == 2
@@ -173,7 +174,7 @@ async def test_a_child_that_cannot_be_created_gives_the_lease_up_and_leaks_no_fd
     monkeypatch.setattr(child, "child_argv", lambda fd, _alive_fd: [missing])
     fds = _open_fds()
     lease = _Lease()
-    workers = child.ChildWorkers(lease)
+    workers = child.ChildWorkers(lease, retire_child=AsyncMock())
     workers.start_all()
     await _until(lambda: bool(lease.given_up))
     assert workers.failed_starts == 3 and "could not start" in lease.given_up[0]
@@ -204,7 +205,7 @@ async def test_a_child_whose_loop_hangs_is_not_alive(monkeypatch) -> None:
     monkeypatch.setattr(
         child, "child_argv", lambda _fd, alive_fd: [sys.executable, "-c", _HANGS, str(alive_fd)]
     )
-    workers = child.ChildWorkers(_Lease())
+    workers = child.ChildWorkers(_Lease(), retire_child=AsyncMock())
     workers.start_all()
     await _until(lambda: workers._proc is not None)
     started = workers._beat_at
@@ -304,12 +305,14 @@ def test_an_auto_holder_runs_its_workers_in_a_child(monkeypatch) -> None:
 
     lease = SupervisorLease("auto")
     monkeypatch.setattr(settings, "workers_process", "child")
-    assert isinstance(child.worker_runner(lease), child.ChildWorkers)
+    assert isinstance(child.worker_runner(lease, retire_child=AsyncMock()), child.ChildWorkers)
     assert child.current_runner() is child._RUNNER
     monkeypatch.setattr(settings, "workers_process", "inline")
-    assert isinstance(child.worker_runner(lease), WorkerSupervisor)
+    assert isinstance(child.worker_runner(lease, retire_child=AsyncMock()), WorkerSupervisor)
     monkeypatch.setattr(settings, "workers_process", "child")
-    assert isinstance(child.worker_runner(SupervisorLease("on")), WorkerSupervisor)
+    assert isinstance(
+        child.worker_runner(SupervisorLease("on"), retire_child=AsyncMock()), WorkerSupervisor
+    )
 
 
 def test_the_child_runs_its_own_entry_point_not_the_serving_app() -> None:

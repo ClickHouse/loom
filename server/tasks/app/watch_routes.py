@@ -34,7 +34,7 @@ from starlette.responses import StreamingResponse
 
 from server.settings import settings
 from server.tasks.app import wakeups as task_wakeups
-from server.tasks.app.common import _err
+from server.tasks.app.common import _err, _warning_read_filters
 from server.tasks.domain import cursors as task_cursors
 from server.tasks.store.rows import TaskEventRow
 
@@ -203,6 +203,7 @@ async def task_watch(
     key, inbox_filter, subject = await _resolve_key(
         org, inbox, bool(posted_by_me), from_subject, auth
     )
+    warning_scope = _warning_read_filters()
 
     async def read(cursor: int) -> list[TaskEventRow]:
         return await repo.events_since(
@@ -211,6 +212,7 @@ async def task_watch(
             lag_s=task_cursors.LAG_SECONDS,
             inbox=inbox_filter,
             from_subject=subject,
+            warning_scope=warning_scope,
             limit=READ_LIMIT,
         )
 

@@ -687,6 +687,7 @@ async def _re_verify_run(ch: Any, args: argparse.Namespace) -> int:
                     actor=row["actor"],
                     requested_at=row["requested_at"],
                     attempts=int(row["attempts"]) + 1,
+                    mirror_marked=bool(row.get("mirror_marked")),
                 ),
                 erasure_id=str(row["id"]),
                 requested_at=row["requested_at"],

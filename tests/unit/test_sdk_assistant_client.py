@@ -108,6 +108,32 @@ def test_the_stream_yields_text_then_the_answer_with_its_citations() -> None:
     }
 
 
+def test_eof_after_partial_text_does_not_yield_a_completed_answer() -> None:
+    seen: list[Any] = []
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(200, content=ANSWER.removesuffix(b"data: [DONE]\n\n"))
+
+    async def run() -> None:
+        async with _agent(handler) as agent:
+            async for event in agent.assistant.stream("q"):
+                seen.append(event)
+
+    with pytest.raises(LoomError, match="before completion"):
+        asyncio.run(run())
+    assert seen == [AssistantText("Deploys freeze "), AssistantText("on Fridays.")]
+    assert len(sent) == 1
+
+
+def test_text_after_done_cannot_change_the_completed_answer() -> None:
+    body = ANSWER + _sse(_chunk("discarded"))
+    events = _collect(_agent(lambda request: httpx.Response(200, content=body)))
+    assert events[:2] == [AssistantText("Deploys freeze "), AssistantText("on Fridays.")]
+    assert len(events) == 3 and events[-1].text == "Deploys freeze on Fridays."
+
+
 @pytest.mark.parametrize("support", ["a-later-state", None])
 def test_an_unknown_or_missing_support_reads_as_unchecked(support: Any) -> None:
     event: dict[str, Any] = {"object": "loom.citations", "id": "chatcmpl-1", "citations": []}

@@ -10,6 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from server.core.ch import get_client
+from server.core.errors import VectorInputTooLargeError
 from server.memory.api.models_search import MemorySearchInput, _MemorySearchHit
 from server.memory.app.search.budget import SearchBudget
 from server.memory.app.search.context import SearchContext
@@ -87,6 +88,8 @@ async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
                             entity_texts=[v],
                         )
                         return out or None
+                    except VectorInputTooLargeError:
+                        raise
                     except Exception as e:  # noqa: BLE001
                         log.warning("derived canonical expand failed (non-fatal): %s", e)
                         return None
@@ -137,6 +140,8 @@ async def _maybe_derived_aggregate(ctx: SearchContext) -> dict[str, Any] | None:
                     agg["category"] = intent.get("category") or ""
                     agg["category_broadened"] = broadened
                     result = agg
+        except VectorInputTooLargeError:
+            raise
         except Exception as e:  # noqa: BLE001
             log.warning("derived aggregate leg failed (non-fatal): %s", e)
     cache["v"] = result

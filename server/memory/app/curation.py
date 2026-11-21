@@ -722,6 +722,9 @@ async def redact_version(
     )
     await memory_repo.run_scrubs(scrubs, apply=True)
     shared_keys = await _scrub_shared_copies(org, target, head_now)
+    from server.memory.app.definition_review import redact_candidates
+
+    await redact_candidates(org, target, head_now)
     await _scrub_profile_derivatives(org, target, profiles, through=through)
     # A redacted value may already be quoted in a cached answer (7-day TTL), a precedent
     # (30 days) or a cached code.ask answer; each carries the keys of the memory it was

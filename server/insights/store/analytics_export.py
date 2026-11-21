@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import date
 
 from server.core.ch import CHClient
+from server.core.event_source import ALL_EVENTS
 from server.core.naming import not_mirror_sql
 
 # One row per (org, namespace, agent, operation, kind, transport, traffic
@@ -32,21 +33,23 @@ from server.core.naming import not_mirror_sql
 # MergeTree: no FINAL).
 USAGE_KEY = "org, namespace, agent, operation, kind, transport, traffic_class"
 # The SLI rollup's rows (its WHERE) that succeeded.
-SLI_OK = "kind = 'request' AND slo_class != '' AND status_class = 'ok'"
+SLI_OK = "mirror_marked = 0 AND kind = 'request' AND slo_class != '' AND status_class = 'ok'"
+# Marked dimensions collapse before aggregation and hashing. An ordinary row
+# with the same placeholder dimensions joins that group without losing its measures.
 USAGE_SQL = f"""
 SELECT
     {USAGE_KEY},
     {{day:Date}} AS day,
     count() AS ops,
-    countIf(NOT success) AS errors,
-    countIf(status_class = 'server') AS server_errors,
+    countIf(mirror_marked = 0 AND NOT success) AS errors,
+    countIf(mirror_marked = 0 AND status_class = 'server') AS server_errors,
     countIf({SLI_OK} AND latency_ms > budget_ms) AS slow,
     sum(input_tokens) AS input_tokens,
     sum(output_tokens) AS output_tokens,
     sum(embedding_tokens) AS embedding_tokens,
-    sum(llm_calls) AS llm_calls,
+    sumIf(llm_calls, mirror_marked = 0) AS llm_calls,
     sum(upstream_cost_usd) AS cost_usd,
-    sum(bytes_written) AS bytes_written,
+    sumIf(bytes_written, mirror_marked = 0) AS bytes_written,
     toUInt32(ifNotFinite(
         quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[1], 0
     )) AS latency_p50_ms,
@@ -56,14 +59,30 @@ SELECT
     toUInt32(ifNotFinite(
         quantilesTDigestIf(0.5, 0.95, 0.99)(latency_ms, {SLI_OK})[3], 0
     )) AS latency_p99_ms,
-    uniqExactIf(user_id, user_id != '-') AS users,
-    uniqExactIf(session_id, session_id != '-') AS sessions,
+    uniqExactIf(user_id, mirror_marked = 0 AND user_id != '-') AS users,
+    uniqExactIf(session_id, mirror_marked = 0 AND session_id != '-') AS sessions,
     now64(3, 'UTC') AS snapshot_at
-FROM (SELECT * REPLACE (if(startsWith(operation, 'me.'), 'me', operation) AS operation)
-      FROM loom.agent_events
-      WHERE ts >= toDateTime64({{day:Date}}, 3, 'UTC')
-        AND ts < toDateTime64({{day:Date}} + 1, 3, 'UTC')
-        AND {not_mirror_sql()})
+FROM (
+    SELECT
+        raw.org AS org, raw.namespace AS namespace,
+        if(raw.mirror_marked = 0, raw.agent, '-') AS agent,
+        if(raw.mirror_marked != 0, '-',
+           if(startsWith(raw.operation, 'me.'), 'me', raw.operation)) AS operation,
+        if(raw.mirror_marked = 0, raw.kind, '-') AS kind,
+        if(raw.mirror_marked = 0, raw.transport, '-') AS transport,
+        if(raw.mirror_marked = 0, raw.traffic_class, '-') AS traffic_class,
+        raw.mirror_marked AS mirror_marked,
+        raw.success AS success, raw.status_class AS status_class,
+        raw.slo_class AS slo_class, raw.latency_ms AS latency_ms, raw.budget_ms AS budget_ms,
+        raw.input_tokens AS input_tokens, raw.output_tokens AS output_tokens,
+        raw.embedding_tokens AS embedding_tokens, raw.upstream_cost_usd AS upstream_cost_usd,
+        raw.llm_calls AS llm_calls, raw.bytes_written AS bytes_written,
+        raw.user_id AS user_id, raw.session_id AS session_id
+    FROM {ALL_EVENTS} AS raw
+    WHERE raw.ts >= toDateTime64({{day:Date}}, 3, 'UTC')
+      AND raw.ts < toDateTime64({{day:Date}} + 1, 3, 'UTC')
+      AND {not_mirror_sql("raw.namespace")}
+)
 GROUP BY {USAGE_KEY}
 """
 

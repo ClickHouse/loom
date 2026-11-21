@@ -28,6 +28,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from server.core.ch_names import otel_table
+from server.core.diagnostics import public_only
 from server.observability.otel_exporters import (
     _SPAN_SCHEDULE_DELAY_MS,
     _make_clickhouse_log_exporter,
@@ -89,8 +90,15 @@ def _instrument_fastapi(app: Any) -> None:
     Never raises: telemetry must not fail a boot."""
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        from opentelemetry.metrics import get_meter_provider
 
-        FastAPIInstrumentor.instrument_app(app, excluded_urls=_fastapi_excluded_urls())
+        from server.observability.otel_privacy import asgi_meter_provider
+
+        FastAPIInstrumentor.instrument_app(
+            app,
+            excluded_urls=_fastapi_excluded_urls(),
+            meter_provider=asgi_meter_provider(get_meter_provider()),
+        )
     except Exception as e:  # noqa: BLE001 — instrumentation is optional; boot continues without it
         log.warning("FastAPIInstrumentor.instrument_app failed: %s", e)
 
@@ -231,10 +239,14 @@ def _start_tracing(exporter_mode: str, endpoint: str) -> tuple[Any, Any, Any] | 
     provider = TracerProvider(resource=resource)
     # 3000ms (vs the 5000ms default) bounds the span-loss window before
     # SIGTERM while still batching enough per export to be efficient.
+    from server.observability.otel_privacy import public_span_processor
+
     provider.add_span_processor(
-        BatchSpanProcessor(
-            span_exporter,
-            schedule_delay_millis=_SPAN_SCHEDULE_DELAY_MS,
+        public_span_processor(
+            BatchSpanProcessor(
+                span_exporter,
+                schedule_delay_millis=_SPAN_SCHEDULE_DELAY_MS,
+            )
         )
     )
     # Second, independent processor. Deliberately after the ClickHouse one and
@@ -335,7 +347,10 @@ def _attach_log_handler(resource: Any, log_exporter: Any) -> None:
         set_logger_provider(logger_provider)
 
         # Attach LoggingHandler to the root logger so everything is captured.
+        from server.core.diagnostics import public_log
+
         handler = LoggingHandler(level=stdlogging.INFO, logger_provider=logger_provider)
+        handler.addFilter(public_log)
         stdlogging.getLogger().addHandler(handler)
         _logger_provider = logger_provider
         _log_handler = handler
@@ -428,6 +443,7 @@ def langfuse_processor_status() -> dict[str, Any]:
     }
 
 
+@public_only
 def record_op(
     op_name: str,
     *,
@@ -477,6 +493,10 @@ def traced(name: str, **attrs: Any) -> Any:
     """
     import contextlib
 
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        return contextlib.nullcontext()
     try:
         from opentelemetry import trace
 

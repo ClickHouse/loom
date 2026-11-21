@@ -205,10 +205,11 @@ async def _ledgered(
     return _Ledgered(digests, keys)
 
 
-async def _read(read: Awaitable[set[str]]) -> set[str] | None:
+async def _read(read: Awaitable[set[str] | None]) -> set[str] | None:
     """One ledger read; None when it fails."""
     try:
-        return set(await read)
+        found = await read
+        return None if found is None else set(found)
     except Exception as e:  # noqa: BLE001 — a check that cannot run never fails an answer
         log.warning("reading an answer's ledgered calls failed: %s", e)
         return None

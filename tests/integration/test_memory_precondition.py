@@ -18,10 +18,13 @@ may both touch the same memory_key.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import uuid
+from collections.abc import AsyncIterator
 from pathlib import Path
 
+import httpx
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -126,3 +129,134 @@ async def test_read_then_conditional_update_loop(control_plane_url) -> None:
         final = await a.memory.get("counter")
         assert final is not None
         assert final["value"] == {"n": 2}
+
+
+@pytest.fixture
+async def conditional_client(
+    control_plane_url, mint_test_token
+) -> AsyncIterator[httpx.AsyncClient]:
+    token = mint_test_token(org=ORG, namespaces=["*"], roles=["writer", "admin"])
+    async with httpx.AsyncClient(
+        base_url=control_plane_url,
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=60,
+    ) as client:
+        yield client
+
+
+@pytest.mark.parametrize(
+    "memory_type,sensitivity", [("episodic", ""), ("semantic", ""), ("episodic", "high")]
+)
+async def test_first_conditional_creators_retry_against_the_winner(
+    conditional_client: httpx.AsyncClient,
+    memory_type: str,
+    sensitivity: str,
+) -> None:
+    c = conditional_client
+    ident = {
+        "org": ORG,
+        "namespace": f"create-{uuid.uuid4().hex[:8]}",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "memory_key": "resource",
+    }
+    patches = [{"workingMemory": "notes"}, {"metadata": {"flag": True}}]
+    preview = await c.post(
+        "/v1/memory.set",
+        json={
+            **ident,
+            "value": patches[0],
+            "memory_type": memory_type,
+            "sensitivity": sensitivity,
+            "if_match_sha256": "absent",
+            "clear_expiry": True,
+            "dry_run": True,
+        },
+    )
+    assert preview.status_code == 200 and preview.json()["version"] == 0, preview.text
+    assert not (await c.post("/v1/memory.get", json=ident)).json()["found"]
+    replies = await asyncio.gather(
+        *(
+            c.post(
+                "/v1/memory.set",
+                json={
+                    **ident,
+                    "value": value,
+                    "memory_type": memory_type,
+                    "sensitivity": sensitivity,
+                    "if_match_sha256": "absent",
+                    "clear_expiry": True,
+                },
+            )
+            for value in patches
+        )
+    )
+    assert sorted(r.status_code for r in replies) == [200, 409], [r.text for r in replies]
+    loser = next(i for i, reply in enumerate(replies) if reply.status_code == 409)
+    assert replies[loser].json()["detail"]["code"] == "PRECONDITION_FAILED"
+    current = (await c.post("/v1/memory.get", json=ident)).json()
+    assert current["value"] == patches[1 - loser]
+    merged = {**current["value"], **patches[loser]}
+    retry = await c.post(
+        "/v1/memory.set",
+        json={
+            **ident,
+            "value": merged,
+            "memory_type": memory_type,
+            "sensitivity": sensitivity,
+            "if_match_sha256": current["content_sha256"],
+            "clear_expiry": True,
+        },
+    )
+    assert retry.status_code == 200, retry.text
+    final = (await c.post("/v1/memory.get", json=ident)).json()
+    assert final["value"] == {"workingMemory": "notes", "metadata": {"flag": True}}
+    assert (final["agent"], final["user_id"], final["session_id"]) == ("a", "u", "s")
+    assert final["memory_id"] == current["memory_id"]
+    assert final["content_sha256"] == retry.json()["content_sha256"]
+
+
+@pytest.mark.parametrize("expired", [False, True])
+async def test_absent_set_recreates_a_deleted_or_expired_key(
+    conditional_client: httpx.AsyncClient,
+    expired: bool,
+) -> None:
+    c = conditional_client
+    ident = {
+        "org": ORG,
+        "namespace": f"recreate-{uuid.uuid4().hex[:8]}",
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "memory_key": "resource",
+    }
+    initial = await c.post(
+        "/v1/memory.set",
+        json={
+            **ident,
+            "value": {"old": True},
+            "memory_type": "episodic",
+            **({"ttl_seconds": -1} if expired else {}),
+        },
+    )
+    assert initial.status_code == 200, initial.text
+    if not expired:
+        deleted = await c.post("/v1/memory.delete", json=ident)
+        assert deleted.status_code == 200, deleted.text
+    assert not (await c.post("/v1/memory.get", json=ident)).json()["found"]
+    created = await c.post(
+        "/v1/memory.set",
+        json={
+            **ident,
+            "value": {"metadata": {"fresh": True}},
+            "memory_type": "episodic",
+            "if_match_sha256": "absent",
+            "clear_expiry": True,
+        },
+    )
+    assert created.status_code == 200, created.text
+    final = (await c.post("/v1/memory.get", json=ident)).json()
+    assert final["found"] and final["value"] == {"metadata": {"fresh": True}}
+    assert final["expires_at"] is None
+    assert final["content_sha256"] == created.json()["content_sha256"]

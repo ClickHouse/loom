@@ -12,6 +12,7 @@ import pytest
 
 from server.memory.api.models_context import ContextPackInput
 from server.memory.app.context_pack import handle_context_pack
+from tests.unit.checked_pack_fakes import install_pack_target
 
 
 def _stub_everything_but_memories(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,7 +27,7 @@ def _stub_everything_but_memories(monkeypatch: pytest.MonkeyPatch) -> None:
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         "server.knowledge.app.conversations.handle_conversation_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
 
 def _memories(n: int, width: int) -> Any:
@@ -91,7 +92,7 @@ def test_section_fill_ratio_exceeds_one_when_the_body_was_cut(
         "server.knowledge.app.knowledge_search.handle_knowledge_search",
         "server.knowledge.app.conversations.handle_conversation_search",
     ):
-        monkeypatch.setattr(target, _dead)
+        install_pack_target(monkeypatch, target, _dead)
 
     async def _match(*a: Any, **k: Any) -> Any:
         return NS(

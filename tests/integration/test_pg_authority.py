@@ -377,7 +377,7 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     published."""
     tag = uuid.uuid4().hex[:8]
     namespaces = [f"pg-{tag}-{i}" for i in range(20)]
-    started = datetime.now(UTC) - timedelta(seconds=1)
+    started = ch_client.query("SELECT toUnixTimestamp64Micro(now64(6))").result_rows[0][0]
     answers = await asyncio.gather(
         *(
             call("memory.set", _set(ns, "k", f"fact {i} of the batch"))
@@ -398,8 +398,9 @@ async def test_writes_made_together_share_their_clickhouse_inserts(
     flushes = ch_client.query(
         "SELECT count() FROM system.query_log WHERE type = 'QueryFinish' "
         "AND query_kind = 'Insert' AND has(tables, 'loom.memory') "
-        "AND startsWith(log_comment, 'pg_batch.flush') AND event_time >= {t:DateTime}",
-        parameters={"t": started.replace(tzinfo=None)},
+        "AND startsWith(log_comment, 'pg_batch.flush') "
+        "AND query_start_time_microseconds >= fromUnixTimestamp64Micro({t:Int64})",
+        parameters={"t": started},
     ).result_rows[0][0]
     assert 0 < flushes < 20, flushes
 
@@ -1937,6 +1938,8 @@ async def test_a_summary_left_a_source_is_downgraded_with_its_vectors_and_search
     tags = ["consolidated", "src:k1", "src:k2"]
     made = await call("memory.set", _set(ns, "summary", "a summary of k1 and k2", tags=tags))
     assert made.status_code == 200, made.text
+    # The downgrade copies vectors from the summary's initial publication.
+    await _published(pg_conn, org)
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k1"})
     assert gone.status_code == 200, gone.text
     assert gone.json().get("dependents_downgraded") == 1, gone.text
@@ -1972,6 +1975,8 @@ async def test_a_summary_left_no_source_is_tombstoned_with_its_vectors_holding_n
     tags = ["consolidated", "src:k1"]
     made = await call("memory.set", _set(ns, "summary", "a summary of k1", tags=tags))
     assert made.status_code == 200, made.text
+    # The retirement needs the summary's initial vectors to have published.
+    await _published(pg_conn, org)
     gone = await call("memory.delete", {"namespace": ns, "agent": "a", "memory_key": "k1"})
     assert gone.status_code == 200, gone.text
     assert gone.json().get("dependents_tombstoned") == 1, gone.text
@@ -2910,6 +2915,8 @@ async def test_a_redaction_reads_a_live_claims_lease_and_leaves_a_parked_one_par
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
@@ -3321,6 +3328,8 @@ async def test_reconcile_status_holds_back_what_the_authority_has_not_published(
         assert (
             await call("memory.set", _set(ns, k, f"an embedded fact about {k}"))
         ).status_code == 200
+    # The divergence cases need both initial memory rows and their vectors.
+    await _published(pg_conn, org)
     ident = {k: (org, ns, "a", "-", "-", k) for k in keys}
 
     def statuses() -> dict[str, str]:
@@ -3740,6 +3749,15 @@ async def test_a_write_made_unembedded_over_an_embedded_key_retires_its_vectors(
     after."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "an embedded fact"))).status_code == 200
+    # Establish the embedded head: the first write answers before its publication.
+    await _published(pg_conn, org)
+    initial_live = ch_client.query(
+        "SELECT count() FROM loom.memory_embeddings FINAL WHERE org = {o:String} "
+        "AND namespace = {n:String} AND memory_key = 'k' AND tombstoned_at IS NULL",
+        settings=_SEQUENTIAL,
+        parameters={"o": org, "n": ns},
+    ).result_rows[0][0]
+    assert initial_live > 0
     # memory.update takes no level: the detector makes its new value 'high'.
     value = "the ssn is 123-45-6789" if op == "memory.update" else "the same fact, changed"
     body: dict[str, Any] = {**_set(ns, "k", value), **change}
@@ -3747,7 +3765,10 @@ async def test_a_write_made_unembedded_over_an_embedded_key_retires_its_vectors(
         body = {"namespace": ns, "agent": "a", "entries": [body]}
     elif op == "memory.update":
         body = {"namespace": ns, "memory_key": "k", "value": value}
-    assert (await call(op, body)).status_code == 200
+    response = await call(op, body)
+    assert response.status_code == 200
+    if op == "memory.update":
+        assert response.json()["updated"] is True
     # The retirement rides the write's publication, after its commit answered.
     await _published(pg_conn, org)
     live = ch_client.query(
@@ -5448,6 +5469,8 @@ async def test_a_cleared_head_is_sent_from_its_head_row_and_a_cleared_older_vers
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     assert (await call("memory.set", _set(ns, "k", "the first version"))).status_code == 200
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     head = (await call("memory.set", _set(ns, "k", "the second version"))).json()
     await _published(pg_conn, org)
     await pg_conn.execute(
@@ -5593,6 +5616,8 @@ async def test_a_revision_past_the_horizon_that_clickhouse_holds_loses_its_paylo
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before revisions can hand its delivery to the worker.
+    await _published(pg_conn, org)
     second = (await call("memory.set", _set(ns, "k", "the token was rotated"))).json()
     assert (await call("memory.set", _set(ns, "k", "the token is in the vault"))).status_code == 200
     for key in ("k2", "kp", "ko", "kd"):
@@ -5725,3 +5750,112 @@ async def test_a_revision_past_the_horizon_that_clickhouse_holds_loses_its_paylo
         }
         assert a["value"] == "[REDACTED]" and a["redaction_reason"].startswith("leak")
         assert a["redacted_at"] and a["content_sha256"] != b["content_sha256"]
+
+
+async def test_exact_head_locks_bound_a_large_absent_batch(pg_conn: Any, org: str) -> None:
+    """Absent keys sharing an identity do not exhaust the commit's statement budget."""
+    from server.core.hashing import sha256_value
+    from server.memory.store import pg_memory
+    from server.memory.store.rows import (
+        IDENTITY_COLUMNS,
+        MemoryRow,
+        build_first_version_row,
+        build_memory_version_row,
+        written_now,
+    )
+
+    namespace = "head-locks"
+    prefix = "gate-delivery-" + "1" * 32
+    first_key = prefix + "-0"
+    template = pg_memory.encode_row(
+        build_memory_version_row(
+            MemoryRow.from_snapshot(
+                build_first_version_row(
+                    {
+                        "org": org,
+                        "namespace": namespace,
+                        "agent": "bench",
+                        "memory_key": first_key,
+                        "memory_type": "semantic",
+                        "value": json.dumps(""),
+                        "version": 1,
+                        "content_sha256": sha256_value(""),
+                        "actor": "process:head-lock-test",
+                        "source_class": "asserted",
+                    },
+                    now=written_now(),
+                )
+            )
+        )
+    )
+    assert pg_memory._LOCK_HEADS.count("loom.memory_current") == 1
+    query = pg_memory._LOCK_HEADS.replace("loom.memory_current", "pg_temp.head_lock_candidates")
+    async with pg_conn.transaction():
+        await pg_conn.execute(
+            "CREATE TEMP TABLE head_lock_candidates "
+            "(LIKE loom.memory_current INCLUDING ALL) WITH (fillfactor = 90) ON COMMIT DROP"
+        )
+        # One statement builds full persisted rows without per-row network calls.
+        inserted = await pg_conn.execute(
+            "WITH keys AS ("
+            " SELECT i, $2::text || '-' || i::text AS key, "
+            "lpad(to_hex(i + 1), 32, '0')::uuid AS id FROM generate_series(0, 15699) AS i"
+            "), prefixes AS ("
+            " SELECT *, 'Cell trigger measurement ' || key || ': ' AS prefix FROM keys"
+            "), payloads AS ("
+            " SELECT *, prefix || left(repeat('abcdefghijklmnopqrstuvwxyz ', 4096), "
+            "4096 - length(prefix)) AS payload FROM prefixes"
+            "), stored AS ("
+            " SELECT *, to_json(payload)::text AS value, "
+            "encode(sha256(convert_to(to_json(payload)::text, 'UTF8')), 'hex') AS hash "
+            "FROM payloads) "
+            "INSERT INTO pg_temp.head_lock_candidates "
+            "(org, namespace, agent, user_id, session_id, memory_key, memory_id, "
+            "version, seq, content_sha256, row) "
+            "SELECT $1::jsonb->>'org', $1::jsonb->>'namespace', $1::jsonb->>'agent', "
+            "$1::jsonb->>'user_id', $1::jsonb->>'session_id', key, id, 1, i + 1, hash, "
+            "$1::jsonb || jsonb_build_object('memory_key', key, 'memory_id', id::text, "
+            "'value', value, 'content_sha256', hash) FROM stored",
+            template,
+            prefix,
+        )
+        assert inserted == "INSERT 0 15700"
+        await pg_conn.execute("ANALYZE pg_temp.head_lock_candidates")
+        await pg_conn.execute("SET LOCAL statement_timeout = 5000")
+        await pg_conn.execute("SET LOCAL lock_timeout = 2000")
+        expected = {}
+        for index in (2, 10, 1):
+            key = f"{prefix}-{index}"
+            start = f"Cell trigger measurement {key}: "
+            payload = start + ("abcdefghijklmnopqrstuvwxyz " * 4096)[: 4096 - len(start)]
+            row = {
+                **template,
+                "memory_key": key,
+                "memory_id": str(uuid.UUID(int=index + 1)),
+                "value": json.dumps(payload),
+                "content_sha256": sha256_value(payload),
+            }
+            identity = pg_memory.identity_key(row)
+            expected[identity] = {**dict(zip(IDENTITY_COLUMNS, identity, strict=True)), "row": row}
+        matched = await pg_conn.fetch(query, *pg_memory._key_arrays(list(expected)))
+        assert [dict(row) for row in matched] == [expected[key] for key in sorted(expected)]
+        identity = next(iter(expected))
+        changed = [
+            tuple(
+                "different-" + value if position == axis else value
+                for position, value in enumerate(identity)
+            )
+            for axis in range(6)
+        ]
+        assert await pg_conn.fetch(query, *pg_memory._key_arrays(sorted(changed))) == []
+        absent_prefix = "gate-delivery-" + "2" * 32
+        absent = sorted(
+            (org, namespace, "bench", "-", "-", f"{absent_prefix}-{index}") for index in range(2500)
+        )
+        arguments = pg_memory._key_arrays(absent)
+        plan = await pg_conn.fetchval("EXPLAIN (FORMAT JSON) " + query, *arguments)
+        try:
+            assert await pg_conn.fetch(query, *arguments) == []
+        except Exception as error:  # The synthetic plan must not replace the native failure.
+            error.add_note("Synthetic head-lock plan before query: " + json.dumps(plan))
+            raise

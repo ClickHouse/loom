@@ -16,7 +16,7 @@ and hands back the handle for the slice after that. Pages are stable, cost
 one keyed read, and stay inside the read scope the first call resolved.
 
 Handle format: `page/<sha256 prefix>@<offset>`. The blob's JSON is
-`{"v": 1, "query": ..., "top_k": ..., "candidates_total": ...,
+`{"v": 2, "query": ..., "top_k": ..., "candidates_total": ...,
 "namespaces_searched": [...], "namespaces_skipped": [...], "hits": [...]}`
 where `hits` is the tail in rank order, each a `_MemorySearchHit` dump, and
 the namespace lists are the first call's, so every page says what it covers.
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from server.memory.api.models_search import _MemorySearchHit
 
 PAGE_PREFIX = "page/"
-PAGE_VERSION = 1
+PAGE_VERSION = 2
 
 
 def split_tail(pool: list[Any], final: list[Any]) -> tuple[int, list[Any]]:

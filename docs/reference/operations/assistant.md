@@ -23,6 +23,7 @@ Ask the Loom assistant one question about this namespace and get one cited answe
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `mirrored` | `bool` | True when this answer is private to the caller's protected session; false by default. |
 | `answer` | `str` | The assistant's answer, with its citations as the agent wrote them. |
 | `run_id` | `str` | The answer's id: the run its tool calls are ledgered under (agent_events.run_id). |
 | `model` | `str` | The model that answered. |

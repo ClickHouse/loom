@@ -1422,7 +1422,12 @@ def test_the_authoritys_erasure_step_leads_the_erasing_steps_and_runs_only_under
     assert authority_steps(USER_STEPS)[0][0] == "pg_memory.delete"
     # A namespace's sources stop first, so no sync turn writes into what the steps erase.
     names = [name for name, _ in authority_steps(NAMESPACE_STEPS)]
-    assert names[:2] == ["knowledge_sources.retire", "pg_memory.delete"]
+    assert names[:4] == [
+        "knowledge_sources.retire",
+        "knowledge_source_push.delete",
+        "pg_memory.delete",
+        "pg_knowledge.delete",
+    ]
     assert set(PG_CENSUS) <= set(census_tables("user_id"))
     monkeypatch.setattr(settings, "storage_authority", "clickhouse")
     for steps in (USER_STEPS, NAMESPACE_STEPS):
@@ -1623,6 +1628,7 @@ def test_a_parked_page_keeps_what_its_hits_are_checked_by(monkeypatch: pytest.Mo
     hit._row_chunk, hit._chunk_typed = ("a", "u", 2, "sha"), True
     back = search_pages.unparked(json.loads(json.dumps(search_pages._parked(hit))))
     assert back is not None
+    assert back.model_dump()["agent"] == "a"
     assert (back._row_identity, back._row_chunk, back._chunk_typed) == (
         ("a", "u", "s"),
         ("a", "u", 2, "sha"),
@@ -1649,7 +1655,9 @@ def _parked_page(hits: list[Any], **kw: Any) -> dict[str, Any]:
 
 
 def _page_input(top_k: int) -> Any:
-    return SimpleNamespace(org="o", namespace="n", top_k=top_k)
+    from server.memory.api.models_search import MemorySearchInput
+
+    return MemorySearchInput(org="o", namespace="n", query="q", top_k=top_k)
 
 
 @pytest.mark.asyncio
@@ -2886,6 +2894,7 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     than its parent's time left."""
     from contextlib import ExitStack
 
+    from server.memory.api.models_search import MemorySearchInput
     from server.memory.app.search import handler, pg_validation
 
     seen: list[tuple[str, list[str], float | None]] = []
@@ -2897,8 +2906,9 @@ async def test_a_search_caps_its_barrier_wait_on_a_reentrant_pass_only(
     monkeypatch.setattr(pg_validation, "admit", _admit)
     run = SimpleNamespace(namespaces=["n"], sequential_scope=ExitStack())
     budget = SimpleNamespace(wall_left_s=lambda: 0.4)
-    search = SimpleNamespace(org="o", _pass_depth=depth)
-    await handler._admit(search, run, budget)
+    search = MemorySearchInput(org="o", namespace="n", query="q", memory_type="semantic")
+    search._pass_depth = depth
+    await handler._admit(search, run, budget, None, "fake-ngram-1024")
     assert seen == [("o", ["n"], cap)]
 
 

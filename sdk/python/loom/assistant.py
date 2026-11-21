@@ -170,12 +170,16 @@ class AssistantClient:
         the text written so far."""
         body = {"stream": True, "messages": _messages(question, history)}
         reading = _Reading()
+        complete = False
         async with self._agent.transport.stream(
             ROUTE, json=body, headers=self._headers(namespace), read_timeout_s=read_timeout_s
         ) as resp:
             request_id = resp.headers.get("X-Request-Id", "")
             async for line in resp.aiter_lines():
-                if not line.startswith("data: ") or line == "data: [DONE]":
+                if line == "data: [DONE]":
+                    complete = True
+                    continue
+                if complete or not line.startswith("data: "):
                     continue
                 try:
                     event = json.loads(line[6:])
@@ -194,6 +198,10 @@ class AssistantClient:
                     yield AssistantText(text)
         if not reading.run_id:
             err = LoomError(f"{ROUTE}: the stream ended before the answer began")
+            err.request_id = request_id
+            raise err
+        if not complete:
+            err = LoomError(f"{ROUTE}: the stream ended before completion")
             err.request_id = request_id
             raise err
         yield reading.answer()

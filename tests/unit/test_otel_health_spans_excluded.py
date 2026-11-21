@@ -44,7 +44,11 @@ def test_instrument_app_receives_the_excluded_urls(monkeypatch: pytest.MonkeyPat
     )
     app = object()
     otel._instrument_fastapi(app)
-    assert calls == [{"app": app, "excluded_urls": "/v1/health,/oauth/"}]
+    assert len(calls) == 1
+    assert calls[0]["app"] is app
+    assert calls[0]["excluded_urls"] == "/v1/health,/oauth/"
+    assert set(calls[0]) == {"app", "excluded_urls", "meter_provider"}
+    assert callable(calls[0]["meter_provider"].get_meter)
 
 
 def test_a_blank_setting_instruments_every_path_but_sign_in(

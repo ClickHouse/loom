@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -27,6 +28,7 @@ from server.operations.registry import OPERATIONS_BY_NAME
 from server.transport import post_rows
 
 _MID = "11111111-1111-1111-1111-111111111111"
+_TARGET_MID = UUID("22222222-2222-4222-8222-222222222222")
 _RATIONALE = "Promoted because Dana Reyes said the vault code is 4417"
 _PROMOTE = {"from_org": "o", "from_namespace": "A", "from_memory_id": _MID, "to_namespace": "B"}
 
@@ -57,6 +59,8 @@ def _hashed(text: str) -> dict[str, Any]:
 @pytest.fixture
 def emitted(monkeypatch: pytest.MonkeyPatch) -> Any:
     rows: list[dict[str, Any]] = []
+    # A generated id must not contain the private-text marker by chance.
+    monkeypatch.setattr("uuid.uuid4", lambda: _TARGET_MID)
 
     async def _emit(event_type: str, **kw: Any) -> str:
         rows.append({"event_type": event_type, **kw})

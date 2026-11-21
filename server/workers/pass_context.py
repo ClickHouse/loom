@@ -18,6 +18,8 @@ from __future__ import annotations
 import contextvars
 import logging
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -35,6 +37,8 @@ MAX_NAMESPACE = 256
 class PassContext:
     worker: str
     count: int = 0
+    # Monotonic for this pass: diagnostics emitted after a private scope must stay masked.
+    private_work: bool = False
     # (what, error class, bounded first line) for the first MAX_KEPT failures.
     failures: list[tuple[str, str, str]] = field(default_factory=list)
     # The cursor the previous pass left in `loom.worker_status`
@@ -199,3 +203,19 @@ def set_namespace(value: str) -> None:
         ctx.namespace = str(value or "")[:MAX_NAMESPACE]
     except Exception:  # noqa: BLE001 — a pass hook never raises into the pass
         pass
+
+
+@contextmanager
+def ensure_pass(worker: str) -> Iterator[PassContext]:
+    """Give directly invoked workers the same pass context as supervised workers."""
+    existing = current()
+    if existing is not None:
+        yield existing
+        return
+    token = _current.set(PassContext(worker=worker))
+    try:
+        ctx = current()
+        assert ctx is not None
+        yield ctx
+    finally:
+        _current.reset(token)

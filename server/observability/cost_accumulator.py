@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import contextvars
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
@@ -72,6 +74,10 @@ _UNPRICED_NAMED_MAX = 64
 
 
 def _note_unpriced(model: str) -> None:
+    from server.core.diagnostics import codes_only
+
+    if codes_only():
+        return
     if not model or model in PRICE_PER_1K_TOKENS or model in _UNPRICED_SEEN:
         return
     if len(_UNPRICED_SEEN) >= _UNPRICED_NAMED_MAX:
@@ -360,3 +366,14 @@ def report_llm(
         cache_write_5m=cache_write_5m,
         cache_write_1h=cache_write_1h,
     )
+
+
+@contextmanager
+def isolated_op() -> Iterator[_Accumulator]:
+    """Keep one private unit's spend out of the enclosing operation's accumulator."""
+    acc = _Accumulator()
+    token = _current.set(acc)
+    try:
+        yield acc
+    finally:
+        _current.reset(token)

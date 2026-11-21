@@ -150,7 +150,7 @@ def test_a_summary_pass_held_at_one_file_leaves_the_rest_of_the_repository(
     async def in_order(repo: Any, org: str, ns: str, *a: Any) -> list[str]:
         return list(paths)
 
-    async def under_cap(org: str, ns: str) -> bool:
+    async def under_cap(org: str, ns: str, *, user_id: str = "") -> bool:
         return False
 
     from server.code.store import index as code_index

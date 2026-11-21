@@ -114,7 +114,7 @@ async def _code_search(input: CodeSearchInput) -> CodeSearchOutput:
         from server.code.app.answers import _propose_identifiers
         from server.observability.budget import namespace_over_cap
 
-        if not await namespace_over_cap(org, ns):
+        if not await namespace_over_cap(org, ns, user_id=input.user_id or ""):
             from server.llm.client import get_llm_client
 
             with code_span("search.query_expand"):

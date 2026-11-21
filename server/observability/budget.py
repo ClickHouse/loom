@@ -1,4 +1,4 @@
-"""Shared per-namespace cost-cap gate for background workers.
+"""Shared namespace and named-user cost-cap gates.
 
 Workers that spend upstream tokens (conversation seeding, entity extraction)
 check this before doing LLM/embed work so a runaway namespace can't blow its
@@ -13,8 +13,12 @@ background (the conflict resolver) passes `fail_open=False`, and a failed read i
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any, Literal
+
+from server.core.event_source import ALL_EVENTS
 
 log = logging.getLogger(__name__)
 
@@ -46,20 +50,20 @@ async def namespaces_over_cap(
 
         client = ch or get_client()
         rows = await client.query_all(
-            """
+            f"""
             WITH
                 spend AS (
                     SELECT org, namespace, sum(upstream_cost_usd) AS spent,
-                           sumIf(upstream_cost_usd, operation = {op:String}) AS own
-                    FROM loom.agent_events
-                    WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
+                           sumIf(upstream_cost_usd, operation = {{op:String}}) AS own
+                    FROM {ALL_EVENTS}
+                    WHERE (org, namespace) IN {{pairs:Array(Tuple(String, String))}}
                       AND ts > now() - INTERVAL 1 DAY
                     GROUP BY org, namespace
                 ),
                 caps AS (
                     SELECT org, namespace, daily_cost_cap_usd AS cap
                     FROM loom.namespaces FINAL
-                    WHERE (org, namespace) IN {pairs:Array(Tuple(String, String))}
+                    WHERE (org, namespace) IN {{pairs:Array(Tuple(String, String))}}
                 )
             SELECT s.org AS org, s.namespace AS namespace, s.spent AS spent, s.own AS own,
                    c.cap AS cap
@@ -103,51 +107,138 @@ def _over(cap: float, spent: float, own: float, operation: str, share: float) ->
     return spent >= cap or (bool(operation) and own >= share * cap)
 
 
-async def _cap_and_spend(
-    org: str, namespace: str, operation: str = ""
-) -> tuple[float, float, float]:
-    """(cap, 24 h spend, `operation`'s part of it) for one namespace: the namespace's cap,
-    else the server default; zeros when uncapped, without reading the spend. Raises on
-    a read error; the public forms take that as under the cap, or over it with
-    `fail_open=False`."""
+@dataclass(frozen=True)
+class BudgetSnapshot:
+    cap: float
+    cap_source: Literal["namespace", "global", "uncapped"]
+    user_cap: float
+    user_cap_source: Literal["namespace_user", "global_user", "uncapped"]
+    spent: float = 0.0
+    own: float = 0.0
+    user_spent: float = 0.0
+    user_own: float = 0.0
+    inbox: str = ""
+
+    def ratio(self, user_id: str) -> float:
+        return max(
+            self.spent / self.cap if self.cap > 0 else 0.0,
+            self.user_spent / self.user_cap if user_id and self.user_cap > 0 else 0.0,
+        )
+
+    def over(self, user_id: str, operation: str, share: float) -> bool:
+        return (self.cap > 0 and _over(self.cap, self.spent, self.own, operation, share)) or (
+            bool(user_id)
+            and self.user_cap > 0
+            and _over(self.user_cap, self.user_spent, self.user_own, operation, share)
+        )
+
+
+def effective_user_cap(
+    ns_cap: Any,
+) -> tuple[float, Literal["namespace_user", "global_user", "uncapped"]]:
+    from server.settings import settings
+
+    own = float(ns_cap or 0.0)
+    if own > 0:
+        return own, "namespace_user"
+    default = float(settings.default_daily_user_cost_cap_usd)
+    return (default, "global_user") if default > 0 else (0.0, "uncapped")
+
+
+def named_user(user_id: str | None) -> str:
+    from server.core.naming import named
+
+    return named(user_id) or ""
+
+
+async def budget_snapshot(
+    org: str,
+    namespace: str,
+    *,
+    operation: str = "",
+    user_id: str = "",
+    read_uncapped: bool = False,
+    ch: Any | None = None,
+) -> BudgetSnapshot:
+    """One policy read and one rolling spend read, shared by status and both guards."""
     from server.core.ch import get_client
 
-    ch = get_client()
-    row = await ch.query_one(
-        """
-        SELECT daily_cost_cap_usd
-        FROM loom.namespaces FINAL
-        WHERE org = {org:String} AND namespace = {ns:String}
-        """,
-        params={"org": org, "ns": namespace},
+    observed_at = time.time()
+    ch = ch or get_client()
+    row = (
+        await ch.query_one(
+            "SELECT daily_cost_cap_usd, daily_user_cost_cap_usd, budget_alert_inbox "
+            "FROM loom.namespaces FINAL WHERE org = {org:String} "
+            "AND namespace = {ns:String} LIMIT 1",
+            params={"org": org, "ns": namespace},
+        )
+        or {}
     )
-    cap, _ = effective_cap((row or {}).get("daily_cost_cap_usd"))
-    if cap <= 0:
-        return 0.0, 0.0, 0.0
-    spent_row = await ch.query_one(
-        """
-        SELECT sum(upstream_cost_usd) AS spent,
-               sumIf(upstream_cost_usd, operation = {op:String}) AS own
-        FROM loom.agent_events
-        WHERE org = {org:String}
-          AND namespace = {ns:String}
-          AND ts > now() - INTERVAL 1 DAY
-        """,
-        params={"org": org, "ns": namespace, "op": operation},
+    cap, source = effective_cap(row.get("daily_cost_cap_usd"))
+    user_cap, user_source = effective_user_cap(row.get("daily_user_cost_cap_usd"))
+    uid = named_user(user_id)
+    values: dict[str, Any] = {}
+    if read_uncapped or cap > 0 or (uid and user_cap > 0):
+        values = (
+            await ch.query_one(
+                "SELECT sum(upstream_cost_usd) AS spent, "
+                "sumIf(upstream_cost_usd, operation = {op:String}) AS own, "
+                "sumIf(upstream_cost_usd, user_id = {uid:String}) AS user_spent, "
+                "sumIf(upstream_cost_usd, user_id = {uid:String} "
+                "AND operation = {op:String}) AS user_own "
+                f"FROM {ALL_EVENTS} WHERE org = {{org:String}} AND namespace = {{ns:String}} "
+                "AND ts > now() - INTERVAL 1 DAY",
+                params={"org": org, "ns": namespace, "op": operation, "uid": uid},
+            )
+            or {}
+        )
+    snapshot = BudgetSnapshot(
+        cap=cap,
+        cap_source=source,
+        user_cap=user_cap,
+        user_cap_source=user_source,
+        spent=float(values.get("spent") or 0.0),
+        own=float(values.get("own") or 0.0),
+        user_spent=float(values.get("user_spent") or 0.0),
+        user_own=float(values.get("user_own") or 0.0),
+        inbox=str(row.get("budget_alert_inbox") or ""),
     )
-    got = spent_row or {}
-    return cap, float(got.get("spent") or 0.0), float(got.get("own") or 0.0)
+
+    if snapshot.inbox:
+        from server.observability.budget_notifications import BudgetWarning, notify
+        from server.settings import settings
+
+        share = float(settings.cost_budget_alert_share)
+        for who, limit, spent in (
+            ("", cap, snapshot.spent),
+            (uid, user_cap if uid else 0.0, snapshot.user_spent),
+        ):
+            if limit > 0 and spent >= share * limit:
+                notify(
+                    BudgetWarning(
+                        org, namespace, snapshot.inbox, who, limit, spent, share, observed_at
+                    )
+                )
+    return snapshot
 
 
 async def namespace_over_cap(
-    org: str, namespace: str, *, operation: str = "", share: float = 1.0, fail_open: bool = True
+    org: str,
+    namespace: str,
+    *,
+    operation: str = "",
+    share: float = 1.0,
+    fail_open: bool = True,
+    user_id: str = "",
 ) -> bool:
-    """True iff this namespace has hit its 24h upstream-cost ceiling; with
+    """True when the namespace or supplied named user has hit its 24h ceiling; with
     `operation`, iff that operation's spend has reached `share` of it. A failed read is
     under the cap (a budget-read blip never halts a request), or over it with
     `fail_open=False` (a background spender)."""
     try:
-        return await operation_over_share(org, namespace, operation=operation, share=share)
+        return await operation_over_share(
+            org, namespace, operation=operation, share=share, user_id=user_id
+        )
     except Exception:  # the caller chose which way a failed read goes
         log.warning(
             "budget guard failed for %s/%s (%s)",
@@ -160,16 +251,16 @@ async def namespace_over_cap(
 
 
 async def operation_over_share(
-    org: str, namespace: str, *, operation: str = "", share: float = 1.0
+    org: str, namespace: str, *, operation: str = "", share: float = 1.0, user_id: str = ""
 ) -> bool:
     """`namespace_over_cap` with no choice made for a failed read: it raises, for a
     caller that answers an unreadable spend apart from a spent one."""
-    cap, spent, own = await _cap_and_spend(org, namespace, operation)
-    return cap > 0 and _over(cap, spent, own, operation, share)
+    snapshot = await budget_snapshot(org, namespace, operation=operation, user_id=user_id)
+    return snapshot.over(named_user(user_id), operation, share)
 
 
-async def namespace_budget_ratio(org: str, namespace: str) -> float:
-    """24h upstream spend as a fraction of this namespace's cost cap.
+async def namespace_budget_ratio(org: str, namespace: str, *, user_id: str = "") -> float:
+    """Largest 24h spend fraction of the namespace and supplied named user's caps.
 
     0.0 when no cap is configured (or on any read error — fail open, like
     `namespace_over_cap`), so a caller can treat >= 1.0 as capped and a
@@ -178,8 +269,8 @@ async def namespace_budget_ratio(org: str, namespace: str) -> float:
     derive the boolean, not pay the reads twice.
     """
     try:
-        cap, spent, _ = await _cap_and_spend(org, namespace)
-        return spent / cap if cap > 0 else 0.0
+        snapshot = await budget_snapshot(org, namespace, user_id=user_id)
+        return snapshot.ratio(named_user(user_id))
     except Exception:  # fail open: a budget-read blip never halts the caller
         log.warning(
             "budget: ratio check failed for %s/%s; treating as 0",

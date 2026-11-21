@@ -413,3 +413,27 @@ def test_every_page_named_for_llms_full_is_in_it() -> None:
             assert any(p.startswith(entry) for p in pages), entry
         else:
             assert entry in pages, entry
+
+
+@pytest.mark.parametrize("literal", ["script", "style"])
+def test_rendered_anchor_inventory_handles_escaped_raw_text_literals(literal):
+    rendered = (
+        f"<p><code>&lt;{literal}&gt;</code></p>"
+        '<a id="ingestion"></a><h2 id="native-heading">Native heading</h2>'
+        '<a href="#ingestion">Go</a>'
+    )
+    page = SimpleNamespace(present_anchor_ids={"native-heading"})
+    assert hooks.on_page_content(rendered, page, None, None) == rendered
+    assert page.present_anchor_ids == {"ingestion", "native-heading"}
+
+
+def test_rendered_anchor_inventory_does_not_accept_code_comments_or_script_text():
+    rendered = (
+        '<pre><code>&lt;a id="code-only"&gt;&lt;/a&gt;</code></pre>'
+        '<!-- <a id="comment-only"></a> -->'
+        "<script>const text = '<a id=\"script-only\"></a>';</script>"
+        '<a href="#missing">Missing</a><a name="legacy"></a><div id="real"></div>'
+    )
+    page = SimpleNamespace(present_anchor_ids={"code-only", "missing"})
+    assert hooks.on_page_content(rendered, page, None, None) == rendered
+    assert page.present_anchor_ids == {"legacy", "real"}

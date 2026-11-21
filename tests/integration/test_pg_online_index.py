@@ -39,12 +39,16 @@ async def database(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[tuple[Any, 
         finally:
             await conn.close()
 
-    try:
-        async with connect() as conn:
-            yield conn, connect
-    finally:
-        await directory.close()
-        await drop_database(admin, name)
+    async with contextlib.AsyncExitStack() as cleanup:
+        cleanup.push_async_callback(drop_database, admin, name)
+        cleanup.push_async_callback(directory.close)
+        try:
+            async with connect() as conn:
+                yield conn, connect
+        except BaseException:  # Owned cleanup cannot replace the first failure.
+            with contextlib.suppress(BaseException):
+                await cleanup.aclose()
+            raise
 
 
 def _prefix(tmp_path: Path) -> Path:

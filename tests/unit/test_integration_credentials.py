@@ -33,10 +33,14 @@ def pytest_sessionstart(session):
     )
     (tmp_path / "test_credentials.py").write_text(
         """
+import dataclasses
 import os
+import time
 
 import jwt
 from conftest import clock
+from server.auth import keyring
+from server.settings import settings
 
 def check_token():
     token = os.environ["LOOM_API_KEY"]
@@ -51,6 +55,12 @@ def check_token():
 def test_first():
     check_token()
     clock["now"] += 3601
+    # In-process handlers can load the server keyring without a refresh worker.
+    keyring._view = dataclasses.replace(
+        keyring._view,
+        read_at=time.monotonic() - settings.jwt_revocation_max_stale_seconds - 1,
+    )
+    assert keyring.stale()
 
 def test_later():
     check_token()
@@ -81,3 +91,52 @@ def test_later():
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("provided", [False, True])
+@pytest.mark.parametrize("body_fails", [False, True])
+def test_client_signer_restores_exact_snapshot_on_every_exit(monkeypatch, provided, body_fails):
+    import dataclasses
+    import time
+
+    import jwt
+
+    from server.auth import keyring
+    from server.core.errors import BackendUnavailableError
+    from server.settings import settings
+    from tests.conftest import _seed_test_api_key
+
+    stale = dataclasses.replace(
+        keyring._view,
+        loaded=True,
+        read_at=time.monotonic() - settings.jwt_revocation_max_stale_seconds - 1,
+    )
+    monkeypatch.setattr(keyring, "_view", stale)
+    if provided:
+        monkeypatch.setenv("LOOM_API_KEY", "caller-token")
+    else:
+        monkeypatch.delenv("LOOM_API_KEY", raising=False)
+    with pytest.raises(BackendUnavailableError, match="stale"):
+        keyring.signing_key()
+
+    lifecycle = _seed_test_api_key.__wrapped__(None)
+    next(lifecycle)
+    assert keyring._view is not stale
+    token = os.environ["LOOM_API_KEY"]
+    if provided:
+        assert token == "caller-token"
+    else:
+        assert jwt.get_unverified_header(token)["kid"] == "default"
+        assert jwt.decode(token, options={"verify_signature": False})["org"] == "*"
+    # A handler can replace its own snapshot; teardown still restores the original.
+    keyring._view = dataclasses.replace(keyring._view, read_at=time.monotonic())
+    if body_fails:
+        with pytest.raises(RuntimeError, match="body failed"):
+            lifecycle.throw(RuntimeError("body failed"))
+    else:
+        with pytest.raises(StopIteration):
+            next(lifecycle)
+    assert keyring._view is stale
+    assert os.environ.get("LOOM_API_KEY") == ("caller-token" if provided else None)
+    with pytest.raises(BackendUnavailableError, match="stale"):
+        keyring.signing_key()

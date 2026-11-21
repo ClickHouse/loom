@@ -56,7 +56,9 @@ from server.settings import settings
 log = logging.getLogger(__name__)
 
 
-async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutput:
+async def handle_memory_promote(
+    input: MemoryPromoteInput, *, reviewed_candidate_id: str | None = None
+) -> MemoryPromoteOutput:
     # Lazy imports break the import cycle with memory/app/handlers.py.
     import server.memory.store as memory_repo
     from server.memory.domain.excerpt import build_excerpt
@@ -95,9 +97,9 @@ async def handle_memory_promote(input: MemoryPromoteInput) -> MemoryPromoteOutpu
             "promoted_from_candidate_id": input.promoted_from_candidate_id,
         }
         ignored = [f for f, v in sent.items() if v is not None]
-        # The token's actor answers for a definition, which records no candidate.
+        # Only the review handler can supply a definition's candidate provenance.
         promoted_by = writer_actor("explicit")
-        candidate_id = None
+        candidate_id = reviewed_candidate_id
     else:
         ignored = ["approved_sha256"] if input.approved_sha256 is not None else []
         promoted_by = input.approver or "explicit"

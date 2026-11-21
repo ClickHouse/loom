@@ -24,6 +24,7 @@ import { oneOf } from "../lib/oneOf";
 import { Modal } from "../components/ui/Modal";
 import { Loading, Unavailable } from "../components/ui";
 import { COST_CAP_EFFECT } from "../lib/costCap";
+import { NamespaceBudgetAlerts, type BudgetAlertsHandle } from "./NamespaceBudgetAlerts";
 
 const REPO_JOIN_RULES = [
   ["open", "Open", "Anyone in the org joins instantly as a reader."],
@@ -62,6 +63,7 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
   // A loaded row is kept with the (org, namespace) it was read for, so a row read for a
   // previous namespace is never shown under this one or used to build its save.
   const key = JSON.stringify([org, namespace]);
+  const budgetAlertsRef = useRef<BudgetAlertsHandle>(null);
   const keyRef = useRef(key);
   keyRef.current = key;
   const [loaded, setLoaded] = useState<{ key: string; info: NamespaceInfo | null } | null>(null);
@@ -200,7 +202,8 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
       className="w-full max-w-[600px]"
       onEscapeKeyDown={(e) => {
         // Escape while editing the cap restores it; the next Escape closes the dialog.
-        if (capDraft === null) return;
+        const cancelledBudgetDraft = budgetAlertsRef.current?.cancelDrafts() ?? false;
+        if (capDraft === null && !cancelledBudgetDraft) return;
         e.preventDefault();
         setCapEdit(null);
       }}
@@ -296,6 +299,13 @@ export function NamespaceSettingsDialog({ open, onOpenChange, org, namespace, la
                     {COST_CAP_EFFECT} 0 inherits the global default.
                   </p>
                 </div>
+                <NamespaceBudgetAlerts
+                  ref={budgetAlertsRef}
+                  key={`${key}:${open}`}
+                  namespace={ns}
+                  locked={locked}
+                  save={save}
+                />
               </>
             )}
 

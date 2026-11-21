@@ -77,6 +77,14 @@ async def test_a_restricted_record_needs_its_own_grant(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_one_namespace_limit_without_a_bound_tracker_still_discovers_a_readable_record(
+    monkeypatch,
+) -> None:
+    _wire_namespaces(monkeypatch, readable=set(), code_readable={"code-clickhouse"})
+    assert await fo.readable_tracker_namespaces(ORG, "", [], 1) == [PUB]
+
+
+@pytest.mark.asyncio
 async def test_requested_namespaces_are_resolved_and_gated_in_order(monkeypatch) -> None:
     _wire_namespaces(monkeypatch, readable={PRIV, PUB})
 
@@ -463,3 +471,41 @@ async def test_an_answer_computed_before_the_code_registry_is_read_is_not_rememb
     monkeypatch.setattr(repos, "_registry_loaded", True)
     await hd.handle_tracker_duplicate_check(ask)
     assert remembered == ["code-example-private"]
+
+
+@pytest.mark.asyncio
+async def test_prepared_duplicate_targets_do_not_discover_new_bindings(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    _wire_namespaces(monkeypatch, readable={PUB})
+    monkeypatch.setattr(tcommon, "linked_trackers", AsyncMock(return_value=[PUB]))
+    monkeypatch.setattr(
+        tcommon,
+        "_bound_input",
+        AsyncMock(side_effect=lambda i: i.model_copy(update={"namespace": PUB})),
+    )
+    plan = await hd.prepare_duplicate_check(
+        TrackerDuplicateCheckInput(
+            org=ORG, namespace="code-clickhouse", title="retention failure", related_prs=False
+        )
+    )
+    assert plan.targets == (PUB,)
+    monkeypatch.setattr(
+        tcommon,
+        "linked_trackers",
+        AsyncMock(side_effect=AssertionError("new binding after consent")),
+    )
+    monkeypatch.setattr(
+        fo,
+        "readable_tracker_namespaces",
+        AsyncMock(side_effect=AssertionError("rediscovery after consent")),
+    )
+    checked = AsyncMock(return_value=_out("none", []))
+    monkeypatch.setattr(hd, "_checked", checked)
+
+    async def links(out, *args, **kwargs):
+        return out
+
+    monkeypatch.setattr(hd, "_with_links", links)
+    await hd.execute_duplicate_check(plan)
+    assert [i.namespace for i in checked.await_args.args[0]] == [PUB]

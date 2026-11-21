@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from server.observability.store.event_reads import MASKED_EVENTS
+
 Status = Literal["ok", "warn", "fail"]
 
 
@@ -100,13 +102,14 @@ async def procedure_plane(
     """One read over agent_events, procedure_runs and the procedural rows."""
     params: dict[str, Any] = {"org": org, "days": int(window_days), "ns": namespace or "*"}
     row = await ch.query_one(
-        """
+        (
+            """
         WITH pk AS (
             SELECT
                 count() AS packs,
                 countIf(args['out_procedure_keys'] != '') AS packs_showing,
                 countIf(args['out_procedure_keys_withheld'] != '') AS packs_withholding
-            FROM loom.agent_events
+            FROM {masked_events}
             WHERE org = {org:String} AND ({ns:String} = '*' OR namespace = {ns:String})
               AND ts > now() - INTERVAL {days:UInt16} DAY
               AND operation = 'context.pack' AND success
@@ -141,7 +144,8 @@ async def procedure_plane(
                runs.retention_pairs, runs.retention_ok_after_ok,
                pr.active_procedures, pr.quarantined
         FROM pk, runs, pr
-        """,
+        """
+        ).replace("{masked_events}", MASKED_EVENTS),
         params,
     )
     return fold(row, window_days=window_days)

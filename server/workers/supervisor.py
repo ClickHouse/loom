@@ -47,6 +47,26 @@ log = logging.getLogger(__name__)
 _ALERT_THRESHOLD = 3
 
 
+@dataclass
+class _FailureStreaks:
+    """Private retry control never advances the ordinary diagnostic streak."""
+
+    ordinary: int = 0
+    private: int = 0
+
+    def completed(self, ctx: pass_context.PassContext) -> int:
+        self.private = (self.private + 1 if ctx.count else 0) if ctx.private_work else 0
+        return self.private if ctx.private_work else self.ordinary
+
+    def failed(self, ctx: pass_context.PassContext) -> int:
+        if ctx.private_work:
+            self.private += 1
+            return self.private
+        self.private = 0
+        self.ordinary += 1
+        return self.ordinary
+
+
 def _record_cancelled(spec: WorkerSpec, started: float, ctx: Any, state: Any, streak: int) -> None:
     """The status row of a pass stopped before it finished."""
     _record_status_row(
@@ -66,6 +86,9 @@ def _report_failure(
 ) -> None:
     """Publish and log a failed pass: the streak and partial gauges, the error, and
     the DEGRADED line once the streak reaches the alert threshold."""
+    if ctx.private_work:
+        log.warning("%s: SYNC_FAILED", spec.name)
+        return
     # The DEGRADED line below is a log; this is the alertable form.
     _publish_streak(spec.name, streak)
     _publish_partial(spec.name, ctx.count)
@@ -225,7 +248,7 @@ class WorkerSupervisor:
     async def _supervise(self, spec: WorkerSpec) -> None:
         """One supervised worker loop: run the pass, sleep, repeat. On failure,
         sleep a backed-off duration and reset the backoff on the next success."""
-        consecutive_failures = 0
+        failures = _FailureStreaks()
         # Each supervised loop is its own task, so this ContextVar write is
         # scoped to the worker: every llm.*/embed.* span the pass creates
         # carries loom.operation=worker.<name> (per-repo code adds org/ns).
@@ -268,16 +291,20 @@ class WorkerSupervisor:
                     async with asyncio.timeout(deadline):
                         await spec.pass_callable()
                 in_pass = False
-                consecutive_failures = _after_pass(
-                    spec, acc, ctx, state, started=started, streak=consecutive_failures
+                failures.ordinary = _after_pass(
+                    spec, acc, ctx, state, started=started, streak=failures.ordinary
                 )
+                retry_streak = failures.completed(ctx)
                 # A clean pass that found nothing sleeps the
                 # spec's idle interval; a pass that did work keeps the
                 # interval; one that noted a failed leg retries sooner on a
                 # long-interval worker.
                 await self._sleep_or_drain(
                     next_interval_seconds(
-                        spec, ctx, partial=bool(ctx.count), streak=consecutive_failures
+                        spec,
+                        ctx,
+                        partial=bool(ctx.count),
+                        streak=retry_streak,
                     )
                 )
             except ProcessStopping:
@@ -286,7 +313,7 @@ class WorkerSupervisor:
                 # The pass saw a stop or a stale lease between batches. Recorded
                 # like a cancel; the loop top waits until the lease is fresh.
                 log.warning("%s: pass stopped (lease not fresh); no further writes", spec.name)
-                _record_cancelled(spec, started, ctx, state, consecutive_failures)
+                _record_cancelled(spec, started, ctx, state, failures.ordinary)
             except asyncio.CancelledError:
                 log.info("%s: cancelled, exiting supervised loop", spec.name)
                 # The store says the colour stopped mid-pass.
@@ -294,10 +321,10 @@ class WorkerSupervisor:
                 # write a `cancelled` row that repeats the previous pass's
                 # counts with the sleep as its duration.
                 if in_pass:
-                    _record_cancelled(spec, started, ctx, state, consecutive_failures)
+                    _record_cancelled(spec, started, ctx, state, failures.ordinary)
                 raise
             except Exception as exc:  # noqa: BLE001 — a failed pass must not end the loop
-                consecutive_failures += 1
+                retry_streak = failures.failed(ctx)
                 _finish_pass(
                     spec.name,
                     acc,
@@ -308,13 +335,13 @@ class WorkerSupervisor:
                     partial=ctx,
                     spec=spec,
                     state=state,
-                    streak=consecutive_failures,
+                    streak=failures.ordinary,
                     deadline=deadline if isinstance(exc, TimeoutError) else 0.0,
                 )
-                _report_failure(spec, exc, ctx, started, deadline, consecutive_failures)
+                _report_failure(spec, exc, ctx, started, deadline, failures.ordinary)
                 backoff = min(
                     settings.worker_backoff_cap_s,
-                    settings.worker_backoff_base_s * (2 ** (consecutive_failures - 1)),
+                    settings.worker_backoff_base_s * (2 ** (retry_streak - 1)),
                 )
                 # A pass cut at its deadline, or any failed pass
                 # of a worker whose interval is longer than its deadline, waits
@@ -528,6 +555,18 @@ def _after_pass(
     three such passes) while the loop keeps its normal interval: the work
     the pass did complete is still wanted on time. A clean pass resets it."""
     partial = ctx.count
+    if ctx.private_work:
+        _finish_pass(
+            spec.name,
+            acc,
+            started=started,
+            success=True,
+            partial=ctx,
+            spec=spec,
+            state=state,
+            streak=streak,
+        )
+        return streak
     _publish_partial(spec.name, partial)
     new_streak = streak + 1 if partial else 0
     _finish_pass(
@@ -629,6 +668,12 @@ def _record_status_row(
     before the ledger drains it), the trigger, the cursor and the last
     namespace the pass reached (pass_context.set_namespace). Idle passes
     write a row too. Never raises."""
+    ctx = partial if partial is not None else pass_context.current()
+    if state is not None and ctx is not None and ctx.cursor:
+        state.cursor = ctx.cursor
+    if ctx is not None and ctx.private_work:
+        _record_private_status(name, started, success, ctx, state, error, cancelled)
+        return
     try:
         from server.core import request_work
         from server.observability import cost_accumulator
@@ -660,9 +705,6 @@ def _record_status_row(
         pass_started, pass_finished = status_store.wall_from_monotonic(started)
         # The cursor this pass left (pass_context.set_cursor), whether or not
         # the caller handed the context over — it is still bound here.
-        ctx = partial if partial is not None else pass_context.current()
-        if state is not None and ctx is not None and ctx.cursor:
-            state.cursor = ctx.cursor
         status_store.record_pass(
             name,
             status=status,
@@ -691,6 +733,36 @@ def _record_status_row(
             state.trigger = "interval" if success else "retry_backoff"
     except Exception:
         log.debug("%s: worker_status row failed", name, exc_info=True)
+
+
+def _record_private_status(
+    name: str,
+    started: float,
+    success: bool,
+    ctx: pass_context.PassContext,
+    state: LoopState | None,
+    error: BaseException | None,
+    cancelled: bool,
+) -> None:
+    try:
+        failed = not success or bool(ctx.count) or error is not None or cancelled
+        at, _ = status_store.wall_from_monotonic(started)
+        status_store.record_pass(
+            name,
+            status="failed" if failed else "ok",
+            started=at,
+            finished=at,
+            error_class="SYNC_FAILED" if failed else "",
+            error="SYNC_FAILED" if failed else "",
+            partial_failures=0,
+            resume_cursor=state.cursor if state is not None else "",
+            namespace=ctx.namespace,
+            trigger=state.trigger if state is not None else "",
+        )
+        if state is not None:
+            state.trigger = "interval" if success else "retry_backoff"
+    except Exception:  # noqa: BLE001 — private status reporting must not fail the worker
+        pass
 
 
 def _emit_pass_row(
@@ -730,6 +802,7 @@ def _emit_pass_row(
         # `.pass` keeps the supervisor's one-row-per-pass apart from the
         # per-item `worker.<name>` rows workers emit themselves; `LIKE
         # 'worker.%'` still sums both for spend.
+        private = partial is not None and partial.private_work
         cost_event.emit_worker_event(
             snap,
             org="-",
@@ -737,8 +810,13 @@ def _emit_pass_row(
             operation=f"worker.{name}.pass",
             started=started,
             success=success,
-            error_code=error_code,
-            args=_pass_args(name, spent=did_spend, error=error, partial=partial, outcome=outcome),
+            error_code=("SYNC_FAILED" if error is not None or noted else "")
+            if private
+            else error_code,
+            args={}
+            if private
+            else _pass_args(name, spent=did_spend, error=error, partial=partial, outcome=outcome),
+            latency_ms=0 if private else None,
         )
     except Exception:
         log.debug("%s: pass ledger row failed", name, exc_info=True)

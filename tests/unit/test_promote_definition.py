@@ -193,6 +193,17 @@ async def test_an_empty_approver_sent_is_named_ignored(store: dict[str, Any]) ->
     assert out.ignored_args == ["approver"]
 
 
+async def test_review_provenance_comes_only_from_the_internal_call(store: dict[str, Any]) -> None:
+    cid = "00000000-0000-0000-0000-000000000001"
+    out = await promote.handle_memory_promote(
+        _input(promoted_from_candidate_id="untrusted"), reviewed_candidate_id=cid
+    )
+    (row,) = store["written"]
+    assert row["promoted_from_candidate_id"] == cid
+    assert row["promoted_by"] == "user:admin"
+    assert out.ignored_args == ["promoted_from_candidate_id"]
+
+
 async def test_a_definition_promotion_needs_its_approved_hash(store: dict[str, Any]) -> None:
     assert await _refusal(store, approved_sha256=None) == "VALIDATION_FAILED"
     with pytest.raises(PreconditionFailedError) as e:

@@ -10,6 +10,7 @@ from typing import Any
 
 from server.core.background import create_deferred_task
 from server.core.ch import get_client
+from server.core.errors import VectorInputTooLargeError
 from server.memory.app.search.ann_entity_boosts import _ann_entity_boosts
 from server.memory.app.search.context import SearchContext
 from server.memory.app.search.scope import _retain_task_result
@@ -20,6 +21,8 @@ from server.memory.app.search.vector_legs import _leg_or_empty
 # shatters it into "00084"/"external"/"aggregation", none of which match the
 # whole-name summary entity, so the per-failure consolidation never surfaces.
 _SUMMARY_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{2,}")
+# not a setting: the documented summary seed input contract accepts 256 distinct names.
+_MAX_ENTITY_SUMMARY_SEEDS = 256
 
 
 def _seed_entity_summary_entities(
@@ -48,13 +51,18 @@ def _seed_entity_summary_entities(
     from server.memory.domain.graph_quality import canonical_entity_text
     from server.memory.domain.retrieval_calibration import _salient_identifiers
 
-    out: list[str] = list(effective_entity_filter or [])
-    seen = {e.lower() for e in out}
+    out: list[str] = []
+    seen: set[str] = set()
 
     def _add(canon: str) -> None:
         if canon and canon.lower() not in seen:
+            if len(out) >= _MAX_ENTITY_SUMMARY_SEEDS:
+                raise VectorInputTooLargeError("entity summary seeds exceed 256 names")
             seen.add(canon.lower())
             out.append(canon)
+
+    for entity in effective_entity_filter or []:
+        _add(entity)
 
     for raw in _salient_identifiers(query or ""):
         if raw.startswith("@"):

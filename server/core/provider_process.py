@@ -96,8 +96,8 @@ def host_proof() -> str:
 
 def proves_stopped(proof: str) -> bool:
     """Whether the process `proof` names has stopped, judged from this one: same host
-    name and kernel boot, and either its pid is free or runs another process than
-    the one that started then (same pid namespace). Another namespace or API
+    name and kernel boot, and its pid is free, runs a different birth, or is a
+    single-thread zombie of that birth (same pid namespace). Another namespace or API
     object proves nothing. Sharing a host name or container identity alone does
     not prove death; an uninspectable process is not proven stopped."""
     parts = proof.split("|")
@@ -116,7 +116,7 @@ def proves_stopped(proof: str) -> bool:
         return False
     if pidns != my_pidns:
         return False  # namespace identity alone says nothing about old processes
-    # Only positive evidence: no such process, or another one under its pid.
+    # Only positive evidence: absence, a different birth, or a fully exited group.
     # A pid this process may not inspect (hidepid, a permission error) proves nothing.
     try:
         os.kill(int(pid), 0)
@@ -125,8 +125,14 @@ def proves_stopped(proof: str) -> bool:
     except (OSError, ValueError):
         return False
     try:
-        return _start_ticks(pid) != start
-    except (OSError, IndexError):
+        if _start_ticks(pid) != start:
+            return True
+        with open(f"/proc/{pid}/stat", encoding="ascii") as f:
+            stat = f.read().rsplit(")", 1)[1].split()
+        # A zombie leader can still have live siblings. Bind all three fields to
+        # one fresh record: only a single-thread zombie cannot resume this birth.
+        return stat[19] == start and stat[0] == "Z" and stat[17] == "1"
+    except (OSError, IndexError, ValueError):
         return False
 
 

@@ -106,6 +106,26 @@ describe("Recall Lab: the scores table", () => {
     expect(screen.queryByRole("button", { name: "deploy_note" })).toBeNull();
   });
 
+  it("keeps settled scores out of draft query edits and clears them with the query", async () => {
+    const result = hit("deploy_note", 0.9);
+    const readTerms = vi.fn(() => ({ semantic: 0.6, entity_ann_boost_effective: 0.06 }));
+    Object.defineProperty(result, "score_components", { get: readTerms });
+    searchMemory.mockResolvedValue({ results: [result], embedding_model: "m" });
+    render(<RecallLab />);
+    const table = await score();
+    expect(readTerms).toHaveBeenCalled();
+    readTerms.mockClear();
+
+    fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "deploy lane" } });
+    expect(screen.getByLabelText("Recall query")).toHaveValue("deploy lane");
+    expect(within(table).getByText("excerpt of deploy_note")).toBeInTheDocument();
+    expect(readTerms).not.toHaveBeenCalled();
+    expect(searchMemory).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(screen.getByLabelText("Recall query"), { target: { value: "" } });
+    expect(screen.queryByRole("table", { name: "Recall scores" })).toBeNull();
+  });
+
   it("draws the score as Click UI's table bar, relative to the top score", async () => {
     searchMemory.mockResolvedValue({
       results: [hit("deploy_note", 0.8), hit("rollback_runbook", 0.4)],
