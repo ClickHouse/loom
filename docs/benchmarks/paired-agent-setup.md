@@ -114,6 +114,55 @@ An elided body is a context-budget outcome. An absent definition is an abstentio
 Neither proves that the index is stale. Record these separately from bodies that
 differ from the local source, and retain the affected task in the comparison.
 
+## Choose tools for the information gap
+
+Qualify the retrieval policy against public task statements and starting source
+before the paid run. A fixed definition lookup does not measure code discovery.
+
+| Information needed                      | Operation                       | Follow-up                                                |
+| --------------------------------------- | ------------------------------- | -------------------------------------------------------- |
+| Known definition                        | `code.symbol`                   | Read its verified body once                              |
+| Literal, unknown name or import         | `code.grep`                     | Narrow by path when known; inspect a relevant scope      |
+| Concept without a known identifier      | `code.search`                   | Return cards, then fetch selected definitions            |
+| Definitions in a known file             | `code.outline`                  | Select the required definition                           |
+| Definition containing a source location | `code.enclosing`                | Fetch selected locations and deduplicate repeated bodies |
+| Callers or change dependencies          | `code.callers` or `code.impact` | Treat tree-sitter relationships as a coverage floor      |
+
+An absent local definition can be an external import or re-export. Search its
+literal uses and imports before treating it as an indexing failure. Do not fetch
+the enclosing body for every grep hit: several hits can belong to one definition,
+and early path-ordered hits can be unrelated to the task. Preserve each location's
+mapping when returning a repeated body only once.
+
+For an unembedded lexical experiment, declare `legs="lexical"`,
+`llm_legs="none"`, `rerank="none"`, `expand=false`, `annotate=false`,
+`include_lessons=false` and `bodies="none"` on discovery searches. This avoids
+implicitly adding a separate model or embedding treatment. Qualify other
+operations independently; their internal defaults need not match this policy.
+
+Check literal hit text at the returned physical file line, as well as definition
+bodies. Indexed chunks can contain copied documentation or synthetic continuation
+headers. Those presentation lines are not source coordinates. Preserve partial
+coverage and truncation warnings instead of turning an empty result into proof
+that no use exists.
+
+Expose the declared operations through named model tool schemas and record their
+dispatch mapping. Adding a single definition wrapper does not expose discovery
+tools. Count each declared retrieval tool name, including choices served from a
+cache, rather than matching one hardcoded wrapper name.
+
+Retrieval can save tokens only when useful evidence replaces other work. Give all
+arms the same instruction to reuse source already inspected. Measure subsequent
+reads and repeated bodies; do not add an impact report after every edit unless
+that dependency check is part of the question being tested. Freeze automatic
+stages, fallback rules, payload projection and model instructions in the protocol.
+
+Qualify serving-account startup privileges before freezing the installation.
+An SDK viewer token and the server's database account have different roles. A
+build can require database privileges at startup even when the benchmark calls
+only read operations. Retain a refused startup as a failed preflight; do not
+weaken authorization to obtain a measurement.
+
 ## Qualify the evaluator independently
 
 Pin dependency images by digest and record their installed package locks. Select
