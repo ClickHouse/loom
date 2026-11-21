@@ -189,7 +189,7 @@ low.
 2. Else from `LOOM_LLM_MODEL`: `bedrock:*` is `bedrock`; `claude*` is `anthropic`; `gpt*`, `o1*`, `o3*`, `o4*`,
    `chatgpt*` are `openai`; `fake*` is `fake`.
 3. Else from the key present: `OPENAI_API_KEY` gives `openai` with `gpt-6-luna`, then
-   `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-4-5`.
+   `ANTHROPIC_API_KEY` gives `anthropic` with `claude-haiku-5-5`.
 4. Else `fake` (`fake-echo-1`).
 
 `Settings` resolves it once at load; `settings.llm_provider` is always concrete, and
