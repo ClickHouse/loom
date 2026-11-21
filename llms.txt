@@ -27,7 +27,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Document search and RAG for agents](docs/use-cases/document-search.md): Loom indexes your documents (Markdown and text, and PDF, `.docx` and `.pptx` files that its extractor service converts) and lets agents search them with citations over MCP, HTTP or the SDKs.
 - [Memory linked to code for coding agents](docs/use-cases/memory-linked-to-code.md): Loom links coding agents' memories to the functions, classes and files they name, follows them through refactors, and flags a memory when its code changes.
 - [Shared context for multi-agent workflows](docs/use-cases/multi-agent.md): Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and separate read and write roles.
-- [Agent runs, traces and PR history](docs/use-cases/runs-and-pr-history.md): Loom records the work coding agents do, as runs and searchable session conversations, and connects it to your code history.
+- [Agent runs, traces and PR history](docs/use-cases/runs-and-pr-history.md): Loom records agent runs and conversations, checks bug drafts for duplicates and ranks candidate regression PRs without building the code.
 - [Self-hosted agent memory on ClickHouse](docs/use-cases/self-hosted-clickhouse.md): Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and stores agent memory, documents, conversations and code indexes as tables in ClickHouse.
 
 ## FAQ and glossary
@@ -53,7 +53,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Unified search and context packs](docs/features/unified-search.md): `loom_search` searches memory, profile, knowledge, past conversations and readable issues and PRs across the caller's namespaces in one round trip.
 - [Code index for coding agents over MCP](docs/features/code-index/overview.md): With code workers enabled for a repository, Loom indexes it into ClickHouse and answers structure questions through the `code.*` operations: where a symbol is defined, who calls it, what a change reaches, which merged PR touched a line.
 - [Code index freshness](docs/features/code-index/freshness.md): The index trails the repository: it indexes merged commits on a configured branch, pass by pass, and each tier advances its own watermark.
-- [History, PRs and releases](docs/features/code-index/history-and-prs.md): These ops need merged-PR history; the `code_pr_history` worker is off by default (`LOOM_CODE_PR_HISTORY_ENABLED`).
+- [History, PRs and releases](docs/features/code-index/history-and-prs.md): ClickHouse Loom's PR-history operations need merged-PR history.
 - [Code operations](docs/features/code-index/operations.md): This page maps questions to `code.*` ops.
 - [Adding repositories](docs/features/code-index/repositories.md): A fresh install indexes no repository.
 - [Integrations](docs/features/integrations/index.md): Integrations put Loom's tools in front of a model, capture its conversations, or receive its telemetry.
