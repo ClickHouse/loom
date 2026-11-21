@@ -1216,11 +1216,10 @@ host dominate the single-row figures, so they show no measurable cost, not a gai
 and the cost is the difference within the round. A marked session, which every Loom
 process with `LOOM_CELL` set opens, shows no cost the rounds can tell from zero (the six
 rounds' differences range from −0.36 to 0.49 µs a row); an unmarked one pays 12 to 14 µs
-a row for the state read and the `loom.tenancy` lookup. Loom's own writes are marked, so
-this predicts the ship gate (a `memory.set` p99 rise of at most 10 ms, a delivery pass
-at most 10% slower) holds by a wide margin; the cost lands on scripts and older builds
-writing a cell without the check. This measures the triggers on the statements, not a
-whole `memory.set` through a server on a cell; the end-to-end gate follows.
+a row for the state read and the `loom.tenancy` lookup. These statement timings do not
+establish the `memory.set` p99 or delivery-throughput gates. Those require the end-to-end
+acceptance workload below. An unmarked session, including a script or older build writing
+a cell without the check, pays the measured state-read and tenancy-lookup cost.
 
 A small local diagnostic on an attached first cell records 400 sequential `memory.set`
 calls per run and 1,000-row statement inserts from marked and unmarked sessions, three
