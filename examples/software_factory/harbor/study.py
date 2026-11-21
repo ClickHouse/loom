@@ -519,6 +519,7 @@ def export(protocol: dict, job_name="live") -> dict:
     summary["fairness_verified"] = read(audit_path).get("passed") if audit_path.exists() else None
     if protocol.get("public_reproduction"):
         summary["public_export"] = export_public(protocol, output / "public-results")
+    write(output / "summary.json", summary)
     return summary
 
 

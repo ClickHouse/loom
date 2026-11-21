@@ -61,16 +61,19 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.coverage.watch": ("sdk_method",),
     "code.enclosing": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "code.examples": ("sdk_method",),
     "code.files": ("sdk_method",),
     "code.first_build": ("sdk_method",),
-    "code.grep": ("sdk_method",),
+    "code.grep": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.history": ("sdk_method",),
     "code.impact": (
         "sdk_method",
-        "sdk_example",
         "plugin_hook",
     ),
     "code.index_errors": ("dashboard",),
@@ -89,7 +92,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
-    "code.outline": ("sdk_method",),
+    "code.outline": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.pr_check": ("sdk_method",),
     "code.recent_commits": ("dashboard",),
     "code.refresh": ("dashboard",),
@@ -110,6 +116,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.scip_status": ("sdk_example",),
     "code.search": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
