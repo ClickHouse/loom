@@ -598,14 +598,27 @@ async def test_a_job_that_closes_its_output_still_dies_at_its_timeout(monkeypatc
     assert loop.time() - started < 5
 
 
-async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkeypatch) -> None:
+@pytest.mark.parametrize("spawn_delay_s", [0.0, 0.4])
+async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(
+    monkeypatch, spawn_delay_s: float
+) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
+    output_closed = asyncio.Event()
     pids: list[int] = []
     real_exec = asyncio.create_subprocess_exec
 
     async def spy(*args, **kwargs):
+        await asyncio.sleep(spawn_delay_s)
         proc = await real_exec(*args, **kwargs)
         pids.append(proc.pid)
+        try:
+            assert proc.stdout is not None and proc.stderr is not None
+            assert await proc.stdout.read() == b""
+            assert await proc.stderr.read() == b""
+            output_closed.set()
+        finally:
+            if not output_closed.is_set():
+                await sandbox._kill_group(proc)
         return proc
 
     monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", spy)
@@ -614,12 +627,20 @@ async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkey
             ["sh", "-c", "exec 1>&- 2>&-; sleep 30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=30
         )
     )
-    await asyncio.sleep(0.3)
-    job.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await job
-    with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
-        os.kill(pids[0], 0)
+    try:
+        # EOF proves both outputs closed before cancellation reaches the child.
+        async with asyncio.timeout(5):
+            await output_closed.wait()
+        job.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+        with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
+            os.kill(pids[0], 0)
+    finally:
+        if not job.done():
+            job.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await job
 
 
 def test_a_refused_layout_is_a_health_problem(tmp_path: Path, monkeypatch) -> None:
