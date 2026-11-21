@@ -586,6 +586,7 @@ class Provisioner:
         ]
         ch = self._create("container", ch_name, command)
         self._cmd(["docker", "start", ch])
+        self._wait_clickhouse(ch_name, ch_secret)
         server_name = self.prefix + "-loom"
         command = [
             "docker",
@@ -668,6 +669,25 @@ class Provisioner:
         }
         save(state, self.runtime)
         return self.runtime
+
+    def _wait_clickhouse(self, name, password):
+        import httpx
+
+        deadline = time.monotonic() + 180
+        with httpx.Client(timeout=2, auth=("loom", password)) as client:
+            while time.monotonic() < deadline:
+                state = self._owned("container", name)["State"]
+                if not state["Running"]:
+                    raise RuntimeError("Owned ClickHouse exited before becoming ready")
+                try:
+                    response = client.get("http://" + name + ":8123", params={"query": "SELECT 1"})
+                    response.raise_for_status()
+                    if response.text.strip() == "1":
+                        return
+                except httpx.HTTPError:
+                    pass
+                time.sleep(1)
+        raise TimeoutError("Owned ClickHouse did not accept queries")
 
     def _healthy(self):
         if self.http is None:
