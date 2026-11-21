@@ -15,17 +15,17 @@ from server.settings.catalog import GIT_PROXY_IDENTITY
 _GIT_PROXY_IDENTITY_OR_EMPTY = f"^(?:{GIT_PROXY_IDENTITY.pattern})?$"
 
 # ============================================================
-# code.repos — every configured repo the caller may read
+# code.repos — readable repositories and permitted access metadata
 # ============================================================
 
 
 class CodeReposInput(_CodeIdentity):
-    """Lists the code namespaces (repo@branch entries) configured on this
-    deployment that the caller is authorized to read, across orgs — each row
-    carries its org. Transport authz targets the default code namespace when
-    there is one to use; the handler then checks each entry separately, so
-    unreadable entries are omitted, never 403'd, and the dashboard renders an
-    empty state."""
+    """List readable repositories and permitted access-request metadata.
+
+    Each row names its organization. Rows with readable=False expose namespace
+    metadata without populated index counts or watermarks; other inaccessible
+    entries are omitted.
+    """
 
     # A caller standing in one checkout (the plugin's code shunt, from the origin
     # remote) names it, and the answer is that repository's entries only — one status
@@ -70,10 +70,8 @@ class CodeRepoSummary(ProjectedRow):
     indexed_at: str = ""  # git_head watermark's updated_at
     last_refresh_at: str = ""
     counts: dict[str, int] = Field(default_factory=dict)
-    # False only for org-admin-shaped callers (flat ADMIN+) who hold no grant
-    # on the entry: they see it exists so they can adopt it (bootstrap of an
-    # auto-registered, ownerless code namespace). Everyone else never sees
-    # entries they cannot read.
+    # Whether the caller may read code; False rows expose permitted join/adoption
+    # metadata without populated index counts or watermarks.
     readable: bool = True
     # How the namespace is joined and where the caller stands, so the Code view can
     # render Join / Request access / Cancel without a second call. `my_status` is
@@ -138,8 +136,8 @@ class CodeRepoSummary(ProjectedRow):
 
 
 class CodeReposOutput(BaseModel):
-    # One row per entry the caller reads (plus unreadable rows an org admin may adopt),
-    # narrowed to the `repo` / `repos` match when either was given; [] when none.
+    # Readable entries and permitted request-only or adoption metadata, narrowed to
+    # the `repo` / `repos` match when either was given; [] when none.
     repos: list[CodeRepoSummary]
 
 

@@ -1,9 +1,13 @@
 # Code index operations
 
-This page covers how to enable the code index workers, configure repositories and keep
-the index current; the code index runs only when an operator enables its workers and
-configures repositories. Every `code_*` worker except `code_coverage_notify` and
-`code_backport_gaps` is off by default. What the `code.*` operations answer is in the
+This page covers how to configure code index workers and repositories and keep the
+index current. Workers run when the supervisor is admitted and their settings and
+repository prerequisites permit it. Some compiler workers are enabled by default;
+they still need a configured repository, its first indexed revision, sandbox admission
+and the required checkout and toolchain. Check each worker's defaults in the
+[workers reference](../reference/workers.md) and the
+[configuration reference](../reference/configuration.md#code).
+What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 
@@ -160,7 +164,9 @@ configured restricted namespace, so a private repository is set up in this order
    finish step 3 before handing out `*` tokens of the org.
 3. The maintainer restricts it with `code.repo.set_access` (`classification: "restricted"`
    and `join_policy: "approval"` or `"closed"`; both are required); then set
-   `classification: "restricted"` on the entry as well, so either input restricts, and run
+   `classification: "restricted"` on the entry as well to align the configured default
+   with the stored policy. A stored access decision takes precedence over the
+   configured classification and join policy. Run
    `loom code backfill`. Mirrors and compiler-tier checkouts are created at mode 2770
    when they belong to `code_repos_shared_gid`, open to the server's
    user and that group only, and 0700 otherwise (see "Writable git mirrors"); one an
@@ -189,8 +195,9 @@ with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`
-makes every code namespace readable by every principal in the org without a grant; the
-default is off.
+lets authenticated org members read standard code namespaces without a grant; the
+default is off. Restricted namespaces still need a token naming the namespace and a
+live direct grant; see [restricted namespaces](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
 
 ## First index
 
@@ -779,7 +786,7 @@ The setting also resumes the git jobs of entries that members added before
 `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
 named and are cloned and fetched the same way. Before turning it on, list the branches in
 the registry (the active rows of `loom.code_repos` whose `row_kind` is not `access`;
-`code.repos` lists only what its caller may read) and have those a platform admin would
+`code.repos` is caller-filtered and can include request-only metadata) and have those a platform admin would
 not add removed with `code.repo.remove`.
 
 `/v1/health` and `loom doctor` keep reporting `repo_jobs_unsandboxed` as a warning, with
@@ -1053,8 +1060,8 @@ copy.
 | Command                                      | Does                                                                                                                                                                                                                                                                                                                    |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `loom code compact [--table T] [--apply]`    | measures, and with `--apply` runs, `OPTIMIZE … FINAL` on a code vector table once its physical copies per key reach `LOOM_CODE_COMPACT_MIN_RATIO` (1.5), and waits for the merge; bulk passes do it themselves after `LOOM_CODE_COMPACT_AFTER_BULK_ROWS` rows ([maintenance](./maintenance.md#compaction-and-optimize)) |
-| `loom code warm <questions.txt>`             | asks each question once so `code.ask` answers are cached for everyone (text lines or JSONL with `question`); hits are free, so re-running is safe                                                                                                                                                                       |
-| `loom code answers-purge`                    | retires cached `code.ask` answers after a synthesis-model change (the cache otherwise invalidates only when a cited file changes); dry run until `--apply`                                                                                                                                                              |
+| `loom code warm <questions.txt>`             | asks each question once to populate shared `code.ask` answers (text lines or JSONL with `question`); a valid answer hit avoids fresh synthesis, but query embedding can still cost                                                                                                                                      |
+| `loom code answers-purge`                    | retires stored `code.ask` answers; dry run until `--apply`. Normal reuse already checks the model and prompt, answer-key settings, maximum age and recorded source hashes                                                                                                                                               |
 | `loom code repack`                           | rebuilds context packs for recently merged PRs in the current shape                                                                                                                                                                                                                                                     |
 | `loom code crossref`                         | the SQL/shell test → implementing C++ reference pass (idempotent)                                                                                                                                                                                                                                                       |
 | `loom code coverage-import [--dry-run]`      | imports the newest per-test line coverage run of the configured source into the test map ([measured coverage](#measured-coverage))                                                                                                                                                                                      |

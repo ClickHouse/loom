@@ -306,18 +306,14 @@ class CodeSearchOutput(_LessonsOut):
 class CodeAskInput(_CodeIdentity):
     # The question to answer about the indexed code (grounded on a code.search of it).
     question: str = Field(min_length=1, max_length=2000)
-    # False = retrieval-only (agent synthesizes); True = grounded server-side
-    # answer with citations, memoized across agents and invalidated when any
-    # cited file changes at merge.
+    # False disables fresh synthesis; use no_cache=True to exclude cached answers.
     synthesize: bool = True
     # Reranker for the retrieval: "" = the deployment default
     # (LOOM_CODE_SEARCH_RERANK_DEFAULT), "none" = off for this request, "builtin:openai" /
     # "builtin:cohere", or the name of an endpoint in LOOM_RERANK_ENDPOINTS_JSON (not a URL).
     rerank: RerankName = ""
-    # Skip the cache lookup and synthesize fresh (the fresh answer still
-    # refreshes the cache entry). For eval and for agents that suspect a
-    # stale answer. Also skips the exact-prompt cache of the pre-synthesis
-    # LLM calls.
+    # Skip answer and pre-synthesis prompt-cache lookups; fresh synthesis, when
+    # enabled, still refreshes the answer cache.
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).
@@ -325,7 +321,7 @@ class CodeAskInput(_CodeIdentity):
 
 
 class CodeAskOutput(BaseModel):
-    # The grounded answer text; "" on an abstain or when synthesize=false.
+    # The grounded answer text; empty on abstention or an uncached retrieval-only call.
     answer: str = ""
     # True when retrieval or provider limits prevent a complete response.
     partial: bool = False
@@ -336,7 +332,7 @@ class CodeAskOutput(BaseModel):
     # Synthesis self-assessment, not verified correctness; empty on cached answers.
     coverage: Literal["", "full", "partial", "none"] = ""
     # The units the answer used (or was shown when none is cited): {path, start_line,
-    # end_line, symbol, unit_id} each; the retrieved units when synthesize=false.
+    # end_line, symbol, unit_id} each; retrieved units on an uncached retrieval-only call.
     citations: list[dict[str, Any]] = Field(default_factory=list)
     # cached = served from the answer cache | synthesized = answered now (or retrieval-only
     # when synthesize=false) | abstained = no grounded answer (`abstain_reason` says why).

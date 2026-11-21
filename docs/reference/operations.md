@@ -224,7 +224,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.repo.remove`](operations/code.md#codereporemove) | Retire a repository index a person added. | admin | idempotent | yes | yes |
 | [`code.repo.set_access`](operations/code.md#codereposet_access) | A maintainer sets a repository's access — its classification (`standard` \| `restricted`) and join policy (`open` \| `approval` \| `closed`). | admin | idempotent | no | yes |
 | [`code.repo.set_source`](operations/code.md#codereposet_source) | A maintainer sets the trackers this repository reads (records of issues, PRs, tests and incidents registered with `tracker.source.add`), in order. | admin | idempotent | no | yes |
-| [`code.repos`](operations/code.md#coderepos) | Lists the code namespaces (repo@branch entries) configured on this deployment that the caller is authorized to read, across orgs — each row carries its org. | viewer | read | yes |  |
+| [`code.repos`](operations/code.md#coderepos) | List readable repositories and permitted access-request metadata. | viewer | read | yes |  |
 | [`code.review_brief`](operations/code.md#codereview_brief) | A merged PR's review brief: the point read of what the ingest built at merge — touched symbols with callers and fan-in, coverage verdicts, setting facts, regression history, blame of the deleted… | viewer | read | no |  |
 | [`code.scip_ingest`](operations/code.md#codescip_ingest) | Accept one part of a SCIP index upload (compiler-tier symbols and references) for a batch. | writer | idempotent | no | yes |
 | [`code.scip_status`](operations/code.md#codescip_status) | Report the progress of a SCIP upload batch: parts received and apply status. | viewer | read | no |  |

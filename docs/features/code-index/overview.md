@@ -11,7 +11,8 @@ the index is built is in
 The [language support table](#language-support) distinguishes fast-tier symbols and
 edges from compiler-tier coverage.
 
-The code workers are off by default; a deployment turns them on per repository
+Worker defaults vary by tier; check the [workers reference](../../reference/workers.md).
+A worker also needs an admitted supervisor and a repository configured for its tier
 ([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
 unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 
@@ -87,8 +88,11 @@ Structure is extracted twice. Each symbol and edge names its tier (`tier`: `scip
   [code index operations](../../operations/code-index-operations.md#compiler-tier)). An
   external producer can upload with `code.scip_ingest`. It gives exact call, override
   and inheritance edges. Its C/C++, Go and TypeScript steps execute the repository's own
-  build code; they run inside the
-  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox).
+  build code. They use the
+  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox)
+  when available. With `LOOM_CODE_SANDBOX_REQUIRED=true` they refuse to run without
+  it; otherwise, operator-configured repositories can run those builds as plain
+  processes.
 
 Why two: the fast tier is cheap, so a merge is searchable after one ingest pass. The
 compiler tier needs a build environment and trails. Serving both, labelled, gives an

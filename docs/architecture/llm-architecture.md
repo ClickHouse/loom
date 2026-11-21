@@ -1,45 +1,54 @@
 # LLM and embedding architecture
 
 Loom has two pluggable providers: an embedder (`server/embedding/`) that turns text into
-vectors, and an LLM client (`server/llm/`) that completes prompts. Each is chosen once
-per process from settings. Each falls back to a deterministic fake when its key is
-missing, so a keyless install boots and answers. Operator setup is in
+vectors, and an LLM client (`server/llm/`) that completes prompts. Their active
+configuration comes from server settings. API-key providers can fall back to a
+deterministic fake when their key is missing; native Bedrock uses deployment AWS
+credentials and propagates credential failures. Operator setup is in
 [deployment](../operations/deployment.md); every setting is in the
 [configuration reference](../reference/configuration.md).
 
 ## Goals and non-goals
 
-| Goals                                                                                   | Non-goals                                                                           |
-| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Every correctness gate on the write path works without an LLM.                          | A general LLM gateway. Loom calls models for its own features only.                 |
-| A keyless install boots and says clearly that it runs on fakes.                         | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
-| Swapping the embedder does not silently miscalibrate recall.                            | Mixing vector spaces. Vectors from different models are never compared.             |
-| Every provider call is attributed to the op or worker pass that made it, with its cost. | Runtime prompt management. Prompts are code.                                        |
+| Goals                                                                                       | Non-goals                                                                           |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Authorization and direct memory-write admission work without an LLM.                        | A general LLM gateway. Loom calls models for its own features only.                 |
+| A keyless install boots and says clearly that it runs on fakes.                             | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
+| Swapping the embedder does not silently miscalibrate recall.                                | Mixing vector spaces. Vectors from different models are never compared.             |
+| Every provider call is attributed to its op or worker pass, with usage and cost when known. | Runtime prompt management. Prompts are code.                                        |
 
 ## Embedders
 
 ### Selection
 
-`server/embedding/embedder.py` (`provider_for`, `get_embedder`) picks the served embedder
-once per process:
+`server/embedding/embedder.py` (`provider_for`, `get_embedder`) selects and caches the
+served embedder from the active settings. Applying or clearing dashboard provider
+configuration resets that cache. Changing the embedding space requires the
+[rebuild procedure](../getting-started/models-and-keys.md).
+
+Selection follows this order:
 
 1. A label resolves first. `prefix:<dim>:<model>` and `ctx[<variant>]:<model>` are views
    over the served embedder and cannot be the served model.
-2. `LOOM_EMBEDDING_PROVIDER` (`fake`, `local`, `openai`, `gemini`) when set; any other
-   value raises.
+2. `LOOM_EMBEDDING_PROVIDER` (`fake`, `local`, `openai`, `gemini`, `compatible`,
+   `bedrock`) when set; any other value raises.
 3. Otherwise inferred from `LOOM_EMBEDDING_MODEL`: `fake-ngram*` is fake, `local` or
-   `local:*` is local, `text-embedding-*` is OpenAI, `gemini*` is Gemini. Any other name
-   raises `unknown embedding model`.
+   `local:*` is local, `text-embedding-*` is OpenAI, `gemini*` is Gemini and `bedrock:*`
+   is Bedrock. Any other name raises `unknown embedding model`; a compatible endpoint
+   needs an explicit provider.
 
-| Provider | Module                       | Model names                                                                | Needs                                    | Notes                                                                     |
-| -------- | ---------------------------- | -------------------------------------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------- |
-| `fake`   | `server/embedding/fake.py`   | `fake-ngram-<dim>`                                                         | nothing                                  | Hashed character trigrams, L2-normalised. Deterministic; the dev default. |
-| `local`  | `server/embedding/local.py`  | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`) | CPU ONNX; 384, 768 and 384 dimensions. No network.                        |
-| `openai` | `server/embedding/openai.py` | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                         | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                 |
-| `gemini` | `server/embedding/gemini.py` | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`     | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).          |
+| Provider     | Module                           | Model names                                                                | Needs                                                                                           | Notes                                                                                                                    |
+| ------------ | -------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `fake`       | `server/embedding/fake.py`       | `fake-ngram-<dim>`                                                         | nothing                                                                                         | Hashed character trigrams, L2-normalised. Deterministic; the dev default.                                                |
+| `local`      | `server/embedding/local.py`      | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`)                                                        | CPU ONNX; 384, 768 and 384 dimensions. Inference is local; missing model files download on first use.                    |
+| `openai`     | `server/embedding/openai.py`     | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                                                                                | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                                                                |
+| `gemini`     | `server/embedding/gemini.py`     | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`                                                            | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).                                                         |
+| `compatible` | `server/embedding/compatible.py` | the endpoint's embedding model ID                                          | `LOOM_EMBEDDING_BASE_URL`, `LOOM_EMBEDDING_API_KEY` or configured workload-token authentication | [OpenAI-compatible embeddings](../getting-started/models-and-keys.md#claude-for-the-llm); optional dimensions parameter. |
+| `bedrock`    | `server/embedding/bedrock.py`    | Cohere Embed v4 model or inference-profile ID                              | deployment AWS credentials                                                                      | [Native Bedrock](#native-bedrock); no API-key fallback.                                                                  |
 
-**Width.** The served width is `LOOM_EMBEDDING_DIM` (default 3072). OpenAI and Gemini are
-asked for that width; choose a model that supports it. Local models emit their native width. Boot probes the real
+**Width.** The served width is `LOOM_EMBEDDING_DIM` (default 3072, or 1536 for native
+Bedrock when unset). OpenAI and Gemini are asked for that width; choose a model that
+supports it. Local models emit their native width. Boot probes the real
 width (`probe_embedding_dim`); a mismatch shows as `embedding_dim_mismatch` on
 `/v1/health`.
 
@@ -101,10 +110,11 @@ other column. In `memory_embeddings` and `conversation_embeddings` the model is 
 sorting key, so old and new rows coexist until `--delete-old`. `entity_vectors`
 (`ReplacingMergeTree(created_at)`) is replaced in place. Flags: `--org`, `--namespace`,
 `--batch-size`, `--dry-run`, `--key-only`, `--resume`, and `--in-database <named
-collection>`, which runs one `INSERT … SELECT` per table through ClickHouse's `aiEmbed`
-(it needs a ClickHouse release that ships it, and is refused while a customer or identity
-header is set or the gateway is required, since those calls name no one and skip the
-gateway's check). See the [CLI reference](../reference/cli.md).
+collection>`, which computes embeddings through ClickHouse's `aiEmbed`. Memory vectors
+are published through embedding admission in bounded pages; other tables use one
+`INSERT … SELECT` each. This mode needs a ClickHouse release that ships `aiEmbed`
+and is refused while a customer or identity header is set or the gateway is required,
+since those calls name no one and skip the gateway's check. See the [CLI reference](../reference/cli.md).
 
 `embedding_worker` covers the rest. It embeds `embedding_dim = 0` stubs newest first; a
 stub labelled with an older model is embedded under the served one and the old stub
@@ -316,15 +326,18 @@ them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
 - **Retry** (`server/llm/_retry.py`): transport errors and 429, 500, 502, 503, 504, 529;
   `LOOM_LLM_RETRY_ATTEMPTS` (4) attempts, exponential backoff (0.5 s base,
   `LOOM_LLM_RETRY_MAX_WAIT_S` cap, 20 s). The request timeout,
-  `LOOM_LLM_REQUEST_TIMEOUT_S`, is 300 s: it only catches a hung connection, so a slow
-  model or a long output never hits it. Callers that need less wrap the call (HyDE on
+  `LOOM_LLM_REQUEST_TIMEOUT_S`, defaults to 300 s. OpenAI and Anthropic clients apply
+  HTTP request timeouts; Bedrock also bounds request and retry work with an elapsed
+  deadline. Slow inference or long outputs can hit these limits. Callers that need less wrap the call (HyDE on
   `memory.search` waits `LOOM_MEMORY_SEARCH_HYDE_TIMEOUT_S`, 6 s).
 - **Fallback model.** `LOOM_LLM_FALLBACK_MODEL` wraps the client in `FallbackLLMClient`
   (`server/llm/fallback.py`). It hands the call to the second model on an outage
   (transport error, retryable status, timeout) or a rejected request (400, 413, 422);
   401, 403 and 404 propagate. Each hand-over is logged and counted (`loom.llm.fallback`),
   and the result names the model that answered. Fallbacks do not chain.
-- **Missing key.** The client is the fake (`_build_llm_client`), logged at WARNING.
+- **Missing API key.** An OpenAI or Anthropic client without its key uses the fake
+  (`_build_llm_client`), logged at WARNING, unless configured workload-token
+  authentication supplies credentials. Native Bedrock credential failures propagate instead.
 - **One identity refused.** With identity headers set, an answer from a gateway host that
   `LOOM_INFERENCE_IDENTITY_REFUSALS_JSON` lists is the gateway refusing the call's identity or
   asking it to wait ([identity headers](#identity-headers)): never retried, never handed to the
@@ -534,16 +547,18 @@ conversation titler).
 
 ## LLM-driven and deterministic parts
 
-Every gate that decides what is stored or who may read it is deterministic:
-authorization, the blacklist, sensitivity detection, conflict and duplicate verdicts,
-ranking and the abstain floor. LLM stages produce or enrich content (facts, answers,
-summaries, titles). Each is optional, bounded, and fails open to the deterministic path.
+Authorization and direct `memory.set` admission do not call an LLM. The blacklist,
+sensitivity checks, conflict and duplicate verdicts, ranking and abstain thresholds
+use deterministic rules over the supplied content and retrieval scores.
 
-**Why.** An LLM-decided gate cannot be reproduced, audited or unit-tested, and it adds
-cost and latency to every write. The deterministic gates run on the fake provider in CI
-through the production code path. The cost: a cosine threshold cannot tell a revision
-from a contradiction, which is why the conflict resolver exists. It judges after the
-write, on the leader, so the write's own verdict stays deterministic.
+Model jobs can change the content that reaches storage. Extraction produces facts;
+the optional durability verifier filters coding-capture facts using model votes before
+persistence. If the primary verifier fails, the batch is kept. If a secondary verifier
+fails, it blocks non-durable rejection, but a successful primary can still drop a
+fact in favor of a retained representative. The conflict resolver judges after a
+write, on the leader, and can revise stored content. These model judgments do not
+replace authorization or the direct write's admission checks. Answers, summaries and
+titles also use models; each feature's failure behavior is listed below.
 
 | Feature                                       | LLM?          | Switch (default)                                                                                                                                                                                                                                                                                             |
 | --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -571,11 +586,13 @@ descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syn
 
 ### LLM-free reads
 
-`LOOM_READS_LLM_FREE=true` makes every read op (`Operation.read_only`) run with no LLM
-call, so a deployment can promise that reads never reach a model. The HTTP and MCP transports mark the
-request while the handler runs (`server/core/llm_free.py`); the memory search reads the mark through the
-same gate as the fast posture and `context.pack` (`_is_llm_free`), and every other read step that could
-call a model reads `reads_llm_free()`:
+`LOOM_READS_LLM_FREE=true` suppresses the generative read steps listed below.
+Query embeddings and the explicitly selected rerankers described below can still
+call providers, send query or candidate content and incur charges. The HTTP and MCP
+transports mark each read request (`Operation.read_only`) while its handler runs
+(`server/core/llm_free.py`). Memory search reads this mark through `_is_llm_free`,
+alongside the fast posture and `context.pack`; the other listed guards use
+`reads_llm_free()`:
 
 - `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
   them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms. The
@@ -589,10 +606,11 @@ call a model reads `reads_llm_free()`:
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
 - `memory.ask` and `code.ask` answer 409 `READS_LLM_FREE` naming the setting unless the request
-  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it;
-  with that flag they return the recalled evidence with no LLM call.
-  A model's answer is the purpose of those calls, so the setting refuses it rather than answering
-  without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
+  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it.
+  These flags disable fresh synthesis. A `code.ask` cache hit can still return a previously
+  synthesized answer. For an uncached retrieval-only `code.ask` response, set both
+  `synthesize=false` and `no_cache=true`. `memory.brief` asks for the evidence alone and returns
+  it with its unknowns, no answer.
 - The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
   the same mark.
 
@@ -636,11 +654,16 @@ parses its output. Editing a prompt needs a deploy.
 
 ## Cost accounting
 
-Every provider call reports usage to a per-op accumulator
+Provider clients report available usage to a per-op accumulator
 (`server/observability/cost_accumulator.py`). Both transports bind it per request; the
 worker supervisor binds it per pass. Prices come from `PRICE_PER_1K_TOKENS` in the same
-module, with cache-read and cache-write multipliers. An unlisted model bills $0 and logs
-one warning. Gemini embeddings report no usage and bill $0.
+module, with cache-read and cache-write multipliers. An unlisted model contributes a
+zero cost estimate and logs one warning. Missing embedding usage also leaves the
+numeric ledger incomplete. These zeros do not establish zero provider spend.
+
+Generation spans omit unpriced cost and set `loom.llm.cost_unknown`. Embedding spans
+set `loom.embed.cost_unknown` or `loom.embed.usage_unknown` when price or usage is
+unavailable. Treat those gaps as unknown when comparing total deployment cost.
 
 The op's `loom.agent_events` row carries `upstream_cost_usd`, `embedding_tokens`,
 `input_tokens`, `output_tokens`, `llm_calls` and the dominant model (`emit_agent_event`
@@ -652,7 +675,7 @@ in `server/observability/ledger.py`). Cache savings appear per answer
 
 The dev defaults are the fakes. Production sets `LOOM_EMBEDDING_MODEL` and
 `LOOM_LLM_MODEL` explicitly; the commented provider block in `.env.example` uses
-`text-embedding-3-small` at 1536 dimensions and `gpt-6-luna`.
+`text-embedding-3-large` at 3072 dimensions and `gpt-6-luna`.
 
 **Run `make bench-quick` before changing either default** or opting into the Anthropic
 provider. It runs a 30-question sample of the long-memory benchmark (`bench/longmemeval.py`)
@@ -661,16 +684,18 @@ real providers. See [running benchmarks](../benchmarks/running.md).
 
 ## Invariants
 
-- A process serves one embedder and one default LLM client, chosen at startup.
+- A process serves one embedder and one default LLM client at a time. Dashboard
+  configuration can replace the cached clients; changing the embedding space requires a rebuild.
 - Vectors of different `embedding_model` values are never compared.
 - The served embedder falls back to the fake only when its key is missing, and says so on
   `/v1/health`. A secondary embedder never falls back.
 - A search always has a threshold: namespace calibration, else boot calibration, else the
   scalar settings.
-- No gate that decides storage or access calls an LLM.
+- Authorization and direct memory-write admission do not call an LLM; capture
+  verification and later conflict resolution can filter or revise content.
 - A fallback model's answer is never cached.
-- Every provider call's usage lands on the `agent_events` row of the op or pass that made
-  it.
+- Provider usage reported to the accumulator lands on the `agent_events` row of the
+  op or pass that made it; unavailable usage and prices leave accounting gaps.
 
 ## Source entry points
 

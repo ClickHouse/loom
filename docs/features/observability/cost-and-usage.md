@@ -1,10 +1,11 @@
 # Cost and usage
 
-Loom records every upstream dollar it spends on embedding and LLM calls against the
-operation that spent it, in the per-operation ledger `loom.agent_events`. The `cost.*` ops
+Loom records reported token usage and estimated provider costs for embedding and LLM
+calls against the operation that made them, in the per-operation ledger `loom.agent_events`.
+Missing usage or prices leave gaps; a zero estimate does not prove zero provider spend. The `cost.*` ops
 read that ledger through a one-minute roll-up. A separate series, `loom.agent_turn_usage`,
 holds what a coding agent spent on its own model turns. The two never overlap: one is
-Loom's provider bill, the other is the agent's.
+Loom's provider usage estimates, the other is the agent's.
 
 This page also covers memory **usage** (recalls, evidence, reliance), which the
 `usage_fold` worker folds back into ranking.
@@ -29,7 +30,11 @@ flowchart LR
 1. **Accumulator.** The transport binds a cost accumulator
    (`server/observability/cost_accumulator.py`) per operation; embedders and LLM clients
    report tokens and dollars into it. Prices come from `PRICE_PER_1K_TOKENS` in the same
-   module. **A model missing from the table bills $0.**
+   module. A model missing from the table contributes a zero cost estimate, and missing
+   embedding usage also leaves the numeric ledger incomplete. Generation spans flag
+   unpriced cost with `loom.llm.cost_unknown`; embedding spans use
+   `loom.embed.cost_unknown` or `loom.embed.usage_unknown` and omit unavailable cost or
+   usage. Include those gaps and provider billing records when measuring total cost.
 2. **Ledger row.** When the op finishes, the accumulator drains into its `agent_events`
    row: `input_tokens`, `output_tokens`, `embedding_tokens`, `upstream_cost_usd`, `model`,
    `llm_calls`, plus identity, latency and outcome ([the ledger](./telemetry.md#the-ledger)).
@@ -58,8 +63,9 @@ flowchart LR
 Each row carries `ops`, `errors`, `tokens` (LLM input plus output), `embed_tokens`,
 `cost_usd` and `latency_p50_ms` / `p95` / `p99`. The output adds `total_ops`,
 `total_errors`, `total_cost_usd`, and `cache_hits` / `cache_saved_usd`: LLM calls served
-from the response cache and the price-table dollars they did not spend. `total_cost_usd`
-is what _was_ spent; the two never overlap.
+from the response cache and their estimated price-table savings. `total_cost_usd`
+sums recorded cost estimates, excluding those cache savings. Missing usage or pricing
+must be accounted for separately when comparing provider bills.
 
 Grouping or filtering by a dimension the roll-up lacks (`memory_key`, `user_id`, `model`,
 `traffic_class`, `instance_label`, `build_commit`) switches to a scan of `agent_events`:
@@ -111,16 +117,18 @@ older builds cannot enforce user caps or protect stored private warnings. Save t
 policies and reapply them after upgrading the whole fleet again.
 
 The guard (`namespace_over_cap` / `namespaces_over_cap` in
-`server/observability/budget.py`) gates LLM work. Over the cap, each of these skips its
-paid step:
+`server/observability/budget.py`) gates selected model work. Over the cap, guarded
+callers skip their paid step. Examples include:
 
 | Where        | Gated                                                                                                                      |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | workers      | entity extractor, code summarizer, code ingest                                                                             |
 | request path | `memory.ask` and `code.ask` synthesis (retrieval still answers), `knowledge.synthesize`, the `expand` leg of `code.search` |
 
-Embeddings (a `memory.set`, a search) are not gated. The guard is **fail-open**: if the
-spend read errors, the namespace reads as under its cap.
+Embeddings in direct `memory.set` and search requests do not check these caps.
+The guard defaults to **fail-open**: a failed spend read counts as under the cap.
+Conflict judgments and knowledge gap embeddings instead fail closed: a failed
+spend read skips that model work.
 
 `cost.budget_status` reports the same computation:
 
@@ -128,7 +136,7 @@ spend read errors, the namespace reads as under its cap.
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `spent_24h_usd`          | Rolling 24h spend in USD; user mode withholds it as `null` except for a platform admin without namespace-role restrictions |
 | `cap_usd`, `cap_source`  | the effective cap and where it came from: `namespace`, `global`, `uncapped`, or `org` for the org-wide form                |
-| `over_cap`, `pct_of_cap` | Whether real spend reaches the selected cap; share spent (`null` when uncapped or user spend is withheld)                  |
+| `over_cap`, `pct_of_cap` | Whether recorded estimated cost reaches the selected cap; share used (`null` when uncapped or user spend is withheld)      |
 | `namespaces_with_spend`  | org-wide form only                                                                                                         |
 
 Omit `namespace` for the org-wide form, which is always uncapped and sums the namespaces
@@ -136,7 +144,8 @@ you can read. Supply both `namespace` and `user_id` for one user's allowance and
 `cap_source` then reads `namespace_user`, `global_user`, or `uncapped`.
 `namespace_over_cap` separately reports whether the namespace ceiling blocks that user.
 A token pinned to one user cannot select another user's status. Caps and routing count
-all actual spend even when the response withholds its amount.
+recorded estimated cost even when the response withholds its amount. Unreported usage
+and unpriced calls can make provider billing higher than the amount used by the cap.
 
 Set `budget_alert_inbox` with `namespace.register` or the namespace settings dialog to
 an existing task inbox owned by that namespace. Empty disables warnings. A point budget
@@ -156,8 +165,8 @@ Updates and watch streams show only warnings inside the caller's user and sessio
 scope. A scope without the required identity receives no warnings. Other task events
 retain their shared inbox visibility.
 
-The $1 default stops a runaway extraction loop on a laptop. A production namespace that
-ingests heavily needs its own cap, or extraction stops partway through the day.
+The daily cap applies to the guarded steps listed above. Inline and queued transcript
+extraction do not check this cap and can continue after it is reached.
 
 ## The coding agent's own spend
 

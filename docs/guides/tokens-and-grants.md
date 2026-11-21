@@ -450,9 +450,11 @@ complete the self-service surface.
 reading needs a grant or a token that names it.
 
 - `LOOM_CODE_ORG_READABLE=true` (or `"org_readable": true` on an entry of
-  `LOOM_CODE_REPOS_JSON`) lets every authenticated principal of the org read every code
-  namespace with the token it holds.
-- Refreshing (`writer`) and administering (`admin`) always come from grants.
+  `LOOM_CODE_REPOS_JSON`) lets authenticated org members read standard code
+  namespaces with the token it holds.
+- Refreshing requires `writer` and administering requires `admin`. Standard code
+  namespaces accept sufficient token claims or grants, subject to scoped-token
+  ceilings and live grant caps. Restricted namespaces require both (below).
 - An unowned code namespace is adopted with `POST /v1/admin/namespace.adopt` (or
   `loom namespaces-adopt`); a restricted one never is (below).
 
@@ -460,10 +462,11 @@ See [code index repositories](../features/code-index/repositories.md).
 
 ## Restricted namespaces (`classification=restricted`)
 
-Everything above widens access. `classification` narrows it: a namespace whose
-`loom.namespaces.classification` is `restricted`, or whose `LOOM_CODE_REPOS_JSON` entry says
-`"classification": "restricted"` (either input restricts), switches every default off. A
-read or write passes only when **all** hold:
+A namespace whose directory row or effective code repository classification is
+`restricted` switches automatic access off. For an operator-configured repository,
+a persisted `code.repo.set_access` row overrides the configured classification and
+join policy. Widening to `standard` requires confirmation and the caller's own live
+admin grant. A read or write on a restricted namespace passes only when **all** hold:
 
 1. the token belongs to the namespace's org (`org="*"` does not count);
 2. the token names the namespace literally, in `namespaces` or `ns_roles`
@@ -477,7 +480,10 @@ refusal is the generic "cannot access" message, so it does not reveal whether th
 exists. If the classification cannot be read, access is denied.
 
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
-  caller cannot read, and `code.repos` hides them.
+  caller cannot read. `code.repos` can return permitted join, access-request or adoption
+  metadata with `readable: false`; those rows omit populated index counts and watermarks
+  and do not authorize code reads. Other inaccessible entries are omitted. See
+  [repository listing and access](../features/code-index/repositories.md#who-can-read).
 - Each request admitted to the restricted namespace it names writes a
   `namespace.restricted_access` audit row before the answer
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
