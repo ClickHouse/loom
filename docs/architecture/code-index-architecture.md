@@ -346,6 +346,10 @@ the C++ tier; `loom code scip-delta` runs one delta pass.
 Where both tiers hold the same row, reads prefer the compiler row, and every answer
 names the tier it read (`scip` or `treesitter`).
 
+Python compiler conversion keeps callable and class descriptors distinct from
+parameters, type parameters and fields. Call edges require a containing function
+span; a reference at module or class scope does not belong to the preceding function.
+
 ## The extractor stamp
 
 Content-addressed chunks and hashed symbol ids key on the input, not on the code that
