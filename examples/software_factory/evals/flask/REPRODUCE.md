@@ -46,7 +46,10 @@ replacement issues. Native links are checked at the task's actual indexed base.
 Three repeats of five arms plus six separate A/A controls produce 51 attempts.
 Execution is serial with retries disabled. Twelve blind fixed-only judgments are
 separate from native hidden-test rewards. The model chooses all retrieval calls.
-Code reads use the serving API defaults for `top_k` and token limits.
+Code reads use the serving API defaults for result counts, token limits, search
+legs, ranking and body delivery. Every returned body is checked against the local
+source span. Code-linked lessons are enabled only for the attempt's bound memory
+namespace, including literal grep reads.
 
 Each attempt has a source-only checkout and an isolated test environment. Agent
 and verifier containers have no network, one CPU, 512 MiB and 64 processes. The

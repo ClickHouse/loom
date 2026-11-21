@@ -350,6 +350,24 @@ class FactoryEpisodeIntegration(unittest.TestCase):
         self.assertFalse(self.calls[0][1]["include_lessons"])
         self.assertNotIn("lessons", result["definitions"][0])
 
+    def test_grep_requests_and_preserves_lessons_in_its_bound_memory_scope(self):
+        from examples.software_factory.factory.retrieval_tools import request_body
+
+        body = request_body(
+            "code.grep",
+            {"pattern": "run"},
+            org="org",
+            namespace="code",
+            memory_namespaces=("working",),
+        )
+        self.assertTrue(body["include_lessons"])
+        self.assertEqual(body["lesson_namespaces"], ["working"])
+        self.assertNotIn("limit", body)
+        factory = self.factory(memory=True)
+        lesson = {"namespace": "working", "memory_key": "decision", "excerpt": "Past contract."}
+        result = factory.context.project("code.grep", {"matches": [], "lessons": [lesson]})
+        self.assertEqual(result["lessons"], [lesson])
+
     def test_memory_augmented_code_reads_are_not_reused_across_mutable_memory(self):
         factory = self.factory(memory=True)
         factory.execute("loom_code_symbol", {"name": "run"})

@@ -10,31 +10,19 @@ from examples.software_factory.factory.model import digest, tool
 
 OPERATIONS = {"code.symbol", "code.grep", "code.search", "code.outline", "code.enclosing"}
 TOOL_OPS = {"loom_" + op.replace(".", "_"): op for op in sorted(OPERATIONS)}
-SEARCH_POLICY = dict(
-    legs="lexical",
-    llm_legs="none",
-    rerank="none",
-    expand=False,
-    annotate=False,
-    include_lessons=False,
-    bodies="none",
-)
 
 
 def request_body(op, args, *, org, namespace, memory_namespaces=()):
     body = {"org": org, "namespace": namespace, **args}
     if op == "code.symbol":
         body.update(include_body=True, include_history=False, include_examples=False)
-    elif op == "code.search":
-        body.update(SEARCH_POLICY)
     elif op == "code.enclosing":
         body.update(include_body=True)
         body["locations"] = list(dict.fromkeys(body["locations"]))
     elif op == "code.grep":
         if not body.get("pattern"):
             raise ValueError("Search pattern must be nonempty")
-        body.update(limit=20)
-    if op in {"code.symbol", "code.search", "code.outline"}:
+    if op in {"code.symbol", "code.search", "code.outline", "code.grep"}:
         body["include_lessons"] = bool(memory_namespaces)
         if memory_namespaces:
             body["lesson_namespaces"] = list(memory_namespaces)
@@ -59,8 +47,8 @@ def schemas() -> list[dict]:
         ),
         tool(
             "loom_code_search",
-            "Discover code for a concept with lexical result cards, without full bodies. "
-            "Read a selected definition with loom_code_symbol.",
+            "Discover relevant code for a concept. Results may include source bodies and "
+            "navigation cards; follow a card with loom_code_symbol when needed.",
             {"query": string, "path_prefix": string, "cursor": string},
             ["query"],
         ),

@@ -54,9 +54,8 @@ class RetrievalTools(unittest.TestCase):
                 self.assertNotIn("token_budget", body)
                 self.assertNotIn("top_k", body)
         search = next(body for op, body in requests if op == "code.search")
-        self.assertEqual(search["legs"], "lexical")
-        self.assertEqual(search["llm_legs"], "none")
-        self.assertEqual(search["bodies"], "none")
+        for key in ("legs", "llm_legs", "rerank", "bodies", "expand", "annotate"):
+            self.assertNotIn(key, search)
         symbol = requests[0][1]
         self.assertFalse(symbol["include_history"])
         self.assertFalse(symbol["include_examples"])

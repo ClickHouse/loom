@@ -31,7 +31,7 @@ class Context:
         if data.get("abstain"):
             return {"abstain": True, "reason": "index_abstained"}
         accepted, rejected = [], []
-        for item in data.get("definitions", [])[:3]:
+        for item in data.get("definitions", []):
             try:
                 source = self.checkout.full_read(item["path"])
                 lines = source.splitlines()

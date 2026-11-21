@@ -11,7 +11,7 @@ class RequestContracts(unittest.TestCase):
         self.assertEqual(validate_requests(requests())["validated"], 15)
 
     def test_unsupported_lesson_fields_refuse_before_a_dispatch(self):
-        for operation in ("code.grep", "code.enclosing"):
+        for operation in ("code.enclosing",):
             with self.subTest(operation=operation):
                 row = next(row for row in requests() if row["operation"] == operation)
                 row["body"]["include_lessons"] = False
