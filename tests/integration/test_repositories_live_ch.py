@@ -335,6 +335,13 @@ async def test_retention_apply_emits_multiif_with_per_namespace_overrides(
             await asyncio.sleep(0.5)
 
     try:
+        for table in managed:
+            row = await ch.query_one(
+                "SELECT engine_full FROM system.tables WHERE database='loom' AND name={name:String}",
+                {"name": table.removeprefix("loom.")},
+            )
+            if " TTL " in str((row or {}).get("engine_full", "")):
+                await ch.execute(f"ALTER TABLE {table} REMOVE TTL")
         # apply() leaves a table alone while it has
         # unfinished mutations (an earlier test's DELETE may still be
         # running on this shared service) and the reconcile worker retries
@@ -372,25 +379,11 @@ async def test_retention_apply_emits_multiif_with_per_namespace_overrides(
         assert "2099" in engine_full
 
     finally:
-        try:
-            for t in (
-                "loom.audit_log",
-                "loom.agent_events",
-                "loom.memory_embeddings",
-                "loom.conversations",
-                "loom.chunks",
-                "loom.documents",
-            ):
-                try:
-                    await ch.execute(f"ALTER TABLE {t} REMOVE TTL")
-                except Exception:  # noqa: BLE001 — teardown: a table may lack a TTL; must not raise
-                    pass
+        for t in managed:
             try:
-                await ch.execute("ALTER TABLE loom.memory REMOVE TTL")
-            except Exception:  # noqa: BLE001 — teardown: memory may lack a TTL; must not raise
+                await ch.execute(f"ALTER TABLE {t} REMOVE TTL")
+            except Exception:  # noqa: BLE001 — teardown: a table may lack a TTL; must not raise
                 pass
-        except Exception:  # noqa: BLE001 — teardown must not raise
-            pass
 
 
 def dataclass_compat(cls):
