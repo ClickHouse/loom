@@ -14,6 +14,8 @@ import { Badge, type BadgeState } from "@clickhouse/click-ui/Badge";
 import { Button } from "@clickhouse/click-ui/Button";
 import { Link } from "@clickhouse/click-ui/Link";
 import { listKnowledgeSources } from "../api/knowledgeSources";
+import { useStore } from "../lib/state";
+import { ExternalLink } from "../components/ui/ExternalLink";
 import { ApiError } from "../lib/errors";
 import { useAbortableEffect } from "../lib/hooks";
 import {
@@ -29,6 +31,7 @@ import { isOpAbsent } from "../lib/trackerSources";
 import { PHONE_QUERY, useMedia } from "../lib/useMedia";
 import { Skeleton } from "../components/Skeleton";
 import { IconButton } from "../components/IconButton";
+import { BusyButton } from "../components/ui/BusyButton";
 import { toast } from "../components/Toast";
 import { ListTime, LoadingSkeleton, TipTarget } from "../components/ui";
 import { ListState } from "../components/ui/ListState";
@@ -47,6 +50,9 @@ const RotateSourceDialog = lazy(() =>
 const SourceDetailsDialog = lazy(() =>
   import("../flows/SourceDetailsDialog").then((m) => ({ default: m.SourceDetailsDialog })),
 );
+const EditSourceItemsDialog = lazy(() =>
+  import("../flows/EditSourceItemsDialog").then((m) => ({ default: m.EditSourceItemsDialog })),
+);
 const SourcePushDialog = lazy(() => import("../flows/SourcePushDialog").then((m) => ({ default: m.SourcePushDialog })));
 const RetireSourceDialog = lazy(() =>
   import("../flows/KnowledgeSourceDialog").then((m) => ({ default: m.RetireSourceDialog })),
@@ -61,10 +67,12 @@ type State =
   | { kind: "refused" }
   | { kind: "error"; error: unknown };
 
-type Verb = "check" | "sync" | "rotate" | "retire" | "push";
+type Verb = "check" | "sync" | "rotate" | "retire" | "push" | "edit";
 
 function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuItem[]; onOpen: () => void }) {
   const badge = syncBadge(s.sync);
+  if (s.credential_mode === "connected" && s.sync.status === "credential_invalid")
+    badge.tip = "Reconnect your account in Connected accounts, then check this source again.";
   const counts = syncCounts(s.sync);
   const reasons = unconvertedDetail(s.sync.unconverted_reasons);
   return (
@@ -113,21 +121,14 @@ function SourceRow({ s, items, onOpen }: { s: KnowledgeSource; items: RowMenuIte
 /** The place a list belongs to: what the add dialog's title names, and what the copy calls it. */
 export type SourcesPlace = { label: string; noun: "repository" | "namespace" | "collection" };
 
-export function SourcesList({
-  org,
-  namespace,
-  place,
-  manageable,
-  busy = false,
-  section,
-  panel,
-}: {
+interface SourcesListProps {
   org: string;
   /** The namespace the sources live in. */
   namespace: string;
   place: SourcesPlace;
   /** The caller may call the source ops on the namespace: every verb. */
   manageable: boolean;
+  connectedManageable?: boolean;
   /** Another change on the page is running: Add waits for it. */
   busy?: boolean;
   /** Render as the Library's own section under this heading: a button named for it, in
@@ -137,25 +138,65 @@ export function SourcesList({
   section?: string;
   /** Where the open section goes (below the page header). */
   panel?: HTMLElement | null;
-}) {
+}
+
+export function SourcesList(props: SourcesListProps) {
+  const scope = useStore((s) =>
+    JSON.stringify([
+      s.identity?.org,
+      s.whoami?.org,
+      s.whoami?.subject,
+      s.whoami?.roles,
+      s.whoami?.is_service_account,
+      s.authed,
+      s.sessionExpired,
+    ]),
+  );
+  return (
+    <ScopedSourcesList
+      key={JSON.stringify([props.org, props.namespace, props.manageable, props.connectedManageable, scope])}
+      {...props}
+    />
+  );
+}
+
+function ScopedSourcesList({
+  org,
+  namespace,
+  place,
+  manageable,
+  connectedManageable = false,
+  busy = false,
+  section,
+  panel,
+}: SourcesListProps) {
+  const subject = useStore((s) => s.whoami?.subject);
+  const canAdd = manageable || connectedManageable;
   const [state, setState] = useState<State>({ kind: "loading" });
   const headingId = useId();
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const phone = useMedia(PHONE_QUERY);
   const heading = useRef<HTMLHeadingElement>(null);
+  const listFocus = useRef<HTMLElement>(null);
   // The panel sits below the header, past the page's other controls: opening it moves
   // the focus to its heading, so the list is next in the tab order.
   useEffect(() => {
     if (open) heading.current?.focus();
   }, [open]);
   const [nonce, setNonce] = useState(0);
+  const [reading, setReading] = useState(true);
+  const [reloadingItems, setReloadingItems] = useState(false);
   const [adding, setAdding] = useState(false);
   const [acting, setActing] = useState<{ verb: Verb; source: KnowledgeSource } | null>(null);
   // Details is a read: any reader may open it.
+  const [connectionKind, setConnectionKind] = useState<string | null>(null);
   const [details, setDetails] = useState<string | null>(null);
   const id = { org, namespace };
-  const reload = () => setNonce((n) => n + 1);
+  const reload = () => {
+    setReading(true);
+    setNonce((n) => n + 1);
+  };
 
   useAbortableEffect(
     async (signal, live) => {
@@ -168,13 +209,19 @@ export function SourcesList({
         if (isOpAbsent(e)) setState({ kind: "absent" });
         else if (e instanceof ApiError && (e.status === 403 || e.status === 401)) setState({ kind: "refused" });
         else setState({ kind: "error", error: e });
+      } finally {
+        if (live()) {
+          setReading(false);
+          setReloadingItems(false);
+        }
       }
     },
     [org, namespace, nonce],
   );
 
   const menu = (s: KnowledgeSource): RowMenuItem[] => {
-    if (!manageable) return [];
+    const owned = !!subject && s.credential_mode === "connected" && s.owned_by_caller === true;
+    if (s.credential_mode === "connected" ? !(connectedManageable && owned) : !manageable) return [];
     const act = (verb: Verb) => () => setActing({ verb, source: s });
     const check: RowMenuItem = { label: "Check", icon: "check", onSelect: act("check") };
     const sync: RowMenuItem = { label: "Sync now", icon: "refresh", onSelect: act("sync") };
@@ -182,11 +229,21 @@ export function SourcesList({
     const retire: RowMenuItem = { label: "Retire", icon: "trash", danger: true, onSelect: act("retire") };
     // A place that takes no new source refuses a sync and a rotation: Check and Retire remain.
     const closed = state.kind === "ready" && !state.accepts;
-    const items = closed ? [check, retire] : [check, sync, rotate, retire];
-    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind)) {
+    const items = closed
+      ? [check, retire]
+      : [check, sync, ...(s.credential_mode === "connected" ? [] : [rotate]), retire];
+    if (!closed && ["gdrive", "notion", "linear"].includes(s.kind))
+      items.splice(1, 0, { label: "Edit items", onSelect: act("edit") });
+    if (!closed && owned)
+      items.splice(2, 0, {
+        label: "Manage connection",
+        icon: "connect",
+        onSelect: () => setConnectionKind(s.kind),
+      });
+    if (!closed && manageable && ["gdrive", "notion", "linear"].includes(s.kind)) {
       items.splice(2, 0, { label: "Push notifications", icon: "refresh", onSelect: act("push") });
     }
-    return items.map((item) => ({ ...item, disabled: busy }));
+    return items.map((item) => ({ ...item, disabled: busy || reloadingItems }));
   };
   const close = (v: boolean) => {
     if (!v) setActing(null);
@@ -196,12 +253,13 @@ export function SourcesList({
   // no source or that this caller cannot add to, and from a non-admin when the list failed.
   const empty = state.kind === "ready" && state.sources.length === 0;
   const closedAndEmpty = empty && !state.accepts;
-  const nothingForReader = empty && !manageable;
+  const nothingForReader = empty && !canAdd;
   const loading = state.kind === "loading";
-  const failedForReader = state.kind !== "ready" && !loading && !manageable;
+  const failedForReader = state.kind !== "ready" && !loading && !canAdd;
   if (section && (closedAndEmpty || nothingForReader || loading || failedForReader)) return null;
   const list = (
-    <div className="space-y-1.5">
+    <section ref={listFocus} aria-label="Document sources" tabIndex={-1} className="space-y-1.5">
+      {reloadingItems && <p role="status">Refreshing source items…</p>}
       {state.kind === "loading" && (
         <LoadingSkeleton label={`Loading the ${place.noun}'s document sources`}>
           <Skeleton className="h-4 w-1/2" />
@@ -226,20 +284,26 @@ export function SourcesList({
       {state.kind === "ready" && state.accepts && state.sources.length === 0 && (
         <p className="text-xs text-text-muted">
           No document sources.{" "}
-          {manageable
+          {canAdd
             ? `Add a source and Loom keeps the ${place.noun}'s documents in step with it.`
             : `Anyone with admin on the ${place.noun} adds them.`}
         </p>
       )}
       {state.kind === "ready" && state.sources.length > 0 && (
-        <ul className="space-y-1.5" aria-label="Document sources">
+        <ul className="space-y-1.5" aria-label="Document sources" aria-busy={reading || undefined}>
           {state.sources.map((s) => (
             <SourceRow key={s.name} s={s} items={menu(s)} onOpen={() => setDetails(s.name)} />
           ))}
         </ul>
       )}
-      {manageable && state.kind === "ready" && state.accepts && (
-        <Button type="empty" htmlType="button" iconLeft="plus" disabled={busy} onClick={() => setAdding(true)}>
+      {canAdd && state.kind === "ready" && state.accepts && (
+        <Button
+          type="empty"
+          htmlType="button"
+          iconLeft="plus"
+          disabled={busy || reloadingItems}
+          onClick={() => setAdding(true)}
+        >
           Add a source
         </Button>
       )}
@@ -255,6 +319,7 @@ export function SourcesList({
             org={org}
             namespace={namespace}
             label={place.label}
+            allowShared={manageable}
             onOpenChange={(v) => {
               if (!v) setAdding(false);
             }}
@@ -265,8 +330,47 @@ export function SourcesList({
           />
         </Suspense>
       )}
+      {connectionKind && (
+        <div role="status" className="text-sm">
+          <ExternalLink href={`/settings/connected-accounts?kind=${connectionKind}&from=source`}>
+            Manage your connection
+          </ExternalLink>{" "}
+          Return here after connecting, then check the source again.
+        </div>
+      )}
+      {state.kind === "ready" && (
+        <BusyButton
+          type="secondary"
+          htmlType="button"
+          busy={reading}
+          disabled={busy || reloadingItems}
+          onClick={reload}
+        >
+          Refresh sources
+        </BusyButton>
+      )}
       {acting && (
         <Suspense fallback={null}>
+          {acting.verb === "edit" && (
+            <EditSourceItemsDialog
+              org={org}
+              namespace={namespace}
+              source={acting.source}
+              canManage={acting.source.credential_mode === "connected" ? connectedManageable : manageable}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                listFocus.current?.focus();
+              }}
+              onClose={() => {
+                setActing(null);
+                setReloadingItems(true);
+                reload();
+              }}
+              onUpdated={() => {
+                toast(`Updated ${acting.source.name}`, "ok");
+              }}
+            />
+          )}
           {acting.verb === "push" && (
             <SourcePushDialog
               org={org}
@@ -277,7 +381,14 @@ export function SourcesList({
             />
           )}
           {acting.verb === "check" && (
-            <CheckSourceDialog open org={org} namespace={namespace} name={acting.source.name} onOpenChange={close} />
+            <CheckSourceDialog
+              open
+              org={org}
+              namespace={namespace}
+              name={acting.source.name}
+              connected={acting.source.credential_mode === "connected"}
+              onOpenChange={close}
+            />
           )}
           {acting.verb === "sync" && (
             <SyncNowDialog
@@ -310,13 +421,14 @@ export function SourcesList({
               namespace={namespace}
               name={acting.source.name}
               enabled={state.kind === "ready" && state.enabled}
+              access={acting.source.access}
               onOpenChange={close}
               onRetired={reload}
             />
           )}
         </Suspense>
       )}
-    </div>
+    </section>
   );
   if (!section) return list;
   const count = state.kind === "ready" ? state.sources.length : 0;

@@ -8,6 +8,7 @@ import type {
   KnowledgeSourceCheckResult,
   KnowledgeSourceDetail,
   KnowledgeSourceList,
+  KnowledgeSourceProbe,
   KnowledgeSourceRemoveResult,
   KnowledgeSourceRotateResult,
   KnowledgeSourceSyncNowResult,
@@ -15,10 +16,52 @@ import type {
 } from "../lib/knowledgeSources";
 import { sourceAddBody } from "../lib/knowledgeSources";
 
-// A namespace's document sources, addressed by that namespace. Reading them needs the
-// namespace's viewer role; every other call its admin.
+// Namespace-scoped requests; the server authorizes each source-management action.
 
 type Ns = Pick<Identity, "org" | "namespace">;
+
+export interface KnowledgeSourceParsedLink {
+  link: string;
+  kind: string;
+  item: Record<string, unknown>;
+  unreadable: string;
+}
+
+export interface KnowledgeSourceUpdateChanges {
+  add_items?: Record<string, unknown>[];
+  add_links?: string[];
+  remove_items?: Record<string, unknown>[];
+  remove_links?: string[];
+  include?: string[];
+}
+
+export interface KnowledgeSourceUpdateResult {
+  name: string;
+  items: Record<string, unknown>[];
+  include: string[];
+  config: Record<string, unknown>;
+  added: Record<string, unknown>[];
+  removed: Record<string, unknown>[];
+  probe: KnowledgeSourceProbe;
+}
+
+/** Resolve link types without accessing the provider or importing content. */
+export function parseKnowledgeSourceLinks(
+  id: Ns,
+  links: string[],
+  opts: RequestOpts = {},
+): Promise<{ links: KnowledgeSourceParsedLink[] }> {
+  return post("/v1/knowledge.source.parse_links", { org: id.org, namespace: id.namespace, links }, opts.signal);
+}
+
+export function updateKnowledgeSource(
+  id: Ns,
+  name: string,
+  changes: KnowledgeSourceUpdateChanges,
+  opts: RequestOpts = {},
+): Promise<KnowledgeSourceUpdateResult> {
+  return post("/v1/knowledge.source.update", { ...changes, org: id.org, namespace: id.namespace, name }, opts.signal);
+}
 
 export async function listKnowledgeSources(id: Ns, opts: RequestOpts = {}): Promise<KnowledgeSourceList> {
   return post<KnowledgeSourceList>("/v1/knowledge.source.list", { org: id.org, namespace: id.namespace }, opts.signal);
