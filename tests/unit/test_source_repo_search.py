@@ -399,12 +399,17 @@ async def test_expiry_before_renewal_does_not_start_the_extra_proof(monkeypatch,
     assert not children["home"].lost and "check:home" in events
 
 
-async def test_timed_out_extra_fallback_keeps_loss_sticky_and_preserves_base_rebuild(monkeypatch):
+@pytest.mark.asyncio(loop_scope="function")
+async def test_timed_out_extra_fallback_keeps_loss_sticky_and_preserves_base_rebuild(
+    monkeypatch, renewal_clock
+):
     from unittest.mock import AsyncMock
 
     events, children = install(monkeypatch)
+    clock, active = renewal_clock
     original = search.run_checked_search
     canceled = []
+    at_expiry = []
 
     async def run(request, plan):
         result = await original(request, plan)
@@ -412,6 +417,16 @@ async def test_timed_out_extra_fallback_keeps_loss_sticky_and_preserves_base_reb
 
             async def block(*_args):
                 try:
+                    deadline, scope = active[-1]
+                    at_expiry.append(
+                        (
+                            children["repo"].lost,
+                            children["repo"].proofs,
+                            deadline - clock.monotonic(),
+                        )
+                    )
+                    clock.advance(0.01)
+                    scope.reschedule(asyncio.get_running_loop().time())
                     await asyncio.Event().wait()
                 finally:
                     canceled.append("drained")
@@ -425,6 +440,7 @@ async def test_timed_out_extra_fallback_keeps_loss_sticky_and_preserves_base_reb
     request = await repo_docs.resolve_repo_search(INPUT, repo_namespace="repo")
     result = await repo_docs.run_repo_search(request, source_access.ReadPlan("acme", marked=True))
     out = await asyncio.wait_for(result.current(), timeout=0.2)
+    assert at_expiry == [(True, None, 0.01)]
     assert [h.source_uri for h in out.results] == ["ordinary:home"]
     assert result.lost and result.extra is None and canceled == ["drained"]
     assert children["repo"]._failed
