@@ -73,8 +73,8 @@ mvn -f sdk/java install && mvn -f sdk/java/spring-ai verify
 ```
 
 The tests run against a local fake HTTP server. One more test runs against a real Loom
-when `LOOM_LIVE_BASE_URL` is set (it turns recording on and deletes its thread, so its
-token needs the admin role):
+when `LOOM_LIVE_BASE_URL` is set. It turns the namespace's recording on, off for one
+refused append, and on again, and deletes its thread, so its token needs the admin role:
 
 ```bash
 LOOM_LIVE_BASE_URL=http://localhost:7777 mvn -f sdk/java/spring-ai verify -Dtest='Live*'

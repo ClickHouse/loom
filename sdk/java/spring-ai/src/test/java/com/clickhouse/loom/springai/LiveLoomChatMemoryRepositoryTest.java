@@ -94,12 +94,15 @@ class LiveLoomChatMemoryRepositoryTest {
     say("findConversationIds() holds %s: %s", id, ids.contains(id));
     assertTrue(ids.contains(id));
 
-    loom.conversationSetLogging(false);
-    LoomException off =
-        assertThrows(LoomException.class, () -> memory.add(id, new UserMessage("lost?")));
+    LoomException off;
+    try {
+      loom.conversationSetLogging(false);
+      off = assertThrows(LoomException.class, () -> memory.add(id, new UserMessage("lost?")));
+    } finally {
+      say("conversation.set_logging enabled=true -> %s", loom.conversationSetLogging(true));
+    }
     say("recording off -> %s: %s", off.code(), off.getMessage());
     assertEquals("LOGGING_DISABLED", off.code());
-    say("conversation.set_logging enabled=true -> %s", loom.conversationSetLogging(true));
 
     memory.clear(id);
     say("clear() -> conversation.delete; found=%s, window %s", loom.conversationGet(id).found(),

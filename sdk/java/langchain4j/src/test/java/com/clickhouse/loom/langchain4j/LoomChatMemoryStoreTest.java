@@ -130,7 +130,25 @@ class LoomChatMemoryStoreTest {
   }
 
   @Test
-  void replacingTheSystemMessageRewritesTheWindow() {
+  void anEditedMessageIsAppendedAgainWithTheTurnsAfterIt() {
+    store.updateMessages(
+        "e", List.of(SystemMessage.from("Be brief."), UserMessage.from("hi"), AiMessage.from("hello")));
+    loom.clearCalls();
+    List<ChatMessage> edited =
+        List.of(SystemMessage.from("Be brief."), UserMessage.from("hi there"), AiMessage.from("hello"));
+    store.updateMessages("e", edited);
+
+    assertEquals(edited, store.getMessages("e"));
+    assertEquals(
+        List.of("hi there", "hello"),
+        loom.calls("conversation.append").stream().map(c -> c.body().get("content").asText()).toList());
+    assertEquals(5, loom.live("e").size()); // the original turns stay in the log
+    assertEquals(
+        "[0]", loom.threadMetadata("e").get(ConversationWindow.WINDOW_HEAD).toString());
+  }
+
+  @Test
+  void aNewSystemMessageMovesThePointerAndAppendsOnlyItself() {
     ChatMemory memory =
         MessageWindowChatMemory.builder().id("s").maxMessages(10).chatMemoryStore(store).build();
     memory.add(SystemMessage.from("Be brief."));

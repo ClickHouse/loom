@@ -98,12 +98,15 @@ class LiveLoomChatMemoryStoreTest {
     say("new system message: %s", show(store.getMessages(id)));
     assertTrue(store.getMessages(id).contains(SystemMessage.from("You answer billing questions.")));
 
-    loom.conversationSetLogging(false);
-    LoomException off =
-        assertThrows(LoomException.class, () -> reloaded.add(UserMessage.from("lost?")));
+    LoomException off;
+    try {
+      loom.conversationSetLogging(false);
+      off = assertThrows(LoomException.class, () -> reloaded.add(UserMessage.from("lost?")));
+    } finally {
+      say("conversation.set_logging enabled=true -> %s", loom.conversationSetLogging(true));
+    }
     say("recording off -> %s: %s", off.code(), off.getMessage());
     assertEquals("LOGGING_DISABLED", off.code());
-    say("conversation.set_logging enabled=true -> %s", loom.conversationSetLogging(true));
 
     reloaded.clear();
     say("clear() -> conversation.delete; found=%s, window %s", loom.conversationGet(id).found(),

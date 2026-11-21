@@ -117,6 +117,24 @@ class LoomChatMemoryRepositoryTest {
   }
 
   @Test
+  void anEditedMessageIsAppendedAgainWithTheTurnsAfterIt() {
+    repo.saveAll(
+        "e", List.of(new SystemMessage("Be brief."), new UserMessage("hi"), new AssistantMessage("hello")));
+    loom.clearCalls();
+    List<Message> edited =
+        List.of(new SystemMessage("Be brief."), new UserMessage("hi there"), new AssistantMessage("hello"));
+    repo.saveAll("e", edited);
+
+    assertEquals(edited, repo.findByConversationId("e"));
+    assertEquals(
+        List.of("hi there", "hello"),
+        loom.calls("conversation.append").stream().map(c -> c.body().get("content").asText()).toList());
+    assertEquals(5, loom.live("e").size()); // the original turns stay in the log
+    assertEquals(
+        "[0]", loom.threadMetadata("e").get(ConversationWindow.WINDOW_HEAD).toString());
+  }
+
+  @Test
   void findConversationIdsListsThisAgentsThreads() {
     repo.saveAll("a", List.of(new UserMessage("x")));
     repo.saveAll("b", List.of(new UserMessage("y")));
