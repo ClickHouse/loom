@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ctypes
+import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import signal
@@ -19,6 +21,51 @@ MAX_WORKERS = 64
 MAX_BYTES = 65536
 MAX_CONTEXT_BYTES = 64 * 1024 * 1024
 MAX_STOPS = 8
+PIPE_REFUSAL = "native diagnostics refuse piped core dumps"
+
+
+def pipe_refusal_context() -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "event": "native_prerequisite_refused",
+        "reason": "piped_core_handler",
+    }
+    try:
+        system = os.uname()
+        # Custom release suffixes can identify private builds; retain only their hash.
+        if re.fullmatch(
+            r"[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,5}(?:-[0-9]{1,6}-(?:generic|azure|aws))?",
+            system.release,
+        ):
+            release = {"kernel_release": system.release}
+        else:
+            release = {"kernel_release_sha256": hashlib.sha256(system.release.encode()).hexdigest()}
+        machine = system.machine if system.machine in ("x86_64", "aarch64") else "unknown"
+        return {**record, **release, "machine": machine}
+    except Exception:  # noqa: BLE001 — metadata must never mask the original privacy refusal
+        return {**record, "kernel_identity": "unavailable"}
+
+
+MAX_TERMINAL_BYTES = 2048
+
+
+def write_terminal(descriptor: int, record: dict[str, Any]) -> None:
+    data = json.dumps(record, ensure_ascii=True, separators=(",", ":")).encode()
+    if len(data) > MAX_TERMINAL_BYTES:
+        raise ValueError("native terminal record too large")
+    if os.pwrite(descriptor, data, 0) != len(data):
+        raise OSError("incomplete native terminal record")
+
+
+def read_terminal(descriptor: int) -> dict[str, Any]:
+    try:
+        data = os.pread(descriptor, MAX_TERMINAL_BYTES + 1, 0)
+        if len(data) <= MAX_TERMINAL_BYTES:
+            record = json.loads(data)
+            if isinstance(record, dict):
+                return record
+    except (OSError, ValueError, RecursionError):
+        pass
+    return {"kind": "unavailable", "reason": "terminal_status_unknown"}
 
 
 def write_record(path: Path, record: dict[str, Any]) -> None:
@@ -102,7 +149,9 @@ class NativeSession:
             raise ValueError("native diagnostics require an existing zero core limit")
         # Piped kernel handlers receive raw dumps even when the core limit is zero.
         if Path("/proc/sys/kernel/core_pattern").read_text().startswith("|"):
-            raise ValueError("native diagnostics refuse piped core dumps")
+            error = ValueError(PIPE_REFUSAL)
+            error.add_note("[native-prerequisite] " + json.dumps(pipe_refusal_context()))
+            raise error
         if CONTEXT in os.environ:
             raise ValueError("native diagnostic environment is already in use")
         debugger = shutil.which("gdb")
@@ -204,6 +253,7 @@ class NativeSession:
 def bootstrap() -> None:
     context = read_context()
     os.close(int(os.environ.pop(CONTEXT)))
+    os.close(context["terminal_fd"])
     directory = Path(context["directory"])
     try:
         parent_death_signal(read_record(directory / "debugger.json")["pid"])
@@ -232,10 +282,14 @@ def launch(root: Path, arguments: list[str]) -> int:
     else:
         return 125
     descriptors = [os.dup(fd) for fd in range(3)]
+    terminal_fd = os.memfd_create("pytest-native-terminal", os.MFD_CLOEXEC)
+    terminal_reader = os.dup(terminal_fd)
+    descriptors.append(terminal_fd)
     context = {
         "directory": str(directory),
         "launcher_pid": os.getpid(),
-        "stdio": descriptors,
+        "terminal_fd": terminal_fd,
+        "stdio": descriptors[:3],
         "python": sys.executable,
         "arguments": arguments,
         "environment": dict(os.environ),
@@ -282,16 +336,36 @@ def launch(root: Path, arguments: list[str]) -> int:
                 os.close(descriptor)
             descriptors.clear()
             process.wait()
-        result = read_record(directory / "result.json")
-        if result.get("kind") == "exit":
+        result = read_terminal(terminal_reader)
+        if (
+            result.get("kind") == "exit"
+            and type(result.get("code")) is int
+            and 0 <= result["code"] <= 255
+        ):
             return result["code"]
-        if result.get("kind") == "signal" and result.get("signal") in signal.valid_signals():
+        if (
+            result.get("kind") == "signal"
+            and type(result.get("signal")) is int
+            and result["signal"] in signal.valid_signals()
+            and result["signal"]
+            not in (
+                signal.SIGSTOP,
+                signal.SIGTSTP,
+                signal.SIGTTIN,
+                signal.SIGTTOU,
+                signal.SIGCONT,
+                signal.SIGCHLD,
+                signal.SIGURG,
+                signal.SIGWINCH,
+            )
+        ):
             received = result["signal"]
-            if received not in (signal.SIGKILL, signal.SIGSTOP):
+            if received != signal.SIGKILL:
                 signal.signal(received, signal.SIG_DFL)
             os.kill(os.getpid(), received)
         return 125
     finally:
+        os.close(terminal_reader)
         for descriptor in descriptors:
             os.close(descriptor)
 

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from tests._native_worker import NativeSession
+from tests._native_worker import PIPE_REFUSAL, NativeSession, pipe_refusal_context
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -57,6 +57,11 @@ class WorkerStatus:
             try:
                 self.native = NativeSession(self.path.parent)
             except (OSError, ValueError) as error:
+                if type(error) is ValueError and error.args == (PIPE_REFUSAL,):
+                    try:
+                        self.emit(pipe_refusal_context())
+                    except Exception:  # noqa: BLE001 — refusal metadata must preserve startup failure
+                        pass
                 raise pytest.UsageError(str(error)) from None
             self.max_records = 2 * MAX_RECORDS
             config.add_cleanup(self.native_cleanup)

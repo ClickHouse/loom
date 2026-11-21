@@ -51,19 +51,29 @@ failure introduced by the diff.
 
 ### Native worker diagnostics
 
-The third unit part runs local workers under an ancestor debugger. Their interpreter,
+The third unit part requests native worker diagnostics for local workers. Their interpreter,
 arguments, environment, parallelism, random seed, coverage and timeout settings stay
 the same. The launcher preserves normal exit codes and terminal signals separately.
+A bounded anonymous channel carries the terminal result independently of artifact
+storage; a failed diagnostic file write does not replace that result.
 GDB is a CI test tool; it is not a server dependency. The controlled transport check is
 `python -m tests.unit.test_native_worker --mechanism`.
 
 `-p tests._worker_status --native-worker-signatures` opts into this collection on Linux
-with GDB, a zero core-size limit and no piped core-dump handler. CI restricts only each
-diagnostic command's soft core-size limit to zero. A piped handler, unreadable core
-configuration, missing prerequisites or a tracing refusal stop startup. No tracing
-policy or capability changes are made. Each helper sets its own parent-death signal so
+with GDB, a zero core-size limit and no piped core-dump handler. On the disposable
+GitHub-hosted Linux VM, the third unit part selects a nonpiped core pattern after
+checking the runner identity and absence of a job container. Each diagnostic command
+also restricts its own soft core-size limit to zero. Local and self-hosted runners
+receive no policy setup. A piped handler, unreadable core configuration, missing
+prerequisites or a tracing refusal stop startup. No tracing policy or capability
+changes are made. Each helper sets its own parent-death signal so
 forced launcher termination also stops its debugger and worker. Registrations never
 authorize controller signals to another process.
+
+A piped-handler refusal records a bounded kernel identity in the job log. The pytest
+wrapper also writes that record beside its worker status artifact. Custom kernel
+release suffixes are hashed. This metadata identifies a candidate build; it does not
+prove its dump behavior or authorize diagnostic execution.
 
 Session artifacts under `.pytest_cache/worker-status/` contain bounded native
 PCs, symbols, module identities and offsets for up to eight threads and 24 frames per

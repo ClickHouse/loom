@@ -130,7 +130,9 @@ def signature(received: str) -> dict[str, Any]:
 
 class NativeDebugger:
     def __init__(self) -> None:
-        self.directory = Path(native.read_context()["directory"])
+        context = native.read_context()
+        self.directory = Path(context["directory"])
+        self.terminal_fd = context["terminal_fd"]
         self.inferior = gdb.selected_inferior()
         self.stops = 0
         self.trap_stops = 0
@@ -152,7 +154,12 @@ class NativeDebugger:
             gdb_version=gdb.VERSION[:64],
         )
         try:
-            native.write_record(self.directory / "result.json", result)
+            # The outcome channel does not depend on diagnostic artifact storage.
+            native.write_terminal(self.terminal_fd, result)
+            try:
+                native.write_record(self.directory / "result.json", result)
+            except OSError:
+                pass  # A full artifact filesystem must not replace the worker's result.
         finally:
             gdb.post_event(lambda: gdb.execute("quit", to_string=False))
 

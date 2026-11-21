@@ -12,6 +12,7 @@ import signal
 import stat
 import subprocess
 import sys
+import traceback
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -118,6 +119,58 @@ def test_core_dump_policy_is_checked_before_creating_session(tmp_path, monkeypat
         assert session.root.is_dir()
 
 
+@pytest.mark.parametrize(
+    "release,machine",
+    [
+        ("6.8.0-1022-azure", "x86_64"),
+        ("private-kernel-canary", "x86_64"),
+        ("private-kernel-canary" * 1000, "private-machine-canary"),
+    ],
+)
+def test_pipe_refusal_adds_only_bounded_kernel_identity(tmp_path, monkeypatch, release, machine):
+    _mock_core_pattern(monkeypatch, "|/private/core-pattern-canary %p\n")
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (0, 0))
+    monkeypatch.setattr(os, "uname", lambda: SimpleNamespace(release=release, machine=machine))
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("refusal must not start a worker")
+    )
+    with pytest.raises(ValueError) as refused:
+        native.NativeSession(tmp_path)
+    assert type(refused.value) is ValueError
+    assert refused.value.args == ("native diagnostics refuse piped core dumps",)
+    note = refused.value.__notes__[0]
+    record = json.loads(note.removeprefix("[native-prerequisite] "))
+    assert record["event"] == "native_prerequisite_refused"
+    assert record["reason"] == "piped_core_handler"
+    assert record["machine"] == ("x86_64" if machine == "x86_64" else "unknown")
+    if release == "6.8.0-1022-azure":
+        assert record["kernel_release"] == release
+    else:
+        assert record["kernel_release_sha256"] == hashlib.sha256(release.encode()).hexdigest()
+        assert release not in note
+    assert "core-pattern-canary" not in note
+    assert "private-machine-canary" not in note
+    assert note in "".join(traceback.format_exception_only(refused.value))
+    assert len(note.encode()) < 512
+    assert not (tmp_path / "native").exists()
+
+
+def test_kernel_metadata_failure_keeps_original_pipe_refusal(tmp_path, monkeypatch):
+    _mock_core_pattern(monkeypatch, "|/private/core-collector %p\n")
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (0, 0))
+
+    def unavailable():
+        raise RuntimeError("private-metadata-error-canary")
+
+    monkeypatch.setattr(os, "uname", unavailable)
+    with pytest.raises(ValueError) as refused:
+        native.NativeSession(tmp_path)
+    assert type(refused.value) is ValueError
+    assert refused.value.args == ("native diagnostics refuse piped core dumps",)
+    assert "private-metadata-error-canary" not in str(refused.value.__notes__)
+    assert not (tmp_path / "native").exists()
+
+
 def test_worker_configuration_rejects_unsupported_specs_without_partial_changes(session):
     valid = SimpleNamespace(popen=True, via=None, python=None)
     invalid = SimpleNamespace(popen=True, via=None, python="custom-python")
@@ -156,9 +209,25 @@ def test_parent_death_registration_never_grants_access_or_signals_another_proces
     assert signals == ([(456, signal.SIGKILL)] if state == "parent_changed" else [])
 
 
-@pytest.mark.parametrize("code", [0, 7, 139])
-def test_launcher_preserves_normal_exit_codes_and_keeps_arguments_private(
-    session, monkeypatch, code
+@pytest.mark.parametrize(
+    "kind,code",
+    [("exit", 0), ("exit", 7), ("exit", 139), ("signal", 11)]
+    + [
+        ("signal", value)
+        for value in (
+            signal.SIGSTOP,
+            signal.SIGTSTP,
+            signal.SIGTTIN,
+            signal.SIGTTOU,
+            signal.SIGCONT,
+            signal.SIGCHLD,
+            signal.SIGURG,
+            signal.SIGWINCH,
+        )
+    ],
+)
+def test_launcher_preserves_outcomes_without_terminal_artifact_and_keeps_arguments_private(
+    session, monkeypatch, kind, code
 ):
     canary = "private-argument-canary"
 
@@ -173,20 +242,141 @@ def test_launcher_preserves_normal_exit_codes_and_keeps_arguments_private(
             context = json.loads(os.pread(descriptor, os.fstat(descriptor).st_size, 0))
             assert context["arguments"] == ["-c", "raise SystemExit(139)", canary]
             self.directory = Path(context["directory"])
+            assert context["terminal_fd"] in kwargs["pass_fds"]
+            assert len(context["stdio"]) == 3
+            assert context["terminal_fd"] not in context["stdio"]
+            self.terminal_fd = os.dup(context["terminal_fd"])
 
         def __enter__(self):
             return self
 
         def __exit__(self, *args):
-            return None
+            os.close(self.terminal_fd)
 
         def wait(self):
-            native.write_record(self.directory / "result.json", {"kind": "exit", "code": code})
+            native.write_terminal(
+                self.terminal_fd, {"kind": kind, "code" if kind == "exit" else "signal": code}
+            )
             return 0
 
     monkeypatch.setattr(subprocess, "Popen", Debugger)
-    assert native.launch(session.root, ["-c", "raise SystemExit(139)", canary]) == code
+    arguments = ["-c", "raise SystemExit(139)", canary]
+    if kind == "exit":
+        assert native.launch(session.root, arguments) == code
+    elif code in (
+        signal.SIGSTOP,
+        signal.SIGTSTP,
+        signal.SIGTTIN,
+        signal.SIGTTOU,
+        signal.SIGCONT,
+        signal.SIGCHLD,
+        signal.SIGURG,
+        signal.SIGWINCH,
+    ):
+        monkeypatch.setattr(signal, "signal", lambda *args: pytest.fail("invalid signal handler"))
+        monkeypatch.setattr(os, "kill", lambda *args: pytest.fail("invalid signal delivery"))
+        assert native.launch(session.root, arguments) == 125
+    else:
+
+        class SignalPreserved(BaseException):
+            pass
+
+        def deliver(pid, received):
+            assert pid == os.getpid() and received == code
+            raise SignalPreserved
+
+        monkeypatch.setattr(signal, "signal", lambda *args: None)
+        monkeypatch.setattr(os, "kill", deliver)
+        with pytest.raises(SignalPreserved):
+            native.launch(session.root, arguments)
+    assert not list(session.root.rglob("result.json"))
     assert all(canary not in path.read_text() for path in session.root.rglob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"",
+        b"not-json",
+        b"[]",
+        b"x" * (native.MAX_TERMINAL_BYTES + 1),
+        b"[" * 1000 + b"0" + b"]" * 1000,
+    ],
+)
+def test_terminal_channel_keeps_missing_or_invalid_results_unknown(payload):
+    descriptor = os.memfd_create("synthetic-terminal-invalid", os.MFD_CLOEXEC)
+    try:
+        os.write(descriptor, payload)
+        assert native.read_terminal(descriptor) == {
+            "kind": "unavailable",
+            "reason": "terminal_status_unknown",
+        }
+    finally:
+        os.close(descriptor)
+
+
+def test_terminal_channel_parser_depth_failure_stays_unknown(monkeypatch):
+    def parser(_data):
+        raise RecursionError("private-parser-error-canary")
+
+    descriptor = os.memfd_create("synthetic-terminal-parser", os.MFD_CLOEXEC)
+    try:
+        os.write(descriptor, b"{}")
+        monkeypatch.setattr(native, "json", SimpleNamespace(loads=parser))
+        assert native.read_terminal(descriptor) == {
+            "kind": "unavailable",
+            "reason": "terminal_status_unknown",
+        }
+    finally:
+        os.close(descriptor)
+
+
+def test_terminal_channel_caps_writes_and_rejects_short_transfer(monkeypatch):
+    descriptor = os.memfd_create("synthetic-terminal-cap", os.MFD_CLOEXEC)
+    try:
+        with pytest.raises(ValueError, match="too large"):
+            native.write_terminal(descriptor, {"kind": "x" * native.MAX_TERMINAL_BYTES})
+        assert os.fstat(descriptor).st_size == 0
+        monkeypatch.setattr(os, "pwrite", lambda *_args: 1)
+        with pytest.raises(OSError, match="incomplete"):
+            native.write_terminal(descriptor, {"kind": "exit", "code": 7})
+    finally:
+        os.close(descriptor)
+
+
+def test_bootstrap_closes_private_terminal_channel_before_original_worker_exec(monkeypatch):
+    context = {
+        "terminal_fd": 104,
+        "directory": "/synthetic/native",
+        "stdio": [101, 102, 103],
+        "environment": {"WORKER_CANARY": "private-original-environment"},
+        "python": "/synthetic/python",
+        "arguments": ["-c", "private-original-argument"],
+    }
+    closed, duplicates = [], []
+    monkeypatch.setattr(os, "environ", {native.CONTEXT: "105"})
+    monkeypatch.setattr(native, "read_context", lambda: context)
+    monkeypatch.setattr(native, "read_record", lambda _path: {"pid": 123})
+    monkeypatch.setattr(native, "write_record", lambda *_args: None)
+    monkeypatch.setattr(native, "parent_death_signal", lambda _pid: None)
+    monkeypatch.setattr(native, "identity", lambda _pid: {})
+    monkeypatch.setattr(os, "close", closed.append)
+    monkeypatch.setattr(os, "dup2", lambda saved, target: duplicates.append((saved, target)))
+
+    class OriginalExec(BaseException):
+        pass
+
+    def execute(program, arguments):
+        assert closed == [105, 104, 101, 102, 103]
+        assert duplicates == [(101, 0), (102, 1), (103, 2)]
+        assert os.environ == context["environment"]
+        assert program == context["python"]
+        assert arguments == [program, *context["arguments"]]
+        raise OriginalExec
+
+    monkeypatch.setattr(os, "execv", execute)
+    with pytest.raises(OriginalExec):
+        native.bootstrap()
 
 
 def test_exhausted_launch_slots_never_start_an_unobserved_worker(session, monkeypatch):
@@ -306,12 +496,20 @@ def debugger(session, monkeypatch):
     directory = session.root / "synthetic-debugger"
     directory.mkdir(mode=0o700)
     native.write_record(directory / "inferior.json", {"pid": 1})
-    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
+    terminal_fd = os.memfd_create("synthetic-terminal-test", os.MFD_CLOEXEC)
+    monkeypatch.setattr(
+        native, "read_context", lambda: {"directory": str(directory), "terminal_fd": terminal_fd}
+    )
     monkeypatch.setitem(sys.modules, "gdb", fake)
     monkeypatch.setitem(sys.modules, "_native_worker", native)
     monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
     module = runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
-    return SimpleNamespace(api=fake, collector=module["collector"], directory=directory)
+    try:
+        yield SimpleNamespace(
+            api=fake, collector=module["collector"], directory=directory, terminal_fd=terminal_fd
+        )
+    finally:
+        os.close(terminal_fd)
 
 
 def test_debugger_permission_refusal_is_reported_without_fallback(debugger):
@@ -360,6 +558,31 @@ def test_collector_failure_still_continues_and_preserves_terminal_event(
     assert "handle SIGSEGV stop print pass" in fake.commands
     assert fake.commands[-3:] == ["run &", "continue &", "quit"]
     assert all("canary" not in path.read_text() for path in debugger.directory.iterdir())
+
+
+@pytest.mark.parametrize("exit_code,exit_signal", [(7, None), (139, None), (None, 11)])
+def test_terminal_artifact_failure_keeps_anonymous_outcome(
+    debugger, monkeypatch, exit_code, exit_signal
+):
+    original = native.write_record
+
+    def full_disk(path, record):
+        if path.name == "result.json":
+            raise OSError("private-disk-full-canary")
+        return original(path, record)
+
+    monkeypatch.setattr(native, "write_record", full_disk)
+    debugger.api.on_command["run &"] = lambda: debugger.api.exit(
+        code=exit_code, received=exit_signal
+    )
+    debugger.api.drain()
+    result = native.read_terminal(debugger.terminal_fd)
+    if exit_signal is None:
+        assert result["kind"] == "exit" and result["code"] == exit_code
+    else:
+        assert result["kind"] == "signal" and result["signal"] == exit_signal
+    assert debugger.api.commands[-1] == "quit"
+    assert not (debugger.directory / "result.json").exists()
 
 
 def test_queued_resume_is_ignored_after_native_exit_event(debugger):
