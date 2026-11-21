@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 from examples.software_factory.factory.model import digest
 
@@ -72,14 +73,16 @@ async def audit_index(request):
     tables = {}
     for table in ("code_files", "code_chunks", "code_symbols", "code_edges"):
         projection = "* EXCEPT (embedding)" if table == "code_chunks" else "*"
-        tables[table] = await client.query_all(
+        encoded = await client.raw_bytes(
             "SELECT "
             + projection
             + " FROM loom."
             + table
-            + " FINAL WHERE org={org:String} AND namespace={ns:String} AND tombstoned_at IS NULL",
+            + " FINAL WHERE org={org:String} AND namespace={ns:String} "
+            + "AND tombstoned_at IS NULL FORMAT JSONEachRow",
             params,
         )
+        tables[table] = [json.loads(line) for line in encoded.splitlines() if line]
     not_indexed = {}
     ancestors = set()
     expected_chunks = {}
