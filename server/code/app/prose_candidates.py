@@ -51,7 +51,7 @@ async def discover_candidates(org: str, namespace: str, quote: str) -> CodeDisco
     """
     result = CodeDiscovery("unavailable", namespace, quote[:2000])
     try:
-        async with asyncio.timeout(3):
+        async with asyncio.timeout(3):  # not a setting: fixed per-decision preview work limit
             await _discover(org, result)
     except TimeoutError:
         result.status, result.note = "deferred", "code discovery deadline reached"
