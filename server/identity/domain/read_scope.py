@@ -455,6 +455,7 @@ NARROW_SAFE_OPS: dict[str, str] = {
     "another user's reads as not found",
     "memory.set": "a write",
     "memory.pin": "a write",
+    "memory.append_batch": "a write: fresh episodic keys in the pinned scope",
     "memory.bulk_set": "a write",
     "memory.import": (
         "a write: the items land as the pinned user and a key's state is read inside the "

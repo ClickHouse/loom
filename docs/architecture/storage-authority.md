@@ -114,6 +114,34 @@ stops serving and background writers, waits out bounded sends, and states when t
 guarantee and optional settings apply. Both builds serve the same schema.
 An older writer can still reproduce the unchecked expiry race during that transition.
 
+## Atomic episodic appends
+
+`memory.append_batch` appends 1–1,000 episodic occurrences under one identity tuple.
+Every key must be distinct and absent, including from tombstoned heads. Equal values
+remain separate rows. The handler requires the Postgres authority before memory or
+provider mutation, then reuses bulk row preparation, blacklist checks, sensitivity,
+provenance and policy admission. It runs no embedding, identity deduplication, entity
+resolution or semantic supersession. Any refused entry aborts the entire batch.
+
+The commit checks absence again while holding the authority's generation and head
+locks. Heads, revision rows, hash-only audit rows, delivery obligations and the bound
+idempotency result commit together. A competing writer that creates one key refuses
+the complete append. Ordinary `memory.bulk_set` keeps its per-entry verdicts and
+identity deduplication; its partial selection is unsuitable for native history.
+
+Publication follows the commit. `PUBLICATION_PENDING` means the batch is committed and
+its remaining delivery belongs to the delivery worker. A replay of that request's
+idempotency key returns the committed rows, without appending again. A lost commit
+acknowledgement remains an uncertain outcome until that same request is resolved;
+clients must not compensate with deletes or invent replacement keys.
+
+The operation uses the existing episodic row format and erasure coverage, with no
+schema migration. Older servers do not register it and refuse rather than accepting
+an ignored atomicity flag. The ClickHouse authority refuses it; the operation catalogue
+advertises availability, not the deployment's storage readiness. Existing history
+reads, pops and clears keep their row format and behavior; this append operation does
+not give them cross-process linearizability.
+
 ## The tables
 
 The schema is `schemas/pg_migrations/` ([migrations](#migrations)). Every tenant primary

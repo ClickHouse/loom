@@ -5859,3 +5859,208 @@ async def test_exact_head_locks_bound_a_large_absent_batch(pg_conn: Any, org: st
         except Exception as error:  # The synthetic plan must not replace the native failure.
             error.add_note("Synthetic head-lock plan before query: " + json.dumps(plan))
             raise
+
+
+async def test_an_episodic_batch_preserves_occurrences_and_replays_once(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+    item = json.dumps({"role": "user", "content": "again"})
+    body = {
+        "namespace": ns,
+        "agent": "a",
+        "user_id": "u",
+        "session_id": "s",
+        "entries": [{"memory_key": k, "value": item} for k in ("first", "second")],
+    }
+    headers = {"Idempotency-Key": f"append-{uuid.uuid4().hex}"}
+    first = await call("memory.append_batch", body, **headers)
+    assert first.status_code == 200, first.text
+    replay = await call("memory.append_batch", body, **headers)
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["written"] == first.json()["written"]
+    assert [r["memory_key"] for r in first.json()["written"]] == ["first", "second"]
+    stored = await pg_conn.fetch(
+        "SELECT row, seq FROM loom.memory_current WHERE org = $1 AND namespace = $2 ORDER BY seq",
+        org,
+        ns,
+    )
+    assert len(stored) == 2
+    from server.memory.store import pg_memory
+
+    for key, entry in zip(("first", "second"), stored, strict=True):
+        row = pg_memory.decode_row(entry["row"])
+        assert tuple(row[c] for c in ("org", "namespace", "agent", "user_id", "session_id")) == (
+            org,
+            ns,
+            "a",
+            "u",
+            "s",
+        )
+        assert row["memory_key"] == key and row["memory_type"] == "episodic"
+        assert json.loads(row["value"]) == item
+        assert row["source_class"] == "asserted" and row["actor"] == "process:test-suite"
+        assert len(row["content_sha256"]) == 64
+        got = await call(
+            "memory.get", {k: v for k, v in body.items() if k != "entries"} | {"memory_key": key}
+        )
+        assert got.status_code == 200 and got.json()["value"] == item, got.text
+    assert (
+        await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
+        )
+        == 2
+    )
+
+
+async def test_a_blacklisted_second_append_item_leaves_no_first_item(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+    blocked = f"refuse-{uuid.uuid4().hex}"
+    policy = await call("blacklist.add", {"namespace": ns, "pattern": blocked})
+    assert policy.status_code == 200, policy.text
+    response = await call(
+        "memory.append_batch",
+        {
+            "namespace": ns,
+            "agent": "a",
+            "user_id": "u",
+            "session_id": "s",
+            "entries": [
+                {"memory_key": "first", "value": "keep separate"},
+                {"memory_key": "second", "value": blocked},
+            ],
+        },
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["code"] == "VALIDATION_FAILED"
+    for table in ("memory_current", "memory_revisions", "memory_deliveries"):
+        assert (
+            await pg_conn.fetchval(
+                f"SELECT count(*) FROM loom.{table} WHERE org = $1 AND namespace = $2", org, ns
+            )
+            == 0
+        )
+
+
+async def test_concurrent_appends_refuse_the_whole_losing_batch(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+
+    async def append(own: str) -> httpx.Response:
+        return await call(
+            "memory.append_batch",
+            {
+                "namespace": ns,
+                "agent": "a",
+                "user_id": "u",
+                "session_id": "s",
+                "entries": [
+                    {"memory_key": "contended", "value": own},
+                    {"memory_key": own, "value": own},
+                ],
+            },
+        )
+
+    left, right = await asyncio.gather(append("left"), append("right"))
+    assert sorted([left.status_code, right.status_code]) == [200, 422], (left.text, right.text)
+    winner = "left" if left.status_code == 200 else "right"
+    heads = await pg_conn.fetch(
+        "SELECT memory_key FROM loom.memory_current WHERE org = $1 AND namespace = $2", org, ns
+    )
+    assert {r["memory_key"] for r in heads} == {"contended", winner}
+    assert (
+        await pg_conn.fetchval(
+            "SELECT count(*) FROM loom.memory_revisions WHERE org = $1 AND namespace = $2", org, ns
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize("refused", ["viewer", "namespace", "user"])
+async def test_append_batch_enforces_the_writer_namespace_and_user_gates(
+    control_plane_url: str, mint_test_token: Any, org: str, refused: str
+) -> None:
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+    token = mint_test_token(
+        org=org,
+        namespaces=["elsewhere" if refused == "namespace" else ns],
+        roles=["viewer" if refused == "viewer" else "writer"],
+        read_user_id="alice" if refused == "user" else None,
+    )
+    async with httpx.AsyncClient(base_url=control_plane_url) as client:
+        response = await client.post(
+            "/v1/memory.append_batch",
+            headers={"Authorization": f"Bearer {token}"},
+            json={
+                "org": org,
+                "namespace": ns,
+                "agent": "a",
+                "user_id": "bob",
+                "entries": [{"memory_key": "first", "value": "private"}],
+            },
+        )
+    assert response.status_code == 403, response.text
+
+
+async def test_append_respects_the_deployments_storage_authority(call: Any) -> None:
+    from server.core import pg
+
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+    response = await call(
+        "memory.append_batch",
+        {
+            "namespace": ns,
+            "agent": "a",
+            "entries": [{"memory_key": "first", "value": "not committed"}],
+        },
+    )
+    assert response.status_code == (200 if pg.enabled() else 422), response.text
+    got = await call("memory.get", {"namespace": ns, "agent": "a", "memory_key": "first"})
+    assert got.status_code == 200 and got.json()["found"] is pg.enabled(), got.text
+
+
+async def test_user_erasure_covers_every_appended_occurrence(
+    call: Any, pg_conn: Any, org: str
+) -> None:
+    ns = f"append-{uuid.uuid4().hex[:8]}"
+    user = f"u-{uuid.uuid4().hex[:8]}"
+    for who in (user, "someone-else"):
+        response = await call(
+            "memory.append_batch",
+            {
+                "namespace": ns,
+                "agent": "a",
+                "user_id": who,
+                "session_id": "s",
+                "entries": [{"memory_key": key, "value": "again"} for key in ("first", "second")],
+            },
+        )
+        assert response.status_code == 200, response.text
+    erased = await call(
+        "erasure.request",
+        {
+            "scope_type": "user_id",
+            "scope_value": user,
+            "requester": "t",
+        },
+    )
+    assert erased.status_code == 200 and erased.json()["status"] == "completed", erased.text
+    for table in ("loom.memory_current", "loom.memory_revisions"):
+        users = await pg_conn.fetch(
+            f"SELECT user_id FROM {table} WHERE org = $1 AND namespace = $2", org, ns
+        )
+        assert [row["user_id"] for row in users] == ["someone-else", "someone-else"], table
+    got = await call(
+        "memory.get",
+        {
+            "namespace": ns,
+            "agent": "a",
+            "user_id": user,
+            "session_id": "s",
+            "memory_key": "first",
+        },
+    )
+    assert got.status_code == 200 and not got.json()["found"], got.text

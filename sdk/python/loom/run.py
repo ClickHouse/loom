@@ -64,6 +64,7 @@ AMBIENT_WRITE_PATHS: frozenset[str] = frozenset(
         "/v1/memory.pin",
         "/v1/memory.update",
         "/v1/memory.set_from_messages",
+        "/v1/memory.append_batch",
         "/v1/memory.bulk_set",
         "/v1/memory.link",
         "/v1/observe.record",
