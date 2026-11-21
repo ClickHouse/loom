@@ -153,6 +153,8 @@ def execute(args):
             },
         )
         core_python = os.environ["FACTORY_LOOM_PYTHON"]
+        meter.set_phase("native-setup")
+        phases.run("runtime", runtime.start)
         phases.run(
             "assets", lambda: profile.create_assets(output / "assets", loom_python=core_python)
         )
@@ -182,7 +184,6 @@ def execute(args):
             ),
         )
         meter.set_phase("native-setup")
-        phases.run("runtime", runtime.start)
         setup = phases.run(
             "native-setup",
             lambda: runtime.prepare(

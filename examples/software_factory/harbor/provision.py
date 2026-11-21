@@ -506,6 +506,7 @@ class Provisioner:
                 "storage_authority": "clickhouse",
                 "memory_code_links_settle_seconds": 10,
                 "inference_customer_header": "X-Factory-Org",
+                "inference_gateway_hosts": alias,
                 "inference_feature_header": "X-Factory-Feature",
                 "inference_identity_headers_json": json.dumps(
                     {"X-Factory-Namespace": "{namespace}"}
@@ -675,6 +676,9 @@ class Provisioner:
             self.http = httpx.Client(timeout=120)
         deadline = time.monotonic() + 300
         while time.monotonic() < deadline:
+            state = self._owned("container", self.runtime["server_container"])["State"]
+            if not state["Running"]:
+                raise RuntimeError("Owned native Loom exited before becoming healthy")
             try:
                 response = self.http.get(self.runtime["loom_url"] + "/v1/health")
                 response.raise_for_status()
