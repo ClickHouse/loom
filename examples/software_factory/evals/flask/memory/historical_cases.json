@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "kind": "historical-project-context",
+  "study_role": "development regression",
+  "cases": [
+    {
+      "case_id": "pallets__flask-4045",
+      "base_commit": "d8c37f43724cd9fb0870f77877b7c4c7e38a19e0",
+      "cutoff": "2021-05-13T19:37:44Z",
+      "excluded_source_numbers": [4041, 4045]
+    },
+    {
+      "case_id": "pallets__flask-4575",
+      "base_commit": "bd56d19b167822a9a23e2e9e2a07ccccc36baa8d",
+      "cutoff": "2022-05-02T14:41:29Z",
+      "excluded_source_numbers": [4569, 4575]
+    },
+    {
+      "case_id": "pallets__flask-4935",
+      "base_commit": "fa1ee7066807c21256e90089731c548b313394d2",
+      "cutoff": "2022-10-04T10:51:08Z",
+      "excluded_source_numbers": [4834, 4856, 4935]
+    }
+  ]
+}

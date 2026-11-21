@@ -1,0 +1,58 @@
+{
+  "label": "scripted-replay-not-model-reasoning",
+  "steps": [
+    {
+      "plan": "Inspect the current function and reproduce the failing objective check.",
+      "actions": [
+        {
+          "name": "read",
+          "input": {
+            "path": "src/subject.py"
+          }
+        },
+        {
+          "name": "test",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "plan": "Try an incomplete edit and check its behavior.",
+      "actions": [
+        {
+          "name": "edit",
+          "input": {
+            "path": "src/subject.py",
+            "old": "return prefix + path",
+            "new": "return prefix + \"/\" + path"
+          }
+        },
+        {
+          "name": "test",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "plan": "Revise the edit to satisfy the specified boundary cases.",
+      "actions": [
+        {
+          "name": "edit",
+          "input": {
+            "path": "src/subject.py",
+            "old": "return prefix + \"/\" + path",
+            "new": "return prefix.rstrip(\"/\") + \"/\" + path.lstrip(\"/\")"
+          }
+        },
+        {
+          "name": "test",
+          "input": {}
+        }
+      ]
+    },
+    {
+      "plan": "Visible checks pass. Submit for independent grading.",
+      "actions": []
+    }
+  ]
+}
