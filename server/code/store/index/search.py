@@ -41,32 +41,39 @@ class SearchMixin(CodeRepoBase):
         `scope` adds the pattern / path predicates to the plain WHERE after
         the identity keys; unset, the statement is unchanged byte for byte.
 
-        The gate is `hasAnyTokens(lexemes, tokens)`, the predicate the `text`
-        index on `lexemes` (tokenizer splitByNonAlpha — the
-        writer's own token boundaries) answers per granule;
-        `multiSearchAny(concat(' ', lexemes, ' '), …)` reads every chunk of
-        the namespace (293 MB and 462 ms per call on the ClickHouse
-        repository)."""
+        The String query form of `hasAnyTokens` tokenizes the query with
+        the text index's splitByNonAlpha tokenizer. Its Array form takes
+        pre-tokenized terms, so whole underscore identifiers cannot gate
+        on it. The exact score rejects the coarse gate's partial matches.
+        Underscore-only lexemes have no text-index token and use only the
+        exact score predicate within the same scope.
+
+        The text-index gate avoids reading every chunk in the namespace.
+        """
         if not tokens:
             return []
         where_prefix = "AND startsWith(path, {prefix:String})" if path_prefix else ""
+        gate = (
+            "AND hasAnyTokens(lexemes, {gate_query:String})"
+            if all(tok.strip("_") for tok in tokens)
+            else ""
+        )
+        score = (
+            "arraySum(arrayMap((tok, idf) -> idf * countSubstrings("
+            "concat(' ', lexemes, ' '), concat(' ', tok, ' ')), "
+            "{tokens:Array(String)}, {idfs:Array(Float32)}))"
+        )
         scope_sql, scope_params = _scope_sql(scope)
         rows = await self._ch.query_all(
             f"""
             SELECT chunk_id, path, scope, kind, start_line, end_line,
                    content, symbol_ids, context_description,
-                   arraySum(
-                       arrayMap(
-                           (tok, idf) -> idf * countSubstrings(
-                               concat(' ', lexemes, ' '), concat(' ', tok, ' ')
-                           ),
-                           {{tokens:Array(String)}}, {{idfs:Array(Float32)}}
-                       )
-                   ) AS lex_score
+                   {score} AS lex_score
             FROM loom.code_chunks FINAL
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND embedding_model = {{model:String}} AND tombstoned_at IS NULL
-              AND hasAnyTokens(lexemes, {{tokens:Array(String)}})
+              {gate}
+              AND {score} > 0
               {where_prefix}
               {scope_sql}
             ORDER BY lex_score DESC
@@ -79,6 +86,7 @@ class SearchMixin(CodeRepoBase):
                 "tokens": tokens,
                 "idfs": idfs,
                 "pool": pool,
+                **({"gate_query": " ".join(tokens)} if gate else {}),
                 **({"prefix": path_prefix} if path_prefix else {}),
                 **scope_params,
             },
