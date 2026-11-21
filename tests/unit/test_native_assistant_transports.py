@@ -732,3 +732,216 @@ def test_native_row_selectors_keep_token_and_answer_ceilings(native_row_reader):
         assert len(state.seen) == 1
 
     asyncio.run(scenario())
+
+
+@pytest.fixture
+def native_history_reader(native_row_reader, monkeypatch):
+    from dataclasses import replace
+
+    from server.auth.context import current_auth
+    from server.memory.api.models_temporal import MemoryHistoryInput, MemoryHistoryOutput
+    from server.transport import mcp_call
+
+    state = native_row_reader
+    state.history_seen = []
+
+    async def handler(inp):
+        assert isinstance(inp, MemoryHistoryInput)
+        assert current_auth() == state.principal
+        state.history_seen.append(inp)
+        return MemoryHistoryOutput.model_validate(
+            {
+                "rows": [
+                    {
+                        "memory_id": "rate-limit",
+                        "version": version,
+                        "value": {"rate_limit": value},
+                        "confidence": 1,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "agent": inp.agent,
+                    }
+                    for version, value in [(9007199254740995, 600), (9007199254740993, 300)]
+                ]
+            }
+        )
+
+    original = mcp_call.TOOLS_BY_NAME["loom_memory_history"]
+    assert original.input_model is MemoryHistoryInput and original.required_role is Role.VIEWER
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, "loom_memory_history", replace(original, handler=handler)
+    )
+    return state
+
+
+def test_history_read_keeps_authenticated_scope_and_live_delegation(native_history_reader):
+    from dataclasses import replace
+
+    from server.core.errors import AuthInsufficientError
+
+    state = native_history_reader
+    state.principal = replace(state.principal, read_scope="own_user", read_user_id="person-a")
+    arguments = {
+        "memory_key": "rate-limit",
+        "agent": "writer",
+        "user_id": "person-a",
+        "session_id": "conversation-a",
+        "limit": 2,
+    }
+
+    async def scenario():
+        native = tools.Tools("acme", "n", "alice", "history-answer")
+        descriptor = native.descriptors({"memory.history"})[0]["function"]["parameters"]
+        assert descriptor["properties"]["limit"]["minimum"] == 1
+        assert descriptor["properties"]["limit"]["maximum"] == 500
+        assert not {"org", "namespace", "roles", "read_scope"} & descriptor["properties"].keys()
+        receipt = await native.call("loom_memory_history", arguments, origin="model_tool")
+        assert [row["value"]["rate_limit"] for row in receipt.result["rows"]] == [600, 300]
+        [inp] = state.history_seen
+        assert (inp.org, inp.namespace, inp.agent, inp.user_id, inp.session_id) == (
+            "acme",
+            "n",
+            "writer",
+            "person-a",
+            "conversation-a",
+        )
+        for changed in ({"org": "other"}, {"namespace": "outside"}):
+            with pytest.raises(AuthInsufficientError):
+                await native.call(
+                    "loom_memory_history", {**arguments, **changed}, origin="model_tool"
+                )
+        with pytest.raises(AuthInsufficientError):
+            await native.call("loom_memory_set", arguments, origin="model_tool")
+        for changed in ({"user_id": "other-user"}, {"limit": 0}, {"limit": 501}):
+            with pytest.raises(AssistantUpstreamError):
+                await tools.Tools("acme", "n", "alice", "history-invalid").call(
+                    "loom_memory_history", {**arguments, **changed}, origin="model_tool"
+                )
+        for org, namespace in (("other", "n"), ("acme", "outside")):
+            with pytest.raises(AssistantUpstreamError):
+                await tools.Tools(org, namespace, "alice", "history-outside").call(
+                    "loom_memory_history", arguments, origin="model_tool"
+                )
+        state.grant = None
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "history-grant-lost").call(
+                "loom_memory_history", arguments, origin="model_tool"
+            )
+        state.grant, state.revoked = Role.ADMIN, True
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "history-revoked").call(
+                "loom_memory_history", arguments, origin="model_tool"
+            )
+        assert len(state.history_seen) == 1
+
+    asyncio.run(scenario())
+
+
+def test_history_calls_share_the_existing_answer_tool_ceiling(native_history_reader, monkeypatch):
+    monkeypatch.setattr(settings, "assistant_max_tool_calls", 1)
+
+    async def scenario():
+        native = tools.Tools("acme", "n", "alice", "history-budget")
+        arguments = {"memory_key": "rate-limit", "agent": "writer", "limit": 2}
+        await native.call("loom_memory_history", arguments, origin="host_context")
+        with pytest.raises(AssistantUpstreamError, match="tool budget"):
+            await native.call(
+                "loom_memory_history", {**arguments, "memory_key": "other"}, origin="model_tool"
+            )
+        assert len(native.receipts) == len(native_history_reader.history_seen) == 1
+
+    asyncio.run(scenario())
+
+
+def test_inventory_read_preserves_token_scope_and_private_members(native_row_reader, monkeypatch):
+    from dataclasses import replace
+
+    from server.auth.context import current_auth
+    from server.core.errors import AuthInsufficientError
+    from server.identity.api.models_inventory import (
+        NamespaceInventoryInput,
+        NamespaceInventoryOutput,
+    )
+    from server.identity.app.request_scope import request_scope
+    from server.transport import mcp_call
+
+    state = native_row_reader
+    state.principal = replace(state.principal, read_scope="own_user", read_user_id="person-a")
+    seen = []
+
+    async def handler(inp):
+        assert isinstance(inp, NamespaceInventoryInput) and current_auth() == state.principal
+        scope = request_scope()
+        assert (scope.scope, scope.user_id) == ("own_user", "person-a")
+        assert (inp.org, inp.namespace, inp.population_limit) == ("acme", "n", 20)
+        seen.append(inp)
+        return NamespaceInventoryOutput.model_validate(
+            {
+                "scope": {
+                    "org": inp.org,
+                    "namespace": inp.namespace,
+                    "read_scope": scope.scope,
+                    "user_id": scope.user_id,
+                    "session_id": None,
+                },
+                "sections": [],
+                "capabilities": [],
+                "computed_at": "2024-01-01T00:00:00Z",
+                "populations": [
+                    {
+                        "population": "members",
+                        "total": None,
+                        "top": [],
+                        "complete": False,
+                        "reason": "membership unavailable",
+                    },
+                    {
+                        "population": "agents",
+                        "total": 1,
+                        "top": [{"name": "scoped-bot", "rows": 1}],
+                        "complete": True,
+                    },
+                ],
+            }
+        )
+
+    original = mcp_call.TOOLS_BY_NAME["loom_namespace_inventory"]
+    assert original.input_model is NamespaceInventoryInput and original.required_role is Role.VIEWER
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, "loom_namespace_inventory", replace(original, handler=handler)
+    )
+
+    async def scenario():
+        native = tools.Tools("acme", "n", "alice", "inventory-answer")
+        descriptor = native.descriptors({"namespace.inventory"})[0]["function"]["parameters"]
+        assert (
+            not {"org", "namespace", "roles", "read_scope", "population_limit"}
+            & descriptor["properties"].keys()
+        )
+        receipt = await native.call("loom_namespace_inventory", {}, origin="model_tool")
+        assert receipt.result["scope"]["user_id"] == "person-a"
+        members, agents = receipt.result["populations"]
+        assert members["total"] is None and not members["top"] and not members["complete"]
+        assert [row["name"] for row in agents["top"]] == ["scoped-bot"]
+        for changed in ({"org": "other"}, {"namespace": "outside"}):
+            with pytest.raises(AuthInsufficientError):
+                await native.call("loom_namespace_inventory", changed, origin="model_tool")
+        for changed in (
+            {"read_scope": "namespace"},
+            {"roles": ["admin"]},
+            {"population_limit": 200},
+        ):
+            with pytest.raises(AssistantUpstreamError):
+                await native.call("loom_namespace_inventory", changed, origin="model_tool")
+        state.grant = None
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "inventory-grant-lost").call(
+                "loom_namespace_inventory", {}, origin="model_tool"
+            )
+        state.grant, state.revoked = Role.ADMIN, True
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "inventory-revoked").call(
+                "loom_namespace_inventory", {}, origin="model_tool"
+            )
+        assert len(seen) == 1
+
+    asyncio.run(scenario())

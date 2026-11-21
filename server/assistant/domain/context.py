@@ -45,6 +45,8 @@ def relevant(ops: set[str]) -> set[str]:
     names = {
         "memory.search",
         "memory.get",
+        "memory.history",
+        "namespace.inventory",
         "knowledge.search",
         "knowledge.get",
         "help.search",

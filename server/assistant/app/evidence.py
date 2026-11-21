@@ -60,6 +60,20 @@ def _nodes(value: Any) -> Iterator[dict[str, Any]]:
 
 def _matches(citation: Citation, receipt: Receipt) -> bool:
     result, op = receipt.result, receipt.op
+    if citation.kind == "memory" and op == "memory.history":
+        rows = result.get("rows")
+        return (
+            receipt.arguments.get("memory_key") == citation.key
+            and isinstance(rows, list)
+            and any(
+                isinstance(row, dict)
+                and "value" in row
+                and row.get("redacted_at") is None
+                and str(row.get("version_text") or row.get("version"))
+                == citation.text.rsplit("@v", 1)[-1][:-1]
+                for row in rows
+            )
+        )
     if citation.kind == "sql":
         return (
             op == "insights.query"

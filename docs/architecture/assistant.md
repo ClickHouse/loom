@@ -64,6 +64,13 @@ returned, not that every sentence is entailed by it. Each citation check records
 whether that source was returned to this answer. Support for an uncited answer derives
 from its tool receipts.
 
+Prior-value questions read `memory.history` after locating the key. A historical
+memory citation binds the requested key to the exact version and value returned in
+that receipt; redacted rows cannot verify it. Current-value questions use current
+reads. Population questions use `namespace.inventory`, keeping its read scope,
+observed-agent and member distinction, totals, bounded top lists and incomplete
+reasons. A complete count does not make a shorter top list exhaustive.
+
 ### Steps
 
 Host context and model-selected tools have separate `origin` values in progress events.

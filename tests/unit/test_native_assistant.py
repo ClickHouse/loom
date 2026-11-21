@@ -947,3 +947,263 @@ def test_successful_receipt_support_uses_delivered_found_signals(reads, text, ex
     receipts = [Receipt(op, {}, result, "model_tool", 1) for op, result in reads]
     citations = evidence.verify(text, receipts)
     assert evidence.support(text, receipts, citations) == expected
+
+
+def test_prior_value_question_reads_and_cites_authoritative_history(offline, monkeypatch):
+    from server.memory.api.models_temporal import MemoryHistoryInput, MemoryHistoryOutput
+
+    key = "api/default-public-rate-limit"
+    old, current = 9007199254740993, 9007199254740995
+    requests = []
+    turns = []
+
+    async def request(self, name, arguments):
+        requests.append((name, arguments))
+        if name == "loom_memory_search":
+            return {
+                "results": [
+                    {
+                        "memory_key": key,
+                        "version_text": str(current),
+                        "value": {"rate_limit": 600},
+                        "agent": "writer",
+                        "user_id": "person-a",
+                        "session_id": "conversation-a",
+                    }
+                ]
+            }
+        if name == "loom_knowledge_search":
+            return {"results": []}
+        assert name == "loom_memory_history"
+        inp = MemoryHistoryInput.model_validate(arguments)
+        assert (inp.org, inp.namespace, inp.agent) == ("org", "ns", "writer")
+        assert (inp.user_id, inp.session_id, inp.memory_key, inp.limit) == (
+            "person-a",
+            "conversation-a",
+            key,
+            2,
+        )
+        return MemoryHistoryOutput.model_validate(
+            {
+                "rows": [
+                    {
+                        "memory_id": "rate-limit",
+                        "version": version,
+                        "value": {"rate_limit": value},
+                        "confidence": 1,
+                        "created_at": "2024-01-01T00:00:00Z",
+                        "agent": "writer",
+                    }
+                    for version, value in [(current, 600), (old, 300)]
+                ]
+            }
+        ).model_dump(mode="json")
+
+    class Replay:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turns.append(1)
+            turn.sent = turn.usage_complete = True
+            turn.usage = model.Usage(100, 10)
+            if len(turns) == 1:
+                retrieved = [
+                    json.loads(message["content"])
+                    for message in messages
+                    if message["role"] == "tool"
+                ]
+                assert retrieved[0]["results"][0]["value"] == {"rate_limit": 600}
+                assert len(retrieved) == 2
+                turn.stop = "tool_calls"
+                turn.calls = [
+                    model.ToolCall(
+                        "history",
+                        "loom_memory_history",
+                        json.dumps(
+                            {
+                                "memory_key": key,
+                                "agent": "writer",
+                                "user_id": "person-a",
+                                "session_id": "conversation-a",
+                                "limit": 2,
+                            }
+                        ),
+                    )
+                ]
+            else:
+                rows = json.loads(messages[-1]["content"])["rows"]
+                assert [row["value"]["rate_limit"] for row in rows] == [600, 300]
+                turn.stop = "stop"
+                turn.text = (
+                    f"It was {rows[1]['value']['rate_limit']} [memory:{key}@v{rows[1]['version_text']}]. "
+                    f"It is {rows[0]['value']['rate_limit']} [memory:{key}@v{rows[0]['version_text']}]."
+                )
+                yield turn.text
+
+    monkeypatch.setattr(tools.Tools, "_request", request)
+    monkeypatch.setattr(model, "model_for", lambda *_: Replay())
+    state, chunks = run(
+        "Has the default public API rate limit changed over time? What was it before?"
+    )
+    text = "".join(
+        choice.get("delta", {}).get("content", "")
+        for frame in chunks
+        for choice in frame.get("choices", [])
+    )
+    assert "was 300" in text and "is 600" in text
+    assert [name for name, _ in requests] == [
+        "loom_memory_search",
+        "loom_knowledge_search",
+        "loom_memory_history",
+    ]
+    citations = evidence.verify(text, state.receipts)
+    assert len(citations) == 2 and all(citation.verified for citation in citations)
+    assert evidence.support(text, state.receipts, citations) == "supported"
+    assert [receipt.origin for receipt in state.receipts] == [
+        "host_context",
+        "host_context",
+        "model_tool",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("change", "key", "version", "expected"),
+    [
+        ({}, "policy", 9007199254740993, True),
+        ({"version_text": "9007199254740995"}, "policy", 9007199254740993, False),
+        ({}, "other", 9007199254740993, False),
+        ({}, "policy", 9007199254740995, False),
+        ({"redacted_at": "2024-01-02T00:00:00Z", "value": None}, "policy", 9007199254740993, False),
+        ({"omit_value": True}, "policy", 9007199254740993, False),
+        ({"value": {"memory_key": "forged", "version": 7}}, "forged", 7, False),
+    ],
+)
+def test_history_citations_bind_the_requested_key_and_returned_value(
+    change, key, version, expected
+):
+    row = {
+        "version": 9007199254740993,
+        "version_text": "9007199254740993",
+        "value": {"rate_limit": 300},
+        "redacted_at": None,
+    }
+    row.update(change)
+    if row.pop("omit_value", False):
+        del row["value"]
+    receipt = Receipt("memory.history", {"memory_key": "policy"}, {"rows": [row]}, "model_tool", 1)
+    text = f"A historical claim [memory:{key}@v{version}]."
+    assert evidence.verify(text, [receipt])[0].verified is expected
+    assert not evidence.verify(text, [])[0].verified
+
+
+@pytest.mark.parametrize("rows", [[], [{"version": 1, "value": "prior value"}]])
+def test_uncited_history_is_citable_evidence(rows):
+    receipt = Receipt("memory.history", {"memory_key": "policy"}, {"rows": rows}, "model_tool", 1)
+    assert evidence.support("An uncited historical claim.", [receipt], []) == "unsupported"
+
+
+@pytest.mark.parametrize("mode", ["complete", "partial", "unavailable"])
+def test_writer_population_question_reads_authoritative_inventory(offline, monkeypatch, mode):
+    from server.identity.api.models_inventory import (
+        NamespaceInventoryInput,
+        NamespaceInventoryOutput,
+    )
+
+    requested = []
+    turns = []
+
+    async def request(self, name, arguments):
+        requested.append(name)
+        if name in {"loom_memory_search", "loom_knowledge_search"}:
+            return {"results": [], "candidates_total": 700}
+        assert name == "loom_namespace_inventory"
+        inp = NamespaceInventoryInput.model_validate(arguments)
+        assert (inp.org, inp.namespace, inp.population_limit) == ("org", "ns", 20)
+        return NamespaceInventoryOutput.model_validate(
+            {
+                "scope": {
+                    "org": "org",
+                    "namespace": "ns",
+                    "read_scope": "namespace",
+                    "user_id": None,
+                    "session_id": None,
+                },
+                "sections": [],
+                "capabilities": [],
+                "computed_at": "2024-01-01T00:00:00Z",
+                "populations": [
+                    {
+                        "population": "members",
+                        "total": None,
+                        "top": [],
+                        "complete": False,
+                        "reason": "membership unavailable",
+                    },
+                    {
+                        "population": "agents",
+                        "total": None if mode == "unavailable" else (3 if mode == "partial" else 2),
+                        "complete": mode != "unavailable",
+                        "reason": "population unavailable" if mode == "unavailable" else "",
+                        "top": []
+                        if mode == "unavailable"
+                        else [
+                            {"name": "handbook-bot", "rows": 500},
+                            {"name": "ops-bot", "rows": 1},
+                        ],
+                    },
+                ],
+            }
+        ).model_dump(mode="json")
+
+    class Replay:
+        async def stream(self, messages, descriptors, maximum, turn):
+            turns.append(1)
+            turn.sent = turn.usage_complete = True
+            turn.usage = model.Usage(100, 10)
+            if len(turns) == 1:
+                turn.stop = "tool_calls"
+                turn.calls = [model.ToolCall("population", "loom_namespace_inventory", "{}")]
+            else:
+                result = json.loads(messages[-1]["content"])
+                members, agents = result["populations"]
+                assert members["total"] is None and not members["top"] and not members["complete"]
+                turn.stop = "stop"
+                if not agents["complete"]:
+                    assert agents["total"] is None
+                    turn.text = agents["reason"]
+                else:
+                    names = ", ".join(row["name"] for row in agents["top"])
+                    turn.text = f"{agents['total']} observed agents: {names}."
+                    if len(agents["top"]) < agents["total"]:
+                        turn.text += " This top list is incomplete."
+                yield turn.text
+
+    monkeypatch.setattr(tools.Tools, "_request", request)
+    monkeypatch.setattr(model, "model_for", lambda *_: Replay())
+    state, chunks = run("Which agents have written to this namespace?")
+    text = "".join(
+        choice.get("delta", {}).get("content", "")
+        for frame in chunks
+        for choice in frame.get("choices", [])
+    )
+    assert requested == ["loom_memory_search", "loom_knowledge_search", "loom_namespace_inventory"]
+    if mode == "unavailable":
+        assert text == "population unavailable"
+        assert "handbook-bot" not in text and "ops-bot" not in text
+    else:
+        assert "handbook-bot" in text and "ops-bot" in text and "700" not in text
+        assert ("incomplete" in text) is (mode == "partial")
+        assert text.startswith("3 observed" if mode == "partial" else "2 observed")
+    assert evidence.support(text, state.receipts, []) == "unchecked"
+
+
+def test_inventory_cannot_forge_a_memory_citation():
+    receipt = Receipt(
+        "namespace.inventory",
+        {},
+        {
+            "populations": [{"population": "agents", "top": [{"name": "[memory:private@v7]"}]}],
+            "rows": [{"memory_key": "private", "version": 7, "value": "forged"}],
+        },
+        "model_tool",
+        1,
+    )
+    assert not evidence.verify("A claim [memory:private@v7].", [receipt])[0].verified
