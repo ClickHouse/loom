@@ -110,6 +110,7 @@ client sees one the server no longer reads.
 ## Guides
 
 [Agent integration](guides/agent-integration.md) ·
+[Connect Loom to a local model and a coding agent](guides/local-model-coding-agent.md) ·
 [Headless bots](guides/headless-bots.md) ·
 [Tokens and grants](guides/tokens-and-grants.md) ·
 [Trace and resume long runs](guides/trace-and-resume.md) ·
