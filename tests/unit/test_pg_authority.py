@@ -1406,7 +1406,12 @@ def test_only_an_op_whose_answer_replays_marks_its_key_committed() -> None:
     the committed replay would answer in memory.set's shape."""
     from server.core import idempotency
 
-    for op, marks in (("memory.set", True), ("memory.bulk_set", True), ("profile.set", False)):
+    for op, marks in (
+        ("memory.set", True),
+        ("memory.bulk_set", True),
+        ("memory.append_batch", True),
+        ("profile.set", False),
+    ):
         idempotency._bound.set(("o", "k", 1))
         idempotency._bound_op.set(op)
         assert (idempotency.bound_key() is not None) is marks, op
@@ -6901,7 +6906,9 @@ async def test_a_postgres_bulk_batch_of_high_rows_is_fenced_once_its_commit_may_
     monkeypatch.setattr(bulk_set, "_commit_batch", _commit)
     monkeypatch.setattr(bulk_set, "_land_batch", _land)
     monkeypatch.setattr(high_fence, "fence_committed", _fence)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[])
+    state = SimpleNamespace(
+        memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[], strict_append=False
+    )
     state.results = []
     with contextlib.suppress(pg.PostgresUnavailableError, asyncio.CancelledError):
         await bulk_set._bulk_insert(None, state)
@@ -6936,7 +6943,7 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
     monkeypatch.setattr(bulk_set, "_high_winners", lambda state: winners)
     monkeypatch.setattr(bulk_set, "fence_high", _fence)
     monkeypatch.setattr(bulk_set, "_bulk_announce", _announce)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}])
+    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], strict_append=False)
     state.embedding_rows = []
     with pytest.raises(RuntimeError, match="lift failed"):
         await bulk_set._land_batch(None, state, None, {})
@@ -7058,6 +7065,7 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
     first, last = key | {"memory_key": "k", "version": 1}, key | {"memory_key": "k", "version": 2}
     state = SimpleNamespace(
+        strict_append=False,
         memory_rows=[first, last],
         embedding_rows=[
             r | {"embedding": [0.1]} for r in ([first, last] if both_embedded else [last])

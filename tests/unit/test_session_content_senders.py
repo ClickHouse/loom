@@ -40,6 +40,7 @@ FLOOR = frozenset(
         "tracker.duplicate_check",
         "memory.search",
         "memory.set",
+        "memory.append_batch",
         "memory.bulk_set",
         "knowledge.search",
     }

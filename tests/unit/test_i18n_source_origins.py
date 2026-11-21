@@ -413,6 +413,62 @@ def test_terminal_paragraph_append_extends_only_the_original_final_section(trail
     assert not plan.removed and not plan.trailing_separator
 
 
+def _terminal_route_case(*, shorten=True, suffix="\nAppended.\n"):
+    link = "../guides/one.md"
+    raw = RAW.replace("Original first.", f"Original first. [Guide]({link}).").replace(
+        "End.", f"End. [Guide]({link})."
+    )
+    routes = sorted(t.link_routes(link, False, PATH, "zh-CN"), key=len)
+    assert len(routes) == 2
+
+    def routed(text, native):
+        return t.replace_spans(
+            text,
+            [(a, b, routes[0 if native else 1]) for a, b, _, _ in t.link_targets(text)],
+        )
+
+    old, now, units, _ = _case(routed(raw + suffix, shorten), historical=routed(raw, not shorten))
+    return old, now, units, SourceOrigins(raw, raw + suffix, "zh-CN")
+
+
+@pytest.mark.parametrize("shorten", [False, True])
+def test_terminal_append_uses_authenticated_routes_when_prepared_prefix_changes(shorten):
+    case = _terminal_route_case(shorten=shorten)
+    old, now, units, _ = case
+    assert not now.english.startswith(old.english)
+    assert (len(now.english) < len(old.english)) is shorten
+    plan = _plan(case)
+    assert not plan.conflicts
+    assert [u.disposition for u in plan.units] == ["reuse", "changed", "reuse", "changed"]
+    assert tuple(u.original for u in plan.units) == units
+    assert plan.units[-1].scope.end == len(now.english)
+    assert (
+        "".join(
+            u.separator_before + u.scope.english[u.scope.start : u.scope.end] for u in plan.units
+        )
+        == now.english
+    )
+
+
+@pytest.mark.parametrize("problem", ["prose", "route"])
+def test_terminal_route_changes_still_require_complete_prepared_authentication(problem):
+    old, now, units, origins = _terminal_route_case()
+    text = now.english.replace(
+        "Original first." if problem == "prose" else "../guides/one.md",
+        "Forged prose." if problem == "prose" else "../guides/unrelated.md",
+    )
+    plan = _plan((old, replace(now, english=text, sha256=_digest(text)), units, origins))
+    assert plan.conflicts and not plan.units
+
+
+@pytest.mark.parametrize(
+    "suffix", ["\n## Added\n\nText.\n", "\n- Item.\n", "\n<b>Text</b>\n", "\n{: .x}\n"]
+)
+def test_terminal_route_changes_do_not_relax_suffix_ownership(suffix):
+    plan = _plan(_terminal_route_case(suffix=suffix))
+    assert plan.conflicts and not plan.units
+
+
 @pytest.mark.parametrize(
     "suffix",
     [

@@ -85,8 +85,8 @@ async def test_proof_uses_an_owned_transport_instead_of_rotating_the_shared_pool
         else:
             assert await client.raw_bytes("SELECT 1") == b"1"
     assert client.client is shared and shared.calls == [] and not shared.closed
-    assert len(channels) == 1 and channels[0].closed
-    assert channels[0].close_calls == 1 and channels[0].force_calls == 0
+    assert len(channels) == 1 and not channels[0].closed
+    assert channels[0].close_calls == 0 and channels[0].force_calls == 0
     assert [call["session_check"] for call in channels[0].calls] == [0, 1]
     assert len({call["session_id"] for call in channels[0].calls}) == 1
     assert {key: options[0][key] for key in client._connection_config} == client._connection_config
@@ -94,6 +94,9 @@ async def test_proof_uses_an_owned_transport_instead_of_rotating_the_shared_pool
     assert options[0]["query_retries"] == 0
     assert options[0]["settings"]["use_query_cache"] == 0
     assert options[0]["settings"]["use_query_condition_cache"] == 0
+    await client.disconnect()
+    assert channels[0].closed and channels[0].close_calls == 1
+    assert channels[0].force_calls == 0
 
 
 def _client_with_channel(
@@ -151,17 +154,19 @@ async def test_a_missing_checked_session_closes_only_its_channel_without_reboots
 
 
 @pytest.mark.asyncio
-async def test_cancelled_close_force_closes_the_owned_channel_and_returns_capacity(
+async def test_cancelled_disconnect_force_closes_the_idle_channel_and_keeps_capacity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     channel = _RoutedDriver(pooled=False)
     monkeypatch.setattr(channel, "close", AsyncMock(side_effect=asyncio.CancelledError()))
     client, _ = _client_with_channel(monkeypatch, channel)
     capacity = client._stream_slots._value
+    async with client.coordination_session():
+        pass
+    assert not channel.closed
     with pytest.raises(asyncio.CancelledError):
-        async with client.coordination_session():
-            pass
-    assert channel.closed and channel.force_calls == 1 and not client.client.closed
+        await client.disconnect()
+    assert channel.closed and channel.force_calls == 1 and not client.connected
     assert client._stream_slots._value == capacity and ch._coordination_session.get() is None
 
 
@@ -221,8 +226,10 @@ async def test_an_admitted_proof_waits_for_the_existing_transport_budget(
     client._stream_slots.release()
     await pending
     assert pending.done() and client._stream_slots._value == 1
-    assert channel.closed and not client.client.closed
+    assert not channel.closed and not client.client.closed
     factory.assert_awaited_once()
+    await client.disconnect()
+    assert channel.closed
 
 
 @pytest.mark.asyncio
@@ -244,7 +251,9 @@ async def test_ordinary_work_can_use_the_shared_driver_while_a_proof_owns_its_ch
         assert len(client.client.calls) == 1 and "session_id" not in client.client.calls[0]
         assert len(channel.calls) == 1
         assert await client.query_one("SELECT 1") == {"value": 1}
-    assert channel.closed and not client.client.closed
+    assert not channel.closed and not client.client.closed
+    await client.disconnect()
+    assert channel.closed
 
 
 @pytest.mark.asyncio
@@ -330,14 +339,18 @@ async def test_transport_queue_uses_the_original_proof_deadline_without_a_fifth_
         assert len(channels) == ch.STREAM_SLOTS and slots._value == 0
         release[0].set()
         await entered[-1].wait()
-        assert channels[0].closed and len(channels) == ch.STREAM_SLOTS + 1
+        assert not channels[0].closed and len(channels) == ch.STREAM_SLOTS
+        assert len({call["session_id"] for call in channels[0].calls}) == 2
         assert sum(not channel.closed for channel in channels) == ch.STREAM_SLOTS
     finally:
         for event in release:
             event.set()
         await asyncio.gather(*tasks, return_exceptions=True)
-    assert all(channel.closed for channel in channels) and slots._value == ch.STREAM_SLOTS
+    assert sum(not channel.closed for channel in channels) == 1
+    assert slots._value == ch.STREAM_SLOTS
     assert not client.client.closed
+    await client.disconnect()
+    assert all(channel.closed for channel in channels)
 
 
 @pytest.mark.asyncio

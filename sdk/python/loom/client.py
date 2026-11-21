@@ -1719,6 +1719,15 @@ class MemoryOps:
             await self._agent.call("memory.aggregate", body, **options),
         )
 
+    async def append_batch(
+        self, body: _ops.MemoryAppendBatchBody | None = None, /, **options: Any
+    ) -> _ops.MemoryBulkSetOutput:
+        """`memory.append_batch`."""
+        return cast(
+            "_ops.MemoryBulkSetOutput",
+            await self._agent.call("memory.append_batch", body, **options),
+        )
+
     async def apply(
         self, body: _ops.MemoryApplyBody | None = None, /, **options: Any
     ) -> _ops.MemoryApplyOutput:
