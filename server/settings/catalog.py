@@ -5551,9 +5551,9 @@ class StorageSettings(BaseModel):
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
     # rows older than that many days.
     # ---- retention ----
-    # Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a
-    # retirement holds by its record there: one aged out stops holding, and the
-    # conflict resolver may judge and retire that pair again.
+    # Days `loom.audit_log` rows are kept; 0 = forever, independent of namespace retention.
+    # A person's Undo of a retirement holds by its record there: one aged out stops
+    # holding, and the conflict resolver may judge and retire that pair again.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0

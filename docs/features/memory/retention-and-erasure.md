@@ -85,6 +85,11 @@ Postgres still serves, so the boot refuses `LOOM_RETENTION_MEMORY_DAYS`,
 `retention_days` leaves `chunks` too, so a document that stays keeps the chunks search
 finds it by; `LOOM_RETENTION_CHUNKS_DAYS` still applies.
 
+Namespace `retention_days` never expires `audit_log` rows. Only
+`LOOM_RETENTION_AUDIT_LOG_DAYS` sets their deletion window; its default of 0 keeps them
+indefinitely. Namespace `warm_days` can still move audit rows to warm storage. Removing a
+namespace retention window does not change the deployment's explicit audit retention.
+
 The `retention_reconcile` worker applies the last two rows as one idempotent
 `ALTER TABLE … MODIFY TTL` per table, per `(org, namespace)` when overrides exist, and
 removes a table's TTL once no namespace and no deployment window is left on it. On
