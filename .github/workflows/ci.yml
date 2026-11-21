@@ -1042,6 +1042,7 @@ jobs:
           tests/integration/test_cell_update_addresses.py
           tests/integration/test_cell_update_run_pg.py
           tests/integration/test_cell_update_participants_ch.py
+          tests/integration/test_cell_observation_census.py
           tests/integration/test_cell_place_cleanup.py
           tests/integration/test_cell_attach_two_replicas.py
           tests/integration/test_cell_attach_cleanup.py

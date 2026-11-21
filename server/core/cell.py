@@ -240,6 +240,52 @@ def matches(mine: Mapping[str, Any], value: Mapping[str, Any] | None) -> bool:
     return True
 
 
+def readable_fingerprint(value: Any) -> bool:
+    """Known fields have exact types; unknown JSON fields remain reserved and intact."""
+    if not isinstance(value, dict) or set(value) != {"v", "fields"}:
+        return False
+    if type(value["v"]) is not int or value["v"] != FINGERPRINT_VERSION:
+        return False
+    fields = value["fields"]
+    if not isinstance(fields, dict):
+        return False
+    try:
+        # Reject cycles, non-JSON values and nonfinite floats before walking nested fields.
+        json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError, RecursionError):
+        return False
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            try:
+                if "\0" in item:
+                    return False
+                item.encode()
+            except UnicodeError:
+                return False
+        elif isinstance(item, dict):
+            if any(not isinstance(key, str) for key in item):
+                return False
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif item is not None and type(item) not in (bool, int, float):
+            return False
+    for name, default in DEFAULTS.items():
+        item = fields.get(name, default)
+        if type(item) is not type(default):
+            return False
+        if isinstance(item, list) and any(not isinstance(part, str) for part in item):
+            return False
+    for name in ("configured_orgs", "end_user_orgs"):
+        for org in fields.get(name, []):
+            if named_org(org) is None or org_name_refusal(org):
+                return False
+    return True
+
+
 def digest(fields: Mapping[str, Any]) -> str:
     """A short digest of a fingerprint for the gate's reason; never compared."""
     blob = json.dumps(dict(fields), sort_keys=True, separators=(",", ":"))
