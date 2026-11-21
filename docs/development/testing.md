@@ -49,6 +49,22 @@ Keep CI's system tools beside the locked Python environment. Release-script test
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
 
+### SDK transport properties
+
+`sdk/typescript/src/transport.property.test.ts` uses `fast-check` to exercise the transport's
+origin binding, credential handling and request-ID header boundary through public requests.
+The suite uses 100 generated trials per property, bounds generated strings and uses mocked
+fetch and token providers. Failures additionally run shrinking and replay evaluations over
+those bounded inputs. It needs no server, live credential or network access. Run it with:
+
+```bash
+npm --prefix sdk/typescript test -- src/transport.property.test.ts
+```
+
+The default seed is fixed for reproducible CI. Set `LOOM_FUZZ_SEED` to explore another seed.
+On a failure, copy the reported seed and shrink path into `LOOM_FUZZ_SEED` and `LOOM_FUZZ_PATH`,
+then select that property with Vitest's `-t` option to replay its counterexample.
+
 ## Integration tests
 
 The integration suite runs against a live server, the way CI's `integration` job does:
