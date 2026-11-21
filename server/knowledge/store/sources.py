@@ -198,8 +198,7 @@ def _crawl_options(row: dict[str, Any]) -> dict[str, Any]:
     raw = str(row.get("options_json") or "{}")
     if row.get("active"):
         return json_object(Options.parse(json.loads(raw)).stored())
-    # Preserve a retired source's remaining selectors during full-row reseals.
-    # Erasure may have removed its directory subject or its final person selector.
+    # Retired rows may lack their directory subject or final person selector.
     without_selectors(raw, frozenset())
     return json_object(raw)
 
