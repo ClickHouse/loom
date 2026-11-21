@@ -637,7 +637,7 @@ async def test_a_retry_onto_a_copy_with_its_chunks_and_tables_gone_copies_it_aga
             return await original_insert(
                 client, table, data, columns, types, stored, settings, deadline
             )
-        except Exception as error:
+        except Exception as error:  # Capture the native send error before translation.
             if table == "loom.datasets":
                 kind = type(error).__name__
                 try:
@@ -666,7 +666,7 @@ async def test_a_retry_onto_a_copy_with_its_chunks_and_tables_gone_copies_it_aga
         with pytest.raises(RuntimeError):
             try:
                 await _move_here(move, src, dst, uri)
-            except Exception as error:
+            except Exception as error:  # Retain send context on a translated error.
                 if send_failure is not None:
                     error.add_note(
                         "catalog send failure: " + json.dumps(send_failure, sort_keys=True)
