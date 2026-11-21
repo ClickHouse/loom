@@ -632,13 +632,23 @@ def may_have_committed(e: BaseException) -> bool:
     return isinstance(e, PostgresUnavailableError) and bool(e.extra.get("outcome_unknown"))
 
 
-async def _connect_dedicated(*, statement_timeout_ms: int = 0, marked: bool = True) -> Any:
-    """Construct, initialize and hand off one process-attributed application session."""
+async def _connect_dedicated(
+    *,
+    statement_timeout_ms: int = 0,
+    marked: bool = True,
+    bind: Callable[[Any], bool] | None = None,
+) -> Any:
+    """Initialize a session; an explicit owner binds before initialization can wait.
+
+    A successful synchronous bind transfers cleanup, including when it returns False
+    to refuse initialization. A bind that raises leaves cleanup with this connector.
+    """
     import asyncpg
 
     with _opening_scope() as gate:
         _require_dsn()
         conn = None
+        owned = False
         try:
             conn = await asyncpg.connect(
                 settings.pg_dsn,
@@ -654,13 +664,18 @@ async def _connect_dedicated(*, statement_timeout_ms: int = 0, marked: bool = Tr
                     **(marker_settings() if marked else {}),
                 },
             )
+            if bind is not None:
+                usable = bind(conn)
+                owned = True
+                if not usable:
+                    raise retirement.ProcessStopping("Postgres connection owner is closed")
             _check_unsealed(gate)
             await _check_deployment(conn)
             await init_connection(conn)
             _check_unsealed(gate)
             return conn
         except BaseException as error:
-            if conn is not None:
+            if conn is not None and not owned:
                 with suppress(BaseException):
                     _terminate(conn)
             if isinstance(error, Exception):

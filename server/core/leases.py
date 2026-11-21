@@ -39,6 +39,7 @@ from typing import Any
 
 from server.core.background import TaskSet
 from server.core.errors import BackendUnavailableError
+from server.core.shielded import finish_cleanup
 
 log = logging.getLogger("loom.leases")
 
@@ -358,7 +359,9 @@ async def take(
             won = await lease.attempt()
     except BaseException as e:
         if lease is not None:
-            await lease.release()  # a failed or cancelled statement may have landed
+            # A failed statement may have landed; caller cancellation must wait
+            # for this release even when the backend failed before the caller.
+            await finish_cleanup(lease.release(), name="lease.take.release")
         if isinstance(e, Exception):
             raise LeaseUnavailable("the lease store did not answer", operation=name) from e
         raise

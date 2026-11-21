@@ -181,6 +181,7 @@ async def test_enforcing_delete_goes_through_the_handler(monkeypatch: pytest.Mon
 @pytest.mark.asyncio
 async def test_a_failed_row_reports_the_error_kind_not_its_text(
     monkeypatch: pytest.MonkeyPatch,
+    memory_insert_keeper: Any,
 ) -> None:
     """An unexpected failure's text (a statement, another row's values) stays in the
     server log; the row names the kind of error only."""
@@ -200,6 +201,8 @@ async def test_a_failed_row_reports_the_error_kind_not_its_text(
     assert row.status == "failed"
     assert row.detail == "RuntimeError: see the server log, request_id=-"
     assert "loom.memory" not in row.detail
+    # An unanswered insert keeps its fence until admitted sends expire.
+    memory_insert_keeper.advance(1000)
     # the id an operator looks the traceback up by
     from server.core.logging_config import request_id_var
 

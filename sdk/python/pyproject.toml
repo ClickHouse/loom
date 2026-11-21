@@ -74,14 +74,17 @@ ag2 = ["ag2>=1.3,<1.4"]
 # Agent Framework 1.26 has the ContextProvider before_run/after_run hooks the adapter
 # implements; the framework is semver past 1.0.
 agent-framework = ["agent-framework-core>=1.26,<1.27"]
-# The Anthropic SDK 2.8 has the async memory tool base the adapter subclasses.
-claude-memory = ["anthropic>=2.8,<2.9"]
+# Anthropic exposes the memory tool as a beta API that can change between SDK minors.
+claude-memory = ["anthropic>=2.11,<2.12"]
 # ADK 2.14 has get_active_events and the memory service's add_memory and delete_memory;
 # 3.0 may change the memory service.
 google-adk = ["google-adk>=2.14,<2.15"]
 # Pipecat 1.16 has LLMContextFrame, LLMContextAssistantTurnFrame and the universal
 # aggregators the adapter hooks; the package is semver past 1.0.
 pipecat = ["pipecat-ai>=1.16,<1.17"]
+# DSPy 3.5 has dspy.Tool with async functions and the dspy.retrievers callables the
+# adapter mirrors; DSPy changes its retrieval API between minor versions.
+dspy = ["dspy>=3.5,<3.6"]
 
 [project.urls]
 Homepage = "https://clickhouse.github.io/loom/"

@@ -3,8 +3,8 @@
 - memory.set's entity-graph projection runs beside the response (canonical
   read + insert + edge inserts, off the serial tail); supersession and the
   audit row share one round trip.
-- memory.update embeds value and key in one round trip, writes its two rows
-  concurrently, and a clear verdict drops the old value's stale mark.
+- memory.update embeds value and key in one round trip, commits memory before search
+  publication, and a clear verdict drops the old value's stale mark.
 - The HTTP transport's post-handler rows (budget violation, op audit,
   idempotency replay) are written concurrently.
 """
@@ -154,6 +154,8 @@ async def test_a_plain_insert_projects_its_edges_as_an_embedded_write_does(
     seen, gate = post_insert
 
     async def _nothing(*_: Any, **__: Any) -> None:
+        if on_inserted := __.get("on_inserted"):
+            on_inserted()
         return None
 
     monkeypatch.setattr(set_commit, "insert_memory_versions", _nothing)
@@ -262,17 +264,25 @@ async def test_a_clear_revision_drops_the_stale_mark(wired) -> None:  # noqa: F8
 
 
 @pytest.mark.asyncio
-async def test_update_writes_its_two_rows_in_one_round_trip(wired, monkeypatch) -> None:  # noqa: F811
+async def test_update_publishes_its_embedding_after_memory_commit(wired, monkeypatch) -> None:  # noqa: F811
     ch, calls = wired(ConflictResult(verdict="clear", peers=[]))
-    both = asyncio.Event()
+    memory_started, memory_committed, allow_memory = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
     started: list[str] = []
 
     async def _insert(table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         started.append(table)
-        if len(started) == 2:
-            both.set()
-        await asyncio.wait_for(both.wait(), timeout=1.0)  # sequential writes time out here
+        if table == "loom.memory":
+            memory_started.set()
+            await allow_memory.wait()
+        else:
+            assert memory_committed.is_set(), "search cannot publish an uncommitted value"
         ch.inserts.append((table, rows))
+        if table == "loom.memory":
+            memory_committed.set()
 
     async def _emb_rows(rows: list[dict[str, Any]], **_: Any) -> None:
         await _insert("loom.memory_embeddings", rows)
@@ -280,8 +290,19 @@ async def test_update_writes_its_two_rows_in_one_round_trip(wired, monkeypatch) 
 
     monkeypatch.setattr(ch, "insert", _insert)
     monkeypatch.setattr("server.memory.store.insert_embedding_rows", _emb_rows)
-    out = await update_mod.handle_memory_update(_input())
-    assert out.updated and sorted(started) == ["loom.memory", "loom.memory_embeddings"]
+    write = asyncio.create_task(update_mod.handle_memory_update(_input()))
+    try:
+        await asyncio.wait_for(memory_started.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+        assert started == ["loom.memory"]
+        allow_memory.set()
+        out = await asyncio.wait_for(write, timeout=1.0)
+        assert out.updated and started == ["loom.memory", "loom.memory_embeddings"]
+    finally:
+        allow_memory.set()
+        if not write.done():
+            write.cancel()
+        await asyncio.gather(write, return_exceptions=True)
 
 
 # ---- HTTP transport tail -------------------------------------------------------

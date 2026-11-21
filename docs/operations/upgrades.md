@@ -65,6 +65,42 @@ loom migrate --target N            # apply through file number N only
 `make migrate`, `make migrate-status` and `make migrate-dry` run the same module from a
 checkout.
 
+## Memory writer fence cutover
+
+For the ClickHouse authority, moving from a build without memory insertion fences to
+one that takes them requires a write pause. Schema compatibility during a rolling
+upgrade does not make older writers participate in those fences
+([storage authority](../architecture/storage-authority.md)).
+
+1. Pause memory write ingress, scheduled jobs and maintenance commands. Inventory
+   every process that can insert memory versions: serving replicas, their background
+   workers, standalone workers, CLI jobs and scripts. Prevent older images or jobs
+   from restarting. Keep replacement writers stopped while earlier sends settle.
+2. Stop those older writers gracefully, allowing active requests and background work
+   to drain, and confirm that every older process has exited. Removing a replica from
+   the load balancer alone does not stop its background workers. Record when the last
+   older writer stops and the carried query-id prefixes of the retired processes.
+3. From that last stop, wait at least `15 + W + 5` seconds: the guarded insert's transit
+   allowance, its largest server execution bound `W`, and the settlement margin.
+   Use the largest effective `max_execution_time` among retired writers, including
+   per-statement overrides; the write class uses `LOOM_CH_TIMEOUT_WRITE_S`, or 60
+   seconds when that setting is zero. These bounds are defined by
+   `server/core/rmt_carry.py` (`send_bound_s`) and `server/core/ch.py`
+   (`write_limit_s`). A successful client response or an early empty process list
+   does not replace this wait: a timed-out send may still start within its allowance.
+4. After the bound, inspect `system.processes` on every ClickHouse replica for the
+   retired processes' `loom-carry/<process-id>/` query-id prefixes. None may remain.
+   If a replica cannot be checked, a writer's execution bound is unknown, or a writer
+   bypasses guarded inserts, keep writes paused until its queued and running work is
+   accounted for; elapsed time alone does not establish settlement for that writer.
+5. Deploy only fence-aware serving and background writers, check their image versions
+   and readiness as in the upgrade procedure, and then resume jobs and write ingress.
+   The source-head guarantee starts only after all earlier sends have settled and
+   every active writer takes the fences. Configure optional
+   `LOOM_CH_WRITE_FENCE_CONCURRENCY` and `LOOM_CH_RESTORE_BATCH_ROWS` only on that fleet.
+   A rollback to writers without fences loses this guarantee; remove settings those
+   builds do not accept before starting them.
+
 ## Upgrade procedure
 
 1. Read the release's [GitHub Release](https://github.com/ClickHouse/loom/releases) notes
@@ -89,7 +125,10 @@ checkout.
    the newer build's first migrating boot creates the org triggers, so an older pod
    still running there has every insert of a tenant org's row refused (an unmapped
    error to its callers) until it is replaced: roll the cell out in one step.
-3. Deploy the new image. The first container to boot applies the migrations; the others
+3. Complete the write pause and settlement steps of the
+   [memory writer fence cutover](#memory-writer-fence-cutover) before starting a
+   fence-aware build over writers that do not take those fences.
+   Deploy the new image. The first container to boot applies the migrations; the others
    wait for it and then find nothing pending.
 4. Wait for `/v1/health` to report `status: ok` and an empty `schema.pending` before
    routing traffic to it. The [zero-downtime pair](./deployment.md#zero-downtime-pair)

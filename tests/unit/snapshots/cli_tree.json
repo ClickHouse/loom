@@ -13272,6 +13272,99 @@
           }
          ]
         },
+        "place": {
+         "prog": "loom cell place",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_place:cmd_place"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "org",
+            "router"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--org"
+           ],
+           "dest": "org",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "The org to place",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          }
+         ]
+        },
         "prepare": {
          "prog": "loom cell prepare",
          "usage": null,
@@ -13633,6 +13726,189 @@
            "metavar": null
           }
          ]
+        },
+        "update": {
+         "prog": "loom cell update",
+         "usage": null,
+         "description": null,
+         "epilog": "Finish/revert require foundation-capable runtimes and completed positive legacy-process turnover. A census cannot verify that external inventory. Address refresh requires every router updated first; retain old endpoints until every router refreshes or restarts after the directory change.",
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_update:cmd_update"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "config",
+            "finish",
+            "revert",
+            "probe_url",
+            "revoke_unprovisioned",
+            "router",
+            "wait"
+           ]
+          }
+         ],
+         "mutually_exclusive": [
+          {
+           "required": false,
+           "dests": [
+            "config",
+            "finish",
+            "revert",
+            "probe_url"
+           ]
+          }
+         ],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--config"
+           ],
+           "dest": "config",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "pathlib:Path",
+           "required": false,
+           "help": "Nonsecret version: 1 settings YAML overlaid on this CLI's effective settings; does not install the file",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--finish"
+           ],
+           "dest": "finish",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Promote next after durable local narrowing and permanent participant turnover",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revert"
+           ],
+           "dest": "revert",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Retain current after durable local narrowing and permanent participant turnover; keep placements",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--probe-url"
+           ],
+           "dest": "probe_url",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "Later cell's verified probe listener URL; no flag refreshes the first cell's router-configured addresses",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--revoke-unprovisioned"
+           ],
+           "dest": "revoke_unprovisioned",
+           "action": "_StoreTrueAction",
+           "default": false,
+           "const": true,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "Cut off pre-update tokens of subjects that cannot satisfy the target SCIM policy",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router's URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 600,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "Seconds to wait for probe readiness or participant turnover (0 to 86400, default: 600)",
+           "metavar": null
+          }
+         ]
         }
        },
        "aliases_of": {
@@ -13643,8 +13919,10 @@
         "limit": "loom cell limit",
         "which": "loom cell which",
         "remove": "loom cell remove",
+        "place": "loom cell place",
         "prepare": "loom cell prepare",
-        "attach": "loom cell attach"
+        "attach": "loom cell attach",
+        "update": "loom cell update"
        },
        "choices_help": [
         {
@@ -13683,6 +13961,11 @@
          "metavar": "remove"
         },
         {
+         "dest": "place",
+         "help": "Place an org in this cell and record its tenancy.",
+         "metavar": "place"
+        },
+        {
          "dest": "prepare",
          "help": "Register this cell in the router's directory and write its rows.",
          "metavar": "prepare"
@@ -13691,6 +13974,11 @@
          "dest": "attach",
          "help": "Attach the prepared first cell: place its orgs, serve.",
          "metavar": "attach"
+        },
+        {
+         "dest": "update",
+         "help": "Reserve configuration, finish or revert its rollout, or refresh verified addresses.",
+         "metavar": "update"
         }
        ]
       }

@@ -1,17 +1,19 @@
-"""Record one hosted text turn using synthetic content and fake server providers.
+"""Render measured native Pipecat events and validated synthetic observations.
 
-The optional filming workload is separate from mandatory qualification CI.
-Original process diagnostics reach the job log; the browser receives only
-allowlisted status and validated synthetic observations after all assertions.
+This is a timestamped execution visualization, not a screen recording. The
+optional renderer is separate from mandatory native qualification CI.
 """
 
 from __future__ import annotations
 
-import base64
 import ctypes
 import hashlib
+import importlib.metadata
+import importlib.resources
 import json
+import math
 import os
+import platform
 import re
 import selectors
 import shutil
@@ -20,10 +22,11 @@ import socket
 import stat
 import subprocess
 import sys
-import tempfile
+import textwrap
 import time
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.error import URLError
+from urllib.request import urlopen
 
 FILMING_CASE = "tests/integration/_pipecat_video_ci.py"
 NATIVE_CASE = "tests/integration/_pipecat_demo_ci.py"
@@ -57,40 +60,396 @@ EXPECTED_RECEIPT = {
 SUMMARY = re.compile(r"1 passed(?:, [0-9]+ warnings?)? in [0-9]+\.[0-9]+s")
 PROGRESS = re.compile(r"\.[ ]+\[100%\]")
 ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+ENCODER_SHA256 = "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"
+ENCODER_FILE = "ffmpeg-linux-x86_64-v7.0.2"
+WIDTH, HEIGHT, FPS = 1280, 720, 5
+MAX_VIDEO_BYTES = 8 * 1024 * 1024
+CAPTURE_FAILURE_CODES = frozenset(
+    {
+        "native_failed_no_qualified_video",
+        "receipt_not_regular_small_file",
+        "receipt_contract_not_met",
+        "native_completion_outside_video_window",
+        "capture_event_bound",
+        "capture_event_stream_incomplete",
+        "capture_event_invalid",
+        "encoder_dependency_unqualified",
+        "encoder_binary_unqualified",
+        "encoder_timeout",
+        "encoder_output_bound",
+        "encoder_failed",
+        "encoder_frame_incomplete",
+        "video_size_invalid",
+        "media_probe_timeout",
+        "media_probe_output_too_large",
+        "media_probe_failed",
+        "encoded_video_duration_or_audio_invalid",
+    }
+)
+
+
+def capture_phase(state: dict, stage: int) -> None:
+    state["capture_stage"] = stage
+
+
+def capture_failure(state: dict, error: Exception) -> dict:
+    code = error.args[0] if isinstance(error, ValueError) and error.args else None
+    return {
+        "stage": state.get("capture_stage", 0),
+        "kind": "io"
+        if isinstance(error, OSError)
+        else "value"
+        if isinstance(error, ValueError)
+        else "other",
+        "code": code if isinstance(code, str) and code in CAPTURE_FAILURE_CODES else "unavailable",
+        "io": io_diagnostic(error),
+    }
+
+
+def packaged_encoder() -> Path:
+    if (
+        platform.system() != "Linux"
+        or platform.machine() != "x86_64"
+        or importlib.metadata.version("imageio-ffmpeg") != "0.6.0"
+        or importlib.metadata.version("Pillow") != "13.0.0"
+    ):
+        raise ValueError("encoder_dependency_unqualified")
+    path = Path(str(importlib.resources.files("imageio_ffmpeg").joinpath("binaries", ENCODER_FILE)))
+    info = path.lstat()
+    if (
+        not stat.S_ISREG(info.st_mode)
+        or info.st_uid != os.getuid()
+        or info.st_mode & 0o022
+        or not os.access(path, os.X_OK)
+        or info.st_size != 79826272
+        or digest(path) != ENCODER_SHA256
+    ):
+        raise ValueError("encoder_binary_unqualified")
+    return path
+
+
+def start_capture(state: dict) -> None:
+    capture_phase(state, 1)
+    state["encoder_binary"] = packaged_encoder()
+    media_binary = shutil.which("mediainfo")
+    if media_binary is None:
+        raise ValueError("runner_tool_missing")
+    state["mediainfo"] = media_binary
+    state["started"] = time.monotonic()
+    state["events"] = []
+
+
+def display(state: dict, label: str) -> None:
+    if not state.get("active"):
+        return
+    try:
+        elapsed = time.monotonic() - state["started"]
+        events = state["events"]
+        if len(events) >= 32:
+            raise ValueError("capture_event_bound")
+        if (
+            not isinstance(label, str)
+            or len(label) > 160
+            or "\n" in label
+            or not math.isfinite(elapsed)
+            or elapsed < 0
+            or (events and elapsed < events[-1][0])
+        ):
+            raise ValueError("capture_event_invalid")
+        events.append((elapsed, label))
+    except Exception as error:  # noqa: BLE001 — visualization failure cannot replace the native result
+        state.setdefault("capture_failure", capture_failure(state, error))
+        state["active"] = False
+        state["reason"] = "capture_event_stream_unqualified"
+
+
+def visible_events(events: list, elapsed: float) -> list[str]:
+    return [f"[{stamp:5.1f}s] {label}" for stamp, label in events if stamp <= elapsed]
+
+
+def frame_bytes(events: list, elapsed: float) -> bytes:
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (WIDTH, HEIGHT), "#101820")
+    draw = ImageDraw.Draw(image)
+    heading = ImageFont.load_default(size=28)
+    font = ImageFont.load_default(size=21)
+    draw.text(
+        (32, 28),
+        "Loom + Pipecat | timestamped execution visualization",
+        font=heading,
+        fill="#75e3c0",
+    )
+    labels = [
+        "Measured process events, rendered after execution; not a screen recording.",
+        "Real Agent + Pipecat 1.16.0 | fake LLM/embeddings | text only, no audio",
+        f"Measured elapsed time: {elapsed:.1f} s | observations are a post-run assertion receipt",
+    ]
+    for index, label in enumerate(labels):
+        draw.text((32, 78 + index * 30), label, font=font, fill="#c9d5df")
+    wrapped = [part for line in visible_events(events, elapsed) for part in textwrap.wrap(line, 96)]
+    for index, line in enumerate(wrapped[-16:]):
+        draw.text((32, 190 + index * 30), line, font=font, fill="white")
+    return image.tobytes()
+
+
+def encoder_command(binary: Path, destination: Path, duration: float) -> list[str]:
+    if not math.isfinite(duration) or not 30 <= duration <= 55:
+        raise ValueError("native_completion_outside_video_window")
+    return [
+        str(binary),
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s:v",
+        f"{WIDTH}x{HEIGHT}",
+        "-r",
+        str(FPS),
+        "-i",
+        "pipe:0",
+        "-an",
+        "-c:v",
+        "libvpx",
+        "-threads",
+        "1",
+        "-b:v",
+        "300k",
+        "-deadline",
+        "realtime",
+        "-frames:v",
+        str(math.ceil(duration * FPS)),
+        "-t",
+        str(math.ceil(duration * FPS) / FPS),
+        "-fs",
+        str(MAX_VIDEO_BYTES),
+        "-f",
+        "webm",
+        str(destination),
+    ]
+
+
+def encode_video(state: dict, path: Path, duration: float) -> None:
+    # The new renderer has one 30-second encoding budget, separate from playback time.
+    deadline = time.monotonic() + 30
+    environment = {name: os.environ[name] for name in ("LANG", "LC_ALL") if name in os.environ}
+    command = encoder_command(state["encoder_binary"], Path("pipe:1"), duration)
+    process = start_owned(
+        state,
+        "encoder",
+        command,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        start_new_session=True,
+    )
+    total = diagnostics = frame_index = offset = 0
+    frame = b""
+    frames = math.ceil(duration * FPS)
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
+        with selectors.DefaultSelector() as selector:
+            for stream, mode, label in (
+                (process.stdin, selectors.EVENT_WRITE, "input"),
+                (process.stdout, selectors.EVENT_READ, "output"),
+                (process.stderr, selectors.EVENT_READ, "diagnostic"),
+            ):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, mode, label)
+            while selector.get_map() or not owned_exited(process):
+                if time.monotonic() >= deadline:
+                    raise ValueError("encoder_timeout")
+                for key, _ in selector.select(timeout=0.1):
+                    if key.data == "input":
+                        if not frame:
+                            frame = frame_bytes(state["events"], frame_index / FPS)
+                            if len(frame) != WIDTH * HEIGHT * 3:
+                                raise ValueError("encoder_frame_incomplete")
+                        offset += os.write(key.fd, memoryview(frame)[offset : offset + 65536])
+                        if offset == len(frame):
+                            frame_index += 1
+                            frame, offset = b"", 0
+                            if frame_index == frames:
+                                selector.unregister(key.fileobj)
+                                process.stdin.close()
+                    else:
+                        chunk = os.read(key.fd, 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                        elif key.data == "output":
+                            total += len(chunk)
+                            if total > MAX_VIDEO_BYTES:
+                                raise ValueError("encoder_output_bound")
+                            out.write(chunk)
+                        else:
+                            diagnostics += len(chunk)
+                            if diagnostics > 65536:
+                                raise ValueError("encoder_output_bound")
+    outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOWAIT)
+    if outcome.si_code != os.CLD_EXITED or outcome.si_status != 0 or frame_index != frames:
+        raise ValueError("encoder_failed")
+    if not 0 < total <= MAX_VIDEO_BYTES:
+        raise ValueError("video_size_invalid")
+
+
+def validated_receipt(state: dict, native_code: int) -> dict:
+    if native_code != 0:
+        raise ValueError("native_failed_no_qualified_video")
+    receipt = state["receipt"]
+    metadata = receipt.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
+        raise ValueError("receipt_not_regular_small_file")
+    payload = json.loads(receipt.read_text())
+    if set(payload) != set(EXPECTED_RECEIPT) or any(
+        type(payload[key]) is not type(value) or payload[key] != value
+        for key, value in EXPECTED_RECEIPT.items()
+    ):
+        raise ValueError("receipt_contract_not_met")
+    state["receipt_sha256"] = digest(receipt)
+    return payload
+
+
+def finish_capture(state: dict, output: Path, native_code: int) -> None:
+    capture_phase(state, 11)
+    payload = validated_receipt(state, native_code)
+    display(state, "POST-RUN ASSERTION RECEIPT (not live API telemetry):")
+    display(state, "Auth-on real Agent; fake server LLM and embedding providers.")
+    observations = payload["observations"]
+    display(state, "OBSERVED native developer context: " + observations["recalled_seed"])
+    for row in observations["persisted"]:
+        display(state, "OBSERVED persisted " + row["role"] + ": " + row["content"])
+    display(state, "Python main() opened the fresh application pointer (executed).")
+    display(state, "NOT qualified: separate CLI, resumed/protected restore, audio.")
+    capture_phase(state, 13)
+    target_end = max(state["started"] + 35, time.monotonic() + 8)
+    duration = target_end - state["started"]
+    if duration > 55:
+        raise ValueError("native_completion_outside_video_window")
+    display(state, "READING HOLD: test finished; the recorder makes no new memory calls.")
+    if not state.get("active"):
+        raise ValueError("capture_event_stream_incomplete")
+    while time.monotonic() < target_end:
+        time.sleep(0.1)
+    capture_phase(state, 14)
+    path = output / "pipecat-ordinary-text.webm"
+    encode_video(state, path, duration)
+    capture_phase(state, 19)
+    metadata = probe_metadata(state, path)
+    tracks = json.loads(metadata)["media"]["track"]
+    general = next(x for x in tracks if x.get("@type") == "General")
+    duration = float(general["Duration"])
+    videos = [x for x in tracks if x.get("@type") == "Video"]
+    if (
+        not 30 <= duration <= 60
+        or len(videos) != 1
+        or any(x.get("@type") == "Audio" for x in tracks)
+    ):
+        raise ValueError("encoded_video_duration_or_audio_invalid")
+    state["video"] = {
+        "file": path.name,
+        "sha256": digest(path),
+        "bytes": path.stat().st_size,
+        "duration_seconds": duration,
+        "kind": "timestamped_execution_visualization",
+    }
+    capture_phase(state, 22)
+
+
+def io_diagnostic(error: Exception) -> dict:
+    cause = error.reason if isinstance(error, URLError) else error
+    if isinstance(cause, TimeoutError):
+        kind = "timeout"
+    elif isinstance(cause, ConnectionRefusedError):
+        kind = "connection_refused"
+    elif isinstance(cause, ConnectionResetError):
+        kind = "connection_reset"
+    elif isinstance(cause, BrokenPipeError):
+        kind = "broken_pipe"
+    else:
+        kind = "io" if isinstance(cause, OSError) else "unavailable"
+    number = cause.errno if isinstance(cause, OSError) else None
+    return {"kind": kind, "errno": number if type(number) is int and 0 < number < 4096 else 0}
+
+
+def server_exit_diagnostic(process: subprocess.Popen | None) -> dict:
+    if process is None:
+        return {"state": "not_started"}
+    try:
+        anchor_identity(process)
+        outcome = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if outcome is None:
+            return {"state": "running"}
+        if outcome.si_code == os.CLD_EXITED and 0 <= outcome.si_status <= 255:
+            return {"state": "exited", "code": outcome.si_status}
+        if outcome.si_code in (os.CLD_KILLED, os.CLD_DUMPED) and 0 < outcome.si_status < 65:
+            return {"state": "signaled", "signal": outcome.si_status}
+    except Exception:  # noqa: BLE001 — optional observation cannot replace refusal or cleanup
+        pass
+    return {"state": "unavailable"}
+
+
+def server_log_diagnostic(log) -> dict:
+    if log is None:
+        return {"state": "not_started"}
+    try:
+        log.flush()
+        info = os.fstat(log.fileno())
+        if info.st_uid != os.getuid() or not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077:
+            return {"state": "unavailable"}
+        raw = os.pread(log.fileno(), 65536, 0)
+        return {
+            "state": "observed",
+            "bytes": len(raw),
+            "truncated": info.st_size > len(raw),
+            "module_not_found": b"ModuleNotFoundError" in raw,
+            "import_error": b"ImportError" in raw,
+            "validation_error": b"ValidationError" in raw,
+            "address_in_use": b"Address already in use" in raw,
+        }
+    except Exception:  # noqa: BLE001 — private diagnostic I/O cannot interrupt owned cleanup
+        return {"state": "unavailable"}
+
+
+def admission_failure(state: dict, error: Exception) -> dict:
+    stage = state.get("admission_stage")
+    code = error.args[0] if isinstance(error, ValueError) and len(error.args) == 1 else None
+    known = {
+        "hosted_context_required",
+        "runner_context_unavailable",
+        "frozen_source_changed",
+        "receipt_path_required",
+        "receipt_not_fresh",
+        "owned_server_exited",
+        "owned_server_not_ready",
+        "owned_group_anchor_changed",
+        "owned_group_birth_changed",
+        "owned_group_anchor_not_in_child_tree",
+    }
+    return {
+        "stage": stage if type(stage) is int and 1 <= stage <= 8 else 0,
+        "kind": "io" if isinstance(error, OSError) else "value",
+        "code": code if type(code) is str and code in known else "unavailable",
+        "io": io_diagnostic(error),
+        "server": server_exit_diagnostic(state.get("server")),
+        "server_log": server_log_diagnostic(state.get("server_log")),
+    }
 
 
 def digest(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    value = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            value.update(chunk)
+    return value.hexdigest()
 
 
 def write_private(path: Path, data: bytes) -> None:
     with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb") as out:
         out.write(data)
-
-
-def driver_call(state: dict, method: str, path: str, payload: dict | None = None):
-    if not owned_listener(state["driver"], state["driver_port"]):
-        raise ValueError("driver_listener_not_owned")
-    body = None if payload is None else json.dumps(payload).encode()
-    request = Request(state["url"] + path, data=body, method=method)
-    request.add_header("Content-Type", "application/json")
-    with urlopen(request, timeout=3) as response:
-        raw = response.read(24 * 1024 * 1024 + 1)
-    if len(raw) > 24 * 1024 * 1024:
-        raise ValueError("driver_response_too_large")
-    value = json.loads(raw)["value"]
-    if isinstance(value, dict) and "error" in value:
-        raise ValueError("driver_command_refused")
-    return value
-
-
-def javascript(state: dict, script: str, args: list | None = None):
-    return driver_call(
-        state,
-        "POST",
-        "/session/" + state["session"] + "/execute/sync",
-        {"script": script, "args": args or []},
-    )
 
 
 def process_identity(pid: int) -> tuple[int, int, int, str, str]:
@@ -123,6 +482,45 @@ def child_tree(parent: int | None = None) -> dict[int, tuple]:
         except FileNotFoundError:
             continue
     return result
+
+
+def post_cleanup_children(subreaper_active: bool) -> str:
+    """Observe owned descendants after cleanup, without signaling or exporting IDs."""
+    if not subreaper_active:
+        return "unavailable"
+    try:
+        parent = os.getpid()
+        birth = process_identity(parent)[3]
+        path = Path(f"/proc/{parent}/task/{parent}/children")
+        deadline = time.monotonic() + 1
+
+        def snapshot() -> dict[int, str]:
+            with path.open("rb") as source:
+                raw = source.read(4097)
+            values = raw.split()
+            if len(raw) > 4096 or len(values) > 128:
+                raise ValueError("child_census_bound")
+            children = {}
+            for value in values:
+                if time.monotonic() >= deadline or not value.isdigit():
+                    raise ValueError("child_census_unavailable")
+                pid = int(value)
+                identity = process_identity(pid)
+                if identity[0] != parent or pid in children:
+                    raise ValueError("child_census_identity_changed")
+                children[pid] = identity[3]
+            return children
+
+        first = snapshot()
+        if (
+            snapshot() != first
+            or process_identity(parent)[3] != birth
+            or time.monotonic() >= deadline
+        ):
+            return "unavailable"
+        return "remaining" if first else "empty"
+    except Exception:  # noqa: BLE001 — optional census failure must not interrupt remaining cleanup
+        return "unavailable"
 
 
 def anchor_identity(process: subprocess.Popen) -> tuple:
@@ -188,6 +586,88 @@ def stop_owned(process: subprocess.Popen | None) -> None:
     process.wait()
 
 
+def stop_adopted_children() -> None:
+    """Clean only pidfd-pinned direct children adopted by this recorder."""
+    if subreaper() != 1:
+        raise ValueError("owned_subreaper_inactive")
+    parent, uid = os.getpid(), os.getuid()
+    parent_birth = process_identity(parent)[3]
+    path = Path(f"/proc/{parent}/task/{parent}/children")
+    pinned, seen = {}, {}
+
+    def identify(pid, expected=None):
+        identity = process_identity(pid)
+        if (
+            identity[0] != parent
+            or Path(f"/proc/{pid}").stat().st_uid != uid
+            or process_identity(parent)[3] != parent_birth
+            or (expected is not None and (identity[0], identity[3]) != expected)
+        ):
+            raise ValueError("adopted_child_identity_changed")
+        return identity
+
+    try:
+        for signum in (signal.SIGTERM, signal.SIGKILL):
+            # These additional three-second stages are shared by all adopted children.
+            deadline = time.monotonic() + 3
+            signalled = set()
+            while time.monotonic() < deadline:
+                with path.open("rb") as source:
+                    raw = source.read(4097)
+                values = raw.split()
+                if len(raw) > 4096 or len(values) > 128:
+                    raise ValueError("adopted_child_cleanup_bound")
+                if process_identity(parent)[3] != parent_birth:
+                    raise ValueError("recorder_birth_changed")
+                children = set()
+                expired = False
+                for value in values:
+                    if time.monotonic() >= deadline:
+                        expired = True
+                        break
+                    if not value.isdigit():
+                        raise ValueError("adopted_child_identity_unavailable")
+                    pid = int(value)
+                    if pid in children:
+                        raise ValueError("adopted_child_identity_changed")
+                    children.add(pid)
+                    identity = identify(pid, seen.get(pid))
+                    if pid not in pinned:
+                        if len(seen) >= 128:
+                            raise ValueError("adopted_child_cleanup_bound")
+                        fd = os.pidfd_open(pid, 0)
+                        pinned[pid] = fd
+                        seen[pid] = (identity[0], identity[3])
+                    current = identify(pid, seen[pid])
+                    if time.monotonic() >= deadline:
+                        expired = True
+                        break
+                    if current[4] == "Z":
+                        # PPID and birth remain verified immediately before numeric reaping.
+                        identify(pid, seen[pid])
+                        if os.waitpid(pid, os.WNOHANG)[0] != pid:
+                            raise ValueError("adopted_child_reap_incomplete")
+                        os.close(pinned.pop(pid))
+                    elif pid not in signalled:
+                        signal.pidfd_send_signal(pinned[pid], signum)
+                        signalled.add(pid)
+                if expired:
+                    break
+                if not children:
+                    return
+                time.sleep(0.02)
+        raise ValueError("adopted_child_not_quiescent")
+    finally:
+        close_error = None
+        for fd in pinned.values():
+            try:
+                os.close(fd)
+            except OSError as error:
+                close_error = error
+        if close_error is not None:
+            raise close_error
+
+
 def refuse_occupied_server_port() -> None:
     for family, address in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
         with socket.socket(family) as reservation:
@@ -227,13 +707,18 @@ def owned_listener(process: subprocess.Popen, port: int = 7778) -> bool:
 
 
 def start_server(state: dict, runner_temp: Path) -> None:
+    state["admission_stage"] = 4
     refuse_occupied_server_port()
+    state["admission_stage"] = 5
     log = os.fdopen(
-        os.open(runner_temp / "pipecat-server.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
-        "wb",
+        os.open(runner_temp / "pipecat-server.log", os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600),
+        "w+b",
     )
     state["server_log"] = log
     environment = {**os.environ, "LOOM_WEB_WORKERS": "3", "PORT": "7778"}
+    # Only the native client needs the recording target's dependency overlay.
+    environment.pop("PYTHONPATH", None)
+    state["admission_stage"] = 6
     process = start_owned(
         state,
         "server",
@@ -245,12 +730,16 @@ def start_server(state: dict, runner_temp: Path) -> None:
     )
     until = time.monotonic() + 60
     while time.monotonic() < until:
+        state["admission_stage"] = 7
         if owned_listener(process):
             try:
+                state["admission_stage"] = 8
                 with urlopen("http://localhost:7778/v1/health", timeout=2) as response:
                     healthy = response.status == 200
-                if healthy and owned_listener(process):
-                    return
+                if healthy:
+                    state["admission_stage"] = 7
+                    if owned_listener(process):
+                        return
             except OSError:
                 pass
         time.sleep(0.1)
@@ -294,83 +783,6 @@ def admit_workload(state: dict) -> Path:
     return Path(runner_temp)
 
 
-def start_capture(state: dict, private: Path) -> None:
-    driver_binary = shutil.which("chromedriver")
-    media_binary = shutil.which("mediainfo")
-    if driver_binary is None or media_binary is None:
-        raise ValueError("runner_tool_missing")
-    state["mediainfo"] = media_binary
-    with socket.socket() as reservation:
-        reservation.bind(("127.0.0.1", 0))
-        port = reservation.getsockname()[1]
-    state["url"] = "http://127.0.0.1:" + str(port)
-    state["driver_port"] = port
-    # The browser and its driver receive no Loom or provider environment values.
-    browser_env = {
-        name: os.environ[name] for name in ("PATH", "LANG", "LC_ALL") if name in os.environ
-    }
-    log = os.fdopen(
-        os.open(private / "driver.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "wb"
-    )
-    state["driver_log"] = log
-    start_owned(
-        state,
-        "driver",
-        [driver_binary, "--port=" + str(port)],
-        env=browser_env,
-        stdout=log,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-    )
-    ready_until = time.monotonic() + 5
-    while True:
-        if owned_listener(state["driver"], port):
-            try:
-                driver_call(state, "GET", "/status")
-                break
-            except OSError:
-                pass
-        if time.monotonic() >= ready_until:
-            raise ValueError("driver_unavailable")
-        time.sleep(0.1)
-    session = driver_call(
-        state,
-        "POST",
-        "/session",
-        {
-            "capabilities": {
-                "alwaysMatch": {
-                    "browserName": "chrome",
-                    "goog:chromeOptions": {
-                        "args": [
-                            "--headless=new",
-                            "--no-first-run",
-                            "--disable-background-networking",
-                            "--user-data-dir=" + str(private / "chrome-profile"),
-                        ]
-                    },
-                }
-            }
-        },
-    )
-    state["session"] = session["sessionId"]
-    html = Path(__file__).with_name("terminal.html").resolve()
-    driver_call(state, "POST", "/session/" + state["session"] + "/url", {"url": html.as_uri()})
-    result = javascript(state, "return window.beginCapture();")
-    if result != "recording":
-        raise ValueError("browser_encoder_unavailable")
-    state["started"] = time.monotonic()
-
-
-def display(state: dict, label: str) -> None:
-    if state.get("active"):
-        try:
-            javascript(state, "window.appendActualEvent(arguments[0]);", [label])
-        except Exception:  # noqa: BLE001 — capture failure must not skip the native check
-            state["active"] = False
-            state["reason"] = "browser_event_failed"
-
-
 def allowed_stdout(line: bytes) -> str | None:
     text = ANSI.sub("", line.decode("utf-8", errors="replace")).strip()
     if SUMMARY.fullmatch(text) or PROGRESS.fullmatch(text):
@@ -380,6 +792,7 @@ def allowed_stdout(line: bytes) -> str | None:
 
 def run_native(state: dict) -> int:
     # The filming case retains the native assertions and exports synthetic observations.
+    capture_phase(state, 9)  # native output events
     display(state, "$ " + " ".join(COMMAND))
     process = start_owned(
         state,
@@ -422,6 +835,7 @@ def run_native(state: dict) -> int:
     state["omitted_stdout_lines"] = omitted
     state["native_ended"] = time.monotonic()
     state["native_code"] = result
+    capture_phase(state, 10)  # native exit event
     display(state, "ACTUAL PROCESS EXIT: " + str(result))
     return result
 
@@ -463,72 +877,10 @@ def probe_metadata(state: dict, path: Path) -> bytes:
     return bytes(output)
 
 
-def finish_capture(state: dict, output: Path, native_code: int) -> None:
-    if native_code != 0:
-        raise ValueError("native_failed_no_qualified_video")
-    receipt = state["receipt"]
-    metadata = receipt.lstat()
-    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > 4096:
-        raise ValueError("receipt_not_regular_small_file")
-    payload = json.loads(receipt.read_text())
-    # Exact types prevent True from masquerading as a numeric row count.
-    if set(payload) != set(EXPECTED_RECEIPT) or any(
-        type(payload[key]) is not type(value) or payload[key] != value
-        for key, value in EXPECTED_RECEIPT.items()
-    ):
-        raise ValueError("receipt_contract_not_met")
-    state["receipt_sha256"] = digest(receipt)
-    display(state, "POST-RUN ASSERTION RECEIPT (not live API telemetry):")
-    display(state, "Auth-on real Agent; fake server LLM and embedding providers.")
-    observations = payload["observations"]
-    display(state, "OBSERVED native developer context: " + observations["recalled_seed"])
-    for row in observations["persisted"]:
-        display(state, "OBSERVED persisted " + row["role"] + ": " + row["content"])
-    display(state, "Python main() opened the fresh application pointer (executed).")
-    display(state, "NOT qualified: separate CLI, resumed/protected restore, audio.")
-    target_end = max(state["started"] + 35, time.monotonic() + 8)
-    if target_end > state["started"] + 55:
-        raise ValueError("native_completion_outside_video_window")
-    if not state.get("active"):
-        raise ValueError("capture_event_stream_incomplete")
-    display(state, "READING HOLD: test finished; the recorder makes no new memory calls.")
-    if not state.get("active"):
-        raise ValueError("capture_event_stream_incomplete")
-    while time.monotonic() < target_end:
-        time.sleep(0.1)
-    javascript(state, "window.finishCapture();")
-    ready_until = time.monotonic() + 5
-    while not javascript(state, "return window.captureReady;"):
-        if time.monotonic() >= ready_until:
-            raise ValueError("browser_export_timeout")
-        time.sleep(0.1)
-    encoded = javascript(state, "return window.captureBase64;")
-    if not isinstance(encoded, str) or len(encoded) > 12 * 1024 * 1024:
-        raise ValueError("browser_export_invalid")
-    video = base64.b64decode(encoded, validate=True)
-    if not 0 < len(video) <= 8 * 1024 * 1024:
-        raise ValueError("video_size_invalid")
-    path = output / "pipecat-ordinary-text.webm"
-    write_private(path, video)
-    tracks = json.loads(probe_metadata(state, path))["media"]["track"]
-    general = next(x for x in tracks if x.get("@type") == "General")
-    duration = float(general["Duration"])
-    if not 30 <= duration <= 60 or any(x.get("@type") == "Audio" for x in tracks):
-        path.unlink()
-        raise ValueError("encoded_video_duration_or_audio_invalid")
-    state["video"] = {
-        "file": path.name,
-        "sha256": digest(path),
-        "bytes": len(video),
-        "duration_seconds": duration,
-    }
-
-
 def main() -> int:
     os.umask(0o077)
     state: dict = {"active": False, "reason": "not_started", "native_code": None}
     output = None
-    temporary = None
     prior_subreaper = None
 
     def cancel(signum, _frame):
@@ -546,26 +898,35 @@ def main() -> int:
     }
     try:
         try:
+            state["admission_stage"] = 1
             runner_temp = admit_workload(state)
+            state["admission_stage"] = 2
             prior_subreaper = subreaper(1)
             if "--with-server" in sys.argv[1:]:
+                state["admission_stage"] = 3
                 start_server(state, runner_temp)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             state["reason"] = "workload_admission_refused"
             state["native_code"] = 2
+            try:
+                print(
+                    json.dumps({"admission_failure": admission_failure(state, error)}),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            except Exception:  # noqa: BLE001 — diagnostic output cannot replace refusal or owned cleanup
+                pass
             return 2
         try:
-            output = runner_temp / "pipecat-video-public"
-            output.mkdir(mode=0o700, exist_ok=False)
-            temporary = tempfile.TemporaryDirectory(prefix="pipecat-video-", dir=runner_temp)
-            start_capture(state, Path(temporary.name))
+            candidate = runner_temp / "pipecat-video-public"
+            candidate.mkdir(mode=0o700, exist_ok=False)
+            output = candidate
+            start_capture(state)
             state["active"] = True
             state["reason"] = "recording"
-        except Exception:  # noqa: BLE001 — recorder setup must not skip the native check
+        except Exception as error:  # noqa: BLE001 — setup must not skip the native check
             state["reason"] = "capture_setup_unqualified"
-            # Never write a status into a pre-existing output directory.
-            if output is not None and temporary is None:
-                output = None
+            state["capture_failure"] = capture_failure(state, error)
         try:
             if state.get("server") and not owned_listener(state["server"]):
                 raise ValueError("owned_server_listener_lost")
@@ -580,7 +941,8 @@ def main() -> int:
                 assert output is not None
                 finish_capture(state, output, native_code)
                 state["reason"] = "recorded_requires_media_review"
-            except Exception:  # noqa: BLE001 — capture failure cannot replace the native result
+            except Exception as error:  # noqa: BLE001 — capture failure cannot replace the native result
+                state.setdefault("capture_failure", capture_failure(state, error))
                 state["reason"] = "capture_receipt_or_encoding_unqualified"
                 if output is not None:
                     try:
@@ -594,36 +956,43 @@ def main() -> int:
         state["cleaning_up"] = True
         # Every cleanup target was started here. Failure of one does not skip the others.
         cleanup_failed = False
-        for process in (state.get("probe"), state.get("native")):
+        for process in (state.get("probe"), state.get("encoder"), state.get("native")):
             try:
                 stop_owned(process)
-            except Exception:  # noqa: BLE001 — owned driver cleanup still has to run
+            except Exception:  # noqa: BLE001 — owned encoder cleanup still has to run
                 cleanup_failed = True
-        if state.get("session"):
-            try:
-                driver_call(state, "DELETE", "/session/" + state["session"])
-            except Exception:  # noqa: BLE001 — terminate the owned driver if quit fails
-                cleanup_failed = True
-        try:
-            stop_owned(state.get("driver"))
-        except Exception:  # noqa: BLE001 — close private logs and files even if the driver is gone
-            cleanup_failed = True
         try:
             stop_owned(state.get("server"))
         except Exception:  # noqa: BLE001 — restore handlers even if server cleanup refuses
             cleanup_failed = True
+        if prior_subreaper is not None and not cleanup_failed:
+            try:
+                stop_adopted_children()
+            except Exception:  # noqa: BLE001 — unknown child ownership must fail cleanup closed
+                cleanup_failed = True
+        # Subreaper adoption keeps escaped process groups in this own-child census.
+        # This is a post-cleanup observation, not continuous no-escape proof.
+        state["post_cleanup_children"] = (
+            post_cleanup_children(prior_subreaper is not None)
+            if not cleanup_failed
+            else "unavailable"
+        )
         try:
             if state.get("probe"):
                 state["probe"].stdout.close()
                 state["probe"].stderr.close()
+            if state.get("encoder"):
+                for stream in (
+                    state["encoder"].stdin,
+                    state["encoder"].stdout,
+                    state["encoder"].stderr,
+                ):
+                    if stream is not None:
+                        stream.close()
             if state.get("server_log"):
                 state["server_log"].close()
             if prior_subreaper is not None:
                 subreaper(prior_subreaper)
-            if state.get("driver_log"):
-                state["driver_log"].close()
-            if temporary is not None:
-                temporary.cleanup()
         except Exception:  # noqa: BLE001 — cleanup status cannot replace the native result
             cleanup_failed = True
         if cleanup_failed:
@@ -631,6 +1000,18 @@ def main() -> int:
         if state.get("cancelled_signal") is not None:
             state["native_code"] = 128 + state["cancelled_signal"]
             state["reason"] = "cancelled"
+        if output is not None and (
+            not state.get("video")
+            or state["reason"] != "recorded_requires_media_review"
+            or state["post_cleanup_children"] != "empty"
+        ):
+            if state["reason"] == "recorded_requires_media_review":
+                state["reason"] = "capture_cleanup_unqualified"
+            state["video"] = None
+            try:
+                (output / "pipecat-ordinary-text.webm").unlink(missing_ok=True)
+            except OSError:
+                state["reason"] = "unqualified_video_removal_failed"
         if output is not None:
             # The status artifact exports no raw exception text, credentials or stdout.
             summary = {
@@ -642,6 +1023,9 @@ def main() -> int:
                     "omitted_stdout_lines",
                     "receipt_sha256",
                     "video",
+                    "capture_failure",
+                    "post_cleanup_children",
+                    "events",
                 )
             }
             summary["intended_public_artifact_synthetic_content_only"] = True

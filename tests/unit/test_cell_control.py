@@ -224,10 +224,18 @@ async def test_terminal_mode_failure_never_resets_unknown_or_retries(failed):
 async def test_expired_phase_does_not_receive_another_exit_allowance(monkeypatch):
     import time
 
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
+
+    clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", clock)
+    monkeypatch.setattr(pg, "time", clock)
+
     class StalledClose(FakeConn):
         async def close(self, **kwargs):
             self.timeouts = [kwargs["timeout"]]
             self.executed.append("CLOSE START")
+            clock.advance(kwargs["timeout"])
             await asyncio.Future()
 
     conn = StalledClose()
@@ -238,8 +246,12 @@ async def test_expired_phase_does_not_receive_another_exit_allowance(monkeypatch
     monkeypatch.setattr(cell_control.Owner, "_open", opening)
     monkeypatch.setattr(cell_control, "TRANSACTION_S", 0.04)
 
+    async def stalled():
+        clock.advance(0.03)
+        await asyncio.Future()
+
     async def body(owned):
-        return await owned.transaction(lambda: asyncio.Future())
+        return await owned.transaction(stalled)
 
     started = time.monotonic()
     with pytest.raises(TimeoutError):
@@ -252,7 +264,13 @@ async def test_expired_phase_does_not_receive_another_exit_allowance(monkeypatch
 
 @pytest.mark.asyncio
 async def test_late_connection_is_discarded_without_starting_command_work(monkeypatch):
+    import asyncpg
+
     from server.core import pg
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "pg_dsn", "postgres://not-connected")
+    monkeypatch.setattr(pg, "_expected", None)
 
     connected, discarded = asyncio.Event(), asyncio.Event()
 
@@ -263,7 +281,7 @@ async def test_late_connection_is_discarded_without_starting_command_work(monkey
 
     conn = Late()
 
-    async def connect(**_):
+    async def connect(*args, **kwargs):
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
@@ -274,7 +292,7 @@ async def test_late_connection_is_discarded_without_starting_command_work(monkey
                     pass
         return conn
 
-    monkeypatch.setattr(pg, "_connect_dedicated", connect)
+    monkeypatch.setattr(asyncpg, "connect", connect)
     monkeypatch.setattr(cell_control, "OPEN_S", 0.04)
     body = AsyncMock()
     with pytest.raises(TimeoutError):
@@ -304,17 +322,23 @@ async def test_successful_body_cannot_hide_failed_required_close(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_late_connection_arriving_inside_reserve_is_closed_once(monkeypatch):
+    import asyncpg
+
     from server.core import pg
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "pg_dsn", "postgres://not-connected")
+    monkeypatch.setattr(pg, "_expected", None)
 
     conn = FakeConn()
 
-    async def connect(**_):
+    async def connect(*args, **kwargs):
         try:
             await asyncio.Future()
         except asyncio.CancelledError:
             return conn
 
-    monkeypatch.setattr(pg, "_connect_dedicated", connect)
+    monkeypatch.setattr(asyncpg, "connect", connect)
     monkeypatch.setattr(cell_control, "OPEN_S", 0.08)
     work = AsyncMock()
     with pytest.raises(TimeoutError):

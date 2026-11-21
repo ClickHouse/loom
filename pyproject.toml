@@ -287,6 +287,8 @@ module = [
   "strands.*",
   "pipecat",
   "pipecat.*",
+  "dspy",
+  "dspy.*",
 ]
 ignore_missing_imports = true
 

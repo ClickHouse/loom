@@ -198,10 +198,10 @@ async def test_clear_star_agent_tombstones_without_an_agent_filter(
             org="acme", namespace="chat", user_id="u1", agent="*", confirm_subject="u1"
         )
     )
-    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
-    assert "user_id = {" in memory_alter.sql
-    assert "agent = {" not in memory_alter.sql
-    assert "agent" not in memory_alter.params
+    memory_read = ch.statements("SELECT * FROM loom.memory FINAL")[0]
+    assert "user_id = {" in memory_read.sql
+    assert "agent = {" not in memory_read.sql
+    assert "agent" not in memory_read.params
 
 
 @pytest.mark.asyncio
@@ -218,10 +218,10 @@ async def test_clear_star_user_tombstones_without_a_user_filter(
             org="acme", namespace="chat", user_id="*", agent="bot", confirm_subject="bot"
         )
     )
-    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
-    assert "agent = {" in memory_alter.sql
-    assert "user_id = {" not in memory_alter.sql
-    assert "uid" not in memory_alter.params
+    memory_read = ch.statements("SELECT * FROM loom.memory FINAL")[0]
+    assert "agent = {" in memory_read.sql
+    assert "user_id = {" not in memory_read.sql
+    assert "uid" not in memory_read.params
 
 
 def _setup(rows: list[tuple[str, str, str, str, str]]) -> list[str]:
@@ -289,7 +289,12 @@ async def test_a_clear_keeps_vectors_only_for_the_locked_identity_in_clickhouse(
     from tests.unit.ch_fake import RecordingCH
 
     setup = _setup(rows)
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    ch = (
+        RecordingCH()
+        .on("SELECT max(version) AS v", [{"v": 0}])
+        .on("SELECT * FROM loom.memory FINAL", [])
+        .on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 1}], times=1)
+    )
     ch.on("SELECT count() AS n", [{"n": 1}])
     # the locked identities are read from the same tables the mutation then runs on
     ch.on(
@@ -337,7 +342,12 @@ async def test_a_bucketed_clear_keeps_every_locked_identitys_vector_in_clickhous
     monkeypatch.setattr(lifecycle, "_LOCKED_PER_MUTATION", 1)
     setup = _setup(_BUCKETED_ROWS)
     run(setup, "SELECT 1", path=tmp_path)
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 4}], times=1)
+    ch = (
+        RecordingCH()
+        .on("SELECT max(version) AS v", [{"v": 0}])
+        .on("SELECT * FROM loom.memory FINAL", [])
+        .on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 4}], times=1)
+    )
     ch.on("SELECT count() AS n", [{"n": 1}])
     ch.on(
         "SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h",
@@ -375,7 +385,12 @@ async def test_a_clear_names_a_bounded_number_of_locked_identities_per_mutation(
 
     # full-width UInt64s, spread unevenly over the buckets as real hashes are
     hashes = [{"h": 2**63 + (i * 2654435761) % 2**62} for i in range(locked_n)]
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": locked_n}], times=1)
+    ch = (
+        RecordingCH()
+        .on("SELECT max(version) AS v", [{"v": 0}])
+        .on("SELECT * FROM loom.memory FINAL", [])
+        .on("SELECT count() AS n FROM loom.memory FINAL", [{"n": locked_n}], times=1)
+    )
     ch.on("SELECT count() AS n", [{"n": 100_000}])
     ch.on("SELECT DISTINCT cityHash64(agent, user_id, session_id, memory_key) AS h", hashes)
     ch.install(monkeypatch)
@@ -447,9 +462,9 @@ async def test_clear_accepts_dash_beside_a_named_axis(
             org="acme", namespace="chat", user_id=user_id, agent=agent, confirm_subject=named
         )
     )
-    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
-    assert "user_id = {" in memory_alter.sql and "agent = {" in memory_alter.sql
-    assert (memory_alter.params["uid"], memory_alter.params["agent"]) == (user_id, agent)
+    memory_read = ch.statements("SELECT * FROM loom.memory FINAL")[0]
+    assert "user_id = {" in memory_read.sql and "agent = {" in memory_read.sql
+    assert (memory_read.params["uid"], memory_read.params["agent"]) == (user_id, agent)
 
 
 @pytest.mark.asyncio
@@ -480,18 +495,59 @@ async def test_clear_refuses_a_scope_that_names_nobody(
 
 
 def _clear_ch(monkeypatch: pytest.MonkeyPatch, tombstoned: list[dict]):
+    from unittest.mock import AsyncMock
+
+    from server.memory.store import lifecycle
+    from server.memory.store.rows import MemoryRow, build_memory_version_row
     from tests.unit.ch_fake import RecordingCH
 
-    ch = RecordingCH().on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
+    supplied = tombstoned or [{"memory_key": "a"}, {"memory_key": "b"}]
+    rows = [
+        build_memory_version_row(
+            MemoryRow.from_snapshot(
+                {
+                    "org": "acme",
+                    "namespace": "chat",
+                    "agent": "bot",
+                    "user_id": "u1",
+                    "session_id": "-",
+                    "version": 7,
+                    **row,
+                }
+            )
+        )
+        for row in supplied
+    ]
+
+    def page(sql, params):
+        after = params.get("after")
+        return [r for r in rows if after is None or lifecycle.key_in_namespace(r) > after][
+            : params["clear_limit"]
+        ]
+
+    ch = (
+        RecordingCH()
+        .on("SELECT max(version) AS v", [{"v": 0}])
+        .on("SELECT count() AS n FROM loom.memory FINAL", [{"n": 0}], times=1)
+    )
     ch.on("SELECT count() AS n", [{"n": 2}])
-    if tombstoned:
-        ch.on("ORDER BY agent, user_id, session_id, memory_key", tombstoned, times=1)
+    ch.on("SELECT * FROM loom.memory FINAL", page)
+    ch.on("SELECT DISTINCT cityHash64", [])
+    ch.on(
+        "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)",
+        lambda sql, params: [
+            r for r in ch.inserted("memory") if lifecycle.identity_key(r) in params["keys"]
+        ],
+    )
+    monkeypatch.setattr(lifecycle, "reemit_embedding_rows_for_keys", AsyncMock(return_value=0))
     return ch.install(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_clear_with_no_subscribers_reads_no_rows(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A namespace with no webhook pays the counts and the mutations, never a row read."""
+async def test_clear_without_subscribers_still_writes_complete_versions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Version history is written even when no webhook subscribes."""
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app.handlers import handle_memory_clear
 
@@ -500,8 +556,33 @@ async def test_clear_with_no_subscribers_reads_no_rows(monkeypatch: pytest.Monke
         MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
     )
     assert out.rows_affected == {"loom.memory": 2, "loom.memory_embeddings": 2}
-    assert ch.statements("memory_id") == []
-    assert len(ch.statements("ALTER TABLE", kind="execute")) == 2
+    assert len(ch.inserted("memory")) == 2
+    assert len(ch.statements("ALTER TABLE", kind="execute")) == 1
+
+
+async def test_clear_reads_copied_and_protected_heads_under_sequential_consistency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from server.core.ch import sequential_reads_active
+    from server.memory.store.lifecycle import bulk_tombstone_scope
+
+    ch = _clear_ch(monkeypatch, [])
+    query_all, query_one = ch.query_all, ch.query_one
+    observed: list[bool] = []
+
+    async def read_all(*args, **kwargs):
+        observed.append(sequential_reads_active())
+        return await query_all(*args, **kwargs)
+
+    async def read_one(*args, **kwargs):
+        observed.append(sequential_reads_active())
+        return await query_one(*args, **kwargs)
+
+    monkeypatch.setattr(ch, "query_all", read_all)
+    monkeypatch.setattr(ch, "query_one", read_one)
+    await bulk_tombstone_scope(org="acme", namespace="chat", user_id="u1", ch=ch)
+    assert observed and all(observed)
+    assert not sequential_reads_active()
 
 
 @pytest.mark.asyncio
@@ -519,12 +600,19 @@ async def test_a_clear_that_tombstones_nothing_announces_nothing(
         read_age_s=0.0,
         due_in_s=float("inf"),
     )
-    ch = RecordingCH().on("SELECT count() AS n", [{"n": 0}]).install(monkeypatch)
+    ch = (
+        RecordingCH()
+        .on("SELECT max(version) AS v", [{"v": 0}])
+        .on("SELECT * FROM loom.memory FINAL", [])
+        .on("SELECT DISTINCT cityHash64", [])
+        .on("SELECT count() AS n", [{"n": 0}])
+        .install(monkeypatch)
+    )
     out = await handle_memory_clear(
         MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
     )
     assert out.rows_affected == {"loom.memory": 0, "loom.memory_embeddings": 0}
-    assert ch.statements("ORDER BY agent, user_id, session_id, memory_key") == []
+    assert ch.inserted("memory") == []
 
 
 @pytest.mark.asyncio
@@ -565,12 +653,12 @@ async def test_clear_announces_what_it_tombstoned_a_page_at_a_time(
         MemoryClearInput(org="acme", namespace="chat", user_id="u1", confirm_subject="u1")
     )
     assert announced == [["a", "b"], ["c"]]
-    # One read fills every page, so the scope is scanned once.
-    (read,) = ch.statements("ORDER BY agent, user_id, session_id, memory_key")
-    assert read.kind == "raw_stream"
-    # The pages read back exactly the rows this clear's mutation stamped.
-    (memory_alter,) = ch.statements("ALTER TABLE loom.memory\n", kind="execute")
-    assert read.params["at"] == memory_alter.params["at"]
+    written = ch.inserted("memory")
+    assert [r["memory_key"] for r in written] == ["a", "b", "c"]
+    assert all(r["tombstoned_at"] is not None and r["version"] > 7 for r in written)
+    assert all(
+        read.params["clear_limit"] == 2 for read in ch.statements("SELECT * FROM loom.memory")
+    )
 
 
 @pytest.mark.asyncio
@@ -608,7 +696,9 @@ async def test_clear_announces_before_the_embeddings_step(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
-async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_clear_with_a_failed_announcement_still_clears(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from server.memory.api.models_crud import MemoryClearInput
     from server.memory.app import webhooks
     from server.memory.app.handlers import handle_memory_clear
@@ -620,11 +710,11 @@ async def test_clear_with_a_failed_read_back_still_clears(monkeypatch: pytest.Mo
         due_in_s=float("inf"),
     )
 
-    def fail(sql, params):
-        raise TimeoutError("read timed out")
+    async def fail(changes):
+        raise TimeoutError("announcement timed out")
 
-    ch = _clear_ch(monkeypatch, [])
-    ch.on("ORDER BY agent, user_id, session_id, memory_key", fail)
+    _clear_ch(monkeypatch, [])
+    monkeypatch.setattr(webhooks, "announce", fail)
     noted: list[tuple[str, str]] = []
     monkeypatch.setattr(
         degradations, "note", lambda area, what, e=None, **_: noted.append((area, what))

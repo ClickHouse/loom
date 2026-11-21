@@ -62,10 +62,12 @@ def cascade_spy(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         row = rows.get(mid)
         return row if row is not None and row.namespace == namespace else None
 
-    async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
+    async def fake_insert(built: list[dict[str, Any]], *, ch: Any = None, **callbacks: Any) -> None:
         for r in built:
             spy["versions"].append(str(r["memory_id"]))
             spy["overrides"].append(r)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def fake_mirror(built: list[dict[str, Any]], *, ch: Any = None, **_: Any) -> int:
         for r in built:
@@ -536,8 +538,10 @@ async def test_a_reject_goes_above_a_head_written_since_its_draw(
         read.append(namespace)
         return rows[mid]
 
-    async def _insert(built: list[dict[str, Any]], *, ch: Any = None) -> None:
+    async def _insert(built: list[dict[str, Any]], *, ch: Any = None, **callbacks: Any) -> None:
         written.extend(built)
+        if on_inserted := callbacks.get("on_inserted"):
+            on_inserted()
 
     async def _mirror(built: list[dict[str, Any]], **_: Any) -> int:
         return len(built)

@@ -54,6 +54,7 @@ async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
     from server.embedding.fake import FakeNGramEmbedder
     from server.settings import settings
 
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
     return await ingest_file(
         repo,
         org,
@@ -61,8 +62,8 @@ async def _ingest(repo, org, ns, source=_SRC, sha="a" * 40):
         path="src/S.cpp",
         source=source,
         commit_sha=sha,
-        embedding_model="fake-ngram-1024",
-        embedder=FakeNGramEmbedder(dim=settings.embedding_dim),
+        embedding_model=embedder.model_name,
+        embedder=embedder,
     )
 
 
@@ -223,12 +224,13 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     from server.code.api.models_symbol import CodeCallersInput, CodeSymbolInput
     from server.code.app.search.handler import handle_code_search
     from server.code.app.symbol import handle_code_callers, handle_code_symbol
+    from server.embedding.fake import fake_model_name
     from server.settings import settings
 
     repo, org, ns = code_env
     monkeypatch.setattr(settings, "code_org", org)
     monkeypatch.setattr(settings, "code_namespace", ns)
-    monkeypatch.setattr(settings, "embedding_model", "fake-ngram-1024")
+    monkeypatch.setattr(settings, "embedding_model", fake_model_name(settings.embedding_dim))
     await _ingest(repo, org, ns)
 
     # symbol-shaped -> exact route, zero embedding calls
@@ -265,10 +267,13 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
 
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
+    from server.embedding.fake import fake_model_name
+    from server.settings import settings
 
     repo, org, ns = code_env
+    model = fake_model_name(settings.embedding_dim)
     await _ingest(repo, org, ns)
-    await tombstone_file(repo, org, ns, path="src/S.cpp", embedding_model="fake-ngram-1024")
-    assert await repo.live_chunks_for_path(org, ns, "src/S.cpp", "fake-ngram-1024") == []
+    await tombstone_file(repo, org, ns, path="src/S.cpp", embedding_model=model)
+    assert await repo.live_chunks_for_path(org, ns, "src/S.cpp", model) == []
     assert await repo.live_symbols_for_path(org, ns, "src/S.cpp", "treesitter") == []
     assert await repo.live_edges_for_path(org, ns, "src/S.cpp", "treesitter") == []

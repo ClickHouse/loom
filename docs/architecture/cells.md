@@ -544,8 +544,12 @@ replaces a later cell's under the directory lock after the same check and a fres
 echo. The first cell's probe and upstream addresses are copied from the router's
 configuration at registration, and `loom cell update` replaces them from it, once every
 router replica runs the new values, after the same probe and a check that the new
-upstream reports the cell's deployment id. A prepare rerun never moves an address: it
-refuses while the router replica it reaches is configured with others.
+upstream reports the cell's deployment id. The generation/address CAS does not prove
+all-router agreement: an old router can read fresh expected values and reverse the
+addresses. Keep old endpoints reachable until every router refreshes its routing table
+or restarts after the directory write; config rollout alone does not flush the cache,
+which can persist indefinitely during directory failure. A prepare rerun never moves
+an address: it refuses while the router replica it reaches is configured with others.
 
 **The `first` row.** Prepare writes an explicit, immutable `first` row into every cell's
 Postgres (`loom.cell_first`: a row trigger refuses its update and delete and a statement
@@ -652,27 +656,43 @@ directory, both values of `loom.cell_self`. A prepared cell's issuers and org pa
 are reserved nowhere: the router routes no issuer to it and takes no placement from it
 until attach has run its overlap refusals and written its directory row.
 
-A change to what a cell accepts goes through `loom cell update --config <file>`, under
-the same directory lock as attach; it computes `next` from that configuration with the
-same function the processes use, and refuses while a different `next` is pending; rerun
-with the same configuration, or `--finish`, first writes `next` wherever it is missing.
-It reruns attach's overlap refusals against every other cell's directory row, counting
-both values of each, writes the new fingerprint as `next` to the directory and then to
-`loom.cell_self`, so old and new processes both serve while the new configuration rolls
-out. Finalization first narrows the cell's accepted value durably while the directory
-keeps both reservations. It then requires a complete post-cutoff participant census,
+A change to what a cell accepts goes through `loom cell update --config <file>`
+([operator procedure](../operations/cell-update.md)). The nonsecret settings file
+overlays the CLI's effective settings without installing them. It computes `next`
+with the same function the processes use and refuses while a different `next` is
+pending. Under the directory lock, overlap checks count both values of every other
+cell. Configured placements, their counts, issuer routing and the directory pair
+commit together before local tenancy repair and acceptance of the pair.
+
+`--finish` selects next; `--revert` selects current. Each repairs local tenancy from
+actual same-cell immutable placement winners for both reserved values, using an
+operator read fenced by the generation, exact registration and pair, locked
+root-secret fingerprint, audit and synchronous WAL acknowledgement. First-cell
+lookup fallback is not evidence of a placement. The attaching first cell may still
+lack placements for its preexisting configured orgs; other missing placements
+require directory metadata recovery.
+
+Finalization durably narrows local acceptance while the directory keeps both
+reservations. It then takes a complete post-cutoff participant census and requires
 permanent guarded retirement or verified exact death for every captured identity,
-and a serving target replacement outside that captured set. Heartbeat expiry and
-request deadlines do not prove this. Only afterward may the directory release its
-old reservation. Online finalization needs the [lifecycle baseline](#participant-lifecycle-baseline)
-and controller fencing; SCIM-on changes remain gated on actual per-cell SCIM support. A widened issuer or
-pattern is reserved in the directory before any process accepts it, and a narrowed one
-is released only after none does. A refusal or a wait that runs out keeps both values
-and prints the processes not yet reporting `next`; rerunning resumes, and
-`loom cell update --revert` waits the same way until no live process matches only `next`
-(refusing when `--wait` runs out), then drops `next`, in `loom.cell_self` first, under
-the same lock; a configured org the update placed stays placed in the cell (a placement
-is never deleted).
+including target processes, and a serving target replacement outside that set.
+Only then may the directory release its old reservation. Heartbeat expiry,
+request deadlines, missing participant rows and workers-only replacements do not
+prove this. Online finalization needs the
+[lifecycle baseline](#participant-lifecycle-baseline) and controller fencing.
+For a SCIM-on target, the CLI runs the shared fresh provisioning census before
+claiming the generation, after durable acceptance, and after participant turnover
+before reservation release. It uses the target cell's configured SCIM credentials,
+OIDC login and required authentication. `--revoke-unprovisioned` permits the same
+reported, irreversible SCIM cutoffs as attach; without it, an unqualified live
+subject refuses. Revert to SCIM-off current requires no provisioning census.
+
+A timeout after cutoff keeps local acceptance single and the directory dual; the
+command reports incomplete turnover. Repeating the selected action takes a fresh
+census. An identical `--config` repairs directory-first interruption and can widen
+local acceptance again; subsequent finalization takes another cutoff and census.
+A singleton no-op still proves local synchronous durability. Every configured org
+placed by an update stays placed and retains its tenancy row after revert.
 
 A new SCIM token changes no fingerprint and needs no `loom cell update`. A cell changes
 its identity provider application as a single deployment does ([SSO and
@@ -932,13 +952,26 @@ read-only scope, lists any tenancy row the directory does not place.
   it, unless the cell is the first and its mode reads `recording`, and an org-free command
   never uses it; a leaked one is stopped by `loom cell limit --closed`, which needs none of
   the cell's stores, and replaced by `loom cell credential` (below).
-  `loom cell place --org <org>` (declared org-free: it writes the org's placement and
-  tenancy row, which is how an org comes to be held), with the router's operator credential,
+  `loom cell place --cell <cell> --org <org>` (declared org-free: it writes the org's
+  placement and tenancy row, which is how an org comes to be held), with the router's operator credential,
   places an org for a command that writes a new one (a bot, an import), through the router's
   placement API and in its order, as attach's placement of configured orgs does: it inserts
   the placement and reads back the winner, writes the cell's tenancy row only if the winner
   is this cell (otherwise it refuses and writes nothing), and reports success only once the
-  row is written, so a rerun is idempotent. For an org the directory does not place yet it
+  row commits synchronously. The CLI holds the attach lock on a direct marked Postgres
+  session, requires a full enforced local cell state and the full accepted configuration
+  fingerprint, and checks both again before inserting. A transactional durability message
+  makes even a no-op insert flush an earlier primary-only tenancy row to the standby.
+  Opening the session, initial checks and the local transaction through COMMIT each have
+  a separate client deadline derived from `LOOM_PG_STATEMENT_TIMEOUT_MS`; the directory
+  request keeps its own transport timeout. Each local phase reserves cleanup inside its
+  original deadline. On failure the shared control owner closes the exact backend before
+  cancelling or reaping its work, deferring repeated signals within that same deadline.
+  Successful exit and failures outside a local phase have a separate cleanup allowance
+  derived from the same setting. An unknown outcome names rerunning the same command;
+  the permanent directory winner and idempotent local insert let that rerun finish. The
+  route checks directory state; a direct operator API caller is trusted to check local
+  Postgres mode as the CLI does. For an org the directory does not place yet it
   passes the placement API's gate (below): refused while the directory is unavailable, for a
   cell the gate does not accept, closed, or when the fingerprint of the CLI's own
   configuration of the cell (with the deployment id read from the stores it connects to)
@@ -1037,9 +1070,12 @@ read-only scope, lists any tenancy row the directory does not place.
   safe, since the read-back makes it idempotent. For an org the directory already
   places, a cell's call is checked only for its credential (against the cells' hashes
   the router caches for `LOOM_ROUTER_DIRECTORY_CACHE_S`, default 5 s) and the cell's
-  rate, and a `loom cell place` only for the operator credential; both answer the winner
-  whatever the cell's state, quota or fingerprint, adding no placement (the winner is
-  public through the lookup anyway); a request refused past its cell's rate answers 503
+  rate. An operator's `loom cell place` checks its deployment id and fingerprint against
+  the requested cell's locked row even for an org already placed there; an org placed
+  elsewhere answers that winner and the CLI refuses without inserting local tenancy.
+  Existing placements bypass closed and quota checks. Every successful call writes an
+  audit row before its synchronous commit, including a retry of an existing winner, so
+  the returned winner survives failover. A request refused past its cell's rate answers 503
   with `Retry-After` (at most a minute), and its retry is admitted by the replica that
   answers it once the cell's calls there are under the rate. An org the cell already
   holds needs no call, so serving it never depends on the router.
@@ -1469,6 +1505,12 @@ that the same backend still holds ATTACH. A COMMIT, rollback or ownership-check 
 never becomes a busy retry. After attempting the mode update, the diagnostic stays
 unknown until rollback plus ownership or COMMIT is acknowledged.
 
+Placement and cell control bind their cleanup owner synchronously inside the shared
+Postgres connector, before deployment or codec initialization can wait. A closed owner
+refuses initialization and closes a late session within its original deadline. Process
+admission, participant attribution and retirement seals still apply. Callers without an
+explicit owner retain connector cleanup until initialization finishes.
+
 Directory control mutations supervise the complete callback transaction independently,
 including acquisition and COMMIT. One 131-second bound includes public close, child
 settlement and pool-context exit, with cleanup time reserved inside it. Both a failed
@@ -1495,21 +1537,27 @@ The source census for acceptance and operator directory writes is checked by
 `tests/unit/test_cell_control_census.py`, including dynamic cleanup tables, guarded
 entry points and the named exceptions:
 
-| Writer                                                                                  | Fence                                                                                              |
-| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                               |
-| `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend    |
-| `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend         |
+| Writer                                                                                  | Fence                                                                                                                                                                                                          |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cell_prepare._write_rows`                                                              | Fresh claim, observed local rows, exact lock backend                                                                                                                                                           |
+| `cell_attach_pg._mode_transaction`                                                      | Attach's claim, supervised mode try, recording/first/fingerprint comparison, exact lock backend                                                                                                                |
+| `cell_control.backout`                                                                  | Fresh claim, fenced close and zero-placement read, observed local rows, exact lock backend                                                                                                                     |
 | `cell_automation.provision`, `directory.set_administration`                             | Fresh claim, paired authority, two live bot proofs, fenced public metadata and operator audit      |
-| `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                     |
-| `directory.set_limit`, `rotate_credential`                                              | Read and compare the current generation/registration/pair; do not claim or rotate                  |
-| `directory.register`                                                                    | Bootstrap default or immutable rerun lookup; never replaces existing acceptance or generation      |
-| `directory.place`                                                                       | Immutable placement only; keeps its org/cell locks and quota checks; never writes local acceptance |
+| `cell_update_pg.write.change`                                                           | Fresh directory claim; owner's bounded transaction on the exact ATTACH backend, paired registration and exact observed local identity/pair before tenancy repair and acceptance write                          |
+| `directory.attach_begin`, `attach_place`, `attach_enforced`, `attach_serving`, `remove` | Claimed generation, full registration and exact pair, including retries/no-ops                                                                                                                                 |
+| `directory.update_addresses`                                                            | Claimed generation, full registration and exact pair under directory/row locks; commit-time address check, audit and synchronous WAL acknowledgement in one bounded transaction                                |
+| `directory.update_configuration`, `_configuration_commit`                               | Claimed generation, full registration and exact pair under ordered org/directory/row locks; root-secret and reservation checks, placements, audit and acceptance commit in one bounded synchronous transaction |
+| `directory.configuration_placements`                                                    | Claimed generation, full registration and exact pair under directory/row locks; root-secret and actual winner checks with audit and synchronous WAL acknowledgement in one bounded transaction                 |
+| `directory.set_limit`, `rotate_credential`                                              | Read and compare the current generation/registration/pair; do not claim or rotate                                                                                                                              |
+| `directory.register`                                                                    | Bootstrap default or immutable rerun lookup; never replaces existing acceptance or generation                                                                                                                  |
+| `directory.place`                                                                       | Immutable placement only; keeps its org/cell locks and quota checks; never writes local acceptance                                                                                                             |
 
-Read-only routes are exempt. Router migrations and an offline directory restore are
-maintenance operations. Future restore/update acceptance writers must use the same
-claim and lock-session helpers; a new directory mutation must use the common comparison
-before its no-op branch as well. Direct privileged SQL is not an online control writer.
+Ordinary read-only routes are exempt; `configuration_placements` is an audited,
+WAL-fenced proof before local tenancy repair. Router migrations and an offline
+directory restore are maintenance operations. Update acceptance writers use the
+same claim and lock-session helpers; any additional acceptance writer must do so
+as well. A directory mutation uses the common comparison before its no-op branch.
+Direct privileged SQL is not an online control writer.
 The [control upgrade and recovery procedure](../operations/cell-control.md) defines the
 required fleet turnover and offline restore of generations. N-1 data-plane builds can
 read and insert on the additive schema; old control clients and router handlers cannot
@@ -1720,7 +1768,7 @@ from its cache ([upgrades](../operations/upgrades.md#upgrade-procedure)).
   cluster listing the same, and the distinct orgs of each table outside `LOG_TABLES`;
   `server/cli/cell_writers.py`: the ClickHouse writer check (the users, user directories,
   objects and replicas outside the operator's allow lists);
-  `server/cli/cell_ch.py`: what both share (the cluster's hosts, the per-host reads);
+  `server/core/cell_ch.py`: what both share (the cluster's hosts, the per-host reads);
 - `schemas/pg_migrations/008_cells.sql`, `schemas/pg_migrations/009_cell_probe.sql` and
   `schemas/migrations/094_cell_heartbeats.sql`: the cell's tables;
 - `server/auth/tenancy.py` (`ensure_held`): the tenancy check and the placement call,
@@ -2028,10 +2076,12 @@ An integration test with two cells and a router in CI's Postgres job:
   value, a winner of this cell's name under another deployment id answers 503 and writes
   no tenancy row, and a process whose configuration differs from its cell's row places
   nothing;
-- a cell attached with SCIM off and switched on by `loom cell update` refuses while an
-  agent-signup token is live, one minted while the update rolls out included, and a
-  process configured with another cell's issuer answers 503 to every bearer request,
-  reached through the router or directly;
+- `loom cell update --config` and `--finish` freshly qualify a SCIM-on target before
+  any generation claim or acceptance write and recheck after local durability and
+  participant turnover; without explicit `--revoke-unprovisioned`, an unqualified
+  live subject refuses with no cutoff write; reverting a SCIM-on pending
+  value to SCIM-off current remains supported; a process configured with another
+  cell's issuer answers 503 to every bearer request, through the router or directly;
 - during a `loom cell update`, processes on the old and the new configuration both
   serve, `--finish` releases a narrowed issuer only after no process accepts it, an
   update that dies after its directory write keeps the widened issuer reserved, and
@@ -2045,7 +2095,8 @@ An integration test with two cells and a router in CI's Postgres job:
   refused, and a cell that starts accepting another cell's issuer takes no placements;
 - a process matching neither value of its row answers 503 to sign-in, refresh, the OAuth
   token and device endpoints, the sign-in callback and signup, and its probe route still
-  echoes prepare's nonce; `--revert` waits for processes matching only `next`;
+  echoes prepare's nonce; `--revert` requires permanent retirement of every captured
+  participant, including ones already on current;
   `update --config` refuses while a different `next` is pending, and an update that died
   before its `loom.cell_self` write resumes forward; prepare refuses while a pre-N
   process is live; a configuration change while `attaching` goes through

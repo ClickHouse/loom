@@ -157,7 +157,7 @@ async def per_host(
     """The rows of `sql`, which selects `hostName() AS h` from `{source:<table>}`, grouped
     by the configured name of the host each came from: system table `<table>` itself on one
     host (grouped under ''), through `clusterAllReplicas` on several (grouped by `names`,
-    from `cell_writers.host_names()`)."""
+    from `cell_catalog.host_names()`)."""
     m = re.search(r"\{source:(\w+)\}", sql)
     assert m, sql
     table = f"system.{m.group(1)}"

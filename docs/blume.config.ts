@@ -9,6 +9,10 @@ export default defineConfig({
   },
   description:
     "Self-hosted MCP server that gives AI agents shared long-term memory, document search with citations, and a code index stored in ClickHouse.",
+  deployment: vercel({
+    site: "https://loom.clickhouse.com",
+    base: "/docs",
+  }),
   content: {
     root: ".blume-content",
     include: ["**/*.{md,mdx}"],
@@ -18,7 +22,6 @@ export default defineConfig({
       enabled: true,
     },
   },
-  deployment: vercel(),
   i18n: {
     defaultLocale: "en",
     locales: [

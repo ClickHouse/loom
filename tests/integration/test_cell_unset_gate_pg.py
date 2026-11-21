@@ -251,7 +251,7 @@ async def test_loom_cell_removes_check_reads_the_first_cells_postgres_alone(
     import httpx
 
     from server.cli import cell as cell_cli
-    from server.cli.cell_ch import Refused
+    from server.core.cell_ch import Refused
 
     async with own_database() as dsn:
         monkeypatch.setattr(settings, "pg_dsn", dsn)
