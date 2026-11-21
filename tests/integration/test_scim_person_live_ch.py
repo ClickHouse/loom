@@ -125,13 +125,17 @@ async def people(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[People]:
     query_all, query_one = client.query_all, client.query_one
 
     async def all_rows(sql: str, params: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        observing_person = ch.current_query_tag() == "auth.scim_people"
         answer = await query_all(sql, params=params, **kwargs)
-        made.results.append((sql, ch.statement_settings(sql), answer))
+        if observing_person:
+            made.results.append((sql, ch.statement_settings(sql), answer))
         return answer
 
     async def one_row(sql: str, params: dict[str, Any] | None = None, **kwargs: Any) -> Any:
+        observing_person = ch.current_query_tag() == "auth.scim_people"
         answer = await query_one(sql, params=params, **kwargs)
-        made.results.append((sql, ch.statement_settings(sql), answer))
+        if observing_person:
+            made.results.append((sql, ch.statement_settings(sql), answer))
         return answer
 
     monkeypatch.setattr(client, "query_all", all_rows)
