@@ -282,6 +282,28 @@ class Provisioner:
         save(path.with_suffix(".claims.json"), summary, private=True)
         return path
 
+    def _mint_setup(self, org, namespaces, name):
+        summary = self._rpc(
+            "mint_setup",
+            {
+                "subject": "sa:" + name,
+                "org": org,
+                "namespaces": namespaces,
+            },
+        )
+        require(
+            summary.get("org") == org
+            and summary.get("namespaces") == namespaces
+            and summary.get("roles") == ["admin"]
+            and summary.get("token"),
+            "Installer token differs from the owned setup scope",
+        )
+        path = self.output / "private" / (name + ".token")
+        path.write_text(summary.pop("token"))
+        path.chmod(0o600)
+        save(path.with_suffix(".claims.json"), summary, private=True)
+        return path
+
     def _build_context(self):
         import shutil
 
@@ -1121,8 +1143,7 @@ class Provisioner:
             group["namespace"]: "admin",
             **{"memory-" + str(slot["order"]): "admin" for slot in slots},
         }
-        admin_path = self._mint(group["org"], roles, "setup-" + group["namespace"])
-        admin = admin_path.read_text().strip()
+        installer = self._mint_setup(group["org"], list(roles), "register-" + group["namespace"])
         for namespace in roles:
             self._api(
                 "namespace.register",
@@ -1135,9 +1156,11 @@ class Provisioner:
                     "join_policy": "closed",
                     **({"code_change_policy": "flag"} if namespace != group["namespace"] else {}),
                 },
-                admin,
+                installer.read_text().strip(),
                 phase="register",
             )
+        admin_path = self._mint(group["org"], roles, "setup-" + group["namespace"])
+        admin = admin_path.read_text().strip()
         self._rpc("init", {"org": group["org"], "namespace": group["namespace"]})
         events = {slot["order"]: [] for slot in slots}
         latest = {slot["order"]: {} for slot in slots}

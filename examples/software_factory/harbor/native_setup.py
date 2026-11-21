@@ -36,7 +36,7 @@ def external(request):
             "interval": "product-default",
             "container_owned": True,
         }
-    if operation == "mint":
+    if operation in {"mint", "mint_setup"}:
         command = [
             "/opt/venv/bin/loom",
             "mint-token",
@@ -48,11 +48,19 @@ def external(request):
             "1",
             "--json",
         ]
-        for namespace, role in body["ns_roles"].items():
-            command.extend(["--namespace-role", namespace + "=" + role])
+        if operation == "mint_setup":
+            command.extend(["--namespaces", *body["namespaces"], "--roles", "admin"])
+        else:
+            for namespace, role in body["ns_roles"].items():
+                command.extend(["--namespace-role", namespace + "=" + role])
         result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120)
         summary = json.loads(result.stdout)
-        if summary.get("org") != body["org"] or summary.get("ns_roles") != body["ns_roles"]:
+        valid_roles = (
+            summary.get("namespaces") == body["namespaces"] and summary.get("roles") == ["admin"]
+            if operation == "mint_setup"
+            else summary.get("ns_roles") == body["ns_roles"]
+        )
+        if summary.get("org") != body["org"] or not valid_roles:
             raise PermissionError("Native mint returned different scopes")
         return summary
     if operation in {"init", "backfill"}:
@@ -80,7 +88,7 @@ def external(request):
 async def execute(request):
     operation = request["operation"]
     body = request.get("body", {})
-    if operation in {"mint", "init", "backfill", "start_memory_worker"}:
+    if operation in {"mint", "mint_setup", "init", "backfill", "start_memory_worker"}:
         return await asyncio.to_thread(external, request)
     from server.core.ch import get_client, set_query_tag
 

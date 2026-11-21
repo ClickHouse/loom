@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from examples.software_factory.harbor.provision import Provisioner
 
@@ -41,6 +41,36 @@ class ProvisioningContracts(unittest.TestCase):
         with self.assertRaises(PermissionError):
             instance.start()
         self.run.assert_not_called()
+
+    def test_namespace_installer_and_attempt_tokens_use_distinct_claim_shapes(self):
+        from examples.software_factory.harbor.native_setup import external
+
+        cases = [
+            (
+                "mint_setup",
+                {"namespaces": ["code", "memory"]},
+                {"namespaces": ["code", "memory"], "roles": ["admin"]},
+            ),
+            ("mint", {"ns_roles": {"code": "viewer"}}, {"ns_roles": {"code": "viewer"}}),
+        ]
+        for operation, body, claims in cases:
+            summary = {"org": "owned", "token": "test-token", **claims}
+            with (
+                self.subTest(operation=operation),
+                patch(
+                    "examples.software_factory.harbor.native_setup.subprocess.run",
+                    return_value=SimpleNamespace(stdout=json.dumps(summary)),
+                ) as run,
+            ):
+                external(
+                    {
+                        "operation": operation,
+                        "body": {"org": "owned", "subject": "sa:setup", **body},
+                    }
+                )
+                command = run.call_args.args[0]
+                self.assertEqual("--namespace-role" in command, operation == "mint")
+                self.assertEqual("--roles" in command, operation == "mint_setup")
 
     def test_mirror_fetches_the_pinned_commit_from_a_shallow_source_without_refs(self):
         repository = self.root / "repository"
