@@ -61,8 +61,9 @@ settings:
   # [restart]
   # ch_secure: null
 
-  # Additional trusted writer HTTP origins for analyst setup policy observations. Uses
-  # the configured service credentials; missing or duplicate writers refuse. [restart]
+  # Extra trusted HTTP origins if the service endpoint cannot reach every writer.
+  # Analyst setup discovers checked replica sessions with the service credentials.
+  # [restart]
   # ch_analysis_observer_urls: []
 
   # Append `sql:<shape12> <first 200 chars>` of each statement to its `log_comment`

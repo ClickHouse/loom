@@ -46,6 +46,7 @@ from server.core.ch_names import NamedClient, qualify, split_table
 from server.core.ch_observer import (
     ObservationUnavailable,
     PolicyObserver,
+    discover_policy_observers,
     observer_origins,
 )
 from server.core.ch_request_cost import note_result_summary, request_query_id
@@ -1050,7 +1051,9 @@ class CHClient:
         return int(self._generation)
 
     @asynccontextmanager
-    async def policy_observers(self) -> AsyncIterator[tuple[PolicyObserver, ...]]:
+    async def policy_observers(
+        self, servers: frozenset[str]
+    ) -> AsyncIterator[tuple[PolicyObserver, ...]]:
         """Read native access policy authority without replaying a session bootstrap."""
         self._ensure_state()
         owner, generation = self.client, self.generation
@@ -1097,20 +1100,19 @@ class CHClient:
 
         observers: list[PolicyObserver] = []
         failed = False
+
+        def create(origin: str) -> PolicyObserver:
+            return PolicyObserver(
+                origin,
+                str(configuration["username"]),
+                str(configuration["password"]),
+                str(configuration["database"]),
+                guarded,
+                options,
+            )
+
         try:
-            for origin in normalized:
-                observer = PolicyObserver(
-                    origin,
-                    str(configuration["username"]),
-                    str(configuration["password"]),
-                    str(configuration["database"]),
-                    guarded,
-                    options,
-                )
-                # Register ownership before a bootstrap can fail or be cancelled.
-                observers.append(observer)
-                await observer.bootstrap()
-            yield tuple(observers)
+            yield await discover_policy_observers(normalized, servers, create, observers)
         except BaseException:
             failed = True
             raise

@@ -767,9 +767,11 @@ stored key. Elsewhere an admin uses one of two commands:
   access-management credentials, applies only the analyst entities under the same
   lease and lost-key rules. It does not rebuild the reader user. Its live
   [event cutover](rolling-upgrades.md#analyst-event-storage-cutover) proves writer,
-  CHECK and policy visibility before grants. Additional writer HTTP routes come
-  from `LOOM_CH_ANALYSIS_OBSERVER_URLS`; their credentials are the configured service
-  credentials, and unavailable or duplicate writers refuse.
+  CHECK and policy visibility before grants. A shared service endpoint can supply
+  checked sessions for all replicas; separate replica addresses are not required.
+  If that endpoint cannot reach every writer, `LOOM_CH_ANALYSIS_OBSERVER_URLS` adds
+  trusted HTTP origins using the configured service credentials. Missing writers
+  and changes in a checked session refuse provisioning.
 
 `loom ch-setup --print-analyst-sql` refuses with a nonzero result and prints no
 statements or secrets. An unchecked SQL file cannot enforce the native access-catalog

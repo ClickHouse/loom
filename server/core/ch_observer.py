@@ -28,6 +28,9 @@ _SESSION_TTL_S = 15
 _REQUEST_TIMEOUT_S = 10
 # not a setting: all owned sessions close concurrently within one second.
 _CLOSE_TIMEOUT_S = 1
+# not settings: bounded replica discovery shares the ten-second authority proof.
+_DISCOVERY_TIMEOUT_S = 5
+_DISCOVERY_ATTEMPTS_PER_REPLICA = 8
 # not a setting: a larger access catalog refuses instead of returning a partial proof.
 _BODY_BYTES = 4 * 1024 * 1024
 _PARAMETER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -305,3 +308,52 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise ObservationUnavailable()
         result[key] = value
     return result
+
+
+async def discover_policy_observers(
+    origins: tuple[str, ...],
+    servers: frozenset[str],
+    create: Callable[[str], PolicyObserver],
+    owned: list[PolicyObserver],
+) -> tuple[PolicyObserver, ...]:
+    """Keep one checked session per replica through the configured trusted origins."""
+    try:
+        valid = (
+            bool(servers)
+            and len(servers) <= 33
+            and all(
+                str(uuid.UUID(server)) == server and uuid.UUID(server).int for server in servers
+            )
+        )
+    except (ValueError, TypeError, AttributeError):
+        valid = False
+    if not valid or not origins:
+        raise ObservationUnavailable()
+    selected: dict[str, PolicyObserver] = {}
+
+    async def open_session(origin: str) -> None:
+        observer = create(origin)
+        owned.append(observer)
+        await observer.bootstrap()
+        if observer.server_uuid not in servers:
+            raise ObservationUnavailable()
+        if observer.server_uuid in selected:
+            # A fresh session can land on a replica already covered by another session.
+            await observer.close()
+            owned.pop()
+        else:
+            selected[observer.server_uuid] = observer
+
+    try:
+        async with asyncio.timeout(_DISCOVERY_TIMEOUT_S):
+            for origin in origins:
+                await open_session(origin)
+            for _ in range(len(servers) * _DISCOVERY_ATTEMPTS_PER_REPLICA):
+                if selected.keys() == servers:
+                    break
+                await open_session(origins[0])
+    except TimeoutError:
+        raise ObservationUnavailable() from None
+    if selected.keys() != servers:
+        raise ObservationUnavailable()
+    return tuple(selected[server] for server in sorted(servers))
