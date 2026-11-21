@@ -13,8 +13,26 @@ module ClickHouse
     # The code of an Error for a call that got no complete answer: the call may have run.
     CODE_NETWORK = "NETWORK"
 
+    # 5xx codes never resent, with their category (the TypeScript SDK's NEVER_RETRIED):
+    # a deployment's configuration, a model call that names no customer, and a write
+    # already committed whose rows are still on their way.
+    NEVER_RETRIED = {
+      "ANALYSIS_UNAVAILABLE" => "configuration",
+      "ASSISTANT_UNAVAILABLE" => "configuration",
+      "CODED_WIDTH_MISMATCH" => "configuration",
+      "GATEWAY_REQUIRED" => "configuration",
+      "MODEL_CALL_UNATTRIBUTED" => "internal",
+      "PUBLICATION_PENDING" => "dependency",
+      "TENANCY_REFUSED" => "configuration"
+    }.freeze
+
+    # Codes the server answers before running the handler: resending runs the op once.
+    NEVER_RAN_CODES = %w[AUTH_UNAVAILABLE].freeze
+
     # A non-2xx answer from the server, or a call that got no usable answer.
-    # Match on +code+, never on the message: the code is the contract.
+    # Match on +code+, never on the message: the code is the contract. An answer with a
+    # server code raises that code's subclass (PinnedConflict, RateLimited, ...: see
+    # generated/errors.rb), so a rescue can name the class instead.
     class Error < StandardError
       # The operation called, like "memory.get".
       attr_reader :op
@@ -30,11 +48,13 @@ module ClickHouse
       attr_reader :retry_after
       # The server's X-Request-Id; quote it in a bug report.
       attr_reader :request_id
+      # The server's whole detail object (like detail["pinned_blocker_id"]); {} when none.
+      attr_reader :detail
 
       alias retryable? retryable
 
       def initialize(message, op:, status: 0, code: "", category: "input", retryable: false,
-                     retry_after: nil, request_id: "")
+                     retry_after: nil, request_id: "", detail: {})
         super(message)
         @op = op
         @status = status
@@ -43,6 +63,7 @@ module ClickHouse
         @retryable = retryable
         @retry_after = retry_after
         @request_id = request_id
+        @detail = detail
       end
 
       def to_s
@@ -52,17 +73,23 @@ module ClickHouse
         code.empty? ? "#{op}: HTTP #{status}: #{text}" : "#{op}: HTTP #{status} #{code}: #{text}"
       end
 
-      # The Error for a non-2xx answer.
-      def self.from_response(op, status, body, request_id, retry_after_header)
+      # The Error for a non-2xx answer: the subclass of its code, else Error. +idempotent+
+      # false (an op the registry does not mark idempotent) makes a 5xx whose body names no
+      # +retryable+ not retryable, since the handler may have written before it failed.
+      def self.from_response(op, status, body, request_id, retry_after_header, idempotent: true)
         detail = extract_detail(body)
-        category, retryable = class_by_status(status)
+        code = detail["code"].to_s
+        category, retryable = default_class(code, status)
         category = detail["category"] if CATEGORIES.include?(detail["category"])
-        retryable = detail["retryable"] if [true, false].include?(detail["retryable"])
+        named = [true, false].include?(detail["retryable"])
+        retryable = detail["retryable"] if named
+        retryable = false if !idempotent && !named && status >= 500 && !NEVER_RAN_CODES.include?(code)
         message = detail["message"].to_s
         message = "HTTP #{status}" if message.empty?
-        new(message, op: op, status: status, code: detail["code"].to_s, category: category,
-                     retryable: retryable, retry_after: seconds(detail["retry_after_s"] || retry_after_header),
-                     request_id: request_id.to_s)
+        klass = ERROR_CLASSES.fetch(code, Error)
+        klass.new(message, op: op, status: status, code: code, category: category, retryable: retryable,
+                           retry_after: seconds(detail["retry_after_s"] || retry_after_header),
+                           request_id: request_id.to_s, detail: detail)
       end
 
       # The Error for a call that never got an answer to read.
@@ -92,9 +119,11 @@ module ClickHouse
       end
       private_class_method :extract_detail
 
-      # The server's own rule for an error whose body names no category, such as a
-      # proxy's page or an older server.
-      def self.class_by_status(status)
+      # The class of an error whose body names none, such as a proxy's page or an older
+      # server: a code never resent, else the server's own rule by HTTP status.
+      def self.default_class(code, status)
+        return [NEVER_RETRIED[code], false] if NEVER_RETRIED.key?(code)
+
         case status
         when 401, 403 then ["auth", false]
         when 408, 429 then ["capacity", true]
@@ -103,13 +132,13 @@ module ClickHouse
         else ["input", false]
         end
       end
-      private_class_method :class_by_status
+      private_class_method :default_class
 
+      # A Retry-After header (seconds or an HTTP-date) or detail.retry_after_s, in
+      # seconds; nil when absent, unreadable or not positive.
       def self.seconds(value)
-        wait = Float(value)
-        wait.positive? ? wait : nil
-      rescue ArgumentError, TypeError
-        nil
+        wait = RetryAfter.parse(value)
+        wait&.positive? ? wait : nil
       end
       private_class_method :seconds
 
