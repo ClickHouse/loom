@@ -49,6 +49,28 @@ Keep CI's system tools beside the locked Python environment. Release-script test
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
 
+### Native worker diagnostics
+
+The third unit part runs local workers under an ancestor debugger. Their interpreter,
+arguments, environment, parallelism, random seed, coverage and timeout settings stay
+the same. The launcher preserves normal exit codes and terminal signals separately.
+GDB is a CI test tool; it is not a server dependency. The controlled transport check is
+`python -m tests.unit.test_native_worker --mechanism`.
+
+`-p tests._worker_status --native-worker-signatures` opts into this collection on Linux
+with GDB and an existing zero core-size limit. Missing prerequisites or a tracing
+refusal stop startup. No tracing policy or capability changes are made. Each helper
+sets its own parent-death signal so forced launcher termination also stops its debugger
+and worker. Registrations never authorize controller signals to another process.
+
+Private session artifacts under `.pytest_cache/worker-status/` contain bounded native
+PCs, symbols, module identities and offsets for up to eight threads and 24 frames per
+thread. Up to eight observed fatal-signal stops are retained. A stop may be handled by
+the worker; the separate terminal result records whether it eventually exited or died
+from a signal. A bounded fault-thread summary also appears in the job log. Missing
+symbols or mappings remain unresolved. Raw debugger output is discarded; core dumps,
+arguments, locals, environment values and memory bytes are not collected.
+
 ## Integration tests
 
 The integration suite runs against a live server, the way CI's `integration` job does:

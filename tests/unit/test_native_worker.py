@@ -1,0 +1,517 @@
+"""Native diagnostics preserve signals, private transport and process ownership."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import resource
+import runpy
+import select
+import signal
+import stat
+import subprocess
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from xml.etree import ElementTree
+
+import pytest
+
+from tests import _native_worker as native
+
+
+@pytest.fixture
+def session(tmp_path, monkeypatch):
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (0, 0))
+    monkeypatch.setattr(native.shutil, "which", lambda _: "/synthetic/gdb")
+    monkeypatch.delenv(native.CONTEXT, raising=False)
+    return native.NativeSession(tmp_path)
+
+
+def test_records_are_private_bounded_and_never_overwrite(tmp_path):
+    path = tmp_path / "record.json"
+    native.write_record(path, {"kind": "exit", "code": 139})
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    with pytest.raises(FileExistsError):
+        native.write_record(path, {"kind": "signal", "signal": 11})
+    assert native.read_record(path) == {"kind": "exit", "code": 139}
+    with pytest.raises(ValueError, match="too large"):
+        native.write_record(tmp_path / "large.json", {"value": "x" * native.MAX_BYTES})
+    assert not (tmp_path / "large.json").exists()
+    link = tmp_path / "link.json"
+    link.symlink_to(path)
+    with pytest.raises(OSError):
+        native.read_record(link)
+    path.chmod(0o644)
+    with pytest.raises(ValueError, match="unsafe"):
+        native.read_record(path)
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("reason", ["core", "debugger", "environment"])
+def test_unavailable_capture_refuses_before_creating_session(tmp_path, monkeypatch, reason):
+    monkeypatch.setattr(resource, "getrlimit", lambda _: (1 if reason == "core" else 0, 1))
+    monkeypatch.setattr(native.shutil, "which", lambda _: None if reason == "debugger" else "gdb")
+    monkeypatch.delenv(native.CONTEXT, raising=False)
+    if reason == "environment":
+        monkeypatch.setenv(native.CONTEXT, "occupied")
+    monkeypatch.setattr(
+        subprocess, "Popen", lambda *a, **k: pytest.fail("refusal must not start a fallback")
+    )
+    with pytest.raises(ValueError):
+        native.NativeSession(tmp_path)
+    assert not (tmp_path / "native").exists()
+
+
+def test_worker_configuration_rejects_unsupported_specs_without_partial_changes(session):
+    valid = SimpleNamespace(popen=True, via=None, python=None)
+    invalid = SimpleNamespace(popen=True, via=None, python="custom-python")
+    with pytest.raises(ValueError):
+        session.configure([valid, invalid])
+    assert valid.python is None
+    with pytest.raises(ValueError, match="limit"):
+        session.configure([valid] * (native.MAX_WORKERS + 1))
+    assert valid.python is None
+
+
+@pytest.mark.parametrize("state", ["registered", "refused", "parent_changed"])
+def test_parent_death_registration_never_grants_access_or_signals_another_process(
+    monkeypatch, state
+):
+    calls = []
+
+    class Prctl:
+        def __call__(self, *arguments):
+            calls.append(arguments)
+            return -1 if state == "refused" else 0
+
+    monkeypatch.setattr(native.ctypes, "CDLL", lambda *a, **k: SimpleNamespace(prctl=Prctl()))
+    monkeypatch.setattr(native.ctypes, "get_errno", lambda: 1)
+    monkeypatch.setattr(os, "getppid", lambda: 123 if state != "parent_changed" else 321)
+    monkeypatch.setattr(os, "getpid", lambda: 456)
+    signals = []
+    monkeypatch.setattr(os, "kill", lambda *arguments: signals.append(arguments))
+    if state == "refused":
+        with pytest.raises(OSError) as refused:
+            native.parent_death_signal(123)
+        assert refused.value.errno == 1
+    else:
+        native.parent_death_signal(123)
+    assert calls == [(1, signal.SIGKILL, 0, 0, 0)]
+    assert signals == ([(456, signal.SIGKILL)] if state == "parent_changed" else [])
+
+
+@pytest.mark.parametrize("code", [0, 7, 139])
+def test_launcher_preserves_normal_exit_codes_and_keeps_arguments_private(
+    session, monkeypatch, code
+):
+    canary = "private-argument-canary"
+
+    class Debugger:
+        def __init__(self, command, **kwargs):
+            assert kwargs["stdout"] is subprocess.DEVNULL
+            assert kwargs["stderr"] is subprocess.DEVNULL
+            assert canary not in command
+            context = json.loads(kwargs["env"][native.CONTEXT])
+            assert context["arguments"] == ["-c", "raise SystemExit(139)", canary]
+            self.directory = Path(context["directory"])
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def wait(self):
+            native.write_record(self.directory / "result.json", {"kind": "exit", "code": code})
+            return 0
+
+    monkeypatch.setattr(subprocess, "Popen", Debugger)
+    assert native.launch(session.root, ["-c", "raise SystemExit(139)", canary]) == code
+    assert all(canary not in path.read_text() for path in session.root.rglob("*.json"))
+
+
+def test_exhausted_launch_slots_never_start_an_unobserved_worker(session, monkeypatch):
+    for slot in range(native.MAX_WORKERS):
+        native.write_record(session.root / f"slot-{slot}.json", {"pid": slot + 2})
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("slot exhaustion"))
+    assert native.launch(session.root, ["-c", "raise SystemExit(0)"]) == 125
+    assert len(list(session.root.glob("slot-*.json"))) == native.MAX_WORKERS
+
+
+@pytest.mark.parametrize("start_offset", [0, 1])
+def test_forged_same_uid_records_cannot_authorize_cleanup(session, monkeypatch, start_offset):
+    launcher = {"pid": 100001, "ppid": 2, "start": 100, "uid": os.getuid()}
+    debugger = {**launcher, "pid": 100002, "ppid": launcher["pid"], "start": 101}
+    inferior = {**launcher, "pid": 100003, "ppid": debugger["pid"], "start": 102}
+    native.write_record(session.root / "slot-0.json", launcher)
+    directory = session.root / str(launcher["pid"])
+    directory.mkdir(mode=0o700)
+    native.write_record(directory / "debugger.json", debugger)
+    native.write_record(directory / "inferior.json", inferior)
+    owners = {debugger["pid"]: debugger, inferior["pid"]: inferior}
+    monkeypatch.setattr(
+        native,
+        "identity",
+        lambda pid: {**owners[pid], "start": owners[pid]["start"] + start_offset, "zombie": 0},
+    )
+    monkeypatch.setattr(
+        os, "pidfd_open", lambda *args: pytest.fail("disk records cannot authorize cleanup")
+    )
+    monkeypatch.setattr(
+        os, "kill", lambda *args: pytest.fail("disk records cannot authorize signals")
+    )
+    monkeypatch.setattr(
+        signal,
+        "pidfd_send_signal",
+        lambda *args: pytest.fail("disk records cannot authorize signals"),
+    )
+    result = session.finish()
+    assert result["remaining"] == (2 if start_offset == 0 else 0)
+    assert session.finish() == {"event": "native_cleanup", "already_finished": True}
+
+
+def test_debugger_permission_refusal_is_reported_without_fallback(session, monkeypatch):
+    class DebuggerError(Exception):
+        pass
+
+    commands = []
+
+    def execute(command, **kwargs):
+        commands.append(command)
+        if command == "run":
+            raise DebuggerError("ptrace: Operation not permitted private-error-canary")
+        return ""
+
+    fake = SimpleNamespace(
+        VERSION="synthetic-gdb",
+        error=DebuggerError,
+        SignalEvent=type("SignalEvent", (), {}),
+        events=SimpleNamespace(stop=SimpleNamespace(connect=lambda callback: None)),
+        execute=execute,
+    )
+    directory = session.root / "synthetic-debugger"
+    directory.mkdir(mode=0o700)
+    monkeypatch.setenv(native.CONTEXT, json.dumps({"directory": str(directory)}))
+    monkeypatch.setitem(sys.modules, "gdb", fake)
+    monkeypatch.setitem(sys.modules, "_native_worker", native)
+    monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
+    runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
+    assert commands[-1] == "run"
+    result = native.read_record(directory / "result.json")
+    assert result == {
+        "kind": "unavailable",
+        "reason": "trace_refused",
+        "observed_fatal_stops": 0,
+        "captured_stops": 0,
+        "trap_stops": 0,
+        "gdb_version": "synthetic-gdb",
+    }
+    assert all("private-error-canary" not in path.read_text() for path in directory.iterdir())
+
+
+@pytest.mark.parametrize("failure", ["unwind", "write"])
+def test_collector_failure_still_continues_and_preserves_terminal_signal(
+    session, monkeypatch, failure
+):
+    class DebuggerError(Exception):
+        pass
+
+    class SignalEvent:
+        stop_signal = "SIGSEGV"
+
+    class Value:
+        def __init__(self, value):
+            self.value = value
+            self.type = SimpleNamespace(code=0 if value is None else 1)
+
+        def __int__(self):
+            return self.value
+
+    commands, callbacks = [], []
+    inferior = SimpleNamespace(pid=1)
+
+    def execute(command, **kwargs):
+        commands.append(command)
+        if command == "run":
+            callbacks[0](SignalEvent())
+        elif command == "continue":
+            inferior.pid = 0
+        return ""
+
+    def no_unwind():
+        raise DebuggerError("private-unwind-canary")
+
+    directory = session.root / "failed-collector"
+    directory.mkdir(mode=0o700)
+    native.write_record(directory / "inferior.json", {"pid": 1})
+    original_write = native.write_record
+
+    def write(path, record):
+        if failure == "write" and path.name.startswith("signature-"):
+            raise OSError("private-write-canary")
+        original_write(path, record)
+
+    fake = SimpleNamespace(
+        VERSION="synthetic-gdb",
+        error=DebuggerError,
+        SignalEvent=SignalEvent,
+        TYPE_CODE_VOID=0,
+        events=SimpleNamespace(stop=SimpleNamespace(connect=callbacks.append)),
+        execute=execute,
+        selected_inferior=lambda: inferior,
+        selected_thread=no_unwind,
+        parse_and_eval=lambda expression: Value(None if expression == "$_exitcode" else 11),
+    )
+    monkeypatch.setattr(native, "write_record", write)
+    monkeypatch.setenv(native.CONTEXT, json.dumps({"directory": str(directory)}))
+    monkeypatch.setitem(sys.modules, "gdb", fake)
+    monkeypatch.setitem(sys.modules, "_native_worker", native)
+    monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
+    runpy.run_path(str(Path(native.__file__).with_name("_native_gdb.py")))
+    result = native.read_record(directory / "result.json")
+    assert result["kind"] == "signal" and result["signal"] == 11
+    assert result["observed_fatal_stops"] == 1
+    assert "handle SIGSEGV stop print pass" in commands
+    assert commands[-1] == "continue"
+    assert all("canary" not in path.read_text() for path in directory.iterdir())
+
+
+def _mechanism_start(root, source, arguments=(), *, environment=None):
+    root.mkdir(mode=0o700)
+    session = native.NativeSession(root)
+    program = root / "inferior.py"
+    program.write_text(source)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            str(Path(native.__file__).resolve()),
+            "--launch",
+            str(session.root),
+            str(program),
+            *arguments,
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+    )
+    return session, process
+
+
+def _mechanism_case(root, source, arguments=(), *, payload=b"", environment=None):
+    session, process = _mechanism_start(root, source, arguments, environment=environment)
+    try:
+        output, error = process.communicate(payload, timeout=20)
+        records = [native.read_record(path) for path in session.root.rglob("*.json")]
+        return process.returncode, output, error, records
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        session.finish()
+
+
+def _mechanism_parent_death(root):
+    session, process = _mechanism_start(
+        root, "import os, signal\nos.write(1, b'ready\\n')\nsignal.pause()\n"
+    )
+    descriptors = []
+    try:
+        assert select.select([process.stdout], [], [], 20)[0], "worker did not start"
+        assert process.stdout.readline() == b"ready\n"
+        directory = session.root / str(process.pid)
+        debugger = native.read_record(directory / "debugger.json")
+        inferior = native.read_record(directory / "inferior.json")
+        assert debugger["ppid"] == process.pid
+        assert inferior["ppid"] == debugger["pid"]
+        for expected in (debugger, inferior):
+            descriptor = os.pidfd_open(expected["pid"])
+            descriptors.append(descriptor)
+            found = native.identity(expected["pid"])
+            assert all(found[key] == expected[key] for key in ("pid", "start", "uid"))
+        process.kill()  # Only our direct Popen; the kernel owns both descendant edges.
+        assert process.wait(timeout=5) == -signal.SIGKILL
+        for descriptor in descriptors:
+            observer = select.poll()
+            observer.register(descriptor, select.POLLIN)
+            assert observer.poll(5000), "owned descendant survived launcher death"
+        process.communicate(timeout=5)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        for descriptor in descriptors:
+            os.close(descriptor)
+        session.finish()
+
+
+def _mechanism_xdist(root):
+    repository = str(Path(native.__file__).resolve().parents[1])
+    environment = {
+        **os.environ,
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+        "PYTEST_ADDOPTS": "",
+        "PYTHONPATH": repository,
+    }
+    for crash in (False, True):
+        outcomes = []
+        for enabled in (False, True):
+            directory = root / f"xdist-{crash}-{enabled}"
+            directory.mkdir(mode=0o700)
+            (directory / "pytest.ini").write_text("[pytest]\n")
+            source = (
+                "import os, signal\ndef test_crash(): os.kill(os.getpid(), signal.SIGSEGV)\n"
+                if crash
+                else "def test_pass(): assert 1 == 1\n"
+                "def test_assertion(): assert False, 'original assertion'\n"
+                "def test_exception(): raise ValueError('original exception')\n"
+            )
+            (directory / "test_case.py").write_text(source)
+            command = [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-q",
+                "-p",
+                "xdist.plugin",
+                "-n",
+                "1",
+                "--max-worker-restart=0",
+                "--junitxml=result.xml",
+            ]
+            if enabled:
+                command += ["-p", "tests._worker_status", "--native-worker-signatures"]
+            process = subprocess.run(
+                command, cwd=directory, env=environment, capture_output=True, timeout=25
+            )
+            assert process.returncode == 1, (
+                crash,
+                enabled,
+                process.returncode,
+                process.stdout,
+                process.stderr,
+            )
+            cases = ElementTree.parse(directory / "result.xml").findall(".//testcase")
+            outcomes.append(
+                sorted((case.get("name"), case.find("failure") is not None) for case in cases)
+            )
+            if enabled:
+                files = list((directory / ".pytest_cache/worker-status").glob("*/status.jsonl"))
+                assert len(files) == 1
+                records = [json.loads(line) for line in files[0].read_text().splitlines()]
+                statuses = [record for record in records if record["event"] == "worker_status"]
+                after = next(record for record in statuses if record["stage"] == "after_teardown")
+                assert after["os_returncode"] == (-11 if crash else 0)
+                observations = [record for record in records if record["event"] == "native_worker"]
+                terminal = next(
+                    record["result"] for record in reversed(observations) if "result" in record
+                )
+                assert terminal["kind"] == ("signal" if crash else "exit")
+                assert terminal["signal" if crash else "code"] == (11 if crash else 0)
+                if crash:
+                    assert any(
+                        record.get("signature", {}).get("signal") == "SIGSEGV"
+                        for record in observations
+                    )
+        assert outcomes[0] == outcomes[1], outcomes
+
+
+def mechanism_checks(root):
+    """Run explicitly under GDB; absence or refusal fails instead of skipping."""
+    canary = "private-argv-and-environment-canary"
+    environment = {**os.environ, "NATIVE_TEST_CANARY": canary}
+    for code in (0, 7, 139):
+        result, _, error, records = _mechanism_case(
+            root / f"exit-{code}", f"raise SystemExit({code})\n"
+        )
+        assert result == code, (result, error, records)
+        terminals = [record for record in records if record.get("kind") == "exit"]
+        assert len(terminals) == 1 and terminals[0]["code"] == code
+        assert terminals[0]["observed_fatal_stops"] == 0
+    result, _, error, records = _mechanism_case(
+        root / "caught-then-native-fault",
+        "import ctypes, os, signal\n"
+        "signal.signal(signal.SIGSEGV, lambda *_: None)\n"
+        "os.kill(os.getpid(), signal.SIGSEGV)\n"
+        "signal.signal(signal.SIGSEGV, signal.SIG_DFL)\n"
+        "ctypes.string_at(0)\n",
+        (canary,),
+        environment=environment,
+    )
+    assert result == -signal.SIGSEGV, (result, error, records)
+    signatures = sorted(
+        (record for record in records if record.get("signal") == "SIGSEGV"),
+        key=lambda record: record["observed_stop"],
+    )
+    assert [record["observed_stop"] for record in signatures] == [1, 2]
+    assert signatures[0]["si_code"] <= 0 < signatures[1]["si_code"]
+    assert signatures[1]["si_addr"] == 0
+    assert canary not in json.dumps(records)
+    result, _, error, records = _mechanism_case(
+        root / "bounded-stops",
+        "import os, signal\n"
+        "signal.signal(signal.SIGSEGV, lambda *_: None)\n"
+        f"for _ in range({native.MAX_STOPS + 2}): os.kill(os.getpid(), signal.SIGSEGV)\n"
+        "raise SystemExit(7)\n",
+    )
+    assert result == 7, (result, error, records)
+    assert sum(record.get("signal") == "SIGSEGV" for record in records) == native.MAX_STOPS
+    terminal = next(record for record in records if record.get("kind") == "exit")
+    assert terminal["observed_fatal_stops"] == native.MAX_STOPS + 2
+    assert terminal["captured_stops"] == native.MAX_STOPS
+    payload = b"wire\x00\xff"
+    environment_hash = hashlib.sha256(json.dumps(environment, sort_keys=True).encode()).hexdigest()
+    result, output, error, records = _mechanism_case(
+        root / "transport",
+        "import hashlib, json, os, sys\n"
+        f"assert hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest() == {environment_hash!r}, 'worker environment mismatch'\n"
+        f"assert sys.argv[1] == {canary!r}\n"
+        "assert os.environ['NATIVE_TEST_CANARY'] == sys.argv[1]\n"
+        f"assert {native.CONTEXT!r} not in os.environ\n"
+        "os.write(1, os.read(0, 6))\n",
+        (canary,),
+        payload=payload,
+        environment=environment,
+    )
+    assert (result, output, error) == (0, payload, b""), (result, output, error, records)
+    assert canary not in json.dumps(records)
+    _mechanism_parent_death(root / "parent-death")
+    _mechanism_xdist(root)
+    for received in (signal.SIGSEGV, signal.SIGTRAP):
+        for caught in (False, True):
+            source = "import os, signal\n"
+            if caught:
+                source += f"signal.signal({int(received)}, lambda *_: None)\n"
+            source += f"os.kill(os.getpid(), {int(received)})\nraise SystemExit(139)\n"
+            result, _, error, records = _mechanism_case(
+                root / f"signal-{received}-{caught}", source, (canary,), environment=environment
+            )
+            assert result == (139 if caught else -received), (
+                int(received),
+                caught,
+                result,
+                error,
+                records,
+            )
+            terminals = [record for record in records if "kind" in record]
+            assert len(terminals) == 1
+            expected = (
+                {"kind": "exit", "code": 139} if caught else {"kind": "signal", "signal": received}
+            )
+            assert all(terminals[0].get(key) == value for key, value in expected.items())
+            assert canary not in json.dumps(records)
+            if received == signal.SIGSEGV:
+                signatures = [record for record in records if record.get("signal") == "SIGSEGV"]
+                assert len(signatures) == 1 and signatures[0]["threads"], records
+    print("native mechanism cases passed")
+
+
+if __name__ == "__main__":
+    import tempfile
+
+    if sys.argv[1:] != ["--mechanism"]:
+        raise SystemExit("expected --mechanism")
+    with tempfile.TemporaryDirectory(prefix="native-worker-mechanism-") as temporary:
+        mechanism_checks(Path(temporary))
