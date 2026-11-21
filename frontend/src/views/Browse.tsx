@@ -48,6 +48,14 @@ const isTrackerKind = (kind: string | undefined) => kind === "qa" || kind === "t
 
 type JoinRole = "viewer" | "writer" | "admin";
 
+/** The page of public namespaces one browse read asks for. A read that comes back this full
+ *  may leave more out, so the search box then asks the server instead of filtering the page. */
+const BROWSE_LIMIT = 200;
+/** How long the typed text settles before the server search is sent. */
+const SEARCH_DEBOUNCE_MS = 250;
+/** Rows drawn before "Show all N": mounting a full page of rows at once is one long task. */
+const ROW_CAP = 50;
+
 const JOIN_ROLES: Array<{
   value: JoinRole;
   label: string;
@@ -84,6 +92,12 @@ export function Browse() {
   const identity = useIdentity();
   const phone = useMedia(PHONE_QUERY);
   const [rows, setRows] = useState<BrowseEntry[] | null>(null);
+  // The browse read came back full (BROWSE_LIMIT rows): more may exist than the page holds.
+  const [full, setFull] = useState(false);
+  // The server's answer for a search over a full page, tagged with the text it answers.
+  const [searched, setSearched] = useState<{ q: string; rows: BrowseEntry[] | null; error: unknown } | null>(null);
+  const [searchReads, setSearchReads] = useState(0);
+  const [showAll, setShowAll] = useState(false);
   // The browse read failed: its error, in place of the public list; Retry reads again.
   const [error, setError] = useState<unknown>(null);
   const [reads, setReads] = useState(0);
@@ -116,7 +130,7 @@ export function Browse() {
     setRefreshing(true);
     let failed: unknown = null;
     Promise.all([
-      browseNamespaces(identity.org, { limit: 200, signal }).catch((e: unknown) => {
+      browseNamespaces(identity.org, { limit: BROWSE_LIMIT, signal }).catch((e: unknown) => {
         failed = e;
         return [] as BrowseEntry[];
       }),
@@ -131,6 +145,10 @@ export function Browse() {
       // Repositories are surfaced in the Repositories section, not as joinable memory. The server
       // lists no collection here: one is shared in the Library, never joined.
       setRows(failed === null ? browseRows.filter((r) => r.kind !== "code") : null);
+      // Counted before the code rows are dropped: the server's limit applies to every kind.
+      setFull(failed === null && browseRows.length >= BROWSE_LIMIT);
+      // A search over the page reads again too: a join, a leave or a create may change it.
+      setSearchReads((n) => n + 1);
       setRepoNames([
         ...new Set([...browseRows, ...mineRead].filter((r) => isCodeKind(r.kind)).map((r) => r.namespace)),
       ]);
@@ -142,7 +160,7 @@ export function Browse() {
       setAdminNs(mineRead.filter((r) => r.role === "admin" && r.status === "active"));
       const map: Record<string, boolean> = {};
       for (const b of browseRows) map[b.namespace] = !!b.requires_approval;
-      setRequireMap(map);
+      setRequireMap((prev) => ({ ...prev, ...map }));
     });
   };
 
@@ -151,6 +169,7 @@ export function Browse() {
     (signal, live) => {
       setRows(null);
       setError(null);
+      setShowAll(false);
       load(signal, live);
     },
     [identity.org, reads],
@@ -227,7 +246,49 @@ export function Browse() {
   const listQuery = useDeferredValue(query).trim();
   // Names are lowercase, so the search is compared lowercased.
   const typedName = listQuery.toLowerCase();
-  const filtered = useMemo(() => (rows || []).filter((r) => matchesSpace(r, typedName)), [rows, typedName]);
+  // Over a full page the text goes to the server (`namespace.browse` `query`), which also
+  // reaches the namespaces past the page; below the limit the page holds every namespace and
+  // the filter stays local.
+  const serverQuery = full ? listQuery : "";
+  useEffect(() => {
+    if (!serverQuery) {
+      setSearched(null);
+      return;
+    }
+    const ctl = new AbortController();
+    const timer = window.setTimeout(() => {
+      browseNamespaces(identity.org, { query: serverQuery, limit: BROWSE_LIMIT, signal: ctl.signal })
+        .then((found) => {
+          if (ctl.signal.aborted) return;
+          setSearched({ q: serverQuery, rows: found.filter((r) => r.kind !== "code"), error: null });
+          setRequireMap((prev) => {
+            const next = { ...prev };
+            for (const b of found) next[b.namespace] = !!b.requires_approval;
+            return next;
+          });
+        })
+        .catch((e: unknown) => {
+          if (!ctl.signal.aborted) setSearched({ q: serverQuery, rows: null, error: e });
+        });
+    }, SEARCH_DEBOUNCE_MS);
+    // A retype, or a reload of the page under it, aborts this read before it can land.
+    return () => {
+      window.clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [identity.org, serverQuery, searchReads]);
+  const answer = serverQuery && searched?.q === serverQuery ? searched : null;
+  // The server's matches are the answer (it also matches guide summaries): not filtered again here.
+  const serverRows = answer?.rows ?? null;
+  const searchError = answer?.error ?? null;
+  // Typed over a full page and not answered yet: the page's own matches show meanwhile, and
+  // nothing says a name is missing until the server has said so.
+  const searching = !!serverQuery && !answer;
+  const filtered = useMemo(
+    () => serverRows ?? (rows || []).filter((r) => matchesSpace(r, typedName)),
+    [rows, serverRows, typedName],
+  );
+  const shown = showAll ? filtered : filtered.slice(0, ROW_CAP);
   const managedShown = managedMemory.filter((r) => matchesSpace(r, typedName));
   // A namespace name no listed row carries may be a private one to request, even beside
   // partial matches; a repository's or collection's name points to its page instead.
@@ -246,8 +307,11 @@ export function Browse() {
     !elsewhere &&
     !isCollectionName(typedName) &&
     typedReach !== "admin" &&
+    !searching &&
+    searchError === null &&
     !filtered.some((r) => r.namespace === typedName);
-  const memberCount = (ns: string) => rows?.find((r) => r.namespace === ns)?.member_count;
+  const memberCount = (ns: string) =>
+    (rows?.find((r) => r.namespace === ns) ?? serverRows?.find((r) => r.namespace === ns))?.member_count;
   const dialogOpen = !!(joinDialog || manageNs || settingsNs || createOpen);
   // The rows of both sections are one tab stop; the arrows move through them.
   const nav = useRowNav({ enabled: !dialogOpen && filtered.length + managedShown.length > 0 });
@@ -413,13 +477,34 @@ export function Browse() {
             />
           )}
 
-          {rows !== null && filtered.length === 0 && listQuery && !offersRequest && !elsewhere && (
-            <ListState kind="filtered" things="public namespaces" filter={listQuery} onClear={() => setQuery("")} />
+          {rows !== null && full && !listQuery && (
+            <p className="mb-2 text-xs text-text-muted" data-testid="browse-cut">
+              Showing the first {BROWSE_LIMIT} namespaces. Search to find one past them.
+            </p>
           )}
 
-          {rows !== null && filtered.length > 0 && (
-            <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || undefined}>
-              {filtered.map((r) => (
+          {rows !== null && searchError !== null && (
+            <ListState
+              kind="error"
+              things="namespaces"
+              error={searchError}
+              onRetry={() => setSearchReads((n) => n + 1)}
+            />
+          )}
+
+          {rows !== null &&
+            filtered.length === 0 &&
+            listQuery &&
+            !searching &&
+            searchError === null &&
+            !offersRequest &&
+            !elsewhere && (
+              <ListState kind="filtered" things="public namespaces" filter={listQuery} onClear={() => setQuery("")} />
+            )}
+
+          {rows !== null && searchError === null && filtered.length > 0 && (
+            <div className="space-y-2" data-testid="browse-list" aria-busy={refreshing || searching || undefined}>
+              {shown.map((r) => (
                 <SpaceRow
                   key={r.namespace}
                   namespace={r.namespace}
@@ -435,6 +520,29 @@ export function Browse() {
                   actions={rowActions}
                 />
               ))}
+              {shown.length < filtered.length && (
+                <Button
+                  type="empty"
+                  htmlType="button"
+                  onClick={() => {
+                    const next = filtered[ROW_CAP];
+                    setShowAll(true);
+                    // The button goes away: the focus moves to the first row it drew.
+                    if (next)
+                      window.setTimeout(
+                        () =>
+                          document
+                            .querySelector<HTMLElement>(
+                              `[data-focus-key="${CSS.escape(`space:${next.namespace}`)}"] [data-row-open]`,
+                            )
+                            ?.focus(),
+                        0,
+                      );
+                  }}
+                >
+                  {`Show all ${filtered.length}`}
+                </Button>
+              )}
             </div>
           )}
 
