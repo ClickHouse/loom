@@ -19,7 +19,7 @@ DEFAULT_MODEL_BY_PROVIDER = {
     # Bedrock model access and inference profiles belong to the deployment.
     "bedrock": "",
     "openai": "gpt-6-luna",
-    "anthropic": "claude-haiku-4-5",
+    "anthropic": "claude-haiku-5-5",
     # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB.
     "local": "qwen2.5:3b",
     "fake": "fake-echo-1",
