@@ -552,13 +552,109 @@ class DifyApplicationGuards(unittest.TestCase):
             with self.subTest(extra=extra.filename), self.assertRaises(RuntimeError):
                 smoke.validate_archive_members([*valid, extra])
 
+    def test_native_run_reaches_tool_workflow_without_optional_editor_defaults(self):
+        class WorkflowReached(Exception):
+            pass
+
+        ctx = SimpleNamespace(
+            env={"INIT_PASSWORD": "fixture-password"},
+            secret=lambda value: value,
+            plugin_python=Path("/owned/plugin/bin/python"),
+            plugin_dir=Path("/owned/plugin"),
+            track_plugin=Mock(),
+            cleanup_callbacks=[],
+            org="fixture-org",
+            namespace="fixture-namespace",
+            agent="fixture-agent",
+            token="fixture-token",
+            record=Mock(),
+            redact=str,
+        )
+        provider = {
+            "id": "clickhouse/loom/loom",
+            "name": "loom",
+            "author": "clickhouse",
+            "type": "builtin",
+        }
+        declarations = {
+            "remember": [
+                ("user_id", "form", "string", True),
+                ("memory_key", "llm", "string", True),
+                ("value", "llm", "string", True),
+            ],
+            "recall": [
+                ("user_id", "form", "string", True),
+                ("query", "llm", "string", True),
+                ("top_k", "form", "number", False),
+            ],
+            "search_knowledge": [
+                ("user_id", "form", "string", True),
+                ("query", "llm", "string", True),
+                ("top_k", "form", "number", False),
+            ],
+        }
+        tools = [
+            {
+                "name": name,
+                "parameters": [
+                    dict(zip(("name", "form", "type", "required"), fields, strict=True))
+                    for fields in parameters
+                ],
+            }
+            for name, parameters in declarations.items()
+        ]
+        console = Mock()
+        console.client.cookies.get.return_value = "fixture-csrf"
+
+        def response(method, path, *payload):
+            if path == "workspaces/current/plugin/debugging-key":
+                return {"key": "fixture-debug", "host": "127.0.0.1", "port": 17883}
+            if path == "workspaces/current/tool-providers":
+                return [provider]
+            if path.endswith("/tools"):
+                return tools
+            if method == "POST":
+                return {"id": "fixture-app"} if path == "apps" else {}
+            raise AssertionError("Unexpected optional editor-default request: " + path)
+
+        console.json.side_effect = response
+        child = Mock()
+        child.poll.return_value = None
+        with (
+            patch.object(scenario, "Console", return_value=console),
+            patch.object(scenario.subprocess, "Popen", return_value=child),
+            patch.object(scenario.threading, "Thread"),
+            patch.object(scenario, "workflow", side_effect=WorkflowReached) as workflow,
+            self.assertRaises(WorkflowReached),
+        ):
+            scenario.run(ctx)
+        self.assertEqual(workflow.call_count, 1)
+        self.assertEqual(
+            workflow.call_args.args[-4:],
+            ("remember", "user-a", {"memory_key": "seat", "value": scenario.FACT}, "remember"),
+        )
+        self.assertEqual(ctx.phase, "native-workflow")
+
     def test_native_graph_keeps_application_user_in_form_configuration(self):
         graph = scenario.build_graph(
-            {"start": {}, "end": {}},
             {"id": "discovered-provider", "name": "loom"},
             "recall",
             "application-user",
             {"query": "aisle seats"},
+        )
+        start = next(node["data"] for node in graph["nodes"] if node["id"] == "start")
+        end = next(node["data"] for node in graph["nodes"] if node["id"] == "end")
+        self.assertEqual(start, {"type": "start", "title": "Start", "desc": "", "variables": []})
+        self.assertEqual(end["type"], "end")
+        self.assertEqual(
+            end["outputs"],
+            [
+                {
+                    "variable": "result",
+                    "value_selector": ["tool", "json"],
+                    "value_type": "array[object]",
+                }
+            ],
         )
         tool = next(node["data"] for node in graph["nodes"] if node["id"] == "tool")
         self.assertEqual(tool["provider_id"], "discovered-provider")

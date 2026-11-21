@@ -7,7 +7,6 @@ import subprocess
 import threading
 import time
 from collections import deque
-from copy import deepcopy
 from urllib.parse import quote
 
 import httpx
@@ -126,11 +125,9 @@ def has_shared_document(output):
     )
 
 
-def build_graph(defaults, provider, tool, user_id, parameters):
-    start = deepcopy(defaults["start"])
-    end = deepcopy(defaults["end"])
-    start.update(type="start", title="Start", desc="", variables=[])
-    end.update(
+def build_graph(provider, tool, user_id, parameters):
+    start = dict(type="start", title="Start", desc="", variables=[])
+    end = dict(
         type="end",
         title="End",
         desc="",
@@ -188,11 +185,11 @@ def build_graph(defaults, provider, tool, user_id, parameters):
     return {"nodes": nodes, "edges": edges}
 
 
-def workflow(console, ctx, app_id, defaults, provider, tool, user_id, parameters, label):
+def workflow(console, ctx, app_id, provider, tool, user_id, parameters, label):
     path = "apps/" + app_id + "/workflows/draft"
     draft = console.request("GET", path, allowed=(200, 404))
     current = draft.json() if draft.status_code == 200 else {}
-    graph = build_graph(defaults, provider, tool, user_id, parameters)
+    graph = build_graph(provider, tool, user_id, parameters)
     console.json(
         "POST",
         path,
@@ -324,13 +321,16 @@ def run(ctx):
     else:
         raise RuntimeError("Native plugin registration deadline exceeded")
     (provider,) = matches
+    ctx.phase = "native-provider-schema"
     if provider["type"] != "builtin":
         raise RuntimeError("Unexpected native provider type")
     provider_path = quote(provider["id"], safe="/")
+    ctx.phase = "native-tool-schema"
     tools = console.json(
         "GET", "workspaces/current/tool-provider/builtin/" + provider_path + "/tools"
     )
     validate_tools(tools)
+    ctx.phase = "native-credentials"
     org, namespace, agent = ctx.org, ctx.namespace, ctx.agent
     token = ctx.token
     profile = ctx.env
@@ -347,15 +347,12 @@ def run(ctx):
         "workspaces/current/tool-provider/builtin/" + provider_path + "/add",
         {"credentials": credentials, "name": "CI proof", "type": "api-key"},
     )
+    ctx.phase = "native-application-create"
     app = console.json(
         "POST", "apps", {"name": "Loom native application proof", "mode": "workflow"}
     )
     app_id = app["id"]
-    configs = console.json("GET", "apps/" + app_id + "/workflows/default-workflow-block-configs")
-    defaults = {item["type"]: item["config"] for item in configs}
-    for name in ("start", "end"):
-        if name not in defaults:
-            raise RuntimeError("Application supplied no default block: " + name)
+    ctx.phase = "native-workflow"
     public_provider = {
         name: provider.get(name)
         for name in ("id", "name", "type", "plugin_id", "plugin_unique_identifier")
@@ -368,7 +365,6 @@ def run(ctx):
         console,
         ctx,
         app_id,
-        defaults,
         provider,
         "remember",
         "user-a",
@@ -379,7 +375,6 @@ def run(ctx):
         console,
         ctx,
         app_id,
-        defaults,
         provider,
         "recall",
         "user-a",
@@ -392,7 +387,6 @@ def run(ctx):
         console,
         ctx,
         app_id,
-        defaults,
         provider,
         "recall",
         "user-b",
@@ -420,7 +414,6 @@ def run(ctx):
         console,
         ctx,
         app_id,
-        defaults,
         provider,
         "search_knowledge",
         "user-b",
