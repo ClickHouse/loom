@@ -3467,7 +3467,7 @@ OPS: dict[str, OpSpec] = {
         "MemoryProposalDecideBody",
         "MemoryProposalDecideOutput",
         True,
-        "writer",
+        "admin",
         "experimental",
         800,
         True,
@@ -15086,6 +15086,7 @@ class MemoryProposalDecideInput(TypedDict, total=False):
     namespace: Required[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15094,6 +15095,7 @@ class MemoryProposalDecideBody(TypedDict, total=False):
     namespace: NotRequired[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15136,6 +15138,7 @@ class MemoryProposalsOutput(TypedDict, total=False):
 class MemoryProposal(TypedDict, total=False):
     memory_key: Required[str]
     memory_id: Required[str]
+    content_sha256: NotRequired[str]
     agent: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
@@ -17562,6 +17565,7 @@ class SnapshotMemoryRow(TypedDict, total=False):
             "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
         ]
     ]
+    requires_review: NotRequired[Optional[bool]]
     conflict_with: NotRequired[list[str]]
     duplicate_of: NotRequired[str]
     evidence_count: NotRequired[int]

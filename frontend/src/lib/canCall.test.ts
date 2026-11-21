@@ -17,6 +17,10 @@ vi.mock("../api", async (importOriginal) => ({
 const user = (roles: string[]): WhoAmI => ({ authenticated: true, subject: "u@example.com", org: "dev", roles });
 
 describe("canCall", () => {
+  it("proposal decisions require an administrator", () => {
+    expect(canCall("memory.proposal_decide", "admin", user(["ADMIN"]))).toBe(true);
+    expect(canCall("memory.proposal_decide", "writer", user(["WRITER"]))).toBe(false);
+  });
   it("an unknown role never sends a request — the token-only principal's case", () => {
     expect(canCall("conflicts.list", null, user(["VIEWER"]))).toBe(false);
     expect(canCall("cost.budget_status", null, user(["WRITER"]))).toBe(false);
