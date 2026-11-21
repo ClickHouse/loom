@@ -26,7 +26,7 @@ _MEMORY_FINAL_PROJECTION = f"""
             toString(value_json) AS value_json,
             confidence, version, pinned,
             created_at, updated_at, expires_at, valid_at, valid_to, invalid_at,
-            status, run_id, source_trace,
+            status, requires_review, run_id, source_trace,
             tags, entities, recall_count, last_recalled_at, char_limit,
             tombstoned_at,
             redacted_at, redaction_reason,
