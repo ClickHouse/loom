@@ -123,12 +123,17 @@ class Tools:
         ):
             raise AuthInsufficientError("a tool cannot change this answer's scope")
         args = {k: v for k, v in raw.items() if k not in ASSISTANT_DROPPED_ARGS}
+        # Code reads use MCP's configured plane target and existing caller grants.
+        # A memory namespace would point them at a different, empty index.
+        if op.name.startswith("code."):
+            args.pop("namespace", None)
         args.update(ASSISTANT_FORCED_ARGS.get(op.name, {}))
         args.update(
             {
                 k: v
                 for k, v in (("org", self.org), ("namespace", self.namespace))
                 if k in op.input_model.model_fields
+                and (k != "namespace" or not op.name.startswith("code."))
             }
         )
         dedup = args

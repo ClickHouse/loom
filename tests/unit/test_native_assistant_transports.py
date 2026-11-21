@@ -945,3 +945,81 @@ def test_inventory_read_preserves_token_scope_and_private_members(native_row_rea
         assert len(seen) == 1
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["code.symbol", "code.search"])
+def test_code_reads_resolve_plane_default_under_live_delegated_grants(
+    native_row_reader, monkeypatch, operation
+):
+    from dataclasses import replace
+
+    from server.auth import authz
+    from server.core.errors import AuthInsufficientError
+    from server.transport import mcp_call
+    from tests.unit.mcp_probe import _Out
+
+    state = native_row_reader
+    monkeypatch.setattr(settings, "code_repo", "acme/widgets")
+    monkeypatch.setattr(settings, "code_repos_json", "")
+    seen = []
+
+    async def handler(inp):
+        from server.auth.context import current_auth
+        from server.code.app.common import resolve_code_identity
+
+        assert current_auth() == state.principal
+        seen.append(resolve_code_identity(inp.org, inp.namespace))
+        return _Out()
+
+    name = "loom_" + operation.replace(".", "_")
+    original = mcp_call.TOOLS_BY_NAME[name]
+    assert original.required_role is Role.VIEWER and original.read_only
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, name, replace(original, handler=handler, output_model=_Out)
+    )
+    raw = {"name": "Target"} if operation == "code.symbol" else {"query": "Target"}
+
+    async def call(arguments=None):
+        native = tools.Tools("acme", "n", "alice", "answer-code-read")
+        result = await native.call(
+            name, raw if arguments is None else arguments, origin="host_context"
+        )
+        assert result.arguments["org"] == "acme" and "namespace" not in result.arguments
+        assert len(native.receipts) == 1
+        return result
+
+    async def scenario():
+        # The answer token stays viewer on memory n. Existing code policy checks
+        # its creator's live repository grant without adding a token namespace.
+        assert state.principal.ns_roles == (("n", "viewer"),)
+        assert await call()
+        assert seen == [("acme", "code-acme")]
+        assert await call({**raw, "namespace": "n"})
+        assert seen == [("acme", "code-acme")] * 2
+        for identity in [{"namespace": "code-acme"}, {"namespace": "other"}, {"org": "other"}]:
+            with pytest.raises(AuthInsufficientError):
+                await call({**raw, **identity})
+        assert len(seen) == 2
+        state.grant = None
+        with pytest.raises(AssistantUpstreamError):
+            await call()
+        state.grant = Role.ADMIN
+        state.revoked = True
+        with pytest.raises(AssistantUpstreamError):
+            await call()
+        state.revoked = False
+        # Restricted code still requires an explicit token claim: the answer's
+        # memory-only claim and a creator grant cannot admit this read.
+        monkeypatch.setattr(authz, "may_be_restricted", AsyncMock(return_value=True))
+        with pytest.raises(AssistantUpstreamError):
+            await call()
+        monkeypatch.setattr(authz, "may_be_restricted", AsyncMock(return_value=False))
+        state.principal = replace(
+            state.principal, creator="", roles=(), ns_roles=(("n", "viewer"),)
+        )
+        monkeypatch.setattr(authz, "grant_role_for", AsyncMock(return_value=None))
+        with pytest.raises(AssistantUpstreamError):
+            await call()
+        assert len(seen) == 2
+
+    asyncio.run(scenario())
