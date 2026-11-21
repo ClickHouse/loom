@@ -37,6 +37,8 @@ _INPUTS = frozenset(
         "top_k",
         "limit",
         "agent",
+        "user_id",
+        "session_id",
         "include_body",
         "include_history",
         "include_examples",

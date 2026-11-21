@@ -584,3 +584,151 @@ def test_tool_cost_ceiling_survives_authenticated_mcp_context(
         assert cost_accumulator.current() is parent and parent.cost_usd == previous_cost
 
     asyncio.run(scenario())
+
+
+@pytest.fixture
+def native_row_reader(monkeypatch):
+    from dataclasses import replace
+
+    from fastapi import FastAPI
+
+    from server.auth import authz, delegation
+    from server.auth.jwt import TokenError
+    from server.code.app import member_writes
+    from server.memory.api.models_crud import MemoryGetInput, MemoryGetOutput
+    from server.transport import mcp, mcp_call
+    from tests.unit.mcp_probe import serve_probe
+
+    authorize_op = member_writes.authorize_op
+    probe = serve_probe(monkeypatch)
+    monkeypatch.setattr(member_writes, "authorize_op", authorize_op)
+    principal = replace(
+        probe["tokens"]["alice"],
+        consumer="loom-assistant",
+        token_id="assistant-row-read",
+        creator="parent-user",
+        roles=(Role.ADMIN,),
+        ns_roles=(("n", "viewer"),),
+    )
+    state = SimpleNamespace(principal=principal, grant=Role.ADMIN, revoked=False, seen=[])
+
+    async def creator_grant(org, namespace, creator):
+        assert (org, creator) == ("acme", "parent-user")
+        return state.grant
+
+    async def handler(inp):
+        from server.auth.context import current_auth
+
+        assert isinstance(inp, MemoryGetInput)
+        assert current_auth() == state.principal
+        state.seen.append(inp)
+        found = (inp.user_id, inp.session_id) in {
+            ("person-a", "-"),
+            ("-", "conversation-a"),
+            ("person-a", "conversation-a"),
+        }
+        return MemoryGetOutput(found=found, value="selected row" if found else None)
+
+    def verify(token):
+        assert token == "alice"
+        if state.revoked:
+            raise TokenError("revoked")
+        return state.principal
+
+    monkeypatch.setattr(authz, "_creator_grant", creator_grant)
+    monkeypatch.setattr(authz, "_check_provisioning", AsyncMock())
+    monkeypatch.setattr(authz, "may_be_restricted", AsyncMock(return_value=False))
+    monkeypatch.setattr(authz, "is_org_readable_code_namespace", AsyncMock(return_value=False))
+    monkeypatch.setattr(delegation, "creator_account_active", AsyncMock(return_value=True))
+    monkeypatch.setattr("server.auth.jwt.authenticate_token", AsyncMock(side_effect=verify))
+    original = mcp_call.TOOLS_BY_NAME["loom_memory_get"]
+    assert original.input_model is MemoryGetInput and original.required_role is Role.VIEWER
+    monkeypatch.setitem(
+        mcp_call.TOOLS_BY_NAME, "loom_memory_get", replace(original, handler=handler)
+    )
+    monkeypatch.setattr(settings, "mcp_auth_mode", "required")
+    app = FastAPI()
+    mcp.attach(app)
+    monkeypatch.setattr(tools, "_app", app)
+    return state
+
+
+def test_native_read_descriptors_offer_row_identity_selectors():
+    native = tools.Tools("acme", "n", "alice", "answer-row-read")
+    descriptor = native.descriptors({"memory.get"})[0]["function"]["parameters"]
+    assert {"agent", "user_id", "session_id"} <= descriptor["properties"].keys()
+    assert not {"org", "namespace", "roles", "read_scope"} & descriptor["properties"].keys()
+
+
+@pytest.mark.parametrize(
+    "selectors",
+    [
+        {"user_id": "person-a"},
+        {"session_id": "conversation-a"},
+        {"user_id": "person-a", "session_id": "conversation-a"},
+    ],
+)
+def test_native_row_selectors_reach_authenticated_memory_get(native_row_reader, selectors):
+    async def scenario():
+        native = tools.Tools("acme", "n", "alice", "answer-row-read")
+        receipt = await native.call(
+            "loom_memory_get",
+            {"memory_key": "non-sentinel", "agent": "writer", **selectors},
+            origin="model_tool",
+        )
+        assert receipt.result["found"] is True and receipt.result["value"] == "selected row"
+        [inp] = native_row_reader.seen
+        assert (inp.org, inp.namespace, inp.agent) == ("acme", "n", "writer")
+        assert (inp.user_id, inp.session_id) == (
+            selectors.get("user_id", "-"),
+            selectors.get("session_id", "-"),
+        )
+
+    asyncio.run(scenario())
+
+
+def test_native_row_selectors_keep_token_and_answer_ceilings(native_row_reader):
+    from dataclasses import replace
+
+    from server.core.errors import AuthInsufficientError
+
+    state = native_row_reader
+    state.principal = replace(state.principal, read_scope="own_user", read_user_id="person-a")
+    arguments = {
+        "memory_key": "non-sentinel",
+        "agent": "writer",
+        "user_id": "person-a",
+        "session_id": "conversation-a",
+    }
+
+    async def scenario():
+        native = tools.Tools("acme", "n", "alice", "answer-row-read")
+        assert (await native.call("loom_memory_get", arguments, origin="host_context")).result[
+            "found"
+        ] is True
+        for changed in ({"org": "other"}, {"namespace": "outside"}):
+            with pytest.raises(AuthInsufficientError):
+                await native.call("loom_memory_get", {**arguments, **changed}, origin="model_tool")
+        with pytest.raises(AuthInsufficientError):
+            await native.call("loom_memory_set", arguments, origin="model_tool")
+        with pytest.raises(AssistantUpstreamError):
+            await native.call(
+                "loom_memory_get", {**arguments, "user_id": "other-user"}, origin="model_tool"
+            )
+        for org, namespace in (("acme", "outside"), ("other", "n")):
+            outside = tools.Tools(org, namespace, "alice", "answer-outside")
+            with pytest.raises(AssistantUpstreamError):
+                await outside.call("loom_memory_get", arguments, origin="model_tool")
+        state.grant = None
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "answer-grant-lost").call(
+                "loom_memory_get", arguments, origin="model_tool"
+            )
+        state.grant, state.revoked = Role.ADMIN, True
+        with pytest.raises(AssistantUpstreamError):
+            await tools.Tools("acme", "n", "alice", "answer-revoked").call(
+                "loom_memory_get", arguments, origin="model_tool"
+            )
+        assert len(state.seen) == 1
+
+    asyncio.run(scenario())
