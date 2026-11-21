@@ -1005,6 +1005,16 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CONNECTED_LEASE_WAIT_S` | `float` | `5.0` |  | Seconds a connection change waits for another holder's account-generation lease. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT` | `int` | `4096` |  | Maximum complete owner scan; exceeding it refuses instead of stopping a subset. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Registrations per page during root-secret resealing. |
+| `LOOM_KNOWLEDGE_CRAWL_DIRECTORY_MAX_RESPONSE_BYTES` | `int` | `1048576` |  | Bytes read from one delegated Directory or OAuth response; larger responses refuse. |
+| `LOOM_KNOWLEDGE_CRAWL_DIRECTORY_MAX_PAGES` | `int` | `256` |  | Directory membership pages across the entire expansion, including nested groups. |
+| `LOOM_KNOWLEDGE_CRAWL_MAX_GROUPS` | `int` | `2000` |  | Groups across one complete crawl expansion; the total-person ceiling stays fixed. |
+| `LOOM_KNOWLEDGE_CRAWL_MAX_FILES` | `int` | `10000` |  | Distinct files across every person's complete listing; a larger union publishes nothing. |
+| `LOOM_KNOWLEDGE_CRAWL_REGISTRY_SCAN_LIMIT` | `int` | `4096` |  | Maximum full control-registry scan for cleanup; a larger scan refuses partial work. |
+| `LOOM_KNOWLEDGE_CRAWL_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Org control rows per root-secret reseal page. |
+| `LOOM_KNOWLEDGE_CRAWL_LEASE_TTL_S` | `float` | `60.0` |  | Seconds the renewed org exclusion lease lives; namespace publication leases follow it. |
+| `LOOM_KNOWLEDGE_CRAWL_LEASE_WAIT_S` | `float` | `5.0` |  | Seconds a crawl control change waits for an existing org exclusion lease. |
+| `LOOM_KNOWLEDGE_CRAWL_IDENTITY_CAPTURE_TIMEOUT_S` | `float` | `30.0` |  | Whole pre-delete Directory identity capture across a person's existing crawl sources. |
+| `LOOM_KNOWLEDGE_CRAWL_PERSON_CLEANUP_TIMEOUT_S` | `float` | `60.0` |  | Whole local canonical-person crawl cleanup, including publisher fencing and residue. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_RESPONSE_MAX_BYTES` | `int` | `65536` |  | Bytes read from a connected-account token or identity response; larger metadata replies are refused before parsing. |
 | `LOOM_KNOWLEDGE_SOURCES_MAX_PER_NAMESPACE` | `int` | `8` | live | Active document sources (knowledge.source.add) one namespace may register; an add past it is refused with SOURCE_QUOTA. |

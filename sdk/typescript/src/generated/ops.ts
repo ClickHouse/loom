@@ -4278,6 +4278,19 @@ export interface KnowledgeSearchOutput {
   stale_dropped?: number;
 }
 
+export interface KnowledgeSourceCrawlOptions {
+  /** The delegated Directory reader's address. */
+  directory_subject: string;
+  /** The people and groups to expand, at most 2000 people in total. */
+  subjects: KnowledgeSourceCrawlSubject[];
+}
+
+export interface KnowledgeSourceCrawlSubject {
+  type: "person" | "group";
+  /** The selected person's or group's address. */
+  email: string;
+}
+
 export interface KnowledgeSourceAddInput {
   /** The org. */
   org: string;
@@ -4295,12 +4308,21 @@ export interface KnowledgeSourceAddInput {
   config?: Record<string, unknown> | null;
   /** gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). */
   include?: string[] | null;
-  /** Use the supplied shared credential, or your own mirrored connected account. */
-  credential_mode?: "shared" | "connected";
+  /** Use shared credentials, your connected account, or approved Workspace delegation. */
+  credential_mode?: "shared" | "connected" | "crawl";
+  /** Crawl only: delegation identity and explicit people or groups; default none. */
+  crawl_options?: KnowledgeSourceCrawlOptions | null;
   /** The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an acc */
   credential?: string;
   /** Probe and write nothing. */
   dry_run?: boolean;
+}
+
+export interface KnowledgeSourceCrawlProof {
+  subject_hashes: string[];
+  read_scopes: string[];
+  write_denials: string[];
+  members: number;
 }
 
 export interface KnowledgeSourceProbe {
@@ -4312,6 +4334,7 @@ export interface KnowledgeSourceProbe {
 }
 
 export interface KnowledgeSourceAddOutput {
+  crawl_proof?: KnowledgeSourceCrawlProof | null;
   name: string;
   kind: string;
   namespace: string;
@@ -4383,6 +4406,7 @@ export interface KnowledgeSourceInspectOutput {
   kind: string;
   credential_mode?: string;
   access?: string;
+  crawl_options?: Record<string, unknown>;
   owner_subject?: string;
   items?: Array<Record<string, unknown>>;
   include?: string[];
@@ -4405,6 +4429,7 @@ export interface KnowledgeSourceEntry {
   kind: string;
   credential_mode?: string;
   access?: string;
+  crawl_options?: Record<string, unknown>;
   owner_subject?: string;
   items?: Array<Record<string, unknown>>;
   include?: string[];
@@ -4526,6 +4551,7 @@ export interface KnowledgeSourceRotateInput {
 }
 
 export interface KnowledgeSourceRotateOutput {
+  crawl_proof?: KnowledgeSourceCrawlProof | null;
   name: string;
   probe?: KnowledgeSourceProbe;
   rotated_at?: string;
@@ -4562,11 +4588,16 @@ export interface KnowledgeSourceUpdateInput {
   remove_items?: Array<Record<string, unknown>>;
   /** Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. */
   remove_links?: string[];
+  /** Crawl only: readmit these Directory-verified people after SCIM reactivation; default none. */
+  crawl_readmit?: string[];
+  /** Crawl only: replace the explicit delegation selectors; default unchanged. */
+  crawl_options?: KnowledgeSourceCrawlOptions | null;
   /** gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. */
   include?: string[] | null;
 }
 
 export interface KnowledgeSourceUpdateOutput {
+  crawl_proof?: KnowledgeSourceCrawlProof | null;
   name: string;
   items?: Array<Record<string, unknown>>;
   include?: string[];

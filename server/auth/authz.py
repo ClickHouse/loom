@@ -39,7 +39,7 @@ from server.core.principals import USER, principal_id
 from server.operations.base import GRANT_ROLES, Role, grant_rank, rank_role
 
 if TYPE_CHECKING:
-    from server.auth.jwt import AuthInfo
+    from server.auth.jwt import AuthInfo, AuthorizationClaims
     from server.core.grant_cache import GrantMap
     from server.operations.base import Operation
 
@@ -66,7 +66,7 @@ class _Unknown(Enum):
 _UNKNOWN_GRANT = _Unknown.GRANT
 
 
-def may_act_in_org(auth: AuthInfo, org: str) -> bool:
+def may_act_in_org(auth: AuthorizationClaims, org: str) -> bool:
     """Whether `auth` may act in `org` at all: a token of that org, an
     org-wide (`*`) token, or a platform admin. The one cross-org rule — the
     transports and every handler's same-org check ask this; a restricted
@@ -84,7 +84,7 @@ class ActedForRefused(PermissionError):
     access to an index, so a transport adds no index reason to it."""
 
 
-async def _check_provisioning(auth: AuthInfo | None, org: str | None) -> None:
+async def _check_provisioning(auth: AuthorizationClaims | None, org: str | None) -> None:
     from server.auth import login, scim
     from server.core.errors import BackendUnavailableError, LoomServerError
 
@@ -103,7 +103,7 @@ async def _check_provisioning(auth: AuthInfo | None, org: str | None) -> None:
         raise ActedForRefused(_ACTED_FOR_REVOKED)
 
 
-async def check_acted_for(auth: AuthInfo | None, org: str | None) -> None:
+async def check_acted_for(auth: AuthorizationClaims | None, org: str | None) -> None:
     """Refuse a trusted caller acting for a revoked or SCIM-deactivated subject under any
     spelling it holds, or for an `sa:` subject that is not an active bot or one of its
     agents: a token's own subject, whose grants are the token's and end with it however
@@ -220,6 +220,36 @@ async def check_authorized(
     known_grant: Role | None | _Unknown = _UNKNOWN_GRANT,
     grants: GrantMap | None = None,
 ) -> None:
+    """Authorize an actual request principal with the common claim and live-grant rules."""
+    from server.auth.jwt import AuthInfo
+
+    if namespace is not None and is_mirror_name(namespace):
+        raise PermissionError(MIRROR_REFUSED)
+    if auth is not None and not isinstance(auth, AuthInfo):
+        raise PermissionError("invalid auth principal")
+    await _check_authorized_claims(
+        auth,
+        required_role,
+        org,
+        namespace,
+        deployment_scoped=deployment_scoped,
+        row_scoped=row_scoped,
+        known_grant=known_grant,
+        grants=grants,
+    )
+
+
+async def _check_authorized_claims(
+    auth: AuthorizationClaims | None,
+    required_role: Role,
+    org: str | None = None,
+    namespace: str | None = None,
+    *,
+    deployment_scoped: bool = False,
+    row_scoped: bool = False,
+    known_grant: Role | None | _Unknown = _UNKNOWN_GRANT,
+    grants: GrantMap | None = None,
+) -> None:
     """Raise PermissionError if `auth` lacks `required_role` or access to `(org,
     namespace)`. Consults `loom.namespace_grants` as a fallback when the JWT role alone
     is insufficient. With `auth is None` (LOOM_AUTH_REQUIRED=false) it refuses only a
@@ -231,7 +261,7 @@ async def check_authorized(
     `org` and is decided there. `known_grant` (the grant the gate would read, the
     creator's for a delegated token) and `grants` (the subject's cached grant map, for
     the restricted check): what a caller that already read them hands in."""
-    from server.auth.jwt import AuthInfo  # circular import sidestep
+    from server.auth.jwt import AuthorizationClaims  # circular import sidestep
 
     # A mirror opens to no token, with auth off too: only the stores' own workers reach one.
     if namespace is not None and is_mirror_name(namespace):
@@ -239,7 +269,7 @@ async def check_authorized(
     if auth is None:
         return
 
-    if not isinstance(auth, AuthInfo):  # defensive
+    if not isinstance(auth, AuthorizationClaims):  # defensive
         raise PermissionError("invalid auth principal")
 
     # A cell serves only the orgs it holds: the routes outside the op registry
@@ -376,7 +406,11 @@ async def check_authorized(
 
 
 def _check_scoped_without_target(
-    auth: AuthInfo, required_role: Role, org: str | None, deployment_scoped: bool, row_scoped: bool
+    auth: AuthorizationClaims,
+    required_role: Role,
+    org: str | None,
+    deployment_scoped: bool,
+    row_scoped: bool,
 ) -> None:
     """A scoped token on an op that names no (org, namespace): admitted on its
     best role anywhere for a row- or deployment-scoped op, else 400."""
@@ -403,7 +437,11 @@ def _check_scoped_without_target(
 
 
 async def _grant_role(
-    auth: AuthInfo, org: str, namespace: str, cap: int | None, known_grant: Role | None | _Unknown
+    auth: AuthorizationClaims,
+    org: str,
+    namespace: str,
+    cap: int | None,
+    known_grant: Role | None | _Unknown,
 ) -> Role | None:
     """The grant the subject holds there. Where its claim is capped, the cap's
     read decides for the subject itself: it covers every spelling consistently,
@@ -424,7 +462,7 @@ async def _grant_role(
 
 
 async def _check_creator(
-    auth: AuthInfo, required_role: Role, org: str | None, namespace: str | None
+    auth: AuthorizationClaims, required_role: Role, org: str | None, namespace: str | None
 ) -> None:
     """A delegated token stops when its creator's account is disabled. An op
     with no namespace has no grant to recheck, so a write there needs the
@@ -449,7 +487,7 @@ async def _check_creator(
 
 
 async def _check_delegated(
-    auth: AuthInfo,
+    auth: AuthorizationClaims,
     required_role: Role,
     org: str,
     namespace: str,
@@ -513,7 +551,7 @@ async def may_be_restricted(org: str, namespace: str) -> bool:
         return True
 
 
-def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
+def names_namespace(auth: AuthorizationClaims, org: str, namespace: str) -> bool:
     """True when the token names `namespace` literally — in its `namespaces`
     claim or its `ns_roles` map. A wildcard (`*`) never counts: a restricted
     namespace must be asked for by name at mint time."""
@@ -525,7 +563,7 @@ def names_namespace(auth: AuthInfo, org: str, namespace: str) -> bool:
 
 
 def _scoped_role(
-    auth: AuthInfo, required_role: Role, org: str, namespace: str, *, cap: int | None
+    auth: AuthorizationClaims, required_role: Role, org: str, namespace: str, *, cap: int | None
 ) -> Role | None:
     """The role a scoped token holds on (org, namespace) for this op: its own,
     capped at the subject's live grant where it holds one. None for a write
@@ -573,7 +611,7 @@ def _capped_message(org: str, namespace: str, required_role: Role) -> str:
     )
 
 
-async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
+async def claim_cap(auth: AuthorizationClaims, org: str, namespace: str) -> int | None:
     """The live grant rank this token's claim on `namespace` is capped at (0:
     none live), where the token names it and its subject holds a grant row
     there of any status. None where the subject never held one (an operator's
@@ -585,7 +623,7 @@ async def claim_cap(auth: AuthInfo, org: str, namespace: str) -> int | None:
     return (await grant_map(org, auth.subject)).rank(namespace)
 
 
-async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> list[str]:
+async def live_claims(auth: AuthorizationClaims, org: str, namespaces: Iterable[str]) -> list[str]:
     """The named `namespaces` (no `*`), in order, that the claim still reaches:
     all but those capped at a grant that is no longer live."""
     return [ns for ns in namespaces if ns and ns != "*" and await claim_cap(auth, org, ns) != 0]
@@ -593,7 +631,7 @@ async def live_claims(auth: AuthInfo, org: str, namespaces: Iterable[str]) -> li
 
 @marks_unverified
 async def _check_restricted(
-    auth: AuthInfo,
+    auth: AuthorizationClaims,
     required_role: Role,
     org: str,
     namespace: str,
@@ -645,7 +683,7 @@ async def _check_restricted(
 
 
 async def restricted_allows(
-    auth: AuthInfo,
+    auth: AuthorizationClaims,
     required_role: Role,
     org: str,
     namespace: str,

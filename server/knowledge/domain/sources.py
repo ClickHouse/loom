@@ -130,6 +130,13 @@ class KnowledgeSource:
     # Connected authority is explicit; created_by remains audit attribution only.
     owner_subject: str = ""
     connection_id: str = ""
+    # Crawl authority is independent of connected ownership and audit attribution.
+    crawl_options: dict[str, Any] = field(default_factory=dict)
+    registrant_subject: str = ""
+    approval_enc: str = ""
+    crawl_generation: str = ""
+    crawl_customer_id: str = ""
+    crawl_credential_hash: str = ""
     created_by: str = ""
     active: bool = True
     # On an inactive row: an admin asked for the source's documents to be retired.
@@ -572,7 +579,7 @@ def mirror_synced(src: KnowledgeSource) -> bool:
     """Whether the sync worker writes `src` into its namespace's mirror: a mirrored
     folder-store source or a person's connected page/project source."""
     return src.access == MIRRORED_ACCESS and (
-        src.kind == "gdrive"
+        (src.kind == "gdrive" and src.credential_mode in {"shared", "connected", "crawl"})
         or (src.credential_mode == "connected" and src.kind in {"notion", "linear"})
     )
 

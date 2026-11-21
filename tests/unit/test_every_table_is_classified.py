@@ -1,6 +1,6 @@
 """Every `loom.*` and `loom_telemetry.*` table is a census row, a documented
-step-only table, canonical-owner cleanup or a NO_MEMORY_CONTENT entry with a reason. A CREATE TABLE
-in schema.sql that is in none of the four lists fails
+step-only table, canonical-owner or canonical-person cleanup, or NO_MEMORY_CONTENT entry.
+A CREATE TABLE in schema.sql that is in none of the five lists fails
 here, so a new table is classified the day it lands. CH-free."""
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def test_every_schema_table_is_classified() -> None:
     classified = erasure_census.classified_tables()
     missing = sorted(_schema_tables() - set(classified))
     assert not missing, (
-        "tables in schemas/schema.sql that are in neither _CENSUS, STEP_ONLY_TABLES, CANONICAL_OWNER_TABLES nor "
+        "tables in schemas/schema.sql that are in neither _CENSUS, STEP_ONLY_TABLES, CANONICAL_OWNER_TABLES, CANONICAL_PERSON_TABLES nor "
         f"NO_MEMORY_CONTENT (server/erasure/store/census.py): {missing}"
     )
 
@@ -39,14 +39,22 @@ def test_the_registry_names_only_tables_that_exist() -> None:
     assert not {s.table for s in erasure_census._CENSUS} - tables
     assert not set(sum(erasure_census.STEP_ONLY_TABLES.values(), ())) - tables
     assert not set(erasure_census.CANONICAL_OWNER_TABLES) - tables
+    assert not set(erasure_census.CANONICAL_PERSON_TABLES) - tables
     assert not set(erasure_census.NO_MEMORY_CONTENT) - tables
 
 
-def test_the_four_lists_are_disjoint_and_every_reason_is_written() -> None:
+def test_the_five_lists_are_disjoint_and_every_reason_is_written() -> None:
     census = {s.table for s in erasure_census._CENSUS}
     step_only = set(sum(erasure_census.STEP_ONLY_TABLES.values(), ()))
     no_content = set(erasure_census.NO_MEMORY_CONTENT)
     canonical = set(erasure_census.CANONICAL_OWNER_TABLES)
+    people = set(erasure_census.CANONICAL_PERSON_TABLES)
+    assert not people & (census | step_only | no_content | canonical)
+    assert erasure_census.CANONICAL_PERSON_TABLES == {
+        "loom.scim_users": "crawl_person.finalize",
+        "loom.knowledge_crawl_exclusion_keys": "crawl_person.exclude",
+        "loom.knowledge_crawl_exclusions": "crawl_person.exclude",
+    }
     assert not canonical & (census | step_only | no_content)
     for table, step in erasure_census.CANONICAL_OWNER_TABLES.items():
         assert table.startswith("loom.") and step.endswith(".erase"), (table, step)

@@ -26,7 +26,10 @@ SEALED: tuple[tuple[str, str, tuple[str, ...], str, str], ...] = (
     ("loom.qa_sources", "password_enc", (), "qa_sources.password", ""),
     ("loom.knowledge_sources", "credential_enc", (), "knowledge_sources.credential", ""),
     ("loom.knowledge_sources", "secret_enc", (), "knowledge_sources.secret", ""),
+    ("loom.knowledge_sources", "approval_enc", (), "knowledge_crawl.approval", ""),
+    ("loom.knowledge_crawl_exclusion_keys", "key_enc", (), "knowledge_crawl.exclusion_key", ""),
     ("loom.knowledge_source_push", "secret_enc", (), "knowledge_source_push.secret", ""),
+    ("loom.scim_users", "crawl_erasure_enc", (), "auth.crawl_person_erasure", ""),
     ("loom.connected_accounts", "credential_enc", (), "connected_accounts.credential", ""),
     ("loom.connected_accounts", "account_email_enc", (), "connected_accounts.email", ""),
     ("loom.provider_configuration", "envelope", (), "model-provider-configuration", ""),
@@ -58,6 +61,8 @@ _KEYS = {
     "loom.knowledge_sources": ("org", "namespace", "name"),
     "loom.knowledge_source_push": ("org", "namespace", "source_id"),
     "loom.connected_accounts": ("org", "subject", "kind"),
+    "loom.knowledge_crawl_exclusion_keys": ("org",),
+    "loom.scim_users": ("id",),
     "loom.provider_configuration": ("config_id",),
     "loom.oauth_state": ("record_type", "id"),
     "loom.analysis_secrets": ("id",),
@@ -131,6 +136,137 @@ async def _check_previous(ch: Any) -> bool:
     return bool(recorded)
 
 
+def _resealed_rows(
+    table: str,
+    column: str,
+    path: tuple[str, ...],
+    purpose: str,
+    rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    out = []
+    unopened = []
+    for row in rows:
+        new, opens = _resealed_value(str(row[column]), path, purpose)
+        if not opens:
+            unopened.append("/".join(str(row[k]) for k in _KEYS[table]))
+        if new is not None:
+            out.append({**row, column: new, "version": int(row["version"]) + 1})
+    return out, unopened
+
+
+async def _reseal_source_values(
+    ch: Any,
+    column: str,
+    purpose: str,
+    *,
+    dry_run: bool,
+) -> tuple[int, list[str]]:
+    from server.core.ch import own_write_reads
+    from server.knowledge.app.sources import sources_lease
+    from server.knowledge.store import sources as source_store
+
+    if column not in {"credential_enc", "secret_enc"}:
+        raise ValueError("source ciphertext column refused")
+    namespaces = await ch.query_all(
+        "SELECT DISTINCT org, namespace FROM loom.knowledge_sources FINAL "
+        f"WHERE {column} != '' ORDER BY org, namespace"
+    )
+    count, lost = 0, []
+    for scope in namespaces:
+        async with sources_lease(scope["org"], scope["namespace"], ch=ch):
+            # Canonical-person cleanup holds this same lease. The fresh read
+            # selects ciphertext; even a late mutation writes no metadata.
+            query = (
+                "SELECT * FROM loom.knowledge_sources FINAL "
+                "WHERE org = {org:String} AND namespace = {ns:String} "
+                f"AND {column} != ''"
+            )
+            params = {"org": scope["org"], "ns": scope["namespace"]}
+            with own_write_reads():
+                rows = await ch.query_all(query, params=params)
+            for row in rows:
+                new, opens = _resealed_value(str(row[column]), (), purpose)
+                if not opens:
+                    lost.append("/".join(str(row[k]) for k in _KEYS["loom.knowledge_sources"]))
+                if new is not None:
+                    if not dry_run:
+                        await source_store.reseal_source_ciphertext(
+                            scope["org"],
+                            scope["namespace"],
+                            row["name"],
+                            str(row["source_id"]),
+                            column,
+                            str(row[column]),
+                            new,
+                            ch=ch,
+                        )
+                    count += 1
+    return count, lost
+
+
+async def _registry_reseal(
+    ch: Any,
+    table: str,
+    column: str,
+    purpose: str,
+    *,
+    dry_run: bool,
+) -> tuple[int, list[str]] | None:
+    if table == "loom.knowledge_sources" and column in {"credential_enc", "secret_enc"}:
+        return await _reseal_source_values(ch, column, purpose, dry_run=dry_run)
+    if table == "loom.knowledge_crawl_exclusion_keys" or (
+        table == "loom.knowledge_sources" and column == "approval_enc"
+    ):
+        from server.knowledge.app import crawl_reseal
+
+        reseal = crawl_reseal.keys if column == "key_enc" else crawl_reseal.approvals
+        n, missing = await reseal(dry_run=dry_run, ch=ch)
+        return n, missing
+    if table == "loom.scim_users" and column == "crawl_erasure_enc":
+        from server.auth.person_erasure import reseal_registry as reseal_people
+
+        n, missing = await reseal_people(dry_run=dry_run, ch=ch)
+        return n, missing
+    if table == "loom.connected_accounts":
+        from server.knowledge.app.connected_accounts import reseal_registry as reseal_accounts
+
+        n, missing = await reseal_accounts(column, purpose, dry_run=dry_run, ch=ch)
+        return n, missing
+    if table == "loom.knowledge_source_push":
+        # This registry is physically erased. Its writer fence and re-read
+        # under the source lease prevent a scanned row from reviving it.
+        from server.knowledge.app.source_push import reseal_registry
+
+        n, missing = await reseal_registry(dry_run=dry_run, ch=ch)
+        return n, missing
+    return None
+
+
+async def _ordinary_reseal(
+    ch: Any,
+    table: str,
+    column: str,
+    path: tuple[str, ...],
+    purpose: str,
+    where: str,
+    *,
+    dry_run: bool,
+) -> tuple[int, list[str]]:
+    async with contextlib.AsyncExitStack() as held:
+        if table in _LEASED:
+            from server.core.ch import own_write_reads
+
+            await held.enter_async_context(_LEASED[table](ch))
+            held.enter_context(own_write_reads())
+        rows = await ch.query_all(
+            f"SELECT * FROM {table} FINAL WHERE {column} != ''" + (f" AND {where}" if where else "")
+        )
+        out, missing = _resealed_rows(table, column, path, purpose, rows)
+        if out and not dry_run:
+            await ch.insert(table, out, settings={"async_insert": 0})
+        return len(out), missing
+
+
 async def reseal_all(
     ch: Any, *, dry_run: bool
 ) -> tuple[dict[str, int], dict[str, list[str]], bool]:
@@ -149,50 +285,15 @@ async def reseal_all(
     counts: dict[str, int] = {}
     lost: dict[str, list[str]] = {}
     for table, column, path, purpose, where in SEALED:
-        if table == "loom.connected_accounts":
-            from server.knowledge.app.connected_accounts import reseal_registry as reseal_accounts
-
-            n, missing = await reseal_accounts(column, purpose, dry_run=dry_run, ch=ch)
-            counts[f"{table}.{column}"] = n
-            if missing:
-                lost[f"{table}.{column}"] = missing
-            continue
-        if table == "loom.knowledge_source_push":
-            # This registry is physically erased. Its writer fence and re-read
-            # under the source lease prevent a scanned row from reviving it.
-            from server.knowledge.app.source_push import reseal_registry
-
-            n, missing = await reseal_registry(dry_run=dry_run, ch=ch)
-            counts[f"{table}.{column}"] = n
-            if missing:
-                lost[f"{table}.{column}"] = missing
-            continue
-        async with contextlib.AsyncExitStack() as held:
-            if table in _LEASED:
-                # One writer of the row at a time, reading the newest copy.
-                from server.core.ch import own_write_reads
-
-                await held.enter_async_context(_LEASED[table](ch))
-                held.enter_context(own_write_reads())
-            rows = await ch.query_all(
-                f"SELECT * FROM {table} FINAL WHERE {column} != ''"
-                + (f" AND {where}" if where else "")
+        result = await _registry_reseal(ch, table, column, purpose, dry_run=dry_run)
+        if result is None:
+            result = await _ordinary_reseal(
+                ch, table, column, path, purpose, where, dry_run=dry_run
             )
-            out = []
-            unopened: list[str] = []
-            for row in rows:
-                new, opens = _resealed_value(str(row[column]), path, purpose)
-                if not opens:
-                    unopened.append("/".join(str(row[k]) for k in _KEYS[table]))
-                if new is not None:
-                    # The lowest version above the one read: an edit written
-                    # meanwhile (at the server's clock) stays the newer row.
-                    out.append({**row, column: new, "version": int(row["version"]) + 1})
-            counts[f"{table}.{column}"] = len(out)
-            if unopened:
-                lost[f"{table}.{column}"] = unopened
-            if out and not dry_run:
-                await ch.insert(table, out, settings={"async_insert": 0})
+        n, missing = result
+        counts[f"{table}.{column}"] = n
+        if missing:
+            lost[f"{table}.{column}"] = missing
     return counts, lost, checked
 
 

@@ -62,6 +62,16 @@ CANONICAL_OWNER_TABLES: dict[str, str] = {
 }
 
 
+# Canonical-person cleanup has no memory user_id or namespace axis. Capsules are
+# physically scrubbed; keyed refusal intent deliberately survives that scrub so
+# a rescan, sign-in recreation or restored source cannot readmit the person.
+CANONICAL_PERSON_TABLES: dict[str, str] = {
+    "loom.scim_users": "crawl_person.finalize",
+    "loom.knowledge_crawl_exclusion_keys": "crawl_person.exclude",
+    "loom.knowledge_crawl_exclusions": "crawl_person.exclude",
+}
+
+
 # One census row per substrate: the live predicate the census counts ("1" =
 # every row), the user-scope predicate (None → namespace-only), and the saga
 # step that owns it in each scope. Zero live rows in scope is the only pass.
@@ -691,10 +701,6 @@ NO_MEMORY_CONTENT: dict[str, str] = {
     "loom.sso_links": (
         "auth plane: verified account links and signed issuer/domain evidence; no memory content."
     ),
-    "loom.scim_users": (
-        "auth plane: the people the identity provider provisions (email, the emails "
-        "list it sent, userName, active) and the subjects a deactivation revoked; no memory."
-    ),
     "loom.oauth_signin_state": (
         "auth plane: Keeper sign-in state (codes, devices, sessions), including optional "
         "verified sign-in email metadata; no memory content."
@@ -781,7 +787,7 @@ NO_MEMORY_CONTENT: dict[str, str] = {
 
 def classified_tables() -> dict[str, str]:
     """Every table the registry knows → which list holds it
-    (`census` | `step_only` | `no_memory_content` | `canonical_owner`)."""
+    (`census` | `step_only` | `no_memory_content` | `canonical_owner` | `canonical_person`)."""
     out: dict[str, str] = {}
     for sub in _CENSUS:
         out[sub.table] = "census"
@@ -792,6 +798,8 @@ def classified_tables() -> dict[str, str]:
         out.setdefault(t, "no_memory_content")
     for t in CANONICAL_OWNER_TABLES:
         out.setdefault(t, "canonical_owner")
+    for t in CANONICAL_PERSON_TABLES:
+        out.setdefault(t, "canonical_person")
     return out
 
 
@@ -1066,3 +1074,30 @@ async def connected_restore_residue(*, ch: _CHClient | None = None) -> int:
             raise RuntimeError("connected_restore_census_unavailable")
         total += int(row["n"])
     return total
+
+
+async def crawl_refusal_residue(
+    org: str,
+    digests: list[str],
+    *,
+    excluded: bool,
+    ch: _CHClient | None = None,
+) -> int:
+    """Count missing or contrary retained refusal intent before releasing its fence."""
+    if not digests or any(
+        len(value) != 64 or any(char not in "0123456789abcdef" for char in value)
+        for value in digests
+    ):
+        raise ValueError("crawl refusal census scope refused")
+    requested = set(digests)
+    rows = await (ch or _default_client()).query_all(
+        "SELECT digest, excluded FROM loom.knowledge_crawl_exclusions FINAL "
+        "WHERE org = {org:String} AND digest IN {digests:Array(String)} LIMIT {limit:UInt32}",
+        params={"org": org, "digests": sorted(requested), "limit": len(requested)},
+    )
+    if len(rows) != len({row["digest"] for row in rows}) or any(
+        row["digest"] not in requested or row["excluded"] not in (0, 1) for row in rows
+    ):
+        raise RuntimeError("crawl_refusal_census_unverified")
+    verified = {row["digest"] for row in rows if bool(row["excluded"]) is excluded}
+    return len(requested - verified)

@@ -61,7 +61,8 @@ async def listings(
     if not pairs:
         return []
     return await (ch or _default_client()).query_all(
-        "SELECT namespace, source_id, started_at FROM loom.knowledge_source_listings FINAL "
+        "SELECT namespace, source_id, started_at, crawl_exclusion_generation, crawl_generation "
+        "FROM loom.knowledge_source_listings FINAL "
         "WHERE org = {org:String} AND (namespace, source_id) "
         "IN {pairs:Array(Tuple(String, String))} "
         "LIMIT {limit:UInt32}",

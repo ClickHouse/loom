@@ -23,7 +23,7 @@ from server.auth import authz
 from server.auth import jwt as jwt_mod
 from server.auth.authz import grant_role
 from server.auth.fail_closed import note_unreadable, unreadable
-from server.auth.jwt import AuthInfo, TokenError
+from server.auth.jwt import AuthInfo, AuthorizationClaims, TokenError
 from server.core.grant_sql import GRANT_RANK_SQL, LIVE_GRANT
 from server.observability.metrics import record_auth_refusal
 from server.operations.base import GRANT_ROLES, Role, grant_rank
@@ -369,7 +369,9 @@ def _lower(a: Role | None, b: Role | None) -> Role | None:
     return min(a, b)
 
 
-def ceiling_role(token: AuthInfo, org: str, namespace: str, *, write: bool = False) -> Role | None:
+def ceiling_role(
+    token: AuthorizationClaims, org: str, namespace: str, *, write: bool = False
+) -> Role | None:
     """The most `token` itself allows on `namespace`, at most admin. A scoped
     token's `ns_roles` entry; a delegated flat token's role where its claim
     covers the namespace (`write`: its write claim); a primary flat token's

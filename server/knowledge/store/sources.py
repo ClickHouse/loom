@@ -2,14 +2,15 @@
 each source's sync state (a `loom.code_index_state` row under
 `knowledge_source:<name>`).
 
-Both tables are ReplacingMergeTree(version): every write is a full version row
-and every read uses FINAL. A registry row changes only on add, update, rotate, remove
+Ordinary writes use ReplacingMergeTree(version) rows; latest-version reads use
+FINAL. Canonical-person cleanup redacts raw history under the namespace lease.
+A registry row otherwise changes on add, update, rotate, remove
 and the retirement when its namespace goes (`code.repo.remove`, `namespace.delete`,
 `collection.delete`, the erasure step `knowledge_sources.retire`), all under the
-namespace's lease, and on `loom secrets reseal`, the one writer outside it: it
-writes the row it read at version + 1, so any later write wins while the ClickHouse
-servers' clocks differ by less than the time between the two writes. The sync state is
-a separate row, so a sync never rewrites the row that holds the credential.
+namespace's lease. `loom secrets reseal` takes the same lease and reads the newest
+ciphertext before conditionally updating only that column across its history.
+Even a late statement cannot revive metadata removed by canonical-person cleanup.
+The sync state is a separate row, so a sync never rewrites the credential row.
 
 A source a build without items can read (`id_list_config` is not None) is written as
 that build writes it, `kind`, `config_json` and the credential in `credential_enc`,
@@ -26,9 +27,11 @@ import json
 from datetime import datetime
 from typing import Any, Literal, NamedTuple
 
+from server.core.ch import own_write_reads
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.repo_base import _CHClient, _default_client
 from server.knowledge.domain.live_chunks import has_live_chunks_sql
+from server.knowledge.domain.source_crawl import Options, without_selectors
 from server.knowledge.domain.sources import (
     NAMESPACE_ACCESS,
     SYNC_WORKER_ACTOR,
@@ -53,9 +56,131 @@ REVISIONS_PAGE = 10_000  # not a setting: a bound on one statement
 _COLUMNS = (
     "org, namespace, name, source_id, kind, source_kind, config_json, items_json, "
     "credential_enc, secret_enc, access, credential_mode, owner_subject, connection_id, "
+    "options_json, registrant_subject, approval_enc, crawl_generation, "
+    "crawl_customer_id, crawl_credential_hash, "
     "created_by, active, pending_delete, created_at, "
     "updated_at"
 )
+
+
+async def crawl_approval_page(
+    after: tuple[str, str, str], *, maximum: int, ch: _CHClient | None = None
+) -> list[tuple[str, str, str]]:
+    if type(maximum) is not int or maximum <= 0:
+        raise ValueError("crawl approval page bound refused")
+    with own_write_reads():
+        rows = await (ch or _default_client()).query_all(
+            f"SELECT DISTINCT org, namespace, name FROM {TABLE} "
+            "WHERE (org, namespace, name) > {after:Tuple(String, String, String)} "
+            "AND approval_enc != '' ORDER BY org, namespace, name LIMIT {limit:UInt32}",
+            params={"after": after, "limit": maximum},
+        )
+    keys = [(str(row["org"]), str(row["namespace"]), str(row["name"])) for row in rows]
+    if len(keys) > maximum or keys != sorted(set(keys)) or any(key <= after for key in keys):
+        raise RuntimeError("crawl_approval_page_unverified")
+    return keys
+
+
+async def crawl_approval_values(
+    org: str,
+    namespace: str,
+    name: str,
+    *,
+    maximum: int,
+    ch: _CHClient,
+) -> list[dict[str, Any]]:
+    rows = await ch.query_all(
+        f"SELECT DISTINCT toString(source_id) AS source_id, approval_enc FROM {TABLE} "
+        "WHERE org = {org:String} AND namespace = {ns:String} AND name = {name:String} "
+        "AND credential_mode = 'crawl' AND approval_enc != '' LIMIT {limit:UInt32}",
+        params={"org": org, "ns": namespace, "name": name, "limit": maximum + 1},
+    )
+    if len(rows) > maximum:
+        raise RuntimeError("crawl_approval_history_bound")
+    return rows
+
+
+async def reseal_crawl_approval(
+    org: str,
+    namespace: str,
+    source_id: str,
+    before: str,
+    after: str,
+    *,
+    ch: _CHClient,
+) -> None:
+    where = (
+        "org = {org:String} AND namespace = {ns:String} AND source_id = {id:String} "
+        "AND credential_mode = 'crawl' AND approval_enc = {old:String}"
+    )
+    params = {"org": org, "ns": namespace, "id": source_id, "old": before, "new": after}
+    await ch.execute(
+        f"ALTER TABLE {TABLE} UPDATE approval_enc = {{new:String}} WHERE {where}",
+        params=params,
+        settings={"mutations_sync": 2},
+    )
+    residue = await ch.query_one(f"SELECT count() AS n FROM {TABLE} WHERE {where}", params=params)
+    if residue is None or residue["n"]:
+        raise RuntimeError("crawl_approval_reseal_residue")
+
+
+async def reseal_source_ciphertext(
+    org: str,
+    namespace: str,
+    name: str,
+    source_id: str,
+    column: str,
+    before: str,
+    after: str,
+    *,
+    ch: _CHClient,
+) -> None:
+    if column not in {"credential_enc", "secret_enc"}:
+        raise ValueError("source ciphertext column refused")
+    where = (
+        "org = {org:String} AND namespace = {ns:String} AND name = {name:String} "
+        f"AND source_id = {{id:String}} AND {column} = {{old:String}}"
+    )
+    params = {
+        "org": org,
+        "ns": namespace,
+        "name": name,
+        "id": source_id,
+        "old": before,
+        "new": after,
+    }
+    # Copy no metadata: a late statement cannot restore canonical-person data.
+    await ch.execute(
+        f"ALTER TABLE loom.knowledge_sources UPDATE {column} = {{new:String}} WHERE {where}",
+        params=params,
+        settings={"mutations_sync": 2},
+    )
+    residue = await ch.query_one(
+        f"SELECT count() AS n FROM loom.knowledge_sources WHERE {where}",
+        params=params,
+    )
+    if residue is None or residue["n"]:
+        raise RuntimeError("source_reseal_residue")
+
+
+async def crawl_history(
+    org: str, *, maximum: int, ch: _CHClient | None = None
+) -> list[KnowledgeSource]:
+    """Raw registrations include retired sources and earlier names, not only FINAL rows."""
+    if not isinstance(org, str) or not org or type(maximum) is not int or maximum <= 0:
+        raise ValueError("crawl history scope refused")
+    with own_write_reads():
+        rows = await (ch or _default_client()).query_all(
+            f"SELECT DISTINCT {_COLUMNS} FROM {TABLE} WHERE org = {{org:String}} "
+            "AND credential_mode = 'crawl' "
+            "ORDER BY namespace, name, source_id, updated_at LIMIT {limit:UInt32}",
+            params={"org": org, "limit": maximum + 1},
+        )
+    if len(rows) > maximum or any(
+        row["org"] != org or row["credential_mode"] != "crawl" for row in rows
+    ):
+        raise RuntimeError("crawl_history_unverified")
+    return [_source(row) for row in rows]
 
 
 def _items(raw: str) -> list[dict[str, Any]]:
@@ -65,6 +190,17 @@ def _items(raw: str) -> list[dict[str, Any]]:
     except ValueError:
         return []
     return [i for i in data if isinstance(i, dict)] if isinstance(data, list) else []
+
+
+def _crawl_options(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("credential_mode") != "crawl":
+        return {}
+    raw = str(row.get("options_json") or "{}")
+    if row.get("active"):
+        return json_object(Options.parse(json.loads(raw)).stored())
+    # Retired rows may lack their directory subject or final person selector.
+    without_selectors(raw, frozenset())
+    return json_object(raw)
 
 
 def _source(row: dict[str, Any]) -> KnowledgeSource:
@@ -87,6 +223,12 @@ def _source(row: dict[str, Any]) -> KnowledgeSource:
         credential_mode=str(row.get("credential_mode") or "shared"),
         owner_subject=str(row.get("owner_subject") or ""),
         connection_id=str(row.get("connection_id") or ""),
+        crawl_options=_crawl_options(row),
+        registrant_subject=str(row.get("registrant_subject") or ""),
+        approval_enc=str(row.get("approval_enc") or ""),
+        crawl_generation=str(row.get("crawl_generation") or ""),
+        crawl_customer_id=str(row.get("crawl_customer_id") or ""),
+        crawl_credential_hash=str(row.get("crawl_credential_hash") or ""),
         created_by=str(row.get("created_by") or ""),
         active=bool(row.get("active")),
         pending_delete=bool(row.get("pending_delete")),
@@ -275,6 +417,17 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
     writing replica's: the lease-serialized writes stay ordered while those clocks
     differ by less than the lease's handoff between writes."""
     now = naive_utc_now_seconds()
+    options = json.dumps(
+        _crawl_options(
+            {
+                "credential_mode": src.credential_mode,
+                "active": src.active,
+                "options_json": json.dumps(src.crawl_options),
+            }
+        ),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     row = {
         "org": src.org,
         "namespace": src.namespace,
@@ -290,6 +443,12 @@ async def insert_source(src: KnowledgeSource, *, ch: _CHClient | None = None) ->
         "credential_mode": src.credential_mode,
         "owner_subject": src.owner_subject,
         "connection_id": src.connection_id,
+        "options_json": options,
+        "registrant_subject": src.registrant_subject,
+        "approval_enc": src.approval_enc,
+        "crawl_generation": src.crawl_generation,
+        "crawl_customer_id": src.crawl_customer_id,
+        "crawl_credential_hash": src.crawl_credential_hash,
         "created_by": src.created_by,
         "active": src.active,
         "pending_delete": src.pending_delete,

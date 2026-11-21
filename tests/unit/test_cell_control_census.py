@@ -181,6 +181,8 @@ GENERIC_SQL_EXCLUSIONS = {
         ("copy_sql", "INSERT INTO", "loom.{dst}"): 1,
         ("apply", "DROP TABLE", "loom.{twin}"): 2,
     },
+    # The token selects a source metadata column, not a cell control table.
+    "server/erasure/store/crawl_controls.py": {("controls", "UPDATE", "{field}"): 1},
     "server/erasure/store/mutations.py": {
         ("run_mutation", "ALTER TABLE", "{table}"): 1,
         ("run_lightweight_delete", "DELETE FROM", "{table}"): 1,
@@ -254,7 +256,10 @@ GENERIC_SQL_EXCLUSIONS = {
     },
     "server/knowledge/store/restore.py": {("unretire", "DELETE FROM", "{SUPERSESSIONS_TABLE}"): 1},
     # The stopped owner and namespace lease scope deletion to knowledge sources.
-    "server/knowledge/store/sources.py": {("erase_connected_owner", "DELETE FROM", "{TABLE}"): 1},
+    "server/knowledge/store/sources.py": {
+        ("erase_connected_owner", "DELETE FROM", "{TABLE}"): 1,
+        ("reseal_crawl_approval", "ALTER TABLE", "{TABLE}"): 1,
+    },
     "server/memory/app/reembed.py": {
         ("in_database_sql", "INSERT INTO", "loom.{table}"): 1,
         ("delete_off_model", "DELETE FROM", "loom.{table}"): 1,

@@ -9,10 +9,11 @@ issued-before cutoff that spares a re-mint.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jwt
@@ -93,9 +94,45 @@ class KeyringUnavailable(AuthUnavailable):
     `jwt_revocation_max_stale_seconds`, so a retired kid may not be known."""
 
 
+def _key_fingerprint(key: Any) -> str:
+    value = key.encode() if isinstance(key, str) else key
+    if not isinstance(value, bytes):
+        from cryptography.hazmat.primitives import serialization
+
+        value = key.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    return hashlib.sha256(value).hexdigest()
+
+
+@dataclass(frozen=True, repr=False)
+class SigningAuthority:
+    """The successful verifier's identity, not a bearer or a stored signing key."""
+
+    issuer: str
+    kid: str
+    algorithm: str
+    fingerprint: str
+
+    def current(self) -> bool:
+        from server.auth import keyring
+
+        return (
+            keyring.loaded()
+            and not keyring.stale()
+            and self.issuer in settings.trusted_issuers()
+            and self.algorithm in keyring.ALGORITHMS
+            and bool(self.fingerprint)
+            and any(
+                secrets.compare_digest(self.fingerprint, _key_fingerprint(key))
+                for key in keyring.verification_keys(self.kid, self.algorithm)
+            )
+        )
+
+
 @dataclass(frozen=True)
-class AuthInfo:
-    """The authenticated principal. Passed through to handlers."""
+class AuthorizationClaims:
+    """Verified claim metadata, without making it an incoming request principal."""
 
     subject: str  # effective subject (post-impersonation if any)
     org: str
@@ -181,6 +218,8 @@ class AuthInfo:
     issued_at: int | None = None
     # `exp` as unix seconds; None for a token without one.
     expires_at: int | None = None
+    # Filled only by the normal verifier after it finds the actual successful key.
+    signing_authority: SigningAuthority | None = field(default=None, repr=False)
 
     def has_role(self, required: Role) -> bool:
         return any(r.value >= required.value for r in self.roles)
@@ -231,6 +270,11 @@ class AuthInfo:
         if self.org != "*" and self.org != org:
             return False
         return namespace in self.write_namespaces or "*" in self.write_namespaces
+
+
+@dataclass(frozen=True)
+class AuthInfo(AuthorizationClaims):
+    """An authenticated request principal, passed through to handlers."""
 
 
 # The `read_scope` claim's values, widest first.
@@ -414,7 +458,7 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
     trusted = settings.trusted_issuers()
 
     try:
-        decoded = _decode(token, candidates, algorithm)
+        decoded, fingerprint = _decode(token, candidates, algorithm)
     except jwt.ExpiredSignatureError as e:
         raise TokenError(f"token expired: {e}", reason="expired") from e
     except jwt.PyJWTError as e:  # InvalidKeyError is not an InvalidTokenError
@@ -480,6 +524,11 @@ def verify_token(token: str, *, secret: str | None = None) -> AuthInfo:
         first_party=_bool_claim(decoded, "fps"),
         issued_at=_iat_of(decoded),
         expires_at=int(exp) if exp is not None else None,
+        signing_authority=(
+            SigningAuthority(str(decoded["iss"]), token_kid, algorithm, fingerprint)
+            if secret is None
+            else None
+        ),
     )
 
 
@@ -569,7 +618,7 @@ def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: A
     from server.core.principals import AGENT, USER, end_user_revocation_subject, principal_id
 
     try:
-        decoded = _decode(token, [public_key], "RS256")
+        decoded, _ = _decode(token, [public_key], "RS256")
     except jwt.ExpiredSignatureError as e:
         raise TokenError(f"token expired: {e}", reason="expired") from e
     except jwt.PyJWTError as e:
@@ -622,14 +671,14 @@ def _verify_end_user(token: str, issuer: str, spec: EndUserIssuer, public_key: A
     )
 
 
-def _decode(token: str, keys: list[Any], algorithm: str) -> dict[str, Any]:
+def _decode(token: str, keys: list[Any], algorithm: str) -> tuple[dict[str, Any], str]:
     """The claims under the first of `keys` the signature matches. `issuer=` is
     checked by the caller (PyJWT takes one string, not a set); `exp` is not
     required (indefinite tokens) but enforced when present."""
     error = jwt.InvalidSignatureError("no key")
     for key in keys:
         try:
-            return jwt.decode(
+            decoded = jwt.decode(
                 token,
                 key,
                 algorithms=[algorithm],
@@ -637,6 +686,7 @@ def _decode(token: str, keys: list[Any], algorithm: str) -> dict[str, Any]:
                 options={"require": ["iat", "sub", "iss", "aud"]},
                 leeway=settings.jwt_leeway_seconds,  # clock-skew tolerance
             )
+            return decoded, _key_fingerprint(key)
         except jwt.InvalidSignatureError as e:
             error = e
     raise error

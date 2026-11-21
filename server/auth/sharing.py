@@ -37,7 +37,7 @@ from server.core.principals import (
 from server.operations.base import Role, rank_role
 
 if TYPE_CHECKING:
-    from server.auth.jwt import AuthInfo
+    from server.auth.jwt import AuthorizationClaims
 
 log = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ async def _load_groups(org: str) -> dict[str, list[str]]:
     return out
 
 
-async def principals(auth: AuthInfo, org: str) -> list[str]:
+async def principals(auth: AuthorizationClaims, org: str) -> list[str]:
     """Every grant subject this request holds: its own, its groups', its
     agent's, and `everyone` (the caller checked it may act in `org`)."""
     out = [auth.subject, *await groups_of(org, auth.subject), EVERYONE]
@@ -169,7 +169,7 @@ async def principals(auth: AuthInfo, org: str) -> list[str]:
     return out
 
 
-def owns_personal(auth: AuthInfo, org: str, namespace: str) -> bool:
+def owns_personal(auth: AuthorizationClaims, org: str, namespace: str) -> bool:
     """True when `namespace` is the personal collection of the end user `auth` runs as."""
     return bool(principal_id(auth.subject, USER)) and namespace == personal_name(org, auth.subject)
 
@@ -179,7 +179,9 @@ def _best(maps: list[grant_cache.GrantMap], lineage: list[str]) -> Role | None:
     return rank_role(max((m.rank(ns) or 0 for m in maps for ns in lineage), default=0))
 
 
-def _claim_limits(auth: AuthInfo, org: str, namespace: str) -> list[tuple[Role | None, str]]:
+def _claim_limits(
+    auth: AuthorizationClaims, org: str, namespace: str
+) -> list[tuple[Role | None, str]]:
     """Each limit the token's own claim sets on `namespace`, whatever its grants, with what
     the claim must say to lift it: `viewer` outside its `ns_write` set; for a scoped or
     delegated token, nothing (None) unless the claim names `namespace` (a `*` does not), and
@@ -206,7 +208,7 @@ def _claim_limits(auth: AuthInfo, org: str, namespace: str) -> list[tuple[Role |
     return limits
 
 
-def _claim_ceiling(auth: AuthInfo, org: str, namespace: str) -> Role | None:
+def _claim_ceiling(auth: AuthorizationClaims, org: str, namespace: str) -> Role | None:
     """The most the token's own claim lets it hold on `namespace` (`_claim_limits`): None
     for nothing, `admin` when the claim sets no limit."""
     ceilings = [limit for limit, _ in _claim_limits(auth, org, namespace)]
@@ -216,7 +218,7 @@ def _claim_ceiling(auth: AuthInfo, org: str, namespace: str) -> Role | None:
 
 
 def _capped(
-    auth: AuthInfo, org: str, namespace: str, granted: Role | None, creator: Role | None
+    auth: AuthorizationClaims, org: str, namespace: str, granted: Role | None, creator: Role | None
 ) -> Role | None:
     """`granted`, no further than the token's own claim allows (`_claim_ceiling`), and for
     a delegated token no further than its creator's role there (`creator`)."""
@@ -228,12 +230,14 @@ def _capped(
     return min(ceilings, key=lambda r: r.value)  # type: ignore[union-attr]
 
 
-async def role(auth: AuthInfo, org: str, namespace: str) -> Role | None:
+async def role(auth: AuthorizationClaims, org: str, namespace: str) -> Role | None:
     """The request's role on the collection `namespace`."""
     return (await roles(auth, org, [namespace]))[namespace]
 
 
-async def roles(auth: AuthInfo, org: str, namespaces: list[str]) -> dict[str, Role | None]:
+async def roles(
+    auth: AuthorizationClaims, org: str, namespaces: list[str]
+) -> dict[str, Role | None]:
     """The request's role on each collection of `namespaces`, reading the tree,
     the principals and their grant maps once. A personal collection needs no
     read: its name says whose it is. A platform admin holds admin on every one
@@ -276,7 +280,7 @@ async def _grant_maps(org: str, subjects: list[str]) -> list[grant_cache.GrantMa
     return maps
 
 
-async def readable(auth: AuthInfo | None, org: str) -> list[str]:
+async def readable(auth: AuthorizationClaims | None, org: str) -> list[str]:
     """Every collection of `org` the request may read, sorted; none (but the
     user's own) when the tree or a grant cannot be read."""
     from server.auth.authz import may_act_in_org
@@ -309,7 +313,9 @@ async def readable(auth: AuthInfo | None, org: str) -> list[str]:
     return sorted(found | shared)
 
 
-def claim_cap(auth: AuthInfo, org: str, namespace: str, required_role: Role) -> str | None:
+def claim_cap(
+    auth: AuthorizationClaims, org: str, namespace: str, required_role: Role
+) -> str | None:
     """What the token's own claim must say when it, rather than a missing grant, keeps the
     token below `required_role` on `namespace` (`_claim_limits`, the limits the gate
     applies): every limit that does, so one re-mint lifts them all; None when none does.
@@ -323,7 +329,7 @@ def claim_cap(auth: AuthInfo, org: str, namespace: str, required_role: Role) -> 
     return ", and ".join(needs) or None
 
 
-async def check(auth: AuthInfo, required_role: Role, org: str, namespace: str) -> None:
+async def check(auth: AuthorizationClaims, required_role: Role, org: str, namespace: str) -> None:
     """The gate for a collection: PermissionError unless the request holds
     `required_role` there. A platform admin (an operator's erasure or export)
     passes."""

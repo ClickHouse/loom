@@ -16,6 +16,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from server.clients._checked_access import Credential
@@ -67,6 +68,19 @@ class ServiceAccount:
     private_key: str = field(repr=False)
 
 
+class ReadScope(StrEnum):
+    DRIVE = _SCOPE
+    DIRECTORY_USERS = "https://www.googleapis.com/auth/admin.directory.user.readonly"
+    DIRECTORY_MEMBERS = "https://www.googleapis.com/auth/admin.directory.group.member.readonly"
+
+
+class WriteScope(StrEnum):
+    DRIVE = "https://www.googleapis.com/auth/drive"
+    DIRECTORY_USERS = "https://www.googleapis.com/auth/admin.directory.user"
+    DIRECTORY_GROUPS = "https://www.googleapis.com/auth/admin.directory.group"
+    DIRECTORY_MEMBERS = "https://www.googleapis.com/auth/admin.directory.group.member"
+
+
 def parse_service_account(credential: str) -> ServiceAccount:
     """The service account a JSON key names; CredentialRefused when it is not one."""
     try:
@@ -82,23 +96,41 @@ def parse_service_account(credential: str) -> ServiceAccount:
     return ServiceAccount(client_email=email, private_key=key)
 
 
-async def access_token(account: ServiceAccount) -> str:
-    """A read-only access token for the service account."""
+def _signed_assertion(
+    account: ServiceAccount, *, scope: ReadScope | WriteScope, subject: str | None = None
+) -> str:
     import jwt
 
+    if not isinstance(scope, (ReadScope, WriteScope)):
+        raise CredentialRefused("the delegated scope is not supported")
+    if subject is not None and (
+        not isinstance(subject, str)
+        or len(subject) > 512
+        or subject.count("@") != 1
+        or not all(subject.split("@"))
+        or not re.fullmatch(r"[A-Za-z0-9@._+\-]+", subject)
+    ):
+        raise CredentialRefused("the delegated subject is not an email")
     now = int(time.time())
     claims = {
         "iss": account.client_email,
-        "scope": _SCOPE,
+        "scope": scope.value,
         "aud": _TOKEN_URL,
         "iat": now,
         "exp": now + 600,
     }
+    if subject is not None:
+        claims["sub"] = subject
     try:
-        assertion = jwt.encode(claims, account.private_key, algorithm="RS256")
+        return jwt.encode(claims, account.private_key, algorithm="RS256")
     # A public key or a non-RSA key raises AttributeError or InvalidKeyError here.
     except (ValueError, TypeError, AttributeError, jwt.PyJWTError):
         raise CredentialRefused("the service account's private_key is not an RSA key") from None
+
+
+async def access_token(account: ServiceAccount) -> str:
+    """A read-only access token for the service account."""
+    assertion = _signed_assertion(account, scope=ReadScope.DRIVE)
     answer = await exchange_token(
         get_client(),
         _TOKEN_URL,
@@ -223,6 +255,7 @@ async def list_all(
     modified_after: str = "",
     fields: str = LISTED,
     pace_s: float = PAGE_PACE_S,
+    limit: int | None = None,
 ) -> tuple[list[dict[str, Any]], bool]:
     """Every file of `mime_types` in any of `folder_ids`, oldest change first, or only
     those changed after `modified_after` (a `valid_stamp`), and whether the store
@@ -230,9 +263,12 @@ async def list_all(
     files: list[dict[str, Any]] = []
     whole = True
     for start in range(0, len(folder_ids), MAX_PARENTS):
+        if limit is not None and len(files) > limit:
+            break
         query = folder_query(folder_ids[start : start + MAX_PARENTS], mime_types)
+        bound: dict[str, Any] = {"limit": limit - len(files)} if limit is not None else {}
         found, complete = await list_query(
-            token, query, modified_after=modified_after, fields=fields, pace_s=pace_s
+            token, query, modified_after=modified_after, fields=fields, pace_s=pace_s, **bound
         )
         files.extend(found)
         whole = whole and complete

@@ -1,0 +1,84 @@
+name: Crawl native privacy
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  crawl-native-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LOOM_ENV_FILE: ""
+      LOOM_CH_CONTAINER: docsrc-crawl-${{ github.run_id }}-${{ github.run_attempt }}
+      LOOM_CH_HOST: 127.0.0.1
+      LOOM_CH_PORT: "18123"
+      LOOM_CH_HOST_PORT: "18123"
+      LOOM_CH_NATIVE_HOST_PORT: "19000"
+      LOOM_CH_USER: loom
+      LOOM_CH_PASSWORD: loomdev
+      LOOM_CH_DATABASE: loom
+      LOOM_DEPLOYMENT: "1"
+      LOOM_INSTANCE_LABEL: ci-crawl-${{ github.run_id }}-${{ github.run_attempt }}
+      LOOM_BUILD_COMMIT: ${{ github.sha }}
+      LOOM_AUTH_REQUIRED: "true"
+      LOOM_STORAGE_AUTHORITY: clickhouse
+      LOOM_WORKERS_PROCESS: inline
+      LOOM_BACKGROUND_WORKERS: auto
+      LOOM_EMBEDDING_MODEL: fake-ngram-1024
+      LOOM_LLM_PROVIDER: fake
+      LOOM_KNOWLEDGE_MIRRORED_SOURCES_ENABLED: "true"
+      LOOM_KNOWLEDGE_SOURCE_SYNC_ENABLED: "true"
+      LOOM_KNOWLEDGE_SOURCE_SYNC_INTERVAL_SECONDS: "60"
+      LOOM_KNOWLEDGE_SOURCE_SYNC_IDLE_INTERVAL_SECONDS: "60"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - name: Install locked dependencies and build dashboard assets
+        run: |
+          uv sync --locked --python 3.12 --extra dev --extra code
+          npm --prefix frontend ci
+          npm --prefix frontend run build
+      - name: Configure the test signer
+        run: |
+          crawl_signer_material="$(openssl rand -hex 32)"
+          printf '::add-mask::%s\n' "$crawl_signer_material"
+          printf 'LOOM_JWT_SECRET=%s\n' "$crawl_signer_material" >> "$GITHUB_ENV"
+      - name: Start the owned backend
+        id: clickhouse
+        run: |
+          if docker container inspect "$LOOM_CH_CONTAINER" >/dev/null 2>&1; then
+            echo "refusing an existing backend container" >&2
+            exit 1
+          fi
+          LOOM_CLICKHOUSE_IMAGE="$(bash dev/clickhouse_release.sh)"
+          export LOOM_CLICKHOUSE_IMAGE
+          echo "admitted=true" >> "$GITHUB_OUTPUT"
+          bash dev/ci_start_clickhouse.sh
+      - name: Run the native privacy witness
+        run: >-
+          .venv/bin/python -m pytest tests/integration/crawl_native_privacy.py
+          -q --tb=short --junitxml=crawl-native-privacy.xml
+      - name: Preserve backend diagnostics
+        if: always() && steps.clickhouse.outputs.admitted == 'true'
+        run: docker logs "$LOOM_CH_CONTAINER" > crawl-native-clickhouse.log 2>&1
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: crawl-native-privacy
+          path: |
+            crawl-native-privacy.xml
+            crawl-native-clickhouse.log
+          if-no-files-found: ignore
+      - name: Remove the owned backend
+        if: always() && steps.clickhouse.outputs.admitted == 'true'
+        run: docker rm -f "$LOOM_CH_CONTAINER"

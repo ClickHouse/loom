@@ -19,6 +19,13 @@ _MUTATION_RE = re.compile(
 # the inventory honest without trying to parse Python string concatenation.
 _EXPECTED_MUTATIONS = Counter(
     {
+        # Reseal historical SCIM cleanup capsules under the identity lease, matching
+        # the exact SCIM row id and old ciphertext; synchronous residue checks keep
+        # the captured erasure identity unchanged before the old root is retired.
+        ("server/auth/person_erasure.py", "scim_users", "UPDATE"): 1,
+        # Root-secret rotation changes only exact old ciphertext, including raw
+        # versions; no late full-row insert can revive canonical-person metadata.
+        ("server/knowledge/store/sources.py", "knowledge_sources", "UPDATE"): 1,
         # The contradiction repair's edge close, end_edges, which ends a dropped fact's
         # edge with its triples (only when no live row keeps the pair), and the undo of
         # a close's own ends (reopen_closed_by).

@@ -134,6 +134,7 @@ async def list_items(
     fields: str = gdrive.LISTED,
     pace_s: float = gdrive.PAGE_PACE_S,
     out_of_time: Callable[[], bool] = lambda: False,
+    limit: int | None = None,
 ) -> Listing:
     """Every file the items list, each once, or only those changed after
     `modified_after`. A rate limit, a refused credential or a failed query raises;
@@ -145,12 +146,16 @@ async def list_items(
     the turn keeps its stamp and lists again. A `file` item is one metadata read on
     every listing, an incremental one too. `fields`: what is read of each file
     (`gdrive.LISTED_WITH_PERMISSIONS` adds its permissions)."""
+    if limit is not None and (type(limit) is not int or limit <= 0):
+        raise ValueError("listing file bound refused")
     out = Listing(mime_types=include_mime_types(include))
     files: dict[str, dict[str, Any]] = {}
 
     def add(found: list[dict[str, Any]]) -> None:
         for f in found:
             files.setdefault(str(f.get("id") or ""), f)
+            if limit is not None and len(files) > limit:
+                raise gdrive.TooLarge("listing exceeds its file bound")
 
     roots = [i["id"] for i in items if i["type"] == "folder" and i.get("recursive")]
     if roots:
@@ -159,6 +164,7 @@ async def list_items(
     if out.ran_out or out_of_time():
         out.ran_out = True
         return out
+    bound: dict[str, Any] = {"limit": limit} if limit is not None else {}
     found, whole = await gdrive.list_all(
         token,
         sorted(out.folders),
@@ -166,6 +172,7 @@ async def list_items(
         modified_after=modified_after,
         fields=fields,
         pace_s=pace_s,
+        **bound,
     )
     add(found)
     out.whole = out.whole and whole
@@ -184,6 +191,7 @@ async def list_items(
                     modified_after=modified_after,
                     fields=fields,
                     pace_s=pace_s,
+                    **bound,
                 )
             except gdrive.NotFound:
                 # A drive the account left lists nothing, which says nothing is absent.
@@ -202,6 +210,7 @@ async def list_items(
                 modified_after=modified_after,
                 fields=fields,
                 pace_s=pace_s,
+                **bound,
             )
             add(found)
             out.whole = out.whole and whole

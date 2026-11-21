@@ -23,6 +23,7 @@ from server.auth import (
     grant_claims,
     login,
     oauth,
+    person_erasure,
     revocation,
     scim,
     scim_routes,
@@ -37,7 +38,7 @@ from server.auth.scim_routes import (
     user_name_and_email,
 )
 from server.core import ch
-from server.core.errors import GrantBusyError
+from server.core.errors import BackendUnavailableError, GrantBusyError
 from server.identity.app import me_service_accounts, scim_groups
 from server.observability import audit
 from server.settings import settings
@@ -157,7 +158,7 @@ def test_active_takes_booleans_and_their_strings() -> None:
 class _Table:
     """loom.scim_users, loom.namespaces as `_subjects` reads it, and
     loom.revoked_tokens as the revocation module reads and writes it,
-    with an empty connected-account inventory."""
+    with verified namespace contacts and empty connected-account/crawl inventories."""
 
     def __init__(
         self,
@@ -260,6 +261,38 @@ class _Table:
         return row
 
     async def query_all(self, sql: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        if "SELECT owner_email, contact_email" in sql:
+            assert set(params) == {"org", "sub"}
+            assert "FROM loom.namespaces FINAL" in sql and "LIMIT 8" in sql
+            assert "ifNull(active, true) = true" in sql and "contact_email != ''" in sql
+            return [
+                {"owner_email": subject, "contact_email": email}
+                for email, subjects in self.accounts.items()
+                for subject in subjects
+                if params["org"] in self.reached_in.get(subject, ["acme"])
+                and params["sub"].lower() in {subject.lower(), email.lower()}
+            ]
+        if "SELECT n.namespace, n.owner_email, n.contact_email, n.password_hash," in sql:
+            assert set(params) == {"org", "sub", "owner"}
+            assert "FROM loom.namespaces FINAL" in sql and "FROM loom.sso_links FINAL" in sql
+            assert "active = 1 AND contact_email != ''" in sql and "LIMIT 129" in sql
+            return [
+                {
+                    "namespace": f"verified-{subject}",
+                    "owner_email": subject,
+                    "contact_email": email,
+                    "password_hash": "verified-password-hash",
+                    "hosted_domain": "",
+                    "issuer": "",
+                }
+                for email, subjects in self.accounts.items()
+                for subject in subjects
+                if params["org"] in self.reached_in.get(subject, ["acme"])
+                and (
+                    subject.lower() == params["owner"].lower()
+                    or email.lower() == params["sub"].lower()
+                )
+            ]
         if sql == (
             "SELECT org, subject, kind, connection_id, account_id, workspace_id, "
             "account_email_enc, credential_enc, scopes, active, refresh_id, connected_at, "
@@ -320,6 +353,51 @@ class _Table:
         self.rows.extend(dict(r) for r in rows)
 
 
+class _PersonCleanup:
+    """An empty crawl inventory with real capture and durable pending validation."""
+
+    def __init__(self, world: _World) -> None:
+        self.world = world
+        self.prepared: list[person_erasure.Capture] = []
+        self.cleaned: list[person_erasure.Capture] = []
+        self.finalized: list[person_erasure.Capture] = []
+
+    async def prepare(
+        self, pending: person_erasure.Pending
+    ) -> tuple[person_erasure.Workspace, ...]:
+        assert self.world.holding > 0
+        await pending.validate(before_delete=True)
+        assert not pending.captured.prepared and not pending.captured.workspaces
+        self.prepared.append(pending.captured)
+        return ()
+
+    async def cleanup(self, pending: person_erasure.Pending) -> None:
+        assert self.world.holding == 0
+        await pending.validate()
+        assert pending.captured.prepared and not pending.captured.workspaces
+        self.cleaned.append(pending.captured)
+
+    async def finalize(self, pending: person_erasure.Pending) -> None:
+        assert self.world.holding > 0 and pending.captured in self.cleaned
+        await pending.validate()
+        for row in self.world.table.rows:
+            if row["id"] != pending.captured.id:
+                continue
+            if row["crawl_erasure_enc"]:
+                historical = person_erasure.load(row["id"], row["crawl_erasure_enc"])
+                assert all(
+                    any(
+                        (old.org, old.subject) == (new.org, new.subject)
+                        and set(old.emails) <= set(new.emails)
+                        and set(old.spellings) <= set(new.spellings)
+                        for new in pending.captured.people
+                    )
+                    for old in historical.people
+                )
+            row.update(crawl_erasure_enc="", crawl_erasure_required=True, crawl_erasure_done=True)
+        self.finalized.append(pending.captured)
+
+
 class _World:
     """The tables, the real revocation writes and reads over them, and the audit log."""
 
@@ -328,12 +406,13 @@ class _World:
         self.elsewhere: dict[str, list[str]] = {}  # subject -> other orgs it is in
         self.reached_in: dict[str, list[str]] = {}  # subject -> orgs its email reaches it in
         self.table = _Table(self.accounts, self.elsewhere, self.reached_in)
+        self.person_cleanup = _PersonCleanup(self)
         self.audits: list[tuple[str, dict[str, Any]]] = []
         self.revoked_at_audit: list[dict[str, Any]] = []  # SCIM's revocations as each audit lands
         self.claim_limit: int | None = None  # names held at once before a claim runs out
         self.claims: dict[tuple[str, str], asyncio.Lock] = {}  # one holder a name, as a lease
         self.leases: list[str] = []
-        self.holding = 0  # SCIM leases held now
+        self._holding: dict[asyncio.Task[Any] | None, int] = {}  # per-caller SCIM leases
         self.waits: list[float] = []  # what the real `wait_out` sleeps
 
         async def stale_snapshot(subject: str) -> bool:
@@ -380,6 +459,10 @@ class _World:
         monkeypatch.setattr(settings, "scim_token", _TOKEN)
         monkeypatch.setattr(scim, "get_client", lambda: self.table)
         monkeypatch.setattr(ch, "get_client", lambda: self.table)
+        monkeypatch.setattr(person_erasure, "get_client", lambda: self.table)
+        monkeypatch.setattr(person_erasure, "_preparer", self.person_cleanup.prepare)
+        monkeypatch.setattr(person_erasure, "_cleanup", self.person_cleanup.cleanup)
+        monkeypatch.setattr(person_erasure, "_finalizer", self.person_cleanup.finalize)
         monkeypatch.setattr(scim, "_held", held)
         monkeypatch.setattr(grant_claims, "service_account_change", name_claim)
         monkeypatch.setattr(revocation, "asyncio", SimpleNamespace(sleep=no_wait))
@@ -387,7 +470,20 @@ class _World:
         monkeypatch.setattr(revocation, "refresh", no_refresh)
         monkeypatch.setattr(audit, "emit", emit)
 
+    @property
+    def holding(self) -> int:
+        return self._holding.get(asyncio.current_task(), 0)
+
+    @holding.setter
+    def holding(self, value: int) -> None:
+        task = asyncio.current_task()
+        if value:
+            self._holding[task] = value
+        else:
+            self._holding.pop(task, None)
+
     def person(self, email: str, *subjects: str) -> None:
+        """Seed verified namespace contacts, separately from grants in other orgs."""
         self.accounts[email] = list(subjects)
 
     @property
@@ -686,7 +782,29 @@ async def test_every_row_written_carries_every_column(world) -> None:
     await scim.create(
         "lee@example.com", "lee@example.com", active=True, emails=[]
     )  # a reactivation
-    assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 4
+    # Creation, deactivation, canonical capture, prepared capture, deletion, reactivation.
+    assert [sorted(r) for r in world.table.rows] == [sorted(column_names("scim_users"))] * 6
+    assert [(r["active"], r["deleted"]) for r in world.table.rows] == [
+        (1, 0),
+        (0, 0),
+        (0, 0),
+        (0, 0),
+        (0, 1),
+        (1, 0),
+    ]
+    assert all(r["id"] == uid and r["email"] == "lee@example.com" for r in world.table.rows)
+    [captured] = world.person_cleanup.prepared
+    assert captured.id == uid and not captured.prepared and not captured.workspaces
+    assert [(p.org, p.subject, p.emails) for p in captured.people] == [
+        ("acme", "lee", ("lee@example.com",))
+    ]
+    [cleaned] = world.person_cleanup.cleaned
+    assert cleaned.people == captured.people and cleaned.prepared and not cleaned.workspaces
+    assert world.person_cleanup.finalized == [cleaned]
+    assert all(
+        not r["crawl_erasure_enc"] and r["crawl_erasure_required"] and r["crawl_erasure_done"]
+        for r in world.table.rows
+    )
     columns = sorted(column_names("revoked_tokens"))
     assert [sorted(r) for r in world.table.revocations] == [columns] * 2
 
@@ -826,6 +944,97 @@ async def test_a_token_the_person_revoked_still_takes_its_children(world) -> Non
     uid = await _create("lee@example.com")
     await scim.update(uid, active=False)
     assert world.table.live_tokens() == []
+
+
+@pytest.mark.parametrize("recreate", [False, True])
+async def test_delete_retry_without_durable_identity_proof_stays_inactive_and_pending(
+    world, monkeypatch, recreate: bool
+) -> None:
+    world.person("lee@example.com", "lee")
+    uid = await _create("lee@example.com")
+    query = world.table.query_all
+    failed = False
+
+    async def read(sql: str, params):
+        nonlocal failed
+        if "SELECT DISTINCT owner_email, org" in sql and not failed:
+            failed = True
+            raise RuntimeError("identity backend unavailable before capture")
+        return await query(sql, params)
+
+    monkeypatch.setattr(world.table, "query_all", read)
+    with pytest.raises(RuntimeError, match="identity backend unavailable"):
+        await scim.delete(uid)
+    row = world.table.newest(uid)
+    assert row is not None and row["deleted"] and not row["active"]
+    assert row["crawl_erasure_required"] and not row["crawl_erasure_done"]
+    assert not row["crawl_erasure_enc"] and not world.person_cleanup.finalized
+    with pytest.raises(BackendUnavailableError):
+        await scim.delete(uid)
+    assert world.table.newest(uid) == row
+    assert await world.keeps_out("lee")
+    assert not world.person_cleanup.finalized
+    if recreate:
+        with pytest.raises(BackendUnavailableError):
+            await scim.create("lee@example.com", "lee@example.com", active=False, emails=[])
+        current = world.table.newest(uid)
+        assert current is not None and not current["deleted"] and not current["active"]
+        assert current["crawl_erasure_required"] and not current["crawl_erasure_done"]
+        assert not current["crawl_erasure_enc"] and not world.person_cleanup.finalized
+        assert await world.keeps_out("lee")
+
+
+async def test_an_older_cleanup_attempt_refuses_after_another_request_finishes_raw_erasure(
+    world, monkeypatch
+) -> None:
+    email = _PEOPLE["a"]
+    world.person(email, *_REACHES["a"])
+    world.person(_PEOPLE["b"], *_REACHES["b"])
+    uid = await _create(email)
+    run = _Run(world)
+    run.together = True
+    entered, release = asyncio.Event(), asyncio.Event()
+    original = world.person_cleanup.cleanup
+    first = True
+
+    async def cleanup(pending: person_erasure.Pending) -> None:
+        nonlocal first
+        if first:
+            first = False
+            entered.set()
+            await release.wait()
+        await original(pending)
+
+    monkeypatch.setattr(person_erasure, "_cleanup", cleanup)
+    task = asyncio.create_task(run.step(("delete", "a", True), ()))
+    signal = asyncio.create_task(entered.wait())
+    try:
+        done, _ = await asyncio.wait({task, signal}, return_when=asyncio.FIRST_COMPLETED)
+        if task in done:
+            await task
+            pytest.fail("the DELETE did not reach its external cleanup boundary")
+        assert entered.is_set()
+        await scim.create(email, email, active=False, emails=[])
+        release.set()
+        assert await task is True  # A stale proof refuses; the request is not a clean success.
+        assert not run.pending_identity and "a" in run.dirty
+        row = world.table.newest(uid)
+        assert row is not None and not row["active"] and not row["deleted"]
+        assert row["crawl_erasure_done"] and not row["crawl_erasure_enc"]
+        assert any(c.id == uid for c in world.person_cleanup.finalized)
+        assert all(
+            not r["crawl_erasure_enc"] and r["crawl_erasure_done"]
+            for r in world.table.rows
+            if r["id"] == uid
+        )
+        assert await world.keeps_out(_REACHES["a"][0])
+        await run.check()
+    finally:
+        release.set()
+        signal.cancel()
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(signal, task, return_exceptions=True)
 
 
 async def test_many_tokens_are_revoked_in_one_request_a_few_names_held_at_once(world) -> None:
@@ -998,8 +1207,12 @@ async def test_a_reactivation_waits_once_its_leases_are_let_go(world, monkeypatc
     @asynccontextmanager
     async def held(name: str) -> AsyncIterator[None]:
         events.append(f"held {name.split(':')[0]}")
-        yield
-        events.append(f"let go {name.split(':')[0]}")
+        world.holding += 1
+        try:
+            yield
+        finally:
+            world.holding -= 1
+            events.append(f"let go {name.split(':')[0]}")
 
     async def wait(cutoff: datetime) -> None:
         events.append("waited")
@@ -2867,6 +3080,7 @@ class _Run:
         self.together = False  # requests at once: no faults, which they would share
         self.race: random.Random | None = None  # whether a sign-in waits on a row write
         self.refused_late = 0  # sign-ins refused at the second check
+        self.pending_identity = False  # a failed capture needs verified historical repair
         self.operator: set[str] = set()  # subjects an operator revoked outright
         self.sessions: list[tuple[str, str, int]] = []  # (person, subject, iat) signed in
         for s in sorted({s for subjects in _REACHES.values() for s in subjects}):
@@ -2964,7 +3178,38 @@ class _Run:
         started = self.now()
         try:
             settled = await self._send(*op)
+        except BackendUnavailableError:
+            row = self.world.table.newest(scim.user_id(_PEOPLE[op[1]]))
+            assert row is not None and row["crawl_erasure_required"]
+            encoded = row["crawl_erasure_enc"]
+            if row["crawl_erasure_done"]:
+                # Another request may finish the exact raw cleanup while this
+                # request's retained Pending proof correctly becomes unusable.
+                assert self.together and not encoded
+                assert any(c.id == row["id"] for c in self.world.person_cleanup.finalized)
+                assert all(
+                    not old["crawl_erasure_enc"] and old["crawl_erasure_done"]
+                    for old in self.world.table.rows
+                    if old["id"] == row["id"]
+                )
+            else:
+                # A permitted recreate resets deleted, but cannot repair absent
+                # historical identity. Deactivation still keeps the person out.
+                assert not row["active"] and not row["crawl_erasure_done"]
+                if not self.together and op[0] == "delete":
+                    assert row["deleted"]
+                assert not encoded or not person_erasure.load(row["id"], encoded).prepared
+                self.pending_identity = True
+            self.dirty[op[1]] = self.now()
+            return True
         except (RuntimeError, scim.Busy, login.SignInUnavailable):
+            if op[1] in _PEOPLE:
+                row = self.world.table.newest(scim.user_id(_PEOPLE[op[1]]))
+                if row and row["deleted"] and not row["crawl_erasure_done"]:
+                    encoded = row["crawl_erasure_enc"]
+                    self.pending_identity |= (
+                        not encoded or not person_erasure.load(row["id"], encoded).prepared
+                    )
             if "row-landed" in self.fired[:-1]:  # and the read-back failed after it
                 self.unaudited[op[1]] += 1
             if op[0] != "signin":  # a sign-in is no SCIM request
@@ -3096,13 +3341,14 @@ def _fresh_world() -> Iterator[_World]:
 
 async def _run(
     units: list[_Unit], fired: list[tuple[bool, bool]] | None = None
-) -> tuple[list[Any], list[tuple[bool, bool]]]:
-    """The state after each unit, and whether it failed and made a JIT account.
+) -> tuple[list[Any], list[tuple[bool, bool]], int | None]:
+    """States, request failures/JIT, and the first state requiring verified identity repair.
     With `fired` (a run before), a unit that failed and was retried is sent
     once, clean."""
     with _fresh_world() as world:
         run = _Run(world)
         states, fires = [], []
+        pending_from = None
         for i, (op, faults, retried) in enumerate(units):
             if fired is not None and fired[i][0] and retried:
                 if fired[i][1]:
@@ -3115,7 +3361,9 @@ async def _run(
                     await run.step(op, ())
             await run.check()
             states.append(run.state())
-        return states, fires
+            if run.pending_identity and pending_from is None:
+                pending_from = i
+        return states, fires, pending_from
 
 
 async def test_every_sequence_keeps_the_invariants_and_a_retry_converges() -> None:
@@ -3129,11 +3377,18 @@ async def test_every_sequence_keeps_the_invariants_and_a_retry_converges() -> No
             faults = tuple(rng.sample(_FAULTS, rng.choice((1, 1, 2)))) if rng.random() < 0.5 else ()
             units.append((rng.choice(_OPS), faults, bool(faults) and rng.random() < 0.7))
         try:
-            states, fired = await _run(units)
-            if any(failed for failed, _ in fired):  # (d) a retry ends where a clean request does
-                clean, _ = await _run(units, fired)
-                assert states == clean
-                runs += 1
+            states, fired, pending_from = await _run(units)
+            if any(failed for failed, _ in fired):  # (d) proven retries match a clean request
+                clean, _, clean_pending_from = await _run(units, fired)
+                uncertain = [n for n in (pending_from, clean_pending_from) if n is not None]
+                if uncertain:
+                    # All schedules and invariants still run. Only the prefix before
+                    # unavailable historical proof can promise clean retry equality.
+                    end = min(uncertain)
+                    assert states[:end] == clean[:end]
+                else:
+                    assert states == clean
+                    runs += 1
         except AssertionError as e:
             raise AssertionError(f"{units}: {e}") from e
     assert runs > 1500  # failures fired and were compared, not just drawn
@@ -3154,9 +3409,11 @@ async def _run_together(groups: list[list[tuple[str, str, bool]]], rng: random.R
                     await lock.acquire()
             except TimeoutError:
                 raise scim.Busy from None
+            world.holding += 1
             try:
                 yield
             finally:
+                world.holding -= 1
                 lock.release()
 
         async def turns() -> None:

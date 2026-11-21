@@ -110,6 +110,43 @@ async def _refusal(restored: str, point: datetime, *, live: bool, ch: Any) -> st
     return ""
 
 
+async def _restore_private_sources(ch: Any, *, apply: bool) -> None:
+    from server.knowledge.app.connected_restore import restore_all
+    from server.knowledge.app.crawl_restore import restore_all as restore_crawls
+
+    await restore_all(apply=apply, ch=ch)
+    await restore_crawls(apply=apply, ch=ch)
+
+
+async def _replay_erasures(
+    store: Any,
+    point: datetime,
+    erasures: list[dict[str, Any]],
+    still_open: list[dict[str, Any]],
+) -> int:
+    from server.erasure.app import replay as erasure_replay
+
+    failed = 0
+    for entry in erasures:
+        status = await _step(erasure_replay.replay(entry, store, point))
+        print(f"  erasure {entry['id']} ({entry['scope_type']}): {status}")
+        failed += status != "completed"
+    for entry in still_open:
+        failed += await _step(erasure_replay.requeue(entry, store, point)) == "failed"
+    return failed
+
+
+async def _replay_redactions(redactions: list[dict[str, Any]], store: Any) -> int:
+    from server.memory.app import restore_reconcile
+
+    failed = 0
+    for entry in redactions:
+        state = await _step(restore_reconcile.replay_redaction(entry, store))
+        print(f"  redaction {entry['memory_id']} v{entry['version']}: {state}")
+        failed += state == "failed"
+    return failed
+
+
 async def reconcile(
     restored: str, point: datetime, *, apply: bool, live: bool = False, ch: Any
 ) -> int:
@@ -147,9 +184,7 @@ async def reconcile(
                 f"namespace {s['namespace']}, source_uri {s['source_uri']}"
             )
     if not apply:
-        from server.knowledge.app.connected_restore import restore_all
-
-        await restore_all(apply=False, ch=ch)
+        await _restore_private_sources(ch, apply=False)
         return 0
     from server.code.app.index import repo_registry
 
@@ -173,12 +208,10 @@ async def reconcile(
         # live head held here, which `loom rechunk` builds again from the stored content.
         for line in _rechunk_lines(await knowledge_reconcile.held_sources()):
             print(line)
-    from server.knowledge.app.connected_restore import restore_all
-
     # Connection cleanup is fail-fast: no restored document may publish with
     # retained provider authority, even when an unrelated erasure replay can retry.
     try:
-        await restore_all(apply=True, ch=ch)
+        await _restore_private_sources(ch, apply=True)
     except Exception:  # noqa: BLE001 — local cleanup must finish before any publication
         print(
             "loom reconcile: connected-account cleanup failed; publication remains held",
@@ -187,20 +220,12 @@ async def reconcile(
         return 1
     # A step that raises is counted and the rest run: what `hold` held is published
     # whatever an erasure did.
-    for entry in erasures:
-        status = await _step(erasure_replay.replay(entry, store, point))
-        print(f"  erasure {entry['id']} ({entry['scope_type']}): {status}")
-        failed += status != "completed"
-    for entry in still_open:
-        failed += await _step(erasure_replay.requeue(entry, store, point)) == "failed"
+    failed += await _replay_erasures(store, point, erasures, still_open)
     if store == "clickhouse":
         memory = await restore_reconcile.publish_held()
         knowledge = await knowledge_reconcile.publish_held()
         print(f"  published: {memory} memory revisions, {knowledge} knowledge documents")
-    for entry in redactions:
-        state = await _step(restore_reconcile.replay_redaction(entry, store))
-        print(f"  redaction {entry['memory_id']} v{entry['version']}: {state}")
-        failed += state == "failed"
+    failed += await _replay_redactions(redactions, store)
     if failed:
         print(f"loom reconcile: {failed} step(s) did not complete; run again", file=sys.stderr)
         return 1

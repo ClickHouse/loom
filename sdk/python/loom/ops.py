@@ -11730,9 +11730,24 @@ class KnowledgeSourceAddInput(TypedDict, total=False):
     links: NotRequired[Optional[list[str]]]
     config: NotRequired[Optional[dict[str, Any]]]
     include: NotRequired[Optional[list[str]]]
-    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential_mode: NotRequired[Literal["shared", "connected", "crawl"]]
+    crawl_options: NotRequired[Optional["KnowledgeSourceCrawlOptions"]]
     credential: NotRequired[str]
     dry_run: NotRequired[bool]
+
+
+class KnowledgeSourceCrawlOptions(TypedDict, total=False):
+    "Delegation identity and the complete bounded union of selected people."
+
+    directory_subject: Required[str]
+    subjects: Required[list["KnowledgeSourceCrawlSubject"]]
+
+
+class KnowledgeSourceCrawlSubject(TypedDict, total=False):
+    "An explicitly selected Workspace person or group, resolved through Directory."
+
+    type: Required[Literal["person", "group"]]
+    email: Required[str]
 
 
 class KnowledgeSourceAddBody(TypedDict, total=False):
@@ -11746,12 +11761,14 @@ class KnowledgeSourceAddBody(TypedDict, total=False):
     links: NotRequired[Optional[list[str]]]
     config: NotRequired[Optional[dict[str, Any]]]
     include: NotRequired[Optional[list[str]]]
-    credential_mode: NotRequired[Literal["shared", "connected"]]
+    credential_mode: NotRequired[Literal["shared", "connected", "crawl"]]
+    crawl_options: NotRequired[Optional["KnowledgeSourceCrawlOptions"]]
     credential: NotRequired[str]
     dry_run: NotRequired[bool]
 
 
 class KnowledgeSourceAddOutput(TypedDict, total=False):
+    crawl_proof: NotRequired[Optional["KnowledgeSourceCrawlProof"]]
     name: Required[str]
     kind: Required[str]
     namespace: Required[str]
@@ -11760,6 +11777,15 @@ class KnowledgeSourceAddOutput(TypedDict, total=False):
     config: NotRequired[dict[str, Any]]
     probe: NotRequired["KnowledgeSourceProbe"]
     dry_run: NotRequired[bool]
+
+
+class KnowledgeSourceCrawlProof(TypedDict, total=False):
+    "The read-only delegation proof, without person addresses or credentials."
+
+    subject_hashes: Required[list[str]]
+    read_scopes: Required[list[str]]
+    write_denials: Required[list[str]]
+    members: Required[int]
 
 
 class KnowledgeSourceProbe(TypedDict, total=False):
@@ -11821,6 +11847,7 @@ class KnowledgeSourceInspectOutput(TypedDict, total=False):
     kind: Required[str]
     credential_mode: NotRequired[str]
     access: NotRequired[str]
+    crawl_options: NotRequired[dict[str, Any]]
     owner_subject: NotRequired[str]
     items: NotRequired[list[dict[str, Any]]]
     include: NotRequired[list[str]]
@@ -11884,6 +11911,7 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     kind: Required[str]
     credential_mode: NotRequired[str]
     access: NotRequired[str]
+    crawl_options: NotRequired[dict[str, Any]]
     owner_subject: NotRequired[str]
     items: NotRequired[list[dict[str, Any]]]
     include: NotRequired[list[str]]
@@ -12041,6 +12069,7 @@ class KnowledgeSourceRotateBody(TypedDict, total=False):
 
 
 class KnowledgeSourceRotateOutput(TypedDict, total=False):
+    crawl_proof: NotRequired[Optional["KnowledgeSourceCrawlProof"]]
     name: Required[str]
     probe: NotRequired["KnowledgeSourceProbe"]
     rotated_at: NotRequired[str]
@@ -12079,6 +12108,8 @@ class KnowledgeSourceUpdateInput(TypedDict, total=False):
     add_links: NotRequired[list[str]]
     remove_items: NotRequired[list[dict[str, Any]]]
     remove_links: NotRequired[list[str]]
+    crawl_readmit: NotRequired[list[str]]
+    crawl_options: NotRequired[Optional["KnowledgeSourceCrawlOptions"]]
     include: NotRequired[Optional[list[str]]]
 
 
@@ -12092,10 +12123,13 @@ class KnowledgeSourceUpdateBody(TypedDict, total=False):
     add_links: NotRequired[list[str]]
     remove_items: NotRequired[list[dict[str, Any]]]
     remove_links: NotRequired[list[str]]
+    crawl_readmit: NotRequired[list[str]]
+    crawl_options: NotRequired[Optional["KnowledgeSourceCrawlOptions"]]
     include: NotRequired[Optional[list[str]]]
 
 
 class KnowledgeSourceUpdateOutput(TypedDict, total=False):
+    crawl_proof: NotRequired[Optional["KnowledgeSourceCrawlProof"]]
     name: Required[str]
     items: NotRequired[list[dict[str, Any]]]
     include: NotRequired[list[str]]

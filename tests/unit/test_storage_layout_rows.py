@@ -357,6 +357,8 @@ def _erasure_cell(table: str) -> set[str]:
             parts.add(f"step `{step}`")
     if qualified in census.CANONICAL_OWNER_TABLES:
         parts.add(f"canonical-owner census, `{census.CANONICAL_OWNER_TABLES[qualified]}`")
+    if qualified in census.CANONICAL_PERSON_TABLES:
+        parts.add(f"canonical-person census, `{census.CANONICAL_PERSON_TABLES[qualified]}`")
     if qualified in census.NO_MEMORY_CONTENT:
         parts.add("no content")
     return parts

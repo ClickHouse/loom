@@ -17,13 +17,13 @@ from __future__ import annotations
 
 import dataclasses
 
-from server.auth.jwt import AuthInfo
+from server.auth.jwt import AuthInfo, AuthorizationClaims
 from server.core.principals import USER, is_reserved_subject, personal_name, principal_id
 
 __all__ = ["effective_auth", "is_end_user", "personal_namespace"]
 
 
-def is_end_user(auth: AuthInfo | None) -> bool:
+def is_end_user(auth: AuthorizationClaims | None) -> bool:
     """True when the request runs as an end user an issuer signed in."""
     return auth is not None and bool(principal_id(auth.subject, USER))
 

@@ -2960,6 +2960,44 @@ settings:
   # Registrations per page during root-secret resealing. [restart]
   # knowledge_connected_registry_page_size: 256
 
+  # Bytes read from one delegated Directory or OAuth response; larger responses refuse.
+  # [restart]
+  # knowledge_crawl_directory_max_response_bytes: 1048576
+
+  # Directory membership pages across the entire expansion, including nested groups.
+  # [restart]
+  # knowledge_crawl_directory_max_pages: 256
+
+  # Groups across one complete crawl expansion; the total-person ceiling stays fixed.
+  # [restart]
+  # knowledge_crawl_max_groups: 2000
+
+  # Distinct files across every person's complete listing; a larger union publishes
+  # nothing. [restart]
+  # knowledge_crawl_max_files: 10000
+
+  # Maximum full control-registry scan for cleanup; a larger scan refuses partial work.
+  # [restart]
+  # knowledge_crawl_registry_scan_limit: 4096
+
+  # Org control rows per root-secret reseal page. [restart]
+  # knowledge_crawl_registry_page_size: 256
+
+  # Seconds the renewed org exclusion lease lives; namespace publication leases follow
+  # it. [restart]
+  # knowledge_crawl_lease_ttl_s: 60.0
+
+  # Seconds a crawl control change waits for an existing org exclusion lease. [restart]
+  # knowledge_crawl_lease_wait_s: 5.0
+
+  # Whole pre-delete Directory identity capture across a person's existing crawl
+  # sources. [restart]
+  # knowledge_crawl_identity_capture_timeout_s: 30.0
+
+  # Whole local canonical-person crawl cleanup, including publisher fencing and residue.
+  # [restart]
+  # knowledge_crawl_person_cleanup_timeout_s: 60.0
+
   # Seconds one connected-account OAuth request may take, including its response. The
   # caller's remaining deadline can shorten this bound. [restart]
   # knowledge_connected_oauth_timeout_s: 30.0

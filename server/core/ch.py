@@ -741,9 +741,11 @@ _FENCE_MAX_S = 60
 def write_limit_s() -> float:
     """The longest a leased write runs on the server, and a carried one sent with no
     longer limit of its own: the configured write timeout, or `_FENCE_MAX_S` when it sets
-    none."""
+    none. A positive scoped statement bound can only shorten this receiver limit."""
     limit = float(settings.ch_timeout_write_s)
-    return _setting_seconds(limit) if limit > 0 else _FENCE_MAX_S
+    bound = _setting_seconds(limit) if limit > 0 else _FENCE_MAX_S
+    scoped = statement_timeout_var.get()
+    return min(bound, _setting_seconds(scoped)) if scoped > 0 else bound
 
 
 def start_guard(deadline_ms_sql: str) -> str:

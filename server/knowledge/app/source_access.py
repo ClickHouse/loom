@@ -85,6 +85,8 @@ class ReadPlan:
         default_factory=dict, repr=False
     )
 
+    _crawl_pins: dict[tuple[str, str], KnowledgeSource] = field(default_factory=dict, repr=False)
+
     @property
     def discovery_sources(self) -> dict[tuple[str, str], str]:
         """The request's fixed discovery scope, unaffected by conditional checks."""
@@ -146,6 +148,7 @@ class ReadPlan:
         snapshot._auth = self._auth
         snapshot._scope_frozen = True
         snapshot._connected_pins = self._connected_pins
+        snapshot._crawl_pins = self._crawl_pins
         await _prepare(snapshot, sources, self._reader_subject)
         self.sources = {
             key: original
@@ -303,17 +306,53 @@ async def prepare(org: str, namespaces: list[str]) -> ReadPlan:
     return plan
 
 
-async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) -> None:
+async def _eligible_sources(
+    plan: ReadPlan,
+    sources: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[tuple[str, str], tuple[str, str]]]:
+    from server.knowledge.app import crawl_authority
     from server.knowledge.app.connected_accounts import validate_indexed
     from server.knowledge.store import sources as source_store
 
     eligible = []
+    crawl_epochs: dict[tuple[str, str], tuple[str, str]] = {}
     for row in sources:
         key = row["namespace"], row["source_id"]
         mode = row.get("credential_mode", "shared")
         if mode == "shared":
-            if key not in plan._connected_pins:
+            if key not in plan._connected_pins and key not in plan._crawl_pins:
                 eligible.append(row)
+            continue
+        if mode == "crawl":
+            if plan._scope_frozen and key not in plan._crawl_pins:
+                continue
+            try:
+                source = await source_store.latest_source(plan.org, row["namespace"], row["name"])
+                if (
+                    source is None
+                    or source.source_id != row["source_id"]
+                    or plan._auth is None
+                    or current_auth() is not plan._auth
+                ):
+                    continue
+                pinned = plan._crawl_pins.get(key)
+                if pinned is not None and (
+                    crawl_authority.scope(source) != crawl_authority.scope(pinned)
+                    or source.approval_enc != pinned.approval_enc
+                    or source.registrant_subject != pinned.registrant_subject
+                    or source.secret_enc != pinned.secret_enc
+                ):
+                    continue
+                await check_authorized(plan._auth, Role.VIEWER, plan.org, row["namespace"])
+                crawl_epochs[key] = (
+                    await crawl_authority.validate_indexed(source),
+                    source.crawl_generation,
+                )
+                eligible.append(row)
+                if not plan._scope_frozen:
+                    plan._crawl_pins[key] = copy.deepcopy(source)
+            except Exception:  # noqa: BLE001 — unverifiable crawl authority admits no mirror leg
+                continue
             continue
         if mode != "connected" or (plan._scope_frozen and key not in plan._connected_pins):
             continue
@@ -336,7 +375,11 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
                 plan._connected_pins[key] = copy.deepcopy(source)
         except Exception:  # noqa: BLE001 — one unverifiable connection admits no private leg
             continue
-    sources = eligible
+    return eligible, crawl_epochs
+
+
+async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) -> None:
+    sources, crawl_epochs = await _eligible_sources(plan, sources)
     names = sorted({s["namespace"] for s in sources})
     mirrors = await mirrors_repo.mirrors_of(plan.org, names, live_only=True)
     by_original: dict[str, list[str]] = {}
@@ -355,5 +398,10 @@ async def _prepare(plan: ReadPlan, sources: list[dict[str, Any]], subject: str) 
         for r in rows
         if (r["namespace"], r["source_id"]) in pairs
         and fresh(r["started_at"], now(), settings.knowledge_source_acl_stale_seconds)
+        and (
+            (pairs[(r["namespace"], r["source_id"])], r["source_id"]) not in crawl_epochs
+            or (r.get("crawl_exclusion_generation"), r.get("crawl_generation"))
+            == crawl_epochs[(pairs[(r["namespace"], r["source_id"])], r["source_id"])]
+        )
     }
     plan.sources = {key: pairs[key] for key in plan.listing_starts}

@@ -215,6 +215,8 @@ async def test_native_connected_notion_turn_publishes_real_rows_then_a_guarded_l
         "org": "team",
         "namespace": _MIRROR,
         "source_id": "source-id",
+        "crawl_exclusion_generation": "",
+        "crawl_generation": "",
         "name": "documents",
     }
     assert isinstance(listing["started_at"], datetime)

@@ -551,14 +551,19 @@ app.add_middleware(RetirementMiddleware)
 
 from server.auth import login as _login  # noqa: E402
 from server.auth import oauth as _oauth  # noqa: E402
+from server.auth import person_erasure as _person_erasure  # noqa: E402
 from server.auth import scim_routes as _scim_routes  # noqa: E402
 from server.auth import self_signup as _self_signup  # noqa: E402
+from server.erasure.app import crawl_person as _crawl_erasure  # noqa: E402
 from server.identity.app import agent_claim as _agent_claim  # noqa: E402
 from server.identity.app import claim_release as _claim_release  # noqa: E402
 from server.identity.app import password_link as _password_link  # noqa: E402
 from server.identity.app import scim_groups as _scim_groups  # noqa: E402
 from server.knowledge.app import connection_routes as _connected_accounts  # noqa: E402
+from server.knowledge.app import crawl_capture as _crawl_capture  # noqa: E402
+from server.knowledge.app import crawl_person_erasure as _crawl_person  # noqa: E402
 
+_person_erasure.bind(_crawl_capture.prepare, _crawl_person.finish, _crawl_erasure.finalize)
 _self_signup.attach(app)
 _login.attach(app)
 _connected_accounts.attach(app)

@@ -493,8 +493,11 @@ async def test_the_identity_saves_to_reads_is_the_one_the_token_verifies_as(
         delegated = dataclasses.replace(delegated, saves_to="a")
     verified = verify_token(delegated.mint("sa:cursor-ab12cd"))
     built = delegated.as_auth("sa:cursor-ab12cd")
-    # Set at verification only: the token's id and its iat/exp.
-    minted_only = {"token_id", "issued_at", "expires_at"}
+    # Verification attaches both token metadata and the checked signing-key identity.
+    minted_only = {"token_id", "issued_at", "expires_at", "signing_authority"}
+    assert built.signing_authority is None
+    assert isinstance(verified.signing_authority, jwt_mod.SigningAuthority)
+    assert verified.signing_authority.current()
     for field in dataclasses.fields(AuthInfo):
         if field.name not in minted_only:
             assert getattr(built, field.name) == getattr(verified, field.name), field.name

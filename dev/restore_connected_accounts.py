@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from server.cli._apply import add_apply_flags
 from server.cli._ch import reads, run_connected, writes
 from server.knowledge.app.connected_restore import restore_all
+from server.knowledge.app.crawl_restore import restore_all as restore_crawls
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
 
     async def run(ch: Any) -> int:
         await restore_all(apply=not args.dry_run, ch=ch)
+        await restore_crawls(apply=not args.dry_run, ch=ch)
         print(
             "connected-account restore cleanup completed; connections must be established again"
             if not args.dry_run

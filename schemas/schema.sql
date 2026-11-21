@@ -16,13 +16,13 @@
 -- Do NOT hand-edit. Edit schemas/migrations/*.sql and re-dump.
 -- CI verifies this file matches what migrations would produce.
 --
--- Counts: 196 tables + 5 views + 19 materialized views.
+-- Counts: 198 tables + 5 views + 19 materialized views.
 
 CREATE DATABASE IF NOT EXISTS `loom`;
 CREATE DATABASE IF NOT EXISTS `loom_telemetry`;
 
 -- ======================================================================
--- Tables (196)
+-- Tables (198)
 -- ======================================================================
 
 -- loom.acl_versions
@@ -2136,6 +2136,34 @@ ORDER BY (seen_at, process)
 TTL toDateTime(seen_at) + toIntervalDay(1)
 SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
 
+-- loom.knowledge_crawl_exclusion_keys
+CREATE TABLE IF NOT EXISTS loom.knowledge_crawl_exclusion_keys
+(
+    `org` String,
+    `key_id` String,
+    `key_enc` String,
+    `generation` String,
+    `pending_id` String DEFAULT '',
+    `pending_digests` Array(String) DEFAULT [],
+    `pending_exclude` Bool DEFAULT false,
+    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY org
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
+-- loom.knowledge_crawl_exclusions
+CREATE TABLE IF NOT EXISTS loom.knowledge_crawl_exclusions
+(
+    `org` String,
+    `digest` String,
+    `excluded` Bool,
+    `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (org, digest)
+SETTINGS non_replicated_deduplication_window = 1000, index_granularity = 8192;
+
 -- loom.knowledge_gaps
 CREATE TABLE IF NOT EXISTS loom.knowledge_gaps
 (
@@ -2265,7 +2293,9 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_source_listings
     `source_id` String,
     `name` String,
     `started_at` DateTime64(3),
-    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9)))
+    `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
+    `crawl_exclusion_generation` String DEFAULT '',
+    `crawl_generation` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, source_id)
@@ -2318,7 +2348,13 @@ CREATE TABLE IF NOT EXISTS loom.knowledge_sources
     `access` LowCardinality(String) DEFAULT 'namespace',
     `credential_mode` LowCardinality(String) DEFAULT 'shared',
     `owner_subject` String DEFAULT '',
-    `connection_id` String DEFAULT ''
+    `connection_id` String DEFAULT '',
+    `options_json` String DEFAULT '{}',
+    `registrant_subject` String DEFAULT '',
+    `approval_enc` String DEFAULT '',
+    `crawl_generation` String DEFAULT '',
+    `crawl_customer_id` String DEFAULT '',
+    `crawl_credential_hash` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace, name)
@@ -3949,7 +3985,10 @@ CREATE TABLE IF NOT EXISTS loom.scim_users
     `subjects` Array(String),
     `created_at` DateTime64(3, 'UTC'),
     `updated_at` DateTime64(3, 'UTC'),
-    `version` UInt64
+    `version` UInt64,
+    `crawl_erasure_enc` String DEFAULT '',
+    `crawl_erasure_done` Bool DEFAULT false,
+    `crawl_erasure_required` Bool DEFAULT false
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY id

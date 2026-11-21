@@ -624,12 +624,14 @@ Register a document source on a namespace: a kind, what it reads (items and link
 | `links` | `list[str] \| None` | `None` | Links to folders, files, documents, slides, pages, databases or projects, read as items (`knowledge.source.parse_links`); an unreadable link refuses the call (BAD_LINK). |
 | `config` | `dict[str, Any] \| None` | `None` | What the source reads in the form that names ids per kind, instead of items or links; gdrive: {folder_ids: [1-20 folder ids], include: [docs, slides, pdf, pptx, docx] (default all but docx)}; linear: {project_ids: [1-20 project ids… |
 | `include` | `list[str] \| None` | `None` | gdrive with items or links: the file kinds read, of docs, slides, pdf, pptx, docx (default all but docx). |
-| `credential_mode` | `Literal['shared', 'connected']` | `'shared'` | Use the supplied shared credential, or your own mirrored connected account. |
+| `credential_mode` | `Literal['shared', 'connected', 'crawl']` | `'shared'` | Use shared credentials, your connected account, or approved Workspace delegation. |
+| `crawl_options` | `KnowledgeSourceCrawlOptions \| None` | `None` | Crawl only: delegation identity and explicit people or groups; default none. |
 | `credential` | `str` | `''` | The source's read-only credential (gdrive: a service account's JSON key, with the folders shared to the account read-only; linear: a read-only API key of an account that sees the projects; notion: an integration token with read content… |
 | `dry_run` | `bool` | `False` | Probe and write nothing. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `crawl_proof` | `KnowledgeSourceCrawlProof \| None` | Crawl only: checked scope and keyed-subject proof; None for another credential mode. |
 | `name` | `str` | The registered source's name, normalised. |
 | `kind` | `str` | The source kind, normalised. |
 | `namespace` | `str` | The namespace the source was registered on. |
@@ -681,6 +683,7 @@ One registered document source: its items, its sync state and the documents it w
 | `kind` | `str` | The source's kind. |
 | `credential_mode` | `str` | The registration's credential class; never the credential or account identity. |
 | `access` | `str` | Namespace-wide or checked mirrored document access. |
+| `crawl_options` | `dict[str, Any]` | Crawl selectors, only for a current org and namespace administrator. |
 | `owner_subject` | `str` | Canonical connected owner, only in the owner's permitted detail projection. |
 | `items` | `list[dict[str, Any]]` | The things the source reads; [] for a recording source. |
 | `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |
@@ -840,6 +843,7 @@ Replace a registered document source's credential.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `crawl_proof` | `KnowledgeSourceCrawlProof \| None` | Crawl only: checked scope and keyed-subject proof; None for another credential mode. |
 | `name` | `str` | The source whose credential was replaced. |
 | `probe` | `KnowledgeSourceProbe` | What the probe with the new credential found. |
 | `rotated_at` | `str` | When the credential was replaced, ISO UTC. |
@@ -877,10 +881,13 @@ Add items to a registered document source or remove them, or change a gdrive sou
 | `add_links` | `list[str]` | *(computed)* | Links to add, read as items; a link to something the source holds names it as held (a recursive folder, a drive at its root), and an add_items entry for the same thing wins. |
 | `remove_items` | `list[dict[str, Any]]` | *(computed)* | Items to remove, matched by type and id (a filter by its fields); a folder entry also removes a shared drive of the same id the source holds. |
 | `remove_links` | `list[str]` | *(computed)* | Links to remove, read as items; a folder link also removes a shared drive of the same id the source holds. |
+| `crawl_readmit` | `list[str]` | *(computed)* | Crawl only: readmit these Directory-verified people after SCIM reactivation; default none. |
+| `crawl_options` | `KnowledgeSourceCrawlOptions \| None` | `None` | Crawl only: replace the explicit delegation selectors; default unchanged. |
 | `include` | `list[str] \| None` | `None` | gdrive only: the new file kinds read, of docs, slides, pdf, pptx, docx; default unchanged. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `crawl_proof` | `KnowledgeSourceCrawlProof \| None` | Crawl only: checked scope and keyed-subject proof; None for another credential mode. |
 | `name` | `str` | The source updated. |
 | `items` | `list[dict[str, Any]]` | The source's items as now stored. |
 | `include` | `list[str]` | The file kinds a gdrive source reads; [] for another kind. |

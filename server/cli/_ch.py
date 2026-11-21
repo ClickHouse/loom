@@ -402,12 +402,17 @@ def run_connected[T](
     HTTP session."""
     from server import boot
     from server.auth.account_lifecycle import bind
+    from server.auth.person_erasure import bind as bind_person_erasure
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
+    from server.erasure.app.crawl_person import finalize as finalize_person_erasure
     from server.insights.app.provider_command import model_command
     from server.knowledge.app.connected_accounts import stop_subjects
+    from server.knowledge.app.crawl_capture import prepare as prepare_person_erasure
+    from server.knowledge.app.crawl_person_erasure import finish as finish_person_erasure
 
     bind(stop_subjects)
+    bind_person_erasure(prepare_person_erasure, finish_person_erasure, finalize_person_erasure)
     named = _declared(orgs, org_free)
     register_buffer_drainer("boot-writes", boot.drain_writes)
 

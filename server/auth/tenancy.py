@@ -43,7 +43,7 @@ from server.core.errors import (
 from server.settings import settings
 
 if TYPE_CHECKING:
-    from server.auth.jwt import AuthInfo
+    from server.auth.jwt import AuthorizationClaims
 
 log = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ async def is_held(org: str) -> bool:
     return held
 
 
-def scoped_to(auth: AuthInfo | None, org: str) -> bool:
+def scoped_to(auth: AuthorizationClaims | None, org: str) -> bool:
     """Whether a verified principal is scoped to `org`: its token's own org. A
     platform or `*`-org principal acts in orgs the cell holds and places none."""
     from server.operations.base import Role
@@ -116,7 +116,7 @@ def scoped_to(auth: AuthInfo | None, org: str) -> bool:
     return not auth.has_role(Role.PLATFORM_ADMIN)
 
 
-async def ensure_held(org: str | None, auth: AuthInfo | None) -> None:
+async def ensure_held(org: str | None, auth: AuthorizationClaims | None) -> None:
     """Pass when this cell holds `org`, recording or placing it as the mode allows.
     Raise `PermissionError` (403) first for a principal that may not act in the org,
     `WrongCellError` (409) for another cell's org, `ValidationError` (422) for a new org

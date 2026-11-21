@@ -534,6 +534,10 @@ def _turn_of(src: KnowledgeSource) -> Callable[..., Awaitable[TurnResult]]:
     """The turn function of a source; this module's `_turn` reads a folder, and a
     mirrored folder source writes into its namespace's mirror."""
     # Imported here: a kind's module builds on this one's helpers.
+    if src.credential_mode == "crawl" and src.kind == "gdrive" and mirror_synced(src):
+        from server.knowledge.app import source_sync_crawl
+
+        return source_sync_crawl.turn
     if (
         src.credential_mode == "connected"
         and src.kind in {"notion", "linear"}
@@ -1273,6 +1277,10 @@ async def require_current(src: KnowledgeSource) -> None:
         if account is None:
             raise connected_accounts.unavailable()
         await connected_accounts._source_standing(src, account)
+    elif src.credential_mode == "crawl":
+        from server.knowledge.app import crawl_authority
+
+        await crawl_authority.current(src).validate()
 
 
 @contextlib.asynccontextmanager
@@ -1281,6 +1289,11 @@ async def publication_guard(src: KnowledgeSource) -> AsyncIterator[None]:
         from server.knowledge.app import connected_accounts
 
         async with connected_accounts.publication_guard(src):
+            yield
+    elif src.credential_mode == "crawl":
+        from server.knowledge.app import crawl_authority
+
+        async with crawl_authority.current(src).publication_guard():
             yield
     else:
         yield
@@ -1356,7 +1369,7 @@ async def write_document(
             permissions=permissions,
             commit_guard=(
                 functools.partial(publication_guard, src)
-                if src.credential_mode == "connected"
+                if src.credential_mode in {"connected", "crawl"}
                 else None
             ),
         )

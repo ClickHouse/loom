@@ -29,6 +29,9 @@ class _RestoreWorld(_World):
         self.account_history = [self.rows[_KEY]]
         self.source_history = [self.source]
         monkeypatch.setattr(accounts.store, "_default_client", lambda: self)
+        from server.knowledge.app import crawl_restore
+
+        monkeypatch.setattr(crawl_restore, "get_client", lambda: self)
 
     async def put(self, row, **kwargs):
         await super().put(row, **kwargs)
@@ -43,6 +46,10 @@ class _RestoreWorld(_World):
         ]
 
     async def query_all(self, query, params, **kwargs):
+        if query.startswith("SELECT DISTINCT org FROM (SELECT org FROM loom.knowledge_sources "):
+            assert "WHERE credential_mode = 'crawl' UNION ALL " in query
+            assert "FROM loom.knowledge_crawl_exclusion_keys)" in query
+            return []  # This connection-only world contains no crawl source or refusal key.
         if "FROM loom.connected_accounts" in query:
             assert "FINAL" not in query
             assert "credential_enc" not in query and "account_email_enc" not in query

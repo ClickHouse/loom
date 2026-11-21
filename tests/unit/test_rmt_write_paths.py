@@ -43,10 +43,9 @@ WRITE_PATHS: dict[str, tuple[str, str]] = {
     "query_history_sources": ("builder", "test_repository_column_sets_match_schema.py"),
     "knowledge_mirrors": ("builder", "test_knowledge_mirrors.py"),
     "knowledge_source_listings": ("builder", "test_knowledge_mirrors.py"),
-    "knowledge_group_members": (
-        "insert_once",
-        "read-side schema only; no production writer inserts or rewrites membership evidence",
-    ),
+    "knowledge_group_members": ("builder", "test_crawl_storage_contracts.py"),
+    "knowledge_crawl_exclusion_keys": ("builder", "test_crawl_storage_contracts.py"),
+    "knowledge_crawl_exclusions": ("builder", "test_crawl_storage_contracts.py"),
     "machine_identities": ("builder", "test_machines.py"),
     "org_model_calls": ("builder", "test_model_calls_switch.py"),
     "extraction_policies": ("builder", "test_extraction_policy.py"),

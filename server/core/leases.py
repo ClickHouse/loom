@@ -397,32 +397,53 @@ class ClaimExpired(LeaseUnavailable):
 
 @asynccontextmanager
 async def holding(
-    name: str, *, ttl_s: float, wait_s: float = 0.0, ch: Any = None
+    name: str,
+    *,
+    ttl_s: float,
+    wait_s: float = 0.0,
+    ch: Any = None,
+    settle_writes: bool = False,
 ) -> AsyncIterator[bool]:
-    """Claim `name` for the block, waiting up to `wait_s`: yields True when this
-    caller has it, False when another holder keeps it. LeaseUnavailable when the
-    store cannot answer, ClaimExpired when a held block runs past `_WORK_SHARE` of
-    the TTL."""
+    """Claim a name; an unanswered fenced write keeps its key until safe expiry.
+
+    With settlement, every INSERT must end before the claim's server-side TTL.
+    A client cancellation or lost reply cannot release the key early. The next
+    holder therefore cannot scrub raw history before an older send has ended.
+    """
+    from server.core import rmt_carry
     from server.core.ch import statement_timeout
 
     lease = await take(name, ttl_s=ttl_s, wait_s=wait_s, ch=ch)
     if lease is None:
         yield False
         return
-    # From when the winning attempt was sent, not when its reply came: a reply held
-    # up past the TTL must not open the block beside the claim's next holder.
-    left = work_left(lease, ttl_s)
+    end = lease.renewed_at + ttl_s * _WORK_SHARE
+    if settle_writes:
+        with statement_timeout(statement_bound(ttl_s)):
+            end = min(end, lease.renewed_at + ttl_s - rmt_carry.send_bound_s())
+    # The winning send predates the store's acquisition stamp. Its local TTL end
+    # is conservative even when the winning reply is delayed.
+    pending: set[str] = set()
     try:
+        left = end - time.monotonic()
         if left <= 0:
             raise TimeoutError
         async with asyncio.timeout(left):
             with statement_timeout(statement_bound(ttl_s)):
-                yield True
+                if settle_writes:
+                    with rmt_carry.claim_writes(end) as pending:
+                        yield True
+                    if pending:
+                        raise LeaseUnavailable("claim has unanswered writes", operation=name)
+                else:
+                    yield True
     except TimeoutError as e:
         raise ClaimExpired(
             f"the work under claim {name} did not finish in time", operation=name
         ) from e
     finally:
+        if pending:
+            lease.let_expire()
         await release_shielded(lease)
 
 

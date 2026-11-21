@@ -373,7 +373,7 @@ directory, so it expands no group ([below](#who-may-read)).
 
 A `crawl` source's credential is a service-account key whose client id the org's
 workspace administrator granted domain-wide delegation for `drive.readonly`,
-`admin.directory.group.member.readonly` and `admin.directory.user.readonly`. Its config
+`admin.directory.group.member.readonly` and `admin.directory.user.readonly`. Its `crawl_options` field
 holds `directory_subject` (a workspace administrator the directory reads impersonate)
 and `subjects`: people (emails) and groups (group emails), whose members the directory
 read lists at each turn, at most 2000 people (not a setting). For each person the sync
@@ -385,8 +385,9 @@ included, leaves out the people an erasure excluded ([erasure](#erasure-and-audi
 
 The probe checks that the delegation grants no write on what the crawl reads: it asks
 for each of the three scopes, which must be granted, and for
-`https://www.googleapis.com/auth/drive`, `admin.directory.user` and
-`admin.directory.group`, which the store must refuse; a credential the store grants any
+`https://www.googleapis.com/auth/drive`, `admin.directory.user`,
+`admin.directory.group` and the distinct `admin.directory.group.member` write scope,
+which the store must refuse; a credential the store grants any
 of them is refused (`CREDENTIAL_REFUSED`). It cannot prove the delegation grants nothing
 else (a mail scope, say), and the page says so to the admin who registers it. The audit
 rows of `add`, `update` and `rotate` record the configured subjects as keyed hashes (an
@@ -394,6 +395,24 @@ HMAC under the root secret, as SCIM's audit rows hash a subject, so a list of th
 addresses does not reverse them). Audit rows also record the scopes granted and the
 number of members resolved: the audit trail outlives erasure and keeps no crawled
 person's address.
+
+Registration, update and rotation require a current org administrator who also
+administers the source namespace. Each approval binds the signing-key lifecycle,
+canonical registrant, exact selectors, items, credential hash, verified Workspace
+customer and source generation. Workers recheck that authority after provider and
+model waits and under the publication leases. An indexed read uses the same local
+approval and exclusion fence without opening a credential or contacting Google.
+Only a complete union listing stamped with both the source generation and current
+exclusion epoch admits copies; updating a registration cannot reuse its old listing.
+A check reports delegation standing without document titles or counts.
+
+`knowledge.source.update.crawl_readmit` explicitly readmits named, Directory-verified
+people after SCIM reactivation. It requires the same current org and namespace
+administration, refuses a still-deactivated contact and advances the durable refusal
+epoch. It never republishes old copies: a complete subsequent crawl must establish
+their permissions and freshness. Ordinary selector edits do not readmit anyone.
+A dry run writes no registry or approval; an org whose refusal key has not been
+initialized must complete its first real registration before a dry-run probe.
 
 ## Access follows the source
 
@@ -1242,8 +1261,8 @@ statements and census keys against these, and its tests pin each one:
 - A person's connected accounts, the sources they own with every mirrored copy those
   wrote, and their entries in every crawl are erased when an org admin asks; afterwards
   no source row, list or members row names them, and a crawl reads them again only once
-  an org admin readmits them. The pull request that builds connected accounts and crawls
-  designs that erasure.
+  an org admin readmits them. Canonical-person deletion runs from the required SCIM
+  lifecycle; it never infers that a memory `user_id` names a sign-in subject.
 - Private canonical-owner cleanup uses the exact `(org, subject, kind)` key independently
   of namespace and end-user erasure. Disconnect and deactivation fence the generation,
   clear the current credential, queue every owned source for retirement, then physically
@@ -1254,6 +1273,20 @@ statements and census keys against these, and its tests pin each one:
   mean an end-user principal and never guesses a sign-in subject from an id or email.
   Source retirement remains queued until the existing mirror retirement worker finishes;
   account cleanup alone does not certify that every source copy or crawl entry is erased.
+- Canonical-person deletion captures verified sign-in subject aliases and contact
+  ties before removing them. A bounded Directory lookup separately proves Workspace
+  customer and provider user ids; neither an email nor an end-user `user_id` is a
+  canonical subject. A required cleanup capsule fences crawls until raw document ACL,
+  group membership, source selector, approval and capsule histories have been scrubbed
+  and their censuses pass. Other writers' content and the registering administrator's
+  service-account key remain intact. The capsule is physically erased; only keyed
+  refusal intent survives until explicit readmission. Reactivation cannot clear it.
+- The canonical-person control registry is cross-namespace and uses its real identity
+  axes rather than inventing a namespace or memory `user_id`. SCIM capsules have an
+  identity-lease-protected history reseal; exclusion keys and pending manifests reseal
+  without changing the keyed identities, cleanup phase or Keeper fence. An unknown
+  historical deletion remains a refusal pending verified identity repair, rather than
+  guessing whom an old email denoted.
 - `erasure.request` refuses an `acl-` scope for every caller but a platform admin with
   auth on, and `erasure.export` refuses one for every caller (an export would read the
   mirror's chunks with no permission check); with auth off both refuse it for everyone.

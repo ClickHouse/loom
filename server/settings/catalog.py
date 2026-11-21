@@ -2451,6 +2451,26 @@ class KnowledgeSettings(BaseModel):
     knowledge_connected_registry_scan_limit: int = Field(default=4096, ge=1)
     # Registrations per page during root-secret resealing.
     knowledge_connected_registry_page_size: int = Field(default=256, ge=1, le=4096)
+    # Bytes read from one delegated Directory or OAuth response; larger responses refuse.
+    knowledge_crawl_directory_max_response_bytes: int = Field(default=1024 * 1024, ge=1024)
+    # Directory membership pages across the entire expansion, including nested groups.
+    knowledge_crawl_directory_max_pages: int = Field(default=256, ge=1)
+    # Groups across one complete crawl expansion; the total-person ceiling stays fixed.
+    knowledge_crawl_max_groups: int = Field(default=2000, ge=1)
+    # Distinct files across every person's complete listing; a larger union publishes nothing.
+    knowledge_crawl_max_files: int = Field(default=10000, ge=1)
+    # Maximum full control-registry scan for cleanup; a larger scan refuses partial work.
+    knowledge_crawl_registry_scan_limit: int = Field(default=4096, ge=1)
+    # Org control rows per root-secret reseal page.
+    knowledge_crawl_registry_page_size: int = Field(default=256, ge=1, le=4096)
+    # Seconds the renewed org exclusion lease lives; namespace publication leases follow it.
+    knowledge_crawl_lease_ttl_s: float = Field(default=60.0, gt=0)
+    # Seconds a crawl control change waits for an existing org exclusion lease.
+    knowledge_crawl_lease_wait_s: float = Field(default=5.0, ge=0)
+    # Whole pre-delete Directory identity capture across a person's existing crawl sources.
+    knowledge_crawl_identity_capture_timeout_s: float = Field(default=30.0, gt=0)
+    # Whole local canonical-person crawl cleanup, including publisher fencing and residue.
+    knowledge_crawl_person_cleanup_timeout_s: float = Field(default=60.0, gt=0)
     # Seconds one connected-account OAuth request may take, including its response.
     # The caller's remaining deadline can shorten this bound.
     knowledge_connected_oauth_timeout_s: float = Field(default=30.0, gt=0)

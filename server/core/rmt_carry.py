@@ -116,6 +116,10 @@ _carried: contextvars.ContextVar[_Write | None] = contextvars.ContextVar(
 _lease_end: contextvars.ContextVar[float | None] = contextvars.ContextVar(
     "rmt_carry_lease_end", default=None
 )
+# All enclosing claims retain unanswered sends, including sends in nested claims.
+_claim_writes: contextvars.ContextVar[tuple[set[str], ...]] = contextvars.ContextVar(
+    "rmt_claim_writes", default=()
+)
 _pinned: list[_Pin] = []
 # How long a send may take to reach the server and start: a request still
 # queued past this is refused by its guard.
@@ -333,6 +337,8 @@ async def writing() -> AsyncIterator[None]:
 def note_ended(query_id: str) -> None:
     """The server answered this send (its rows, or an error of its own): the query
     is over and holds nothing back."""
+    for pending in _claim_writes.get():
+        pending.discard(query_id)
     write = _carried.get()
     if write is not None:
         write.ended.add(query_id)
@@ -341,6 +347,8 @@ def note_ended(query_id: str) -> None:
 def note_send(query_id: str, deadline: float = 0.0, max_s: float = 0.0) -> None:
     """The client sent one batch of this carried write as `query_id`, to start by
     `deadline` (server clock) and run for at most `max_s`."""
+    for pending in _claim_writes.get():
+        pending.add(query_id)
     write = _carried.get()
     if write is not None:
         write.query_ids.append(query_id)
@@ -378,6 +386,18 @@ def under_lease(ends_at: float) -> Iterator[None]:
         yield
     finally:
         _lease_end.reset(token)
+
+
+@contextlib.contextmanager
+def claim_writes(ends_at: float) -> Iterator[set[str]]:
+    """Track sends without server completion in every enclosing claim."""
+    pending: set[str] = set()
+    token = _claim_writes.set((*_claim_writes.get(), pending))
+    try:
+        with under_lease(ends_at):
+            yield pending
+    finally:
+        _claim_writes.reset(token)
 
 
 def sent_under_lease() -> bool:

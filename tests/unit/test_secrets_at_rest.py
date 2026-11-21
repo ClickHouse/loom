@@ -49,6 +49,20 @@ def _no_analysis_lease(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service, "lease", lambda ch=None: contextlib.nullcontext())
 
 
+@pytest.fixture(autouse=True)
+def _no_crawl_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These sealed-registry fakes contain no crawl approvals, keys or person capsules."""
+    from server.auth import person_erasure
+    from server.knowledge.app import crawl_reseal
+
+    async def empty(*, dry_run: bool, ch: object) -> tuple[int, list[str]]:
+        return 0, []
+
+    monkeypatch.setattr(crawl_reseal, "approvals", empty)
+    monkeypatch.setattr(crawl_reseal, "keys", empty)
+    monkeypatch.setattr(person_erasure, "reseal_registry", empty)
+
+
 def test_purposes_do_not_open_each_other_and_empty_stays_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -233,8 +247,9 @@ async def test_reseal_push_registry_uses_the_supplied_client(
         pytest.fail("reseal must use the supplied ClickHouse client")
 
     @asynccontextmanager
-    async def source_lease(name: str, *, ttl_s: float, wait_s: float, ch=None):
+    async def source_lease(name: str, *, ttl_s: float, wait_s: float, ch=None, settle_writes: bool):
         assert ch is client and name == "knowledge-source:o:docs"
+        assert settle_writes is True
         assert ttl_s == 60.0 and wait_s == 5.0
         calls.append("lease")
         yield True

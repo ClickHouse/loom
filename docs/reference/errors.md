@@ -450,7 +450,7 @@ Raised in `server/tracker/app/sources.py`.
 
 #### `CREDENTIAL_REFUSED`
 
-Raised in `server/knowledge/app/connected_sources.py`, `server/knowledge/app/sources.py`.
+Raised in `server/knowledge/app/connected_sources.py`, `server/knowledge/app/crawl_sources.py`, `server/knowledge/app/sources.py`.
 
 #### `CROSS_SITE_REQUEST`
 

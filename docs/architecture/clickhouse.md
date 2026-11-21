@@ -694,6 +694,25 @@ with `purge=true`, runner state, and the supersession rows `knowledge.restore` r
   refused because an erasure removed the document it was built from deletes the chunk
   rows it inserted (lightweight `DELETE FROM loom.chunks` by source and version,
   `chunks.delete_versions`), so its text and author do not outlive the erasure.
+- **Source credential resealing** conditionally updates only the matching old
+  ciphertext for an exact org, namespace, name and source id, under the source
+  lease. It rewrites raw versions and checks for old-ciphertext residue before
+  the previous root is retired. A full-row replacement could revive selectors
+  or identity metadata erased during a delayed write; the mutation preserves
+  every other column, including the version and unrelated sources.
+- **Canonical-person metadata publishers** bound every source and SCIM INSERT
+  under their claim's receiver deadline. An unanswered send retains its Keeper
+  key until expiry; the receiver's latest possible completion precedes that
+  expiry. Nested claims retain the earliest deadline and every unanswered send.
+  Cleanup cannot acquire the same claim and report raw history erased while an
+  older publisher may still append it. Scoped statement bounds also limit the
+  guarded receiver; an insufficient claim window refuses before publishing.
+- **SCIM cleanup capsule resealing** updates matching historical `scim_users` rows
+  in place under the identity lease, by exact SCIM row id and old ciphertext. The
+  replacement retains the captured canonical/provider identity and cleanup phase.
+  It waits for mutation completion and checks raw-history residue before the old
+  sealing root can be retired. Appending a version would leave older capsules
+  encrypted by the retired root (`server/auth/person_erasure.py`).
 - **Remaining `ALTER … UPDATE/DELETE` call sites** are listed in
   `tests/unit/test_clickhouse_mutation_inventory.py`, which fails on a new one until it is
   classified there.

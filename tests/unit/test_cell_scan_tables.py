@@ -92,6 +92,8 @@ _DATA_TABLES = frozenset(
         "loom.graph_projections",
         "loom.idempotency",
         "loom.knowledge_gaps",
+        "loom.knowledge_crawl_exclusion_keys",
+        "loom.knowledge_crawl_exclusions",
         "loom.knowledge_group_members",
         "loom.knowledge_ingest_cancels",
         "loom.knowledge_ingestions",
