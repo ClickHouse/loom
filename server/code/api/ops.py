@@ -358,7 +358,7 @@ OPERATIONS: list[Operation] = [
         name="code.grep",
         input_model=CodeGrepInput,
         output_model=CodeGrepOutput,
-        handler=handle_code_grep,
+        handler=result_lessons.WithLessons(handle_code_grep, result_lessons.grep_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),

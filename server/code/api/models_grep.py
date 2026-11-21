@@ -17,9 +17,12 @@ from pydantic import (
 
 from server.code.api.models_common import (
     _CodeIdentity,
+    _drop_empty_lessons,
     _drop_empty_presence_keys,
     _drop_unfired_symbol_blocks,
     _lead_namespaces,
+    _LessonsOut,
+    _ResultLessons,
     _trim_namespaces,
 )
 from server.operations.base import MCP_HIDDEN
@@ -29,7 +32,7 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
-class CodeGrepInput(_CodeIdentity):
+class CodeGrepInput(_CodeIdentity, _ResultLessons):
     """Exact-match lookup over the indexed corpus. Unlike shell grep, the
     answer arrives WITH what raw grep can't attach: the
     enclosing symbol per hit, one indexed round-trip, and a hit list that
@@ -129,7 +132,7 @@ class CodeGrepInput(_CodeIdentity):
         return min(self.limit or 20, 200)
 
 
-class CodeGrepOutput(BaseModel):
+class CodeGrepOutput(_LessonsOut):
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # the presence block rides only when it fired, the neighbours block
@@ -142,7 +145,7 @@ class CodeGrepOutput(BaseModel):
         for k in ("partial", "partial_reason", "fallback"):
             if not data.get(k):
                 data.pop(k, None)
-        return data
+        return _drop_empty_lessons(data)
 
     # {path, line, text, scope, scope_start_line, scope_end_line} per matching
     # LINE, path/line ordered. scope_* is the span of the enclosing unit named

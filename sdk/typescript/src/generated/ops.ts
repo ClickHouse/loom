@@ -864,6 +864,8 @@ export interface CodeFirstBuildOutput {
 }
 
 export interface CodeGrepInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -887,6 +889,8 @@ export interface CodeGrepInput {
 }
 
 export interface CodeGrepOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
   next_cursor?: string;
   has_more?: boolean;
