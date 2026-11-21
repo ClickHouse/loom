@@ -504,3 +504,29 @@ async def test_discovery_cancellation_closes_retained_duplicate_and_pending_sess
     with pytest.raises(asyncio.CancelledError):
         await task
     assert len(channels) == 3 and all(item.closed for item in channels)
+
+
+async def test_discovery_resamples_an_additional_shared_endpoint(owner, monkeypatch):
+    client, config, channels, channel = owner
+    expected = frozenset(f"00000000-0000-0000-0000-{index:012x}" for index in (1, 2, 3))
+    secondary = iter(sorted(expected)[1:])
+    secondary_visits = []
+
+    def create(origin, *args):
+        observer = channel(origin, *args)
+        observer.origin = origin
+        return observer
+
+    async def bootstrap(self):
+        if self.origin == "http://other:8123/":
+            secondary_visits.append(True)
+            self.server_uuid = next(secondary)
+        else:
+            self.server_uuid = min(expected)
+
+    monkeypatch.setattr(ch_module, "PolicyObserver", create)
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    async with client.policy_observers(expected) as observers:
+        assert {observer.server_uuid for observer in observers} == expected
+        assert len(secondary_visits) == 2
+    assert all(observer.closed for observer in channels)

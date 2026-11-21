@@ -348,10 +348,10 @@ async def discover_policy_observers(
         async with asyncio.timeout(_DISCOVERY_TIMEOUT_S):
             for origin in origins:
                 await open_session(origin)
-            for _ in range(len(servers) * _DISCOVERY_ATTEMPTS_PER_REPLICA):
+            for attempt in range(len(servers) * _DISCOVERY_ATTEMPTS_PER_REPLICA):
                 if selected.keys() == servers:
                     break
-                await open_session(origins[0])
+                await open_session(origins[attempt % len(origins)])
     except TimeoutError:
         raise ObservationUnavailable() from None
     if selected.keys() != servers:
