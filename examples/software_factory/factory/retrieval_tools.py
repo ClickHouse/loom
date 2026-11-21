@@ -21,6 +21,26 @@ SEARCH_POLICY = dict(
 )
 
 
+def request_body(op, args, *, org, namespace, memory_namespaces=()):
+    body = {"org": org, "namespace": namespace, **args}
+    if op == "code.symbol":
+        body.update(include_body=True, include_history=False, include_examples=False)
+    elif op == "code.search":
+        body.update(SEARCH_POLICY)
+    elif op == "code.enclosing":
+        body.update(include_body=True)
+        body["locations"] = list(dict.fromkeys(body["locations"]))
+    elif op == "code.grep":
+        if not body.get("pattern"):
+            raise ValueError("Search pattern must be nonempty")
+        body.update(limit=20)
+    if op in {"code.symbol", "code.search", "code.outline"}:
+        body["include_lessons"] = bool(memory_namespaces)
+        if memory_namespaces:
+            body["lesson_namespaces"] = list(memory_namespaces)
+    return body
+
+
 def schemas() -> list[dict]:
     string = {"type": "string"}
     return [
@@ -130,28 +150,13 @@ class QualifiedContext(Context):
         }[op]
         if set(args) - allowed:
             raise ValueError("Unexpected retrieval argument")
-        body = {"org": self.org, "namespace": self.task.namespace, **args}
-        if op == "code.symbol":
-            body.update(
-                include_body=True,
-                include_history=False,
-                include_examples=False,
-                include_lessons=False,
-            )
-        elif op == "code.search":
-            body.update(SEARCH_POLICY)
-        elif op == "code.outline":
-            body.update(include_lessons=False)
-        elif op == "code.enclosing":
-            body.update(include_body=True)
-            body["locations"] = list(dict.fromkeys(body["locations"]))
-        else:
-            if not body.get("pattern"):
-                raise ValueError("Search pattern must be nonempty")
-            body.update(limit=20)
-        body["include_lessons"] = bool(self.memory_namespaces)
-        if self.memory_namespaces:
-            body["lesson_namespaces"] = list(self.memory_namespaces)
+        body = request_body(
+            op,
+            args,
+            org=self.org,
+            namespace=self.task.namespace,
+            memory_namespaces=self.memory_namespaces,
+        )
         if op in {"code.grep", "code.search"}:
             prefix = args.get("path_prefix", "")
             if not isinstance(prefix, str):

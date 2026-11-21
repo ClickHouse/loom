@@ -261,4 +261,6 @@ def task_inputs(protocol, task_id, index_tier=None, *, slot=None, binding=None):
         binding = selected
     elif index_tier is not None or binding is not None:
         raise PermissionError("Live task inputs require an explicit scheduled binding")
+    if slot is not None and slot["mode"] == "baseline":
+        binding = None
     return load_profile(protocol).task_inputs(protocol, task_id, binding=binding)

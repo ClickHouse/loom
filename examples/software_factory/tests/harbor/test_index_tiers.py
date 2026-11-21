@@ -154,6 +154,7 @@ class TierContracts(unittest.TestCase):
             "examples.software_factory.evals.flask.profile.FrozenSource", return_value=source
         ):
             self.assertEqual(task_inputs(protocol, "task")[2].namespace, "-")
+            self.assertEqual(task_inputs(protocol, "task", slot=fixture.slots[0])[2].namespace, "-")
             self.assertEqual(
                 task_inputs(protocol, "task", "treesitter", slot=fixture.slots[1])[2].namespace,
                 "code",

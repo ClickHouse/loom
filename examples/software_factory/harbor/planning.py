@@ -11,7 +11,7 @@ from examples.software_factory.factory.model import Budget, digest
 from .arms import PRIMARY, validate_schedule
 from .charts import METRICS
 from .cohorts import comparison_cohorts
-from .runtime import write
+from .runtime import task_inputs, write
 from .scopes import binding_for, frozen_json, selected_scopes
 from .source import check_files, controller_identity
 
@@ -139,6 +139,7 @@ def freeze_plan(
     plan["comparison_cohorts"] = comparison_cohorts(plan)
     for slot in plan["schedule"]:
         binding_for(plan, slot)
+        task_inputs(plan, slot["task_id"], slot["index_tier"], slot=slot)
     if len(selected_scopes(plan)) != len(tasks) * 2:
         raise PermissionError("Every scenario needs exactly two certified code tiers")
     for task_id, row in plan["memory_histories"].items():

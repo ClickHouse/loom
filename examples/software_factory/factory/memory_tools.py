@@ -11,6 +11,23 @@ OPS = {
     f"loom_memory_{name}": f"memory.{name}"
     for name in ("search", "get", "set", "update", "for_file")
 }
+
+
+def request_body(name, args, *, org, namespace, agent, user_id, session_id, repository_tag):
+    body = {"org": org, "namespace": namespace, **args}
+    if name != "loom_memory_for_file":
+        body.update(agent=agent)
+    if name in {"loom_memory_get", "loom_memory_set"}:
+        body.update(user_id=user_id, session_id=session_id)
+    if name == "loom_memory_search":
+        body.update(namespace_scope="this", auto_touch=False, agent="*")
+    if name == "loom_memory_set":
+        body.update(memory_type="semantic", tags=[repository_tag, *args.get("tags", [])])
+    if name == "loom_memory_update":
+        body.update(user_id=user_id)
+    return body
+
+
 FIELDS = {
     "found",
     "unchanged",
@@ -239,17 +256,16 @@ class MemoryTools:
             or not re.fullmatch(r"[0-9a-f]{64}", args["if_match_sha256"])
         ):
             raise ValueError("Update requires the current native content hash")
-        body = {"org": self.org, "namespace": self.namespace, **args}
-        if name != "loom_memory_for_file":
-            body.update(agent=self.agent)
-        if name in {"loom_memory_get", "loom_memory_set"}:
-            body.update(user_id=self.user_id, session_id=self.session_id)
-        if name == "loom_memory_search":
-            body.update(namespace_scope="this", auto_touch=False, agent="*")
-        if name == "loom_memory_set":
-            body.update(memory_type="semantic", tags=[self.repository_tag, *args.get("tags", [])])
-        if name == "loom_memory_update":
-            body.update(user_id=self.user_id)
+        body = request_body(
+            name,
+            args,
+            org=self.org,
+            namespace=self.namespace,
+            agent=self.agent,
+            user_id=self.user_id,
+            session_id=self.session_id,
+            repository_tag=self.repository_tag,
+        )
         writing = name in {"loom_memory_set", "loom_memory_update"}
         started = time.monotonic()
         try:

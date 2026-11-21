@@ -674,6 +674,9 @@ class Provisioner:
             for key in ("provider", "embedding_model", "dimension", "source", "revision", "files")
         }
         self.runtime["require_real_providers"] = model["require_real_providers"]
+        from .contracts import requests
+
+        self.runtime["request_contracts"] = self._rpc("request_contracts", {"requests": requests()})
         tracked = self._cmd(
             ["git", "-C", str(self.source_root), "ls-files", "-z", "--", "server", "schemas", "sdk"]
         ).stdout.split("\0")
