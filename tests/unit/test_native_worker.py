@@ -29,6 +29,21 @@ def session(tmp_path, monkeypatch):
     return native.NativeSession(tmp_path)
 
 
+def test_context_uses_bounded_offset_independent_anonymous_fd(monkeypatch):
+    descriptor = os.memfd_create("native-context-test", os.MFD_CLOEXEC)
+    try:
+        data = b'{"arguments":["private-context-canary"]}'
+        os.write(descriptor, data)
+        monkeypatch.setenv(native.CONTEXT, str(descriptor))
+        assert native.read_context() == {"arguments": ["private-context-canary"]}
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == len(data)
+        os.ftruncate(descriptor, native.MAX_CONTEXT_BYTES + 1)
+        with pytest.raises(ValueError, match="size"):
+            native.read_context()
+    finally:
+        os.close(descriptor)
+
+
 def test_records_are_private_bounded_and_never_overwrite(tmp_path):
     path = tmp_path / "record.json"
     native.write_record(path, {"kind": "exit", "code": 139})
@@ -113,7 +128,9 @@ def test_launcher_preserves_normal_exit_codes_and_keeps_arguments_private(
             assert kwargs["stdout"] is subprocess.DEVNULL
             assert kwargs["stderr"] is subprocess.DEVNULL
             assert canary not in command
-            context = json.loads(kwargs["env"][native.CONTEXT])
+            descriptor = int(kwargs["env"][native.CONTEXT])
+            assert descriptor in kwargs["pass_fds"]
+            context = json.loads(os.pread(descriptor, os.fstat(descriptor).st_size, 0))
             assert context["arguments"] == ["-c", "raise SystemExit(139)", canary]
             self.directory = Path(context["directory"])
 
@@ -193,7 +210,7 @@ def test_debugger_permission_refusal_is_reported_without_fallback(session, monke
     )
     directory = session.root / "synthetic-debugger"
     directory.mkdir(mode=0o700)
-    monkeypatch.setenv(native.CONTEXT, json.dumps({"directory": str(directory)}))
+    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
     monkeypatch.setitem(sys.modules, "gdb", fake)
     monkeypatch.setitem(sys.modules, "_native_worker", native)
     monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
@@ -265,7 +282,7 @@ def test_collector_failure_still_continues_and_preserves_terminal_signal(
         parse_and_eval=lambda expression: Value(None if expression == "$_exitcode" else 11),
     )
     monkeypatch.setattr(native, "write_record", write)
-    monkeypatch.setenv(native.CONTEXT, json.dumps({"directory": str(directory)}))
+    monkeypatch.setattr(native, "read_context", lambda: {"directory": str(directory)})
     monkeypatch.setitem(sys.modules, "gdb", fake)
     monkeypatch.setitem(sys.modules, "_native_worker", native)
     monkeypatch.syspath_prepend(str(Path(native.__file__).parent))
@@ -462,21 +479,36 @@ def mechanism_checks(root):
     assert terminal["observed_fatal_stops"] == native.MAX_STOPS + 2
     assert terminal["captured_stops"] == native.MAX_STOPS
     payload = b"wire\x00\xff"
-    environment_hash = hashlib.sha256(json.dumps(environment, sort_keys=True).encode()).hexdigest()
-    result, output, error, records = _mechanism_case(
-        root / "transport",
-        "import hashlib, json, os, sys\n"
-        f"assert hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest() == {environment_hash!r}, 'worker environment mismatch'\n"
-        f"assert sys.argv[1] == {canary!r}\n"
-        "assert os.environ['NATIVE_TEST_CANARY'] == sys.argv[1]\n"
-        f"assert {native.CONTEXT!r} not in os.environ\n"
-        "os.write(1, os.read(0, 6))\n",
-        (canary,),
-        payload=payload,
-        environment=environment,
-    )
-    assert (result, output, error) == (0, payload, b""), (result, output, error, records)
-    assert canary not in json.dumps(records)
+    large_environment = {
+        **environment,
+        "NATIVE_LARGE_A": "private-large-a-" + "a" * (70 * 1024),
+        "NATIVE_LARGE_B": "private-large-b-" + "b" * (70 * 1024),
+        "NATIVE_NON_UTF8": os.fsdecode(b"\xff"),
+    }
+    for label, transport_environment in (
+        ("transport", environment),
+        ("large-environment", large_environment),
+    ):
+        environment_hash = hashlib.sha256(
+            json.dumps(transport_environment, sort_keys=True).encode()
+        ).hexdigest()
+        result, output, error, records = _mechanism_case(
+            root / label,
+            "import hashlib, json, os, sys\n"
+            f"assert hashlib.sha256(json.dumps(dict(os.environ), sort_keys=True).encode()).hexdigest() == {environment_hash!r}, 'worker environment mismatch'\n"
+            f"assert sys.argv[1] == {canary!r}\n"
+            "assert os.environ['NATIVE_TEST_CANARY'] == sys.argv[1]\n"
+            f"assert {native.CONTEXT!r} not in os.environ\n"
+            "os.write(1, os.read(0, 6))\n",
+            (canary,),
+            payload=payload,
+            environment=transport_environment,
+        )
+        assert (result, output, error) == (0, payload, b""), (label, result, output, error, records)
+        serialized = json.dumps(records)
+        assert all(
+            value not in serialized for value in (canary, "private-large-a-", "private-large-b-")
+        )
     _mechanism_parent_death(root / "parent-death")
     _mechanism_xdist(root)
     for received in (signal.SIGSEGV, signal.SIGTRAP):

@@ -129,7 +129,7 @@ def signature(received: str) -> dict[str, Any]:
 
 
 def run() -> None:
-    context = json.loads(os.environ[native.CONTEXT])
+    context = native.read_context()
     directory = Path(context["directory"])
     stops = 0
     trap = False

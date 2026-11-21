@@ -17,6 +17,7 @@ from typing import Any
 CONTEXT = "_PYTEST_NATIVE_CONTEXT"
 MAX_WORKERS = 64
 MAX_BYTES = 65536
+MAX_CONTEXT_BYTES = 64 * 1024 * 1024
 MAX_STOPS = 8
 
 
@@ -52,6 +53,17 @@ def read_record(path: Path) -> dict[str, Any]:
         result = json.loads(source.read(MAX_BYTES + 1))
     if not isinstance(result, dict):
         raise ValueError("invalid native record")
+    return result
+
+
+def read_context() -> dict[str, Any]:
+    descriptor = int(os.environ[CONTEXT])
+    size = os.fstat(descriptor).st_size
+    if not 0 < size <= MAX_CONTEXT_BYTES:
+        raise ValueError("native context size is unsupported")
+    result = json.loads(os.pread(descriptor, size, 0))
+    if not isinstance(result, dict):
+        raise ValueError("invalid native context")
     return result
 
 
@@ -187,7 +199,8 @@ class NativeSession:
 
 
 def bootstrap() -> None:
-    context = json.loads(os.environ.pop(CONTEXT))
+    context = read_context()
+    os.close(int(os.environ.pop(CONTEXT)))
     directory = Path(context["directory"])
     try:
         parent_death_signal(read_record(directory / "debugger.json")["pid"])
@@ -224,7 +237,14 @@ def launch(root: Path, arguments: list[str]) -> int:
         "arguments": arguments,
         "environment": dict(os.environ),
     }
-    environment = {**os.environ, CONTEXT: json.dumps(context)}
+    data = json.dumps(context, ensure_ascii=True).encode()
+    if len(data) > MAX_CONTEXT_BYTES:
+        raise ValueError("native context size is unsupported")
+    context_fd = os.memfd_create("pytest-native-context", os.MFD_CLOEXEC)
+    descriptors.append(context_fd)
+    with os.fdopen(os.dup(context_fd), "wb") as output:
+        output.write(data)
+    environment = {**os.environ, CONTEXT: str(context_fd)}
     debugger = read_record(root / "config.json")["debugger"]
     command = [
         debugger,
@@ -278,7 +298,7 @@ if __name__ == "__main__":
     if sys.argv[1] == "--bootstrap":
         bootstrap()
     elif sys.argv[1] == "--debugger-bootstrap":
-        context = json.loads(os.environ[CONTEXT])
+        context = read_context()
         directory = Path(context["directory"])
         try:
             parent_death_signal(context["launcher_pid"])
