@@ -16,6 +16,7 @@ on:
         "scripts/gates/testsupport/cell_trigger/**",
         "bench/cell_trigger_gate.py",
         "tests/unit/test_cell_trigger_ci_creator.py",
+        "scripts/gates/sandbox-requirements.*",
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
@@ -57,6 +58,7 @@ on:
         "scripts/gates/testsupport/cell_trigger/**",
         "bench/cell_trigger_gate.py",
         "tests/unit/test_cell_trigger_ci_creator.py",
+        "scripts/gates/sandbox-requirements.*",
         "frontend/**",
         "tests/fixtures/docker_provider_app.py",
         "scripts/install-code-toolchains.sh",
@@ -250,7 +252,8 @@ jobs:
           dev/apparmor_check.sh dev/docker-compose.colour.yml
       # The image has no test runner; the versions are uv.lock's.
       - name: Install pytest for the container
-        run: python3 -m pip install --target "$RUNNER_TEMP/pylib" pytest==9.1.1 pytest-asyncio==1.4.0
+        run: |
+          python3 -m pip install --target "$RUNNER_TEMP/pylib" --require-hashes --only-binary=:all: -r scripts/gates/sandbox-requirements.txt
       - name: Probe and hostile suite under the profile
         run: |
           opts=(--rm --network none --user loom
