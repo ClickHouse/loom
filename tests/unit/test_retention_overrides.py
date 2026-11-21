@@ -60,6 +60,19 @@ class StubCH:
         self.execute_calls.append(sql)
 
 
+@pytest.mark.parametrize("audit_days", [0, 365])
+def test_namespace_retention_cannot_shorten_or_create_audit_retention(audit_days: int) -> None:
+    out = retention_overrides.compute_alters(
+        _FakeSettings(retention_audit_log_days=audit_days),
+        namespace_overrides=[{"org": "o", "namespace": "n", "retention_days": 1, "warm_days": 0}],
+    )
+    audit = [sql for target, sql, _ in out if target.table == "loom.audit_log"]
+    if audit_days:
+        assert audit == ["ALTER TABLE loom.audit_log MODIFY TTL ts + INTERVAL 365 DAY DELETE"]
+    else:
+        assert audit == []
+
+
 # ----------------------------------------------------------------------
 # compute_alters — pure function
 # ----------------------------------------------------------------------
@@ -110,22 +123,22 @@ def test_compute_alters_per_namespace_override_uses_multiif() -> None:
             },
         ],
     )
-    # Override applies to every managed table — one ALTER per table.
-    assert len(out) == 8
-    audit_alter = next(s for t, s, _ in out if t.table == "loom.audit_log")
-    assert "multiIf" in audit_alter
-    assert "org = 'clickhouse'" in audit_alter
-    assert "namespace = 'compliance'" in audit_alter
-    assert "INTERVAL 3650 DAY" in audit_alter
+    # Namespace retention leaves the audit table alone.
+    assert len(out) == 7
+    event_alter = next(s for t, s, _ in out if t.table == "loom.agent_events")
+    assert "multiIf" in event_alter
+    assert "org = 'clickhouse'" in event_alter
+    assert "namespace = 'compliance'" in event_alter
+    assert "INTERVAL 3650 DAY" in event_alter
     # 2099 fallback for unmatched rows
-    assert "2099-12-31" in audit_alter
+    assert "2099-12-31" in event_alter
 
 
 def test_compute_alters_override_with_global_falls_through_to_global() -> None:
     """Override + global both set: matching rows use override; others
     use the global default (not 2099)."""
     out = retention_overrides.compute_alters(
-        _FakeSettings(retention_audit_log_days=365),
+        _FakeSettings(retention_agent_events_days=365),
         namespace_overrides=[
             {
                 "org": "clickhouse",
@@ -135,10 +148,10 @@ def test_compute_alters_override_with_global_falls_through_to_global() -> None:
             },
         ],
     )
-    audit_alter = next(s for t, s, _ in out if t.table == "loom.audit_log")
-    assert "INTERVAL 3650 DAY" in audit_alter  # override
-    assert "INTERVAL 365 DAY" in audit_alter  # global fallback
-    assert "2099" not in audit_alter  # global covers fallback
+    event_alter = next(s for t, s, _ in out if t.table == "loom.agent_events")
+    assert "INTERVAL 3650 DAY" in event_alter  # override
+    assert "INTERVAL 365 DAY" in event_alter  # global fallback
+    assert "2099" not in event_alter  # global covers fallback
 
 
 def test_compute_alters_memory_uses_coalesce_for_caller_expiry() -> None:
@@ -204,13 +217,12 @@ def test_compute_alters_sql_quotes_org_namespace_safely() -> None:
             },
         ],
     )
-    audit_alter = next(s for t, s, _ in out if t.table == "loom.audit_log")
-    assert "tenant\\'s-org" in audit_alter
+    event_alter = next(s for t, s, _ in out if t.table == "loom.agent_events")
+    assert "tenant\\'s-org" in event_alter
 
 
-def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
-    """One namespace override produces one ALTER per managed table —
-    retention is uniform across tables for a namespace, by design."""
+def test_namespace_retention_preserves_audit_rows() -> None:
+    """A memory-retention policy leaves its audit evidence intact."""
     out = retention_overrides.compute_alters(
         _FakeSettings(),
         namespace_overrides=[
@@ -221,7 +233,6 @@ def test_compute_alters_per_namespace_applies_to_all_tables() -> None:
     assert tables == [
         "loom.agent_events",
         "loom.agent_events_private",
-        "loom.audit_log",
         "loom.chunks",
         "loom.conversations",
         "loom.documents",
@@ -252,7 +263,7 @@ async def test_apply_uses_provided_overrides_without_ch_query() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
-    """One namespace override → one ALTER per managed table (8)."""
+    """Namespace retention applies to seven tables and leaves audit rows alone."""
     ch = _DiffCH({})
     n = await retention_overrides.apply(
         _FakeSettings(),
@@ -262,7 +273,7 @@ async def test_apply_per_namespace_emits_alters_for_all_tables() -> None:
         ],
         leader=True,
     )
-    assert n == 8
+    assert n == 7
 
 
 @pytest.mark.asyncio
@@ -440,13 +451,15 @@ async def test_a_cleared_window_removes_the_ttl_on_real_tables(tmp_path: Path) -
         namespace_overrides=[{"org": "o", "namespace": "ns1", "retention_days": 30}],
         leader=True,
     )
-    assert set_ttl == len(tables)
-    assert all(" TTL " in _engine_full(tmp_path, t) for t in tables)
+    retained = [t for t in tables if t != "audit_log"]
+    assert set_ttl == len(retained)
+    assert all(" TTL " in _engine_full(tmp_path, t) for t in retained)
+    assert " TTL " not in _engine_full(tmp_path, "audit_log")
 
     removed = await retention_overrides.apply(
         _FakeSettings(), ch=ch, namespace_overrides=[], leader=True
     )
-    assert removed == len(tables)
+    assert removed == len(retained)
     assert not [t for t in tables if " TTL " in _engine_full(tmp_path, t)]
 
     # an overlapping pass sends the same statement; the text apply matches is ClickHouse's
@@ -623,7 +636,7 @@ def test_no_ttl_deletes_memory_or_its_vectors_under_the_postgres_authority(
         ],
     )
     by_table = {target.table: sql for target, sql, _ in out}
-    assert "DELETE" in by_table["loom.audit_log"]
+    assert "loom.audit_log" not in by_table
     assert "DELETE" not in by_table["loom.memory"] and "TO VOLUME" in by_table["loom.memory"]
     assert (
         "loom.memory_embeddings" not in by_table
@@ -685,3 +698,26 @@ async def test_a_ttl_left_from_the_clickhouse_authority_goes_under_postgres(monk
     assert n >= 1
     documents = [c for c in ch.execute_calls if "loom.documents " in c]
     assert documents == ["ALTER TABLE loom.documents REMOVE TTL"], ch.execute_calls
+
+
+@pytest.mark.asyncio
+async def test_namespace_retention_removes_an_inherited_audit_ttl() -> None:
+    ch = _DiffCH({"audit_log": "ts + toIntervalDay(1)"})
+    await retention_overrides.apply(
+        _FakeSettings(),
+        ch=ch,
+        leader=True,
+        namespace_overrides=[{"org": "o", "namespace": "n", "retention_days": 1}],
+    )
+    assert "ALTER TABLE loom.audit_log REMOVE TTL" in ch.execute_calls
+
+
+def test_namespace_tiering_preserves_dedicated_audit_retention() -> None:
+    out = retention_overrides.compute_alters(
+        _FakeSettings(retention_audit_log_days=365),
+        namespace_overrides=[{"org": "o", "namespace": "n", "retention_days": 1, "warm_days": 7}],
+    )
+    sql = next(sql for target, sql, _ in out if target.table == "loom.audit_log")
+    assert "TO VOLUME" in sql and "INTERVAL 7 DAY" in sql
+    assert "INTERVAL 365 DAY DELETE" in sql
+    assert "INTERVAL 1 DAY" not in sql
