@@ -324,6 +324,10 @@ def _wanted(lane: str) -> Callable[[str], object]:
             return lang_rust.wanted_paths("src/a/b.rs", specs)
         if lane == "go":
             return lang_go.go_wanted_paths(specs, [("m", "")])
+        if lane == "thrift":
+            from server.code.domain.extract import lang_thrift
+
+            return lang_thrift.wanted_paths("a/b/c.thrift", specs)
         return lang_proto.wanted_paths("a/b/c.proto", specs)
 
     return walk
@@ -431,6 +435,7 @@ WALKS: list[tuple[str, Callable[[str], object], Callable[[int], str]]] = [
     ("rust-long-use", _wanted("rust"), _run("", "a::")),
     ("go-imports", _wanted("go"), _numbered("m/p{}\n")),
     ("proto-imports", _wanted("proto"), _numbered("p{}.proto\n")),
+    ("thrift-includes", _wanted("thrift"), _numbered("t{}.thrift\n")),
     ("python-route-rows", _py_routes, _run("", "app.add_url_rule('a')\n")),
     ("python-unclosed-include-router", _py_routes, _run("", "a.include_router(a,")),
     (
@@ -539,6 +544,7 @@ SAMPLES: dict[str, tuple[str, str, str]] = {
     "astro": ("a.astro", "", "typescript"),
     "angular_template": ("a.component.html", "", "typescript"),
     "proto": ("a.proto", "", "proto"),
+    "thrift": ("a.thrift", "", "thrift"),
     "gotemplate": ("chart/templates/a.yaml", "{{ .Values.a }}\n", "gotemplate"),
     "hcl": ("a.tf", "", "hcl"),
     "k8s": ("a.yaml", "apiVersion: v1\nkind: ConfigMap\n", "k8s"),
