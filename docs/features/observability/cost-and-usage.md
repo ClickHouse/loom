@@ -163,8 +163,8 @@ Updates and watch streams show only warnings inside the caller's user and sessio
 scope. A scope without the required identity receives no warnings. Other task events
 retain their shared inbox visibility.
 
-The $1 default stops a runaway extraction loop on a laptop. A production namespace that
-ingests heavily needs its own cap, or extraction stops partway through the day.
+The daily cap applies to the guarded steps listed above. Inline and queued transcript
+extraction do not check this cap and can continue after it is reached.
 
 ## The coding agent's own spend
 
