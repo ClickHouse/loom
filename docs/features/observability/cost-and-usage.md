@@ -1,10 +1,11 @@
 # Cost and usage
 
-Loom records every upstream dollar it spends on embedding and LLM calls against the
-operation that spent it, in the per-operation ledger `loom.agent_events`. The `cost.*` ops
+Loom records reported token usage and estimated provider costs for embedding and LLM
+calls against the operation that made them, in the per-operation ledger `loom.agent_events`.
+Missing usage or prices leave gaps; a zero estimate does not prove zero provider spend. The `cost.*` ops
 read that ledger through a one-minute roll-up. A separate series, `loom.agent_turn_usage`,
 holds what a coding agent spent on its own model turns. The two never overlap: one is
-Loom's provider bill, the other is the agent's.
+Loom's provider usage estimates, the other is the agent's.
 
 This page also covers memory **usage** (recalls, evidence, reliance), which the
 `usage_fold` worker folds back into ranking.
@@ -29,7 +30,11 @@ flowchart LR
 1. **Accumulator.** The transport binds a cost accumulator
    (`server/observability/cost_accumulator.py`) per operation; embedders and LLM clients
    report tokens and dollars into it. Prices come from `PRICE_PER_1K_TOKENS` in the same
-   module. **A model missing from the table bills $0.**
+   module. A model missing from the table contributes a zero cost estimate, and missing
+   embedding usage also leaves the numeric ledger incomplete. Generation spans flag
+   unpriced cost with `loom.llm.cost_unknown`; embedding spans use
+   `loom.embed.cost_unknown` or `loom.embed.usage_unknown` and omit unavailable cost or
+   usage. Include those gaps and provider billing records when measuring total cost.
 2. **Ledger row.** When the op finishes, the accumulator drains into its `agent_events`
    row: `input_tokens`, `output_tokens`, `embedding_tokens`, `upstream_cost_usd`, `model`,
    `llm_calls`, plus identity, latency and outcome ([the ledger](./telemetry.md#the-ledger)).

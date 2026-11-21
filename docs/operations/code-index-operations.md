@@ -1,9 +1,13 @@
 # Code index operations
 
-This page covers how to enable the code index workers, configure repositories and keep
-the index current; the code index runs only when an operator enables its workers and
-configures repositories. Every `code_*` worker except `code_coverage_notify` and
-`code_backport_gaps` is off by default. What the `code.*` operations answer is in the
+This page covers how to configure code index workers and repositories and keep the
+index current. Workers run when the supervisor is admitted and their settings and
+repository prerequisites permit it. Some compiler workers are enabled by default;
+they still need a configured repository, its first indexed revision, sandbox admission
+and the required checkout and toolchain. Check each worker's defaults in the
+[workers reference](../reference/workers.md) and the
+[configuration reference](../reference/configuration.md#code).
+What the `code.*` operations answer is in the
 [code index overview](../features/code-index/overview.md); how the index is built is in
 [code index architecture](../architecture/code-index-architecture.md).
 

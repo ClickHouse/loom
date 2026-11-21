@@ -12,7 +12,7 @@ credentials and propagates credential failures. Operator setup is in
 
 | Goals                                                                                       | Non-goals                                                                           |
 | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| Every correctness gate on the write path works without an LLM.                              | A general LLM gateway. Loom calls models for its own features only.                 |
+| Authorization and direct memory-write admission work without an LLM.                        | A general LLM gateway. Loom calls models for its own features only.                 |
 | A keyless install boots and says clearly that it runs on fakes.                             | Provider-agnostic prompts. Prompts are tuned to a model and re-benched on a change. |
 | Swapping the embedder does not silently miscalibrate recall.                                | Mixing vector spaces. Vectors from different models are never compared.             |
 | Every provider call is attributed to its op or worker pass, with usage and cost when known. | Runtime prompt management. Prompts are code.                                        |
@@ -545,16 +545,16 @@ conversation titler).
 
 ## LLM-driven and deterministic parts
 
-Every gate that decides what is stored or who may read it is deterministic:
-authorization, the blacklist, sensitivity detection, conflict and duplicate verdicts,
-ranking and the abstain floor. LLM stages produce or enrich content (facts, answers,
-summaries, titles). Each is optional, bounded, and fails open to the deterministic path.
+Authorization and direct `memory.set` admission do not call an LLM. The blacklist,
+sensitivity checks, conflict and duplicate verdicts, ranking and abstain thresholds
+use deterministic rules over the supplied content and retrieval scores.
 
-**Why.** An LLM-decided gate cannot be reproduced, audited or unit-tested, and it adds
-cost and latency to every write. The deterministic gates run on the fake provider in CI
-through the production code path. The cost: a cosine threshold cannot tell a revision
-from a contradiction, which is why the conflict resolver exists. It judges after the
-write, on the leader, so the write's own verdict stays deterministic.
+Model jobs can change the content that reaches storage. Extraction produces facts;
+the optional durability verifier filters coding-capture facts using model votes before
+persistence and keeps them on verifier failure. The conflict resolver judges after a
+write, on the leader, and can revise stored content. These model judgments do not
+replace authorization or the direct write's admission checks. Answers, summaries and
+titles also use models; each feature's failure behavior is listed below.
 
 | Feature                                       | LLM?          | Switch (default)                                                                                                                                                                                                                                                                                             |
 | --------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -647,11 +647,16 @@ parses its output. Editing a prompt needs a deploy.
 
 ## Cost accounting
 
-Every provider call reports usage to a per-op accumulator
+Provider clients report available usage to a per-op accumulator
 (`server/observability/cost_accumulator.py`). Both transports bind it per request; the
 worker supervisor binds it per pass. Prices come from `PRICE_PER_1K_TOKENS` in the same
-module, with cache-read and cache-write multipliers. An unlisted model bills $0 and logs
-one warning. Gemini embeddings report no usage and bill $0.
+module, with cache-read and cache-write multipliers. An unlisted model contributes a
+zero cost estimate and logs one warning. Missing embedding usage also leaves the
+numeric ledger incomplete. These zeros do not establish zero provider spend.
+
+Generation spans omit unpriced cost and set `loom.llm.cost_unknown`. Embedding spans
+set `loom.embed.cost_unknown` or `loom.embed.usage_unknown` when price or usage is
+unavailable. Treat those gaps as unknown when comparing total deployment cost.
 
 The op's `loom.agent_events` row carries `upstream_cost_usd`, `embedding_tokens`,
 `input_tokens`, `output_tokens`, `llm_calls` and the dominant model (`emit_agent_event`
@@ -679,10 +684,11 @@ real providers. See [running benchmarks](../benchmarks/running.md).
   `/v1/health`. A secondary embedder never falls back.
 - A search always has a threshold: namespace calibration, else boot calibration, else the
   scalar settings.
-- No gate that decides storage or access calls an LLM.
+- Authorization and direct memory-write admission do not call an LLM; capture
+  verification and later conflict resolution can filter or revise content.
 - A fallback model's answer is never cached.
-- Every provider call's usage lands on the `agent_events` row of the op or pass that made
-  it.
+- Provider usage reported to the accumulator lands on the `agent_events` row of the
+  op or pass that made it; unavailable usage and prices leave accounting gaps.
 
 ## Source entry points
 

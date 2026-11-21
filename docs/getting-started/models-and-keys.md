@@ -46,8 +46,8 @@ keyless providers a degraded-health condition.
 | What your organization has                     | Loom LLM                                       | Embeddings                                                       |
 | ---------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | OpenAI API access                              | An available OpenAI model                      | OpenAI; one API key can serve both roles.                        |
-| Anthropic plus an approved embedding provider  | An available Claude model                      | OpenAI, Gemini or a compatible endpoint, with its key.           |
-| Anthropic API access only                      | An available Claude model                      | Add an embedding provider and its API key.                       |
+| Anthropic plus an approved embedding provider  | An available Claude model                      | Configure that embedder and its supported authentication.        |
+| Anthropic API access only                      | An available Claude model                      | The bundled `local` embedder needs no additional API key.        |
 | AWS role with Bedrock model access             | A permitted Bedrock model or inference profile | Cohere Embed v4 through Bedrock, or another configured embedder. |
 | No provider key; a model server on the machine | A local model (`local`)                        | The `local` embedder the image carries.                          |
 
@@ -57,10 +57,12 @@ to use it for those jobs, including capture verification and retrieval judging.
 Background settings such as the conflict resolver are configured separately; use the
 [per-job recipe](#keep-every-llm-job-on-your-chosen-provider) to route them explicitly.
 
-Choose OpenAI, Google Gemini, [Bedrock](#amazon-bedrock) or an
+Choose the bundled `local` embedder, OpenAI, Google Gemini, [Bedrock](#amazon-bedrock) or an
 **OpenAI-compatible embedding endpoint**. OpenAI embeddings use
 an embedding model such as `text-embedding-3-large`, not a GPT chat model.
-Claude can handle Loom's LLM jobs, but requires a separate embedding provider and key.
+Claude can handle Loom's LLM jobs with a separately configured embedder. The bundled
+`local` embedder needs no provider key; hosted embedders use their supported API-key,
+workload-token or AWS authentication.
 Anthropic does not provide its own embedding model; Voyage is not a built-in Loom provider.
 [Anthropic's embedding guidance](https://platform.claude.com/docs/en/build-with-claude/embeddings)
 
@@ -175,8 +177,10 @@ key and content unencrypted. Compatibility requires indexed float-array response
 with the configured width; a provider using a different API needs its own adapter.
 Changing the endpoint, model or width requires rebuilding existing embeddings.
 
-If your organization currently has only Anthropic API access, obtain access to an
-embedding provider before enabling semantic search.
+With only Anthropic API access, use `LOOM_EMBEDDING_MODEL=local` and
+`LOOM_EMBEDDING_DIM=384` for the bundled semantic embedder. To use a hosted embedder,
+configure its supported authentication and dimensions. Changing an existing embedding
+space requires [rebuilding embeddings](../architecture/llm-architecture.md#changing-the-embedder).
 
 ### Amazon Bedrock
 

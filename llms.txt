@@ -79,7 +79,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Working memory and profiles](docs/features/memory/working-memory-and-profiles.md): Two planes hold text an agent is given every time instead of finding it by search:
 - [Writing memory](docs/features/memory/writing.md): A memory is one claim stored under a key in a namespace.
 - [Audit log](docs/features/observability/audit.md): Audit rows, the `audit_verifier` worker and the checkpoint chain are on by default.
-- [Cost and usage](docs/features/observability/cost-and-usage.md): Loom records every upstream dollar it spends on embedding and LLM calls against the operation that spent it, in the per-operation ledger `loom.agent_events`.
+- [Cost and usage](docs/features/observability/cost-and-usage.md): Loom records reported token usage and estimated provider costs for embedding and LLM calls against the operation that made them, in the per-operation ledger `loom.agent_events`.
 - [Telemetry](docs/features/observability/telemetry.md): Loom reports on itself in three layers:
 - [Issue duplicate checks and regression candidates for agents](docs/features/tracker/overview.md): With `LOOM_TRACKER_ORG` set and a registered source, Loom lets agents check whether a bug is already reported and rank changes that may have introduced a regression, using tracker records and indexed PR history.
 - [Maintain a GitHub tracker record](docs/features/tracker/github-feed.md): `loom tracker-feed` copies repository issues, pull requests, issue comments and inline review comments into a team's dedicated ClickHouse database.
@@ -112,7 +112,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Cell control upgrades and recovery](docs/operations/cell-control.md): Cell control mutations require generation-aware clients and router handlers, and direct access to the cell's Postgres.
 - [Update a cell's configuration or addresses](docs/operations/cell-update.md): `loom cell update` reserves a configuration before the cell accepts it.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
-- [Code index operations](docs/operations/code-index-operations.md): This page covers how to enable the code index workers, configure repositories and keep the index current; the code index runs only when an operator enables its workers and configures repositories.
+- [Code index operations](docs/operations/code-index-operations.md): This page covers how to configure code index workers and repositories and keep the index current.
 - [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
 - [Kubernetes](docs/operations/kubernetes.md): `deploy/helm/loom` runs Loom as N identical replicas on Kubernetes: one Deployment of web pods over one ClickHouse service, each pod a full replica.
 - [Maintenance](docs/operations/maintenance.md): Every command here is a `loom` subcommand; run it inside the container that has the deployment's environment (`docker exec loom-server loom …`, or `loom-workers` in a split deployment).
