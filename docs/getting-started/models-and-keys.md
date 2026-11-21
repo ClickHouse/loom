@@ -504,9 +504,10 @@ LOOM_INFERENCE_FEATURE_MAP_JSON='{"hyde": "search", "*": "memory"}'  # Loom's fe
   forgot its org, and the gateway would bill it to no one.
 - An org id is sent percent-encoded where it needs to be.
 
-Cached answers make no call: an embedding or a model answer served from Loom's
-cache is not metered again. The customer is still checked before the cache, so a
-path that names none is refused even on a hit.
+An embedding or completion served from Loom's embedding or completion cache
+avoids that provider call and is not metered again by the gateway. Serving a
+cached `code.ask` answer can still require a query-embedding call. The customer
+is checked before these caches, so a path that names none is refused even on a hit.
 
 #### Naming the agent on every call
 

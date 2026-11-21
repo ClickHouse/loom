@@ -88,8 +88,11 @@ Structure is extracted twice. Each symbol and edge names its tier (`tier`: `scip
   [code index operations](../../operations/code-index-operations.md#compiler-tier)). An
   external producer can upload with `code.scip_ingest`. It gives exact call, override
   and inheritance edges. Its C/C++, Go and TypeScript steps execute the repository's own
-  build code; they run inside the
-  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox).
+  build code. They use the
+  [repository-job sandbox](../../operations/code-index-operations.md#repository-job-sandbox)
+  when available. With `LOOM_CODE_SANDBOX_REQUIRED=true` they refuse to run without
+  it; otherwise, operator-configured repositories can run those builds as plain
+  processes.
 
 Why two: the fast tier is cheap, so a merge is searchable after one ingest pass. The
 compiler tier needs a build environment and trails. Serving both, labelled, gives an

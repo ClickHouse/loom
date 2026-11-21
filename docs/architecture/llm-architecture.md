@@ -40,7 +40,7 @@ Selection follows this order:
 | Provider     | Module                           | Model names                                                                | Needs                                                                                           | Notes                                                                                                                    |
 | ------------ | -------------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `fake`       | `server/embedding/fake.py`       | `fake-ngram-<dim>`                                                         | nothing                                                                                         | Hashed character trigrams, L2-normalised. Deterministic; the dev default.                                                |
-| `local`      | `server/embedding/local.py`      | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`)                                                        | CPU ONNX; 384, 768 and 384 dimensions. No network.                                                                       |
+| `local`      | `server/embedding/local.py`      | `local` (`bge-small`), `local:bge-small`, `local:bge-base`, `local:minilm` | the `local-embedder` extra (`fastembed`)                                                        | CPU ONNX; 384, 768 and 384 dimensions. Inference is local; missing model files download on first use.                    |
 | `openai`     | `server/embedding/openai.py`     | `text-embedding-3-small`, `text-embedding-3-large`                         | `OPENAI_API_KEY`                                                                                | Requests `dimensions=LOOM_EMBEDDING_DIM`.                                                                                |
 | `gemini`     | `server/embedding/gemini.py`     | `gemini-embedding-001`                                                     | `GEMINI_API_KEY` or `GOOGLE_API_KEY`                                                            | Requests `outputDimensionality=LOOM_EMBEDDING_DIM` (up to 3072).                                                         |
 | `compatible` | `server/embedding/compatible.py` | the endpoint's embedding model ID                                          | `LOOM_EMBEDDING_BASE_URL`, `LOOM_EMBEDDING_API_KEY` or configured workload-token authentication | [OpenAI-compatible embeddings](../getting-started/models-and-keys.md#claude-for-the-llm); optional dimensions parameter. |
@@ -583,11 +583,13 @@ descriptions (`server/transport/mcp_descriptions.py`) describe intent, not a syn
 
 ### LLM-free reads
 
-`LOOM_READS_LLM_FREE=true` makes every read op (`Operation.read_only`) run with no LLM
-call, so a deployment can promise that reads never reach a model. The HTTP and MCP transports mark the
-request while the handler runs (`server/core/llm_free.py`); the memory search reads the mark through the
-same gate as the fast posture and `context.pack` (`_is_llm_free`), and every other read step that could
-call a model reads `reads_llm_free()`:
+`LOOM_READS_LLM_FREE=true` suppresses the generative read steps listed below.
+Query embeddings and the explicitly selected rerankers described below can still
+call providers, send query or candidate content and incur charges. The HTTP and MCP
+transports mark each read request (`Operation.read_only`) while its handler runs
+(`server/core/llm_free.py`). Memory search reads this mark through `_is_llm_free`,
+alongside the fast posture and `context.pack`; the other listed guards use
+`reads_llm_free()`:
 
 - `memory.search`, `search.query` (the MCP `loom_search` tool), `context.pack` and every read built on
   them: no HyDE, graph triples, retry judge, LLM count intent or verb synonyms. The
@@ -601,10 +603,11 @@ call a model reads `reads_llm_free()`:
 - `tracker.duplicate_check` and `tracker.answer`: no rerank or uncertainty judge; `code.bisect_candidates`:
   no rerank. Each keeps the deterministic answer it already falls back to.
 - `memory.ask` and `code.ask` answer 409 `READS_LLM_FREE` naming the setting unless the request
-  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it;
-  with that flag they return the recalled evidence with no LLM call.
-  A model's answer is the purpose of those calls, so the setting refuses it rather than answering
-  without one. `memory.brief` asks for the evidence alone and returns it with its unknowns, no answer.
+  sets `allow_synthesis=false` / `synthesize=false`, even when a deterministic route could answer it.
+  These flags disable fresh synthesis. A `code.ask` cache hit can still return a previously
+  synthesized answer. For an uncached retrieval-only `code.ask` response, set both
+  `synthesize=false` and `no_cache=true`. `memory.brief` asks for the evidence alone and returns
+  it with its unknowns, no answer.
 - The sampled retrieval-quality judge queues nothing: both transports record a search's quality inside
   the same mark.
 
@@ -669,7 +672,7 @@ in `server/observability/ledger.py`). Cache savings appear per answer
 
 The dev defaults are the fakes. Production sets `LOOM_EMBEDDING_MODEL` and
 `LOOM_LLM_MODEL` explicitly; the commented provider block in `.env.example` uses
-`text-embedding-3-small` at 1536 dimensions and `gpt-6-luna`.
+`text-embedding-3-large` at 3072 dimensions and `gpt-6-luna`.
 
 **Run `make bench-quick` before changing either default** or opting into the Anthropic
 provider. It runs a 30-question sample of the long-memory benchmark (`bench/longmemeval.py`)
