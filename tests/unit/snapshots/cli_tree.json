@@ -13406,6 +13406,99 @@
           }
          ]
         },
+        "restore": {
+         "prog": "loom cell restore",
+         "usage": null,
+         "description": null,
+         "epilog": null,
+         "formatter_class": "argparse:HelpFormatter",
+         "add_help": true,
+         "allow_abbrev": true,
+         "defaults": {
+          "func": "server.cli.cell_restore:cmd_restore"
+         },
+         "groups": [
+          {
+           "title": "positional arguments",
+           "description": null,
+           "dests": []
+          },
+          {
+           "title": "options",
+           "description": null,
+           "dests": [
+            "help",
+            "cell",
+            "router",
+            "wait"
+           ]
+          }
+         ],
+         "mutually_exclusive": [],
+         "arguments": [
+          {
+           "option_strings": [
+            "-h",
+            "--help"
+           ],
+           "dest": "help",
+           "action": "_HelpAction",
+           "default": "==SUPPRESS==",
+           "const": null,
+           "choices": null,
+           "nargs": 0,
+           "type": null,
+           "required": false,
+           "help": "show this help message and exit",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--cell"
+           ],
+           "dest": "cell",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": true,
+           "help": "This cell's name (LOOM_CELL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--router"
+           ],
+           "dest": "router",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "The router URL (default: LOOM_CELL_ROUTER_URL)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--wait"
+           ],
+           "dest": "wait",
+           "action": "_StoreAction",
+           "default": 300,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": "builtins:float",
+           "required": false,
+           "help": "Total repair deadline in seconds (default: 300)",
+           "metavar": null
+          }
+         ]
+        },
         "update": {
          "prog": "loom cell update",
          "usage": null,
@@ -13599,6 +13692,7 @@
         "place": "loom cell place",
         "prepare": "loom cell prepare",
         "attach": "loom cell attach",
+        "restore": "loom cell restore",
         "update": "loom cell update"
        },
        "choices_help": [
@@ -13641,6 +13735,11 @@
          "dest": "attach",
          "help": "Attach the prepared first cell: place its orgs, serve.",
          "metavar": "attach"
+        },
+        {
+         "dest": "restore",
+         "help": "Repair a stopped cell's metadata before reconciliation.",
+         "metavar": "restore"
         },
         {
          "dest": "update",

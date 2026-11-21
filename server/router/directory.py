@@ -87,6 +87,8 @@ REFUSAL_READ_MAX_S = _bound_s(REFUSAL_READ_STATEMENTS)
 OPERATOR_READ_STATEMENTS, ATTACH_READ_STATEMENTS = 3, 2
 ATTACH_CHANGE_STATEMENTS, ATTACH_PLACE_STATEMENTS, REMOVE_STATEMENTS = 9, 10, 9
 OPERATOR_READ_MAX_S = _bound_s(OPERATOR_READ_STATEMENTS)  # not a setting: derived
+RESTORE_READ_STATEMENTS = 7  # begin, index, cell lock, other, placements, audit, commit
+RESTORE_READ_MAX_S = _bound_s(RESTORE_READ_STATEMENTS)  # not a setting: derived
 REMOVE_MAX_S = _bound_s(REMOVE_STATEMENTS)  # not a setting: derived
 # Every directory connection commits through the synchronous standby and reads what
 # committed before each statement, whatever the database's defaults: a placement the
@@ -888,6 +890,64 @@ async def attach_read(cell_name: str, *, audited: bool = False) -> Attaching:
     if found is None:
         raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
     return _attaching(found, other)
+
+
+async def _restore_page(
+    conn: Any,
+    cell_name: str,
+    deployment_id: str,
+    after: str | None,
+    expected_sha256: str | None,
+) -> dict[str, Any]:
+    from server.router import restore
+
+    if not await conn.fetchval(
+        "SELECT indisvalid AND indisready FROM pg_index "
+        "WHERE indexrelid=to_regclass('loom_router.placements_by_cell_org')"
+    ):
+        raise OperatorRefused("restore needs the current directory schema: run loom router migrate")
+    row = await conn.fetchrow(f"{_CELL_REGISTERED} WHERE cell = $1 FOR UPDATE", cell_name)
+    if row is None:
+        raise NoSuchCell(f"cell {cell_name!r} is not in the directory")
+    if row["deployment_id"] != deployment_id:
+        raise OperatorRefused("the restored stores name another deployment")
+    descriptor = {k: row[k] for k in restore.DESCRIPTOR_KEYS if k != "sole_cell"}
+    descriptor["sole_cell"] = await conn.fetchval(_OTHER, cell_name) is None
+    restore.validate_descriptor(descriptor)
+    sha = restore.digest(descriptor)
+    if expected_sha256 is not None and sha != expected_sha256:
+        answer = {"descriptor": descriptor, "sha256": sha}
+    else:
+        predicate = " AND org > $2" if after is not None else ""
+        args = [cell_name, after] if after is not None else [cell_name]
+        rows = await conn.fetch(
+            "SELECT org FROM loom_router.placements WHERE cell = $1 "
+            + predicate
+            + " ORDER BY org LIMIT 501",
+            *args,
+        )
+        answer = restore.page(descriptor, [r["org"] for r in rows])
+    await _audit(conn, "restore_read", {"cell": cell_name, "after": after})
+    return answer
+
+
+async def restore_read(
+    cell_name: str, deployment_id: str, after: str | None, expected_sha256: str | None
+) -> dict[str, Any]:
+    """One audited page; one supervisor closes its session before pool release."""
+    try:
+        return await _control_transaction(
+            lambda conn: _restore_page(conn, cell_name, deployment_id, after, expected_sha256),
+            seconds=RESTORE_READ_MAX_S,
+        )
+    except DirectoryUnavailable as error:
+        if isinstance(error.__cause__, TimeoutError):
+            raise DirectoryUnavailable(
+                "restore-read reached its directory deadline"
+            ) from error.__cause__
+        raise
+    except ValueError as error:
+        raise OperatorRefused("the directory restore metadata is invalid") from error
 
 
 # Every acceptance controller compares the full registration and exact JSON pair.

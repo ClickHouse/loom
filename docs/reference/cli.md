@@ -337,6 +337,7 @@ python scripts/codegen/docs_reference.py
 | `loom cell place` | Place an org in this cell and record its tenancy. | `--cell`, `--org`, `--router` |
 | `loom cell prepare` | Register this cell in the router's directory and write its rows. | `--cell`, `--host`, `--credential-sha256`, `--probe-url`, `--wait`, `--router` |
 | `loom cell attach` | Attach the prepared first cell: place its orgs, serve. | `--cell`, `--wait`, `--scan-budget`, `--dry-run`, `--ch-allow-user`, `--ch-allow-user-directory`, `--ch-allow-object`, `--ch-allow-replica`, `--pg-allow-role`, `--revoke-unprovisioned`, `--router` |
+| `loom cell restore` | Repair a stopped cell's metadata before reconciliation. | `--cell`, `--router`, `--wait` |
 | `loom cell update` | Reserve configuration, finish or revert its rollout, or refresh verified addresses. | `--cell`, `--config`, `--finish`, `--revert`, `--probe-url`, `--revoke-unprovisioned`, `--router`, `--wait` |
 | `loom tracker-probe` | Read-only first contact with the tracker source: counts and newest timestamps per upstream table per credential, breaker states, the configured tracker namespaces. |  |
 | `loom tracker-contract-check` | Read-only: does each tracker source's schema meet the record contract (docs/features/tracker/record-contract.md)? | `--source`, `--namespace`, `--json` |

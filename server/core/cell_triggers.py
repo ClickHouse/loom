@@ -285,6 +285,40 @@ async def ensure_table(
     state = await cell.read_state(conn)
     if state != "enforced" and not (recording_first and state == "recording"):
         raise RuntimeError(f"cell triggers: not created in state {state!r}")
+    return await _ensure_planned_table(conn, table, lock_timeout, attempts)
+
+
+async def ensure_restore_missing_own_table(
+    conn: Any,
+    table: str,
+    *,
+    cell_name: str,
+    is_first: bool,
+    mode: str,
+    lock_timeout: str = LOCK_TIMEOUT,
+) -> Outcome:
+    """A stopped restore adds backstops without inventing an absent own approval."""
+    row = await conn.fetchrow(cell._STATE)
+    if (
+        row["cell"] != cell_name
+        or row["is_first"] != is_first
+        or row["mode"] != mode
+        or row["has_own"]
+        or mode not in cell.MODES
+        or (not is_first and mode != "enforced")
+        or cell.state(
+            first=(is_first, cell_name),
+            mode=mode,
+            has_own=False,
+            has_tenancy=bool(row["has_tenancy"]),
+        )
+        != "partial"
+    ):
+        raise RuntimeError("cell restore triggers require exactly first/mode with own absent")
+    return await _ensure_planned_table(conn, table, lock_timeout, 1)
+
+
+async def _ensure_planned_table(conn: Any, table: str, lock_timeout: str, attempts: int) -> Outcome:
     planned = [
         (r, names) for r, names in _planned(await conn.fetch(ORG_TABLES)) if r["relname"] == table
     ]
@@ -523,3 +557,84 @@ def readiness_check() -> readiness.CheckResult:
     if state in ("enforced", "partial"):
         return readiness.CheckResult(False, f"{lost}; the cell's triggers refuse {refused}")
     return readiness.CheckResult(True)
+
+
+async def first_missing(conn: Any) -> list[Defect]:
+    """Restore verifies the immutable first guards' definitions and function too."""
+    found = []
+    function = "loom.cell_first_immutable"
+    fn = await conn.fetchrow(_FUNCTION, function + "()")
+    if fn is None or fn["volatile"] != "v" or fn["definer"] or list(fn["config"]):
+        found.append(
+            Defect(
+                "cell_first",
+                "loom.cell_first: immutable function is absent or has unsafe attributes",
+            )
+        )
+    if fn is not None and fn["body"] not in _first_bodies():
+        found.append(
+            Defect("cell_first", "loom.cell_first: immutable function has an unrecognized body")
+        )
+    if fn is not None and not await conn.fetchval(
+        "SELECT p.prorettype = 'trigger'::regtype AND l.lanname = 'plpgsql' "
+        "FROM pg_proc p JOIN pg_language l ON l.oid=p.prolang WHERE p.oid=$1",
+        fn["oid"],
+    ):
+        found.append(Defect("cell_first", "loom.cell_first: immutable function has another type"))
+    first = await _triggers(conn, CELL_FIRST_TRIGGERS)
+    expected = await _expected_first(conn) if fn is not None else {}
+    for name in CELL_FIRST_TRIGGERS:
+        row = first.get(("cell_first", name))
+        if (
+            row is None
+            or row["enabled"] != "A"
+            or fn is None
+            or row["function_oid"] != fn["oid"]
+            or row["definition"] != expected[name]
+        ):
+            found.append(
+                Defect(
+                    "cell_first",
+                    f"loom.cell_first: {name} has another definition, function or enabled state",
+                )
+            )
+    return found
+
+
+def _first_bodies() -> list[str]:
+    from server.core.schema import pg_migrate
+
+    pattern = re.compile(
+        r"CREATE OR REPLACE FUNCTION loom\.cell_first_immutable\(\)[^$]*AS \$\$(.*?)\$\$", re.S
+    )
+    return [
+        match[1]
+        for path in pg_migrate.migration_files()
+        if (match := pattern.search(path.read_text()))
+    ]
+
+
+async def _expected_first(conn: Any) -> dict[str, str]:
+    tx = conn.transaction()
+    await tx.start()
+    try:
+        await conn.execute("CREATE TEMP TABLE loom_first_probe (org text)")
+        out = {}
+        for name in CELL_FIRST_TRIGGERS:
+            event = "UPDATE OR DELETE" if name == "cell_first_immutable" else "TRUNCATE"
+            level = "ROW" if name == "cell_first_immutable" else "STATEMENT"
+            await conn.execute(
+                f"CREATE TRIGGER {name} BEFORE {event} ON loom_first_probe "
+                f"FOR EACH {level} EXECUTE FUNCTION loom.cell_first_immutable()"
+            )
+            definition = await conn.fetchval(
+                "SELECT pg_get_triggerdef(oid) FROM pg_trigger "
+                "WHERE tgrelid='loom_first_probe'::regclass AND tgname=$1",
+                name,
+            )
+            out[name] = definition.replace(
+                " ON pg_temp.loom_first_probe ", " ON loom.cell_first "
+            ).replace(" ON loom_first_probe ", " ON loom.cell_first ")
+        return out
+    finally:
+        await tx.rollback()

@@ -713,6 +713,38 @@ class Router:
             lambda found: {**_attach_answer(found), "other": found.other},
         )
 
+    async def restore_read(self, request: Request) -> JSONResponse:
+        """Read permanent placements for a stopped cell's metadata repair."""
+        body = await self._operator_body(request, MAX_BODY_BYTES)
+        if isinstance(body, JSONResponse):
+            return body
+        after, expected = body.get("after"), body.get("expected_sha256")
+        deployment = _text(body, "deployment_id", needed=True)
+        if (
+            set(body) != {"deployment_id", "after", "expected_sha256"}
+            or deployment is None
+            or (
+                after is not None
+                and (cell_state.named_org(after) is None or cell_state.org_name_refusal(after))
+            )
+            or (
+                expected is not None
+                and (
+                    not isinstance(expected, str) or re.fullmatch("[0-9a-f]{64}", expected) is None
+                )
+            )
+        ):
+            return _refused(400, "restore-read names deployment_id, after and expected_sha256")
+        answer = await _answered(
+            lambda: directory.restore_read(
+                request.path_params["cell"], deployment, after, expected
+            ),
+            lambda value: value,
+        )
+        if answer.status_code == 200 and "orgs" not in json.loads(bytes(answer.body)):
+            answer.status_code = 409
+        return answer
+
     async def claim(self, request: Request) -> JSONResponse:
         body = await self._operator_body(request, ATTACH_BEGIN_MAX_BYTES)
         if isinstance(body, JSONResponse):
@@ -1630,6 +1662,11 @@ def build_app(router: Router | None = None) -> Starlette:
         routes=[
             Route("/cells/v1/placements", router.place, methods=["POST"]),
             Route("/cells/v1/operator/cells/{cell}/place", router.operator_place, methods=["POST"]),
+            Route(
+                "/cells/v1/operator/cells/{cell}/restore-read",
+                router.restore_read,
+                methods=["POST"],
+            ),
             Route("/cells/v1/cells/{cell}", router.cell_state, methods=["GET"]),
             Route("/cells/v1/operator/cells/{cell}/limit", router.set_limit, methods=["POST"]),
             Route("/cells/v1/operator/cells/{cell}/register", router.register, methods=["POST"]),

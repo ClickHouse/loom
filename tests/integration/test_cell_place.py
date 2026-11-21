@@ -49,7 +49,9 @@ async def stores(monkeypatch):
         monkeypatch.setattr(
             httpx,
             "AsyncClient",
-            lambda **kw: real_client(transport=httpx.ASGITransport(app=router_app), **kw),
+            lambda **kw: real_client(
+                **{**kw, "transport": kw.get("transport") or httpx.ASGITransport(app=router_app)}
+            ),
         )
         targets = {"first": first, "second": second}
         for cell_name, cell_dsn in targets.items():

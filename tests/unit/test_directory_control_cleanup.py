@@ -185,6 +185,22 @@ async def test_late_acquired_proxy_is_discarded_without_running_callback(owned):
     conn.close.assert_not_awaited()  # Expired original end cannot create a fresh close budget.
 
 
+async def test_restore_uses_its_separate_runtime_budget(owned, monkeypatch):
+    conn, _ = owned
+    seen = []
+    answer = {"page": "audited"}
+
+    async def transaction(change, *, seconds):
+        seen.append(seconds)
+        return await change(conn)
+
+    monkeypatch.setattr(directory, "_control_transaction", transaction)
+    monkeypatch.setattr(directory, "_restore_page", AsyncMock(return_value=answer))
+    monkeypatch.setattr(directory, "RESTORE_READ_MAX_S", 0.037)
+    assert await directory.restore_read("first", "dep-first", None, None) == answer
+    assert seen == [0.037]
+
+
 @pytest.mark.parametrize(
     "ending", ["success", "failure", "self_cancel", "exit", "keyboard", "deadline"]
 )

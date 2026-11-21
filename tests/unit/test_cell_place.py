@@ -272,8 +272,13 @@ async def test_local_invalid_identity_refuses_before_directory(local, monkeypatc
 
 @pytest.mark.parametrize("change", [{"state": "recording"}, {"first": "us-1"}, {"row": None}])
 async def test_local_identity_is_read_again_before_insert(local, monkeypatch, change):
-    from server.cli import cell_place
+    from server.cli import cell_control, cell_place
+    from server.core import pg
+    from tests.unit.clock_fake import ManualClock
 
+    phase_clock = ManualClock()
+    monkeypatch.setattr(cell_control, "time", phase_clock)
+    monkeypatch.setattr(pg, "time", phase_clock)
     conn, state = local
 
     async def changed(*a):
