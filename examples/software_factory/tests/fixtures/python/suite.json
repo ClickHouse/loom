@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "authored-expression-fixture",
+  "dependencies": "Python standard library only; no third-party packages",
+  "tasks": {
+    "name-validation": {
+      "task": {
+        "path": "tasks/name-validation.json",
+        "sha256": "ca41594a2ec52fe6ba8bb4b7f0368a9e947671a3045721582c7a1580596c0e81"
+      },
+      "grader": {
+        "path": "graders/name-validation.json",
+        "sha256": "d7091cf5671e0cfd87452a06ffc095883c54ea164daf1bc6dff1a410a75c2358"
+      },
+      "replay": {
+        "path": "replays/name-validation.json",
+        "sha256": "88cb829d92318a39567d659173bcd9ece621bc6620ff8e6164bfd0400221e460"
+      }
+    },
+    "path-composition": {
+      "task": {
+        "path": "tasks/path-composition.json",
+        "sha256": "f425cc39f3f89842ac995b8fffe2c26ddbe20f530c4df2f784301b8d7cd6070a"
+      },
+      "grader": {
+        "path": "graders/path-composition.json",
+        "sha256": "bc3105936db2c3ceef75b319508de5d0005945fc236c573e3523de2115fde2f7"
+      },
+      "replay": {
+        "path": "replays/path-composition.json",
+        "sha256": "d57608b71a1373ed8ebbb5ccda7942a35f55dcd923e7285ed34a21e3c8877874"
+      }
+    },
+    "method-normalization": {
+      "task": {
+        "path": "tasks/method-normalization.json",
+        "sha256": "de99400d12938c06bc3d61ac6a7474a7c95611afeba6ba5b5d622ab85cfd2cf6"
+      },
+      "grader": {
+        "path": "graders/method-normalization.json",
+        "sha256": "3784735108023ac7e667957f9835ba503f73be3e0b2291ab0473a5a2e190af25"
+      },
+      "replay": {
+        "path": "replays/method-normalization.json",
+        "sha256": "a9143d4a0c13de3118d9cc4fe618718534cb070eadd47566483cea07000b3666"
+      }
+    }
+  }
+}
