@@ -67,31 +67,41 @@ class _Object:
     members: tuple[_Member, ...]
 
 
-def upsert_object_key(
-    text: str, section: str, name: str, entry: dict[str, Any]
+def upsert_nested_key(
+    text: str, sections: tuple[str, ...], name: str, entry: dict[str, Any]
 ) -> tuple[str, bool]:
-    """Return the text with `section.name` set to `entry`, and whether it changed.
+    """Return the text with `entry` set at `sections` + `name`, and whether it changed.
 
-    An entry that is already equal is left byte for byte. Raises JsoncEditError
-    when the root is not an object, `section` is not one object, or `name` is
-    duplicated there.
+    With sections ("mcp", "servers"), `mcp.servers.name` is set. The first section
+    missing on the way down is inserted with the rest of the path inside it. An entry
+    that is already equal is left byte for byte. Raises JsoncEditError when the root
+    is not an object, a section on the path is not one object, or `name` is
+    duplicated in the last one.
     """
+    if not sections:
+        raise ValueError("sections must name at least one object")
+    path = (*sections, name)
     newline = _fragment_newline(text)
-    root = _parse_root(text)
-    section_member = _only(root, section)
-    if section_member is None:
-        return _commit(text, root, section, {name: entry}, section, name, entry, newline)
-    if not isinstance(section_member.value, _Object):
-        raise JsoncEditError(f"{section} is not an object")
-    current = _only(section_member.value, name)
+    obj = _parse_root(text)
+    for depth, key in enumerate(path[:-1]):
+        member = _only(obj, key)
+        if member is None:
+            value: object = entry
+            for inner in reversed(path[depth + 1 :]):
+                value = {inner: value}
+            return _commit(text, obj, key, value, path, entry, newline)
+        if not isinstance(member.value, _Object):
+            raise JsoncEditError(f"{'.'.join(path[: depth + 1])} is not an object")
+        obj = member.value
+    current = _only(obj, name)
     if current is None:
-        return _commit(text, section_member.value, name, entry, section, name, entry, newline)
+        return _commit(text, obj, name, entry, path, entry, newline)
     if _to_data(current.value) == entry:
         return text, False
     indent = _indent_before(text, current.key_start) or "  "
     rendered = _render(entry, indent, newline)
     updated = text[: current.value_start] + rendered + text[current.value_end :]
-    _require_entry(updated, section, name, entry)
+    _require_entry(updated, path, entry)
     return updated, True
 
 
@@ -139,25 +149,25 @@ def _commit(
     obj: _Object,
     key: str,
     value: object,
-    section: str,
-    name: str,
+    path: tuple[str, ...],
     entry: dict[str, Any],
     newline: str,
 ) -> tuple[str, bool]:
     updated = _insert_member(text, obj, key, value, newline)
-    _require_entry(updated, section, name, entry)
+    _require_entry(updated, path, entry)
     return updated, True
 
 
-def _require_entry(text: str, section: str, name: str, entry: dict[str, Any]) -> None:
+def _require_entry(text: str, path: tuple[str, ...], entry: dict[str, Any]) -> None:
     """The written text has to parse back to the entry. A splice inside a
     comment is syntactically quiet and must not count as success."""
-    root = _parse_root(text)
-    section_member = _only(root, section)
-    if section_member is None or not isinstance(section_member.value, _Object):
-        raise JsoncEditError("could not place the new key")
-    current = _only(section_member.value, name)
-    if current is None or _to_data(current.value) != entry:
+    value: Any = _parse_root(text)
+    for key in path:
+        member = _only(value, key) if isinstance(value, _Object) else None
+        if member is None:
+            raise JsoncEditError("could not place the new key")
+        value = member.value
+    if _to_data(value) != entry:
         raise JsoncEditError("could not place the new key")
 
 

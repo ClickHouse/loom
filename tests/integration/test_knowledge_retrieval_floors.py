@@ -23,6 +23,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
+from collections.abc import Awaitable
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -235,6 +237,88 @@ async def _op(c: httpx.AsyncClient, op: str, **body: Any) -> dict[str, Any]:
     return dict(r.json())
 
 
+@dataclass
+class _RetryAttempt:
+    scope: tuple[str, str, str]
+    task: asyncio.Task[Any] | None
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+_retry_attempt: ContextVar[_RetryAttempt | None] = ContextVar("ingest_retry_attempt", default=None)
+
+
+def _retry_failure(error: Exception) -> dict[str, Any]:
+    from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
+
+    from server.core.ch_errors import error_code
+    from server.core.errors import (
+        BackendTimeoutError,
+        BackendUnavailableError,
+        EmbedTimeoutError,
+        OverloadedError,
+    )
+    from server.core.pg import PostgresUnavailableError
+    from server.knowledge.app.extractors import ExtractorUnavailable
+
+    labels = (
+        (BackendUnavailableError, "BackendUnavailableError"),
+        (BackendTimeoutError, "BackendTimeoutError"),
+        (OverloadedError, "OverloadedError"),
+        (EmbedTimeoutError, "EmbedTimeoutError"),
+        (ExtractorUnavailable, "ExtractorUnavailable"),
+        (PostgresUnavailableError, "PostgresUnavailableError"),
+    )
+    label = next((name for cls, name in labels if type(error) is cls), "other")
+    out: dict[str, Any] = {
+        "retry_exception": label,
+        "native_exception": "none",
+        "native_code": None,
+    }
+    current: BaseException | None = error
+    seen: set[int] = set()
+    try:
+        for depth in range(5):  # the caught exception and at most four causes
+            if current is None or id(current) in seen:
+                break
+            seen.add(id(current))
+            if type(current) in (DatabaseError, OperationalError):
+                out["native_exception"] = (
+                    "DatabaseError" if type(current) is DatabaseError else "OperationalError"
+                )
+                attrs = vars(current)
+                args = current.args
+                code = attrs.get("code")
+                if code is None and args and type(args[0]) is str:
+                    code = error_code(args[0][:4096])
+                out["native_code"] = code if type(code) is int and 0 <= code <= 1_000_000 else None
+                break
+            if depth:
+                out["native_exception"] = "other"
+            if depth == 4 or not any(type(current) is cls for cls, _ in labels):
+                break
+            current = BaseException.__getattribute__(current, "__cause__")
+    except Exception:  # noqa: BLE001 — diagnostics must not replace the worker outcome
+        out["native_exception"], out["native_code"] = "unavailable", None
+    return out
+
+
+@pytest.fixture
+def _observe_ingest_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    from server.knowledge.app import ingest_run
+
+    original = ingest_run._retry_or_fail
+
+    def observe(job: dict[str, Any], error: Exception) -> Awaitable[str]:
+        attempt = _retry_attempt.get()
+        if attempt is not None and attempt.task is asyncio.current_task() and type(job) is dict:
+            scope = tuple(job.get(key) for key in ("org", "namespace", "ingestion_id"))
+            if all(type(value) is str for value in scope) and scope == attempt.scope:
+                attempt.details.update(_retry_failure(error))
+        return original(job, error)
+
+    monkeypatch.setattr(ingest_run, "_retry_or_fail", observe)
+
+
 async def _ingest_failure_context(org: str, ns: str, ingestion_id: str) -> dict[str, Any]:
     """Read only fixed status fields; a retry message can contain source content."""
     from server.knowledge.store import ingestions
@@ -299,10 +383,15 @@ async def _ingest(
     try:
         row = await ingestions.get_ingestion(org, ns, job["ingestion_id"])
         assert row is not None
-        state = await ingest_run.take_and_run(row)
-        assert state == "ready", (
-            name,
-            await _ingest_failure_context(org, ns, job["ingestion_id"]),
+        attempt = _RetryAttempt((org, ns, job["ingestion_id"]), asyncio.current_task())
+        token = _retry_attempt.set(attempt)
+        try:
+            state = await ingest_run.take_and_run(row)
+        finally:
+            _retry_attempt.reset(token)
+        # pytest truncates non-string messages before all diagnostic fields are shown.
+        assert state == "ready", repr(
+            (name, await _ingest_failure_context(org, ns, job["ingestion_id"]), attempt.details)
         )
     finally:
         await ch.disconnect()
@@ -342,7 +431,7 @@ def _measure(
     }
 
 
-@pytest.mark.usefixtures("reference_extractor")
+@pytest.mark.usefixtures("reference_extractor", "_observe_ingest_retries")
 @pytest.mark.asyncio
 async def test_each_retrieval_slice_meets_its_floor(control_plane_url: str) -> None:
     from server.embedding.embedder import embedder_is_fake
