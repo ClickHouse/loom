@@ -1971,6 +1971,10 @@ settings:
   # "none" serves handles only. [restart]
   # code_search_bodies_default: "auto"
 
+  # code.search response budget in tokens when the request omits token_budget; 0 =
+  # unlimited. An explicit request budget overrides this default. [restart]
+  # code_search_token_budget: 0
+
   # Memoise served code.search responses per (org, namespace, request shape) in
   # loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true`
   # bypasses it. [restart]

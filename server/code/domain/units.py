@@ -227,10 +227,15 @@ def unit_from_symbol(row: dict[str, Any], *, body: str = "") -> CodeUnit:
     )
 
 
+def remaining_token_budget(token_budget: int, spent: int) -> int:
+    """Subtract overhead from a finite budget; keep zero as unlimited."""
+    return max(1, token_budget - spent) if token_budget else 0
+
+
 def budget_units(
     units: list[CodeUnit], token_budget: int, *, bodies: str = "auto"
 ) -> tuple[list[CodeUnit], int]:
-    """Two-pass budget fill. Returns (units, tokens_used).
+    """Two-pass budget fill; zero means unlimited. Returns (units, tokens_used).
 
     Pass 1 reserves HEAD room (signature + doc + pointer) for as many ranked units as
     fit, so every requested slot is represented at least elided. Pass 2 spends the
@@ -251,7 +256,7 @@ def budget_units(
     kept = 0
     reserved = 0
     for h in heads:
-        if reserved + h > token_budget:
+        if token_budget and reserved + h > token_budget:
             break
         reserved += h
         kept += 1
@@ -262,7 +267,7 @@ def budget_units(
         body_cost = estimate_unit_tokens(u) - _h if u.body else 0
         if not u.body:
             out.append(u)  # bodyless (symbol units): whole, not "elided"
-        elif bodies != "none" and used + body_cost <= token_budget:
+        elif bodies != "none" and (not token_budget or used + body_cost <= token_budget):
             out.append(u)
             used += body_cost
         else:

@@ -1445,7 +1445,7 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
 | `query` | `str` | required | The question, identifier or phrase to search for; a symbol-shaped query tries the symbol table first (`route` says which path answered). |
 | `top_k` | `int` | `5` | At most this many results per page (1-25). |
-| `token_budget` | `int \| None` | `None` | Response budget in tokens; results are whole units, overflow elides. |
+| `token_budget` | `int \| None` | `None` | Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET (default 0). |
 | `path_prefix` | `str` | `''` | Keep only units whose path starts with this prefix; "" = the whole namespace. |
 | `cursor` | `str` | `''` | Continuation: the `next_cursor` of an earlier response to this query. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set: unit ids not to serve again. |
