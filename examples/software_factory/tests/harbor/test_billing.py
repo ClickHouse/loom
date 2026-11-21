@@ -43,7 +43,7 @@ class ProviderBilling(unittest.TestCase):
                     mode="natural",
                     arm="loom-treesitter",
                     index_tier="treesitter",
-                    memory_enabled=False,
+                    memory_enabled=True,
                 ),
             ],
         )
@@ -60,7 +60,7 @@ class ProviderBilling(unittest.TestCase):
                 task_id="task",
                 index_tier="treesitter",
                 code_namespace="parse",
-                memory_namespace=None,
+                memory_namespace="working-1",
             ),
         }
         self.entries = []
@@ -236,7 +236,7 @@ class ProviderBilling(unittest.TestCase):
             mode="natural",
             arm="loom-scip",
             index_tier="scip",
-            memory_enabled=False,
+            memory_enabled=True,
         )
         self.protocol["schedule"].append(slot)
         self.protocol["attempt_scopes"]["2"] = dict(
@@ -244,7 +244,7 @@ class ProviderBilling(unittest.TestCase):
             task_id="task",
             index_tier="scip",
             code_namespace="compile",
-            memory_namespace=None,
+            memory_namespace="working-2",
         )
         folder = self.root / "2"
         (folder / "agent").mkdir(parents=True)
@@ -328,7 +328,7 @@ class ProviderBilling(unittest.TestCase):
             mode="natural",
             arm="loom-scip",
             index_tier="scip",
-            memory_enabled=False,
+            memory_enabled=True,
         )
         self.protocol["schedule"].append(slot)
         self.protocol["attempt_scopes"]["2"] = dict(
@@ -336,7 +336,7 @@ class ProviderBilling(unittest.TestCase):
             task_id="task",
             index_tier="scip",
             code_namespace="compile",
-            memory_namespace=None,
+            memory_namespace="working-2",
         )
         folder = self.root / "2"
         (folder / "agent").mkdir(parents=True)

@@ -10,15 +10,16 @@ pair per issue for 51 attempts. Freeze seed 741 and retain the interleaved arm
 blocks and balanced positions. Retain nonuse, failures, invalid rewards and
 unknown costs. Analyze paired task clusters and report A/A controls separately.
 
-These are development regression tasks whose earlier outcomes were inspected.
+Task selection preceded solver outcomes on these three harder issues. Earlier
+development outcomes informed the harness. The report discloses both facts.
 Historical notes must have independent public provenance and precede the task's
 cutoff. Target discussions, fixing PRs, reference patches, hidden requirements and
 later information cannot supply memory. Freeze the corpus before inference and
 never revise it based on that run's results.
 
-The memory treatment adds 24 short historical notes, ten linked to code. Baseline
-and code-only arms receive no seeded notes. Memory arms expose optional native
-search, reads and writes; code tools may return the bound namespace's lessons.
+The memory treatment adds 30 short historical notes, 13 linked to code. Baseline
+and cold index arms receive no seeded notes. All four Loom arms expose identical
+optional native search, reads and writes; code tools may return the bound namespace's lessons.
 The treatment therefore measures historical knowledge plus retrieval. A claim
 about linking alone requires another control with identical facts.
 
@@ -26,7 +27,10 @@ Each attempt has a private mutable memory namespace. Code-only and memory arms
 share their certified read-only source index for that case and tier. Parser and
 compiler tiers index the same source allowlist. Native memory writes, exact reads,
 current code links, source hashes and serving build must qualify before inference.
-The curated snapshot represents past knowledge, not elapsed autonomous learning.
+The public source advances from an earlier real revision to the task base.
+Native workers must flag changed anchors before a source-backed memory revision
+relinks fresh. Cold namespaces must be observed empty. This replays past knowledge
+and code evolution, rather than elapsed autonomous learning.
 
 Freeze source, tasks, evaluator inputs, model, prices, images, schema exposure,
 prompts, provider limits and all namespace identities. Require base controls to

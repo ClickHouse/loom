@@ -229,12 +229,12 @@ class TierContracts(unittest.TestCase):
                 "arm": "loom-scip",
                 "mode": "natural",
                 "index_tier": "scip",
-                "memory_enabled": False,
+                "memory_enabled": True,
             }
             binding = dict(
                 org="org",
                 code_namespace="compiled",
-                memory_namespace=None,
+                memory_namespace="working",
                 token_file=str(token),
                 task_id="task",
                 index_tier="scip",
@@ -242,7 +242,7 @@ class TierContracts(unittest.TestCase):
                 repository_tag="repo:0123456789",
                 compiler_rows=counts,
                 source_scope=source_proof,
-                memory_history_sha256=None,
+                memory_history_sha256=digest({}),
             )
             protocol.update(schedule=[slot], attempt_scopes={"0": binding})
             protocol["tasks"]["task"]["base_commit"] = "a" * 40

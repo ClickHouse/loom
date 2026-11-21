@@ -1,25 +1,31 @@
 {
   "schema_version": 1,
   "kind": "historical-project-context",
-  "study_role": "development regression",
+  "study_role": "predeclared historical issue study; no solver outcomes used for task selection",
   "cases": [
     {
-      "case_id": "pallets__flask-4045",
-      "base_commit": "d8c37f43724cd9fb0870f77877b7c4c7e38a19e0",
-      "cutoff": "2021-05-13T19:37:44Z",
-      "excluded_source_numbers": [4041, 4045]
+      "case_id": "pallets__flask-4074",
+      "base_commit": "a541c2ac8b05c2b23e11bd8540088fce1abc2373",
+      "cutoff": "2021-05-18T00:00:00Z",
+      "excluded_source_numbers": [1091, 4069, 4074],
+      "history_base_commit": "d7ac6f5bcf324e7fc588e501b2f18669efd5a12a",
+      "history_base_cutoff": "2021-05-03T14:13:43Z"
     },
     {
-      "case_id": "pallets__flask-4575",
-      "base_commit": "bd56d19b167822a9a23e2e9e2a07ccccc36baa8d",
-      "cutoff": "2022-05-02T14:41:29Z",
-      "excluded_source_numbers": [4569, 4575]
+      "case_id": "pallets__flask-4230",
+      "base_commit": "4346498c85848c53843b810537b83a8f6124c9d3",
+      "cutoff": "2021-08-09T00:00:00Z",
+      "excluded_source_numbers": [4229, 4230],
+      "history_base_commit": "d7ac6f5bcf324e7fc588e501b2f18669efd5a12a",
+      "history_base_cutoff": "2021-05-03T14:13:43Z"
     },
     {
-      "case_id": "pallets__flask-4935",
-      "base_commit": "fa1ee7066807c21256e90089731c548b313394d2",
-      "cutoff": "2022-10-04T10:51:08Z",
-      "excluded_source_numbers": [4834, 4856, 4935]
+      "case_id": "pallets__flask-4642",
+      "base_commit": "97298e06fe19298c3ff9d2e0ed9ba70bb3fda2c8",
+      "cutoff": "2022-06-12T00:00:00Z",
+      "excluded_source_numbers": [3263, 4642],
+      "history_base_commit": "d7ac6f5bcf324e7fc588e501b2f18669efd5a12a",
+      "history_base_cutoff": "2021-05-03T14:13:43Z"
     }
   ]
 }

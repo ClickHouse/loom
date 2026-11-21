@@ -48,13 +48,15 @@ class RuntimeBindings(unittest.TestCase):
                 "index_tier": spec.index_tier,
                 "org": "org" if spec.index_tier else "-",
                 "code_namespace": "code" if spec.index_tier else "-",
-                "memory_namespace": "working-2" if spec.memory_enabled else None,
+                "memory_namespace": "working-" + str(order) if spec.memory_enabled else None,
                 "token_file": str(token) if spec.index_tier else None,
                 "base_commit": "a" * 40,
                 "repository_tag": "repo:0123456789",
                 "compiler_rows": counts if spec.index_tier else None,
                 "source_scope": self.source if spec.index_tier else None,
-                "memory_history_sha256": digest({"decision": "Public project document."})
+                "memory_history_sha256": digest(
+                    {"decision": "Public project document."} if spec.history_seeded else {}
+                )
                 if spec.memory_enabled
                 else None,
             }
@@ -141,10 +143,13 @@ class RuntimeBindings(unittest.TestCase):
                 backend(self.protocol, self.task, self.root / "none", slot=self.slots[0])
             agent.assert_not_called()
 
-    def test_public_documents_equal_in_all_arms_and_fixture_hash_is_checked(self):
+    def test_only_seeded_arms_receive_history_and_fixture_hash_is_checked(self):
         for slot in self.slots:
             notes = episode_notes(self.protocol, slot, self.root / str(slot["order"]))
-            self.assertEqual(notes.project, {"decision": "Public project document."})
+            self.assertEqual(
+                notes.project,
+                {"decision": "Public project document."} if ALL[slot["arm"]].history_seeded else {},
+            )
             self.assertEqual(notes.execute("notes_list", {"scope": "working"})["keys"], [])
         Path(self.protocol["memory_histories"]["task"]["fixture_file"]).write_text("{}")
         with self.assertRaises(PermissionError):

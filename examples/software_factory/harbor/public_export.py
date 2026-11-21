@@ -197,6 +197,18 @@ def public_metadata(value):
         result["dataset"]["sha256"] = hexdigest(dataset["sha256"])
         if "bytes" in dataset:
             result["dataset"]["bytes"] = number(dataset["bytes"])
+        if "selector_policy" in dataset:
+            result["dataset"]["selector_policy"] = label(dataset["selector_policy"])
+        if "supplemental_records" in dataset:
+            result["dataset"]["supplemental_records"] = [
+                {
+                    "file": relative(row["file"]),
+                    "sha256": hexdigest(row["sha256"]),
+                    "issue_url": url(row["issue_url"]),
+                    "reference_commit": hexdigest(row["reference_commit"], 40),
+                }
+                for row in dataset["supplemental_records"]
+            ]
     deps = value.get("dependencies", {})
 
     def image(item):
@@ -299,6 +311,7 @@ def schedule(protocol, metadata):
                 "arm": row["arm"],
                 "index_tier": tier,
                 "memory_enabled": ALL[row["arm"]].memory_enabled,
+                "history_seeded": ALL[row["arm"]].history_seeded,
             }
         )
     return result

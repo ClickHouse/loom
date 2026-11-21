@@ -72,14 +72,32 @@
       "merged_at": "2017-06-03T19:26:15Z",
       "sha256": "b27981ec6a1fdadfe8d93ee0b5a86057e19d4df3ef2111445cb1e6d8eaaecb95",
       "excerpt": "When using stream_with_context, a new session was being opened based on the original request data. If the view containing the"
+    },
+    "cli": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/571334df8e26333f34873a3dcb84441946e6c64c/docs/cli.rst",
+      "commit": "571334df8e26333f34873a3dcb84441946e6c64c",
+      "path": "docs/cli.rst",
+      "published_at": "2017-05-16T08:39:30+02:00",
+      "sha256": "597de73ee3300cfee37950b7ae609697b7ed83cb7e4cb4457f073c2962717d93"
+    },
+    "nested-blueprints": {
+      "kind": "git-document",
+      "url": "https://github.com/pallets/flask/blob/2f0c62f5e6e290843f03c1fa70817c7a3c7fd661/docs/blueprints.rst",
+      "commit": "2f0c62f5e6e290843f03c1fa70817c7a3c7fd661",
+      "path": "docs/blueprints.rst",
+      "published_at": "2021-05-11T14:43:42-07:00",
+      "sha256": "e4e15084a59ebe7b6a8d29b665fb971704de07955edee462908db4da36e9d3e9"
     }
   },
   "records": [
     {
       "key": "history/component-recipe",
-      "value": "`Blueprint.__init__` creates a reusable registration recipe, not an independent application.",
+      "value": "`Blueprint.register` can nest a child, with parent prefixes on endpoint names and URLs. Parent callbacks apply to descendants. A parent error handler is tried only if the child cannot handle the exception.",
       "files": ["src/flask/blueprints.py"],
-      "source_ids": ["blueprints"]
+      "source_ids": ["nested-blueprints"],
+      "initial_value": "`Blueprint.__init__` creates a reusable registration recipe, not an independent application.",
+      "initial_source_ids": ["blueprints"]
     },
     {
       "key": "history/endpoint-hook-coupling",
@@ -218,12 +236,48 @@
       "value": "Streaming observes the existing session, but changing a cookie-backed session after response headers are sent cannot update those headers.",
       "files": [],
       "source_ids": ["pr-2354"]
+    },
+    {
+      "key": "history/cli-application-owner",
+      "value": "`FlaskGroup` is the application-aware parent of management commands. Custom Click drivers are supported, but application commands must run beneath a FlaskGroup so they know which application to use.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-context-wrapper",
+      "value": "`AppGroup.command` wraps callbacks in an application context by default. Commands attached later with Click add_command do not receive that wrapper automatically; with_appcontext=False explicitly opts out.",
+      "files": ["src/flask/cli.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/shell-application-context",
+      "value": "`Flask.make_shell_context` supplies shell locals after the correct application context has been established. The default shell exposes the application and g.",
+      "files": ["src/flask/app.py"],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-import-selection",
+      "value": "FLASK_APP can identify a module or a filename. A colon suffix chooses an application object whose name differs from app.",
+      "files": [],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-custom-driver",
+      "value": "Flask uses Click so reusable applications can ship a custom management driver integrated into a larger command-line application.",
+      "files": [],
+      "source_ids": ["cli"]
+    },
+    {
+      "key": "history/cli-factory-loading",
+      "value": "A custom FlaskGroup receives an application factory and asks it to create the application when Click needs to operate on it. This lets the driver control application construction.",
+      "files": [],
+      "source_ids": ["cli"]
     }
   ],
   "requirements": {
-    "rows": 24,
-    "code_linked": 10,
-    "unlinked": 14,
+    "rows": 30,
+    "code_linked": 13,
+    "unlinked": 17,
     "max_words": 45,
     "max_chars": 400
   },

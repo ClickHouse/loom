@@ -57,11 +57,31 @@ def select_records(rows: list[dict], pins: list[dict]) -> list[dict]:
             or not passing
             or not failing
             or not pin["visible_selectors"]
-            or not set(pin["visible_selectors"]) <= set(passing)
+            or not set(pin["visible_selectors"]) <= set(test_functions(passing))
         ):
             raise PermissionError("Task source or visible test separation differs from the lock")
         selected.append(row)
     return selected
+
+
+def test_functions(selectors):
+    """Run complete functions, including every published parameterization."""
+    return list(dict.fromkeys(node.split("[", 1)[0] for node in selectors))
+
+
+def hidden_selectors(record):
+    return test_functions(json.loads(record["FAIL_TO_PASS"]) + json.loads(record["PASS_TO_PASS"]))
+
+
+def supplemental_records(lock):
+    rows, paths = [], []
+    for pin in lock.get("supplemental_records", []):
+        path = (HERE / pin["file"]).resolve(strict=True)
+        if not path.is_relative_to(HERE) or path.is_symlink() or sha(path) != pin["sha256"]:
+            raise PermissionError("Supplemental public task differs from its pinned input")
+        rows.append(read(path))
+        paths.append(path)
+    return rows, paths
 
 
 def public_task(row: dict) -> dict:
@@ -176,7 +196,8 @@ def create_assets(output: Path) -> Path:
         + dataset["file"]
     )
     download(url, dataset["sha256"], dataset_path)
-    rows = select_records(parquet.read_table(dataset_path).to_pylist(), lock["tasks"])
+    additional, additional_paths = supplemental_records(lock)
+    rows = select_records(parquet.read_table(dataset_path).to_pylist() + additional, lock["tasks"])
     trusted = output / "trusted"
     trusted.mkdir(mode=0o700)
     write(trusted / "tasks.json", rows)
@@ -212,7 +233,13 @@ def create_assets(output: Path) -> Path:
         ):
             (folder / name).write_text(content)
     write(output / "source-provenance.json", sources)
-    inputs = [LOCK, dataset_path, output / "historical.json", *trusted.glob("*.json")]
+    inputs = [
+        LOCK,
+        dataset_path,
+        output / "historical.json",
+        *trusted.glob("*.json"),
+        *additional_paths,
+    ]
     inputs.append(output / "source-provenance.json")
     inputs += list(attribution.iterdir())
     inputs += [p for p in (output / "compiler").rglob("*") if p.is_file()]
@@ -531,11 +558,7 @@ def create_protocol(config_path: Path, output: Path) -> Path:
             "image": image,
             "evaluation_file": str(assets / "trusted" / (task_id + ".json")),
             "visible_selectors": pin["visible_selectors"],
-            "hidden_selectors": list(
-                dict.fromkeys(
-                    json.loads(record["FAIL_TO_PASS"]) + json.loads(record["PASS_TO_PASS"])
-                )
-            ),
+            "hidden_selectors": hidden_selectors(record),
         }
     if (
         config.get("source_writers_stopped") is not True

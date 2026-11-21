@@ -128,6 +128,8 @@ def plan(root=ROOT, evaluation="flask"):
     history_ids = {row["case_id"] for row in histories["cases"]}
     cold, warm = len(task_ids - history_ids), len(history_ids)
     cases, repeats = len(task_ids | history_ids), 3
+    memory_attempts = cases * repeats * sum(arm.memory_enabled for arm in PRIMARY.values())
+    seeded_attempts = warm * repeats * sum(arm.history_seeded for arm in PRIMARY.values())
     records = memories["records"]
     linked = sum(bool(row["files"]) for row in records)
     if not cases or len({row["key"] for row in records}) != len(records):
@@ -159,7 +161,10 @@ def plan(root=ROOT, evaluation="flask"):
             "linked": linked,
             "unlinked": len(records) - linked,
             "equal_plain_notes_all_arms": False,
-            "historical_knowledge": "Only memory-enabled arms receive the frozen historical corpus",
+            "historical_knowledge": "Only history-seeded arms receive the frozen historical corpus",
+            "memory_namespaces": memory_attempts,
+            "seeded_memory_attempts": seeded_attempts,
+            "cold_memory_attempts": memory_attempts - seeded_attempts,
             "cold_memory_records": 0,
             "delivery": "Optional tools; project records are not inserted into the prompt",
         },

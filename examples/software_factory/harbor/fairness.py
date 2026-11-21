@@ -15,7 +15,7 @@ from examples.software_factory.factory.model import digest, tool_schemas
 from examples.software_factory.factory.retrieval_tools import TOOL_OPS
 from examples.software_factory.harbor.billing import _trace
 from examples.software_factory.harbor.index import select_snapshot
-from examples.software_factory.harbor.memory import validate_history_certificate
+from examples.software_factory.harbor.memory import treatment_fixture, validate_history_certificate
 from examples.software_factory.harbor.paired import analyze
 from examples.software_factory.harbor.runtime import read, verify, write
 from examples.software_factory.harbor.scopes import selected_scopes
@@ -177,7 +177,7 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
     fixture = Path(frozen["fixture_file"])
     if hashlib.sha256(fixture.read_bytes()).hexdigest() != frozen["fixture_sha256"]:
         return False
-    notes = digest(read(fixture)["public_documents"])
+    notes = digest(treatment_fixture(read(fixture), slot["arm"])["public_documents"])
     for identity in (result, start):
         if (
             type(identity.get("memory_enabled")) is not bool

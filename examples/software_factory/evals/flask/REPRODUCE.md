@@ -27,19 +27,28 @@ record hashes, source commits, test and dependency image inputs, package hashes,
 compiler toolchain and model. [Harbor requirements](../../harbor/requirements.txt)
 pin Harbor 0.27.0 separately from server dependencies. Original source license
 hashes and downloaded dataset attributions remain in the asset receipt.
+Two task records come from that dataset. Task 4230 is pinned separately in
+[the upstream record](data/upstream-4230.json), with its original issue, source
+patch and regression test. The controller selects complete test functions,
+including every published parameterization. This also avoids truncated selector
+strings in the original CLI record without dropping cases.
 
 | Public task           | Exact Flask base                           |
 | --------------------- | ------------------------------------------ |
-| `pallets__flask-4045` | `d8c37f43724cd9fb0870f77877b7c4c7e38a19e0` |
-| `pallets__flask-4575` | `bd56d19b167822a9a23e2e9e2a07ccccc36baa8d` |
-| `pallets__flask-4935` | `fa1ee7066807c21256e90089731c548b313394d2` |
+| `pallets__flask-4074` | `a541c2ac8b05c2b23e11bd8540088fce1abc2373` |
+| `pallets__flask-4230` | `4346498c85848c53843b810537b83a8f6124c9d3` |
+| `pallets__flask-4642` | `97298e06fe19298c3ff9d2e0ed9ba70bb3fda2c8` |
 
 [Historical cases](memory/historical_cases.json) pair those exact issues with
 [the historical corpus](memory/historical_memories.json). Every note names its
 public sources; source hashes and chronology are checked before ingestion.
-Only memory-enabled arms receive the 24 seeded facts. Neither the issue nor the
+Only history-seeded arms receive the 30 seeded facts. Neither the issue nor the
 source or test contract changes between arms. The study contains no authored
 replacement issues. Native links are checked at the task's actual indexed base.
+All four Loom arms expose identical memory schemas. Cold controls receive private
+empty namespaces, proven by native listings; seeded arms replay history from
+2.0.0rc2, observe changed links at the task base, then revise one source-backed
+fact and verify that its anchor becomes fresh again.
 
 ## Execution and artifacts
 
@@ -71,10 +80,11 @@ configured viewer; the original measured jobs remain untouched.
 
 ## Interpretation
 
-This is a development regression study: earlier task outcomes informed analysis.
-The five arms are rerun under one frozen implementation; an older score is not a
-current control. Three issues are a subset of the eleven Flask issues in the
-pinned dataset, and repeated attempts are not independent tasks.
+These three harder issues were selected before their solver outcomes were
+measured. Earlier development outcomes informed harness changes. Five arms run
+under one frozen implementation; older scores are not current controls.
+Repeated attempts are not independent tasks, and three issues cannot establish
+a general result across repositories.
 
 The memory contrast adds historical information as well as retrieval. It tests
 that combined contribution; it does not establish the benefit of linking alone.

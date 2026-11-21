@@ -55,15 +55,21 @@ def public_reproduction(lock, protocol):
         )
     return {
         **public_reproduction_base(lock, protocol),
-        "study_role": "development regression; prior task outcomes were inspected",
+        "study_role": lock["study_role"],
         "memory_treatment": {
-            "availability": "Historical knowledge is available only to memory-enabled arms",
+            "availability": "All Loom arms have identical memory tools; "
+            "only history-seeded arms receive prior facts",
             "delivery": "Optional native memory tools and code-linked lessons; no prompt injection",
-            "measures": "Historical knowledge plus its native retrieval, not linking in isolation",
+            "measures": "Historical knowledge plus native retrieval versus certified empty memory; "
+            "not linking in isolation",
         },
         "dataset": {
-            key: lock["dataset"][key]
-            for key in ("repository", "revision", "file", "sha256", "bytes")
+            **{
+                key: lock["dataset"][key]
+                for key in ("repository", "revision", "file", "sha256", "bytes")
+            },
+            "supplemental_records": lock["supplemental_records"],
+            "selector_policy": lock["selector_policy"],
         },
         "tasks": tasks,
         "dependencies": {

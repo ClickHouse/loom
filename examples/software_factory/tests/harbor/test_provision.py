@@ -217,10 +217,10 @@ class ProvisioningContracts(unittest.TestCase):
             for value in bindings.values()
             if value["memory_namespace"] is not None
         ]
-        self.assertEqual(len(memories), 36)
-        self.assertEqual(len(set(memories)), 36)
+        self.assertEqual(len(memories), 72)
+        self.assertEqual(len(set(memories)), 72)
         for group in groups.values():
-            self.assertEqual(len(group["memory_slots"]), 3)
+            self.assertEqual(len(group["memory_slots"]), 6)
         self.run.assert_not_called()
 
     def test_native_backfill_uses_fixed_commit_real_embeddings_and_no_fetch(self):

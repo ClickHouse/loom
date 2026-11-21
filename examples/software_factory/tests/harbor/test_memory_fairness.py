@@ -20,7 +20,9 @@ class NativeMemoryEvidence(unittest.TestCase):
         import hashlib
 
         history = digest({"observation": "Public history"})
-        self.slot = dict(order=0, task_id="episode", memory_enabled=True)
+        self.slot = dict(
+            order=0, task_id="episode", arm="loom-treesitter-memory", memory_enabled=True
+        )
         self.binding = dict(
             org="episode-org",
             code_namespace="code",

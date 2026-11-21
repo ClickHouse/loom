@@ -229,11 +229,14 @@ def memory_backend(protocol, slot, binding, code_context):
 def episode_notes(protocol, slot, folder):
     from examples.software_factory.factory.project_notes import ProjectNotes
 
+    from .memory import treatment_fixture
     from .scopes import binding_for, frozen_json
 
     binding = binding_for(protocol, slot)
     frozen = protocol["memory_histories"][slot["task_id"]]
-    fixture = frozen_json(frozen["fixture_file"], frozen["fixture_sha256"])
+    fixture = treatment_fixture(
+        frozen_json(frozen["fixture_file"], frozen["fixture_sha256"]), slot["arm"]
+    )
     documents = fixture["public_documents"]
     if not isinstance(documents, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in documents.items()

@@ -17,7 +17,7 @@ from examples.software_factory.factory.model import digest
 
 from .arms import ALL, validate_schedule
 from .index import snapshot
-from .memory import validate_history_certificate
+from .memory import treatment_fixture, validate_history_certificate
 from .source_tree import source_files
 
 
@@ -803,7 +803,9 @@ class Provisioner:
                 "repository_tag": tag,
                 "compiler_rows": None,
                 "source_scope": None,
-                "memory_history_sha256": digest(fixtures[task_id]["data"]["public_documents"])
+                "memory_history_sha256": digest(
+                    treatment_fixture(fixtures[task_id]["data"], slot["arm"])["public_documents"]
+                )
                 if memory
                 else None,
             }
@@ -1143,6 +1145,7 @@ class Provisioner:
         seeded = fixture.get("kind") != "cold"
         authored = seeded and fixture.get("kind") != "historical-snapshot"
         slots = group["memory_slots"]
+        history_slots = [slot for slot in slots if ALL[slot["arm"]].history_seeded]
         roles = {
             group["namespace"]: "admin",
             **{"memory-" + str(slot["order"]): "admin" for slot in slots},
@@ -1193,7 +1196,7 @@ class Provisioner:
                     for event in fixture["history_events"]
                     if event["operation"] == "set"
                 }
-                for slot in slots:
+                for slot in history_slots:
 
                     def stale(key, row, head=head, anchor=anchor, changed=changed):
                         links = row.get("code", [])
@@ -1219,7 +1222,7 @@ class Provisioner:
             for public in fixture["history_events"]:
                 if public["revision"] != revision:
                     continue
-                for slot in slots:
+                for slot in history_slots:
                     body = {
                         "org": group["org"],
                         "namespace": "memory-" + str(slot["order"]),
@@ -1258,7 +1261,7 @@ class Provisioner:
                     for event in fixture["history_events"]
                     if event["revision"] == "B" and event["operation"] == "update"
                 }
-                for slot in slots:
+                for slot in history_slots:
 
                     def fresh(
                         key, row, current=current, revision=revision, changed_keys=changed_keys
@@ -1374,6 +1377,7 @@ class Provisioner:
             )
         for slot in slots:
             binding = bindings[str(slot["order"])]
+            history_seeded = ALL[slot["arm"]].history_seeded
             cert = {
                 "schema_version": 1,
                 "kind": "factory-native-history",
@@ -1389,14 +1393,16 @@ class Provisioner:
                 "trunk_namespace": group["namespace"],
                 "public_history_sha256": binding["memory_history_sha256"],
                 "fixture_sha256": public_fixtures[group["task_id"]]["fixture_sha256"],
-                "source_heads": heads,
-                "source_receipts": source_receipts,
+                "source_heads": heads if history_seeded else {"B": heads["B"]},
+                "source_receipts": source_receipts
+                if history_seeded
+                else {"B": source_receipts["B"]},
                 "events": events[slot["order"]],
                 "final_snapshot": [
                     dict(row, memory_key=key) for key, row in latest[slot["order"]].items()
                 ],
             }
-            if not seeded:
+            if not seeded or not history_seeded:
                 listing = {
                     "org": group["org"],
                     "namespace": binding["memory_namespace"],

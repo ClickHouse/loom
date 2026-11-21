@@ -64,19 +64,23 @@ Python smoke fixtures live under tests and are not repository evaluations.
 
 ## Historical memory treatment
 
-The Flask development regression study uses the same three real issues in five
-arms. Each optional memory arm receives 24 curated historical facts, ten linked to
-code, in a private namespace. Other arms receive no seeded history. The issue,
+The Flask historical issue study uses the same three real issues in five
+arms. Each optional memory arm receives 30 curated historical facts, 13 linked to
+code, in a private namespace. All four Loom arms expose identical optional memory
+tools. Cold controls have fresh writable namespaces proven empty by native
+listings. Other arms receive no seeded history. The issue,
 source, ordinary tools, model and tests remain paired. No historical facts are
 inserted into the prompt; the model chooses memory and code tools.
 
 Historical source hashes and publication/edit cutoffs qualify before ingestion.
 Target discussions, reference fixes and hidden requirements cannot supply memory.
-Native write receipts, exact read-back values, versions, content hashes and fresh
-code links prove the snapshot actually exists in the task's certified source scope.
-It represents replayed historical knowledge, not autonomous elapsed learning.
+Native write receipts, exact read-back values, versions and content hashes prove
+the history exists. The indexed source advances across real public revisions;
+native workers must flag changed anchors before a source-backed memory update
+relinks fresh. No synthetic source tree supplies the task. This represents
+replayed historical knowledge, rather than autonomous elapsed learning.
 
 The comparison measures the combined contribution of historical information and
 its retrieval. Linking in isolation needs an additional matched-facts control.
-Earlier outcomes on these development tasks were inspected, so their results are
-reported as regression evidence rather than unseen-task generalization.
+The harder task selection precedes its solver outcomes. Earlier development
+outcomes informed harness changes, and three tasks cannot establish generalization.

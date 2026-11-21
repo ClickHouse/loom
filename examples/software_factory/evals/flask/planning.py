@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from examples.software_factory.evals.flask import bootstrap
@@ -34,11 +33,7 @@ def inputs(assets: Path, materialization: dict, output: Path) -> dict:
             "image": images["images"][task_id]["image"],
             "evaluation_file": str(assets / "trusted" / (task_id + ".json")),
             "visible_selectors": pin["visible_selectors"],
-            "hidden_selectors": list(
-                dict.fromkeys(
-                    json.loads(record["FAIL_TO_PASS"]) + json.loads(record["PASS_TO_PASS"])
-                )
-            ),
+            "hidden_selectors": bootstrap.hidden_selectors(record),
             "scenario_family": "historical-issue",
         }
     tasks.update({task_id: dict(config) for task_id, config in materialization["tasks"].items()})

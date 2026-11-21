@@ -13,6 +13,20 @@ from examples.software_factory.factory.model import digest
 from .arms import ALL
 
 
+def treatment_fixture(fixture, arm):
+    """Apply the frozen arm's history treatment before setup and receipt validation."""
+    if ALL[arm].history_seeded:
+        return fixture
+    return {
+        **fixture,
+        "kind": "cold",
+        "public_documents": {},
+        "public_documents_sha256": digest({}),
+        "history_events": [],
+        "history_events_sha256": digest([]),
+    }
+
+
 class NativeMemoryContext:
     """Borrow the code context's client and loop; the code context owns their close."""
 
@@ -160,7 +174,9 @@ def _validate_history(protocol, slot, binding):
                 "Two attempts share mutable memory",
             )
     fixture_info = protocol["memory_histories"][slot["task_id"]]
-    fixture = _file(fixture_info["fixture_file"], fixture_info["fixture_sha256"])
+    fixture = treatment_fixture(
+        _file(fixture_info["fixture_file"], fixture_info["fixture_sha256"]), slot["arm"]
+    )
     cert = _file(binding["history_certificate_file"], binding["history_certificate_sha256"])
     _require(
         cert.get("schema_version") == 1

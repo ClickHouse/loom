@@ -29,6 +29,7 @@ class CompilerSetup(unittest.TestCase):
 
     def test_nine_revisions_share_only_the_authored_dependency_environment(self):
         lock = setup._read(setup.LOCK)
+        dependency = lock["tasks"][-1]["task_id"]
         with tempfile.TemporaryDirectory() as directory:
             assets = Path(directory)
             (assets / "assets.json").write_text(json.dumps(dict(source_git="/public/flask.git")))
@@ -41,20 +42,19 @@ class CompilerSetup(unittest.TestCase):
             for i in range(3):
                 key = "authored-" + str(i)
                 fixtures[key] = dict(
+                    dependency_task_id=dependency,
                     source_git="/owned/" + key,
                     revisions={
                         label: dict(commit=f"{i * 2 + j + 1:040x}")
                         for j, label in enumerate(("A", "B"))
                     },
                 )
-                tasks[key] = dict(image=images["pallets__flask-4935"]["image"])
+                tasks[key] = dict(image=images[dependency]["image"])
             rows = setup.compiler_revisions(assets, dict(fixtures=fixtures, tasks=tasks))
             self.assertEqual(len(rows), 9)
             self.assertEqual(len({row["base_commit"] for row in rows}), 9)
             self.assertEqual(sum(row["revision"] == "A" for row in rows), 3)
-            self.assertEqual(
-                {row["dependency_task_id"] for row in rows[3:]}, {"pallets__flask-4935"}
-            )
+            self.assertEqual({row["dependency_task_id"] for row in rows[3:]}, {dependency})
             tasks["authored-0"]["image"] = "wrong-image"
             with self.assertRaises(PermissionError):
                 setup.compiler_revisions(assets, dict(fixtures=fixtures, tasks=tasks))
@@ -142,10 +142,11 @@ class CompilerSetup(unittest.TestCase):
 
     def test_cached_raw_requires_matching_source_recipe_image_and_file_hashes(self):
         pins = setup.tool_pins("arm64")
+        dependency = setup._read(setup.LOCK)["tasks"][-1]["task_id"]
         revision = dict(
             base_commit="a" * 40,
             dependency_image="sha256:" + "b" * 64,
-            dependency_task_id="pallets__flask-4935",
+            dependency_task_id=dependency,
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -167,7 +168,7 @@ class CompilerSetup(unittest.TestCase):
                         cache_initially_empty=True,
                         source_before=source_hashes,
                         source_after=source_hashes,
-                        packages=setup._expected_packages("pallets__flask-4935"),
+                        packages=setup._expected_packages(dependency),
                     )
                 ),
                 "compiler-command.json": "[]",

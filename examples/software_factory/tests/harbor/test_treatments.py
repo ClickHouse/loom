@@ -4,11 +4,29 @@ import copy
 import unittest
 from collections import Counter
 
+from examples.software_factory.factory.model import tool_schemas
 from examples.software_factory.harbor.arms import PRIMARY, contrasts, validate_schedule
 from examples.software_factory.harbor.live_support import schedule
+from examples.software_factory.harbor.memory import treatment_fixture
 
 
 class TreatmentContracts(unittest.TestCase):
+    def test_loom_schemas_are_identical_and_cold_controls_have_no_seeded_content(self):
+        fixture = {
+            "public_documents": {"decision": "Historical fact"},
+            "history_events": [{"key": "decision"}],
+        }
+        schemas = []
+        for name, arm in PRIMARY.items():
+            if arm.index_tier is None:
+                continue
+            schemas.append(tool_schemas(arm.mode, memory=arm.memory_enabled))
+            applied = treatment_fixture(fixture, name)
+            self.assertEqual(bool(applied["history_events"]), arm.history_seeded)
+            self.assertEqual(bool(applied["public_documents"]), arm.history_seeded)
+        self.assertTrue(all(schema == schemas[0] for schema in schemas))
+        self.assertEqual(fixture["public_documents"], {"decision": "Historical fact"})
+
     def test_six_families_keep_all_arms_repeats_and_controls(self):
         tasks = [f"scenario-{i}" for i in range(6)]
         rows = schedule(tasks, seed=741)
@@ -34,7 +52,7 @@ class TreatmentContracts(unittest.TestCase):
     def test_memory_cannot_be_silently_enabled_or_aliased_to_a_tier(self):
         rows = schedule(["a", "b", "c"], seed=741)
         for arm, field, wrong in (
-            ("loom-treesitter", "memory_enabled", True),
+            ("loom-treesitter", "memory_enabled", False),
             ("loom-scip-memory", "memory_enabled", False),
             ("loom-scip-memory", "index_tier", "scip-memory"),
             ("baseline", "index_tier", "treesitter"),

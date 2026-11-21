@@ -9,8 +9,12 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Arm:
     index_tier: str | None
-    memory_enabled: bool
+    history_seeded: bool
     label: str
+
+    @property
+    def memory_enabled(self):
+        return self.index_tier is not None
 
     @property
     def mode(self):
@@ -26,9 +30,9 @@ class Arm:
 
 PRIMARY = {
     "baseline": Arm(None, False, "Claude without Loom"),
-    "loom-treesitter": Arm("treesitter", False, "Claude + Loom, Tree-sitter"),
+    "loom-treesitter": Arm("treesitter", False, "Claude + Loom, Tree-sitter, cold memory"),
     "loom-treesitter-memory": Arm("treesitter", True, "Claude + Loom, Tree-sitter + memory"),
-    "loom-scip": Arm("scip", False, "Claude + Loom, SCIP"),
+    "loom-scip": Arm("scip", False, "Claude + Loom, SCIP, cold memory"),
     "loom-scip-memory": Arm("scip", True, "Claude + Loom, SCIP + memory"),
 }
 CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}

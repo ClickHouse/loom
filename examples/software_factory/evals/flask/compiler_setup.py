@@ -58,29 +58,27 @@ def compiler_revisions(assets: Path, materialization: dict) -> list[dict]:
                 dependency_image=images[pin["task_id"]]["image"],
             )
         )
-    dependency = "pallets__flask-4935"
-    for task_id in sorted(materialization["tasks"]):
-        fixture = materialization["fixtures"][task_id]
-        if materialization["tasks"][task_id]["image"] != images[dependency]["image"]:
-            raise PermissionError("Authored compiler dependencies differ from their pinned base")
-        for label in ("A", "B"):
-            revisions.append(
-                dict(
-                    key=task_id + ":" + label,
-                    task_id=task_id,
-                    revision=label,
-                    base_commit=fixture["revisions"][label]["commit"],
-                    source_git=fixture["source_git"],
-                    dependency_task_id=dependency,
-                    dependency_image=images[dependency]["image"],
-                )
+    for task_id, fixture in sorted(materialization["fixtures"].items()):
+        dependency = fixture["dependency_task_id"]
+        config = materialization["tasks"].get(task_id)
+        if config and config["image"] != images[dependency]["image"]:
+            raise PermissionError("History compiler dependencies differ from their pinned base")
+        for label, revision in fixture["revisions"].items():
+            row = dict(
+                key=task_id + ":" + label,
+                task_id=task_id,
+                revision=label,
+                base_commit=revision["commit"],
+                source_git=fixture["source_git"],
+                dependency_task_id=dependency,
+                dependency_image=images[dependency]["image"],
             )
-    expected = len(lock["tasks"]) + 2 * len(materialization["tasks"])
-    if (
-        not revisions
-        or len(revisions) != expected
-        or len({row["base_commit"] for row in revisions}) != expected
-    ):
+            existing = [item for item in revisions if item["key"] == row["key"]]
+            if existing and existing != [row]:
+                raise PermissionError("History compiler source differs from the solver base")
+            if not existing:
+                revisions.append(row)
+    if not revisions or len({row["key"] for row in revisions}) != len(revisions):
         raise PermissionError("Compiler preparation requires every distinct frozen revision")
     for row in revisions:
         if not re.fullmatch(r"[a-f0-9]{40}", row["base_commit"]):
@@ -505,7 +503,7 @@ def prepare_compiler_artifacts(
     cache_file: Path | None = None,
     owner: str | None = None,
 ) -> dict:
-    """Compile nine frozen source trees; no model calls, server writes, or repository tests."""
+    """Compile frozen source revisions; no model calls, server writes, or repository tests."""
     from .bootstrap import stage_compiler_source
 
     assets, output = Path(assets).resolve(strict=True), Path(output).resolve()
