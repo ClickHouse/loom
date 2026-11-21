@@ -322,7 +322,16 @@ class BootstrapTests(unittest.TestCase):
 
             with (
                 patch.object(Path, "read_text", reject_credential_read),
-                patch.object(bootstrap, "server_identity", return_value={"files": {}}),
+                patch.object(
+                    bootstrap,
+                    "server_identity",
+                    return_value={
+                        "files": {},
+                        "relative_files": {},
+                        "dirty": False,
+                        "commit": "a" * 40,
+                    },
+                ),
                 patch.object(bootstrap, "index_status", side_effect=statuses),
                 patch.object(bootstrap, "compiler_counts", side_effect=tier_counts),
                 patch.object(bootstrap, "source_scope", return_value={"verified": True}),

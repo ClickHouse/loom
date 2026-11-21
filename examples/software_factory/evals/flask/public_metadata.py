@@ -21,7 +21,12 @@ def public_reproduction(lock, protocol):
         },
         "implementation": {
             "repository_url": "https://github.com/ClickHouse/loom",
-            "commit": protocol["server_commit"],
+            "controller_commit": protocol["controller_source_identity"]["commit"],
+            "server_commit": protocol["server_commit"],
+            "controller_dirty": protocol["controller_source_identity"]["dirty"],
+            "server_dirty": protocol["server_source_identity"]["dirty"],
+            "controller_files": protocol["controller_source_identity"]["relative_files"],
+            "server_files": protocol["server_source_identity"]["relative_files"],
         },
         "model": {
             "id": lock["model_id"],

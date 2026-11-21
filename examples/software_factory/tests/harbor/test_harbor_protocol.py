@@ -17,14 +17,18 @@ class HarborProtocol(unittest.TestCase):
         frozen = self.root / "source.py"
         frozen.write_text("value = 1\n")
         identity = {str(frozen): hashlib.sha256(frozen.read_bytes()).hexdigest()}
+        controller = self.root / "controller.py"
+        controller.write_text("controller = True\n")
+        controller_files = {str(controller): hashlib.sha256(controller.read_bytes()).hexdigest()}
         self.plan = {
             "controller": "harbor",
             "harbor_version": "0.27.0",
             "schedule": [],
             "schedule_sha256": digest([]),
-            "files": identity,
+            "files": {**identity, **controller_files},
             "public_inputs": identity,
             "server_source_identity": {"files": identity},
+            "controller_source_identity": {"files": controller_files},
             "model_id": "claude-haiku-5-5",
             "index_tier": "per-arm",
             "tasks": {name: {} for name in ("a", "b", "c")},
@@ -40,7 +44,7 @@ class HarborProtocol(unittest.TestCase):
     def test_input_freeze_verifies_public_provenance_and_every_server_source(self):
         paths = harbor_study.verified_input_files(self.plan)
         self.assertEqual(set(paths), {Path(p) for p in self.plan["files"]})
-        for field in ("public_inputs", "server_source_identity"):
+        for field in ("public_inputs", "server_source_identity", "controller_source_identity"):
             changed = json.loads(json.dumps(self.plan))
             hashes = changed[field] if field == "public_inputs" else changed[field]["files"]
             hashes[next(iter(hashes))] = "0" * 64

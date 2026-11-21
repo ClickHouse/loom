@@ -337,9 +337,31 @@ def server_identity(root: Path, container: str, container_root: str) -> dict:
     if actual != relative:
         raise PermissionError("Host runtime source differs from the serving container")
     return {
+        "commit": git(root, "rev-parse", "HEAD").decode().strip(),
+        "dirty": bool(git(root, "status", "--porcelain", "--", "server", "schemas")),
+        "relative_files": relative,
         "files": {str(root / p): h for p, h in relative.items()},
         "container_source_root": container_root,
         "container_bytes_verified": True,
+    }
+
+
+def controller_identity() -> dict:
+    root = HERE.parents[3]
+    parts = ("examples/software_factory", "sdk/python", "pyproject.toml", "uv.lock")
+    names = git(root, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", *parts)
+    relative = {
+        name: sha(root / name)
+        for name in sorted(set(names.decode().strip("\0").split("\0")))
+        if name and (root / name).is_file()
+    }
+    if not relative:
+        raise PermissionError("Controller source manifest is empty")
+    return {
+        "commit": git(root, "rev-parse", "HEAD").decode().strip(),
+        "dirty": bool(git(root, "status", "--porcelain", "--", *parts)),
+        "relative_files": relative,
+        "files": {str(root / name): hashed for name, hashed in relative.items()},
     }
 
 
@@ -507,6 +529,8 @@ def create_protocol(config_path: Path, output: Path) -> Path:
         config["server_container"],
         config["container_source_root"],
     )
+    if identity["commit"] != config["server_commit"]:
+        raise PermissionError("Serving source checkout and declared build commits differ")
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     tasks, statuses = {}, {}
     for pin in lock["tasks"]:
@@ -633,6 +657,7 @@ def create_protocol(config_path: Path, output: Path) -> Path:
         "server_container": config["server_container"],
         "server_commit": config["server_commit"],
         "server_source_identity": identity,
+        "controller_source_identity": controller_identity(),
         "historical_manifest": str(assets / "historical.json"),
         "tasks": tasks,
         "reference_controls_file": str(assets / "trusted/tasks.json"),

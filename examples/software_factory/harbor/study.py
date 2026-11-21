@@ -44,7 +44,11 @@ def file_hash(path):
 
 def verified_input_files(plan):
     paths = set()
-    for identity in (plan["public_inputs"], plan["server_source_identity"]["files"]):
+    for identity in (
+        plan["public_inputs"],
+        plan["server_source_identity"]["files"],
+        plan["controller_source_identity"]["files"],
+    ):
         if not identity:
             raise PermissionError("Public input and server source fingerprints are required")
         for name, expected in identity.items():

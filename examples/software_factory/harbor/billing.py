@@ -68,7 +68,7 @@ def _unknown(reason, *, dispatched=None, matched=0):
     }
 
 
-def _trace(protocol, slot, result):
+def _trace(protocol, slot, result, *, rows=None):
     if not isinstance(result, dict):
         raise ValueError("Attempt result metadata is missing")
     if any(
@@ -82,9 +82,10 @@ def _trace(protocol, slot, result):
         }.items()
     ):
         raise ValueError("Attempt identity or protocol is unverified")
-    path = Path(result["harbor_trial"]) / "agent/loom-transport.jsonl"
-    rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
-    if any(not isinstance(row, dict) for row in rows):
+    if rows is None:
+        path = Path(result["harbor_trial"]) / "agent/loom-transport.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
         raise ValueError("Malformed transport event")
     if (slot["mode"] == "baseline") != (slot["index_tier"] is None):
         raise ValueError("Attempt tier is unverified")

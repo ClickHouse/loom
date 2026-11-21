@@ -1,6 +1,7 @@
 """Public bundles expose measured scalar evidence without private trial assets."""
 
 import hashlib
+import json
 import unittest
 
 from examples.software_factory.factory.model import digest
@@ -23,6 +24,15 @@ class PublicExportTests(unittest.TestCase):
         self.protocol.update(
             model_id="fixture-model", schedule_sha256=digest(self.protocol["schedule"])
         )
+        self.protocol["org"] = "fixture-org"
+        self.protocol["tasks"] = {
+            task: {
+                "indexes": {
+                    tier: {"namespace": task + "-" + tier} for tier in ("treesitter", "scip")
+                }
+            }
+            for task in self.fixture.tasks
+        }
         self.protocol["public_reproduction"] = {
             "schema_version": 1,
             "suite": {
@@ -67,6 +77,8 @@ class PublicExportTests(unittest.TestCase):
         for order, raw in enumerate(self.fixture.raw):
             raw["agent_result"]["metadata"] = {
                 "factory": {
+                    **self.protocol["schedule"][order],
+                    "protocol_sha256": digest(self.protocol),
                     "task_id": self.protocol["schedule"][order]["task_id"],
                     "generation_cost_usd": 0.0 if order == 0 else raw["agent_result"]["cost_usd"],
                     "agent_time_s": 1.0,
@@ -183,12 +195,8 @@ class PublicExportTests(unittest.TestCase):
     def test_independent_suite_judge_and_billing_proofs_are_not_replaced_by_zero(self):
         import copy
 
-        folder = self.fixture.source / self.fixture.raw[0]["trial_name"]
+        order, folder, _ = self.billed_attempt()
         raw = read(folder / "result.json")
-        factory = raw["agent_result"]["metadata"]["factory"]
-        for key in ("loom_logical_requests", "loom_physical_requests", "loom_transport_dispatches"):
-            factory[key] = 3
-        write(folder / "result.json", raw)
         base_folder = self.fixture.root / "jobs/base/base-trial"
         base = copy.deepcopy(raw)
         base.update(trial_name="base-trial", trial_uri=base_folder.as_uri())
@@ -218,7 +226,7 @@ class PublicExportTests(unittest.TestCase):
             {
                 "protocol_sha256": digest(self.protocol),
                 "attempts": {
-                    "0": {
+                    str(order): {
                         "candidate_state": "a" * 64,
                         "judge_fixed": False,
                         "source": "/Users/PRIVATE_PATH/judge.json",
@@ -226,28 +234,132 @@ class PublicExportTests(unittest.TestCase):
                 },
             },
         )
-        write(
-            self.fixture.root / "provider-costs.json",
-            {
-                "protocol_sha256": digest(self.protocol),
-                "attempts": {
-                    "0": {
-                        "proof_status": "known",
-                        "physical_requests_dispatched": 3,
-                        "physical_requests_matched": 3,
-                        "loom_provider_cost_usd": 0.25,
-                        "input_tokens": 100,
-                        "output_tokens": 10,
-                    }
-                },
-            },
-        )
         public_export.export_public(self.protocol, self.output)
-        row = read(self.output / "attempts.json")[0]
+        row = read(self.output / "attempts.json")[order]
         self.assertEqual(row["full_suite_regressions"], 1)
         self.assertIs(row["judge_fixed"], False)
-        self.assertEqual(row["total_provider_cost_usd"], 0.25)
+        self.assertEqual(row["total_provider_cost_usd"], row["generation_cost_usd"] + 0.25)
         self.assertEqual(row["model_total_tokens"], 12)
+
+    def billed_attempt(self):
+        slot = next(s for s in self.protocol["schedule"] if s["arm"] == "loom-treesitter")
+        order = slot["order"]
+        folder = self.fixture.source / self.fixture.raw[order]["trial_name"]
+        raw = read(folder / "result.json")
+        factory = raw["agent_result"]["metadata"]["factory"]
+        factory.update(
+            {
+                **slot,
+                "protocol_sha256": digest(self.protocol),
+                "loom_logical_requests": 1,
+                "loom_physical_requests": 3,
+                "loom_transport_dispatches": 3,
+                "model_selected_loom_requests": 1,
+            }
+        )
+        write(folder / "result.json", raw)
+        events = []
+        ids = []
+        for i, op in enumerate(("code.index_status", "code.symbol", "code.index_status")):
+            identifier = f"physical-{order}-{i}"
+            ids.append(identifier)
+            events.extend(
+                [
+                    dict(phase="dispatch", path="/v1/" + op, request_id=None),
+                    dict(phase="response", path="/v1/" + op, request_id=identifier, status=200),
+                ]
+            )
+        (folder / "agent/loom-transport.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in events)
+        )
+        bill = dict(
+            protocol_sha256=digest(self.protocol),
+            cohort_complete=True,
+            attempts={
+                str(order): dict(
+                    proof_status="known",
+                    physical_requests_dispatched=3,
+                    physical_requests_matched=3,
+                    physical_request_ids_sha256=digest(sorted(ids)),
+                    loom_provider_cost_usd=0.25,
+                )
+            },
+        )
+        write(self.fixture.root / "provider-costs.json", bill)
+        return order, folder, bill
+
+    def test_counts_only_missing_or_malformed_trace_and_wrong_id_digest_keep_cost_unknown(self):
+        order, folder, bill = self.billed_attempt()
+        trace = folder / "agent/loom-transport.jsonl"
+        original = trace.read_text()
+        for case in (
+            "missing",
+            "wrong_digest",
+            "incomplete",
+            "undeclared_op",
+            "wrong_scope",
+            "duplicate_id",
+            "invalid_json",
+            "incomplete_billing",
+        ):
+            with self.subTest(case=case):
+                trace.write_text(original)
+                changed = json.loads(json.dumps(bill))
+                rows = [json.loads(line) for line in original.splitlines()]
+                raw = read(folder / "result.json")
+                raw["agent_result"]["metadata"]["factory"]["index_tier"] = "treesitter"
+                if case == "missing":
+                    trace.unlink()
+                elif case == "wrong_digest":
+                    changed["attempts"][str(order)]["physical_request_ids_sha256"] = digest(
+                        ["wrong"]
+                    )
+                elif case == "incomplete":
+                    trace.write_text("\n".join(json.dumps(r) for r in rows[:-1]))
+                elif case == "undeclared_op":
+                    for row in rows:
+                        row["path"] = "/v1/memory.set"
+                    trace.write_text("\n".join(json.dumps(r) for r in rows))
+                elif case == "wrong_scope":
+                    raw["agent_result"]["metadata"]["factory"]["index_tier"] = "scip"
+                elif case == "invalid_json":
+                    trace.write_text("not json")
+                elif case == "incomplete_billing":
+                    changed["cohort_complete"] = False
+                else:
+                    rows[3]["request_id"] = rows[1]["request_id"]
+                    trace.write_text("\n".join(json.dumps(r) for r in rows))
+                write(folder / "result.json", raw)
+                write(self.fixture.root / "provider-costs.json", changed)
+                public_export.export_public(self.protocol, self.output)
+                row = read(self.output / "attempts.json")[order]
+                self.assertIsNone(row["loom_provider_cost_usd"])
+                self.assertIsNone(row["total_provider_cost_usd"])
+
+    def test_valid_cost_uses_only_tracked_trace_bytes_and_preserves_native_assets(self):
+        from pathlib import Path
+        from unittest.mock import patch
+
+        order, folder, _ = self.billed_attempt()
+        trace = folder / "agent/loom-transport.jsonl"
+        before = hashes(self.fixture.source)
+        original = Path.read_text
+
+        def guarded(path, *args, **kwargs):
+            if path == trace:
+                raise AssertionError("Native trace was reread outside tracked inputs")
+            return original(path, *args, **kwargs)
+
+        with patch.object(Path, "read_text", guarded):
+            public_export.export_public(self.protocol, self.output)
+        row = read(self.output / "attempts.json")[order]
+        self.assertEqual(row["loom_provider_cost_usd"], 0.25)
+        provenance = read(self.output / "provenance.json")
+        self.assertEqual(
+            provenance["source_files"][f"native/live/slot-{order:02d}/loom-transport.jsonl"],
+            hashlib.sha256(trace.read_bytes()).hexdigest(),
+        )
+        self.assertEqual(hashes(self.fixture.source), before)
 
     def test_incomplete_billing_proof_and_state_mismatch_stay_unknown(self):
         folder = self.fixture.source / self.fixture.raw[0]["trial_name"]

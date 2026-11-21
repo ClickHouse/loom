@@ -20,6 +20,7 @@ from harbor.models.trial.result import TrialResult
 
 from examples.software_factory.factory.model import Budget, digest
 
+from .billing import _trace
 from .charts import ARMS, generate_charts
 from .metrics import token_totals
 
@@ -136,9 +137,25 @@ def public_metadata(value):
         ],
     }
     if value.get("implementation"):
+        implementation = value["implementation"]
         result["implementation"] = {
-            "repository_url": url(value["implementation"]["repository_url"]),
-            "commit": hexdigest(value["implementation"]["commit"], 40),
+            "repository_url": url(implementation["repository_url"]),
+            **{
+                key: hexdigest(implementation[key], 40)
+                for key in ("controller_commit", "server_commit")
+            },
+            **{
+                key: implementation[key]
+                for key in ("controller_dirty", "server_dirty")
+                if type(implementation[key]) is bool
+            },
+            **{
+                key: {
+                    relative(path): hexdigest(hashed)
+                    for path, hashed in implementation[key].items()
+                }
+                for key in ("controller_files", "server_files")
+            },
         }
     dataset = value.get("dataset", {})
     result["dataset"] = {
@@ -409,6 +426,7 @@ def measurements(protocol, slots, inputs):
                 inputs.read(path, f"native/base/slot-{order:02d}/full-suite.json")
             )
     verdicts, costs = {}, {}
+    billing_complete = False
     for name, target in (("judgements/verdicts.json", verdicts), ("provider-costs.json", costs)):
         path = root / name
         if path.exists():
@@ -416,6 +434,8 @@ def measurements(protocol, slots, inputs):
             if saved.get("protocol_sha256") != digest(protocol):
                 raise ValueError("Supplementary measurements belong to another protocol")
             target.update(saved.get("attempts", {}))
+            if name == "provider-costs.json":
+                billing_complete = saved.get("cohort_complete") is True
     attempts, chart_entries = [], []
     for slot in slots:
         order = slot["order"]
@@ -508,18 +528,20 @@ def measurements(protocol, slots, inputs):
             item["judge_fixed"] = verdict["judge_fixed"]
         bill = costs.get(str(order), {})
         trace = folder / "agent/loom-transport.jsonl"
-        events = (
-            [
-                json.loads(line)
-                for line in inputs.raw(
-                    trace, f"native/live/slot-{order:02d}/loom-transport.jsonl"
-                ).splitlines()
-            ]
-            if trace.exists()
-            else []
+        traced = (
+            inputs.raw(trace, f"native/live/slot-{order:02d}/loom-transport.jsonl")
+            if trace.exists() or trace.is_symlink()
+            else b""
         )
+        calls, namespace = None, None
+        try:
+            events = [json.loads(line) for line in traced.splitlines()]
+            calls, namespace = _trace(protocol, protocol["schedule"][order], factory, rows=events)
+        except (KeyError, ValueError, TypeError):
+            pass  # Missing or malformed billing evidence must remain unknown.
         if (
-            all(
+            calls == []
+            and all(
                 factory.get(key) == 0 and type(factory.get(key)) is int
                 for key in (
                     "loom_logical_requests",
@@ -528,7 +550,6 @@ def measurements(protocol, slots, inputs):
                     "loom_transport_dispatches",
                 )
             )
-            and not events
             and (
                 bill.get("proof_status") != "known"
                 or (
@@ -536,17 +557,25 @@ def measurements(protocol, slots, inputs):
                     == bill.get("physical_requests_matched")
                     == 0
                     and bill.get("loom_provider_cost_usd") == 0
+                    and bill.get("physical_request_ids_sha256") == digest([])
                 )
             )
         ):
             item["loom_provider_cost_usd"] = 0
         elif (
             bill.get("proof_status") == "known"
+            and bool(calls)
+            and isinstance(namespace, str)
+            and bool(namespace)
+            and billing_complete
+            and len({identifier for identifier, _ in calls}) == len(calls)
+            and bill.get("physical_request_ids_sha256")
+            == digest(sorted(identifier for identifier, _ in calls))
             and count(factory.get("loom_physical_requests")) is not None
             and factory["loom_physical_requests"] > 0
             and factory.get("loom_transport_dispatches") == factory["loom_physical_requests"]
-            and bill.get("physical_requests_dispatched") == factory.get("loom_physical_requests")
-            and bill.get("physical_requests_matched") == factory.get("loom_physical_requests")
+            and count(bill.get("physical_requests_dispatched")) == len(calls)
+            and count(bill.get("physical_requests_matched")) == len(calls)
         ):
             item["loom_provider_cost_usd"] = number(bill.get("loom_provider_cost_usd"))
         values = [item["generation_cost_usd"], item["loom_provider_cost_usd"]]

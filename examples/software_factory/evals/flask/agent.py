@@ -82,7 +82,7 @@ class VisibleGrader:
             raise PermissionError("Only Harbor may run the independent hidden verifier")
         limit = self.spec["visible_test_call_limit"]
         if limit is not None and self.calls >= limit:
-            raise TimeoutError("Visible test budget exhausted")
+            raise TestRefusal("Visible test budget exhausted")
         return asyncio.run_coroutine_threadsafe(self.evaluate(checkout), self.loop).result()
 
 
