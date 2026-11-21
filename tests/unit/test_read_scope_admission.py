@@ -267,6 +267,7 @@ _ACTS_AS_A_USER = [
     "knowledge.source.push_configure",
     "knowledge.synthesize",
     "knowledge.upsert",
+    "memory.append_batch",
     "memory.bulk_set",
     "memory.delete",
     "memory.import",

@@ -186,6 +186,7 @@ def with_resolved_org(op: Operation, args: dict[str, Any], auth: AuthInfo | None
 # that falls back to any agent; "*" where MCP also reads across agents.
 SINGLE_USER_FILLED_OPS: Final[dict[str, str]] = {
     "memory.set": "http",
+    "memory.append_batch": "http",
     "memory.bulk_set": "http",
     "memory.get": "http",
     "memory.delete": "http",

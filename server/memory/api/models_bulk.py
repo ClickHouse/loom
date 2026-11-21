@@ -22,6 +22,29 @@ from server.operations.base import MCP_HIDDEN
 MAX_BULK_ENTRIES = 1000  # not a setting: a wire bound the request schema and SDKs publish
 
 
+class _AppendBatchEntry(BaseModel):
+    memory_key: str
+    value: dict[str, Any] | list[Any] | str | int | float | bool
+    source_trace: str = ""
+    # A caller may downgrade the source to derived, external or imported.
+    source_class: str | None = None
+
+    @field_validator("source_trace")
+    @classmethod
+    def _source_trace(cls, v: str) -> str:
+        return caller_trace(v)
+
+
+class MemoryAppendBatchInput(_Identity):
+    """Append distinct episodic occurrences atomically on the Postgres authority.
+
+    Every key must be fresh. Equal values remain separate occurrences. A refused
+    entry refuses the entire batch; this operation never splits the request.
+    """
+
+    entries: list[_AppendBatchEntry] = Field(..., min_length=1, max_length=MAX_BULK_ENTRIES)
+
+
 class _BulkSetEntry(BaseModel):
     memory_key: str
     memory_type: MemoryType = "semantic"

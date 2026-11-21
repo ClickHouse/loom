@@ -46,6 +46,8 @@ _MCP_HIDDEN_OPS: frozenset[str] = frozenset(
         "memory.unlock",
         "memory.sweep_expired",
         "memory.search_trace",
+        # Native history clients require one indivisible episodic occurrence batch.
+        "memory.append_batch",
         "memory.bulk_set",
         "memory.bulk_get",
         # A sync job's reads and deletes: one answer of every key in the namespace, and a

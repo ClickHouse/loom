@@ -254,6 +254,22 @@ Both shapes return `owners`: recency-weighted PR authors over the seed paths, wi
 code, so the diff is read against the branch head; your uncommitted functions resolve
 only when they already exist there.
 
+### Check function changes and API contracts
+
+Use `code.impact` to find indexed callers and tests that reach a proposed change.
+Read `epistemic` and `causes` before treating the result as a complete dependency
+list. Dynamic calls and consumers outside the indexed repositories can be missing.
+
+For an API change, check the consumer contract as well as the call graph. For
+example, making an optional request field required can break an existing client
+without changing any indexed call site. Compare the request and response schemas,
+required fields, status codes and error behavior, then check the expectations of
+the clients that use that interface.
+
+Report the indexed revision, the callers and tests found, the contract checks
+performed, and any consumers outside the available scope. A caller list identifies
+where to investigate; it does not establish that an API remains compatible.
+
 ## History, PRs and releases
 
 These read the PR plane that the `code_pr_history` worker fills from GitHub

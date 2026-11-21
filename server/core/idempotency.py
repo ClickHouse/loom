@@ -70,7 +70,7 @@ _bound: ContextVar[tuple[str, str, int] | None] = ContextVar("loom_idempotency_k
 _bound_op: ContextVar[str] = ContextVar("loom_idempotency_op", default="")
 # The operations whose answer `_committed_hit` rebuilds from their revisions. Another
 # operation's commit (`profile.set` writes through memory.set) leaves its key running.
-COMMITTED_REPLAY_OPS = frozenset({"memory.set", "memory.bulk_set"})
+COMMITTED_REPLAY_OPS = frozenset({"memory.set", "memory.bulk_set", "memory.append_batch"})
 
 
 def bound_key() -> tuple[str, str, int] | None:
@@ -404,8 +404,9 @@ async def _committed_hit(conn: Any, row: Any) -> CacheHit:
     """What a request committed before its answer was lost, in its op's answer shape
     (only those of COMMITTED_REPLAY_OPS mark their keys committed): each revision's
     identity, the first one's at the top level for memory.set, one `written` result
-    per row for memory.bulk_set, marked `idempotent_replay: committed`. Their
-    ClickHouse delivery is the delivery worker's, as for any commit."""
+    per row for memory.bulk_set and memory.append_batch, marked
+    `idempotent_replay: committed`. Their ClickHouse delivery is the delivery worker's,
+    as for any commit."""
     refs = list(row["revisions"] or [])
     revs = await conn.fetch(
         "SELECT r.namespace, r.seq, r.memory_id::text AS memory_id, r.version, "
@@ -432,7 +433,7 @@ async def _committed_hit(conn: Any, row: Any) -> CacheHit:
         for r in revs
     ]
     body: dict[str, Any]
-    if row["operation"] == "memory.bulk_set":  # its answer's own shape: one result per row
+    if row["operation"] in {"memory.bulk_set", "memory.append_batch"}:
         body = {
             "written": [
                 {k: r[k] for k in ("memory_key", "version", "memory_id")} for r in revisions

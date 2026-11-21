@@ -18,6 +18,7 @@ import pytest
 from agents import FunctionTool
 from agents.tool_context import ToolContext
 from loom import Agent
+from loom.capabilities import Capabilities
 from loom.errors import LoomError
 from loom.integrations.openai_agents import LoomSession, loom_tools
 from loom.session_protection import AutomaticCaptureSuppressed, SessionProtection
@@ -218,11 +219,14 @@ class _Memory:
         self.memory = rows
         self.transport = SimpleNamespace(session_protection=None)
 
+    async def capabilities(self) -> Capabilities:
+        return Capabilities.from_response({"ops": [{"name": "memory.append_batch"}]}, None)
+
     async def call(self, op: str, body: dict[str, Any], **scope: Any) -> dict[str, Any]:
-        assert op == "memory.set"
-        return await self.memory.set(
-            body["memory_key"], body["value"], body["memory_type"], **scope
-        )
+        assert op == "memory.append_batch"
+        for entry in body["entries"]:
+            await self.memory.set(entry["memory_key"], entry["value"], "episodic", **scope)
+        return {}
 
 
 def _session(rows: _Rows, session_id: str = "s1", **kw: Any) -> Any:
@@ -417,12 +421,14 @@ def test_a_disappearing_item_fails_instead_of_returning_invalid_history(method: 
         asyncio.run(getattr(session, method)())
 
 
-def test_concurrent_repeats_use_point_writes_with_default_sdk_coalescing() -> None:
+def test_concurrent_repeats_use_atomic_batches_with_default_sdk_coalescing() -> None:
     from loom.integrations.openai_agents import LoomSession
 
     posts: list[tuple[str, dict[str, Any]]] = []
 
     async def post(path: str, body: dict[str, Any], *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if path == "/v1/ops.capabilities":
+            return {"ops": [{"name": "memory.append_batch"}]}
         posts.append((path, dict(body)))
         return {}
 
@@ -437,9 +443,10 @@ def test_concurrent_repeats_use_point_writes_with_default_sdk_coalescing() -> No
             assert agent.coalesce_sets
 
     asyncio.run(append())
-    assert [path for path, _ in posts] == ["/v1/memory.set"] * 4
-    assert len({body["memory_key"] for _, body in posts}) == 4
-    assert {body["value"] for _, body in posts} == {json.dumps(_msg("user", "again"))}
+    assert [path for path, _ in posts] == ["/v1/memory.append_batch"] * 4
+    assert all(len(body["entries"]) == 1 for _, body in posts)
+    assert len({body["entries"][0]["memory_key"] for _, body in posts}) == 4
+    assert {body["entries"][0]["value"] for _, body in posts} == {json.dumps(_msg("user", "again"))}
 
 
 def test_a_nested_key_prefix_is_not_read_as_this_sessions_items() -> None:
@@ -508,6 +515,7 @@ def _protected_session_agent(
         retry={"max_attempts": 1},
     )
     agent.transport._client._transport = httpx.MockTransport(respond)
+    agent._caps = Capabilities.from_response({"ops": [{"name": "memory.append_batch"}]}, None)
     return agent
 
 
@@ -611,11 +619,13 @@ def test_callback_native_history_contributor_survives_ambient_scope_exit(tmp_pat
     asyncio.run(go())
 
 
-def test_marked_native_history_write_stops_before_the_next_item(tmp_path: Path) -> None:
+def test_marked_native_batch_response_protects_the_whole_callback(tmp_path: Path) -> None:
     family = SessionProtection.create(base=tmp_path / "family")
     writes: list[dict[str, Any]] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/ops.capabilities":
+            return httpx.Response(200, json={"ops": [{"name": "memory.append_batch"}]})
         writes.append(json.loads(request.content))
         return httpx.Response(200, json={"mirrored": True})
 
@@ -625,7 +635,11 @@ def test_marked_native_history_write_stops_before_the_next_item(tmp_path: Path) 
             session = LoomSession(agent, "native-history")
             with pytest.raises(AutomaticCaptureSuppressed):
                 await session.add_items([_msg("user", "first"), _msg("assistant", "second")])
-            assert len(writes) == 1 and json.loads(writes[0]["value"]) == _msg("user", "first")
+            assert len(writes) == 1
+            assert [json.loads(entry["value"]) for entry in writes[0]["entries"]] == [
+                _msg("user", "first"),
+                _msg("assistant", "second"),
+            ]
             assert family.protected
         finally:
             await agent.transport.close()
@@ -719,3 +733,129 @@ def test_explicit_native_history_delete_observes_retained_contributors(
             await agent.transport.close()
 
     asyncio.run(go())
+
+
+# The transport tests keep serialization, discovery and mutation failures separate.
+def test_a_later_unencodable_session_item_dispatches_nothing(tmp_path: Path) -> None:
+    posts: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(200, json={})
+
+    async def go() -> None:
+        family = SessionProtection.create(base=tmp_path / "family")
+        agent = _protected_session_agent(family, respond)
+        try:
+            with pytest.raises(TypeError):
+                await LoomSession(agent, "s").add_items(
+                    [_msg("user", "first"), {"role": "user", "content": object()}]  # type: ignore[list-item]
+                )
+            assert posts == []
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_an_empty_session_addition_needs_no_discovery_or_mutation() -> None:
+    class EmptyOnly(_Memory):
+        async def capabilities(self) -> Capabilities:
+            raise AssertionError("empty additions need no discovery")
+
+        async def call(self, *_a: Any, **_kw: Any) -> dict[str, Any]:
+            raise AssertionError("empty additions need no mutation")
+
+    asyncio.run(LoomSession(EmptyOnly(_Rows()), "s").add_items([]))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("failure", ["discovery", "absent", "old_replica", "refused", "committed"])
+def test_session_batch_failures_never_fall_back_or_change_keys(
+    tmp_path: Path, failure: str
+) -> None:
+    posts: list[tuple[str, dict[str, Any]]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append((request.url.path, json.loads(request.content)))
+        if request.url.path == "/v1/ops.capabilities":
+            if failure == "discovery":
+                return httpx.Response(503, json={"detail": {"code": "BACKEND_UNAVAILABLE"}})
+            return httpx.Response(200, json={"ops": []})
+        assert request.url.path == "/v1/memory.append_batch"
+        if failure == "old_replica":
+            return httpx.Response(404, json={"detail": "Not Found"})
+        code = "PUBLICATION_PENDING" if failure == "committed" else "VALIDATION_FAILED"
+        return httpx.Response(
+            503 if failure == "committed" else 422,
+            json={
+                "detail": {
+                    "code": code,
+                    "message": "batch refused",
+                    "committed": failure == "committed",
+                }
+            },
+        )
+
+    async def go() -> None:
+        family = SessionProtection.create(base=tmp_path / "family")
+        agent = _protected_session_agent(family, respond)
+        if failure in {"discovery", "absent"}:
+            agent._caps = None
+        try:
+            with pytest.raises(LoomError) as raised:
+                await LoomSession(agent, "s").add_items(
+                    [_msg("user", "repeated"), _msg("user", "repeated")]
+                )
+            assert not family.protected
+            assert len(posts) == 1
+            if failure in {"discovery", "absent"}:
+                assert posts[0][0] == "/v1/ops.capabilities"
+            else:
+                entries = posts[0][1]["entries"]
+                assert len(entries) == 2
+                assert entries[0]["memory_key"] != entries[1]["memory_key"]
+                assert entries[0]["value"] == entries[1]["value"]
+                if failure == "committed":
+                    assert raised.value.code == "PUBLICATION_PENDING"
+                    assert raised.value.detail["committed"] is True
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_a_marked_discovery_reply_stops_before_sending_history(tmp_path: Path) -> None:
+    posts: list[str] = []
+    family = SessionProtection.create(base=tmp_path / "family")
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        posts.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "mirrored": True,
+                "ops": [{"name": "memory.append_batch"}],
+            },
+        )
+
+    async def go() -> None:
+        agent = _protected_session_agent(family, respond)
+        agent._caps = None
+        try:
+            with pytest.raises(AutomaticCaptureSuppressed):
+                await LoomSession(agent, "s").add_items([_msg("user", "private")])
+            assert posts == ["/v1/ops.capabilities"] and family.protected
+        finally:
+            await agent.transport.close()
+
+    asyncio.run(go())
+
+
+def test_an_oversized_session_addition_is_not_split_or_dispatched() -> None:
+    class TooLarge(_Memory):
+        async def capabilities(self) -> Capabilities:
+            raise AssertionError("oversized additions need no discovery")
+
+    session = LoomSession(TooLarge(_Rows()), "s")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="at most 1,000"):
+        asyncio.run(session.add_items([_msg("user", "again")] * 1001))

@@ -586,14 +586,32 @@ def _attack_moves(seed: _Seed) -> list[tuple[str, dict[str, Any]]]:
     return moves
 
 
+def _append_authority_refusal(base: str, response: httpx.Response) -> bool:
+    """An append must write on Postgres or give its exact unsupported-authority refusal."""
+    with httpx.Client(base_url=base, timeout=60.0) as client:
+        health = client.get("/v1/health")
+    assert health.status_code == 200, health.text
+    authority = health.json()["storage_authority"]
+    if authority == "postgres":
+        assert response.status_code == 200, response.text
+        return False
+    assert authority == "clickhouse", health.text
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "VALIDATION_FAILED", response.text
+    assert detail["message"] == "memory.append_batch requires the Postgres memory authority"
+    return True
+
+
 def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
     control_plane_url: str, seed: _Seed, tokens: dict[str, str], ch_client: Any
 ) -> None:
     """A token pinned to W (who holds nothing) sends every write a bounded token may
     call at V's keys, ids and brief, plus a delete, lock, touch and outcome (by key and
     by id) and an if_match probe at each of V's facts. No answer carries V's nonce or
-    hash, a refusal is a 409 or a 423 (W's own lock) at most, and each of V's rows and
-    its usage counters read back unchanged afterwards."""
+    hash, a refusal is a 409 or a 423 (W's own lock), or an append's exact unsupported
+    authority refusal. Each of V's rows and its usage counters read back unchanged
+    afterwards."""
     ns_tok, w_tok = tokens["namespace"], tokens["pinned_w"]
     shas: list[str] = []
     for key, session in zip(seed.keys_v, ("sess-1", "sess-2", "-"), strict=True):
@@ -659,11 +677,16 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
             unbuildable.append(op.name)
             continue
         r = _post(control_plane_url, w_tok, op.name, body)
-        if r.status_code == 422:
+        authority_refusal = (
+            _append_authority_refusal(control_plane_url, r)
+            if op.name == "memory.append_batch"
+            else False
+        )
+        if r.status_code == 422 and not authority_refusal:
             unbuildable.append(op.name)
             continue
         walked.add(op.name)
-        if r.status_code not in {200, 404, 409, 423}:  # 409/423: a refused write
+        if not authority_refusal and r.status_code not in {200, 404, 409, 423}:
             bad[op.name] = r.status_code
         if seed.nonce_v in r.text:
             leaks[op.name] = r.text[:300]
@@ -680,7 +703,12 @@ def test_writes_aimed_at_vs_rows_never_answer_or_change_them(
     assert not leaks, f"V's canary or hash reached W's token: {leaks}"
     assert not bad, f"unexpected answers: {bad}"
     assert set(unbuildable) <= set(_UNBUILDABLE), unbuildable
-    assert {"session.brief_save", "session.brief_delete", "memory.set"} <= walked
+    assert {
+        "session.brief_save",
+        "session.brief_delete",
+        "memory.set",
+        "memory.append_batch",
+    } <= walked
     r = _post(
         control_plane_url,
         ns_tok,

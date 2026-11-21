@@ -18,6 +18,7 @@
 
 import { type AgentInputItem, type FunctionTool, type Session, tool } from "@openai/agents";
 import type { Agent, Scope } from "../agent.js";
+import { Capabilities } from "../capabilities.js";
 import { LoomError } from "../errors.js";
 import {
   boundProtection,
@@ -211,23 +212,32 @@ export class LoomSession implements Session {
 
   async addItems(items: AgentInputItem[]): Promise<void> {
     this.rememberProducers();
-    const scope = await this.scope();
-    for (const entry of items) {
+    if (!items.length) return;
+    if (items.length > 1000) throw new LoomError("LoomSession appends at most 1000 items at once");
+    // Encode the whole call before discovery or mutation; a bad later item writes nothing.
+    const entries = items.map((entry) => {
+      const value = JSON.stringify(
+        mapToolBytes(entry, (data) => (data instanceof Uint8Array ? Array.from(data) : data)),
+      );
+      if (value === undefined) throw new LoomError("Session item cannot be serialized");
       const clock = BigInt(Date.now()) * 1_000_000n;
       lastStamp = clock > lastStamp ? clock : lastStamp + 1n;
-      // One memory.set per item: a batch folds a value identical to a live row.
-      await this.agent.call(
-        "memory.set",
-        {
-          memory_key: `${this.prefix}${lastStamp.toString().padStart(20, "0")}-${randomHex()}`,
-          value: JSON.stringify(mapToolBytes(entry, (data) => (data instanceof Uint8Array ? Array.from(data) : data))),
-          memory_type: "episodic",
-        },
-        scope,
-        this.control(true),
-      );
-      await this.requireAllowed();
+      return {
+        memory_key: `${this.prefix}${lastStamp.toString().padStart(20, "0")}-${randomHex()}`,
+        value,
+      };
+    });
+    await this.requireAllowed();
+    const scope = await this.scope();
+    const served = await this.agent.call("ops.capabilities", {}, scope, this.control(true));
+    const caps = new Capabilities(served.ops ?? [], served.build_commit ?? "", served.schema_version ?? "", undefined);
+    await this.requireAllowed();
+    if (!caps.has("memory.append_batch")) {
+      throw new LoomError("LoomSession needs a server serving memory.append_batch with the Postgres memory authority");
     }
+    // Keep one payload and the transport's idempotency key across retries; never fall back to point writes.
+    await this.agent.call("memory.append_batch", { entries }, scope, this.control(true));
+    await this.requireAllowed();
   }
 
   async popItem(): Promise<AgentInputItem | undefined> {
