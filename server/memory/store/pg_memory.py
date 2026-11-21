@@ -663,6 +663,27 @@ def deleted_decision(row: Mapping[str, Any]) -> bool:
     return row.get("memory_type") == "decision" and row.get("tombstoned_at") is not None
 
 
+def _batch_indexes(
+    stored: list[dict[str, Any]],
+) -> tuple[
+    dict[tuple[str, str], int], list[tuple[str, str]], dict[IdentityKey, int], list[IdentityKey]
+]:
+    per_scope: dict[tuple[str, str], int] = {}
+    for r in stored:
+        s = (r["org"], r["namespace"])
+        per_scope[s] = per_scope.get(s, 0) + 1
+    scopes = sorted(per_scope)
+    # The newest version of each key is its head; a batch may carry a key twice.
+    # Each key's head, as its index in `stored`.
+    heads: dict[IdentityKey, int] = {}
+    for i, r in enumerate(stored):
+        k = identity_key(r)
+        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
+            heads[k] = i
+    keys = sorted(heads)
+    return per_scope, scopes, heads, keys
+
+
 async def commit_versions(
     rows: Sequence[Mapping[str, Any]],
     audits: Sequence[Mapping[str, Any]],
@@ -694,19 +715,7 @@ async def commit_versions(
         t | (DECISION_RECORD if deleted_decision(r) else 0)
         for t, r in zip(per_row, stored, strict=True)
     ]
-    per_scope: dict[tuple[str, str], int] = {}
-    for r in stored:
-        s = (r["org"], r["namespace"])
-        per_scope[s] = per_scope.get(s, 0) + 1
-    scopes = sorted(per_scope)
-    # The newest version of each key is its head; a batch may carry a key twice.
-    # Each key's head, as its index in `stored`.
-    heads: dict[IdentityKey, int] = {}
-    for i, r in enumerate(stored):
-        k = identity_key(r)
-        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
-            heads[k] = i
-    keys = sorted(heads)
+    per_scope, scopes, heads, keys = _batch_indexes(stored)
     async with pg.transaction() as conn:
         await _bound_lock_waits(conn)
         if admission is not None:
