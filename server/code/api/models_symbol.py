@@ -180,8 +180,8 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` when an over-qualified name bound through
-    # symbol-form tolerance; "" and off the wire otherwise.
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
     # — section qualified name, path, line; at most five distinct sections, first by
@@ -372,8 +372,9 @@ class CodeCallersOutput(_LessonsOut):
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
     # namespace the definition does not carry dropped; one definition fit), or
     # `registration` when a SQL-level name (`sumMap`, `arrayFold::executeImpl`) bound to
-    # the implementing class's methods through its registration statement. "" and off
-    # the wire for an exact hit.
+    # the implementing class's methods through its registration statement, or
+    # `python_module` for an import spelling of a retained Python name. "" and
+    # off the wire for an exact hit.
     resolved_by: str = ""
     # A bare short name that resolves to many unrelated definitions (setColumns
     # on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the
@@ -550,8 +551,8 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # `anonymous_namespace` | `tail` when the symbol shape's name bound through
-    # symbol-form tolerance; "" and off the wire otherwise.
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:
     # `no_indexed_paths` (the change names no path the symbol table holds

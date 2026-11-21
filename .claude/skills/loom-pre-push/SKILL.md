@@ -1,13 +1,13 @@
 ---
 name: loom-pre-push
-description: Runs the Loom CI gates a diff touches, locally, and fixes each failure at its source — format, lint, generator checks, ratchets, unit tests, schema, frontend, plugins, integration. Use before a commit or push, after a rebase, or when asked "is this ready". Not for opening the PR (loom-ship-pr).
+description: Runs local format, lint, type checks and focused tests for a Loom diff, fixing failures at their source. The full unit suite and other heavy checks run in CI. Use before a commit or push, after a rebase, or when asked "is this ready". Not for opening the PR (loom-ship-pr).
 metadata:
   internal: true
 ---
 
-# Loom pre-push gates
+# Loom local checks
 
-CI runs every gate below on each pull request into `main`. Running the ones the diff touches locally turns a 20-minute CI round trip into a 2-minute one.
+Run format, lint, type checks and tests focused on the changed behavior locally. The full unit suite, coverage and other heavy checks run in CI; do not hold a push for a complete local run. An explicit request can still authorize a full local reproduction.
 
 ## 1. What changed
 
@@ -23,12 +23,13 @@ git status --short          # untracked files are part of the change too
 make format                 # rewrites; commit the result
 make lint                   # ruff, function-length + secret gates, every generator --check, Biome a11y on frontend/src
 make typecheck              # mypy --strict on the SDK + the server ratchet
-make test-unit              # tests/unit (random order in CI) + bench
 ```
 
-Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=` so a local `.env` does not change what a snapshot or generator renders. CI runs `pytest -n auto -p randomly`; reproduce a failure as [`tests/README.md`](../../../tests/README.md) describes.
+Run them in the worktree's `.venv`, on CI's Python (3.12), with `LOOM_ENV_FILE=` so a local `.env` does not change what a snapshot or generator renders. Run the tests that reproduce the bug and cover the changed behavior. CI runs the full unit and benchmark suites with `pytest -n auto -p randomly`; reproduce a failure as [`tests/README.md`](../../../tests/README.md) describes.
 
 ## 3. By path
+
+Use this map to select local checks and inspect the matching CI jobs. Full integration suites, coverage, image builds and end-to-end checks run in CI by default; they do not block publishing a reviewable PR. Run a focused local integration check when needed to verify the change.
 
 | Paths touched | Also run |
 | --- | --- |
@@ -66,4 +67,4 @@ A generator's output is part of the review. `git diff --stat` after regenerating
 
 ## Done when
 
-Every command above that applies exits 0 and `git status` shows only the files you mean to commit.
+The local format, lint, type and focused test checks pass, `git status` shows only the files you mean to commit, and the PR states which heavy checks remain for CI. Do not describe a pending or interrupted run as passed.

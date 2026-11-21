@@ -15,18 +15,12 @@ _TODAY = (
     """
             SELECT chunk_id, path, scope, kind, start_line, end_line,
                    content, symbol_ids, context_description,
-                   arraySum(
-                       arrayMap(
-                           (tok, idf) -> idf * countSubstrings(
-                               concat(' ', lexemes, ' '), concat(' ', tok, ' ')
-                           ),
-                           {tokens:Array(String)}, {idfs:Array(Float32)}
-                       )
-                   ) AS lex_score
+                   arraySum(arrayMap((tok, idf) -> idf * countSubstrings(concat(' ', lexemes, ' '), concat(' ', tok, ' ')), {tokens:Array(String)}, {idfs:Array(Float32)})) AS lex_score
             FROM loom.code_chunks FINAL
             WHERE org = {org:String} AND namespace = {ns:String}
               AND embedding_model = {model:String} AND tombstoned_at IS NULL
-              AND hasAnyTokens(lexemes, {tokens:Array(String)})
+              AND hasAnyTokens(lexemes, {gate_query:String})
+              AND arraySum(arrayMap((tok, idf) -> idf * countSubstrings(concat(' ', lexemes, ' '), concat(' ', tok, ' ')), {tokens:Array(String)}, {idfs:Array(Float32)})) > 0
 """
     + " " * 14
     + "\n"
@@ -69,6 +63,7 @@ def test_lexical_statement_byte_for_byte() -> None:
         "ns": "n",
         "model": "m",
         "tokens": ["merge", "tree"],
+        "gate_query": "merge tree",
         "idfs": [2.5, 0.7],
         "pool": 200,
     }

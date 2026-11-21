@@ -240,6 +240,15 @@ their symbol spans (`lane_units.span_chunks`). A chunk id is
 an unchanged chunk keeps its id and hash and the embed step skips it without a lookup.
 Identical chunks in one file get an ordinal suffix.
 
+Class skeletons carry compacted presentation text, not physical source coordinates.
+The chunker retains class source outside method chunks as `other` chunks, including
+documentation, declarations and data members. These source runs keep their original
+line spans even when they are shorter than the general leftover-chunk threshold.
+Skeletons remain available for class summaries, and unmappable chunks still disclose
+partial grep coverage. Retaining source adds chunk rows and can add embedding work.
+The shared chunker's stamp moves only the chunk stage, across language families;
+existing indexes need that stage re-derived before missing source becomes readable.
+
 ### Symbols and edges
 
 A symbol id is `treesitter.symbol_id(qualified_name, signature)`: the first 128 bits of
@@ -471,6 +480,12 @@ Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Query patterns
 
+Python import spellings use the bounded short-name candidate read after an exact
+symbol miss. Read-side matching preserves dotted module scopes and treats a package's
+`__init__.py` as implicit. Only Python source rows participate; ambiguous or incomplete
+candidate sets decline. The response discloses `resolved_by: python_module` while
+retaining stored names and ids. Extraction and its stamp do not change.
+
 | Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |
@@ -478,6 +493,11 @@ Every column is in the generated [schema reference](../reference/schema.md).
 | `code.symbol`                    | `code/app/symbol/`            | A qualified name is a key-prefix read of `code_symbols`; a short name goes through `code_symbol_names`; several definitions rank by `near_paths` or the PR under review.                                                                                                                                                                                                                           |
 | `code.callers`, `code.impact`    | `code/store/index/edges.py`   | Callers are the `to_symbol_id` range of `code_edges`, compiler rows preferred, with the unresolved count. `code.impact` maps diff hunks to seed symbols and walks outward; an empty walk answers `no_indexed_paths`, `no_seeds_in_hunks` or `no_static_callers`.                                                                                                                                   |
 | `code.outline`, `code.enclosing` | —                             | Per-path reads of `code_symbols` and `code_chunks` spans.                                                                                                                                                                                                                                                                                                                                          |
+
+The lexical text-index gate tokenizes the query with `splitByNonAlpha`, matching the
+index tokenizer. The score counts only whole app lexemes and rejects partial matches
+from the gate. Underscore-only lexemes use the exact score within the same tenant,
+model and path scope because the text index has no token for them.
 
 ### Symbol bodies
 
