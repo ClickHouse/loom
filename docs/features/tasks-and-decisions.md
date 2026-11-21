@@ -528,7 +528,7 @@ loom decisions extract --org O --namespace NS --source-uri URI --repo OWNER/NAME
   record confirmed paths through `decision.record` after reviewing the complete decision body.
 
   Discovery runs for at most eight unresolved decisions per preview, with a three-second bound per decision and
-  a 2000-character quotation query. Search uses the selected namespace only, without query expansion, model-backed
+  a 2000-character quotation query. Search uses the selected namespace only, without model-backed
   retrieval legs or reranking. It does not copy document quotations into the code namespace's query traces or
   cursor storage. It preserves search abstention; unavailable retrieval says `unavailable`, and partial,
   stale, changing or ungrounded index evidence says `deferred`. Later decisions past the preview limit also say
