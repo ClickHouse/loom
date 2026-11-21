@@ -6,12 +6,12 @@ import json
 from typing import Any
 
 from server.cli import cell_control, cell_update_probe
-from server.router.app import _cell_address
 from server.router.directory import CONTROL_FIELDS
+from server.router.routing import cell_address
 
 
 def normalise(value: str) -> str:
-    address = _cell_address(value)
+    address = cell_address(value)
     if not address:
         raise cell_control._refused("probe address is an HTTP(S) host-only URL")
     return address

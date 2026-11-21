@@ -13070,6 +13070,7 @@
             "host",
             "credential_sha256",
             "probe_url",
+            "upstream_url",
             "wait",
             "router"
            ]
@@ -13151,6 +13152,21 @@
            "type": null,
            "required": false,
            "help": "A later cell's probe listener address (not the first's)",
+           "metavar": null
+          },
+          {
+           "option_strings": [
+            "--upstream-url"
+           ],
+           "dest": "upstream_url",
+           "action": "_StoreAction",
+           "default": null,
+           "const": null,
+           "choices": null,
+           "nargs": null,
+           "type": null,
+           "required": false,
+           "help": "A later cell's internal main-port origin (with --probe-url)",
            "metavar": null
           },
           {
