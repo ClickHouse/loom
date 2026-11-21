@@ -541,14 +541,14 @@ TYPE_CHUNKS = [
         "symbol_ids": ["t1"],
         "start_line": 5,
         "end_line": 40,
-        "content": "class ChunkBuffer\n{\n    ChunkBuffer();\n};",
+        "content": "class ChunkBuffer\n{\n    ChunkBuffer();\n};\n" + "\n" * 32,
     },
     {
         "path": "src/Processors/Use.cpp",
         "scope": "DB::use",
         "symbol_ids": ["u1"],
         "start_line": 10,
-        "end_line": 13,
+        "end_line": 14,
         "content": "void use()\n{\n    ChunkBuffer buf;\n    // ChunkBuffer holds\n}",
     },
     {

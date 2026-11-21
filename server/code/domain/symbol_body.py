@@ -5,7 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 
-def _source_lines(row: dict[str, Any]) -> list[str] | None:
+def retained_source_lines(row: dict[str, Any]) -> list[str] | None:
+    """Physical source lines, excluding presentation prefixes and unmappable skeletons."""
     if row.get("kind") == "class_skeleton":
         return None
     text = str(row.get("content") or "")
@@ -48,7 +49,7 @@ def complete_source_span(
         return ""
     by_line: dict[int, str] = {}
     for row in rows:
-        lines = _source_lines(row)
+        lines = retained_source_lines(row)
         if lines is None:
             return ""
         for line_no, text in enumerate(lines, int(row["start_line"])):

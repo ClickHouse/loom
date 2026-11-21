@@ -72,7 +72,7 @@ def _chunk(path: str, start: int, scope: str, content: str) -> dict[str, Any]:
     return {
         "path": path,
         "start_line": start,
-        "end_line": start + content.count("\n"),
+        "end_line": start + len(content.splitlines()) - 1,
         "scope": scope,
         "content": content,
         "symbol_ids": [],
@@ -407,6 +407,39 @@ def _grep(repo: _Repo, **kw):
 
 
 LINE_CHUNK = _chunk("src/a.cpp", 10, "f", "int x;\nbool isAlias = ALIAS;\nreturn x;\n")
+
+
+@pytest.mark.parametrize(
+    "message_partial,literal_partial", [(True, False), (False, True), (True, True)]
+)
+@pytest.mark.parametrize("literal_hit", [False, True])
+def test_message_fallback_preserves_both_legs_source_coverage(
+    message_partial: bool,
+    literal_partial: bool,
+    literal_hit: bool,
+) -> None:
+    message = "Cannot bind endpoint"
+    skeleton = {
+        **_chunk(
+            "src/holder.cpp",
+            1,
+            "Holder",
+            'class Holder {\n    throw Exception("Cannot bind endpoint");\n};\n',
+        ),
+        "kind": "class_skeleton",
+        "end_line": 100,
+    }
+    literal = [skeleton] if literal_partial else []
+    if literal_hit:
+        literal.append(_chunk("src/comment.cpp", 10, "", "// Cannot bind endpoint\n"))
+    out = _grep(
+        _Repo(message=[skeleton] if message_partial else [], literal=literal, regex=[]),
+        pattern=message,
+        mode="message",
+    )
+    assert bool(out.matches) is literal_hit
+    assert out.partial
+    assert out.partial_reason.count("no exact source line mapping") == 1
 
 
 def test_literal_hit_is_byte_identical_and_never_falls_back() -> None:
