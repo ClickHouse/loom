@@ -172,7 +172,7 @@ def _install(
             raise error
         try:
             got = await CHClient._fenced_insert(sender, *args)
-        except Exception as caught:
+        except Exception as caught:  # Check identity before simulating translation.
             assert caught is error
             if outward is not None:
                 raise outward from None
