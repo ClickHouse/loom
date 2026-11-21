@@ -1093,8 +1093,13 @@ has a gold question set; it is never run in CI, whose embedder is fake
   `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then
   sweep their copy of the mirror only once code intelligence is on again.
 - **Erase an index.** `erasure.request` with `scope_type = namespace` on a code namespace
-  also purges the `loom.code_*` tables. An entry that is still configured is re-indexed
-  from scratch on the next pass, so retire it first.
+  also purges indexed content and the `git_head` watermark. An active self-service
+  entry can bootstrap again; an operator-configured entry needs a full
+  `loom code backfill --org <org> --namespace <namespace>` before incremental ingestion
+  resumes. A targeted `--paths-file` repair does not restore that watermark. Add
+  `--embed` to request vector rebuilding in the same backfill. To keep the namespace
+  unindexed, first retire the self-service entry or remove the operator entry from
+  `LOOM_CODE_REPOS_JSON`.
 
 ## When a tier fails
 

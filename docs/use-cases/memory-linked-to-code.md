@@ -78,10 +78,12 @@ hooks capture with `repo:<id>`, and the session primer names the id
 agent saves itself with `loom_memory_set` links when it carries that tag
 (`tags: ["repo:<id>"]`) or is written in the repository's code namespace; any client can do
 either. Over HTTP (or `agent.call` in the Python SDK), a lesson saved in your own namespace
-is read only when the call names that namespace in `lesson_namespaces`. Each link pass links
-writes at least 60 seconds old and passes run every 60 seconds, so once trunk is indexed,
-`code.symbol` on that definition returns the lesson under `lessons` within about two
-minutes.
+is read only when the call names that namespace in `lesson_namespaces`. Writes become
+eligible after `LOOM_MEMORY_CODE_LINKS_SETTLE_SECONDS` (60 seconds by default). An
+admitted worker processes them on later passes; `LOOM_MEMORY_CODE_LINKS_INTERVAL_SECONDS`
+defaults to 60 seconds. Queue backlogs, pass duration and worker failures can delay
+completion. Once trunk is indexed, read `code.symbol` on the definition and check
+`lessons` to confirm that the link resolved.
 
 ### Save and retrieve a linked team decision
 
