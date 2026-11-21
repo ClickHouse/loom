@@ -181,6 +181,8 @@ GENERIC_SQL_EXCLUSIONS = {
         ("copy_sql", "INSERT INTO", "loom.{dst}"): 1,
         ("apply", "DROP TABLE", "loom.{twin}"): 2,
     },
+    # The token selects a source metadata column, not a cell control table.
+    "server/erasure/store/crawl_controls.py": {("controls", "UPDATE", "{field}"): 1},
     "server/erasure/store/mutations.py": {
         ("run_mutation", "ALTER TABLE", "{table}"): 1,
         ("run_lightweight_delete", "DELETE FROM", "{table}"): 1,
