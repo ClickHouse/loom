@@ -354,6 +354,103 @@ def test_bedrock_stream_and_tool_results_use_converse_contract() -> None:
     assert "temperature" not in json.dumps(body)
 
 
+@pytest.mark.parametrize("first", ["tool", "text"])
+@pytest.mark.parametrize("reused", ["tool_start", "text_delta", "tool_delta", "text_start"])
+def test_bedrock_rejects_reused_closed_content_block_indices(first: str, reused: str) -> None:
+    parser = BedrockStream(model.Turn())
+
+    def feed(kind: str, frame: dict[str, Any]) -> None:
+        parser.turn.text += parser.feed(kind, frame)
+
+    feed("messageStart", {"role": "assistant"})
+    if first == "tool":
+        feed(
+            "contentBlockStart",
+            {"contentBlockIndex": 0, "start": {"toolUse": {"toolUseId": "a", "name": "tool_a"}}},
+        )
+        feed("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"toolUse": {"input": "{}"}}})
+    else:
+        feed("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "first"}})
+    feed("contentBlockStop", {"contentBlockIndex": 0})
+    original_call = parser.calls.get(0)
+    with pytest.raises(AssistantUpstreamError):
+        if reused == "tool_start":
+            feed(
+                "contentBlockStart",
+                {
+                    "contentBlockIndex": 0,
+                    "start": {"toolUse": {"toolUseId": "b", "name": "tool_b"}},
+                },
+            )
+            feed(
+                "contentBlockDelta", {"contentBlockIndex": 0, "delta": {"toolUse": {"input": "{}"}}}
+            )
+        elif reused == "text_delta":
+            feed("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"text": "second"}})
+        elif reused == "tool_delta":
+            feed(
+                "contentBlockDelta", {"contentBlockIndex": 0, "delta": {"toolUse": {"input": "{}"}}}
+            )
+        else:
+            feed("contentBlockStart", {"contentBlockIndex": 0, "start": {"text": ""}})
+        feed("contentBlockStop", {"contentBlockIndex": 0})
+        feed("messageStop", {"stopReason": "tool_use" if parser.calls else "end_turn"})
+        feed("metadata", {"usage": {"inputTokens": 100, "outputTokens": 10}})
+        parser.finish()
+    assert parser.calls.get(0) is original_call
+    assert not parser.turn.calls and not parser.turn.usage_complete
+
+
+@pytest.mark.parametrize("index", [0, 7])
+def test_bedrock_preserves_implicit_text_start_and_multiple_open_deltas(index: int) -> None:
+    parser = BedrockStream(model.Turn())
+    parser.feed("messageStart", {"role": "assistant"})
+    for text in ["hello ", "world"]:
+        parser.turn.text += parser.feed(
+            "contentBlockDelta", {"contentBlockIndex": index, "delta": {"text": text}}
+        )
+    parser.feed("contentBlockStop", {"contentBlockIndex": index})
+    parser.feed("messageStop", {"stopReason": "end_turn"})
+    parser.feed("metadata", {"usage": {"inputTokens": 100, "outputTokens": 10}})
+    parser.finish()
+    assert parser.turn.text == "hello world" and parser.turn.calls == []
+    assert parser.turn.usage == model.Usage(100, 10)
+
+
+def test_bedrock_preserves_interleaved_blocks_and_chunked_tool_arguments() -> None:
+    parser = BedrockStream(model.Turn())
+    events = [
+        ("messageStart", {"role": "assistant"}),
+        (
+            "contentBlockStart",
+            {"contentBlockIndex": 0, "start": {"toolUse": {"toolUseId": "a", "name": "tool_a"}}},
+        ),
+        ("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"toolUse": {"input": '{"a":'}}}),
+        ("contentBlockDelta", {"contentBlockIndex": 1, "delta": {"text": "read "}}),
+        (
+            "contentBlockStart",
+            {"contentBlockIndex": 2, "start": {"toolUse": {"toolUseId": "b", "name": "tool_b"}}},
+        ),
+        ("contentBlockDelta", {"contentBlockIndex": 2, "delta": {"toolUse": {"input": '{"b":2}'}}}),
+        ("contentBlockDelta", {"contentBlockIndex": 0, "delta": {"toolUse": {"input": "1}"}}}),
+        ("contentBlockStop", {"contentBlockIndex": 2}),
+        ("contentBlockDelta", {"contentBlockIndex": 1, "delta": {"text": "source"}}),
+        ("contentBlockStop", {"contentBlockIndex": 0}),
+        ("contentBlockStop", {"contentBlockIndex": 1}),
+        ("messageStop", {"stopReason": "tool_use"}),
+        ("metadata", {"usage": {"inputTokens": 100, "outputTokens": 10}}),
+    ]
+    for kind, frame in events:
+        parser.turn.text += parser.feed(kind, frame)
+    parser.finish()
+    assert parser.turn.text == "read source"
+    assert parser.turn.calls == [
+        model.ToolCall("a", "tool_a", '{"a":1}'),
+        model.ToolCall("b", "tool_b", '{"b":2}'),
+    ]
+    assert parser.turn.usage == model.Usage(100, 10)
+
+
 def test_citation_evidence_is_from_results_not_untrusted_text() -> None:
     receipts = [
         Receipt(

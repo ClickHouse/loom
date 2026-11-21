@@ -175,6 +175,7 @@ class BedrockStream:
         self.turn = turn
         self.calls: dict[int, ToolCall] = {}
         self.open: set[int] = set()
+        self.closed: set[int] = set()
         self.started = self.done = self.usage_seen = False
 
     def feed(self, kind: str, frame: dict[str, Any]) -> str:
@@ -184,7 +185,11 @@ class BedrockStream:
             raise AssistantUpstreamError("Bedrock omitted messageStart")
         elif kind == "contentBlockStart" and not self.done:
             index = count(frame.get("contentBlockIndex"))
-            if index in self.open or len(self.calls) >= settings.assistant_max_tool_calls:
+            if (
+                index in self.open
+                or index in self.closed
+                or len(self.calls) >= settings.assistant_max_tool_calls
+            ):
                 raise AssistantUpstreamError("Bedrock repeated or exceeded tool blocks")
             tool = frame.get("start", {}).get("toolUse")
             if not isinstance(tool, dict):
@@ -198,6 +203,7 @@ class BedrockStream:
             if index not in self.open:
                 raise AssistantUpstreamError("Bedrock closed an unopened block")
             self.open.remove(index)
+            self.closed.add(index)
         elif kind == "messageStop" and not self.done:
             if self.open:
                 raise AssistantUpstreamError("Bedrock left content blocks open")
@@ -217,6 +223,8 @@ class BedrockStream:
 
     def _delta(self, frame: dict[str, Any]) -> str:
         index = count(frame.get("contentBlockIndex"))
+        if index in self.closed:
+            raise AssistantUpstreamError("Bedrock reopened a closed content block")
         delta = frame["delta"]
         if "text" in delta and index not in self.calls:
             self.open.add(index)
