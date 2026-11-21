@@ -110,10 +110,11 @@ other column. In `memory_embeddings` and `conversation_embeddings` the model is 
 sorting key, so old and new rows coexist until `--delete-old`. `entity_vectors`
 (`ReplacingMergeTree(created_at)`) is replaced in place. Flags: `--org`, `--namespace`,
 `--batch-size`, `--dry-run`, `--key-only`, `--resume`, and `--in-database <named
-collection>`, which runs one `INSERT … SELECT` per table through ClickHouse's `aiEmbed`
-(it needs a ClickHouse release that ships it, and is refused while a customer or identity
-header is set or the gateway is required, since those calls name no one and skip the
-gateway's check). See the [CLI reference](../reference/cli.md).
+collection>`, which computes embeddings through ClickHouse's `aiEmbed`. Memory vectors
+are published through embedding admission in bounded pages; other tables use one
+`INSERT … SELECT` each. This mode needs a ClickHouse release that ships `aiEmbed`
+and is refused while a customer or identity header is set or the gateway is required,
+since those calls name no one and skip the gateway's check. See the [CLI reference](../reference/cli.md).
 
 `embedding_worker` covers the rest. It embeds `embedding_dim = 0` stubs newest first; a
 stub labelled with an older model is embedded under the served one and the old stub
@@ -552,7 +553,9 @@ use deterministic rules over the supplied content and retrieval scores.
 
 Model jobs can change the content that reaches storage. Extraction produces facts;
 the optional durability verifier filters coding-capture facts using model votes before
-persistence and keeps them on verifier failure. The conflict resolver judges after a
+persistence. If the primary verifier fails, the batch is kept. If a secondary verifier
+fails, it blocks non-durable rejection, but a successful primary can still drop a
+fact in favor of a retained representative. The conflict resolver judges after a
 write, on the leader, and can revise stored content. These model judgments do not
 replace authorization or the direct write's admission checks. Answers, summaries and
 titles also use models; each feature's failure behavior is listed below.
