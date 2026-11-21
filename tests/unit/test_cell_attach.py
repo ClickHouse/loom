@@ -1107,7 +1107,7 @@ async def test_the_ddl_lock_bound_is_taken_after_the_migration_lock(
     assert asked == [f"{apg.TRY_FLOOR_MS}ms"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
 @pytest.mark.parametrize("stall", ["migration", "reset", "ddl", "commit", "rollback", "unlock"])
 async def test_a_trigger_try_deadline_covers_transaction_and_lock_cleanup(
     monkeypatch: pytest.MonkeyPatch, clock: _Clock, stall: str
@@ -1502,6 +1502,9 @@ async def _trigger_try_idle_clock():
     with pytest.MonkeyPatch.context() as scoped:
 
         def short_phases(_monkeypatch, bounds=None):
+            assert asyncio.get_running_loop() is loop, (
+                "trigger test and clock fixture must use the same loop"
+            )
             actual_short_phases(scoped, bounds)
             scoped.setattr(cell_control, "time", clock)
             scoped.setattr(cell_control.pg, "time", clock)
