@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+import pytest_asyncio
 
 from server.core import provider_process
 from server.insights.app import provider_barrier as barrier
@@ -626,7 +627,8 @@ async def test_pod_object_death_never_retires_work_that_can_resume(
         await asyncio.gather(task, return_exceptions=True)
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.usefixtures("_request_clock")
 async def test_production_child_task_cancellation_stays_counted_until_completion():
     import asyncio
     import contextlib
@@ -891,3 +893,42 @@ async def test_websocket_lifetime_and_shutdown_refusal_share_the_same_counter():
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def _request_clock(monkeypatch):
+    import asyncio
+
+    from tests.unit.clock_fake import ManualClock
+
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    # This cancellation protocol waits on idle timers, not machine scheduling.
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    yield clock
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "retirement request leaves no task on its private loop"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_request_clock_keeps_a_blocked_wait_bounded(_request_clock):
+    import asyncio
+
+    began = _request_clock.monotonic()
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(asyncio.Event().wait(), timeout=0.5)
+    assert _request_clock.monotonic() - began == pytest.approx(0.5)
