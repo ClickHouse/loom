@@ -775,6 +775,8 @@ async def test_a_redact_reaches_a_revision_by_its_metadata(
     whose payload is cleared through its columns, which it then marks."""
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     at = "WHERE org = $1 AND namespace = $2 AND version = $3"
@@ -2834,6 +2836,8 @@ async def test_a_redaction_fences_the_claim_still_sending_the_old_text(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
@@ -3901,6 +3905,8 @@ async def test_a_fenced_holder_is_waited_out_after_its_delivery_moves_on(
 
     ns = f"pg-{uuid.uuid4().hex[:8]}"
     first = (await call("memory.set", _set(ns, "k", "the token is hunter2"))).json()
+    # Publish the initial head before the next write can supersede it.
+    await _published(pg_conn, org)
     assert (await call("memory.set", _set(ns, "k", "the token was rotated"))).status_code == 200
     await _published(pg_conn, org)
     seq = await pg_conn.fetchval(
