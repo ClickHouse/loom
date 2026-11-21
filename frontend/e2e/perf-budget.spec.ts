@@ -26,10 +26,12 @@ const LONG_TASK_BUDGET_MS = 2500;
 // a closed dialog, a forced layout or a per-row formatter creeps back into every boot.
 const SHELL_LONG_TASK_BUDGET_MS = 1200;
 // Namespaces in your org with a full page of 200: the page draws 50 rows and "Show all 200".
-// Drawing all 200 at once was one task of about 1,000 ms at 4x CPU (#1023); the first 50 take
-// LONGEST_SPACES_MEASURED. The budget trips when the cap goes and the 200 rows mount at once again.
-const SPACES_LONGEST_TASK_BUDGET_MS = 500;
-const SPACES_NODE_BUDGET = 2600;
+// At 4x CPU, drawing all 200 at once was a longest task of about 750 ms and 4,755 DOM nodes;
+// the first 50 take about 225 ms and 1,457 nodes. The task budget is twice that for CI's
+// slower runners and trips when the 200 rows mount at once again; the node budget is the
+// count plus about two nodes per drawn row.
+const SPACES_LONGEST_TASK_BUDGET_MS = 450;
+const SPACES_NODE_BUDGET = 1550;
 const CLS_BUDGET = 0.1;
 
 test("boot on /memories: LCP and layout shift within budget at 4x CPU, fonts preloaded, boot reads leave together", async ({
