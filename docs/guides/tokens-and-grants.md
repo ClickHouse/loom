@@ -21,7 +21,7 @@ of the token. This guide holds the procedures;
 
 ```bash
 loom mint-token --subject my-bot --org acme --namespaces support --roles writer --ttl-days 30 --save
-# /home/you/.loom/token
+# ~/.loom/token
 ```
 
 `loom` ships with the server package and the Docker image, not with the SDK; in a container
@@ -472,12 +472,21 @@ read or write passes only when **all** hold:
 4. a live **direct** grant for the token's own subject reaches it (a service account does
    not inherit its creator's grant).
 
-No org-readable rule, `visibility=public`, `org_admin` or `platform_admin` bypasses this. A
-refusal is the generic "cannot access" message, so it does not reveal whether the namespace
-exists. If the classification cannot be read, access is denied.
+An authenticated platform administrator using its own unscoped authority can read every
+registered repository, including restricted entries. This authority remains subject to
+deployment tenancy, token validity, classification availability and `LOOM_RESTRICTED_SERVE`.
+It does not extend to scoped or delegated tokens, impersonated subjects, writes or other
+namespace kinds ([repository read authority](../architecture/security.md#restricted-namespaces)).
+No org-readable rule, `visibility=public` or `org_admin` bypasses restriction. A refusal is
+the generic "cannot access" message, so it does not reveal whether the namespace exists.
+If the classification cannot be read, access is denied.
 
 - Search fan-out, context packs and org-wide rollups skip the restricted namespaces the
-  caller cannot read, and `code.repos` hides them.
+  caller cannot read. `code.repos` returns readable metadata only when its authorization
+  gate admits the repository. It can also return permitted join, access-request or adoption
+  metadata with `readable: false`; those rows omit populated index counts and watermarks
+  and do not authorize code reads. Other inaccessible entries are omitted. See
+  [repository listing and access](../features/code-index/repositories.md#who-can-read).
 - Each request admitted to the restricted namespace it names writes a
   `namespace.restricted_access` audit row before the answer
   (`LOOM_RESTRICTED_AUDIT_INLINE=false` writes it beside the request instead,
@@ -502,11 +511,13 @@ exists. If the classification cannot be read, access is denied.
 - `LOOM_RESTRICTED_SERVE=false` refuses every restricted read while ingest continues.
 
 > **Warning:** `loom mint-token` signs locally and is not checked against grants. Whoever
-> holds the signing key can mint any token; the direct-grant check at request time is what
-> still protects a restricted namespace.
+> holds the signing key can mint any token. Restricted access normally also requires a
+> live direct grant. An unscoped, undelegated, non-impersonating platform administrator
+> may view registered repositories without namespace claims or grants; direct grants do
+> not limit that repository-viewer authority. Protect the signing key.
 
-**To give a reader access, do both:** a direct grant on the subject, and a token that names
-the namespace.
+**To give an ordinary namespace reader access, do both:** a direct grant on the subject,
+and a token that names the namespace.
 
 ```bash
 # as an admin of the namespace

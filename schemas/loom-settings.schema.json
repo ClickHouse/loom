@@ -6329,7 +6329,7 @@
         "restricted_serve": {
           "default": true,
           "type": "boolean",
-          "description": "Kill switch for restricted namespaces. True: served to a principal whose token names the namespace AND who holds a live direct grant. False: every read is refused while ingest continues."
+          "description": "Kill switch for restricted namespaces. True requires a token naming the namespace and a live direct grant, except registered-repository viewer reads by an unscoped, undelegated, non-impersonating platform administrator. False refuses every restricted read while ingest continues."
         },
         "retention_agent_events_days": {
           "default": 0,

@@ -205,14 +205,18 @@ until `loom code backfill` runs. Every setting is in the
 Code namespaces follow the usual grant rules
 ([identities and namespaces](../../concepts/identities-and-namespaces.md),
 [tokens and grants](../../guides/tokens-and-grants.md)): a token must name the code
-namespace (or `*`), or the call fails with `AUTH_INSUFFICIENT`. Three switches change
-that:
+namespace (or `*`), or the call fails with `AUTH_INSUFFICIENT`. An unscoped,
+undelegated, non-impersonating platform administrator may use its own platform role
+for viewer reads of registered repositories without namespace claims or grants,
+including restricted repositories. Writes retain their existing grant checks.
+`LOOM_RESTRICTED_SERVE=false` refuses every restricted read, including administrator
+reads. Three switches change ordinary namespace access:
 
 | Switch                                                            | Effect                                                                                                                                       |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `LOOM_CODE_ORG_READABLE=true`, or the entry's `org_readable`      | every authenticated principal of the org reads without a grant (default off); writes stay grant-driven                                       |
 | `LOOM_CODE_REPO_PUBLIC=true`, or the entry's `public`             | the namespace registers `join_policy=open` and discoverable, so any org member joins as a reader at once; otherwise the policy is `approval` |
-| `classification: "restricted"` (entry, or `code.repo.set_access`) | never org-readable or public; a maintainer approves each reader, and every read needs a token naming the namespace plus a live direct grant  |
+| `classification: "restricted"` (entry, or `code.repo.set_access`) | never org-readable or public; ordinary readers need maintainer approval, a token naming the namespace and a live direct grant                |
 
 A `code.repo.set_access` row wins over the configured classification and join policy
 and survives restarts. `code.refresh` (writer) and the admin ops always need a grant.
