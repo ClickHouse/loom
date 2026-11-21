@@ -34,6 +34,7 @@ from server.core import cell as cell_state
 from server.core import pg
 from server.core.paths import ROUTER_MIGRATIONS_DIR
 from server.router import cell_admin, fingerprints
+from server.router.limits import MAX_BODY_BYTES, MAX_CELLS, MAX_CENSUS_BYTES
 from server.settings import settings
 
 # The directory's own migration lock: never the memory authority's.
@@ -71,11 +72,10 @@ PLACE_MAX_S = _bound_s(PLACE_STATEMENTS)  # not a setting: derived
 # The longest limit/credential change has ten statements: begin, directory lock, row,
 # other row, WAL, credential check, update, audit, read-back and commit.
 OPERATOR_CHANGE_MAX_S = _bound_s(10)  # not a setting: derived from the bound above
-# The longest a registration's directory write can take: thirteen statements (begin, lock,
-# row, five refusal reads, three inserts, read-back, commit); and its read before the probe:
-# six statements (the row, the first cell, then the credential, deployment id, host and
-# bucket reads). tests/unit/test_cell_register.py counts the statements against the code.
-REGISTER_STATEMENTS, REFUSAL_READ_STATEMENTS = 13, 6
+# Later registration adds one bounded reservation read to the existing identity checks,
+# both before the probe and under the directory lock. The first-cell path is unchanged.
+# tests/unit/test_cell_register.py counts the longest paths against these bounds.
+REGISTER_STATEMENTS, REFUSAL_READ_STATEMENTS = 14, 7
 REGISTER_MAX_S = _bound_s(REGISTER_STATEMENTS)
 REFUSAL_READ_MAX_S = _bound_s(REFUSAL_READ_STATEMENTS)
 # The attach calls' statements, which tests/unit/test_router_attach.py counts against the
@@ -547,7 +547,8 @@ class Registration:
     """What `loom cell prepare` registers: the cell's host (as `normalise_host` writes
     it), the deployment id its stores record, the SHA-256 of the credential it calls the
     router with, its document bucket and prefix, and the address its probe listener
-    answers at (the router's own LOOM_ROUTER_UPSTREAM_PROBE_URL for the first cell)."""
+    answers at (the router's own LOOM_ROUTER_UPSTREAM_PROBE_URL for the first cell).
+    A later registration also reserves its verified process/local fingerprint pair."""
 
     cell: str
     host: str
@@ -564,8 +565,53 @@ class Registration:
     processes_without_cell: int
     # Where the router forwards to the cell: the first cell's is the deployment the
     # router was put in front of (LOOM_ROUTER_UPSTREAM_URL), so registering it changes no
-    # route; a later cell's is '' until attach writes it.
+    # route; a later cell supplies its independently verified main-port origin.
     upstream_url: str = ""
+    current_fp: dict[str, Any] | None = None
+    next_fp: dict[str, Any] | None = None
+
+
+def registration_pair_refusal(reg: Mapping[str, Any]) -> str:
+    """A later registration reserves one bounded, readable, store-matching pair."""
+    current, pending = reg.get("current_fp"), reg.get("next_fp")
+    if reg["is_first"]:
+        return (
+            "the first cell registers no fingerprint pair"
+            if current is not None or pending is not None
+            else ""
+        )
+    size = 0
+    try:
+        for chunk in json.JSONEncoder(allow_nan=False).iterencode((current, pending)):
+            size += len(chunk.encode("utf-8"))
+            if size > MAX_BODY_BYTES:
+                return "the registration fingerprint pair exceeds 64 KiB"
+    except (TypeError, ValueError, RecursionError, UnicodeError):
+        return "the registration fingerprint pair is unreadable"
+    if (
+        current is None
+        or not fingerprints.readable(current)
+        or (pending is not None and not fingerprints.readable(pending))
+    ):
+        return "the registration fingerprint pair is unreadable"
+    return fingerprints.registration_pair_refusal(reg, current, pending)
+
+
+_REGISTRATION_RESERVATIONS = """
+WITH candidates AS MATERIALIZED (
+    SELECT cell, current_fp, next_fp,
+           coalesce(octet_length(current_fp::text), 0) AS current_bytes,
+           coalesce(octet_length(next_fp::text), 0) AS next_bytes
+    FROM loom_router.cells ORDER BY cell LIMIT $1
+), bounds AS (
+    SELECT count(*) < $2 AND coalesce(sum(current_bytes + next_bytes), 0) <= $3
+           AND coalesce(bool_and(current_bytes <= $4 AND next_bytes <= $4), true) AS fits
+    FROM candidates
+)
+SELECT cell, CASE WHEN fits THEN current_fp END AS current_fp,
+       CASE WHEN fits THEN next_fp END AS next_fp, fits
+FROM bounds LEFT JOIN candidates ON true ORDER BY cell
+"""
 
 
 def _overlaps(prefix: str, other: str) -> bool:
@@ -589,7 +635,11 @@ async def register(reg: Registration) -> tuple[Cell, bool]:
     objects or whose processes run without its LOOM_CELL, a second first cell, a later cell
     before the first is `serving`, a first cell with no upstream to copy, a credential hash
     any cell holds as current or next, a deployment id or host another cell holds, and a
-    bucket prefix that shares objects with another cell's in a bucket of the same name."""
+    bucket prefix that shares objects with another cell's in a bucket of the same name.
+    A later cell also publishes its verified current/next reservation in this transaction;
+    exact reruns retain that pair and never fill a missing old reservation."""
+    if refusal := registration_pair_refusal(vars(reg)):
+        raise OperatorRefused(refusal)
     async with _reading(), _connection() as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock($1)", _DIRECTORY_LOCK)
         held = await conn.fetchrow(f"{_CELL_REGISTERED} WHERE cell = $1 FOR UPDATE", reg.cell)
@@ -599,10 +649,19 @@ async def register(reg: Registration) -> tuple[Cell, bool]:
                 raise OperatorRefused(refusal)
             return row, False
         await _refuse_registration(conn, reg)
+        columns = ""
+        values = ""
+        pair: tuple[Any, ...] = ()
+        if not reg.is_first:
+            columns, values = ", current_fp, next_fp", ", $11, $12"
+            pair = (reg.current_fp, reg.next_fp)
         await conn.execute(
             "INSERT INTO loom_router.cells (cell, is_first, host, state, mode, mode_set_at, "
-            "credential_sha256, deployment_id, bucket, bucket_prefix, probe_url, upstream_url) "
-            "VALUES ($1, $2, $3, 'attaching', $4, now(), $5, $6, $7, $8, $9, $10)",
+            "credential_sha256, deployment_id, bucket, bucket_prefix, probe_url, upstream_url"
+            + columns
+            + ") VALUES ($1, $2, $3, 'attaching', $4, now(), $5, $6, $7, $8, $9, $10"
+            + values
+            + ")",
             reg.cell,
             reg.is_first,
             reg.host,
@@ -613,6 +672,7 @@ async def register(reg: Registration) -> tuple[Cell, bool]:
             reg.bucket_prefix,
             reg.probe_url,
             reg.upstream_url,
+            *pair,
         )
         await conn.execute(
             "INSERT INTO loom_router.hosts (host, cell) VALUES ($1, $2)", reg.host, reg.cell
@@ -667,11 +727,23 @@ def _rerun_refusal(held: Mapping[str, Any], reg: Registration) -> str:
             f"cell {cell!r} is registered with probe address {held['probe_url']}: run "
             "`loom cell prepare` with that --probe-url"
         )
+    if not reg.is_first and (not held["upstream_url"] or held["upstream_url"] != reg.upstream_url):
+        return f"cell {cell!r} is registered with another or blank upstream; prepare never moves it"
     if reg.is_first and reg.upstream_url and held["upstream_url"] != reg.upstream_url:
         return (
             f"cell {cell!r} is registered with upstream {held['upstream_url']}: set this router "
             "replica's LOOM_ROUTER_UPSTREAM_URL to it"
         )
+    if not reg.is_first:
+        if registration_pair_refusal(held):
+            return (
+                "the later cell has no readable registered fingerprint pair; "
+                "prepare never repairs it"
+            )
+        if json.dumps((held["current_fp"], held["next_fp"]), sort_keys=True) != json.dumps(
+            (reg.current_fp, reg.next_fp), sort_keys=True
+        ):
+            return "the later cell's registered fingerprint pair differs; use cell update"
     return ""
 
 
@@ -689,6 +761,8 @@ def _order_refusal(reg: Registration, first: Mapping[str, Any] | None) -> str:
             f"the first cell {first['cell']!r} is not serving yet: a later cell registers "
             "once the first cell's attach is done"
         )
+    if not reg.is_first and not reg.upstream_url:
+        return "a later cell needs its verified main-port upstream"
     if reg.is_first and not reg.upstream_url:
         return (
             "the router needs LOOM_ROUTER_UPSTREAM_URL (http or https with a host) to register "
@@ -702,6 +776,8 @@ async def refusal_before_probe(reg: Registration) -> str:
     nothing yet): a rerun's checks, or every refusal of a new cell. Read first so a refusal is
     named at once rather than probed (and perhaps retried as unreachable); `register`
     answers the same under its lock."""
+    if refusal := registration_pair_refusal(vars(reg)):
+        return refusal
     async with _reading(), _connection() as conn:
         held = await conn.fetchrow(f"{_CELL_REGISTERED} WHERE cell = $1", reg.cell)
         if held is not None:
@@ -773,6 +849,23 @@ async def _refuse_registration(conn: Any, reg: Registration) -> None:
                     f"bucket {reg.bucket!r} prefix {reg.bucket_prefix!r} shares objects "
                     f"with cell {other['cell']!r}'s ({other['bucket_prefix']!r})"
                 )
+    if not reg.is_first:
+        reservations = await conn.fetch(
+            _REGISTRATION_RESERVATIONS,
+            MAX_CELLS + 1,
+            MAX_CELLS,
+            MAX_CENSUS_BYTES,
+            MAX_BODY_BYTES,
+        )
+        if not reservations or any(row["fits"] is not True for row in reservations):
+            raise OperatorRefused("registered reservations exceed their count or byte bounds")
+        accepted = [value for value in (reg.current_fp, reg.next_fp) if value is not None]
+        for other in reservations:
+            if other["cell"] is None:
+                continue  # The bounded query's explicit empty-directory marker.
+            pair = [value for value in (other["current_fp"], other["next_fp"]) if value is not None]
+            if reason := fingerprints.reservation_refusal(accepted, pair):
+                raise OperatorRefused(f"cell {other['cell']!r}: {reason}")
 
 
 async def first_cell() -> Cell | None:

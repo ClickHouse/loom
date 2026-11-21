@@ -44,7 +44,6 @@ import contextlib
 import functools
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import re
@@ -226,6 +225,7 @@ class Router:
         # and the last one kept while the directory cannot be read.
         self._table: routing.Table | None = None
         self._table_at: float | None = None
+        self._table_gen = 0
         self._table_lock = asyncio.Lock()
         self._refreshing: asyncio.Task[None] | None = None
         self._http: httpx.AsyncClient | None = None
@@ -460,6 +460,7 @@ class Router:
                 )
                 if fresh:  # read by the request this one waited behind
                     return
+                generation = self._table_gen
                 try:
                     cells, aliases = await directory.routing()
                 except directory.DirectoryUnavailable as e:
@@ -471,7 +472,8 @@ class Router:
                         shared_host=settings.router_shared_host,
                         passthrough=settings.router_upstream_url,
                     )
-                self._table_at = self._clock()  # when the read ended, failed or not
+                if generation == self._table_gen:
+                    self._table_at = self._clock()  # Failed reads retain their retry window.
         finally:
             self._refreshing = None
 
@@ -642,6 +644,14 @@ class Router:
             self._forget_credentials()
         return response
 
+    def _forget_routing(self) -> None:
+        self._table_gen += 1
+        self._table_at = None
+
+    def _registration_changed(self) -> None:
+        self._forget_credentials()
+        self._forget_routing()
+
     async def register(self, request: Request) -> JSONResponse:
         """`loom cell prepare`: register the cell once its probe address shows the stores
         prepare wrote its nonces to are the ones the cell serves from. The first cell
@@ -662,8 +672,14 @@ class Router:
             return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
         if refusal := await _probe(reg, nonces, self._probe_transport):
             return refusal
-        # Only a first cell has an upstream, and a rerun may come with none: it copies none.
-        if reg.upstream_url and (refusal := await _upstream_check(reg, self._probe_transport)):
+        # Both addresses must name the nonce-verified deployment before any insert.
+        if reg.upstream_url and (
+            refusal := await _upstream_check(
+                reg,
+                self._probe_transport,
+                names=_REGISTERING if reg.is_first else ("upstream_url", "probe_url"),
+            )
+        ):
             return refusal
         try:
             row, written = await directory.register(reg)
@@ -671,9 +687,12 @@ class Router:
             return _refused(409, e.reason)
         except directory.DirectoryUnavailable as e:
             # Its commit may have landed: this replica reads the hashes again.
-            self._forget_credentials()
+            self._registration_changed()
             return _refused(503, e.reason, code="BACKEND_UNAVAILABLE")
-        self._forget_credentials()  # its credential places from this replica at once
+        except BaseException:  # An interrupted commit may still have published the origin.
+            self._registration_changed()
+            raise
+        self._registration_changed()
         return JSONResponse(
             {
                 "cell": row.cell,
@@ -681,9 +700,17 @@ class Router:
                 "state": row.state,
                 "mode": row.mode,
                 "registered": written,
-                # The fingerprints attach accepted, which a rerun writes into the cell.
+                # Later prepare publishes the pair; first attach publishes its pair.
                 "current_fp": row.current_fp,
                 "next_fp": row.next_fp,
+                **(
+                    {
+                        "upstream_url": reg.upstream_url,
+                        "deployment_id": row.deployment_id,
+                    }
+                    if not row.is_first
+                    else {}
+                ),
             }
         )
 
@@ -809,8 +836,10 @@ class Router:
             return JSONResponse(
                 {
                     **_attach_answer(found),
-                    "router_upstream_url": _cell_address(settings.router_upstream_url) or "",
-                    "router_upstream_probe_url": _cell_address(settings.router_upstream_probe_url)
+                    "router_upstream_url": routing.cell_address(settings.router_upstream_url) or "",
+                    "router_upstream_probe_url": routing.cell_address(
+                        settings.router_upstream_probe_url
+                    )
                     or "",
                 }
             )
@@ -828,8 +857,8 @@ class Router:
             )
         probe_text = _text(body, "probe_url", needed=True)
         upstream_text = _text(body, "upstream_url")
-        probe_url = _cell_address(probe_text) if probe_text is not None else None
-        upstream_url = _cell_address(upstream_text) if upstream_text else ""
+        probe_url = routing.cell_address(probe_text) if probe_text is not None else None
+        upstream_url = routing.cell_address(upstream_text) if upstream_text else ""
         if not probe_url or upstream_text is None or upstream_url is None:
             return _refused(400, "address refresh requires normalized HTTP(S) host-only addresses")
         found = await _read_attaching(request.path_params["cell"])
@@ -841,8 +870,8 @@ class Router:
 
         def configured() -> bool:
             return not found.row.is_first or (probe_url, upstream_url) == (
-                _cell_address(settings.router_upstream_probe_url),
-                _cell_address(settings.router_upstream_url),
+                routing.cell_address(settings.router_upstream_probe_url),
+                routing.cell_address(settings.router_upstream_url),
             )
 
         if not configured():
@@ -865,7 +894,7 @@ class Router:
             _attach_answer,
         )
         if response.status_code in (200, 503):
-            self._table_at = None
+            self._forget_routing()
         return response
 
     async def configuration_placements(self, request: Request) -> JSONResponse:
@@ -925,7 +954,7 @@ class Router:
             _attach_answer,
         )
         if response.status_code in (200, 503):
-            self._table_at = None
+            self._forget_routing()
         return response
 
     async def attach_begin(self, request: Request) -> JSONResponse:
@@ -1044,7 +1073,7 @@ class Router:
         # A 503's change may have committed: this replica reads the cell's issuers and state
         # on its next request either way.
         if response.status_code in (200, 503):
-            self._table_at = None
+            self._forget_routing()
             # Under the lock: a state read in flight stores its row first, then loses it.
             async with self._states_lock:
                 self._states.pop(name, None)
@@ -1071,7 +1100,7 @@ class Router:
         # A 503 is included: the removal may have committed (BACKEND_UNAVAILABLE).
         if response.status_code in (200, 503):
             self._forget_credentials()
-            self._table_at = None
+            self._forget_routing()
         return response
 
     async def _stores_check(
@@ -1166,7 +1195,7 @@ def _malformed_cell_refusal(request: Request) -> JSONResponse | None:
 PROBE_TIMEOUT = httpx.Timeout(10.0, connect=5.0)  # not a setting: the probe's shape bounds it
 PROBE_DEADLINE_S = 15.0  # not a setting: the whole probe, however slowly it answers
 # The longest a registration's answer can take: the read before the probe, the probe and
-# the first cell's upstream check, then the write. A client waits at least this long.
+# the main-port check and write. The client waits at least this long.
 REGISTER_ANSWER_MAX_S = (  # not a setting: derived
     directory.REFUSAL_READ_MAX_S + 2 * PROBE_DEADLINE_S + directory.REGISTER_MAX_S
 )
@@ -1316,33 +1345,22 @@ def _is_operator_hash(sha: str) -> bool:
     return hmac.compare_digest(sha, settings.router_operator_sha256)
 
 
-def _cell_address(value: str) -> str | None:
-    """A cell's probe or upstream address in the shape the forward's upstreams take
-    (`http(s)://host[:port]`, `routing.usable_upstream`), written one way however it is
-    spelled (host in lower case, IDNA-encoded, an IPv6 address compressed; no default
-    port and no trailing `/`; a fully qualified name keeps its final dot, as the forward
-    resolves it), so replicas that spell one address differently agree on it; the router
-    appends the path."""
-    if not routing.usable_upstream(value):
-        return None
-    u = httpx.URL(value)
-    # httpx lower-cases a name; an IPv6 address is compressed (lower-cased) below.
-    host = u.raw_host.decode("ascii")
-    if ":" in host:  # an IPv6 address, which httpx gives without its brackets
-        host = f"[{ipaddress.ip_address(host).compressed}]"
-    default = {"http": 80, "https": 443}[u.scheme]
-    return f"{u.scheme}://{host}" + ("" if u.port in (None, default) else f":{u.port}")
-
-
 def _registration(
     cell: str, body: Any
 ) -> tuple[directory.Registration, dict[str, str | None]] | JSONResponse:
     known = {"host", "deployment_id", "credential_sha256", "bucket", "bucket_prefix"}
-    if not isinstance(body, dict) or set(body) - known - {"probe_url", "nonces", "held"}:
+    if not isinstance(body, dict) or set(body) - known - {
+        "probe_url",
+        "upstream_url",
+        "current_fp",
+        "next_fp",
+        "nonces",
+        "held",
+    }:
         return _refused(
             400,
             "a registration is a JSON object of " + ", ".join(sorted(known)) + ", held and "
-            "nonces, with a later cell's probe_url",
+            "nonces, with a later cell's probe_url, upstream_url, current_fp and next_fp",
         )
     host_text = _text(body, "host", needed=True)
     deployment_id = _text(body, "deployment_id", needed=True)
@@ -1386,7 +1404,7 @@ def _registration(
         # A cell's own settings refuse these (LOOM_DOCUMENT_S3_PREFIX), so no listener
         # could echo them back.
         return _refused(400, "a bucket's prefix is named, with no leading or trailing /")
-    probe_address = _cell_address(probe) if probe else ""
+    probe_address = routing.cell_address(probe) if probe else ""
     if probe_address is None:
         return _refused(400, "probe_url, when given, is http(s)://host[:port] with a valid host")
     # What needs no configuration is judged above; what depends on the first cell, below.
@@ -1400,12 +1418,16 @@ def _registration(
     is_first = host == shared_host
     upstream = ""
     if is_first:
+        if "current_fp" in body or "next_fp" in body:
+            return _refused(400, "the first cell registers no fingerprint pair")
+        if "upstream_url" in body:
+            return _refused(400, "the first cell uses the router's upstream: no upstream_url")
         if probe:
             return _refused(
                 400, "the first cell is probed at the router's own address: no probe_url"
             )
         # The router's own configuration, never prepare's: the deployment it fronts.
-        address = _cell_address(settings.router_upstream_probe_url) or ""
+        address = routing.cell_address(settings.router_upstream_probe_url) or ""
         if not address:
             return _refused(
                 409,
@@ -1414,10 +1436,19 @@ def _registration(
             )
         # The upstream may be '': only a new row copies it (the directory refuses one
         # without it), and a rerun probes and answers without it.
-        upstream = _cell_address(settings.router_upstream_url) or ""
+        upstream = routing.cell_address(settings.router_upstream_url) or ""
     else:
+        if not {"current_fp", "next_fp"} <= body.keys():
+            return _refused(400, "a later cell names current_fp and next_fp explicitly")
         if not probe_address:
             return _refused(400, "a later cell names its probe_url")
+        proposed = _text(body, "upstream_url", needed=True)
+        normalized = routing.cell_address(proposed) if proposed else None
+        if not normalized:
+            return _refused(400, "a later cell names its main-port upstream_url origin")
+        upstream = normalized
+        if upstream == probe_address:
+            return _refused(400, "the main-port upstream_url differs from probe_url")
         address = probe_address
     reg = directory.Registration(
         cell=cell,
@@ -1429,11 +1460,15 @@ def _registration(
         probe_url=address,
         is_first=is_first,
         upstream_url=upstream,
+        current_fp=body.get("current_fp"),
+        next_fp=body.get("next_fp"),
         tenancy_rows=held["tenancy_rows"],
         state_rows=held["state_rows"],
         prefix_objects=held["prefix_objects"],
         processes_without_cell=held["processes_without_cell"],
     )
+    if reason := directory.registration_pair_refusal(vars(reg)):
+        return _refused(400, reason)
     return reg, dict(nonces)
 
 
@@ -1562,8 +1597,8 @@ async def _upstream_check(
     *,
     names: tuple[str, str] = _REGISTERING,
 ) -> JSONResponse | None:
-    """None when the first cell's upstream (the deployment the shared host forwards to)
-    reports the deployment id its probe listener did, else the refusal, naming the upstream
+    """None when the main port reports the deployment id its probe listener did, else
+    the refusal, naming the upstream
     and probe addresses as `names` does: the row's upstream must be the deployment probed.
     The main port answers the id from memory and sets no rate of its own: a 429, 502, 503 or
     504 there is a proxy's in front of it, and is asked again."""

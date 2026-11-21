@@ -52,6 +52,7 @@ def _args(**over: Any) -> argparse.Namespace:
         "host": "eu-1.loom.example",
         "credential_sha256": SHA,
         "probe_url": "",
+        "upstream_url": None,
         "wait": 0,
         "router": "http://127.0.0.1:7900",
     }
