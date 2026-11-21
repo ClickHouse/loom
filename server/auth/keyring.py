@@ -466,7 +466,7 @@ async def refresh(*, ch: _CHClient | None = None) -> bool:
     return await _read(ch=ch) is not None
 
 
-async def _read(*, ch: _CHClient | None = None) -> _View | None:
+async def _read(*, ch: _CHClient | None = None, deadline: float | None = None) -> _View | None:
     """Re-read the keyring and install the view; None when the read failed."""
     from server.core.ch import get_client, sequential_reads
 
@@ -475,11 +475,21 @@ async def _read(*, ch: _CHClient | None = None) -> _View | None:
         # Sequentially consistent: a rotation or retirement another process
         # acknowledged is in the read, whichever replica answers.
         with sequential_reads():
-            rows = await (ch or get_client()).query_all(READ_SQL)
-    except Exception as e:  # noqa: BLE001 — keep the last keyring on a CH glitch
+            if deadline is None:
+                rows = await (ch or get_client()).query_all(READ_SQL)
+            else:
+                rows = await _bounded_rows(ch or get_client(), deadline=deadline)
+                if max(len(_view.keys), len(_view.retired), len(_view.retired_public)) > 128:
+                    raise ValueError("keyring history exceeds its allowance")
+                rows = [{**r, "retired": r["retired_at"] is not None} for r in rows]
+    except Exception as e:  # Keep the last keyring when the ordinary read fails.
+        if deadline is not None:
+            raise ValueError("the complete keyring could not be read") from e
         log.warning("signing keyring read failed: %s — keeping %d keys", e, len(_view.keys))
         return None
     view = _keep_retired(_parse(rows), _view)
+    if deadline is not None and len(set(view.keys) | view.retired | view.unsealable) > 128:
+        raise ValueError("keyring history exceeds its allowance")
     view = dataclasses.replace(view, read_at=time.monotonic(), loaded=True)
     for kid in sorted(view.unsealable - _warned):
         _warned.add(kid)
@@ -578,25 +588,30 @@ def _is_this_root(recorded: str) -> bool:
     return hmac.compare_digest(recorded, _root_record())
 
 
-async def record_root(*, ch: _CHClient, force: bool = False) -> None:
+async def record_root(
+    *,
+    ch: _CHClient,
+    force: bool = False,
+    deadline: float | None = None,
+) -> None:
     """Write the `default` row for this root secret, when it has none (or
     always, with `force`: the operator replaced the root on purpose). A
     retired `default` stays retired: the row is written one version above the
     one read, so a retire written meanwhile stays the newer row."""
-    row = await ch.query_one(
-        f"SELECT {', '.join(_COLUMNS)}, version FROM loom.signing_keys FINAL "
-        "WHERE kid = {kid:String}",
-        params={"kid": ROOT_KID},
-    )
+    if deadline is None:
+        row = await ch.query_one(
+            f"SELECT {', '.join(_COLUMNS)}, version FROM loom.signing_keys FINAL "
+            "WHERE kid = {kid:String}",
+            params={"kid": ROOT_KID},
+        )
+    else:
+        rows = await _bounded_rows(ch, deadline=deadline, kid=ROOT_KID)
+        row = rows[0] if rows else None
     if row is not None and row["sealed_key"] and not force:
         return
     version = int(row["version"]) + 1 if row else 1
     row = row or _root_row_values()
-    await ch.insert(
-        "loom.signing_keys",
-        [{**row, "sealed_key": _root_record(), "version": version}],
-        settings={"async_insert": 0},
-    )
+    await _insert_key(ch, {**row, "sealed_key": _root_record(), "version": version}, deadline)
 
 
 def _root_row_values() -> dict[str, Any]:
@@ -611,19 +626,24 @@ def _root_row_values() -> dict[str, Any]:
     }
 
 
-async def _same_root(ch: _CHClient) -> _View:
+async def _same_root(ch: _CHClient, *, deadline: float | None = None) -> _View:
     """Refuse a keyring change unless this process read the keyring and holds
     the root secret it was recorded under: a key sealed with another root does
     not open on the servers, and which keys sign here is not what they see.
     Returns the view read: the change judges it, not `_view`, which the
     refresh loop may replace meanwhile."""
-    view = await _read(ch=ch)
+    view = await _read(ch=ch) if deadline is None else await _read(ch=ch, deadline=deadline)
     if view is None:
         raise ValueError("the keyring could not be read; nothing was changed")
     if view.root_row == "other":
         raise ValueError(_OTHER_ROOT)
     if view.root_row == "absent" and not settings.jwt_secret_is_dev_default():
-        await record_root(ch=ch)
+        if deadline is None:
+            await record_root(ch=ch)
+        else:
+            if len(set(view.keys) | view.retired | view.unsealable) >= 128:
+                raise ValueError("keyring exceeds its allowance")
+            await record_root(ch=ch, deadline=deadline)
     return view
 
 
@@ -742,15 +762,26 @@ def _new_key(algorithm: str) -> tuple[str, str]:
     return pem, public
 
 
-async def rotate(algorithm: str, *, activate_in_s: float, ch: _CHClient) -> SigningKey:
+async def rotate(
+    algorithm: str,
+    *,
+    activate_in_s: float,
+    ch: _CHClient,
+    deadline: float | None = None,
+) -> SigningKey:
     """Write a new key that signs from `activate_in_s` from now on the
     ClickHouse server's clock: it must exceed two of the servers' keyring
     refresh intervals, so every process verifies the key before it signs."""
     if algorithm not in ALGORITHMS:
         raise ValueError(f"algorithm must be one of {ALGORITHMS}")
-    await _same_root(ch)
+    if deadline is None:
+        await _same_root(ch)
+    else:
+        view = await _same_root(ch, deadline=deadline)
+        if len(set(view.keys) | view.retired | view.unsealable | {ROOT_KID}) >= 128:
+            raise ValueError("keyring exceeds its allowance")
     secret, public = _new_key(algorithm)
-    now = await _ch_now(ch)
+    now = await _ch_now(ch) if deadline is None else await _bounded_now(ch, deadline)
     key = SigningKey(
         f"k{now:%Y%m%d%H%M%S}-{secrets.token_hex(3)}",
         algorithm,
@@ -758,11 +789,7 @@ async def rotate(algorithm: str, *, activate_in_s: float, ch: _CHClient) -> Sign
         public,
         now + timedelta(seconds=activate_in_s),
     )
-    await ch.insert(
-        "loom.signing_keys",
-        [_row(key, created_at=now, retired_at=None)],
-        settings={"async_insert": 0},
-    )
+    await _insert_key(ch, _row(key, created_at=now, retired_at=None), deadline)
     return key
 
 
@@ -795,15 +822,25 @@ async def retire(kid: str, *, ch: _CHClient) -> bool:
         raise ValueError(_LOST) from None
 
 
-async def _retire(kid: str, *, ch: _CHClient, held: Callable[[], bool]) -> bool:
-    view = await _same_root(ch)
-    row = await ch.query_one(
-        f"SELECT {', '.join(_COLUMNS)} FROM loom.signing_keys FINAL WHERE kid = {{kid:String}}",
-        params={"kid": kid},
-    )
+async def _retire(
+    kid: str,
+    *,
+    ch: _CHClient,
+    held: Callable[[], bool],
+    deadline: float | None = None,
+) -> bool:
+    view = await _same_root(ch) if deadline is None else await _same_root(ch, deadline=deadline)
+    if deadline is None:
+        row = await ch.query_one(
+            f"SELECT {', '.join(_COLUMNS)} FROM loom.signing_keys FINAL WHERE kid = {{kid:String}}",
+            params={"kid": kid},
+        )
+    else:
+        rows = await _bounded_rows(ch, deadline=deadline, kid=kid)
+        row = rows[0] if rows else None
     if row is None and kid != ROOT_KID:
         return False
-    now = await _ch_now(ch)
+    now = await _ch_now(ch) if deadline is None else await _bounded_now(ch, deadline)
     signers = {k.kid for k in _keys(view).values() if k.activate_at <= now}
     if _root_signs(view.retired):
         signers.add(ROOT_KID)
@@ -820,7 +857,10 @@ async def _retire(kid: str, *, ch: _CHClient, held: Callable[[], bool]) -> bool:
     if not held():
         raise ValueError(_LAPSED)
     row = row or {**_root_row_values(), "sealed_key": _root_record()}
-    await ch.insert("loom.signing_keys", [{**row, "retired_at": now}], settings={"async_insert": 0})
+    if deadline is not None:
+        # As in the ordinary path, the store supplies this retirement's new version.
+        row = {key: row[key] for key in _COLUMNS}
+    await _insert_key(ch, {**row, "retired_at": now}, deadline)
     return True
 
 
@@ -829,6 +869,178 @@ async def listing(*, ch: _CHClient) -> list[dict[str, Any]]:
         "SELECT kid, algorithm, created_at, activate_at, retired_at "
         "FROM loom.signing_keys FINAL ORDER BY activate_at"
     )
+
+
+async def _bounded_rows(
+    ch: Any,
+    *,
+    deadline: float,
+    kid: str | None = None,
+) -> list[dict[str, Any]]:
+    from server.core.ch_bounded import BoundedReadError, read_rows
+
+    maximum = 128 if kid is None else 1
+    where = "" if kid is None else " WHERE kid = {kid:String}"
+    rows = await read_rows(
+        "SELECT kid, algorithm, sealed_key, public_pem, version, "
+        "toUnixTimestamp64Milli(created_at) AS created_at, "
+        "toUnixTimestamp64Milli(activate_at) AS activate_at, "
+        "toUnixTimestamp64Milli(retired_at) AS retired_at, "
+        "toUnixTimestamp64Milli(now64(3)) AS server_now "
+        "FROM loom.signing_keys FINAL" + where + " LIMIT {limit:UInt32} FORMAT JSONEachRow",
+        {"kid": kid, "limit": maximum + 1} if kid is not None else {"limit": maximum + 1},
+        ch=ch,
+        deadline=deadline,
+        row_bytes=16384,
+        total_bytes=1024**2,
+        max_rows=maximum,
+        tag="cell.each.keyring_read",
+    )
+    seen: set[str] = set()
+    for row in rows:
+        if (
+            set(row) != {*_COLUMNS, "version", "server_now"}
+            or any(
+                type(row[key]) is not str
+                for key in ("kid", "algorithm", "sealed_key", "public_pem")
+            )
+            or row["kid"] in seen
+            or not row["kid"]
+            or len(row["kid"].encode()) > 256
+            or row["algorithm"] not in ALGORITHMS
+            or type(row["version"]) is not int
+            or row["version"] < 0
+            or kid is not None
+            and row["kid"] != kid
+        ):
+            raise BoundedReadError("Malformed keyring row")
+        seen.add(row["kid"])
+        for key in ("created_at", "activate_at", "retired_at", "server_now"):
+            if row[key] is None and key == "retired_at":
+                continue
+            if type(row[key]) is not int:
+                raise BoundedReadError("Malformed keyring timestamp")
+            try:
+                row[key] = datetime(1970, 1, 1) + timedelta(milliseconds=row[key])
+            except (ValueError, OverflowError) as error:
+                raise BoundedReadError("Malformed keyring timestamp") from error
+    return rows
+
+
+async def _bounded_now(ch: Any, deadline: float) -> datetime:
+    from server.core.ch_bounded import BoundedReadError, read_rows
+
+    rows = await read_rows(
+        "SELECT toUnixTimestamp64Milli(now64(3)) AS now LIMIT 2 FORMAT JSONEachRow",
+        {},
+        ch=ch,
+        deadline=deadline,
+        row_bytes=1024,
+        total_bytes=1024,
+        max_rows=1,
+        tag="cell.each.keyring_clock",
+    )
+    if len(rows) != 1 or set(rows[0]) != {"now"} or type(rows[0]["now"]) is not int:
+        raise BoundedReadError("Malformed keyring clock")
+    return datetime(1970, 1, 1) + timedelta(milliseconds=rows[0]["now"])
+
+
+async def _insert_key(ch: Any, row: dict[str, Any], deadline: float | None) -> None:
+    if deadline is None:
+        await ch.insert("loom.signing_keys", [row], settings={"async_insert": 0})
+        return
+    import asyncio
+
+    from server.core.ch import set_query_tag, statement_timeout
+    from server.core.ch_bounded import BoundedReadError
+
+    remaining = min(2.0, deadline - time.monotonic())
+    if remaining <= 0:
+        raise BoundedReadError("Keyring write allowance exhausted")
+    stored = {key: value for key, value in row.items() if key in {*_COLUMNS, "version"}}
+    set_query_tag("cell.each.keyring_write")
+    async with asyncio.timeout(remaining):
+        with statement_timeout(remaining):
+            await ch.insert(
+                "loom.signing_keys",
+                [stored],
+                settings={
+                    "async_insert": 0,
+                    "max_memory_usage": 128 * 1024**2,
+                },
+            )
+
+
+async def listing_bounded(*, ch: Any, deadline: float) -> list[dict[str, Any]]:
+    from server.core.ch import sequential_reads
+
+    with sequential_reads():
+        rows = await _bounded_rows(ch, deadline=deadline)
+    return [
+        {key: row[key] for key in ("kid", "algorithm", "created_at", "activate_at", "retired_at")}
+        for row in sorted(rows, key=lambda row: (row["activate_at"], row["kid"]))
+    ]
+
+
+async def rotate_bounded(
+    algorithm: str,
+    *,
+    activate_in_s: float,
+    ch: Any,
+    deadline: float,
+) -> SigningKey:
+    import math
+
+    from server.core.ch_bounded import BoundedReadError, read_rows
+
+    if settings.jwt_secret_is_dev_default() or root_is_weak():
+        raise BoundedReadError("A strong deployment root is required")
+    rows = await read_rows(
+        f"SELECT max(refresh_seconds) AS s FROM {READERS_TABLE} "
+        "WHERE seen_at > now64(3) - toIntervalSecond({age:UInt32}) "
+        "LIMIT 2 FORMAT JSONEachRow",
+        {"age": int(2 * _ANNOUNCE_S)},
+        ch=ch,
+        deadline=deadline,
+        row_bytes=1024,
+        total_bytes=1024,
+        max_rows=1,
+        tag="cell.each.keyring_refresh_interval",
+    )
+    if (
+        len(rows) != 1
+        or set(rows[0]) != {"s"}
+        or type(rows[0]["s"]) not in (int, float)
+        or not math.isfinite(rows[0]["s"])
+        or rows[0]["s"] < 0
+    ):
+        raise BoundedReadError("The serving refresh interval could not be verified")
+    refresh = rows[0]["s"] or settings.jwt_keyring_refresh_seconds
+    if not math.isfinite(activate_in_s) or activate_in_s < 2 * refresh:
+        raise BoundedReadError("Activation precedes the serving refresh allowance")
+    return await rotate(algorithm, activate_in_s=activate_in_s, ch=ch, deadline=deadline)
+
+
+async def retire_bounded(kid: str, *, ch: Any, deadline: float) -> bool:
+    from server.core import leases
+    from server.core.ch import sequential_reads, statement_timeout
+    from server.core.ch_bounded import BoundedReadError
+
+    async with leases.holding(
+        RETIRE_CLAIM,
+        ttl_s=60,
+        wait_s=0,
+        ch=ch,
+        deadline=deadline,
+        confirm_release=True,
+    ) as held:
+        if not held:
+            raise BoundedReadError("Another key retirement holds the claim")
+        with (
+            sequential_reads(),
+            statement_timeout(min(2.0, max(0.001, deadline - time.monotonic()))),
+        ):
+            return await _retire(kid, ch=ch, held=lambda: True, deadline=deadline)
 
 
 def _row(key: SigningKey, *, created_at: datetime, retired_at: datetime | None) -> dict[str, Any]:

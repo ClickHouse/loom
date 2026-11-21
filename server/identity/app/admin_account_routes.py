@@ -220,8 +220,12 @@ async def bots_create(input: BotInput, info: Admin) -> dict[str, Any]:
 
 
 @router.post("/v1/admin/bots.list")
-async def bots_list() -> dict[str, Any]:
-    """Every registered bot: its namespaces and roles, key or issuer, and limits."""
+async def bots_list(info: Admin = None, self_only: bool = False) -> dict[str, Any]:
+    """Every registered bot, or with self_only the caller's fresh bounded public identity."""
+    if self_only:
+        from server.insights.app.cell_admin_auth import registered_bot_identity
+
+        return await registered_bot_identity(info)
     rows = await machines.listed()
     return {
         "bots": [

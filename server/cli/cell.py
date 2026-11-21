@@ -438,6 +438,12 @@ def _add_cell_parser(sub: Any) -> None:
     scim_new.add_argument("--cell", required=True, help="The cell's exact LOOM_CELL name")
     scim_new.set_defaults(func=_cmd_scim_token)
 
+    from server.cli.cell_automation import add_automation_parser
+    from server.cli.cell_each_run import add_each_parser
+
+    add_each_parser(csub)
+    add_automation_parser(csub)
+
     cred = csub.add_parser("credential", help="Make a router credential, or rotate a cell's.")
     cred.add_argument("action", nargs="?", choices=["new"], help="new: make one offline")
     cred.add_argument("--cell", help="The cell whose credential to rotate")

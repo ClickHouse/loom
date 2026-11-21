@@ -78,17 +78,40 @@ class BudgetOverrides:
 
     # -- per op (unchanged API) -------------------------------------------
 
-    def set(self, op_name: str, budget_ms: int) -> None:
+    def check_bounded_change(self, op_name: str, *, consumer: str | None, clear: bool) -> None:
+        """Inspect only map cardinalities before a bounded point change."""
+        with self._lock:
+            self._check_bounded_change(op_name, consumer=consumer, clear=clear)
+
+    def _check_bounded_change(self, op_name: str, *, consumer: str | None, clear: bool) -> None:
+        from server.core.ch_bounded import BoundedReadError
+
+        if len(self._overrides) > 4096 or len(self._by_consumer) > 1024:
+            raise BoundedReadError("Budget overrides exceed their allowance")
+        if not clear:
+            if consumer:
+                if (consumer, op_name or ANY_OP) not in self._by_consumer and len(
+                    self._by_consumer
+                ) == 1024:
+                    raise BoundedReadError("Consumer budgets exceed their allowance")
+            elif op_name not in self._overrides and len(self._overrides) == 4096:
+                raise BoundedReadError("Operation budgets exceed their allowance")
+
+    def set(self, op_name: str, budget_ms: int, *, bounded: bool = False) -> None:
         stored = stored_ms(budget_ms)
         with self._lock:
+            if bounded:
+                self._check_bounded_change(op_name, consumer=None, clear=False)
             self._overrides[op_name] = stored
 
     def get(self, op_name: str) -> int | None:
         with self._lock:
             return self._overrides.get(op_name)
 
-    def clear(self, op_name: str) -> None:
+    def clear(self, op_name: str, *, bounded: bool = False) -> None:
         with self._lock:
+            if bounded:
+                self._check_bounded_change(op_name, consumer=None, clear=True)
             self._overrides.pop(op_name, None)
 
     def snapshot(self) -> dict[str, int]:
@@ -97,7 +120,14 @@ class BudgetOverrides:
 
     # -- per consumer --------------------------------------
 
-    def set_for_consumer(self, consumer: str, op_name: str, value: int | str) -> None:
+    def set_for_consumer(
+        self,
+        consumer: str,
+        op_name: str,
+        value: int | str,
+        *,
+        bounded: bool = False,
+    ) -> None:
         """`value` is milliseconds or a "<n>x" multiplier; `op_name` "*"
         covers every op for the consumer."""
         if not consumer:
@@ -106,6 +136,8 @@ class BudgetOverrides:
         if parsed is None:
             raise ValueError("budget must be a non-negative integer (ms) or '<n>x'")
         with self._lock:
+            if bounded:
+                self._check_bounded_change(op_name, consumer=consumer, clear=False)
             self._by_consumer[(consumer, op_name or ANY_OP)] = parsed
 
     def get_for_consumer(self, consumer: str, op_name: str) -> int | float | None:
@@ -115,8 +147,16 @@ class BudgetOverrides:
                 hit = self._by_consumer.get((consumer, ANY_OP))
             return hit
 
-    def clear_for_consumer(self, consumer: str, op_name: str = ANY_OP) -> None:
+    def clear_for_consumer(
+        self,
+        consumer: str,
+        op_name: str = ANY_OP,
+        *,
+        bounded: bool = False,
+    ) -> None:
         with self._lock:
+            if bounded:
+                self._check_bounded_change(op_name, consumer=consumer, clear=True)
             self._by_consumer.pop((consumer, op_name or ANY_OP), None)
 
     def snapshot_by_consumer(self) -> dict[str, dict[str, int | float]]:

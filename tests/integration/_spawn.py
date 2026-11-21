@@ -11,6 +11,7 @@ removed.
 from __future__ import annotations
 
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,8 @@ def loom_server(
     ready_timeout: float = 45.0,
     log_level: str = "warning",
     port: int | None = None,
+    tls_files: tuple[Path, Path] | None = None,
+    router: bool = False,
 ) -> Iterator[str]:
     """Run `server.main:app` with `env` layered over this process's
     environment; yield its base URL. `port` is kernel-assigned unless the
@@ -53,7 +56,13 @@ def loom_server(
     itself, past the in-process guard."""
     ch_target()
     port = port or free_port()
-    base = f"http://127.0.0.1:{port}"
+    base = f"{'https' if tls_files else 'http'}://127.0.0.1:{port}"
+    app = "server.router.app:build_app" if router else "server.main:app"
+    extra = ["--factory"] if router else []
+    if tls_files is not None:
+        certificate, key = tls_files
+        extra += ["--ssl-certfile", str(certificate), "--ssl-keyfile", str(key)]
+    verify = ssl.create_default_context(cafile=str(tls_files[0])) if tls_files else True
     # No drain: a test server that kept serving past SIGTERM would outlast the
     # stop grace and be killed, ten seconds a test. A caller may still set one.
     full_env = {**os.environ, "LOOM_SHUTDOWN_READY_DELAY_S": "0", **env}
@@ -68,7 +77,7 @@ def loom_server(
                 sys.executable,
                 "-m",
                 "uvicorn",
-                "server.main:app",
+                app,
                 "--host",
                 "127.0.0.1",
                 "--port",
@@ -77,6 +86,7 @@ def loom_server(
                 "asyncio",
                 "--log-level",
                 log_level,
+                *extra,
             ],
             env=full_env,
             cwd=str(ROOT),
@@ -88,7 +98,11 @@ def loom_server(
         def _up_or_exited() -> bool:
             if proc.poll() is not None:
                 return True
-            return httpx.get(f"{base}/v1/health", timeout=1.0).status_code == 200
+            path = "/livez" if router else "/v1/health"
+            return (
+                httpx.get(f"{base}{path}", timeout=1.0, verify=verify, trust_env=False).status_code
+                == 200
+            )
 
         try:
             wait_until(_up_or_exited, max_wait=ready_timeout, interval=0.2, description=name)

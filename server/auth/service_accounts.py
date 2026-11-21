@@ -15,8 +15,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any
 
 from server.auth.fail_closed import note_unreadable
@@ -260,7 +260,12 @@ _UNEXPIRED = "(expires_at IS NULL OR expires_at > now())"
 _MADE_BY = "(created_by IN {subs:Array(String)} OR hasAny(lineage, {subs:Array(String)}))"
 
 
-async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> set[str]:
+async def revoke_created_by(
+    subjects: list[str],
+    *,
+    revoked_by: str,
+    work: _RevocationWork | None = None,
+) -> set[str]:
     """Mark revoked each token any of `subjects` made, directly or through
     their tokens, whose token the revocations kill, so its name comes free;
     one made after a cutoff stays live. A retry finds only what an earlier
@@ -270,7 +275,7 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> set[str]
     from server.auth.delegation import MAX_CHAIN_DEPTH
     from server.core.ch import get_client, own_write_reads
 
-    ch = get_client()
+    ch = get_client() if work is None else work.ch
     seen = set(subjects)
     creators = sorted(seen)
     dead: set[str] = set()  # the `sa:` subjects of the dead tokens found so far
@@ -281,21 +286,31 @@ async def revoke_created_by(subjects: list[str], *, revoked_by: str) -> set[str]
         made: set[str] = set()
         for i in range(0, len(creators), _CREATORS_AT_ONCE):
             chunk = creators[i : i + _CREATORS_AT_ONCE]
-            with own_write_reads():
-                rows = await ch.query_all(
-                    "SELECT org, name, sa_subject, created_by, created_at, lineage, "
-                    "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
-                    f"WHERE {_MADE_BY} AND {_UNEXPIRED}",
-                    params={"subs": chunk},
-                )
+            if work is None:
+                with own_write_reads():
+                    rows = await ch.query_all(
+                        "SELECT org, name, sa_subject, created_by, created_at, lineage, "
+                        "revoked_at IS NULL AS live FROM loom.service_accounts FINAL "
+                        f"WHERE {_MADE_BY} AND {_UNEXPIRED}",
+                        params={"subs": chunk},
+                    )
+            else:
+                rows = await work.read(f"{_MADE_BY} AND {_UNEXPIRED}", {"subs": chunk})
             # Read after the list, so it tells whether each token listed is dead.
-            revoked = await revocation.cutoffs(chunk, permanent=True)
+            revoked = (
+                await revocation.cutoffs(chunk, permanent=True)
+                if work is None
+                else await work.cutoffs(chunk)
+            )
             # Only those still dead: a row listed revoked is judged again, as the gate would.
             dead |= {
                 str(r["sa_subject"]) for r in rows if not r["live"] and _is_dead(r, revoked, dead)
             }
             live = [r for r in rows if r["live"]]
-            dead |= await _revoke_all(live, chunk, revoked, dead, revoked_by)
+            if work is None:
+                dead |= await _revoke_all(live, chunk, revoked, dead, revoked_by)
+            else:
+                dead |= await _revoke_all(live, chunk, revoked, dead, revoked_by, work=work)
             # Revoked ones too: a retry still reaches what their tokens made.
             made |= {str(r["sa_subject"]) for r in rows}
         made -= seen
@@ -334,6 +349,8 @@ async def _revoke_all(
     revoked: dict[str, int | None],
     dead: set[str],
     revoked_by: str,
+    *,
+    work: _RevocationWork | None = None,
 ) -> set[str]:
     """Revoke those of the rows `found` whose token is dead, each name claimed
     as a create claims it and read again under it: a revoked copy of a row
@@ -341,41 +358,30 @@ async def _revoke_all(
     claim at a time, so two passes over the same names never wait on each
     other in a cycle, and each row that lands stays revoked for a retry.
     Returns the `sa:` subjects revoked."""
-    from server.auth import revocation
     from server.auth.grant_claims import service_account_change
-    from server.core.ch import get_client, own_write_reads
-    from server.core.datetimes import naive_utc_now_seconds
+    from server.core.ch import get_client
 
-    ch = get_client()
-    gate = asyncio.Semaphore(_CLAIMS_AT_ONCE)
+    ch = get_client() if work is None else work.ch
+    gate = asyncio.Semaphore(_CLAIMS_AT_ONCE if work is None else 4)
     listed = {str(r["sa_subject"]) for r in found}
 
     async def revoke(org: str, name: str) -> str | None:
-        from server.auth.authz import identity_write
-
-        async with gate, service_account_change(org, name):
-            with own_write_reads():
-                row = await ch.query_one(
-                    "SELECT * FROM loom.service_accounts FINAL "
-                    "WHERE org = {org:String} AND name = {name:String} "
-                    f"AND {_MADE_BY} AND revoked_at IS NULL AND {_UNEXPIRED}",
-                    params={"org": org, "name": name, "subs": creators},
+        async with gate:
+            bounded: dict[str, Any] = {} if work is None else {"deadline": work.deadline, "ch": ch}
+            if work is not None:
+                work.statements(6)  # The existing finite claim's worst path, including release.
+            async with service_account_change(org, name, **bounded):
+                return await _revoke_named(
+                    org,
+                    name,
+                    creators,
+                    revoked,
+                    dead,
+                    revoked_by,
+                    listed,
+                    ch=ch,
+                    work=work,
                 )
-            if row is None:
-                return None
-            row = dict(row)
-            # A token made since the list may postdate `revoked` (a reactivation's).
-            now_revoked = revoked
-            if row["sa_subject"] not in listed:
-                now_revoked = await revocation.cutoffs(sorted(_above(row)), permanent=True)
-            if not _is_dead(row, now_revoked, dead):
-                return None
-            revoked_copy = revoked_row(
-                row, revoked_at=naive_utc_now_seconds(), revoked_by=revoked_by
-            )
-            with identity_write():
-                await ch.insert("loom.service_accounts", [revoked_copy])
-            return str(row["sa_subject"])
 
     try:
         async with asyncio.TaskGroup() as tasks:
@@ -383,6 +389,240 @@ async def _revoke_all(
     except ExceptionGroup as e:  # the failure itself, which the caller maps to a 503
         raise e.exceptions[0] from e
     return {subject for task in done if (subject := task.result()) is not None}
+
+
+async def _revoke_named(
+    org: str,
+    name: str,
+    creators: list[str],
+    revoked: dict[str, int | None],
+    dead: set[str],
+    revoked_by: str,
+    listed: set[str],
+    *,
+    ch: Any,
+    work: _RevocationWork | None,
+) -> str | None:
+    from server.auth import revocation
+    from server.auth.authz import identity_write
+    from server.core.ch import own_write_reads
+    from server.core.datetimes import naive_utc_now_seconds
+
+    if work is None:
+        with own_write_reads():
+            row = await ch.query_one(
+                "SELECT * FROM loom.service_accounts FINAL "
+                "WHERE org = {org:String} AND name = {name:String} "
+                f"AND {_MADE_BY} AND revoked_at IS NULL AND {_UNEXPIRED}",
+                params={"org": org, "name": name, "subs": creators},
+            )
+    else:
+        rows = await work.read(
+            "org = {org:String} AND name = {name:String} "
+            f"AND {_MADE_BY} AND revoked_at IS NULL AND {_UNEXPIRED}",
+            {"org": org, "name": name, "subs": creators},
+            point=True,
+        )
+        row = rows[0] if rows else None
+    if row is None:
+        return None
+    row = dict(row)
+    # A replacement under the name may postdate the discovery's revocation view.
+    now_revoked = revoked
+    if row["sa_subject"] not in listed:
+        now_revoked = (
+            await revocation.cutoffs(sorted(_above(row)), permanent=True)
+            if work is None
+            else await work.cutoffs(sorted(_above(row)))
+        )
+    if not _is_dead(row, now_revoked, dead):
+        return None
+    revoked_copy = revoked_row(row, revoked_at=naive_utc_now_seconds(), revoked_by=revoked_by)
+    with identity_write():
+        if work is None:
+            await ch.insert("loom.service_accounts", [revoked_copy])
+        else:
+            await work.insert(revoked_copy)
+            work.confirmed_dead.add(str(row["sa_subject"]))
+    return str(row["sa_subject"])
+
+
+_SA_COLUMNS = (
+    "org",
+    "name",
+    "sa_subject",
+    "namespaces",
+    "roles",
+    "ttl_days",
+    "created_by",
+    "created_at",
+    "expires_at",
+    "revoked_at",
+    "revoked_by",
+    "version",
+    "kind",
+    "client",
+    "inherit_creator_grants",
+    "ns_roles",
+    "lineage",
+    "saves_to",
+)
+
+
+@dataclass
+class _RevocationWork:
+    """One finite descendant pass; counters are neither a cache nor a replay record."""
+
+    ch: Any
+    deadline: float
+    roots: set[str]
+    fetched: int = 0
+    used_statements: int = 0
+    mutations: int = 0
+    subjects: set[str] = field(default_factory=set)
+    confirmed_dead: set[str] = field(default_factory=set)
+
+    def statements(self, count: int) -> None:
+        from server.core.ch_bounded import BoundedReadError
+
+        if self.used_statements + count > 1024:
+            raise BoundedReadError("Descendant statements exceed their allowance")
+        self.used_statements += count
+
+    async def read(
+        self,
+        predicate: str,
+        params: dict[str, Any],
+        *,
+        point: bool = False,
+    ) -> list[dict[str, Any]]:
+        from server.core.ch_bounded import BoundedReadError, read_rows
+
+        maximum = min(1 if point else 256, 512 - self.fetched)
+        if maximum <= 0:
+            raise BoundedReadError("Descendant rows exceed their allowance")
+        self.statements(1)
+        dates = {"created_at", "expires_at", "revoked_at"}
+        projection = ", ".join(
+            f"toUnixTimestamp64Milli(toDateTime64({key}, 3)) AS {key}" if key in dates else key
+            for key in _SA_COLUMNS
+        )
+        # Reserve before awaiting: four point readers share this same finite pass.
+        self.fetched += maximum
+        rows = await read_rows(
+            "SELECT "
+            + projection
+            + " FROM (SELECT "
+            + ", ".join(_SA_COLUMNS)
+            + " FROM loom.service_accounts FINAL WHERE "
+            + predicate
+            + " LIMIT {limit:UInt32}) FORMAT JSONEachRow",
+            {**params, "limit": maximum + 1},
+            ch=self.ch,
+            deadline=self.deadline,
+            row_bytes=8191,
+            total_bytes=maximum * 8192,
+            max_rows=maximum,
+            tag="cell.each.subject_descendants",
+        )
+        # Charging the full row allowance covers whitespace and newlines across every read.
+        self.fetched -= maximum - len(rows)
+        for row in rows:
+            self._row(row)
+            subject = row["sa_subject"]
+            if subject not in self.roots and subject not in self.subjects:
+                if len(self.subjects) == 256:
+                    raise BoundedReadError("Descendant subjects exceed their allowance")
+                self.subjects.add(subject)
+        return rows
+
+    def _row(self, row: dict[str, Any]) -> None:
+        from server.core.ch_bounded import BoundedReadError
+
+        if set(row) != set(_SA_COLUMNS):
+            raise BoundedReadError("Malformed descendant row")
+        for key in (
+            "org",
+            "name",
+            "sa_subject",
+            "created_by",
+            "revoked_by",
+            "kind",
+            "client",
+            "ns_roles",
+            "saves_to",
+        ):
+            if type(row[key]) is not str:
+                raise BoundedReadError("Malformed descendant identity")
+        for key in ("namespaces", "roles", "lineage"):
+            if type(row[key]) is not list or any(type(value) is not str for value in row[key]):
+                raise BoundedReadError("Malformed descendant collection")
+        if (
+            type(row["version"]) is not int
+            or not 0 <= row["version"] < 2**64 - 1
+            or type(row["ttl_days"]) is not int
+            or type(row["inherit_creator_grants"]) not in (int, bool)
+            or row["inherit_creator_grants"] not in (0, 1)
+        ):
+            raise BoundedReadError("Malformed descendant row")
+        for key in ("created_at", "expires_at", "revoked_at"):
+            if row[key] is None and key != "created_at":
+                continue
+            if type(row[key]) is not int:
+                raise BoundedReadError("Malformed descendant timestamp")
+            try:
+                row[key] = datetime(1970, 1, 1) + timedelta(milliseconds=row[key])
+            except (ValueError, OverflowError) as error:
+                raise BoundedReadError("Malformed descendant timestamp") from error
+        row["live"] = row["revoked_at"] is None
+
+    async def cutoffs(self, subjects: list[str]) -> dict[str, int | None]:
+        from server.auth import revocation
+
+        self.statements((len(subjects) + 4) // 5)
+        return await revocation.cutoffs_bounded(
+            subjects,
+            permanent=True,
+            ch=self.ch,
+            deadline=self.deadline,
+        )
+
+    async def insert(self, row: dict[str, Any]) -> None:
+        from server.core.ch import set_query_tag, statement_timeout
+        from server.core.ch_bounded import BoundedReadError
+
+        remaining = min(2.0, self.deadline - time.monotonic())
+        if self.mutations >= 256 or remaining <= 0:
+            raise BoundedReadError("Descendant mutation allowance exhausted")
+        self.statements(1)
+        self.mutations += 1
+        set_query_tag("cell.each.subject_descendant_write")
+        async with asyncio.timeout(remaining):
+            with statement_timeout(remaining):
+                await self.ch.insert(
+                    "loom.service_accounts",
+                    [row],
+                    settings={
+                        "async_insert": 0,
+                        "wait_for_async_insert": 1,
+                        "max_memory_usage": 128 * 1024**2,
+                    },
+                )
+
+
+async def revoke_created_by_bounded(
+    subject: str,
+    *,
+    revoked_by: str,
+    ch: Any,
+    deadline: float,
+    progress: dict[str, int],
+) -> set[str]:
+    work = _RevocationWork(ch=ch, deadline=deadline, roots={subject})
+    try:
+        return await revoke_created_by([subject], revoked_by=revoked_by, work=work)
+    finally:
+        progress["tokens"] = len(work.confirmed_dead)
 
 
 __all__ = [

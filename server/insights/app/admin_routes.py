@@ -465,66 +465,17 @@ async def admin_budget_set(input: BudgetSetInput) -> BudgetSetOutput:
     With `consumer`: {consumer, op | "*", budget_ms | budget: "3x"}
     installs for that consumer only; {consumer, op, clear: true} removes it.
     """
-    from server.core import runtime_overrides as ro
-    from server.core.numbers import parse_budget_value
-    from server.observability.budgets import get_overrides, stored_ms
+    from server.insights.app.limit_changes import change_budget
 
     set_query_tag("admin.budget_set")
-    overrides = get_overrides()
-    if input.consumer:
-        if input.clear:
-            await ro.clear(ro.BUDGET_CONSUMER, (input.consumer, input.op or "*"))
-            overrides.clear_for_consumer(input.consumer, input.op)
-            return BudgetSetOutput(ok=True, cleared=True, op=input.op, consumer=input.consumer)
-        value: int | str | None = input.budget if input.budget is not None else input.budget_ms
-        if value is None:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": "budget_ms (ms) or budget ('<n>x') required when clear=false",
-                },
-            )
-        if parse_budget_value(value) is None:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VALIDATION_FAILED",
-                    "message": "budget must be a non-negative integer (ms) or '<n>x'",
-                },
-            )
-        # Stored first: a failed write changes no process.
-        await ro.put(ro.BUDGET_CONSUMER, (input.consumer, input.op or "*"), value)
-        overrides.set_for_consumer(input.consumer, input.op, value)
-        return BudgetSetOutput(
-            ok=True,
-            op=input.op,
-            consumer=input.consumer,
-            budget=value,
-            budget_ms=value if isinstance(value, int) else None,
-        )
-    if input.clear:
-        await ro.clear(ro.BUDGET_OP, (input.op,))
-        overrides.clear(input.op)
-        return BudgetSetOutput.model_validate({"ok": True, "cleared": True, "op": input.op})
-    if input.budget_ms is None:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "VALIDATION_FAILED",
-                "message": "budget_ms required when clear=false",
-            },
-        )
-    try:
-        stored_ms(input.budget_ms)  # refused before it is stored
-    except ValueError as e:
-        raise HTTPException(
-            status_code=422, detail={"code": "VALIDATION_FAILED", "message": str(e)}
-        ) from e
-    await ro.put(ro.BUDGET_OP, (input.op,), input.budget_ms)
-    overrides.set(input.op, input.budget_ms)
     return BudgetSetOutput.model_validate(
-        {"ok": True, "op": input.op, "budget_ms": input.budget_ms}
+        await change_budget(
+            input.op,
+            consumer=input.consumer,
+            budget_ms=input.budget_ms,
+            budget=input.budget,
+            clear=input.clear,
+        )
     )
 
 
@@ -557,20 +508,20 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
         from server.auth import tenancy
 
         await tenancy.ensure_held(org, None)
+    if ns:
+        from server.insights.app.limit_changes import change_namespace_rate
+
+        return RatelimitSetOutput.model_validate(
+            await change_namespace_rate(
+                ns,
+                input.op_class,
+                capacity=input.capacity,
+                rate=input.rate,
+                clear=input.clear,
+            )
+        )
     limiter = get_limiter()
     if input.clear:
-        if ns:
-            await ro.clear(ro.RATELIMIT_NAMESPACE, (ns, input.op_class))
-            limiter.clear_namespace_limit(ns, input.op_class)
-            return RatelimitSetOutput.model_validate(
-                {
-                    "ok": True,
-                    "cleared": True,
-                    "scope": "namespace",
-                    "key": ns,
-                    "op_class": input.op_class,
-                }
-            )
         await ro.clear(ro.RATELIMIT_ORG, (org, input.op_class))
         limiter.clear_org_limit(org, input.op_class)
         return RatelimitSetOutput.model_validate(
@@ -591,23 +542,6 @@ async def admin_ratelimit_set(input: RatelimitSetInput) -> RatelimitSetOutput:
             },
         )
     value = {"capacity": input.capacity, "rate": input.rate}
-    if ns:
-        await ro.put(ro.RATELIMIT_NAMESPACE, (ns, input.op_class), value)
-        limiter.set_namespace_limit(
-            ns,
-            input.op_class,
-            Limit(capacity=input.capacity, rate=input.rate),
-        )
-        return RatelimitSetOutput.model_validate(
-            {
-                "ok": True,
-                "scope": "namespace",
-                "key": ns,
-                "op_class": input.op_class,
-                "capacity": input.capacity,
-                "rate": input.rate,
-            }
-        )
     await ro.put(ro.RATELIMIT_ORG, (org, input.op_class), value)
     limiter.set_org_limit(
         org,

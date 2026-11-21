@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 from server.core.datetimes import naive_utc_now_seconds
 from server.core.error_summary import error_summary
@@ -17,6 +19,7 @@ from server.memory.api.models_blacklist import (
     BlacklistRemoveOutput,
     BlacklistSweepInput,
     BlacklistSweepOutput,
+    PatternType,
     _BlacklistRow,
 )
 from server.memory.app.blacklist_guard import (
@@ -135,9 +138,23 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
         await _reject_bad_regex(input.pattern, input.scope, *stored)
 
     pattern_id = str(uuid.uuid4())
+    now = await _store_pattern(input, pattern_id)
+    if not input.sweep:
+        return BlacklistAddOutput(pattern_id=pattern_id, created_at=now)
+    return await _sweep_added(input, pattern_id, now)
+
+
+async def _store_pattern(
+    input: BlacklistAddInput,
+    pattern_id: str,
+    *,
+    deadline: float | None = None,
+    ch: Any = None,
+) -> datetime:
     now = naive_utc_now_seconds()
-    stored_org, stored_ns = stored
+    stored_org, stored_ns = _scope_args(input.scope, input.org, input.namespace)
     created_by = _stamped_author(input.created_by)
+    bounded: dict[str, Any] = {} if deadline is None else {"deadline": deadline, "ch": ch}
     await blacklist_repo.insert_row(
         {
             "pattern_id": pattern_id,
@@ -151,12 +168,17 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
             "hit_count": 0,
             "created_at": now,
             "tombstoned_at": None,
-        }
+        },
+        **bounded,
     )
     invalidate_cache()
-    await _bump_version(updated_by=f"add:{created_by or 'unknown'}", org=stored_org)
-    if not input.sweep:
-        return BlacklistAddOutput(pattern_id=pattern_id, created_at=now)
+    await _bump_version(updated_by=f"add:{created_by or 'unknown'}", org=stored_org, **bounded)
+    return now
+
+
+async def _sweep_added(
+    input: BlacklistAddInput, pattern_id: str, now: datetime
+) -> BlacklistAddOutput:
     # The pattern reaches the rows written before it.
     from server.memory.app.blacklist_sweep import SweepResult, sweep_error_text, sweep_pattern
 
@@ -180,6 +202,113 @@ async def handle_blacklist_add(input: BlacklistAddInput) -> BlacklistAddOutput:
         swept_truncated=res.truncated,
         sweep_error=res.error,
     )
+
+
+def require_global_authority(verb: str) -> None:
+    from server.auth.context import current_auth
+    from server.core.errors import AuthInsufficientError
+
+    if current_auth() is None:
+        raise AuthInsufficientError("Authenticated global authority is required")
+    _require_scope_authority("global", verb, row_org="*")
+
+
+async def add_global_bounded(
+    pattern_id: str,
+    pattern: str,
+    pattern_type: PatternType,
+    reason: str,
+    *,
+    ch: Any,
+    deadline: float,
+) -> BlacklistAddOutput:
+    from server.core import leases
+    from server.core.ch import sequential_reads, statement_timeout
+    from server.core.ch_bounded import BoundedReadError
+
+    require_global_authority("add")
+    parsed = uuid.UUID(pattern_id)
+    if str(parsed) != pattern_id or parsed.version != 4:
+        raise BoundedReadError("A fresh canonical pattern identity is required")
+    input = BlacklistAddInput(
+        org="*",
+        namespace="*",
+        scope="global",
+        sweep=False,
+        pattern=pattern,
+        pattern_type=pattern_type,
+        reason=reason,
+    )
+    await blacklist_repo.check_bounded_storage(ch=ch, deadline=deadline)
+    if pattern_type == "regex":
+        await _check_global_regex(pattern, ch=ch, deadline=deadline)
+    async with leases.holding(
+        "blacklist-pattern:" + pattern_id,
+        ttl_s=60,
+        wait_s=0,
+        ch=ch,
+        deadline=deadline,
+        confirm_release=True,
+    ) as held:
+        if not held:
+            raise BoundedReadError("The pattern identity is unavailable")
+        with (
+            sequential_reads(),
+            statement_timeout(min(2.0, max(0.001, deadline - time.monotonic()))),
+        ):
+            if await blacklist_repo.collision_bounded(pattern_id, ch=ch, deadline=deadline):
+                raise BoundedReadError("The pattern identity is unavailable")
+            now = await _store_pattern(input, pattern_id, ch=ch, deadline=deadline)
+    return BlacklistAddOutput(pattern_id=pattern_id, created_at=now)
+
+
+async def _check_global_regex(pattern: str, *, ch: Any, deadline: float) -> None:
+    from server.core.ch import sequential_reads
+    from server.core.ch_bounded import BoundedReadError
+    from server.core.errors import ValidationError
+
+    try:
+        total = compile_regex(pattern).programsize
+    except ValidationError as error:
+        raise BoundedReadError("The global regex is unsupported") from error
+    with sequential_reads():
+        patterns = await blacklist_repo.global_regexes_bounded(ch=ch, deadline=deadline)
+    for stored in patterns:
+        try:
+            total += compile_regex(stored).programsize
+        except ValidationError:
+            continue  # The ordinary cache likewise excludes invalid stored programmes.
+        if total > REGEX_PROGRAM_PER_SCOPE:
+            raise BoundedReadError("The global regex programme exceeds its allowance")
+    if total > REGEX_PROGRAM_PER_SCOPE:
+        raise BoundedReadError("The global regex programme exceeds its allowance")
+
+
+async def list_global_bounded(limit: int, *, ch: Any, deadline: float) -> dict[str, Any]:
+    from server.core.ch import sequential_reads
+
+    require_global_authority("list")
+    await blacklist_repo.check_bounded_storage(ch=ch, deadline=deadline)
+    with sequential_reads():
+        rows = await blacklist_repo.global_list_bounded(limit, ch=ch, deadline=deadline)
+    return {
+        "rows": [
+            {
+                "pattern_id": row["pattern_id"],
+                "pattern": row["pattern"],
+                "pattern_type": row["pattern_type"],
+                "reason": row["reason"],
+                "created_by": row["created_by"],
+                "hit_count": row["hit_count"],
+                "last_hit_at": row["last_hit_at"].isoformat()
+                if row["last_hit_at"] is not None
+                else None,
+                "created_at": row["created_at"].isoformat(),
+            }
+            for row in rows[:limit]
+        ],
+        "truncated": len(rows) > limit,
+    }
 
 
 async def handle_blacklist_sweep(input: BlacklistSweepInput) -> BlacklistSweepOutput:
@@ -298,7 +427,11 @@ async def handle_blacklist_remove(
             # An org-scoped pattern of another org is not addressable here.
             return BlacklistRemoveOutput(removed=False)
         _require_scope_authority(scope, "remove", row_org=row_org)
-    await blacklist_repo.tombstone_pattern(input.pattern_id, now)
+    removed = await blacklist_repo.tombstone_pattern(
+        input.pattern_id, now, selected=(row_org, row_ns, scope)
+    )
+    if not removed:
+        return BlacklistRemoveOutput(removed=False)
     invalidate_cache()
     await _bump_version(updated_by=f"remove:{input.removed_by or 'unknown'}", org=row_org)
     return BlacklistRemoveOutput(removed=True, removed_at=now)

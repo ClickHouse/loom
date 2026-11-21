@@ -220,12 +220,45 @@ def _refresh_row(rid: str, g: Grant, version: int) -> dict[str, Any]:
     }
 
 
-async def session_families(subject: str) -> dict[str, int]:
+async def session_families(
+    subject: str,
+    *,
+    deadline: float | None = None,
+    ch: Any = None,
+) -> dict[str, int]:
     """The sign-in sessions of `subject`, in any org, that hold a refresh token
     not yet expired, ended ones included: each family, and when its newest
     refresh token was written (unix seconds), which a refresh is judged by."""
     from server.core.ch import get_client
 
+    if deadline is not None:
+        from server.core.ch_bounded import BoundedReadError, read_rows
+
+        rows = await read_rows(
+            f"SELECT family, toUnixTimestamp(max(created_at)) AS at FROM {_T} FINAL "
+            "WHERE record_type = {t:String} AND subject = {s:String} AND family != '' "
+            "AND expires_at > toUInt32(now()) GROUP BY family LIMIT 1025 FORMAT JSONEachRow",
+            {"t": _REFRESH_TYPE, "s": subject},
+            ch=ch or get_client(),
+            deadline=deadline,
+            row_bytes=512,
+            total_bytes=256 * 1024,
+            max_rows=1024,
+            tag="cell.each.subject_sessions",
+        )
+        found: dict[str, int] = {}
+        for row in rows:
+            if (
+                set(row) != {"family", "at"}
+                or type(row["family"]) is not str
+                or not row["family"]
+                or row["family"] in found
+                or type(row["at"]) is not int
+                or not 0 <= row["at"] <= 2**32 - 1
+            ):
+                raise BoundedReadError("Malformed session-family view")
+            found[row["family"]] = row["at"]
+        return found
     rows = await get_client().query_all(
         f"SELECT family, toUnixTimestamp(max(created_at)) AS at FROM {_T} FINAL "
         "WHERE record_type = {t:String} AND subject = {s:String} AND family != '' "

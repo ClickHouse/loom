@@ -33,7 +33,7 @@ from uuid import UUID
 from server.core import cell as cell_state
 from server.core import pg
 from server.core.paths import ROUTER_MIGRATIONS_DIR
-from server.router import fingerprints
+from server.router import cell_admin, fingerprints
 from server.settings import settings
 
 # The directory's own migration lock: never the memory authority's.
@@ -291,6 +291,108 @@ _CELL = f"SELECT {_CELL_COLUMNS} FROM loom_router.cells"
 _REGISTERED = ("bucket", "bucket_prefix", "probe_url", "upstream_url")
 _CELL_REGISTERED = f"SELECT {_CELL_COLUMNS}, {', '.join(_REGISTERED)} FROM loom_router.cells"
 _ROUTING = "SELECT cell, host, state, is_first, issuers, upstream_url FROM loom_router.cells"
+
+# Public administration identities are projected before driver materialization. The
+# generation is the update foundation's existing UUID, never a locally invented counter.
+_ADMINISTRATION = (
+    "cell, left(deployment_id, 257) AS deployment_id, "
+    "left(break_glass::text, 1025) AS administration"
+)
+_ADMINISTRATION_READ_S = 2.0  # not a setting: fresh identity reads fit the fixed action envelope
+_ADMIN_TARGET = (
+    f"{_ADMINISTRATION}, left(host, 513) AS host, state, mode, mutation_generation, "
+    "CASE WHEN octet_length(current_fp::text) <= 65536 "
+    "THEN encode(sha256(convert_to(current_fp::text, 'UTF8')), 'hex') END AS current_digest, "
+    "CASE WHEN next_fp IS NOT NULL AND octet_length(next_fp::text) <= 65536 "
+    "THEN encode(sha256(convert_to(next_fp::text, 'UTF8')), 'hex') "
+    "WHEN next_fp IS NOT NULL THEN 'oversized' END AS next_digest"
+)
+
+
+def _administration_projection(selection: str) -> str:
+    # A NULL payload signals excess rather than filtering a cell out of the census.
+    return (
+        "SELECT CASE WHEN octet_length(row_to_json(selected)::text) <= 1024 "
+        "THEN row_to_json(selected)::text END AS payload FROM ("
+        f"SELECT {_ADMIN_TARGET} FROM loom_router.cells {selection}) AS selected "
+        "ORDER BY selected.cell"
+    )
+
+
+@asynccontextmanager
+async def _administration_read() -> AsyncIterator[Any]:
+    """One fresh bounded read, with no fleet credential or successful-state cache."""
+    async with _reading(), asyncio.timeout(_ADMINISTRATION_READ_S), _connection() as conn:
+        async with conn.transaction(readonly=True):
+            await conn.execute("SET LOCAL statement_timeout = '2s'")
+            yield conn
+
+
+async def administration_identity(name: str, presented: str) -> dict[str, Any] | None:
+    """Authenticate this exact row before exposing its two public bot identities."""
+    async with _administration_read() as conn:
+        row = await conn.fetchrow(
+            f"SELECT {_ADMINISTRATION}, credential_sha256, credential_next_sha256 "
+            "FROM loom_router.cells WHERE cell = $1 LIMIT 1",
+            name,
+            timeout=_ADMINISTRATION_READ_S,
+        )
+        if row is None or not holds(
+            presented,
+            [value for value in (row["credential_sha256"], row["credential_next_sha256"]) if value],
+        ):
+            return None
+        return cell_admin.identity(row)
+
+
+async def administration_cells(name: str | None = None) -> dict[str, Any]:
+    """Require every registered cell ready, including cells closed to new placements."""
+    async with _administration_read() as conn:
+        if name is not None:
+            row = await conn.fetchrow(
+                _administration_projection("WHERE cell = $1 LIMIT 1"),
+                name,
+                timeout=_ADMINISTRATION_READ_S,
+            )
+            if row is None:
+                raise cell_admin.InvalidAdministration("No such administration cell")
+            return {
+                "version": 1,
+                "cell": cell_admin.target(cell_admin.selected_record(row["payload"])),
+            }
+        cells: list[dict[str, Any]] = []
+        size = len(b'{"version":1,"cells":[]}')
+        query = _administration_projection("ORDER BY cell LIMIT 4097")
+        async for row in conn.cursor(query, prefetch=1, timeout=_ADMINISTRATION_READ_S):
+            target = cell_admin.target(cell_admin.selected_record(row["payload"]))
+            size += len(
+                json.dumps(target, ensure_ascii=True, separators=(",", ":")).encode()
+            ) + bool(cells)
+            if len(cells) >= cell_admin.MAX_CELLS or size > cell_admin.MAX_CENSUS_BYTES:
+                raise cell_admin.InvalidAdministration("Administration census is too large")
+            cells.append(target)
+        return cell_admin.census_targets(cells)
+
+
+async def set_administration(
+    cell_name: str, bots: list[dict[str, str]], *, expected: Control
+) -> dict[str, Any]:
+    """Record only the public pair under the existing directory claim and audit."""
+    encoded = json.dumps(bots, ensure_ascii=True, separators=(",", ":"))
+    public = cell_admin.public_pair(encoded)
+
+    async def change_locked(conn: Any, found: Attaching) -> dict[str, Any]:
+        if found.row.state != "serving" or found.row.mode != "enforced":
+            raise OperatorRefused("automation provisioning requires a serving, enforced cell")
+        await conn.execute(
+            "UPDATE loom_router.cells SET break_glass = $2, updated_at = now() WHERE cell = $1",
+            cell_name,
+            bots,
+        )
+        await _audit(conn, "administration", {"cell": cell_name, "bots": bots})
+        return {"version": 1, "cell": cell_name, "deployment_id": found.row.deployment_id, **public}
+
+    return await _attach_change(cell_name, expected, change_locked)
 
 
 _WINNER = (

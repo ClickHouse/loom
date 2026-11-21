@@ -386,9 +386,9 @@ from server.observability import otel as _otel  # noqa: E402
 
 _otel.init_otel(app)
 
-# Request-body cap — the one bounded input at the front door (413 before any
-# parser runs; LOOM_MAX_REQUEST_BYTES, 0 disables). Added first, so it is the
-# innermost middleware: the 413 still passes out through the header middleware.
+# Request-body caps reject oversized input before parsing. LOOM_MAX_REQUEST_BYTES
+# is the global cap; 0 disables only that cap. Fixed cell administration caps remain.
+# This middleware is innermost so 413 responses pass through header middleware.
 from server.transport.body_limit import BodyLimitMiddleware as _BodyLimit  # noqa: E402
 
 # An upload's route bounds its own body (LOOM_KNOWLEDGE_UPLOAD_MAX_BYTES).
@@ -575,10 +575,14 @@ _scim_routes.attach(app)
 
 from server.insights.app.admin_routes import admin_router as _admin_router  # noqa: E402
 from server.insights.app.admin_routes import org_admin_router as _org_admin_router  # noqa: E402
+from server.insights.app.cell_admin_routes import (  # noqa: E402
+    cell_admin_router as _cell_admin_router,
+)
 from server.insights.app.provider_routes import provider_router as _provider_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_org_admin_router)
+app.include_router(_cell_admin_router)
 app.include_router(_provider_router)
 
 from server.identity.app.admin_account_routes import router as _account_admin_router  # noqa: E402

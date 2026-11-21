@@ -3763,7 +3763,7 @@
         "max_request_bytes": {
           "default": 33554432,
           "type": "integer",
-          "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
+          "description": "Global request-body cap, bytes, enforced by ASGI middleware before parsing (413 PAYLOAD_TOO_LARGE). 0 disables the global cap; fixed cell administration caps remain."
         },
         "mcp_always_load_tools": {
           "default": "",

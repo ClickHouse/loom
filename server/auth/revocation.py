@@ -279,6 +279,9 @@ async def revoke(
     reason: str = "",
     revoked_by: str = "",
     issued_before: datetime | None = None,
+    deadline: float | None = None,
+    ch: Any = None,
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Revoke every token whose `jti` OR `sub` equals `token_id` and update
     this process's snapshot so `is_revoked` answers True at once.
@@ -306,6 +309,7 @@ async def revoke(
         revoked_by=revoked_by,
         issued_before=issued_before,
         reread=False,
+        **({} if deadline is None else {"deadline": deadline, "ch": ch, "progress": progress}),
     )
 
 
@@ -338,9 +342,14 @@ async def _write(
     revoked_by: str,
     issued_before: datetime | None,
     reread: bool,
+    deadline: float | None = None,
+    ch: Any = None,
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     from server.core.ch import get_client
 
+    if deadline is not None:
+        check_bounded_bookkeeping(key)
     now = datetime.now(UTC).replace(microsecond=0, tzinfo=None)
     expires_at = revocation_expiry(expires_at)
     if issued_before is not None and issued_before.tzinfo is not None:
@@ -352,26 +361,175 @@ async def _write(
         "reason": reason or "",
         "revoked_by": revoked_by or "",
         "issued_before": issued_before,
-        "version": await _next_version(key),
+        "version": (
+            await _next_version(key)
+            if deadline is None
+            else await _bounded_version(key, ch=ch or get_client(), deadline=deadline)
+        ),
     }
-    await get_client().insert("loom.revoked_tokens", [row])
-    remember_row(row)
+    if deadline is None:
+        await get_client().insert("loom.revoked_tokens", [row])
+    else:
+        await _bounded_insert(row, ch=ch or get_client(), deadline=deadline)
+    if progress is not None:
+        progress["recorded"] = True
+    if deadline is None:
+        remember_row(row)
+    else:
+        remember_row(row, bounded=True)
     if reread:  # a caller writing several re-reads once, after them
         await refresh()
     return row
 
 
 @asynccontextmanager
-async def subject_change(subject: str) -> AsyncIterator[None]:
+async def subject_change(
+    subject: str,
+    *,
+    deadline: float | None = None,
+    ch: Any = None,
+) -> AsyncIterator[None]:
     """Serialize subject revocations across every writer and replica."""
     from server.core import leases
     from server.core.errors import GrantBusyError
 
     name = f"subject-revocation:{uuid.uuid5(_LEASE_NAMESPACE, subject)}"
-    async with leases.holding(name, ttl_s=60.0, wait_s=10.0) as held:
+    bounded: dict[str, Any] = (
+        {}
+        if deadline is None
+        else {
+            "deadline": deadline,
+            "confirm_release": True,
+            "ch": ch,
+        }
+    )
+    async with leases.holding(
+        name, ttl_s=60.0, wait_s=10.0 if deadline is None else 0, **bounded
+    ) as held:
         if not held:
             raise GrantBusyError("another revocation of this subject is running; retry shortly")
         yield
+
+
+async def _bounded_version(key: str, *, ch: Any, deadline: float) -> int:
+    from server.core.versions import next_version
+
+    return await next_version(ch, "loom.revoked_tokens", {"jti": key}, deadline=deadline)
+
+
+async def _bounded_insert(row: dict[str, Any], *, ch: Any, deadline: float) -> None:
+    from server.core.ch import set_query_tag, statement_timeout
+    from server.core.ch_bounded import BoundedReadError
+
+    remaining = min(2.0, deadline - time.monotonic())
+    if remaining <= 0:
+        raise BoundedReadError("Revocation write allowance exhausted")
+    check_bounded_bookkeeping(row["jti"])
+    set_query_tag("cell.each.subject_write")
+    async with asyncio.timeout(remaining):
+        with statement_timeout(remaining):
+            await ch.insert(
+                "loom.revoked_tokens",
+                [row],
+                settings={
+                    "async_insert": 0,
+                    "wait_for_async_insert": 1,
+                    "max_memory_usage": 128 * 1024**2,
+                },
+            )
+
+
+async def stored_bounded(key: str, *, deadline: float, ch: Any) -> dict[str, Any] | None:
+    from server.core.ch_bounded import BoundedReadError, read_rows
+
+    rows = await read_rows(
+        "SELECT jti, reason, revoked_by, version, "
+        "toUnixTimestamp64Milli(revoked_at) AS revoked_at, "
+        "toUnixTimestamp64Milli(expires_at) AS expires_at, "
+        "toUnixTimestamp64Milli(issued_before) AS issued_before FROM ("
+        "SELECT jti, reason, revoked_by, version, revoked_at, expires_at, issued_before "
+        "FROM loom.revoked_tokens FINAL WHERE jti = {key:String} AND expires_at > now() "
+        "LIMIT 2) FORMAT JSONEachRow",
+        {"key": key},
+        ch=ch,
+        deadline=deadline,
+        row_bytes=1024,
+        total_bytes=1024,
+        max_rows=1,
+        tag="cell.each.subject_record",
+    )
+    if not rows:
+        return None
+    row = rows[0]
+    if (
+        set(row)
+        != {"jti", "reason", "revoked_by", "version", "revoked_at", "expires_at", "issued_before"}
+        or row["jti"] != key
+        or type(row["reason"]) is not str
+        or type(row["revoked_by"]) is not str
+        or type(row["version"]) is not int
+        or not 0 <= row["version"] <= 2**64 - 1
+    ):
+        raise BoundedReadError("Malformed subject record")
+    _bounded_times(row, ("revoked_at", "expires_at", "issued_before"))
+    return row
+
+
+def _bounded_times(row: dict[str, Any], fields: tuple[str, ...]) -> None:
+    from server.core.ch_bounded import BoundedReadError
+
+    for field in fields:
+        if row[field] is None and field == "issued_before":
+            continue
+        if type(row[field]) is not int:
+            raise BoundedReadError("Malformed revocation timestamp")
+        try:
+            row[field] = datetime(1970, 1, 1) + timedelta(milliseconds=row[field])
+        except (ValueError, OverflowError) as error:
+            raise BoundedReadError("Malformed revocation timestamp") from error
+
+
+async def cutoffs_bounded(
+    subjects: list[str],
+    *,
+    deadline: float,
+    ch: Any,
+    permanent: bool = False,
+) -> dict[str, int | None]:
+    from server.core.ch_bounded import BoundedReadError, read_rows
+
+    if len(subjects) > 100 or any(len(subject.encode()) > 512 for subject in subjects):
+        raise BoundedReadError("Revocation key set exceeds its allowance")
+    found: dict[str, int | None] = {}
+    for start in range(0, len(subjects), 5):
+        keys = _keys_of(subjects[start : start + 5])
+        rows = await read_rows(
+            "SELECT jti, toUnixTimestamp64Milli(issued_before) AS issued_before, "
+            "toUnixTimestamp64Milli(expires_at) AS expires_at FROM ("
+            "SELECT jti, issued_before, expires_at FROM loom.revoked_tokens FINAL "
+            "WHERE jti IN {keys:Array(String)} AND expires_at > now() "
+            "LIMIT {limit:UInt32}) FORMAT JSONEachRow",
+            {"keys": keys, "limit": len(keys) + 1},
+            ch=ch,
+            deadline=deadline,
+            row_bytes=1024,
+            total_bytes=65536,
+            max_rows=len(keys),
+            tag="cell.each.subject_cutoffs",
+        )
+        seen: set[str] = set()
+        for row in rows:
+            if (
+                set(row) != {"jti", "issued_before", "expires_at"}
+                or type(row["jti"]) is not str
+                or row["jti"] not in keys
+                or row["jti"] in seen
+            ):
+                raise BoundedReadError("Malformed revocation view")
+            seen.add(row["jti"])
+            _bounded_times(row, ("issued_before", "expires_at"))
+        found.update(_cutoff_rows(rows, permanent=permanent))
+    return found
 
 
 async def cut_off(
@@ -452,11 +610,13 @@ def revoked_here(jti: str) -> None:
     _apply_locally(jti, None)
 
 
-def remember_row(row: dict[str, Any]) -> None:
+def remember_row(row: dict[str, Any], *, bounded: bool = False) -> None:
     """Apply a committed or retained row without advancing the full snapshot's age."""
     global _cut_off
 
     key = str(row["jti"])
+    if bounded:
+        check_bounded_bookkeeping(key)
     cutoff = _cutoff_seconds(row["issued_before"])
     version = int(row["version"])
     if key.startswith(CUTOFF_PREFIX):
@@ -465,6 +625,33 @@ def remember_row(row: dict[str, Any]) -> None:
         _remember("cut_off", subject, cutoff, version)
     else:
         _apply_locally(key, cutoff, version)
+
+
+def check_bounded_bookkeeping(key: str) -> None:
+    """Each bounds the existing copy-on-write cache work, not the durable table.
+
+    Ordinary revocations retain their normal behavior for larger snapshots.
+    A failed recheck after the insert leaves the action unsettled.
+    """
+    from server.core.ch_bounded import BoundedReadError
+
+    if (
+        any(
+            len(collection) > 4096
+            for collection in (
+                _revoked_jtis,
+                _revoked_folded,
+                _revoked_before,
+                _cut_off,
+            )
+        )
+        or len(_recent) >= 4096
+        or len(_revoked_jtis) == 4096
+        and key not in _revoked_jtis
+        or len(_revoked_folded) == 4096
+        and key.lower() not in _revoked_folded
+    ):
+        raise BoundedReadError("Local revocation bookkeeping exceeds its allowance")
 
 
 def _apply_locally(key: str, cutoff: int | None, version: int | None = None) -> None:
@@ -519,10 +706,14 @@ async def cutoffs(subjects: list[str], *, permanent: bool = False) -> dict[str, 
     """Each of `subjects` that is revoked, read from ClickHouse as `refresh`
     reads it: None when outright, else the cutoff (unix seconds) a token must
     be issued at or after to live. `permanent` excludes temporary suspensions."""
-    found: dict[str, int | None] = {}
     if not subjects:
-        return found
-    for r in await _read_revocations(_keys_of(subjects)):
+        return {}
+    return _cutoff_rows(await _read_revocations(_keys_of(subjects)), permanent=permanent)
+
+
+def _cutoff_rows(rows: list[dict[str, Any]], *, permanent: bool) -> dict[str, int | None]:
+    found: dict[str, int | None] = {}
+    for r in rows:
         if permanent and not never_lapses(r):
             continue
         key, cutoff = str(r["jti"]), _cutoff_seconds(r.get("issued_before"))

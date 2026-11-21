@@ -50,6 +50,6 @@ Imports run one way: `app` imports the family modules; a family module never
 imports `app`.
 """
 
-from server.cli.app import main
+from server.cli._entrypoint import main
 
 __all__ = ["main"]
