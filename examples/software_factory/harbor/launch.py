@@ -373,7 +373,7 @@ def container_args(record, action, name):
             root,
         ]
     )
-    if action != "cleanup":
+    if action != "cleanup" and record["budget_usd"] is not None:
         args.extend(["--budget-usd", record["budget_usd"]])
     return args
 
@@ -476,8 +476,8 @@ def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="
     output, root = requested.resolve(), Path(root).resolve()
     descriptor = load_evaluation(root, evaluation)
     if action == "run":
-        if not amount or not docker.key or any(c.isspace() for c in docker.key):
-            raise LaunchError("Run requires an explicit budget and ANTHROPIC_API_KEY")
+        if not docker.key or any(c.isspace() for c in docker.key):
+            raise LaunchError("Run requires ANTHROPIC_API_KEY")
         if output.exists():
             raise LaunchError("Run requires a fresh output path; use explicit resume or cleanup")
         if not (root / HERE / "one_shot.py").is_file():
@@ -586,7 +586,7 @@ def main(argv=None):
         child.add_argument("--output", required=True)
         child.add_argument("--eval", default="flask", dest="evaluation")
         if name != "cleanup":
-            child.add_argument("--budget-usd", type=budget, required=True)
+            child.add_argument("--budget-usd", type=budget)
     args = parser.parse_args(argv)
     if args.command == "plan":
         description = plan(evaluation=args.evaluation)

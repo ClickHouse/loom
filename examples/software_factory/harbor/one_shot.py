@@ -92,8 +92,8 @@ def execute(args):
         receipt = runtime.cleanup()
         write(output / "cleanup-receipt.json", receipt)
         return receipt
-    if not args.budget_usd or not os.environ.get("ANTHROPIC_API_KEY"):
-        raise PermissionError("An explicit provider allowance and API credential are required")
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        raise PermissionError("An API credential is required")
     if launch["budget_usd"] != args.budget_usd:
         raise PermissionError("Provider allowance differs from the launch record")
     if launch["evaluation"] != args.eval:

@@ -7,10 +7,10 @@ or contacting a provider:
 python3 -m examples.software_factory plan
 ```
 
-Run with a local Docker daemon and an explicit provider budget:
+Run with a local Docker daemon:
 
 ```bash
-ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run --budget-usd 10
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run
 ```
 
 The launcher builds pinned controller dependencies, mounts source read-only, and
@@ -18,7 +18,8 @@ automates the inner setup and evaluation. The plan contains six cases, five arms
 three repeats and twelve separate A/A controls: 102 attempts, plus 24 blind
 fixed-only judgments using the same model. Embedding uses the checked local
 `bge-small` weights. The plan reports Loom's separate native Anthropic model
-default; its internal requests share the provider budget. History cases expose
+default; all provider requests contribute to the cost ledger. Runs have no dollar cap
+unless `--budget-usd` is supplied. History cases expose
 100 short project records through tools,
 with the same plain notes available to every arm; cold cases start empty.
 
@@ -26,7 +27,7 @@ Interrupted work is never retried automatically. Explicit resume preserves the
 frozen source and budget, and the inner controller refuses unsettled paid requests:
 
 ```bash
-ANTHROPIC_API_KEY=... python3 -m examples.software_factory resume --output ./factory-run --budget-usd 10
+ANTHROPIC_API_KEY=... python3 -m examples.software_factory resume --output ./factory-run
 python3 -m examples.software_factory cleanup --output ./factory-run
 ```
 

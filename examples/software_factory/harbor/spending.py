@@ -19,14 +19,15 @@ PRICE_BASIS = "Frozen standard uncached list prices; not an invoice or infrastru
 
 
 class Spending:
-    def __init__(self, path: Path, *, dollars: str, model: str, native_model="claude-haiku-5-5"):
+    def __init__(
+        self, path: Path, *, dollars: str | None, model: str, native_model="claude-haiku-5-5"
+    ):
         try:
-            self.limit = Decimal(dollars).normalize()
+            self.limit = None if dollars is None else Decimal(dollars).normalize()
         except InvalidOperation:
             raise ValueError("Freeze a finite positive allowance") from None
         if (
-            not self.limit.is_finite()
-            or self.limit <= 0
+            (self.limit is not None and (not self.limit.is_finite() or self.limit <= 0))
             or model != "claude-haiku-5-5"
             or native_model != "claude-haiku-5-5"
         ):
@@ -60,7 +61,7 @@ class Spending:
                 if (
                     row.get("model") != model
                     or row.get("native_model") != native_model
-                    or row.get("limit_usd") != str(self.limit)
+                    or row.get("limit_usd") != (None if self.limit is None else str(self.limit))
                 ):
                     raise PermissionError("Spending model or allowance changed")
                 self._apply(row)
@@ -156,9 +157,8 @@ class Spending:
             expected = (
                 row["input_token_bound"] * incoming + row["output_token_bound"] * outgoing
             ) / 1000000
-            if (
-                Decimal(row["reserved_usd"]) != expected
-                or self.spent + self._reserved() + expected > self.limit
+            if Decimal(row["reserved_usd"]) != expected or (
+                self.limit is not None and self.spent + self._reserved() + expected > self.limit
             ):
                 raise PermissionError("Reservation exceeds its frozen allowance")
             self.pending[ticket] = row
@@ -213,7 +213,7 @@ class Spending:
             "phase": self._phase,
             "model": self.model,
             "native_model": self.native_model,
-            "limit_usd": str(self.limit),
+            "limit_usd": None if self.limit is None else str(self.limit),
             **fields,
         }
         try:
@@ -258,7 +258,7 @@ class Spending:
             incoming = size + 4096
             rates = self.rates(payload["model"], incoming, ceiling=True)
             ceiling = (incoming * rates[0] + output * rates[1]) / 1000000
-            if self.spent + self._reserved() + ceiling > self.limit:
+            if self.limit is not None and self.spent + self._reserved() + ceiling > self.limit:
                 raise PermissionError("Provider allowance cannot cover this request")
             ticket = len(self.rows)
             self._append(
@@ -362,8 +362,12 @@ class Spending:
                     groups[group][row[key]].append(row)
             return {
                 **total(reservations),
-                "limit_usd": float(self.limit),
-                "remaining_usd": float(self.limit - self.spent - self._reserved()),
+                "limit_usd": None if self.limit is None else float(self.limit),
+                "remaining_usd": (
+                    None
+                    if self.limit is None
+                    else float(self.limit - self.spent - self._reserved())
+                ),
                 "blocked": self.blocked,
                 "complete": not self.pending and not self.blocked,
                 "unattributed_requests": sum(

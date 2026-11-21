@@ -204,6 +204,7 @@ class PublicLauncher(unittest.TestCase):
 
     def test_budget_and_existing_output_refuse_before_docker(self):
         docker = FakeDocker()
+        docker.key = ""
         with self.assertRaises(launch.LaunchError):
             launch.execute("run", self.output, root=self.root, docker=docker)
         self.assertEqual(docker.calls, [])
@@ -214,6 +215,14 @@ class PublicLauncher(unittest.TestCase):
         with self.assertRaises(launch.LaunchError):
             launch.execute("run", self.output, "10", root=self.root, docker=docker)
         self.assertEqual(docker.calls, [])
+
+    def test_no_cap_is_forwarded_as_an_unlimited_frozen_run(self):
+        docker = FakeDocker()
+        self.assertEqual(launch.execute("run", self.output, root=self.root, docker=docker), 0)
+        record = launch.read(self.output / "launch.json")
+        self.assertIsNone(record["budget_usd"])
+        create = next(args for args, _ in docker.calls if args[0] == "create")
+        self.assertNotIn("--budget-usd", create)
 
     def test_interrupt_gracefully_cleans_without_replaying_a_paid_run(self):
         docker = FakeDocker(interrupt=True)

@@ -54,7 +54,7 @@ def freeze_plan(
     lock: dict,
     public_metadata_factory,
     inference: dict,
-    budget_usd: str,
+    budget_usd: str | None,
     reporting: dict | None = None,
 ) -> Path:
     validate_schedule(prepared["schedule"])

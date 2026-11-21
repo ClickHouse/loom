@@ -82,6 +82,23 @@ class SpendingContracts(unittest.TestCase):
         self.assertNotIn("private-gate", self.path.read_text())
         self.assertNotIn("Fix the issue", self.path.read_text())
 
+    def test_unlimited_run_keeps_costs_and_reopens_without_a_spend_ceiling(self):
+        path = self.path.with_name("uncapped.jsonl")
+        journal = Spending(path, dollars=None, model="claude-haiku-5-5")
+        self.addCleanup(journal.close)
+        for index in range(20):
+            ticket = journal.reserve({**self.payload, "max_tokens": 128000}, role="solver")
+            journal.settle(ticket, self.response(output_tokens=128000), f"uncapped-{index}")
+        summary = journal.summary()
+        self.assertGreater(summary["spent_usd"], 1)
+        self.assertIsNone(summary["limit_usd"])
+        self.assertIsNone(summary["remaining_usd"])
+        self.assertTrue(summary["complete"])
+        journal.close()
+        restored = Spending(path, dollars=None, model="claude-haiku-5-5")
+        self.addCleanup(restored.close)
+        self.assertEqual(restored.summary(), summary)
+
     def test_failed_dispatch_retains_reservation_and_blocks_the_next(self):
         calls = []
 
