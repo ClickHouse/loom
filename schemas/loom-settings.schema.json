@@ -6339,7 +6339,7 @@
         "retention_audit_log_days": {
           "default": 0,
           "type": "integer",
-          "description": "Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again."
+          "description": "Days `loom.audit_log` rows are kept; 0 = forever, independent of namespace retention. A person's Undo of a retirement holds by its record there: one aged out stops holding, and the conflict resolver may judge and retire that pair again."
         },
         "retention_chunks_days": {
           "default": 0,

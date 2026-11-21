@@ -190,7 +190,8 @@ the retention gauges (`loom.retention.*`) only count candidates.
   `memory`, `memory_embeddings`, `conversations`, `chunks` and `documents`.
 - **Per namespace.** `retention_days` in the namespace's registration
   (`namespace.register`); the managed tables' TTL becomes one `multiIf` over every
-  namespace that sets it.
+  namespace that sets it. Audit deletion uses only `LOOM_RETENTION_AUDIT_LOG_DAYS`;
+  namespace `warm_days` still applies to audit tiering.
 - The workers' leader applies the `MODIFY TTL` at boot. After that only the
   `retention_reconcile` worker writes table TTLs, so a policy change reaches the tables
   within `LOOM_RETENTION_RECONCILE_INTERVAL_SECONDS` and a burst of registrations does
