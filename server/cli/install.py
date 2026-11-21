@@ -13,12 +13,13 @@ from typing import Any
 
 from server.cli._client import DEFAULT_BASE_URL, agent_mode, default_base_url, resolve_token
 from server.cli._paths import write_private
-from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
+from server.cli.jsonc_edit import JsoncEditError, upsert_nested_key
 from server.identity.app.token_clients import (
     CODING_CLIENTS,
     CODING_TOOLSET,
     CONFIG_PATHS,
     config_key,
+    config_path_keys,
     mcp_entry,
 )
 
@@ -41,6 +42,8 @@ _INSTALL_CLIENTS: dict[str, dict[str, str]] = {**CONFIG_PATHS, "claude-code": _C
 
 def _resolve_install_path(client: str) -> Path:
     """Map (client, current OS) → expanded config file path."""
+    if client == "opencode":
+        return _opencode_config_path()
     spec = _INSTALL_CLIENTS[client]
     osname = sys.platform
     # Unknown platforms fall back to the linux convention.
@@ -50,6 +53,31 @@ def _resolve_install_path(client: str) -> Path:
     raw = os.path.expanduser(raw)
     raw = os.path.expandvars(raw)
     return Path(raw)
+
+
+# The files OpenCode's `mcp add --global` looks for in its config directory, in its
+# order; with none there it creates the first.
+_OPENCODE_CONFIG_NAMES = (
+    "opencode.json",
+    "opencode.jsonc",
+    os.path.join(".opencode", "opencode.json"),
+    os.path.join(".opencode", "opencode.jsonc"),
+)
+
+
+def _opencode_config_path() -> Path:
+    """OpenCode's global config file: in $OPENCODE_CONFIG_DIR, else
+    $XDG_CONFIG_HOME/opencode, else ~/.config/opencode (Windows too), the first of
+    `_OPENCODE_CONFIG_NAMES` that exists, or opencode.json when none does."""
+    directory = os.environ.get("OPENCODE_CONFIG_DIR") or os.path.join(
+        os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config"),
+        "opencode",
+    )
+    for name in _OPENCODE_CONFIG_NAMES:
+        candidate = Path(directory) / name
+        if candidate.is_file():
+            return candidate
+    return Path(directory) / _OPENCODE_CONFIG_NAMES[0]
 
 
 def _detect_installed_clients() -> list[str]:
@@ -341,7 +369,8 @@ def _print_dry_run(path: Path, changes: dict[str, Any]) -> None:
     print("  (every other key in the file is kept as it is)")
 
 
-def _print_zed_manual(
+def _print_jsonc_manual(
+    client: str,
     path: Path,
     section: str,
     name: str,
@@ -351,60 +380,64 @@ def _print_zed_manual(
     """The file stays as it was. The entry is what the user pastes by hand."""
     import json as _json
 
-    preview = mcp_entry("zed", str(entry["url"]), "<token>")
+    preview = mcp_entry(client, str(entry["url"]), "<token>")
     rendered = _json.dumps({name: preview}, indent=2)
     print(
-        f"ERROR (zed): {path} could not be merged ({reason}). The file was not changed.\n"
+        f"ERROR ({client}): {path} could not be merged ({reason}). The file was not changed.\n"
         f'Add this under "{section}" in that file:\n{rendered}\n'
         "Replace <token> with your Loom token before saving.",
         file=sys.stderr,
     )
 
 
-def _install_zed(
+def _install_jsonc(
+    client: str,
     cfg_path: Path,
-    section: str,
+    sections: tuple[str, ...],
     name: str,
     entry: dict[str, Any],
     *,
     dry_run: bool,
 ) -> bool:
-    """Merge `context_servers` into Zed's settings.json without a full rewrite."""
+    """Merge the entry under `sections` (Zed's `context_servers`, OpenCode's
+    `mcp.servers`) without a full rewrite, so the file's comments and trailing
+    commas stay."""
     import json as _json
 
+    preview = mcp_entry(client, str(entry["url"]), "<token>") if dry_run else entry
+    changes: dict[str, Any] = {name: preview}
+    for key in reversed(sections):
+        changes = {key: changes}
+    section = ".".join(sections)
     if not cfg_path.exists():
-        rendered = _json.dumps({section: {name: entry}}, indent=2) + "\n"
+        rendered = _json.dumps(changes, indent=2) + "\n"
         if dry_run:
-            _print_dry_run(
-                cfg_path, {section: {name: mcp_entry("zed", str(entry["url"]), "<token>")}}
-            )
+            _print_dry_run(cfg_path, changes)
             return True
         write_private(cfg_path, rendered, newline="")
-        print(f"✓ zed: wrote {name} → {cfg_path}")
+        print(f"✓ {client}: wrote {name} → {cfg_path}")
         return True
     try:
         original = cfg_path.read_bytes().decode("utf-8")
     except (UnicodeDecodeError, OSError) as exc:
-        _print_zed_manual(cfg_path, section, name, entry, f"could not read it ({exc})")
+        _print_jsonc_manual(client, cfg_path, section, name, entry, f"could not read it ({exc})")
         return False
     try:
-        rendered, changed = upsert_object_key(original, section, name, entry)
+        rendered, changed = upsert_nested_key(original, sections, name, entry)
     except JsoncEditError as exc:
-        _print_zed_manual(cfg_path, section, name, entry, exc.reason)
+        _print_jsonc_manual(client, cfg_path, section, name, entry, exc.reason)
         return False
     if dry_run:
         if changed:
-            _print_dry_run(
-                cfg_path, {section: {name: mcp_entry("zed", str(entry["url"]), "<token>")}}
-            )
+            _print_dry_run(cfg_path, changes)
         else:
             print(f"unchanged: {cfg_path}")
         return True
     if not changed:
-        print(f"✓ zed: {name} already set → {cfg_path}")
+        print(f"✓ {client}: {name} already set → {cfg_path}")
         return True
     write_private(cfg_path, rendered, newline="")
-    print(f"✓ zed: wrote {name} → {cfg_path}")
+    print(f"✓ {client}: wrote {name} → {cfg_path}")
     return True
 
 
@@ -462,8 +495,10 @@ def _install_one(
     cfg_path = _resolve_install_path(client)
     mcp_url = _install_mcp_url(server_url, toolset)
     entry = mcp_entry(client, mcp_url, token)
-    if client == "zed":
-        return _install_zed(cfg_path, section, name, entry, dry_run=dry_run)
+    if client in ("zed", "opencode"):
+        return _install_jsonc(
+            client, cfg_path, config_path_keys(client), name, entry, dry_run=dry_run
+        )
 
     existing: dict[str, Any] = {}
     if cfg_path.exists():

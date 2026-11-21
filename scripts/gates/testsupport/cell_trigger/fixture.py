@@ -39,7 +39,7 @@ POLICY = dict(
 HERE = Path(__file__).resolve().parent
 FILES = ("fixture.py", "native.py", "tls_proxy.py", "capture.py", "owned_children.py")
 PROTOCOL = "protocol.json"
-PROTOCOL_SHA = "690f1a06d0a523600a3ef4dcfa5cb58cc48052812ecad4e6e9e591c9e4582924"
+PROTOCOL_SHA = "bc7f195305c54d2488275442f72408248cbc01e55ca75cd8c9bd2b88befea758"
 SPEC_FIELDS = {
     "schema",
     "fixture_id",
@@ -826,11 +826,11 @@ class Owner:
                         "resource process birth changed",
                     )
                     observed[pid] = before
-                    need(
-                        self.owned.rss(pid) * 1024 <= POLICY["stop_process_rss_bytes"],
-                        "process RSS",
-                    )
                     try:
+                        need(
+                            self.owned.rss(pid) * 1024 <= POLICY["stop_process_rss_bytes"],
+                            "process RSS",
+                        )
                         children = self.owned.children(pid)
                     except (FileNotFoundError, ProcessLookupError):
                         need(

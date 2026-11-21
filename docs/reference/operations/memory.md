@@ -52,6 +52,38 @@ Templated SQL aggregation over typed records in loom.memory.
 | `rows` | `list[_AggregateRow]` | One row per group (a single row when `group_by` is empty). |
 | `sql_executed` | `str` | the exact SQL run, for debugging without trace logs |
 
+## `memory.append_batch`
+
+Append distinct episodic occurrences atomically on the Postgres authority.
+
+`POST /v1/memory.append_batch` · MCP `loom_memory_append_batch` · role `writer` · idempotent · not listed under the MCP `all` toolset
+
+| Input field | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `org` | `str` | required | The tenant (first element of the identity tuple). |
+| `namespace` | `str` | required | The namespace the op reads or writes. |
+| `agent` | `str` | required | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
+| `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
+| `session_id` | `str` | `'-'` | The session or conversation the row belongs to; `'-'` for none. |
+| `run_id` | `str` | `'-'` | The agent run (task scope) the call belongs to; `'-'` for none. |
+| `entries` | `list[_AppendBatchEntry]` | required |  |
+
+| Output field | Type | Meaning |
+| --- | --- | --- |
+| `written` | `list[_BulkSetResult]` | One result per entry, in order: key, version (0 when not inserted) and verdict. |
+| `skipped_pinned` | `list[str]` | Keys whose live row is pinned: skipped (result version=0) rather than overwritten, since overwriting would also unpin (entries default pinned=False). |
+| `skipped_locked` | `list[str]` | Keys whose live row is locked read_only: skipped (result version=0), where memory.set would answer 423 LOCKED. |
+| `skipped_blacklisted` | `list[str]` | Keys whose entry the blacklist refused or could not check in the request's budget: not written (result version=0), where memory.set would answer 422 BLACKLISTED. |
+| `merged` | `list[str]` | Conflict verdicts, the same four memory.set produces: canonical restatement of an existing row → not inserted, existing row reinforced; close to a pinned peer → not inserted; same fact in other words → inserted as status=duplicate… |
+| `value_updates_linked` | `int` | Older rows marked superseded by a value update in this batch. |
+| `rejected_pinned` | `list[str]` | Keys not inserted because they are too close to a pinned row. |
+| `duplicates` | `list[str]` | Keys inserted as `status=duplicate`: the same fact as a live row in other words. |
+| `conflicted` | `list[str]` | Keys inserted and cross-linked as `status=conflicted` with the rows they contradict. |
+| `unchecked` | `int` | Entries past bulk_conflict_check_max_entries, written without a check. |
+| `retyped` | `list[str]` | Entries declared procedural whose value is not a procedure body, stored as semantic tagged retyped_from:procedural. |
+| `identity_duplicates` | `dict[str, str]` | Entries not written because a live row in the same identity already carries the same content: entry key -> the keeper's key. |
+| `stage_ms` | `dict[str, float]` | Wall time per phase of the write (existing_lookup, entity_resolution, prepare, embed, verdicts, insert, value_updates, projections, total) — Diagnostic; readers tolerate unknown keys. |
+
 ## `memory.apply`
 
 One scope grammar for every write that can touch more than one row.
@@ -1502,7 +1534,7 @@ Promote a single source memory to the namespace's shared layer.
 
 Accept (→ active, served by default) or reject a list of proposals.
 
-`POST /v1/memory.proposal_decide` · MCP `loom_memory_proposal_decide` · role `writer` · idempotent · audited · not listed under the MCP `all` toolset
+`POST /v1/memory.proposal_decide` · MCP `loom_memory_proposal_decide` · role `admin` · idempotent · audited · not listed under the MCP `all` toolset
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -1510,6 +1542,7 @@ Accept (→ active, served by default) or reject a list of proposals.
 | `namespace` | `str` | required | The namespace the op reads or writes. |
 | `memory_keys` | `list[str]` | required | Keys of the proposals to decide; a key that is not a proposal is left as is and reported. |
 | `decision` | `Literal['accept', 'reject']` | required | `accept` makes each proposal live (`active`, or `conflicted` when contradicted on trial); `reject` sets it `rejected`. |
+| `approved_sha256` | `dict[str, str]` | *(computed)* | Acceptance binds the content the reviewer saw, one canonical hash per key. |
 | `reason` | `str` | `''` | Why; stored as the rejection reason on `reject` ("proposal rejected" when empty). |
 
 | Output field | Type | Meaning |
@@ -2271,7 +2304,7 @@ Run one expiry-sweep pass now — the same pass the `memory_expiry_sweep` worker
 | `demoted` | `int` | Rows demoted: expiry cleared, confidence scaled down (or would be, under `dry_run`). |
 | `anonymized` | `int` | Rows anonymized: value replaced by a marker, embeddings tombstoned, the shell row kept (or would be, under `dry_run`). |
 | `locked_skipped` | `int` | Rows left as they are because a lock refuses their post-action; reads still hide them. |
-| `moved_skipped` | `int` | Rows deferred because their source changed or a second batch admission refused them, including unchanged peers in that batch; 0 under the ClickHouse authority. |
+| `moved_skipped` | `int` | Candidates skipped after renewal, deletion or source-head contention, including unchanged candidates left in a batch refused again. |
 | `dry_run` | `bool` | Echo of the request's `dry_run`. |
 | `sample` | `list[dict[str, Any]]` | Up to 20 handled rows: memory_key, namespace, agent, action, expired_at. |
 | `failures` | `list[str]` | Errors of the pass (`scan:`, `insert:`, `mirror:`); empty on a clean run. |

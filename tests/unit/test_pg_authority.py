@@ -132,16 +132,48 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
             now=datetime(2026, 1, 2, 3, 4, 5),
         )
     )
-    sparse = {
-        c: v
-        for c, v in full.items()
-        if c not in pg_memory.SPARSE_DEFAULTS or v != pg_memory.SPARSE_DEFAULTS[c]
-    }
+    sparse = pg_memory.sparse_row(full)
     assert len(sparse) < len(full)
+    assert sparse["value"] == full["value"]
+    assert all(
+        c not in sparse
+        for c, v in pg_memory.SPARSE_DEFAULTS.items()
+        if full[c] == v and c != "requires_review"
+    )
+    assert sparse["requires_review"] == 0
     assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")
     assert second["tags"] == []
+    # A value other than its default is stored, a falsy one included.
+    changed = {
+        "evidence_count": 0,
+        "pinned": 1,
+        "tags": ["x"],
+        "status": "superseded",
+        "char_limit": 0,
+    }
+    kept = pg_memory.sparse_row({**full, **changed})
+    assert {c: kept[c] for c in changed} == changed
+    assert pg_memory.decode_row(kept) == pg_memory.decode_row({**full, **changed})
+
+
+def test_the_fields_read_as_stored_are_never_left_out() -> None:
+    """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
+    (`memory_revisions_profile`, `_profile_built_from`), other statements read the key and
+    session, the value and the creation time as stored, and the erasure export reads the
+    type, value and confidence from the stored JSON: none has a default a row may leave
+    out."""
+    read_as_stored = {
+        "agent",
+        "memory_type",
+        "memory_key",
+        "session_id",
+        "value",
+        "created_at",
+        "confidence",
+    }
+    assert not read_as_stored & pg_memory.SPARSE_DEFAULTS.keys()
 
 
 def test_a_row_round_trips_at_clickhouse_precision() -> None:
@@ -1406,7 +1438,12 @@ def test_only_an_op_whose_answer_replays_marks_its_key_committed() -> None:
     the committed replay would answer in memory.set's shape."""
     from server.core import idempotency
 
-    for op, marks in (("memory.set", True), ("memory.bulk_set", True), ("profile.set", False)):
+    for op, marks in (
+        ("memory.set", True),
+        ("memory.bulk_set", True),
+        ("memory.append_batch", True),
+        ("profile.set", False),
+    ):
         idempotency._bound.set(("o", "k", 1))
         idempotency._bound_op.set(op)
         assert (idempotency.bound_key() is not None) is marks, op
@@ -4959,10 +4996,15 @@ async def test_an_expiry_pass_leaves_a_moved_head_for_the_next_one(
     """One head that moved since the pass read it refuses the batch: the heads are read
     again and the batch goes once more without it, which the next pass sees."""
     from server.memory.app import expiry
+    from server.settings import settings
 
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
     batches: list[list[str]] = []
 
-    async def _over_heads(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    async def _over_heads(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         batches.append([r["memory_key"] for r in rows])
         if any(r["memory_key"] == "moved" for r in rows):
             raise pg_memory.AdmissionContendedError("the memory changed while it was read")
@@ -4997,8 +5039,14 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
     left out; a batch refused once more (a head moved after the re-read) is left whole,
     counted for the next pass and not as a failure."""
     from server.memory.app import expiry
+    from server.settings import settings
 
-    async def _always_moved(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+
+    async def _always_moved(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     def _row(key: str, *, redacted: bool = False) -> Any:
@@ -6890,7 +6938,9 @@ async def test_a_postgres_bulk_batch_of_high_rows_is_fenced_once_its_commit_may_
     monkeypatch.setattr(bulk_set, "_commit_batch", _commit)
     monkeypatch.setattr(bulk_set, "_land_batch", _land)
     monkeypatch.setattr(high_fence, "fence_committed", _fence)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[])
+    state = SimpleNamespace(
+        memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[], strict_append=False
+    )
     state.results = []
     with contextlib.suppress(pg.PostgresUnavailableError, asyncio.CancelledError):
         await bulk_set._bulk_insert(None, state)
@@ -6925,7 +6975,7 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
     monkeypatch.setattr(bulk_set, "_high_winners", lambda state: winners)
     monkeypatch.setattr(bulk_set, "fence_high", _fence)
     monkeypatch.setattr(bulk_set, "_bulk_announce", _announce)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}])
+    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], strict_append=False)
     state.embedding_rows = []
     with pytest.raises(RuntimeError, match="lift failed"):
         await bulk_set._land_batch(None, state, None, {})
@@ -7047,6 +7097,7 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
     first, last = key | {"memory_key": "k", "version": 1}, key | {"memory_key": "k", "version": 2}
     state = SimpleNamespace(
+        strict_append=False,
         memory_rows=[first, last],
         embedding_rows=[
             r | {"embedding": [0.1]} for r in ([first, last] if both_embedded else [last])

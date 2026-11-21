@@ -5551,9 +5551,9 @@ class StorageSettings(BaseModel):
     # server/storage/retention_overrides.py: a retention_*_days setting deletes a table's
     # rows older than that many days.
     # ---- retention ----
-    # Days `loom.audit_log` rows are kept; 0 = forever. A person's Undo of a
-    # retirement holds by its record there: one aged out stops holding, and the
-    # conflict resolver may judge and retire that pair again.
+    # Days `loom.audit_log` rows are kept; 0 = forever, independent of namespace retention.
+    # A person's Undo of a retirement holds by its record there: one aged out stops
+    # holding, and the conflict resolver may judge and retire that pair again.
     retention_audit_log_days: int = 0
     # Days `loom.agent_events` rows are kept; 0 = forever.
     retention_agent_events_days: int = 0
@@ -6426,6 +6426,8 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     # One JSONExtract query over loom.memory FINAL; budget covers large group-by
     # cardinality.
     "memory.aggregate": 250,
+    # Fresh episodic rows: one Postgres commit, publication and the hash-only audit.
+    "memory.append_batch": 300,
     "memory.apply": 3000,
     # Retrieval (memory.search's own budget) plus at most one LLM synthesis
     # call; a retrieval_only / abstained call pays no LLM latency.
@@ -6746,6 +6748,7 @@ OP_SHAPE_BUDGETS_P99_MS: dict[str, dict[str, int]] = {
     # "rewrite": deduplication dropped the saved turn, + the rewritten row's wait.
     "conversation.save_message": {"rewrite": 350},
     "memory.bulk_get": {"audited": 130},
+    "memory.append_batch": {"webhook": 350},
     "memory.bulk_set": {"webhook": 350},
     "memory.delete": {"webhook": 80},
     "memory.delete_version": {"webhook": 130},

@@ -212,6 +212,7 @@ OpName = Literal[
     "learnings.review",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.append_batch",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -590,6 +591,7 @@ OP_NAMES: tuple[str, ...] = (
     "learnings.review",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.append_batch",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -2871,6 +2873,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "memory.append_batch": OpSpec(
+        "memory.append_batch",
+        "MemoryAppendBatchInput",
+        "MemoryAppendBatchBody",
+        "MemoryBulkSetOutput",
+        True,
+        "writer",
+        "experimental",
+        300,
+        False,
+        False,
+    ),
     "memory.apply": OpSpec(
         "memory.apply",
         "MemoryApplyInput",
@@ -3453,7 +3467,7 @@ OPS: dict[str, OpSpec] = {
         "MemoryProposalDecideBody",
         "MemoryProposalDecideOutput",
         True,
-        "writer",
+        "admin",
         "experimental",
         800,
         True,
@@ -12400,6 +12414,73 @@ class AggregateRow(TypedDict, total=False):
     metric: Required[float]
 
 
+class MemoryAppendBatchInput(TypedDict, total=False):
+    "Append distinct episodic occurrences atomically on the Postgres authority."
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["AppendBatchEntry"]]
+
+
+class AppendBatchEntry(TypedDict, total=False):
+    memory_key: Required[str]
+    value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
+    source_trace: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class MemoryAppendBatchBody(TypedDict, total=False):
+    "Append distinct episodic occurrences atomically on the Postgres authority."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["AppendBatchEntry"]]
+
+
+class MemoryBulkSetOutput(TypedDict, total=False):
+    written: Required[list["BulkSetResult"]]
+    skipped_pinned: NotRequired[list[str]]
+    skipped_locked: NotRequired[list[str]]
+    skipped_blacklisted: NotRequired[list[str]]
+    merged: NotRequired[list[str]]
+    value_updates_linked: NotRequired[int]
+    rejected_pinned: NotRequired[list[str]]
+    duplicates: NotRequired[list[str]]
+    conflicted: NotRequired[list[str]]
+    unchecked: NotRequired[int]
+    retyped: NotRequired[list[str]]
+    identity_duplicates: NotRequired[dict[str, str]]
+    stage_ms: NotRequired[dict[str, float]]
+
+
+class BulkSetResult(TypedDict, total=False):
+    memory_key: Required[str]
+    version: Required[int]
+    memory_id: NotRequired[str]
+    conflict_verdict: NotRequired[str]
+    peers: NotRequired[list["MemorySetPeer"]]
+    next: NotRequired[str]
+    pinned_blocker_id: NotRequired[str]
+
+
+class MemorySetPeer(TypedDict, total=False):
+    "A row the conflict check compared the write against."
+
+    memory_id: NotRequired[str]
+    memory_key: NotRequired[str]
+    excerpt: NotRequired[str]
+    valid_at: NotRequired[Optional[str]]
+    similarity: NotRequired[float]
+
+
 class MemoryApplyInput(TypedDict, total=False):
     "One scope grammar for every write that can touch more than one row."
 
@@ -13103,42 +13184,6 @@ class MemoryBulkSetBody(TypedDict, total=False):
     entries: Required[list["BulkSetEntry"]]
     contextualize: NotRequired[bool]
     detect_updates: NotRequired[Optional[bool]]
-
-
-class MemoryBulkSetOutput(TypedDict, total=False):
-    written: Required[list["BulkSetResult"]]
-    skipped_pinned: NotRequired[list[str]]
-    skipped_locked: NotRequired[list[str]]
-    skipped_blacklisted: NotRequired[list[str]]
-    merged: NotRequired[list[str]]
-    value_updates_linked: NotRequired[int]
-    rejected_pinned: NotRequired[list[str]]
-    duplicates: NotRequired[list[str]]
-    conflicted: NotRequired[list[str]]
-    unchecked: NotRequired[int]
-    retyped: NotRequired[list[str]]
-    identity_duplicates: NotRequired[dict[str, str]]
-    stage_ms: NotRequired[dict[str, float]]
-
-
-class BulkSetResult(TypedDict, total=False):
-    memory_key: Required[str]
-    version: Required[int]
-    memory_id: NotRequired[str]
-    conflict_verdict: NotRequired[str]
-    peers: NotRequired[list["MemorySetPeer"]]
-    next: NotRequired[str]
-    pinned_blocker_id: NotRequired[str]
-
-
-class MemorySetPeer(TypedDict, total=False):
-    "A row the conflict check compared the write against."
-
-    memory_id: NotRequired[str]
-    memory_key: NotRequired[str]
-    excerpt: NotRequired[str]
-    valid_at: NotRequired[Optional[str]]
-    similarity: NotRequired[float]
 
 
 class MemoryClearInput(TypedDict, total=False):
@@ -15041,6 +15086,7 @@ class MemoryProposalDecideInput(TypedDict, total=False):
     namespace: Required[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15049,6 +15095,7 @@ class MemoryProposalDecideBody(TypedDict, total=False):
     namespace: NotRequired[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15091,6 +15138,7 @@ class MemoryProposalsOutput(TypedDict, total=False):
 class MemoryProposal(TypedDict, total=False):
     memory_key: Required[str]
     memory_id: Required[str]
+    content_sha256: NotRequired[str]
     agent: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
@@ -17517,6 +17565,7 @@ class SnapshotMemoryRow(TypedDict, total=False):
             "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
         ]
     ]
+    requires_review: NotRequired[Optional[bool]]
     conflict_with: NotRequired[list[str]]
     duplicate_of: NotRequired[str]
     evidence_count: NotRequired[int]

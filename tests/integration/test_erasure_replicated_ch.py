@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from server.core import rmt_carry
+from server.core.ch import describe_cache_clear
 from server.settings import settings
 from tests.integration._resources import ch_client_from_env, unique_org
 
@@ -74,8 +76,21 @@ def db(raw: Any, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
             parameters={"db": name},
         ).result_rows
         assert engines == [(True,)]
-        monkeypatch.setattr(settings, "ch_database", name)
-        yield name
+        # Memory clears fence writes through the same database's lease table.
+        raw.command(
+            f"CREATE TABLE {name}._migration_lock AS {source}._migration_lock "
+            f"ENGINE = KeeperMap('/loom/tests/{name}/migration_lock') PRIMARY KEY name"
+        )
+        # Carry and type metadata name logical tables, so isolate this partial schema.
+        rmt_carry.reset_for_tests()
+        describe_cache_clear()
+        with monkeypatch.context() as scoped:
+            scoped.setattr(settings, "ch_database", name)
+            try:
+                yield name
+            finally:
+                rmt_carry.reset_for_tests()
+                describe_cache_clear()
     finally:
         raw.command(f"DROP DATABASE IF EXISTS {name} SYNC")
 
@@ -340,3 +355,24 @@ def test_a_mutation_with_a_subquery_is_refused(raw: Any, db: str) -> None:
         )
     with pytest.raises(DatabaseError, match="Code: 36"):
         raw.command(f"ALTER TABLE {db}.memory UPDATE tombstoned_at = now() WHERE 1")
+
+
+async def test_replicated_fixture_does_not_leak_schema_metadata(raw: Any) -> None:
+    import server.knowledge.store.datasets  # noqa: F401 — register the carried catalog
+    from server.core.ch import CHClient
+
+    assert rmt_carry.carries("loom.datasets")
+    with pytest.MonkeyPatch.context() as patched:
+        scope = db.__wrapped__(raw, patched)
+        next(scope)
+        client = CHClient()
+        try:
+            await client.connect()
+            assert await rmt_carry._read_columns(client)
+            assert rmt_carry._TABLES["loom.datasets"].stored == frozenset()
+        finally:
+            try:
+                await client.disconnect()
+            finally:
+                scope.close()
+    assert rmt_carry._TABLES["loom.datasets"].stored is None
