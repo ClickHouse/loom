@@ -46,6 +46,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from server.code.domain.python_names import import_forms
+
 ANON = "(anonymous namespace)"
 # the compiler tier's spelling: `$anonymous_namespace_src/Common/Foo.cpp`
 ANON_SCIP_PREFIX = "$anonymous_namespace"
@@ -182,17 +184,10 @@ def python_bind(written: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     best_rank = 0
     for row in rows:
         path = str(row.get("path") or "")
-        if not path.endswith(".py"):
-            continue
         qualified = str(row.get("qualified_name") or "")
-        parts = segments(qualified)
-        if len(parts) < 2:
+        forms = import_forms(path, segments(qualified))
+        if not forms:
             continue
-        forms = [".".join(parts)]
-        # Only the file's module scope is implicit in a package import. A class's
-        # constructor and a directory named __init__ keep their names.
-        if path.endswith("/__init__.py") and parts[0].endswith(".__init__"):
-            forms.append(".".join([parts[0].removesuffix(".__init__"), *parts[1:]]))
         rank = max(
             (2 if form == spelling else int(form.endswith("." + spelling))) for form in forms
         )

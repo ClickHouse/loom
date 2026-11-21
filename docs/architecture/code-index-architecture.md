@@ -486,6 +486,12 @@ symbol miss. Read-side matching preserves dotted module scopes and treats a pack
 candidate sets decline. The response discloses `resolved_by: python_module` while
 retaining stored names and ids. Extraction and its stamp do not change.
 
+Memory code links use the same Python import spellings when resolving named
+definitions. A package-level name such as `pkg.json.dumps` can anchor the definition
+in `pkg/json/__init__.py`; its stored qualified name remains intact. Constructor
+names remain explicit, and ambiguous matches stay unlinked unless the memory's
+file scope selects one definition.
+
 | Op                               | Path                          | How                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `code.search`                    | `code/app/search/pipeline.py` | Routes first (pattern, path, history question), then runs legs under the deadline (`gather.py`): lexical (idf-weighted token count), vector (a scan with no vector index, or twin shortlist), PR history, fuzzy symbol vote. `fusion.py` fuses by reciprocal rank (k = 60); `serve.py` pages into the token budget or abstains. A repeat within the memo window is one read of `code_search_memo`. |

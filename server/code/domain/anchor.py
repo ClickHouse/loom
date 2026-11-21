@@ -21,6 +21,7 @@ from server.code.domain.extract.lang_detect import detect_by_extension
 from server.code.domain.extract.lang_go import go_dir_scope
 from server.code.domain.extract.lang_rust import module_scope_rust
 from server.code.domain.extract.treesitter import lang_for_path
+from server.code.domain.python_names import import_forms
 
 _TICKS = re.compile(r"`([^`\n]{3,160})`")
 _IDENT = re.compile(r"~?[A-Za-z_]\w*(?:(?:::|\.)~?[A-Za-z_]\w*)*")
@@ -166,10 +167,13 @@ def mentions(text: str, *, cap: int = 16) -> list[Mention]:
     return [Mention(name, in_prose) for name, in_prose in list(out.items())[:cap]]
 
 
-def names_symbol(mention: str, qualified_name: str) -> bool:
+def names_symbol(mention: str, qualified_name: str, path: str) -> bool:
     """`mention` is the qualified name or a `::`- / `.`-separated suffix of it."""
     m, q = mention.replace("::", "."), qualified_name.replace("::", ".")
-    return q == m or q.endswith("." + m)
+    return any(
+        form == m or form.endswith("." + m)
+        for form in (q, *import_forms(path, qualified_name.split("::")))
+    )
 
 
 def path_matches(path: str, ref: str) -> bool:
@@ -185,7 +189,7 @@ def resolve(
     than one target matches."""
     targets: dict[tuple[str, str], Definition] = {}
     for d in sorted(defs, key=lambda d: d.start_line):
-        if names_symbol(mention, d.qualified_name):
+        if names_symbol(mention, d.qualified_name, d.path):
             targets.setdefault((d.path, d.qualified_name), d)
     if files:
         inside = [d for d in targets.values() if any(path_matches(d.path, f) for f in files)]
