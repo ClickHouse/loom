@@ -21,19 +21,19 @@ FROZEN_CHAINS = {
         "51bd6e8908f2494690b42922fa9febb90c54795fbfbb0a6fc54985f2b932c31d",
         "51bd6e8908f2494690b42922fa9febb90c54795fbfbb0a6fc54985f2b932c31d",
         "54be88fc192eff14e61baa778cf1df9bc1139e8263262e70d42983e5469d6239",
-        "460467af421698fa9dd5afc8245b401b95744c3400314bb3b0d9cac7e1e2998a",
+        "fcf23a1ee95f236c09e2e3fd10ef8ffa8ead9d86dc9203fe8db39cb399fbbbf2",
     ],
     "delivery2": [
         "f73f3b3be6c5fd24463ed9502e31df23c58c3064b51dc0aa4299cd27bebc1027",
         "f73f3b3be6c5fd24463ed9502e31df23c58c3064b51dc0aa4299cd27bebc1027",
         "da18067ae8443825622dda7ed41c789c9414441cbdd58d8a6f1a38884caf3927",
-        "6d05bc5906e4a0d03f08d7e18f8b9402ce0d62d0708965d18c936850e18ea331",
+        "e0907c09e6ad430fd278bb28a77d3431ca2ffccd043c76f73f63e0993d237313",
     ],
     "api": [
         "78a3c6e80c1664b376cdf33619b47146c51d2b1740b2b69349446d937e45f45c",
         "78a3c6e80c1664b376cdf33619b47146c51d2b1740b2b69349446d937e45f45c",
         "e8d048f64d6f860160e0f1c92b578dc6ebffcd4d96b8720265650339d8b17d9b",
-        "460467af421698fa9dd5afc8245b401b95744c3400314bb3b0d9cac7e1e2998a",
+        "fcf23a1ee95f236c09e2e3fd10ef8ffa8ead9d86dc9203fe8db39cb399fbbbf2",
     ],
 }
 
@@ -127,7 +127,9 @@ def _case(native, count, api):
         if not api:
             item.update(row=deepcopy(row), audit=deepcopy(audit))
         sparse = {
-            key: value for key, value in row.items() if key not in specification["sparse_defaults"]
+            key: value
+            for key, value in row.items()
+            if key == "requires_review" or key not in specification["sparse_defaults"]
         }
         record = {}
         for prefix, fields in (

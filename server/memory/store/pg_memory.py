@@ -122,8 +122,13 @@ SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
 
 def sparse_row(encoded: Mapping[str, Any]) -> dict[str, Any]:
     """An encoded row as it is stored: without the fields at their default
-    (`SPARSE_DEFAULTS`), which every reader fills back (`decode_row`)."""
-    return {c: v for c, v in encoded.items() if c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]}
+    (`SPARSE_DEFAULTS`). Review provenance stays explicit, including false, so a
+    missing legacy flag cannot turn a rejected proposal into an established fact."""
+    return {
+        c: v
+        for c, v in encoded.items()
+        if c == "requires_review" or c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]
+    }
 
 
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
@@ -131,6 +136,8 @@ def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     default (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
     out = {c: list(v) if isinstance(v, list) else v for c, v in SPARSE_DEFAULTS.items()}
     out.update(stored)
+    if "requires_review" not in stored:
+        out["requires_review"] = int(out.get("status") in {"proposed", "rejected"})
     for col in DATETIME_COLS:
         val = out.get(col)
         if isinstance(val, str):

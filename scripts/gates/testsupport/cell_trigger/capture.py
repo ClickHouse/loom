@@ -146,6 +146,7 @@ class Codec:
         )
         value = dict(original)
         if origin == "pg":
+            need("requires_review" in value, "stored review provenance")
             for key, default in self.p["sparse_defaults"].items():
                 if key not in value:
                     value[key] = list(default) if isinstance(default, list) else default

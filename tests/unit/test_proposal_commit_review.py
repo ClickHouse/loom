@@ -111,6 +111,88 @@ def test_a_legacy_rejected_proposal_remains_pending_without_its_flag(snapshot):
         enforce_review([replacement], {identity_key(source): raw})
 
 
+@pytest.mark.parametrize("status", ["proposed", "rejected"])
+def test_native_decoding_preserves_legacy_pending_review(status):
+    from server.memory.domain.proposal_review import enforce_review
+    from server.memory.store import pg_memory
+    from server.memory.store.rows import _hydrate
+
+    raw = store.build_memory_version_row(_row(status=status, requires_review=True))
+    raw.pop("requires_review")
+    decoded = pg_memory.decode_row(pg_memory.encode_row(raw))
+    assert decoded["requires_review"]
+    source = _hydrate(decoded)
+    replacement = store.build_memory_version_row(source, status="active", requires_review=0)
+    with pytest.raises(PermissionError):
+        enforce_review([replacement], {identity_key(source): decoded})
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_native_sparse_storage_keeps_explicit_review_provenance(pending):
+    from server.memory.domain.proposal_review import enforce_review
+    from server.memory.store import pg_memory
+    from server.memory.store.rows import _hydrate
+
+    source = _row(status="rejected", requires_review=pending)
+    raw = pg_memory.encode_row(store.build_memory_version_row(source))
+    sparse = pg_memory.sparse_row(raw)
+    assert "requires_review" in sparse
+    decoded = pg_memory.decode_row(sparse)
+    assert bool(decoded["requires_review"]) is pending
+    restored = _hydrate(decoded)
+    replacement = store.build_memory_version_row(restored, status="active", requires_review=0)
+    if pending:
+        with pytest.raises(PermissionError):
+            enforce_review([replacement], {identity_key(source): decoded})
+    else:
+        enforce_review([replacement], {identity_key(source): decoded})
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_native_commit_checks_decoded_review_state_before_publishing(monkeypatch, legacy):
+    from contextlib import asynccontextmanager
+
+    from server.core import pg
+    from server.memory.store import pg_memory
+
+    source = _row(status="rejected", requires_review=False)
+    head = pg_memory.encode_row(store.build_memory_version_row(source))
+    if legacy:
+        head.pop("requires_review")
+    wrote = []
+
+    class Conn:
+        async def fetch(self, sql, *args):
+            if "loom.memory_current c" in sql:
+                return [{**head, "row": head}]
+            return [{"org": source.org, "scope": source.namespace, "generation": 5}]
+
+        async def fetchval(self, *args):
+            return False
+
+        async def execute(self, sql, *args):
+            wrote.append((sql, args))
+
+    @asynccontextmanager
+    async def transaction():
+        yield Conn()
+
+    monkeypatch.setattr(pg, "transaction", transaction)
+    replacement = store.build_memory_version_row(
+        source, status="active", requires_review=0, version=source.version + 1
+    )
+    if legacy:
+        with pytest.raises(PermissionError):
+            await pg_memory.commit_versions([replacement], [{}])
+        assert not any(
+            sql in (pg_memory._UPSERT_HEADS, pg_memory._INSERT_REVISIONS) for sql, _ in wrote
+        )
+    else:
+        await pg_memory.commit_versions([replacement], [{}])
+        heads = next(args[-1] for sql, args in wrote if sql == pg_memory._UPSERT_HEADS)
+        assert heads[0]["requires_review"] == 0
+
+
 def test_consolidation_cannot_drop_pending_proposal_provenance():
     from server.core.datetimes import naive_utc_now
     from server.memory.api.models_admin import MemoryConsolidateInput
