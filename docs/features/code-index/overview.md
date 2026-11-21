@@ -11,7 +11,8 @@ the index is built is in
 The [language support table](#language-support) distinguishes fast-tier symbols and
 edges from compiler-tier coverage.
 
-The code workers are off by default; a deployment turns them on per repository
+Worker defaults vary by tier; check the [workers reference](../../reference/workers.md).
+A worker also needs an admitted supervisor and a repository configured for its tier
 ([repositories](repositories.md)). The default `core` MCP toolset lists no code tools
 unless `LOOM_MCP_CODE_TOOLS=true`; `?toolset=coding` always does.
 

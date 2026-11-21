@@ -210,7 +210,7 @@ existing grant revocations and role caps still apply. Three switches change acce
 
 | Switch                                                            | Effect                                                                                                                                       |
 | ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `LOOM_CODE_ORG_READABLE=true`, or the entry's `org_readable`      | every authenticated principal of the org reads standard namespaces without a grant (default off); write access is unchanged                  |
+| `LOOM_CODE_ORG_READABLE=true`, or the entry's `org_readable`      | authenticated org members read standard namespaces without a grant (default off); write access is unchanged                                  |
 | `LOOM_CODE_REPO_PUBLIC=true`, or the entry's `public`             | the namespace registers `join_policy=open` and discoverable, so any org member joins as a reader at once; otherwise the policy is `approval` |
 | `classification: "restricted"` (entry, or `code.repo.set_access`) | never org-readable or public; a maintainer approves each reader, and every read needs a token naming the namespace plus a live direct grant  |
 

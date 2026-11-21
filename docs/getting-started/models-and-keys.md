@@ -21,15 +21,15 @@ The released Docker installation embeds with `local` (bge-small, 384 dimensions,
 from files the image carries) and selects the `fake-echo-1` LLM, unless the installer
 set a local model server ([a model server on your
 machine](#a-model-server-on-your-machine-no-api-key)). It boots without provider keys or
-network: storage, the dashboard, structural code indexing and semantic search work,
-though a hosted embedder retrieves better on paraphrase-heavy questions. The fake LLM
+network: storage, the dashboard, structural code indexing and semantic search work. The fake LLM
 does not produce meaningful extracted facts, summaries or generated answers. A
 checkout's `.env` selects `fake-ngram-3072` embeddings, which match on character
 overlap. An upgraded installation keeps the embedder its `~/.loom/.env` names; switching
 it to `local` is a model change like any other, and re-embeds what is stored.
 
-For stronger retrieval over paraphrase-heavy content, configure a hosted embedding
-provider. For automatic fact extraction, summaries and generated answers, configure an
+To choose another embedding model, configure a supported local or hosted provider and
+[evaluate retrieval on your content](evaluate.md). For automatic fact extraction,
+summaries and generated answers, configure an
 LLM too. An LLM alone does not replace an embedding model; an embedding model alone does
 not generate answers. With no embedding configured, a checkout's server uses its fake
 embedder; it does not skip embedding.
@@ -177,8 +177,9 @@ key and content unencrypted. Compatibility requires indexed float-array response
 with the configured width; a provider using a different API needs its own adapter.
 Changing the endpoint, model or width requires rebuilding existing embeddings.
 
-With only Anthropic API access, use `LOOM_EMBEDDING_MODEL=local` and
-`LOOM_EMBEDDING_DIM=384` for the bundled semantic embedder. To use a hosted embedder,
+With only Anthropic API access, configure the bundled semantic embedder with
+`LOOM_EMBEDDING_PROVIDER=local`, `LOOM_EMBEDDING_MODEL=local` and
+`LOOM_EMBEDDING_DIM=384`. To use a hosted embedder,
 configure its supported authentication and dimensions. Changing an existing embedding
 space requires [rebuilding embeddings](../architecture/llm-architecture.md#changing-the-embedder).
 
@@ -343,13 +344,11 @@ setting names the same model.
   `LOCAL_LLM_BASE_URL` to the assistant's Secret; the chart's policy lets LibreChat reach
   only DNS, its database, Loom and TCP 443, so the model server needs a NetworkPolicy of
   your own that selects the LibreChat pod.
-- **Quality and speed.** Loom's prompts and thresholds are tuned on hosted models, and no
-  published benchmark covers a local one, so treat a small model as a way to try Loom
-  with no key or to keep everything on the machine, not as an equal: expect extraction,
-  `memory.ask` answers and the assistant's tool use to be weaker, by an amount nobody
-  has measured. A small model on a CPU is slow on long prompts such as extraction, so a
-  busy capture queue backs up; a GPU, or a larger model on a machine with the memory for
-  it, helps. For a team server, a hosted model answers better.
+- **Quality and capacity.** Evaluate each model's extraction, `memory.ask` answers and
+  assistant tool use on your workload; deployment location alone does not establish
+  quality. Measure latency and capture throughput on the hardware you plan to use,
+  including long prompts and the expected arrival rate. Use the
+  [evaluation procedure](evaluate.md) to compare named local and hosted candidates.
 
 ### Through an inference gateway
 

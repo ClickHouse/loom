@@ -450,7 +450,7 @@ complete the self-service surface.
 reading needs a grant or a token that names it.
 
 - `LOOM_CODE_ORG_READABLE=true` (or `"org_readable": true` on an entry of
-  `LOOM_CODE_REPOS_JSON`) lets every authenticated principal of the org read standard code
+  `LOOM_CODE_REPOS_JSON`) lets authenticated org members read standard code
   namespaces with the token it holds.
 - Refreshing requires `writer` and administering requires `admin`. Standard code
   namespaces accept sufficient token claims or grants, subject to scoped-token

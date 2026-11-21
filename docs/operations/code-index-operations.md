@@ -193,8 +193,9 @@ with `docker compose --env-file .env -f dev/docker-compose.cloud.yml config`.
 
 Who can read an index is governed by the namespace's join policy and grants
 ([tokens and grants](../guides/tokens-and-grants.md)). `LOOM_CODE_ORG_READABLE=true`
-makes every code namespace readable by every principal in the org without a grant; the
-default is off.
+lets authenticated org members read standard code namespaces without a grant; the
+default is off. Restricted namespaces still need a token naming the namespace and a
+live direct grant; see [restricted namespaces](../guides/tokens-and-grants.md#restricted-namespaces-classificationrestricted).
 
 ## First index
 

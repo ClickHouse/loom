@@ -63,8 +63,9 @@ flowchart LR
 Each row carries `ops`, `errors`, `tokens` (LLM input plus output), `embed_tokens`,
 `cost_usd` and `latency_p50_ms` / `p95` / `p99`. The output adds `total_ops`,
 `total_errors`, `total_cost_usd`, and `cache_hits` / `cache_saved_usd`: LLM calls served
-from the response cache and the price-table dollars they did not spend. `total_cost_usd`
-is what _was_ spent; the two never overlap.
+from the response cache and their estimated price-table savings. `total_cost_usd`
+sums recorded cost estimates, excluding those cache savings. Missing usage or pricing
+must be accounted for separately when comparing provider bills.
 
 Grouping or filtering by a dimension the roll-up lacks (`memory_key`, `user_id`, `model`,
 `traffic_class`, `instance_label`, `build_commit`) switches to a scan of `agent_events`:
@@ -133,7 +134,7 @@ spend read errors, the namespace reads as under its cap.
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
 | `spent_24h_usd`          | Rolling 24h spend in USD; user mode withholds it as `null` except for a platform admin without namespace-role restrictions |
 | `cap_usd`, `cap_source`  | the effective cap and where it came from: `namespace`, `global`, `uncapped`, or `org` for the org-wide form                |
-| `over_cap`, `pct_of_cap` | Whether real spend reaches the selected cap; share spent (`null` when uncapped or user spend is withheld)                  |
+| `over_cap`, `pct_of_cap` | Whether recorded estimated cost reaches the selected cap; share used (`null` when uncapped or user spend is withheld)      |
 | `namespaces_with_spend`  | org-wide form only                                                                                                         |
 
 Omit `namespace` for the org-wide form, which is always uncapped and sums the namespaces
@@ -141,7 +142,8 @@ you can read. Supply both `namespace` and `user_id` for one user's allowance and
 `cap_source` then reads `namespace_user`, `global_user`, or `uncapped`.
 `namespace_over_cap` separately reports whether the namespace ceiling blocks that user.
 A token pinned to one user cannot select another user's status. Caps and routing count
-all actual spend even when the response withholds its amount.
+recorded estimated cost even when the response withholds its amount. Unreported usage
+and unpriced calls can make provider billing higher than the amount used by the cap.
 
 Set `budget_alert_inbox` with `namespace.register` or the namespace settings dialog to
 an existing task inbox owned by that namespace. Empty disables warnings. A point budget

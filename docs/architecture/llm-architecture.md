@@ -325,8 +325,9 @@ them. `LOOM_LLM_ANTHROPIC_EFFORT` sends a thinking effort to Claude models.
 - **Retry** (`server/llm/_retry.py`): transport errors and 429, 500, 502, 503, 504, 529;
   `LOOM_LLM_RETRY_ATTEMPTS` (4) attempts, exponential backoff (0.5 s base,
   `LOOM_LLM_RETRY_MAX_WAIT_S` cap, 20 s). The request timeout,
-  `LOOM_LLM_REQUEST_TIMEOUT_S`, is 300 s: it only catches a hung connection, so a slow
-  model or a long output never hits it. Callers that need less wrap the call (HyDE on
+  `LOOM_LLM_REQUEST_TIMEOUT_S`, defaults to 300 s. OpenAI and Anthropic clients apply
+  HTTP request timeouts; Bedrock also bounds request and retry work with an elapsed
+  deadline. Slow inference or long outputs can hit these limits. Callers that need less wrap the call (HyDE on
   `memory.search` waits `LOOM_MEMORY_SEARCH_HYDE_TIMEOUT_S`, 6 s).
 - **Fallback model.** `LOOM_LLM_FALLBACK_MODEL` wraps the client in `FallbackLLMClient`
   (`server/llm/fallback.py`). It hands the call to the second model on an outage
