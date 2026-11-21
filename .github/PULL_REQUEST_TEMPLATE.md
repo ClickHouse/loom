@@ -52,7 +52,7 @@ the change goes here with the command that reproduces it.
 
 ### Checklist
 
-- [ ] `make format-check`, `make lint`, `make typecheck` and `make test-unit` pass; the integration suite passes if server behaviour changed.
+- [ ] Local format, lint, type checks and focused tests pass. The full `make test-unit` and applicable integration results are reported by CI; a full local run is not required before pushing.
 - [ ] Generated files are regenerated in this PR, not by hand: the SDK op tables, `docs/reference/configuration.md` and the `docs/reference/` tables (`python scripts/codegen/docs_reference.py`), the reach manifest, `schemas/schema.sql` (`make schema-dump`) and the Codex plugin copies (`python3 scripts/codegen/agent_plugin_sync.py`).
 - [ ] A new migration is additive and numbered after the latest on `main`; no merged migration is edited.
 - [ ] A behaviour change to any file a plugin ships (`hooks/`, `lib/`, `bin/`, `skills/`, `.mcp.json`, the Codex `plugin-defaults.json`) bumps both plugin manifests' version, and no other open PR uses that version.
