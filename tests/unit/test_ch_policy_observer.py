@@ -530,3 +530,30 @@ async def test_discovery_resamples_an_additional_shared_endpoint(owner, monkeypa
         assert {observer.server_uuid for observer in observers} == expected
         assert len(secondary_visits) == 2
     assert all(observer.closed for observer in channels)
+
+
+async def test_discovery_resamples_the_last_of_many_configured_origins(owner, monkeypatch):
+    client, config, channels, channel = owner
+    origins = [f"http://writer-{index}:8123" for index in range(32)]
+    monkeypatch.setattr(ch_module.settings, "ch_analysis_observer_urls", origins)
+    first, last = (f"00000000-0000-0000-0000-{index:012x}" for index in (1, 2))
+    visits = []
+
+    def create(origin, *args):
+        observer = channel(origin, *args)
+        observer.origin = origin
+        return observer
+
+    async def bootstrap(self):
+        self.server_uuid = first
+        if self.origin == origins[-1] + "/":
+            visits.append(True)
+            if len(visits) == 2:
+                self.server_uuid = last
+
+    monkeypatch.setattr(ch_module, "PolicyObserver", create)
+    monkeypatch.setattr(channel, "bootstrap", bootstrap)
+    async with client.policy_observers(frozenset({first, last})) as observers:
+        assert {observer.server_uuid for observer in observers} == {first, last}
+        assert len(visits) == 2
+    assert all(observer.closed for observer in channels)

@@ -30,8 +30,8 @@ _REQUEST_TIMEOUT_S = 10
 _CLOSE_TIMEOUT_S = 1
 # not a setting: reserve half the fixed authority proof for the drain and census.
 _DISCOVERY_TIMEOUT_S = 5
-# not a setting: cap session creation inside that fixed discovery deadline.
-_DISCOVERY_ATTEMPTS_PER_REPLICA = 8
+# not a setting: cap probes using the larger of the writer and origin counts.
+_DISCOVERY_ATTEMPT_MULTIPLIER = 8
 # not a setting: a larger access catalog refuses instead of returning a partial proof.
 _BODY_BYTES = 4 * 1024 * 1024
 _PARAMETER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -349,7 +349,7 @@ async def discover_policy_observers(
         async with asyncio.timeout(_DISCOVERY_TIMEOUT_S):
             for origin in origins:
                 await open_session(origin)
-            for attempt in range(len(servers) * _DISCOVERY_ATTEMPTS_PER_REPLICA):
+            for attempt in range(max(len(servers), len(origins)) * _DISCOVERY_ATTEMPT_MULTIPLIER):
                 if selected.keys() == servers:
                     break
                 await open_session(origins[attempt % len(origins)])

@@ -987,7 +987,8 @@ Loom opens independent sessions through the configured service origin until it
 reaches every expected replica. A shared endpoint does not need separate replica
 addresses. A successful session that reaches an already covered replica is closed;
 its bootstrap is never replayed. Discovery is bounded by five seconds and eight
-additional attempts per replica, within the complete proof deadline. An endpoint
+times the larger of the writer and configured origin counts in additional attempts,
+within the complete proof deadline. An endpoint
 that cannot reach every replica refuses provisioning.
 
 `LOOM_CH_ANALYSIS_OBSERVER_URLS` can add explicit trusted HTTP origins using the
