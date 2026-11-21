@@ -19,6 +19,7 @@ from examples.software_factory.harbor.memory import validate_history_certificate
 from examples.software_factory.harbor.paired import analyze
 from examples.software_factory.harbor.runtime import read, verify, write
 from examples.software_factory.harbor.scopes import selected_scopes
+from examples.software_factory.harbor.source import reporting_identity
 
 ATTEMPT_CHECKS = (
     "artifact_integrity",
@@ -71,7 +72,7 @@ def _prompt(protocol, slot, start, initial, public):
     scopes = [
         scope
         for scope in protocol["attempt_scopes"].values()
-        if scope["task_id"] == slot["task_id"]
+        if scope["task_id"] == slot["task_id"] and scope["index_tier"] is not None
     ]
     return (
         meta["repository"] == issue["repository"]
@@ -193,9 +194,13 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
         ):
             return False
         if not memory:
-            if operation != "code.index_status" and (
+            if operation in {"code.symbol", "code.search", "code.outline"} and (
                 request.get("include_lessons") is not enabled
                 or request.get("lesson_namespaces", []) != ([namespace] if enabled else [])
+            ):
+                return False
+            if operation in {"code.grep", "code.enclosing"} and any(
+                key in request for key in ("include_lessons", "lesson_namespaces")
             ):
                 return False
             continue
@@ -261,6 +266,37 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
     )
 
 
+def index_certificate_matches(protocol):
+    certificate = Path(protocol["index_certificate_file"])
+    frozen = read(certificate)
+    expected = [
+        (binding["task_id"] + ":" + binding["index_tier"], binding)
+        for binding in protocol["attempt_scopes"].values()
+        if binding["index_tier"] is not None
+    ]
+    return (
+        hashlib.sha256(certificate.read_bytes()).hexdigest() == protocol["index_certificate_sha256"]
+        and frozen.get("schema_version") == 1
+        and set(frozen["scopes"]) == {key for key, _ in expected}
+        and digest(read(protocol["index_content_file"])) == protocol["index_content_sha256"]
+        and all(
+            all(
+                frozen["scopes"][key].get(field) == value
+                for field, value in {
+                    "org": binding["org"],
+                    "namespace": binding["code_namespace"],
+                    "repo": protocol["tasks"][binding["task_id"]]["repository"],
+                    "git_head": binding["base_commit"],
+                    "build_commit": protocol["server_commit"],
+                    "source_scope": binding["source_scope"],
+                    "compiler_rows": binding["compiler_rows"],
+                }.items()
+            )
+            for key, binding in expected
+        )
+    )
+
+
 def audit_fairness(protocol, entries, *, billing=None):
     """Write a protocol-bound report; incomplete or unknown proof cannot pass."""
     observed = defaultdict(list)
@@ -301,14 +337,7 @@ def audit_fairness(protocol, entries, *, billing=None):
     )
     try:
         public = {row["task_id"]: row for row in read(protocol["historical_manifest"])["tasks"]}
-        certificate = Path(protocol["index_certificate_file"])
-        frozen = read(certificate)
-        check(
-            "index_certificate",
-            hashlib.sha256(certificate.read_bytes()).hexdigest()
-            == protocol["index_certificate_sha256"]
-            and frozen["index_content_sha256"] == protocol["index_content_sha256"],
-        )
+        check("index_certificate", index_certificate_matches(protocol))
     except Exception as error:  # noqa: BLE001 — missing public/index proof remains unknown
         public = {}
         check("index_certificate", None, type(error).__name__)
@@ -602,6 +631,7 @@ def audit_fairness(protocol, entries, *, billing=None):
     receipt = {
         "schema_version": 1,
         "protocol_sha256": digest(protocol),
+        "reporting_implementation": reporting_identity(),
         "passed": complete and all(item["passed"] is True for item in checks.values()),
         "complete": complete,
         "checks": checks,

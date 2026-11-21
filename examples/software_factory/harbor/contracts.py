@@ -1,6 +1,7 @@
 """Qualify the adapters' actual request builders against the serving wire models."""
 
-from examples.software_factory.factory.memory_tools import OPS, request_body as memory_request
+from examples.software_factory.factory.memory_tools import OPS
+from examples.software_factory.factory.memory_tools import request_body as memory_request
 from examples.software_factory.factory.retrieval_tools import request_body as code_request
 
 

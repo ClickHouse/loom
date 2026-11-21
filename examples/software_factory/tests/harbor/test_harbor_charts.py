@@ -85,7 +85,10 @@ class HarborCharts(unittest.TestCase):
                 "Test runs by the agent",
                 "Loom tool calls",
                 "Memory rows written",
-                "Tokens",
+                "Solver LLM tokens",
+                "Loom LLM tokens",
+                "Total LLM tokens",
+                "Loom embedding tokens",
             ],
         )
         self.entries[0]["result"].update(

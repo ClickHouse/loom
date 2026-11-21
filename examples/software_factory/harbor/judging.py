@@ -36,7 +36,7 @@ def verdict_tool(labels):
                 "required": list(labels),
                 "additionalProperties": False,
             },
-            "reason": {"type": "string"},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
         },
     )
 

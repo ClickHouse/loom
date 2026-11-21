@@ -59,6 +59,7 @@ class FairnessProof(unittest.TestCase):
                 (self.root / "certificate.json").read_bytes()
             ).hexdigest(),
             index_content_sha256=digest(snapshot),
+            index_content_file=str(self.root / "index-content.json"),
             attempt_budget={"output_tokens": 128000},
             schedule=schedule(["a", "b", "c"], seed=741),
             tasks={},
@@ -76,6 +77,7 @@ class FairnessProof(unittest.TestCase):
             task = issue["task_id"]
             source = digest({"src/a.py": task})
             self.protocol["tasks"][task] = {
+                "repository": "owner/repo",
                 "base_commit": "a" * 40,
                 "indexes": {
                     tier: {
@@ -102,7 +104,9 @@ class FairnessProof(unittest.TestCase):
                 if slot["memory_enabled"]
                 else None,
                 compiler_rows={"definitions": 0},
-                source_scope={
+                source_scope=None
+                if baseline
+                else {
                     "verified": True,
                     "base_commit": "a" * 40,
                     "paths_sha256": digest(["src/a.py"]),
@@ -123,12 +127,13 @@ class FairnessProof(unittest.TestCase):
         snapshot = fingerprint(tables)
         save(self.root / "index-content.json", snapshot)
         self.protocol["index_content_sha256"] = digest(snapshot)
-        certificate = {"index_content_sha256": digest(snapshot), "scopes": {}}
+        certificate = {"schema_version": 1, "scopes": {}}
         for row in self.protocol["attempt_scopes"].values():
             if row["index_tier"] is not None:
                 certificate["scopes"][row["task_id"] + ":" + row["index_tier"]] = {
                     "org": row["org"],
                     "namespace": row["code_namespace"],
+                    "repo": "owner/repo",
                     "git_head": row["base_commit"],
                     "build_commit": self.protocol["server_commit"],
                     "compiler_rows": row["compiler_rows"],

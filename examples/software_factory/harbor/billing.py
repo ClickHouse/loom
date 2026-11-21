@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -215,8 +216,35 @@ def _price(calls, binding, grouped):
     }
 
 
-def audit_provider_costs(protocol, entries, *, ledger_loader=load_ledger):
+def saved_ledger_loader(protocol):
+    root = Path(protocol["output_root"])
+    path = root / "provider-ledger.json"
+    costs = json.loads((root / "provider-costs.json").read_text())
+    saved = json.loads(path.read_text())
+    if (
+        saved.get("protocol_sha256") != digest(protocol)
+        or costs.get("protocol_sha256") != digest(protocol)
+        or hashlib.sha256(path.read_bytes()).hexdigest() != costs.get("provider_ledger_sha256")
+    ):
+        raise ValueError("Saved provider ledger differs from its cost receipt")
+
+    def load(scoped, identifiers):
+        matches = [row for row in saved["queries"] if row["org"] == scoped["org"]]
+        if len(matches) != 1 or matches[0]["request_ids"] != identifiers:
+            raise ValueError("Saved provider ledger scope or requested IDs differ")
+        return matches[0]["rows"]
+
+    return load
+
+
+def audit_provider_costs(protocol, entries, *, ledger_loader=None):
     """Write one batch audit. Unknown usage stays unknown; this does not authorize inference."""
+    if ledger_loader is None:
+        ledger_loader = (
+            saved_ledger_loader(protocol)
+            if (Path(protocol["output_root"]) / "provider-ledger.json").exists()
+            else load_ledger
+        )
     schedule = protocol["schedule"]
     orders = [entry.get("order") for entry in entries]
     complete = (
@@ -246,7 +274,7 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=load_ledger):
     for calls, binding in traces.values():
         if calls:
             by_org[binding["org"]].extend(identifier for identifier, _ in calls)
-    grouped, query_status = defaultdict(list), "not_needed"
+    grouped, query_status, receipts = defaultdict(list), "not_needed", []
     if ids:
         try:
             rows = []
@@ -260,6 +288,7 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=load_ledger):
                 ):
                     raise ValueError("Ledger returned malformed, unrequested or foreign rows")
                 rows.extend(batch)
+                receipts.append({"org": org, "request_ids": sorted(identifiers), "rows": batch})
             for row in rows:
                 grouped[row["request_id"]].append(row)
             query_status = "completed"
@@ -285,5 +314,9 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=load_ledger):
             "The audit uses SELECT and writes only its local receipt.",
         ],
     }
+    if complete and query_status in {"completed", "not_needed"}:
+        path = Path(protocol["output_root"]) / "provider-ledger.json"
+        write(path, {"schema_version": 1, "protocol_sha256": digest(protocol), "queries": receipts})
+        receipt["provider_ledger_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
     write(Path(protocol["output_root"]) / "provider-costs.json", receipt)
     return receipt

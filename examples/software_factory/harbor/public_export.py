@@ -12,6 +12,7 @@ import math
 import re
 import shutil
 import tempfile
+from collections import defaultdict
 from dataclasses import fields
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -21,9 +22,11 @@ from harbor.models.trial.result import TrialResult
 from examples.software_factory.factory.model import Budget, digest
 
 from .arms import ALL, validate_schedule
-from .billing import _trace
+from .billing import FIELDS as BILLING_FIELDS
+from .billing import _price, _trace
 from .charts import ARMS, generate_charts
-from .metrics import token_totals
+from .metrics import paid_token_totals, token_totals
+from .source import reporting_identity
 
 KIND = "factory-public-results"
 ALL_ARMS = tuple(ALL)
@@ -44,6 +47,11 @@ TOKEN_FIELDS = (
     "model_cache_read_tokens",
     "model_cache_write_tokens",
     "model_total_tokens",
+    "loom_provider_input_tokens",
+    "loom_provider_output_tokens",
+    "loom_provider_total_tokens",
+    "total_paid_llm_tokens",
+    "loom_embedding_tokens",
 )
 NUMERIC = (
     "generation_cost_usd",
@@ -133,10 +141,28 @@ def public_metadata(value):
                 "task_id": label(row["task_id"]),
                 "base_commit": hexdigest(row["base_commit"], 40),
                 "record_sha256": hexdigest(row["record_sha256"]),
+                **{
+                    key: label(row[key])
+                    for key in ("scenario_family", "dependency_task_id")
+                    if key in row
+                },
             }
             for row in value["tasks"]
         ],
     }
+
+    def public_text(text):
+        if not isinstance(text, str) or not re.fullmatch(r"[A-Za-z0-9 ,;:+().'\-]{1,512}", text):
+            raise ValueError("Study disclosures must be bounded public prose")
+        return text
+
+    if value.get("study_role"):
+        result["study_role"] = public_text(value["study_role"])
+    if value.get("memory_treatment"):
+        result["memory_treatment"] = {
+            key: public_text(value["memory_treatment"][key])
+            for key in ("availability", "delivery", "measures")
+        }
     if value.get("implementation"):
         implementation = value["implementation"]
         result["implementation"] = {
@@ -420,7 +446,7 @@ def measurements(protocol, slots, inputs):
                 inputs.read(path, f"native/base/slot-{order:02d}/full-suite.json")
             )
     verdicts, costs = {}, {}
-    billing_complete = False
+    billing_complete, billing_receipt = False, {}
     for name, target in (("judgements/verdicts.json", verdicts), ("provider-costs.json", costs)):
         path = root / name
         if path.exists():
@@ -430,6 +456,8 @@ def measurements(protocol, slots, inputs):
             target.update(saved.get("attempts", {}))
             if name == "provider-costs.json":
                 billing_complete = saved.get("cohort_complete") is True
+                billing_receipt = saved
+    raw_ledger = ledger_rows(protocol, billing_receipt, inputs)
     attempts, chart_entries = [], []
     for slot in slots:
         order = slot["order"]
@@ -482,7 +510,7 @@ def measurements(protocol, slots, inputs):
             and item["generation_cost_usd"] != native_cost
         ):
             item["generation_cost_usd"] = None
-        if native.started_at:
+        if native.started_at and native.finished_at:
             item["harbor_wall_s"] = number((native.finished_at - native.started_at).total_seconds())
         path = folder / "factory-measurement.json"
         if path.exists():
@@ -515,7 +543,8 @@ def measurements(protocol, slots, inputs):
                 )
         verdict = verdicts.get(str(order), {})
         if (
-            grade.get("state")
+            isinstance(grade, dict)
+            and grade.get("state")
             and verdict.get("candidate_state") == grade["state"]
             and type(verdict.get("judge_fixed")) is bool
         ):
@@ -533,6 +562,7 @@ def measurements(protocol, slots, inputs):
             calls, binding = _trace(protocol, protocol["schedule"][order], factory, rows=events)
         except (KeyError, ValueError, TypeError):
             pass  # Missing or malformed billing evidence must remain unknown.
+        priced = _price(calls, binding, raw_ledger) if calls is not None else {}
         if (
             calls == []
             and all(
@@ -556,6 +586,9 @@ def measurements(protocol, slots, inputs):
             )
         ):
             item["loom_provider_cost_usd"] = 0
+            item.update(
+                loom_provider_input_tokens=0, loom_provider_output_tokens=0, loom_embedding_tokens=0
+            )
         elif (
             bill.get("proof_status") == "known"
             and bool(calls)
@@ -570,8 +603,21 @@ def measurements(protocol, slots, inputs):
             and factory.get("loom_transport_dispatches") == factory["loom_physical_requests"]
             and count(bill.get("physical_requests_dispatched")) == len(calls)
             and count(bill.get("physical_requests_matched")) == len(calls)
+            and priced.get("proof_status") == "known"
+            and all(bill.get(key) == priced.get(key) for key in BILLING_FIELDS)
         ):
             item["loom_provider_cost_usd"] = number(bill.get("loom_provider_cost_usd"))
+            item.update(
+                {
+                    key: count(bill.get(key))
+                    for key in (
+                        "loom_provider_input_tokens",
+                        "loom_provider_output_tokens",
+                        "loom_embedding_tokens",
+                    )
+                }
+            )
+        item.update(paid_token_totals(item))
         values = [item["generation_cost_usd"], item["loom_provider_cost_usd"]]
         item["total_provider_cost_usd"] = sum(values) if None not in values else None
         attempts.append(item)
@@ -614,6 +660,25 @@ def evaluator_overhead(protocol, inputs):
             "excluded_from_attempt_provider_cost_and_time": True,
         }
     }
+
+
+def ledger_rows(protocol, receipt, inputs):
+    path = Path(protocol["output_root"]) / "provider-ledger.json"
+    if not path.exists() or not receipt.get("provider_ledger_sha256"):
+        return {}
+    encoded = inputs.raw(path, "evidence/provider-ledger.json")
+    if hashlib.sha256(encoded).hexdigest() != receipt["provider_ledger_sha256"]:
+        raise ValueError("Provider ledger differs from its billing receipt")
+    saved = json.loads(encoded)
+    if saved.get("protocol_sha256") != digest(protocol):
+        raise ValueError("Provider ledger belongs to another protocol")
+    grouped = defaultdict(list)
+    for query in saved["queries"]:
+        for row in query["rows"]:
+            if row.get("org") != query["org"] or row.get("request_id") not in query["request_ids"]:
+                raise ValueError("Provider ledger contains unrequested rows")
+            grouped[row["request_id"]].append(row)
+    return grouped
 
 
 def _export(protocol, output, metadata, require_complete):
@@ -723,6 +788,7 @@ def _export(protocol, output, metadata, require_complete):
                 "model_id": public["model"]["id"],
                 "historical_manifest": str(chart_root / "tasks.json"),
                 "schedule": slots,
+                "public_reproduction": public,
                 "reporting": {"publish_charts": False},
             },
             chart_entries,
@@ -745,13 +811,19 @@ def _export(protocol, output, metadata, require_complete):
                 "source_protocol_sha256": digest(protocol),
                 "source_files": inputs.source_files,
                 "raw_native_files_unchanged": True,
+                "reporting_implementation": reporting_identity(),
             },
         )
         (stage / "README.md").write_text(
             "# Public factory results\n\n"
             + ("Complete" if complete else "Pending")
             + f" cohort: {len(chart_entries)} of {len(slots)} attempts observed.\n\n"
-            "Every scheduled failure and A/A control is retained. Unknown measurements are null. "
+            + "Study role: "
+            + public.get("study_role", "not declared")
+            + ".\n\n"
+            + " ".join(public.get("memory_treatment", {}).values())
+            + "\n\n"
+            + "Every scheduled failure and A/A control is retained. Unknown measurements are null. "
             "The charts compare primary arms; A/A controls have separate tables. "
             "Judge opinions are separate from independent hidden-test success. "
             "No automatic performance or merge claim is made.\n\n"

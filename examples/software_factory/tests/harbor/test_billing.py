@@ -147,6 +147,26 @@ class ProviderBilling(unittest.TestCase):
         self.assertEqual(row["loom_embedding_tokens"], 6)
         self.assertEqual(row["loom_response_tokens"], 20000)
 
+    def test_saved_ledger_reprices_offline_without_querying_the_removed_server(self):
+        self.trace()
+        first, _ = self.audit([self.ledger()])
+        with patch("examples.software_factory.harbor.billing.load_ledger") as live:
+            replay = audit_provider_costs(self.protocol, self.entries)
+        live.assert_not_called()
+        self.assertEqual(first, replay)
+
+    def test_modified_saved_ledger_refuses_before_overwriting_the_cost_receipt(self):
+        self.trace()
+        self.audit([self.ledger()])
+        path = self.root / "provider-ledger.json"
+        saved = json.loads(path.read_text())
+        saved["queries"][0]["rows"][0]["input_tokens"] += 1
+        path.write_text(json.dumps(saved))
+        receipt = (self.root / "provider-costs.json").read_bytes()
+        with self.assertRaisesRegex(ValueError, "differs from its cost receipt"):
+            audit_provider_costs(self.protocol, self.entries)
+        self.assertEqual((self.root / "provider-costs.json").read_bytes(), receipt)
+
     def test_missing_duplicate_wrong_scope_failed_or_unpriced_ledger_is_unknown(self):
         self.trace()
         valid = self.ledger()

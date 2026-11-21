@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+from functools import lru_cache
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -91,6 +92,16 @@ def controller_identity(root: Path | None = None) -> dict:
         "dirty": bool(_git(root, "status", "--porcelain", "--", *CONTROLLER_PARTS)),
         "relative_files": relative,
         "files": {str(root / name): hashed for name, hashed in relative.items()},
+    }
+
+
+@lru_cache(maxsize=1)
+def reporting_identity():
+    identity = controller_identity()
+    return {
+        "commit": identity["commit"],
+        "dirty": identity["dirty"],
+        "files": identity["relative_files"],
     }
 
 

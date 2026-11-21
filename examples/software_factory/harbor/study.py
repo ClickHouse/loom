@@ -29,7 +29,7 @@ from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
-from .metrics import known_total, token_totals
+from .metrics import known_total, paid_token_totals, token_totals
 from .profiles import load_profile
 from .public_export import export_public
 from .scopes import selected_scopes
@@ -388,6 +388,7 @@ def enrich_evaluations(protocol, entries, job_name):
         if billed.get("proof_status") != "known":
             billed = {}
         result.update({key: billed.get(key) for key in BILLING_FIELDS})
+        result.update(paid_token_totals(result))
         components = [result.get("generation_cost_usd"), result.get("loom_provider_cost_usd")]
         result["total_provider_cost_usd"] = sum(components) if None not in components else None
         full = result.get("full_suite")

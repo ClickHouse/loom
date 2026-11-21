@@ -13,6 +13,7 @@ from urllib.parse import quote
 
 from .arms import PRIMARY
 from .cohorts import comparison_cohorts
+from .source import reporting_identity
 
 ARMS = {name: arm.label for name, arm in PRIMARY.items()}
 METRICS = [
@@ -24,7 +25,10 @@ METRICS = [
     {"key": "agent_test_runs", "title": "Test runs by the agent", "kind": "count"},
     {"key": "loom_tool_calls", "title": "Loom tool calls", "kind": "count"},
     {"key": "memory_rows_written", "title": "Memory rows written", "kind": "count"},
-    {"key": "model_total_tokens", "title": "Tokens", "kind": "count"},
+    {"key": "model_total_tokens", "title": "Solver LLM tokens", "kind": "count"},
+    {"key": "loom_provider_total_tokens", "title": "Loom LLM tokens", "kind": "count"},
+    {"key": "total_paid_llm_tokens", "title": "Total LLM tokens", "kind": "count"},
+    {"key": "loom_embedding_tokens", "title": "Loom embedding tokens", "kind": "count"},
 ]
 ASSETS = importlib.resources.files("examples.software_factory.harbor").joinpath("report_assets")
 
@@ -102,6 +106,11 @@ def chart_data(protocol, entries, views_manifest):
                         "model_output_tokens",
                         "model_cache_read_tokens",
                         "model_cache_write_tokens",
+                        "loom_provider_input_tokens",
+                        "loom_provider_output_tokens",
+                        "loom_provider_total_tokens",
+                        "total_paid_llm_tokens",
+                        "loom_embedding_tokens",
                     )
                 },
             )
@@ -118,6 +127,9 @@ def chart_data(protocol, entries, views_manifest):
         "schema_version": 1,
         "name": output.name,
         "model": protocol.get("model_id"),
+        "study_role": protocol.get("public_reproduction", {}).get("study_role"),
+        "memory_treatment": protocol.get("public_reproduction", {}).get("memory_treatment", {}),
+        "reporting_implementation": reporting_identity(),
         "run_id": hashlib.sha256(str(output).encode()).hexdigest()[:16],
         "arms": ARMS,
         "metrics": METRICS,

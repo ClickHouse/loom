@@ -167,6 +167,11 @@ function render() {
     " Judge evaluations are blinded and separate from hidden tests. Unmeasured results remain unknown. Agent time includes the coding loop and its tests; full end-to-end also includes environment setup, verification and index audits. Input tokens include cached tokens; total tokens equal input plus output. Counters show totals; cost and time show means. A/A controls are separate. Historical issues and authored experiments are never pooled for a headline. This experiment contains " +
     cohort.task_ids.length +
     " distinct task clusters; repeats are not independent issues. Native comparison links include all scenarios.";
+  document.getElementById("study-disclosure").textContent = [
+    data.study_role ? `Study role: ${data.study_role}.` : "Study role not declared.",
+    ...Object.values(data.memory_treatment || {}),
+    "Solver and Loom LLM token totals include cached input; embedding tokens are separate. Unknown usage remains unknown.",
+  ].join(" ");
 }
 for (const [key, cohort] of Object.entries(data.cohorts.groups)) {
   const option = node("option", cohort.label);

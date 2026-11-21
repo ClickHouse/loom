@@ -1,9 +1,23 @@
 import unittest
 
-from examples.software_factory.harbor.metrics import token_totals
+from examples.software_factory.harbor.metrics import paid_token_totals, token_totals
 
 
 class RecordedTokens(unittest.TestCase):
+    def test_combined_llm_totals_require_both_solver_and_loom_evidence(self):
+        result = dict(
+            model_total_tokens=100, loom_provider_input_tokens=30, loom_provider_output_tokens=5
+        )
+        self.assertEqual(
+            paid_token_totals(result),
+            dict(loom_provider_total_tokens=35, total_paid_llm_tokens=135),
+        )
+        result["loom_provider_input_tokens"] = None
+        self.assertEqual(
+            paid_token_totals(result),
+            dict(loom_provider_total_tokens=None, total_paid_llm_tokens=None),
+        )
+
     def test_native_and_converse_tokens_include_cache_once_and_retain_output(self):
         result = {
             "provider_logical_requests": 2,

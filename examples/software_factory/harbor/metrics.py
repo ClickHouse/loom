@@ -15,6 +15,16 @@ def known_total(records, key):
     return sum(values) if values and None not in values else None
 
 
+def paid_token_totals(result):
+    values = [
+        result.get(key) for key in ("loom_provider_input_tokens", "loom_provider_output_tokens")
+    ]
+    loom = sum(values) if all(type(v) is int and v >= 0 for v in values) else None
+    solver = result.get("model_total_tokens")
+    total = solver + loom if type(solver) is int and solver >= 0 and loom is not None else None
+    return {"loom_provider_total_tokens": loom, "total_paid_llm_tokens": total}
+
+
 def token_totals(result):
     usage = result.get("provider_usage")
     requests = result.get("provider_logical_requests")

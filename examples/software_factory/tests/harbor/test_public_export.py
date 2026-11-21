@@ -306,9 +306,50 @@ class PublicExportTests(unittest.TestCase):
                     physical_requests_matched=3,
                     physical_request_ids_sha256=digest(sorted(ids)),
                     loom_provider_cost_usd=0.25,
+                    loom_provider_input_tokens=0,
+                    loom_provider_output_tokens=0,
+                    loom_embedding_tokens=0,
+                    loom_response_tokens=0,
                 )
             },
         )
+        binding = self.protocol["attempt_scopes"][str(order)]
+        ledger = self.fixture.root / "provider-ledger.json"
+        write(
+            ledger,
+            dict(
+                protocol_sha256=digest(self.protocol),
+                queries=[
+                    dict(
+                        org=binding["org"],
+                        request_ids=sorted(ids),
+                        rows=[
+                            dict(
+                                org=binding["org"],
+                                namespace=binding["code_namespace"],
+                                request_id=identifier,
+                                operation=op,
+                                success=True,
+                                error_code="",
+                                input_tokens=0,
+                                output_tokens=0,
+                                embedding_tokens=0,
+                                response_tokens=0,
+                                upstream_cost_usd="0.25" if i == 0 else "0",
+                            )
+                            for i, (identifier, op) in enumerate(
+                                zip(
+                                    ids,
+                                    ("code.index_status", "code.symbol", "code.index_status"),
+                                    strict=True,
+                                )
+                            )
+                        ],
+                    )
+                ],
+            ),
+        )
+        bill["provider_ledger_sha256"] = hashlib.sha256(ledger.read_bytes()).hexdigest()
         write(self.fixture.root / "provider-costs.json", bill)
         return order, folder, bill
 
