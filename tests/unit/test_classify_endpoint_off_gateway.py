@@ -736,6 +736,10 @@ async def _with_nameserver(
     monkeypatch.setattr(hosts, "_resolve", _no_thread)
     before = {t.name for t in threading.enumerate()}
     try:
+        # Complete resolver startup before timing an unanswered query.
+        ready = await resolver.resolve("v4.example", "A", lifetime=5.0)
+        assert [record.to_text() for record in ready] == ["93.184.215.14"]
+        server.asked.clear()
         result = await body()
     finally:
         transport.close()
@@ -756,11 +760,25 @@ def test_a_real_lookup_reads_an_answer_with_no_aaaa_and_an_nxdomain(
     assert sorted(set(server.asked)) == ["none.example.", "v4.example."]
 
 
+@pytest.mark.parametrize("cold_socket", [False, True], ids=["ready", "cold-socket"])
 def test_a_real_lookup_that_never_answers_ends_at_the_deadline_without_a_thread(
-    monkeypatch: pytest.MonkeyPatch, client: type[_Client]
+    monkeypatch: pytest.MonkeyPatch, client: type[_Client], cold_socket: bool
 ) -> None:
-    """dnspython waits on the event loop: the classifier's deadline, shorter than the
-    resolver's own lifetime, ends the lookup, and no thread was used or is left."""
+    """The classifier deadline cancels a real unanswered lookup without a thread."""
+    if cold_socket:
+        from dns._asyncio_backend import Backend
+
+        make_socket = Backend.make_socket
+        ready = False
+
+        async def _cold_socket(self: Any, *args: Any, **kwargs: Any) -> Any:
+            nonlocal ready
+            if not ready:
+                await asyncio.sleep(0.4)
+                ready = True
+            return await make_socket(self, *args, **kwargs)
+
+        monkeypatch.setattr(Backend, "make_socket", _cold_socket)
     monkeypatch.setattr(settings, "memory_classify_timeout_s", 0.3)
 
     async def _timed() -> tuple[str, float]:
