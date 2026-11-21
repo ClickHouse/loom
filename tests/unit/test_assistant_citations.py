@@ -27,10 +27,6 @@ def test_every_citation_form_is_parsed_once() -> None:
     assert sql.sql == SQL
 
 
-# The memory key the answer's own tool calls were returned (its run's exposure rows).
-MEMORY_KEY = "policy/deploy/freeze"
-
-
 def test_a_key_with_an_at_sign_and_a_section_with_a_comma_are_parsed_whole() -> None:
     memory, doc = parse("[memory:user/pref/a@b.com@v3] [doc:spec.pdf § Billing, refunds]")
     assert memory.key == "user/pref/a@b.com"
