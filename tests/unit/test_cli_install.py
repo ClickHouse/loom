@@ -9,7 +9,7 @@ import sys
 import pytest
 
 import server.cli.install as cli
-from server.cli.jsonc_edit import JsoncEditError, upsert_object_key
+from server.cli.jsonc_edit import JsoncEditError, upsert_nested_key
 from server.identity.app.token_clients import MCP_CLIENTS, client_config
 
 
@@ -1441,7 +1441,7 @@ def test_only_zed_settings_writes_skip_newline_translation(
 )
 def test_a_non_ascii_or_huge_number_is_a_jsonc_edit_error(text: str) -> None:
     with pytest.raises(JsoncEditError):
-        upsert_object_key(text, "context_servers", "loom", {"url": "http://h"})
+        upsert_nested_key(text, ("context_servers",), "loom", {"url": "http://h"})
 
 
 @pytest.mark.parametrize(
@@ -1475,3 +1475,182 @@ def test_zed_refuses_a_bad_number_and_still_installs_cursor(
     assert json.loads(cursor.read_text())["mcpServers"]["loom"]["headers"]["Authorization"] == (
         "Bearer T"
     )
+
+
+# --- OpenCode -----------------------------------------------------------------------
+
+
+def _opencode_entry(token: str) -> dict[str, object]:
+    return {
+        "type": "remote",
+        "url": "https://h/mcp?toolset=coding",
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
+
+
+def test_install_one_opencode_writes_mcp_servers_and_keeps_the_rest(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "opencode" / "opencode.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    other = {"type": "local", "command": ["npx", "-y", "other-mcp"]}
+    cfg.write_text(
+        json.dumps(
+            {
+                "$schema": "https://opencode.ai/config.json",
+                "theme": "opencode",
+                "mcp": {"timeout": {"request": 30000}, "servers": {"other": other}},
+            },
+            indent=2,
+        )
+    )
+
+    for token in ("T1", "T2"):  # a first write, then a rewrite with a new token
+        assert cli._install_one(
+            "opencode", token=token, server_url="https://h", name="loom", dry_run=False
+        )
+        d = json.loads(cfg.read_text())
+        # a coding agent: the coding toolset; a remote server with the bearer, no OAuth
+        assert d["mcp"]["servers"]["loom"] == _opencode_entry(token)
+        assert d["mcp"]["servers"]["other"] == other
+        assert d["mcp"]["timeout"] == {"request": 30000}
+        assert d["theme"] == "opencode" and d["$schema"] == "https://opencode.ai/config.json"
+
+
+def test_install_one_opencode_creates_the_file_and_the_nesting(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = tmp_path / "opencode" / "opencode.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    assert cli._install_one(
+        "opencode", token="T", server_url="https://h", name="loom", dry_run=False
+    )
+    assert json.loads(cfg.read_text()) == {"mcp": {"servers": {"loom": _opencode_entry("T")}}}
+
+    # an existing `mcp` with no `servers` gets one
+    cfg.write_text('{"mcp": {"timeout": {"request": 1}}}')
+    assert cli._install_one(
+        "opencode", token="T", server_url="https://h", name="loom", dry_run=False
+    )
+    assert json.loads(cfg.read_text())["mcp"] == {
+        "timeout": {"request": 1},
+        "servers": {"loom": _opencode_entry("T")},
+    }
+
+
+_OPENCODE_JSONC = """\
+{
+  // my OpenCode settings
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      /* kept */
+      "other": { "type": "remote", "url": "https://other/mcp", },
+    },
+  },
+}
+"""
+
+
+def test_install_opencode_merges_into_an_existing_jsonc_and_keeps_its_comments(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "config"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home))
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    jsonc = home / "opencode" / "opencode.jsonc"
+    jsonc.parent.mkdir(parents=True)
+    jsonc.write_text(_OPENCODE_JSONC)
+
+    assert cli._resolve_install_path("opencode") == jsonc
+    assert cli._install_one(
+        "opencode", token="T", server_url="https://h", name="loom", dry_run=False
+    )
+
+    text = jsonc.read_text()
+    assert not (home / "opencode" / "opencode.json").exists()
+    # every byte of the old file is still there, comments and trailing commas included
+    assert "// my OpenCode settings" in text and "/* kept */" in text
+    assert '"other": { "type": "remote", "url": "https://other/mcp", },' in text
+    for line in _OPENCODE_JSONC.splitlines():
+        assert line in text
+    from server.cli.jsonc_edit import _parse_root, _to_data
+
+    servers = _to_data(_parse_root(text))["mcp"]["servers"]
+    assert servers["loom"] == _opencode_entry("T")
+    assert servers["other"] == {"type": "remote", "url": "https://other/mcp"}
+
+    # a second run with the same token leaves the file byte for byte
+    assert cli._install_one(
+        "opencode", token="T", server_url="https://h", name="loom", dry_run=False
+    )
+    assert jsonc.read_text() == text
+
+
+def test_install_opencode_refuses_a_file_it_cannot_merge_and_prints_the_entry(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = tmp_path / "opencode" / "opencode.json"
+    monkeypatch.setattr(cli, "_resolve_install_path", lambda c: cfg)
+    cfg.parent.mkdir(parents=True)
+    cfg.write_text('{"mcp": "not an object"}')
+    assert (
+        cli._install_one("opencode", token="T", server_url="https://h", name="loom", dry_run=False)
+        is False
+    )
+    assert cfg.read_text() == '{"mcp": "not an object"}'
+    err = capsys.readouterr().err
+    assert f"ERROR (opencode): {cfg} could not be merged (mcp is not an object)" in err
+    assert 'Add this under "mcp.servers" in that file:' in err and '"type": "remote"' in err
+
+
+def test_opencode_config_path_follows_opencode_lookup(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    base = tmp_path / ".config" / "opencode"
+    # no config yet: the file `opencode mcp add --global` would create
+    assert cli._resolve_install_path("opencode") == base / "opencode.json"
+
+    base.mkdir(parents=True)
+    (base / ".opencode").mkdir()
+    (base / ".opencode" / "opencode.jsonc").write_text("{}")
+    assert cli._resolve_install_path("opencode") == base / ".opencode" / "opencode.jsonc"
+    (base / "opencode.jsonc").write_text("{}")
+    assert cli._resolve_install_path("opencode") == base / "opencode.jsonc"
+    (base / "opencode.json").write_text("{}")
+    assert cli._resolve_install_path("opencode") == base / "opencode.json"
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert cli._resolve_install_path("opencode") == tmp_path / "xdg" / "opencode" / "opencode.json"
+    monkeypatch.setenv("OPENCODE_CONFIG_DIR", str(tmp_path / "custom"))
+    assert cli._resolve_install_path("opencode") == tmp_path / "custom" / "opencode.json"
+
+
+def test_install_with_no_client_wires_opencode_when_its_config_dir_exists(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.delenv("OPENCODE_CONFIG_DIR", raising=False)
+    others = {c: tmp_path / "absent" / c / "cfg.json" for c in cli._INSTALL_CLIENTS}
+    real = cli._resolve_install_path
+    monkeypatch.setattr(
+        cli, "_resolve_install_path", lambda c: real(c) if c == "opencode" else others[c]
+    )
+    monkeypatch.setattr(cli.shutil, "which", lambda name: None)
+    assert "opencode" not in cli._detect_installed_clients()
+
+    (tmp_path / "config" / "opencode").mkdir(parents=True)
+    assert cli._detect_installed_clients() == ["opencode"]
+    import argparse
+
+    p = argparse.ArgumentParser()
+    cli._add_install_flags(p)
+    assert cli._cmd_install(p.parse_args(["--token", "T", "--server-url", "https://h"])) == 0
+    written = json.loads((tmp_path / "config" / "opencode" / "opencode.json").read_text())
+    assert written["mcp"]["servers"]["loom"] == _opencode_entry("T")
