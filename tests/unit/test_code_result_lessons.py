@@ -680,7 +680,9 @@ def test_grep_enrichment_uses_only_the_remaining_deadline(monkeypatch: pytest.Mo
     from tests.unit.clock_fake import ManualClock
 
     clock = ManualClock()
-    monkeypatch.setattr(result_lessons, "time", SimpleNamespace(monotonic=clock.monotonic))
+    clock_time = SimpleNamespace(monotonic=clock.monotonic)
+    monkeypatch.setattr(result_lessons, "time", clock_time)
+    monkeypatch.setattr(result_lessons.code_deadline, "time", clock_time)
     inp = CodeGrepInput(pattern="ab", deadline_ms=200)
     started = clock.monotonic()
     clock.advance(0.15)
