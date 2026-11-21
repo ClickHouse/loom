@@ -601,9 +601,10 @@ class AuthSettings(BaseModel):
             return {}
         return dict(json_map_items(raw, "jwt_public_keys_json"))
 
-    # Kill switch for restricted namespaces. True: served to a principal whose
-    # token names the namespace AND who holds a live direct grant. False: every
-    # read is refused while ingest continues.
+    # Kill switch for restricted namespaces. True requires a token naming the
+    # namespace and a live direct grant, except registered-repository viewer reads
+    # by an unscoped, undelegated, non-impersonating platform administrator.
+    # False refuses every restricted read while ingest continues.
     restricted_serve: bool = True
     # Wait for the `namespace.restricted_access` audit row of each admitted restricted read
     # before answering; false writes it beside the answer, lost if the process dies first.

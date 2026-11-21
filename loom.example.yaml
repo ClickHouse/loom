@@ -891,9 +891,10 @@ settings:
   # honoured from the next fetch. [restart]
   # jwt_end_user_jwks_refresh_seconds: 300.0
 
-  # Kill switch for restricted namespaces. True: served to a principal whose token names
-  # the namespace AND who holds a live direct grant. False: every read is refused while
-  # ingest continues. [restart]
+  # Kill switch for restricted namespaces. True requires a token naming the namespace
+  # and a live direct grant, except registered-repository viewer reads by an unscoped,
+  # undelegated, non-impersonating platform administrator. False refuses every
+  # restricted read while ingest continues. [restart]
   # restricted_serve: true
 
   # Wait for the `namespace.restricted_access` audit row of each admitted restricted

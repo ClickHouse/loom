@@ -511,11 +511,13 @@ If the classification cannot be read, access is denied.
 - `LOOM_RESTRICTED_SERVE=false` refuses every restricted read while ingest continues.
 
 > **Warning:** `loom mint-token` signs locally and is not checked against grants. Whoever
-> holds the signing key can mint any token; the direct-grant check at request time is what
-> still protects a restricted namespace.
+> holds the signing key can mint any token. Restricted access normally also requires a
+> live direct grant. An unscoped, undelegated, non-impersonating platform administrator
+> may view registered repositories without namespace claims or grants; direct grants do
+> not limit that repository-viewer authority. Protect the signing key.
 
-**To give a reader access, do both:** a direct grant on the subject, and a token that names
-the namespace.
+**To give an ordinary namespace reader access, do both:** a direct grant on the subject,
+and a token that names the namespace.
 
 ```bash
 # as an admin of the namespace
