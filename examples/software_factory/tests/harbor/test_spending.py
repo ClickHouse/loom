@@ -187,19 +187,19 @@ class SpendingContracts(unittest.TestCase):
             lambda _: httpx.Response(
                 200,
                 headers={"request-id": "native-id"},
-                json=self.response(model="claude-haiku-4-5-20251001"),
+                json=self.response(model="claude-haiku-5-5-20261007"),
             )
         )
         gateway.forward(
-            {**self.payload, "model": "claude-haiku-4-5", "max_tokens": 8192},
+            {**self.payload, "model": "claude-haiku-5-5", "max_tokens": 8192},
             {**self.headers, "x-factory-role": "loom"},
         )
-        self.assertEqual(str(self.journal.spent), "0.0002")
+        self.assertEqual(str(self.journal.spent), "0.00002")
         row = self.journal.rows[-1]
-        self.assertEqual(row["request_model"], "claude-haiku-4-5")
-        self.assertEqual(row["response_model"], "claude-haiku-4-5-20251001")
-        self.assertEqual(row["input_usd_per_million"], "1")
-        self.assertEqual(row["output_usd_per_million"], "5")
+        self.assertEqual(row["request_model"], "claude-haiku-5-5")
+        self.assertEqual(row["response_model"], "claude-haiku-5-5-20261007")
+        self.assertEqual(row["input_usd_per_million"], "0.1")
+        self.assertEqual(row["output_usd_per_million"], "0.5")
 
     def test_inflight_settlement_and_failure_keep_the_reserved_phase(self):
         self.journal.phase = "setup"
@@ -248,8 +248,8 @@ class SpendingContracts(unittest.TestCase):
         self.assertNotIn("PRIVATE_PROVIDER_DEBUG", self.path.read_text())
 
     def test_summary_retains_pending_and_unattributed_native_costs(self):
-        ticket = self.journal.reserve({**self.payload, "model": "claude-haiku-4-5"}, role="loom")
-        self.journal.settle(ticket, self.response(model="claude-haiku-4-5"), "native-summary")
+        ticket = self.journal.reserve({**self.payload, "model": "claude-haiku-5-5"}, role="loom")
+        self.journal.settle(ticket, self.response(model="claude-haiku-5-5"), "native-summary")
         self.journal.phase = "live:2"
         self.journal.reserve(self.payload, role="solver")
         summary = self.journal.summary()
@@ -257,7 +257,7 @@ class SpendingContracts(unittest.TestCase):
         self.assertEqual(summary["known_requests"], 1)
         self.assertEqual(summary["pending_requests"], 1)
         self.assertGreater(summary["pending_reserved_usd"], 0)
-        self.assertEqual(summary["by_role"]["loom"]["spent_usd"], 0.0002)
+        self.assertEqual(summary["by_role"]["loom"]["spent_usd"], 0.00002)
         self.assertEqual(summary["unattributed_requests"], 1)
         self.assertFalse(summary["complete"])
 
@@ -297,7 +297,7 @@ class SpendingContracts(unittest.TestCase):
         for role, model in (
             ("solver", "claude-haiku-4-5"),
             ("judge", "claude-haiku-4-5"),
-            ("loom", "claude-haiku-5-5"),
+            ("loom", "claude-haiku-4-5"),
             ("other", "claude-haiku-5-5"),
         ):
             with self.subTest(role=role, model=model), self.assertRaises(PermissionError):

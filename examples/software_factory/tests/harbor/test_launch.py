@@ -167,7 +167,7 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(plan["blind_judges"]["model"], plan["model"])
         self.assertEqual(plan["model"], "claude-haiku-5-5")
         self.assertEqual(plan["native_provider"], "anthropic")
-        self.assertEqual(plan["native_model"], "claude-haiku-4-5")
+        self.assertEqual(plan["native_model"], "claude-haiku-5-5")
         self.assertEqual(plan["arms"], list(PRIMARY))
         self.assertEqual(
             (

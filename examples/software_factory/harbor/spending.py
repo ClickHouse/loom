@@ -19,7 +19,7 @@ PRICE_BASIS = "Frozen standard uncached list prices; not an invoice or infrastru
 
 
 class Spending:
-    def __init__(self, path: Path, *, dollars: str, model: str, native_model="claude-haiku-4-5"):
+    def __init__(self, path: Path, *, dollars: str, model: str, native_model="claude-haiku-5-5"):
         try:
             self.limit = Decimal(dollars).normalize()
         except InvalidOperation:
@@ -28,9 +28,9 @@ class Spending:
             not self.limit.is_finite()
             or self.limit <= 0
             or model != "claude-haiku-5-5"
-            or native_model != "claude-haiku-4-5"
+            or native_model != "claude-haiku-5-5"
         ):
-            raise ValueError("Freeze a positive allowance and the two priced models")
+            raise ValueError("Freeze a positive allowance and the priced models")
         self.path = Path(path)
         self.model, self.native_model = model, native_model
         self.lock = threading.RLock()
@@ -92,8 +92,6 @@ class Spending:
             self._phase = value
 
     def rates(self, model, incoming, *, ceiling=False):
-        if model == self.native_model:
-            return Decimal("1"), Decimal("5")
         if model != self.model:
             raise ValueError("Unknown model price")
         return (
