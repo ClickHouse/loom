@@ -138,6 +138,18 @@ def _wire_quarantine(monkeypatch, heads, outcome_reads=None):
     monkeypatch.setattr(memory_repo, "get_by_id", get_first)
     monkeypatch.setattr(lifecycle, "get_by_id", get_by_id)
     monkeypatch.setattr(lifecycle, "build_memory_version_row", build)
+
+    async def current_heads(keys, **kwargs):
+        columns = ("org", "namespace", "agent", "user_id", "session_id", "memory_key")
+        return {
+            tuple(getattr(head, c) for c in columns): head
+            for head in heads.values()
+            if tuple(getattr(head, c) for c in columns) in keys
+        }
+
+    monkeypatch.setattr(
+        "server.memory.store.write_fence.memory_rows_by_identity_keys", current_heads
+    )
     monkeypatch.setattr("server.memory.store.inserts.check_memory_rows", lambda rows: None)
     return ch
 

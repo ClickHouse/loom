@@ -563,7 +563,7 @@ diff <(jq -S . /tmp/summary.json) <(jq -S . bench/code_ask_cache_threshold/summa
 ```
 
 Embedding APIs are not bit-stable across provider revisions: expect cosines to agree to a
-few thousandths. A threshold is robust only when its margin exceeds that drift.
+few thousandths. A threshold's margin must exceed that drift.
 
 **With the guard on** (`sweep_with_guard`: paraphrase hits of 42 and false hits of 65
 different pairs):
@@ -1216,12 +1216,59 @@ host dominate the single-row figures, so they show no measurable cost, not a gai
 and the cost is the difference within the round. A marked session, which every Loom
 process with `LOOM_CELL` set opens, shows no cost the rounds can tell from zero (the six
 rounds' differences range from −0.36 to 0.49 µs a row); an unmarked one pays 12 to 14 µs
-a row for the state read and the `loom.tenancy` lookup. Loom's own writes are marked, so
-this predicts the ship gate (a `memory.set` p99 rise of at most 10 ms, a delivery pass
-at most 10% slower) holds by a wide margin; the cost lands on scripts and older builds
-writing a cell without the check. This measures the triggers on the statements, not a
-whole `memory.set` through a server on a cell: the gate itself is measured end to end
-with attach.
+a row for the state read and the `loom.tenancy` lookup. These statement timings do not
+establish the `memory.set` p99 or delivery-throughput gates. Those require the end-to-end
+acceptance workload below. An unmarked session, including a script or older build writing
+a cell without the check, pays the measured state-read and tenancy-lookup cost.
+
+A small local diagnostic on an attached first cell records 400 sequential `memory.set`
+calls per run and 1,000-row statement inserts from marked and unmarked sessions, three
+rounds with org triggers on and off. Its fixture has two server processes, a router,
+Postgres 16 with a synchronous standby and ClickHouse in Docker on a shared host under
+other load. These are diagnostic figures, not the end-to-end acceptance workload:
+
+| Local, three rounds                 | Triggers on            | Triggers off           |
+| ----------------------------------- | ---------------------- | ---------------------- |
+| `memory.set` p50                    | 154.4, 99.3, 98.4 ms   | 91.9, 101.2, 101.6 ms  |
+| `memory.set` p99                    | 494.0, 291.7, 257.6 ms | 279.2, 244.7, 233.3 ms |
+| 1,000-row insert, marked (median)   | 11.0, 9.2, 8.5 ms      | 9.7, 11.1, 10.6 ms     |
+| 1,000-row insert, unmarked (median) | 22.1, 21.4, 21.0 ms    | 10.9, 9.6, 11.0 ms     |
+
+The marked statement medians average 9.6 ms on and 10.5 ms off. A statement insert omits
+the delivery worker's claim, embedding, publication and settlement work, so these figures
+establish no delivery-throughput gate. The API p99 differences within each round are
++214.8, +47.0 and +24.3 ms; another small diagnostic has differences of −71.7, −10.0 and
+−42.4 ms. Their opposing signs on the loaded host leave the API gate unresolved. Neither
+end-to-end gate is established by these measurements.
+
+`bench/cell_trigger_gate.py` measures the acceptance workload on an independently owned,
+attached scratch fixture with explicit fake providers, enforced mode and an already held
+org. Its namespace uses `append_only` for independent writes: sibling values do not
+rewrite one another's heads. The fixture verifies the stored policy before every arm,
+and the row proof requires each exact returned version and active status. This measures
+trigger cost for independent writes, not semantic conflict resolution. Each API run has
+50 unmeasured warmups and 2,000 sequential measured requests with
+4,096-byte values, with five runs per arm in counterbalanced order. Each delivery block
+times five complete `pg_delivery.run_pass` calls at the unchanged configured batch size,
+with five blocks per arm. The latency gate is `median(p99_on) - median(p99_off) <= 10 ms`;
+the throughput gate is `1 - median(rows_per_second_on) / median(rows_per_second_off) <= 0.10`.
+The driver retains every run and raw outcome; it does not substitute statement timings.
+
+```bash
+PYTHONPATH=$PWD .venv/bin/python bench/cell_trigger_gate.py \
+  --base-url <loopback-server-url> --pg-dsn <cell-dsn> --token <writer-token> \
+  --org <held-org> --namespace <namespace> --fixture-manifest <fixture-manifest.json> \
+  --launch-manifest <launch-manifest.json> --output <result.jsonl>
+```
+
+The fixture owner supplies the exact source, launch, configuration and ownership receipts,
+excludes competing controllers and workers, and stops its processes before deleting its
+exact scratch databases. The output path must not exist. The driver verifies source,
+launch and configuration identities and the live fixture before native setup and every
+arm, restores the org triggers within its cleanup bound and emits a final verdict only
+after cleanup and artifact sync. It records the ownership-receipt digest supplied by
+the fixture owner.
+Source tests and the diagnostic figures above are not evidence that this workload passes.
 
 ## Reference computations
 

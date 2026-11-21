@@ -183,6 +183,40 @@ def english_live(
     return not anchor or f'<a id="{unquote(anchor)}"></a>' in body
 
 
+def pending_link_fallbacks(path: str, text: str, proposed: dict[str, str]) -> str:
+    """Keep selected imports usable when a native dependency is not published."""
+    owned = owner(path, text)
+    if not owned or owned[0] == "README.md":
+        return text
+    start = body_start(path, text)
+    body = text[start:]
+    prefix = f"{t.OUT_DIR}/{owned[1].code}/"
+    inventory = frozenset(t.sources())
+    english_bodies: dict[str, tuple[str, str]] = {}
+    edits = []
+    for a, b, link, image in t.link_targets(body):
+        if image or re.match(r"[a-z]+:|#|/", link):
+            continue
+        relative, _, anchor = link.partition("#")
+        target = posixpath.normpath(posixpath.join(posixpath.dirname(path), unquote(relative)))
+        file = t.ROOT / target
+        if (
+            not target.startswith(prefix)
+            or target in proposed
+            or file.exists()
+            or any(p.is_symlink() for p in (file, *file.parents))
+        ):
+            continue
+        source = target.removeprefix(prefix)
+        if source_path(source) and english_live(source, anchor, inventory, _bodies=english_bodies):
+            fallback = f"{t.REPO_URL}/blob/main/{quote(source)}{'#' + anchor if anchor else ''}"
+            edits.append((a, b, fallback))
+    repaired = t.replace_spans(body, edits)
+    if canonical_links(repaired, path) != canonical_links(body, path):
+        raise t.TranslationDiffers(f"{path}: pending link repair changes source destinations")
+    return text[:start] + repaired
+
+
 def link_failures(extra: dict[str, str] | None = None) -> list[tuple[str, str, str]]:
     pages = {
         p: (t.ROOT / p).read_text() for p in output_files() if regular(p) and p.endswith(".md")
@@ -655,6 +689,9 @@ def import_pending(ref: str, codes: list[str] | None = None) -> int:
         else:
             proposed[path] = text
     for path, text in proposed.items():
+        # Refresh proofs bind exact text across the job's entire locale selection.
+        if not job or path.split("/", 2)[1] not in job["languages"]:
+            text = pending_link_fallbacks(path, text, proposed)
         stage(path, text)
     activate_ready(codes)
     print(f"reused={len(proposed)} preserved_deferred={preserved}")

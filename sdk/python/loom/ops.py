@@ -212,6 +212,7 @@ OpName = Literal[
     "learnings.review",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.append_batch",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -590,6 +591,7 @@ OP_NAMES: tuple[str, ...] = (
     "learnings.review",
     "memory.agents_list",
     "memory.aggregate",
+    "memory.append_batch",
     "memory.apply",
     "memory.ask",
     "memory.assign_category",
@@ -2871,6 +2873,18 @@ OPS: dict[str, OpSpec] = {
         False,
         True,
     ),
+    "memory.append_batch": OpSpec(
+        "memory.append_batch",
+        "MemoryAppendBatchInput",
+        "MemoryAppendBatchBody",
+        "MemoryBulkSetOutput",
+        True,
+        "writer",
+        "experimental",
+        300,
+        False,
+        False,
+    ),
     "memory.apply": OpSpec(
         "memory.apply",
         "MemoryApplyInput",
@@ -3453,7 +3467,7 @@ OPS: dict[str, OpSpec] = {
         "MemoryProposalDecideBody",
         "MemoryProposalDecideOutput",
         True,
-        "writer",
+        "admin",
         "experimental",
         800,
         True,
@@ -5614,6 +5628,10 @@ class CodeAskBody(TypedDict, total=False):
 
 class CodeAskOutput(TypedDict, total=False):
     answer: NotRequired[str]
+    partial: NotRequired[bool]
+    partial_reason: NotRequired[str]
+    note: NotRequired[str]
+    coverage: NotRequired[Literal["", "full", "partial", "none"]]
     citations: NotRequired[list[dict[str, Any]]]
     source: Required[Literal["cached", "synthesized", "abstained"]]
     cache_similarity: NotRequired[float]
@@ -7149,6 +7167,7 @@ class CodeRepoAddInput(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7165,6 +7184,7 @@ class CodeRepoAddBody(TypedDict, total=False):
     join_policy: NotRequired[Literal["open", "approval"]]
     classification: NotRequired[Literal["standard", "restricted"]]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     path_prefixes: NotRequired[list[str]]
     exclude: NotRequired[list[str]]
     exclude_generated: NotRequired[bool]
@@ -7210,6 +7230,7 @@ class CodeRepoRemoteBranchesInput(TypedDict, total=False):
     org: Required[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -7220,6 +7241,7 @@ class CodeRepoRemoteBranchesBody(TypedDict, total=False):
     org: NotRequired[str]
     repo: Required[str]
     access_token: NotRequired[str]
+    git_proxy_identity: NotRequired[str]
     query: NotRequired[str]
     limit: NotRequired[int]
 
@@ -12392,6 +12414,73 @@ class AggregateRow(TypedDict, total=False):
     metric: Required[float]
 
 
+class MemoryAppendBatchInput(TypedDict, total=False):
+    "Append distinct episodic occurrences atomically on the Postgres authority."
+
+    org: Required[str]
+    namespace: Required[str]
+    agent: Required[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["AppendBatchEntry"]]
+
+
+class AppendBatchEntry(TypedDict, total=False):
+    memory_key: Required[str]
+    value: Required[Union[dict[str, Any], list[Any], str, int, float, bool]]
+    source_trace: NotRequired[str]
+    source_class: NotRequired[Optional[str]]
+
+
+class MemoryAppendBatchBody(TypedDict, total=False):
+    "Append distinct episodic occurrences atomically on the Postgres authority."
+
+    org: NotRequired[str]
+    namespace: NotRequired[str]
+    agent: NotRequired[str]
+    user_id: NotRequired[str]
+    session_id: NotRequired[str]
+    run_id: NotRequired[str]
+    entries: Required[list["AppendBatchEntry"]]
+
+
+class MemoryBulkSetOutput(TypedDict, total=False):
+    written: Required[list["BulkSetResult"]]
+    skipped_pinned: NotRequired[list[str]]
+    skipped_locked: NotRequired[list[str]]
+    skipped_blacklisted: NotRequired[list[str]]
+    merged: NotRequired[list[str]]
+    value_updates_linked: NotRequired[int]
+    rejected_pinned: NotRequired[list[str]]
+    duplicates: NotRequired[list[str]]
+    conflicted: NotRequired[list[str]]
+    unchecked: NotRequired[int]
+    retyped: NotRequired[list[str]]
+    identity_duplicates: NotRequired[dict[str, str]]
+    stage_ms: NotRequired[dict[str, float]]
+
+
+class BulkSetResult(TypedDict, total=False):
+    memory_key: Required[str]
+    version: Required[int]
+    memory_id: NotRequired[str]
+    conflict_verdict: NotRequired[str]
+    peers: NotRequired[list["MemorySetPeer"]]
+    next: NotRequired[str]
+    pinned_blocker_id: NotRequired[str]
+
+
+class MemorySetPeer(TypedDict, total=False):
+    "A row the conflict check compared the write against."
+
+    memory_id: NotRequired[str]
+    memory_key: NotRequired[str]
+    excerpt: NotRequired[str]
+    valid_at: NotRequired[Optional[str]]
+    similarity: NotRequired[float]
+
+
 class MemoryApplyInput(TypedDict, total=False):
     "One scope grammar for every write that can touch more than one row."
 
@@ -13095,42 +13184,6 @@ class MemoryBulkSetBody(TypedDict, total=False):
     entries: Required[list["BulkSetEntry"]]
     contextualize: NotRequired[bool]
     detect_updates: NotRequired[Optional[bool]]
-
-
-class MemoryBulkSetOutput(TypedDict, total=False):
-    written: Required[list["BulkSetResult"]]
-    skipped_pinned: NotRequired[list[str]]
-    skipped_locked: NotRequired[list[str]]
-    skipped_blacklisted: NotRequired[list[str]]
-    merged: NotRequired[list[str]]
-    value_updates_linked: NotRequired[int]
-    rejected_pinned: NotRequired[list[str]]
-    duplicates: NotRequired[list[str]]
-    conflicted: NotRequired[list[str]]
-    unchecked: NotRequired[int]
-    retyped: NotRequired[list[str]]
-    identity_duplicates: NotRequired[dict[str, str]]
-    stage_ms: NotRequired[dict[str, float]]
-
-
-class BulkSetResult(TypedDict, total=False):
-    memory_key: Required[str]
-    version: Required[int]
-    memory_id: NotRequired[str]
-    conflict_verdict: NotRequired[str]
-    peers: NotRequired[list["MemorySetPeer"]]
-    next: NotRequired[str]
-    pinned_blocker_id: NotRequired[str]
-
-
-class MemorySetPeer(TypedDict, total=False):
-    "A row the conflict check compared the write against."
-
-    memory_id: NotRequired[str]
-    memory_key: NotRequired[str]
-    excerpt: NotRequired[str]
-    valid_at: NotRequired[Optional[str]]
-    similarity: NotRequired[float]
 
 
 class MemoryClearInput(TypedDict, total=False):
@@ -14623,7 +14676,7 @@ class MemoryListEntry(TypedDict, total=False):
 
 
 class MemoryLockInput(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: Required[str]
     namespace: Required[str]
@@ -14640,7 +14693,7 @@ class MemoryLockInput(TypedDict, total=False):
 
 
 class MemoryLockBody(TypedDict, total=False):
-    "Lock one row against a class of writes."
+    "Lock one row, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     namespace: NotRequired[str]
@@ -15033,6 +15086,7 @@ class MemoryProposalDecideInput(TypedDict, total=False):
     namespace: Required[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15041,6 +15095,7 @@ class MemoryProposalDecideBody(TypedDict, total=False):
     namespace: NotRequired[str]
     memory_keys: Required[list[str]]
     decision: Required[Literal["accept", "reject"]]
+    approved_sha256: NotRequired[dict[str, str]]
     reason: NotRequired[str]
 
 
@@ -15083,6 +15138,7 @@ class MemoryProposalsOutput(TypedDict, total=False):
 class MemoryProposal(TypedDict, total=False):
     memory_key: Required[str]
     memory_id: Required[str]
+    content_sha256: NotRequired[str]
     agent: NotRequired[str]
     memory_type: NotRequired[str]
     value_preview: NotRequired[str]
@@ -16358,6 +16414,8 @@ class MemoryTouchResult(TypedDict, total=False):
 
 
 class MemoryUnlockInput(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: Required[str]
     namespace: Required[str]
     agent: Required[str]
@@ -16369,6 +16427,8 @@ class MemoryUnlockInput(TypedDict, total=False):
 
 
 class MemoryUnlockBody(TypedDict, total=False):
+    "Unlock one row, refusing a changed source with retryable 503"
+
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -16517,7 +16577,7 @@ class MemoryUpdateByIdOutput(TypedDict, total=False):
 
 
 class MemoryVerifyInput(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: Required[str]
     memory_id: NotRequired[str]
@@ -16531,7 +16591,7 @@ class MemoryVerifyInput(TypedDict, total=False):
 
 
 class MemoryVerifyBody(TypedDict, total=False):
-    "Attest to (or revoke the attestation on) one memory."
+    "Attest or revoke, refusing a changed source with retryable 503"
 
     org: NotRequired[str]
     memory_id: NotRequired[str]
@@ -17505,6 +17565,7 @@ class SnapshotMemoryRow(TypedDict, total=False):
             "active", "conflicted", "tombstoned", "duplicate", "superseded", "rejected", "proposed"
         ]
     ]
+    requires_review: NotRequired[Optional[bool]]
     conflict_with: NotRequired[list[str]]
     duplicate_of: NotRequired[str]
     evidence_count: NotRequired[int]

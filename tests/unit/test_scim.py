@@ -1222,6 +1222,9 @@ async def test_deleting_an_inactive_user_is_audited_too(world) -> None:
 
 
 async def test_a_deactivated_email_is_refused_where_every_sso_sign_in_ends(monkeypatch) -> None:
+    async def no_account(email: str) -> None:
+        return None
+
     async def deactivated(email: str) -> bool:
         return email == "lee@example.com"
 
@@ -1230,12 +1233,13 @@ async def test_a_deactivated_email_is_refused_where_every_sso_sign_in_ends(monke
 
     monkeypatch.setattr(scim, "deactivated", deactivated)
     monkeypatch.setattr(audit, "emit", emit)
+    monkeypatch.setattr(login, "resolve_identity_for_email", no_account)
     # Before JIT could make an account, and again at the end of a link.
     got = await oauth._account_for("lee@example.com", {}, "")
-    assert got == oauth._Denied("this account is deactivated")
+    assert got == oauth._Denied("this account is not allowed to sign in")
     identity = ("lee", "acme", ["lee"], ["writer"])
     page = await oauth._signed_in_as({"kind": "dashboard"}, identity, "", "lee@example.com")
-    assert page.status_code == 403 and b"deactivated" in page.body
+    assert page.status_code == 403 and b"this account is not allowed to sign in" in page.body
 
 
 async def test_an_unreadable_deactivation_fails_the_sign_in_retryably(world, monkeypatch) -> None:

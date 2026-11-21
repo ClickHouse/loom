@@ -19,6 +19,7 @@ from server.core import pg
 from server.core.error_summary import error_summary
 from server.core.errors import stored_caller_text
 from server.core.hashing import hash_text, sha256_value
+from server.embedding.documents import document_vector
 from server.identity.domain.read_scope import WHOLE_NAMESPACE
 from server.memory.api.models_admin import (
     ConsolidationRunRow,
@@ -33,6 +34,7 @@ from server.memory.app.drops import record_drop
 from server.memory.app.provenance import writer_actor
 from server.memory.domain.lock import refuses_cross_key_retirement
 from server.memory.domain.memory_types import DEFINITION
+from server.memory.domain.proposal_review import pending_review
 from server.memory.domain.sensitivity import (
     Sensitivity,
     inherited_sensitivity,
@@ -212,6 +214,7 @@ def _consolidation_canonical_row(
         "redacted_at": None,
         "redaction_reason": "",
         "status": "active",
+        "requires_review": int(any(pending_review(r) for r in cluster)),
         "conflict_with": [],
         "duplicate_of": "",
         "evidence_count": len(cluster),
@@ -336,6 +339,8 @@ SELECT
     m.session_id,
     m.version,
     m.redacted_at,
+    m.status,
+    m.requires_review,
     m.memory_key,
     m.memory_type,
     m.value,
@@ -363,6 +368,7 @@ WHERE m.org = {org:String}
   AND m.tombstoned_at IS NULL
   AND m.redacted_at IS NULL
   AND m.status IN ('active', 'duplicate', 'conflicted')
+  AND m.requires_review = 0
   AND m.created_at <= {age_cutoff:DateTime}
   -- Pinned and locked rows stay out of a cluster; one pinned or locked
   -- since this read is left by `_held_since`.
@@ -623,7 +629,7 @@ async def _write_canonical(
     sensitivity = _summary_sensitivity(cluster, canonical_value)
     high = sensitivity == "high"
     try:  # before any key is claimed or read
-        embedding = None if high else await embedder.embed(canonical_value)
+        embedding = None if high else await document_vector(embedder, canonical_value)
     except Exception as e:  # re-raised: the cluster is recorded as failed
         log.warning("consolidate: the summary's embed failed: %s", error_summary(e))
         raise _EmbedFailed() from e

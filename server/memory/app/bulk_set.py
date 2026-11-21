@@ -8,6 +8,7 @@ import asyncio
 import functools
 import logging
 from collections import Counter
+from collections.abc import Callable
 from contextlib import nullcontext
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ from server.core import pg, pg_lease
 from server.core.ch import get_client, sequential_reads
 from server.core.datetimes import naive_utc_now
 from server.core.error_summary import error_summary
+from server.core.errors import ValidationError
 from server.core.hashing import hash_text
 from server.core.hashing import sha256_value as _content_sha256
 from server.core.vectors import codes_state
@@ -24,8 +26,10 @@ from server.identity.app.request_scope import request_scope
 from server.identity.domain.read_scope import scope_and
 from server.llm import customer
 from server.memory.api.models_bulk import (
+    MemoryAppendBatchInput,
     MemoryBulkSetInput,
     MemoryBulkSetOutput,
+    _BulkSetEntry,
 )
 from server.memory.app import after_write, blacklist_guard, pg_admission, webhooks
 from server.memory.app.bulk_rows import (
@@ -72,6 +76,7 @@ from server.memory.domain.memory_types import is_definition, is_embedded
 from server.memory.domain.temporal_sql import LIVE_STATUSES
 from server.memory.domain.webhook_events import EventType
 from server.memory.store import identity_key, pg_memory, pg_publish
+from server.memory.store.lifecycle import finish_followups
 from server.memory.store.pg_memory import (
     Admission,
     AdmissionContendedError,
@@ -513,12 +518,14 @@ def _settle_results(state: _BulkWriteState, plan: BulkVerdictPlan) -> None:
 async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
     """Phase 10: the two core writes, the memory rows and their embedding rows. Under
     Postgres the batch is committed and published through the publication batch, then
-    announced. On ClickHouse the two are gathered, each a committed insert, and once the
+    announced. On ClickHouse the memory rows precede the embeddings, and once the
     memory rows are in the batch is announced even when the embedding insert or the tail
     after it fails: a retry of the same values writes nothing and would announce
     nothing."""
 
-    if state.memory_rows and not pg.enabled():
+    if state.strict_append:
+        _require_append_authority()
+    if not state.strict_append and state.memory_rows and not pg.enabled():
         # Under Postgres the commit orders the batch after a delete (`write_fence`).
         first = state.memory_rows[0]
         lifted = await lift_above_deletes(
@@ -533,10 +540,14 @@ async def _bulk_insert(ch: Any, state: _BulkWriteState) -> None:
         r for r in state.embedding_rows if str(r.get("memory_key")) not in retire
     ]
     async with fenced_once_committed(
-        lambda: _high_winners(state), op="memory.bulk_set", ch=ch
+        lambda: _high_winners(state),
+        op="memory.append_batch" if state.strict_append else "memory.bulk_set",
+        ch=ch,
     ) as answer:
         committed = (
-            await _commit_batch(state, retire) if pg.enabled() and state.memory_rows else None
+            await _commit_batch(state, retire)
+            if (state.strict_append or pg.enabled()) and state.memory_rows
+            else None
         )
         if committed is not None:
             answer.mark_committed()
@@ -571,10 +582,19 @@ async def _land_batch(
         finally:  # committed: a failed follow-up must not also skip the announcement
             await _fence_and_announce(state, ch=ch)
         return
-    embedding_error = await _insert_batch(state, ch)
+    sent = False
+    inserted = False
+
+    def mark_sent() -> None:
+        nonlocal sent
+        sent = True
+
+    def mark_inserted() -> None:
+        nonlocal inserted
+        inserted = True
+
     try:
-        if embedding_error is not None:
-            raise embedding_error
+        await _insert_batch(state, ch, on_send=mark_sent, on_inserted=mark_inserted)
         if state.memory_rows:
             # A memory.delete_version that landed after the fence read: the rows go above it.
             first = state.memory_rows[0]
@@ -588,26 +608,29 @@ async def _land_batch(
         after_write.index_late_rows(state.embedding_rows, ch=ch)
         await memory_repo.retire_vectors_for_keys(list(retire.values()), ch=ch)
     finally:  # the rows are in: a failed lift or retire must not also skip the fence
-        await _fence_and_announce(state, ch=ch)
+        if inserted:
+            await finish_followups(
+                _fence_and_announce(state, ch=ch), name="memory.bulk_set.followups"
+            )
+        elif sent and (fences := _high_winners(state)):
+            await fence_high(fences, ch=ch)
 
 
-async def _insert_batch(state: _BulkWriteState, ch: Any) -> BaseException | None:
+async def _insert_batch(
+    state: _BulkWriteState,
+    ch: Any,
+    *,
+    on_send: Callable[[], None] | None = None,
+    on_inserted: Callable[[], None] | None = None,
+) -> None:
     """On the ClickHouse authority: the batch's memory rows and embedding rows, written
-    beside each other. Raises what refused the memory rows; returns what refused the
-    embedding rows, raised once the batch is announced."""
+    in that order. The caller announces acknowledged rows even if an insert raises."""
     import server.memory.store as memory_repo
 
-    # The two core writes are independent rows of two tables and each is a ~260 ms committed
-    # insert on ClickHouse Cloud, so they are gathered, as on the point path (`memory.set`).
-    memory_done, embedding_done = await asyncio.gather(
-        # Full version rows (revision or first version), so the typed insert checks them.
-        memory_repo.insert_memory_versions(state.memory_rows, ch=ch),
-        memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch),
-        return_exceptions=True,
+    await memory_repo.insert_memory_versions(
+        state.memory_rows, ch=ch, on_send=on_send, on_inserted=on_inserted
     )
-    if isinstance(memory_done, BaseException):
-        raise memory_done
-    return embedding_done if isinstance(embedding_done, BaseException) else None
+    await memory_repo.insert_embedding_rows(state.embedding_rows, ch=ch)
 
 
 async def _fence_and_announce(state: _BulkWriteState, *, ch: Any) -> None:
@@ -640,6 +663,8 @@ async def _commit_batch(
     without its type's vector, a key the batch embedded earlier, a failed lookup); they
     owe OLD_VECTORS. The commit adds any row over an embedded head itself."""
 
+    if state.strict_append:
+        _require_append_authority()
     # The publication clears a revision's search document only for the version it was
     # built from, so only that version owes one.
     embedded = {(identity_key(r), int(r["version"])) for r in state.embedding_rows}
@@ -651,16 +676,17 @@ async def _commit_batch(
         | (pg_memory.OLD_VECTORS if _owes_retirement(r, retire) else 0)
         for r in state.memory_rows
     ]
+    recheck = _fresh_append_head if state.strict_append else heads_unchanged(read)
     entries = await _reach_of(state)
     if not entries:
         # No verdict to keep: only the heads and the policy the guards ran under, so a
         # batch of unsearchable rows, or only definitions, never waits on search.
         generations = pg_memory.policy_part(state.generations, state.memory_rows[0]["org"])
-        admission = Admission(generations=generations, recheck=heads_unchanged(read))
+        admission = Admission(generations=generations, recheck=recheck)
     else:
         admission = Admission(
             generations=dict(state.generations),
-            recheck=heads_unchanged(read),
+            recheck=recheck,
             gap_check=pg_admission.batch_gap_check(entries),
         )
     state.retry.start()
@@ -957,7 +983,10 @@ async def _bulk_audit(
     # Every write lands in the hash-chained audit log as hashes, not text: what was written,
     # by whom, with which verdict.
     try:
-        await _audit_bulk_write(input, state.memory_rows, plan)
+        if state.strict_append:
+            await _audit_bulk_write(input, state.memory_rows, plan, operation="memory.append_batch")
+        else:
+            await _audit_bulk_write(input, state.memory_rows, plan)
     except Exception as e:  # noqa: BLE001 — the ledger row is best-effort
         log.warning("bulk_set: audit row failed (non-fatal): %s", e)
 
@@ -1214,12 +1243,53 @@ async def _bulk_follow_row_supersessions(
     clock.mark("triples_follow_rows")
 
 
+def _require_append_authority() -> None:
+    if not pg.enabled():
+        raise ValidationError("memory.append_batch requires the Postgres memory authority")
+
+
+def _fresh_append_head(_key: Any, head: dict[str, Any] | None) -> None:
+    # Checked under the authority's generation and head locks, including deleted heads.
+    if head is not None:
+        raise ValidationError("memory.append_batch keys must not already exist")
+
+
+async def handle_memory_append_batch(input: MemoryAppendBatchInput) -> MemoryBulkSetOutput:
+    _require_append_authority()
+    keys = [entry.memory_key for entry in input.entries]
+    if len(set(keys)) != len(keys):
+        raise ValidationError("memory.append_batch requires distinct keys")
+    batch = MemoryBulkSetInput(
+        **input.model_dump(exclude={"entries"}),
+        entries=[_BulkSetEntry(**e.model_dump(), memory_type="episodic") for e in input.entries],
+        detect_updates=False,
+    )
+    return await handle_memory_bulk_set(batch, reinforce=False, strict_append=True)
+
+
+def _require_whole_append(input: MemoryBulkSetInput, state: _BulkWriteState) -> None:
+    if not state.strict_append:
+        return
+    if not state.existing_lookup_ok:
+        raise ValidationError("memory.append_batch could not verify fresh keys")
+    if state.existing_rows or state.deleted_heads:
+        raise ValidationError("memory.append_batch keys must not already exist")
+    if (
+        len(state.memory_rows) != len(input.entries)
+        or any(result.version == 0 for result in state.results)
+        or state.retyped
+        or state.unchecked_keys
+    ):
+        raise ValidationError("memory.append_batch refused an entry; no items were appended")
+
+
 async def handle_memory_bulk_set(
     input: MemoryBulkSetInput,
     *,
     dry_run: bool = False,
     conflict_check_cap: int | None = None,
     reinforce: bool = True,
+    strict_append: bool = False,
 ) -> MemoryBulkSetOutput:
     """One CH insert for all rows; one more for embeddings. Versions are
     each unique (nanosecond) to preserve LWW semantics.
@@ -1232,14 +1302,20 @@ async def handle_memory_bulk_set(
     commit; a batch whose scope or keys changed meanwhile starts over, reusing its
     vectors and contexts: until LOOM_PG_ADMISSION_DEADLINE_MS for a moved namespace, at
     most LOOM_PG_ADMISSION_ROUNDS passes for a head or policy that keeps changing."""
+    if strict_append:
+        _require_append_authority()
     once = functools.partial(
-        _bulk_set_once, dry_run=dry_run, conflict_check_cap=conflict_check_cap, reinforce=reinforce
+        _bulk_set_once,
+        dry_run=dry_run,
+        conflict_check_cap=conflict_check_cap,
+        reinforce=reinforce,
+        strict_append=strict_append,
     )
-    if not pg.enabled():
+    if not strict_append and not pg.enabled():
         return await once(input, get_embedder(), BatchRetry())
     from server.settings import settings
 
-    embedder = ReusedVectors(get_embedder())
+    embedder = None if strict_append else ReusedVectors(get_embedder())
     retry = BatchRetry()
     head_moves = 0
     spent = blacklist_guard.regex_work_spent()
@@ -1267,6 +1343,7 @@ async def _bulk_set_once(
     dry_run: bool,
     conflict_check_cap: int | None,
     reinforce: bool,
+    strict_append: bool = False,
 ) -> MemoryBulkSetOutput:
     ch = get_client()
     # The write names its phases on the response.
@@ -1278,16 +1355,17 @@ async def _bulk_set_once(
         retry=retry,
         conflict_check_cap=conflict_check_cap,
         reinforce=reinforce,
+        strict_append=strict_append,
     )
     if pg.enabled():
         # The verdicts below must see every commit through these generations (`catch_up`, below).
         state.generations = await pg_memory.capture(input.org, input.namespace)
     await _bulk_existing_lookup(ch, input, state)
 
-    identity_dupes = await _bulk_identity_dupes(ch, input)
+    identity_dupes = {} if strict_append else await _bulk_identity_dupes(ch, input)
 
     _bulk_clock.mark("existing_lookup")
-    entity_resolution = await _bulk_resolve_entities(ch, input)
+    entity_resolution = {} if strict_append else await _bulk_resolve_entities(ch, input)
 
     _bulk_clock.mark("entity_resolution")
     await _bulk_build_rows(input, state, identity_dupes, entity_resolution)
@@ -1303,14 +1381,17 @@ async def _bulk_set_once(
     # on any replica.
     with sequential_reads() if pg.enabled() else nullcontext():
         plan = await _bulk_verdicts(input, state, emb_idx_of, value_vectors, _bulk_clock)
+    _require_whole_append(input, state)
     if dry_run:
         _bulk_clock.finish()
         return _bulk_output(state, plan, _bulk_work)
     # After the verdicts: settling the batch moves entries to unchanged or pinned.
     _bulk_log_skips(state)
 
-    await _bulk_mark_same_key(ch, input, state)
-    _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
+    _intra_pairs: list[tuple[str, str]] = []
+    if not strict_append:
+        await _bulk_mark_same_key(ch, input, state)
+        _intra_pairs = await _bulk_intra_batch_pairs(ch, input, state)
 
     await _bulk_insert(ch, state)
     _bulk_clock.mark("insert")
@@ -1371,6 +1452,11 @@ async def _bulk_follow_ups(
 ) -> None:
     """What a batch does once its rows are in: retirements, conflict marks and same-key
     supersession, projections, row supersessions."""
+    if state.strict_append:
+        # Fresh episodic occurrences have no semantic or graph projections to settle.
+        _bulk_record_write_metrics(input, state)
+        await _bulk_audit(input, state, plan)
+        return
     await _record_intra_batch_retirements(input, state, intra_pairs)
 
     # A bulk write's retirement intents are left to the repair, which resolves them.
@@ -1570,7 +1656,11 @@ async def _bulk_conflict_verdicts(
 
 
 async def _audit_bulk_write(
-    input: Any, memory_rows: list[dict[str, Any]], plan: BulkVerdictPlan
+    input: Any,
+    memory_rows: list[dict[str, Any]],
+    plan: BulkVerdictPlan,
+    *,
+    operation: str = "memory.bulk_set",
 ) -> None:
     """One hash-chained audit row per bulk write: keys, ids and content hashes
     (never text — set_from_messages carries raw conversation), the writer and
@@ -1581,7 +1671,7 @@ async def _audit_bulk_write(
         return
     try:
         await _audit.emit(
-            event_type="memory.bulk_set",
+            event_type=operation,
             org=input.org,
             namespace=input.namespace,
             actor=writer_actor() or "-",

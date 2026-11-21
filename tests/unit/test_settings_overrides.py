@@ -453,13 +453,18 @@ async def test_a_native_command_chunks_as_the_http_op_does_under_an_override(
 ) -> None:
     """`loom rechunk` and knowledge.upsert share `_chunk_text`: inside a native command
     it reads the stored override, not the startup default."""
+    from server.core import retirement
     from server.insights.app import provider_command as pc
     from server.knowledge.app import writes
 
     async def _noop(*_a: Any, **_k: Any) -> bool:
         return True
 
-    for name in ("register_process", "load_active_configuration", "retire_process"):
+    async def _register() -> None:
+        retirement.get_gate().enrolled = True
+
+    monkeypatch.setattr(pc, "register_process", _register)
+    for name in ("load_active_configuration", "_retire_until"):
         monkeypatch.setattr(pc, name, _noop)
     monkeypatch.setattr(pc, "drain_task_sets", _noop)
     monkeypatch.setattr(pc, "flush_registered_buffers", _noop)

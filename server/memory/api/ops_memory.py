@@ -19,6 +19,7 @@ from server.memory.api.ops_admin import (
 )
 from server.memory.api.ops_ask import memory_ask
 from server.memory.api.ops_bulk import (
+    memory_append_batch,
     memory_bulk_get,
     memory_bulk_set,
     memory_extraction_retry_mine,
@@ -124,6 +125,7 @@ OPERATIONS: list[Operation] = [
     memory_demote,
     memory_definitions_list,
     memory_bulk_set,
+    memory_append_batch,
     memory_set_from_messages,
     memory_bulk_get,
     memory_extraction_status,

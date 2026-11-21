@@ -67,11 +67,13 @@ _CLASS_BY_LANG: dict[str, str] = {
     "rust": NATIVE,
     # Protobuf and Go-template names are module-scoped `<path>::Name` like Python's
     "proto": SCRIPT,
+    "thrift": SCRIPT,
     "gotemplate": SCRIPT,
     "hcl": SCRIPT,  # Dotted directory scopes
     "k8s": SCRIPT,  # Dotted file scopes
     "jsonnet": SCRIPT,
     "lua": SCRIPT,  # Dotted file scopes
+    "graphql": SCRIPT,  # Module-scoped `<path>::Type` like protobuf
 }
 
 # Programs a shell test calls that are not, and can never be, symbols of

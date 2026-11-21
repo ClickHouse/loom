@@ -36,10 +36,21 @@ class EntityResolutionDecision:
     strategy: str
 
 
+_ASCII_COMPACT_DELETE = str.maketrans(
+    "", "", "".join(chr(i) for i in range(128) if not chr(i).isalnum())
+)
+
+
+def _compact_canonical(text: str) -> str:
+    if text.isascii():
+        return text.translate(_ASCII_COMPACT_DELETE)
+    return "".join(char for char in text if char.isalnum())
+
+
 def compact_entity_text(text: str) -> str:
     """Normalize away separators for near-exact product/org spellings."""
 
-    return "".join(ch for ch in canonical_entity_text(text) if ch.isalnum())
+    return _compact_canonical(canonical_entity_text(text))
 
 
 def entity_similarity(a: str, b: str) -> float:
@@ -51,8 +62,13 @@ def entity_similarity(a: str, b: str) -> float:
         return 0.0
     if a_canon == b_canon:
         return 1.0
-    compact_a = compact_entity_text(a_canon)
-    compact_b = compact_entity_text(b_canon)
+    compact_a = _compact_canonical(a_canon)
+    compact_b = _compact_canonical(b_canon)
+    return _prepared_similarity(a_canon, b_canon, compact_a, compact_b)
+
+
+def _prepared_similarity(a_canon: str, b_canon: str, compact_a: str, compact_b: str) -> float:
+    """Score unequal, nonempty canonical names with their already prepared compact forms."""
     ratios = [
         SequenceMatcher(None, a_canon, b_canon).ratio(),
         SequenceMatcher(None, compact_a, compact_b).ratio() if compact_a and compact_b else 0.0,
@@ -190,12 +206,18 @@ def _prepare_candidates(candidates: Iterable[str]) -> PreparedCandidates:
     not re-canonicalize, de-duplicate and sort the whole candidate list on
     every call (a further ~6% of the cost).
     """
+    return _prepare_canonical_candidates(
+        canonical_entity_text(raw) if raw else "" for raw in candidates
+    )
+
+
+def _prepare_canonical_candidates(candidates: Iterable[str]) -> PreparedCandidates:
+    """Index normalized names without repeating their idempotent normalization."""
     prepared: dict[str, PreparedCandidate] = {}
-    for raw in candidates:
-        canon = canonical_entity_text(raw) if raw else ""
+    for canon in candidates:
         if not canon or canon in prepared:
             continue
-        compact = compact_entity_text(canon)
+        compact = _compact_canonical(canon)
         prepared[canon] = (canon, compact, len(canon), len(compact))
     return PreparedCandidates(prepared[k] for k in sorted(prepared))
 
@@ -264,7 +286,11 @@ def _overlap_upper_bound(chars_a: Counter[str], la: int, chars_b: Counter[str], 
     2 * |a ∩ b| / (la + lb) bounds 2 * M / T from above."""
     if la <= 0 or lb <= 0:
         return 0.0
-    shared = sum(min(n, chars_b[c]) for c, n in chars_a.items() if c in chars_b)
+    shared = 0
+    for char, count in chars_a.items():
+        if char in chars_b:
+            other = chars_b[char]
+            shared += count if count <= other else other
     return 2.0 * shared / (la + lb)
 
 
@@ -301,16 +327,30 @@ def choose_canonical_candidate(
     # Block by length (index), then bound by character overlap, then — only
     # for what survives both — run the real similarity. Both bounds are exact
     # (see the note above), so this decides exactly what the full scan would.
-    scored = sorted(
-        (
-            (prepared[i][0], entity_similarity(mention, prepared[i][0]))
-            for i in _blocked_positions(prepared, m_len, m_clen, min_score)
-            if prepared[i][0] != mention
-            and _overlap_admits(prepared, i, m_len, m_clen, m_chars, m_cchars, min_score)
-        ),
-        key=lambda item: item[1],
-        reverse=True,
-    )
+    scored: list[tuple[str, float]] = []
+    gap_blockers = 0
+    entropy_blockers = 0
+    # Qualifying probabilities contain at least min_score uniform mass.
+    # Reserve 64 ulps per candidate for normalization and entropy summation.
+    entropy_floor = min_score - 64.0 * math.ulp(1.0) * len(prepared)
+    two_scores_refuse = 0.0 < min_score <= 1.0 and 0.0 <= max_entropy < entropy_floor
+    for i in _blocked_positions(prepared, m_len, m_clen, min_score):
+        if prepared[i][0] == mention or not _overlap_admits(
+            prepared, i, m_len, m_clen, m_chars, m_cchars, min_score
+        ):
+            continue
+        score = _prepared_similarity(mention, prepared[i][0], m_compact, prepared[i][1])
+        scored.append((prepared[i][0], score))
+        if two_scores_refuse and score >= min_score:
+            entropy_blockers += 1
+            if entropy_blockers == 2:
+                return EntityResolutionDecision(mention, mention, 1.0, "self")
+        if 1.0 - score < min_gap:
+            gap_blockers += 1
+            # Two scores this close to one leave no room for the required winner gap.
+            if gap_blockers == 2:
+                return EntityResolutionDecision(mention, mention, 1.0, "self")
+    scored.sort(key=lambda item: item[1], reverse=True)
     if not scored:
         return EntityResolutionDecision(mention, mention, 1.0, "self")
     best, best_score = scored[0]
@@ -358,35 +398,29 @@ async def resolve_entities_for_write(
     except Exception:  # noqa: BLE001 — a failed candidate read keeps mentions as written
         return {mention: mention for mention in mentions}
 
-    by_mention = {
-        canonical_entity_text(str(row.get("mention_text") or "")): row
-        for row in rows
-        if row.get("mention_text")
-    }
-    candidates = sorted(
-        {
-            canonical_entity_text(str(row.get("canonical_text") or ""))
-            for row in rows
-            if row.get("canonical_text")
-        }
-    )
-    # Prepared ONCE for all mentions rather than rebuilt inside every
-    # choose_canonical_candidate call.
-    prepared_candidates = _prepare_candidates(candidates)
-    # Direct attestation per surface: the self-row evidence_count records
-    # how often that exact text was itself observed as a mention. Canonical
-    # DIRECTION follows attestation — a merge points at the better-evidenced
-    # variant, so a typo that happened to be written first cannot
-    # permanently canonicalize a correct later spelling into the typo.
-    # Ties keep the earlier-seen canonical.
+    by_mention: dict[str, Any] = {}
+    candidates: set[str] = set()
+    # Direct attestation is the maximum self-row evidence, even if a later
+    # duplicate row is the one the mention lookup retains.
     self_evidence: dict[str, int] = {}
     for row in rows:
-        m_text = canonical_entity_text(str(row.get("mention_text") or ""))
-        c_text = canonical_entity_text(str(row.get("canonical_text") or ""))
+        raw_mention = row.get("mention_text")
+        raw_canonical = row.get("canonical_text")
+        mention_raw = str(raw_mention or "")
+        canonical_raw = str(raw_canonical or "")
+        m_text = canonical_entity_text(mention_raw)
+        c_text = m_text if canonical_raw == mention_raw else canonical_entity_text(canonical_raw)
+        if raw_mention:
+            by_mention[m_text] = row
+        if raw_canonical:
+            candidates.add(c_text)
         if m_text and m_text == c_text:
             self_evidence[m_text] = max(
                 self_evidence.get(m_text, 0), int(row.get("evidence_count") or 0)
             )
+    # The rows are normalized once; ranking still receives the same sorted,
+    # distinct names and uses the same length and character-overlap indexes.
+    prepared_candidates = _prepare_canonical_candidates(candidates)
 
     decisions: list[EntityResolutionDecision] = []
     redirects: dict[str, str] = {}  # flipped canonical -> new canonical

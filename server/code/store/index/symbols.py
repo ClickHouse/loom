@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from clickhouse_connect.driver.binding import format_bind_value
+
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _hex, like_contains
 from server.code.store.index.symbol_rank import (
@@ -19,7 +21,35 @@ from server.code.store.index.symbol_rank import (
     demote_noise_paths,
     return_type_from_signature,
 )
-from server.core.ch_params import chunks
+from server.core.ch_params import FIELD_BYTES, chunks
+
+
+def _concat_key_parts(refs: list[str]) -> str:
+    """Keep each concatenation small even for a name spanning thousands of fields."""
+    while len(refs) > 1:
+        groups = [refs[i : i + 64] for i in range(0, len(refs), 64)]
+        refs = [f"concat({', '.join(group)})" if len(group) > 1 else group[0] for group in groups]
+    return refs[0]
+
+
+def _reconcile_key_match(keys: list[tuple[str, str]]) -> tuple[str, dict[str, Any]]:
+    """Keep a large single key exact without putting it in one HTTP form field."""
+    if len(keys) != 1 or len(format_bind_value(keys).encode()) <= FIELD_BYTES:
+        return "(qualified_name, symbol_id) IN {keys:Array(Tuple(String, String))}", {"keys": keys}
+    params: dict[str, Any] = {}
+    columns: list[str] = []
+    # Hex parts can split a UTF-8 sequence: concat restores its exact bytes before
+    # the String comparison. Quotes still fit inside the field budget.
+    part_bytes = FIELD_BYTES // 2 - 1
+    for column, value in enumerate(keys[0]):
+        raw = value.encode()
+        refs: list[str] = []
+        for i in range(0, max(1, len(raw)), part_bytes):
+            name = f"rk{column}_{i // part_bytes}"
+            params[name] = raw[i : i + part_bytes].hex()
+            refs.append(f"unhex({{{name}:String}})")
+        columns.append(_concat_key_parts(refs))
+    return f"(qualified_name, symbol_id) = ({', '.join(columns)})", params
 
 
 class SymbolsMixin(CodeRepoBase):
@@ -88,16 +118,17 @@ class SymbolsMixin(CodeRepoBase):
         keys = [(str(r["qualified_name"]), str(r["symbol_id"])) for r in cand]
         out: list[dict[str, Any]] = []
         for batch in _batched(keys, 1000):
+            key_match, key_params = _reconcile_key_match(batch)
             out.extend(
                 await self._ch.query_all(
-                    """
+                    f"""
                 SELECT * FROM loom.code_symbols FINAL
-                WHERE org = {org:String} AND namespace = {ns:String}
-                  AND tier = {tier:String}
-                  AND (qualified_name, symbol_id) IN {keys:Array(Tuple(String, String))}
-                  AND path = {path:String} AND tombstoned_at IS NULL
+                WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                  AND tier = {{tier:String}}
+                  AND {key_match}
+                  AND path = {{path:String}} AND tombstoned_at IS NULL
                 """,
-                    {"org": org, "ns": ns, "path": path, "tier": tier, "keys": batch},
+                    {"org": org, "ns": ns, "path": path, "tier": tier, **key_params},
                 )
             )
         return out
@@ -161,15 +192,16 @@ class SymbolsMixin(CodeRepoBase):
             )
             keys = [(str(r["qualified_name"]), str(r["symbol_id"])) for r in cand]
             for kb in _batched(keys, 1000):
+                key_match, key_params = _reconcile_key_match(kb)
                 rows = await self._ch.query_all(
-                    """
+                    f"""
                     SELECT * FROM loom.code_symbols FINAL
-                    WHERE org = {org:String} AND namespace = {ns:String}
-                      AND tier = {tier:String}
-                      AND (qualified_name, symbol_id) IN {keys:Array(Tuple(String, String))}
-                      AND path IN {paths:Array(String)} AND tombstoned_at IS NULL
+                    WHERE org = {{org:String}} AND namespace = {{ns:String}}
+                      AND tier = {{tier:String}}
+                      AND {key_match}
+                      AND path IN {{paths:Array(String)}} AND tombstoned_at IS NULL
                     """,
-                    {"org": org, "ns": ns, "paths": batch, "tier": tier, "keys": kb},
+                    {"org": org, "ns": ns, "paths": batch, "tier": tier, **key_params},
                 )
                 for r in rows:
                     out.setdefault(str(r["path"]), []).append(r)

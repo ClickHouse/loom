@@ -37,7 +37,7 @@ async def me_set_default_namespace(
 
     from server.core.ch import get_client
 
-    subject, org = me_callers.caller_identity(request)
+    subject, org = await me_callers.caller_identity(request)
 
     namespace = str(payload.get("namespace") or "").strip()
     if not namespace:
@@ -66,6 +66,7 @@ async def me_set_default_namespace(
 
 _SHARING_WRITE_OPS = [
     "memory.set",
+    "memory.append_batch",
     "memory.bulk_set",
     "memory.update_by_id",
     "memory.pin",
@@ -162,7 +163,7 @@ async def me_sharing_summary(request: Request) -> dict[str, object]:
 
     # Auth-off keeps a self-minted bearer's subject so per-subject role lookups
     # stay accurate on multi-member namespaces.
-    subject, org = me_callers.caller_identity(request, prefer_bearer_in_dev=True)
+    subject, org = await me_callers.caller_identity(request)
     subs = await me_callers.lowered_aliases(org, subject)
 
     ch = get_client()

@@ -164,6 +164,23 @@ class _CH:
 
     async def query_all(self, sql, params=None):
         self.reads.append((sql, dict(params or {})))
+        if "FROM loom.memory FINAL" in sql and "PREWHERE (org, namespace" in sql:
+            from server.memory.store import build_memory_version_row, identity_key
+
+            heads = {
+                identity_key(r): r
+                for r in [
+                    build_memory_version_row(_existing(str(r["memory_id"]), str(r["memory_key"])))
+                    for r in self.rows
+                ]
+            }
+            for table, rows in self.inserts:
+                if table == "loom.memory":
+                    for row in rows:
+                        key = identity_key(row)
+                        if key not in heads or int(row["version"]) >= int(heads[key]["version"]):
+                            heads[key] = row
+            return [heads[key] for key in (params or {})["keys"] if key in heads]
         return list(self.rows)
 
     async def execute(self, sql, params=None):
@@ -197,6 +214,9 @@ class _Emb:
 
     async def embed(self, text):
         return [1.0, 0.0, 0.0, 0.0]
+
+    async def embed_many(self, texts):
+        return [await self.embed(text) for text in texts]
 
 
 def _existing(mid: str, key: str) -> MemoryRow:

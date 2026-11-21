@@ -26,7 +26,12 @@ loom mint-token --subject my-bot --org acme --namespaces support --roles writer 
 
 `loom` ships with the server package and the Docker image, not with the SDK; in a container
 run `docker exec <server-container> loom mint-token ...`. Minting needs the signing key,
-`LOOM_JWT_SECRET`. A fresh clone gets a development secret from `.env.example`.
+`LOOM_JWT_SECRET`, and access to the deployment's migrated stores. The command verifies
+the paired stores and enrolls before reading the accepting cell state or signing.
+Offline native minting and minting before migrations refuse. If only the keyring read
+fails after successful enrollment, an ordinary mint can still sign with the root key.
+Platform-admin minting also requires a fresh readable fleet and a recorded audit event. A fresh clone gets a development
+secret from `.env.example`.
 `loom mint-token` and `loom doctor` warn while it is in use, and a deployment with auth on
 refuses to start with it (except the `make dev` stack).
 

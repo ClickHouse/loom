@@ -30,6 +30,10 @@ Ask a QUESTION about this codebase and get a grounded answer with [file:line] ci
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `answer` | `str` | The grounded answer text; "" on an abstain or when synthesize=false. |
+| `partial` | `bool` | True when retrieval or provider limits prevent a complete response. |
+| `partial_reason` | `str` | Sanitized reason for an incomplete response; empty when complete. |
+| `note` | `str` | Caller-facing warning about missing retrieval or synthesis. |
+| `coverage` | `Literal['', 'full', 'partial', 'none']` | Synthesis self-assessment, not verified correctness; empty on cached answers. |
 | `citations` | `list[dict[str, Any]]` | The units the answer used (or was shown when none is cited): {path, start_line, end_line, symbol, unit_id} each; the retrieved units when synthesize=false. |
 | `source` | `Literal['cached', 'synthesized', 'abstained']` | cached = served from the answer cache \| synthesized = answered now (or retrieval-only when synthesize=false) \| abstained = no grounded answer (`abstain_reason` says why). |
 | `cache_similarity` | `float` | Cosine between this question and the served cached question; 0.0 unless source=cached. |
@@ -1146,11 +1150,12 @@ Add a repository's branch as a new read-only index.
 | `join_policy` | `Literal['open', 'approval']` | `'open'` | `open`: any org member joins at once; `approval`: a maintainer approves each request. |
 | `classification` | `Literal['standard', 'restricted']` | `'standard'` | `standard` or `restricted` (a reader needs an approved grant and a token that names the namespace). |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; stored encrypted, never returned. |
+| `git_proxy_identity` | `str` | `''` | The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. |
 | `path_prefixes` | `list[str]` | *(computed)* | Path prefixes to index (`src/`, `lib/`); blank entries are dropped, [] indexes the whole tree. |
 | `exclude` | `list[str]` | *(computed)* | Globs never indexed for this repository (`vendor/`, `*.generated.go`); [] keeps the deployment's default exclude list. |
 | `exclude_generated` | `bool` | `True` | Refuse generated content (Go's `// Code generated … DO NOT EDIT.` header, the `@generated` marker, the repository's `.gitattributes` linguist rules) — on unless the maintainer says otherwise |
 | `scip_producer` | `Literal['', 'go', 'typescript', 'clang', 'python']` | `''` | The compiler tier's producer; "" infers it from the tree's manifests (go.mod → go, tsconfig / package.json → typescript, a root CMakeLists.txt → clang, pyproject → python) |
-| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
+| `branches` | `list[str]` | *(computed)* | More branches chosen at add time, each its own index sharing the mirror and inheriting rule, token, git proxy identity and paths; per-branch refusals come back in `skipped`, never undoing the ones registered. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -1207,6 +1212,7 @@ What a Git remote shows before anything is written — every branch with its hea
 | `org` | `str` | required | The org adding the repository. |
 | `repo` | `str` | required | GitHub owner/name or an HTTPS/SSH Git URL. |
 | `access_token` | `str` | `''` | Token for a private HTTPS remote; used once. |
+| `git_proxy_identity` | `str` | `''` | The user name this read presents to the deployment's git proxy; only a platform admin may set it. |
 | `query` | `str` | `''` | Case-insensitive substring of the branch name to match. |
 | `limit` | `int` | `60` | How many matching branches to return (default 60). |
 
@@ -1447,7 +1453,7 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `expand` | `bool` | `False` | Vocabulary bridge: one LLM hop proposes codebase identifiers for the lexical leg (natural-language wording often misses the implementing subsystem's vocabulary). |
 | `annotate` | `bool` | `True` | Risk annotations + one-hop callee context per result (churn/amp/tested/ callees on each unit). |
 | `bodies` | `Literal['auto', 'none'] \| None` | `None` | "auto" (default): granularity scales with budget-per-slot — cards when the budget can't fit any body (~<200 tok/slot), whole units in the normal range, and top hits expand toward their WHOLE FILE when the budget is generous. "none": cards… |
-| `kind_prior` | `Literal['off', 'default', 'flat', 'structural'] \| None` | `None` | Chunk-kind prior override for A/B: None = the served "flat" table; "default" / "flat" pick a table, "structural" applies only the phrasing rule, "off" disables. |
+| `kind_prior` | `Literal['off', 'default', 'flat', 'structural'] \| None` | `None` | Chunk-kind prior override: None = code_search_kind_prior; "default" / "flat" pick a table, "structural" applies only the phrasing rule, "off" disables. |
 | `pr_leg_before` | `datetime \| None` | `None` | Only PRs merged strictly before this instant may vote — the time-travel pin a bench mined from merged PRs needs so the fix PR cannot vote for its own files. |
 | `embedding_model` | `str` | `''` | Bench-only override of the embedding_model label the legs read: "" = the deployment embedder's model name. |
 | `fresh` | `bool` | `False` | true = bypass the served-response memo and compute. |
@@ -1493,11 +1499,11 @@ Search the shared code index of this repository (fresh to the last merged PR).
 | `top_similarity` | `float` | Raw cosine of the top vector-leg hit (0.0 when the vector leg did not run or the route was symbol_exact). |
 | `tracked` | `dict[str, Any]` | track_path diagnostic: {path, verdict, chunks, pool, best: {chunk_id, scope, start_line, lexical_rank, vector_rank, lex_score, distance, served_rank}, lexical_floor, vector_ceiling}. |
 | `fanout` | `dict[str, Any]` | Fan-out disclosure: {namespaces, interleave: "rank", timeout_ms, per_namespace: {ns: {ms, results, abstain, route, commit, trace_run_id}}, dropped: [ns...]}. |
-| `note` | `str` | e.g. "lexical only until embeddings finish (41% embedded)" while the namespace's vector leg covers less than LOOM_CODE_READY_EMBED_COVERAGE of its chunks (a first index still embedding, a backfill without --embed); "" otherwise. |
+| `note` | `str` | Caller-facing warning when retrieval is unavailable or vector indexing is incomplete; empty when neither limitation applies. |
 | `legs_timed_out` | `list[str]` | The legs the deadline (or the model-leg grace) dropped — their rows are not in the ranking — and `epistemic` "partial" then, or when a content leg failed (`retrieval_work` names it). |
 | `epistemic` | `Literal['', 'partial']` | "partial" when a leg timed out or a content leg failed; off the wire otherwise. |
-| `partial` | `bool` | `deadline_ms` cut something (a leg, rerank, a late stage): the page is the best found in the budget, and `partial_reason` names what did not finish. |
-| `partial_reason` | `str` | What the deadline cut, as `deadline N ms: <stage>; <stage>`; off the wire otherwise. |
+| `partial` | `bool` | True when retrieval is unavailable, a leg timed out or a deadline cut a stage; false (and off the wire) when no such limitation was observed. |
+| `partial_reason` | `str` | Explanation of unavailable or timed-out retrieval and deadline cuts; empty (and off the wire) when no such limitation was observed. |
 
 ## `code.setting_facts`
 

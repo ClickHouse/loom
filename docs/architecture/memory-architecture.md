@@ -16,7 +16,7 @@ obeys are in [ClickHouse](clickhouse.md).
 | A writer reads its own point write on the next call, search included.                          | Atomic multi-row writes. `memory.bulk_set` and promotion are not transactional.                          |
 | Every write is judged against its peers (merge, duplicate, conflict, refines, rejected).       | Loom deciding truth. Verdicts flag and link rows; the owner or caller resolves.                          |
 | Derived work (entities, chunks, summaries, statistics) never fails or slows the primary write. | Derived rows current at every instant. They converge within a worker interval.                           |
-| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | Transaction-time queries. Validity (`valid_at`, `valid_to`, `invalid_at`) is valid-time only.            |
+| Every version is recoverable (`memory_versions`); every write leaves a hash receipt.           | A complete reconstruction of every overwritten value at an arbitrary transaction time.                   |
 | Search explains itself: per-component scores, an abstain code, a retrieval risk.               | One ranking formula for all corpora. Modes, recipes and namespace defaults exist because corpora differ. |
 
 ## Components
@@ -89,6 +89,13 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
    row stays attached to the write, so its locks and pin still hold and Postgres
    admission checks that row's exact version before replacing it. Lifecycle status and
    `valid_to` do not make an exact-key-readable row absent.
+   Pending proposals carry `requires_review` through revisions, rejection, deletion and
+   snapshots. The storage commit checks the locked current head before activating it or
+   clearing that bit. Only `memory.proposal_decide` can grant a permit for the exact
+   source and destination revisions, after an independent authenticated human
+   administrator supplies the hash of the content reviewed. Linked subjects count as
+   the same reviewer. Unknown proposer identity and failed alias reads refuse approval.
+   Automatic grading can reject or mark a proposal ready, but never accepts one.
 7. **Build the version row** (`_set_build_memory_row`). Over a live row,
    `build_revision_row` carries the other columns forward and resets those that describe
    the old value (`REVISION_RESETS` in `memory/store/rows.py`). `actor` comes from the
@@ -149,8 +156,9 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
 
 11. **Dry run** returns the verdict with version 0 and writes nothing, not even an audit
     row.
-12. **Dual write** (`_set_dual_write`). The `memory` row and its `build_embedding_row`
-    row are inserted concurrently. The embedding row carries the columns search filters
+12. **Dual write** (`_set_dual_write`). The `memory` row commits before its
+    `build_embedding_row` row is inserted, so a refused memory write publishes no text to
+    search. The embedding row carries the columns search filters
     on (type, status, tags, entities, validity, `source_class`, `verified`), so no leg
     joins back to `memory`; its `conflict_checked_at` carries the resolver's mark.
     Conflict marks then go on the peers, or `refines` supersedes them.
@@ -162,6 +170,14 @@ outcome (refusal, 4xx `rejected`, or `error`) and to attach value-shape advisori
     projection is scheduled beside the response (`memory/app/after_write.py`) and repaired
     by `entity_extractor` if lost. A long value is also split into `memory_chunks`,
     fail-open.
+
+**Embedding purpose.** Stored values, key axes, conversation excerpts, summaries and
+chunks use document embeddings, including single-item writes and serial recovery after
+a batch failure. Queries use query embeddings. Write retries cache each purpose
+separately: one text can have different query and document vectors. The shared document
+helper checks batch cardinality, width and finite values before a write consumes them.
+An embedding provider implements both methods in the `Embedder` protocol; writes never
+substitute a query vector when a document batch is malformed or unavailable.
 
 **Embedding stubs.** `memory.set` embeds before it inserts, so an embed failure fails
 the call and writes nothing. Writers that can wait for a vector (such as
@@ -983,6 +999,24 @@ and lets a client conditionally delete the exact writer/version without resolvin
 a key across authors. Namespace and end-user admission still select readable rows
 before serialization; the field grants no additional read or write access.
 
+Graph edges, degrees and typed-triple matches are namespace aggregates without a user,
+session, agent or run identity. A read bounded on one of those axes omits the aggregate
+graph signals, including hub pruning and graph paths. Its fact legs retain their scoped
+cosine and query-entity ranking. Namespace-wide reads use the graph aggregates.
+
+Session digests carry the keys they compressed in `derived_from`. Before deduplication,
+the summary leg checks those known sources under the digest's full identity. A source
+that is missing, unserved, deleted, expired, outside its validity, high-sensitivity or at a newer
+version withholds the digest. An unreadable source check withholds all unchecked digests.
+Without source revision hashes, a later source version conservatively withholds a digest
+during replay too. Lineage covers extracted facts, not every sentence of the transcript:
+a digest without a known source remains session evidence, and does not prove that its
+statements are current facts.
+
+`memory.list` excludes rejected rows from both sort orders and counts. A key lookup can
+inspect a rejected row. `memory.for_file` also checks `valid_to` before adding a fact to
+the edit context.
+
 `handle_memory_search` (`server/memory/app/search/handler.py`) runs phases, one
 module each. The SQL is in `server/memory/app/retrieval/` and
 `server/memory/domain/search_sql.py`.
@@ -1025,6 +1059,14 @@ and shared duplicate selection by phrase completion.
    | lexical and BM25 | `lexical.py`, `side_legs.py` | `hasAnyTokens` over the lowercase, stem and lemma columns; Okapi BM25 from `memory_term_freq` / `memory_doc_stats` plus rows newer than the refresh mark.                                                                                                                                                      |
    | verbatim chunks  | `chunks.py`                  | `memory_chunks`: a stage-1 candidate read, then one keyed stage 2 with neighbour windows.                                                                                                                                                                                                                      |
    | records          | `side_legs.py`               | `memory_records`.                                                                                                                                                                                                                                                                                              |
+
+   Every chunk statement excludes a known parent that the read would not serve, using
+   the canonical memory row's status and time predicates. The parent match includes
+   agent, user, session and key within the org and namespace, so another writer's row
+   cannot hide a passage. Anonymous user and session spellings compare as the same
+   sentinel. Blank-session ingests retain independent generated session ids. A chunk
+   with no matching canonical parent, including such a generated session, stays
+   eligible. Hard tags also require a matching searchable parent.
 
    A pooled chunk of a long `memory.set` value folds onto the row whose current value cuts
    it (`pool.py`, `fold_set_chunks`): one read of the writer's served rows of the key with
@@ -1161,6 +1203,10 @@ when one of them is empty for a namespace in scope (`workers/first_pass.py`).
 
 ## Lifecycle
 
+The `invalid_at` retirement stamp uses the record clock, including supersession within
+one extraction batch. A successor's backdated `valid_at` does not backdate when the
+service learned that its predecessor was retired.
+
 Every lifecycle change is a new version built with `build_memory_version_row`:
 tombstone, restore, lock, promote, demote, supersession (`status='superseded'`,
 `superseded_by`, `invalid_at`). Prior versions stay in `memory_versions`. `memory.redact`
@@ -1168,6 +1214,17 @@ is the one op that edits a stored version. `memory.reject` and negative-outcome
 quarantine write `status='rejected'` as a new version too (`reject_by_identity`). The
 usage fold's counters on `memory` are batched lightweight updates; see
 [ClickHouse](clickhouse.md#deletes-and-mutations).
+
+Under the ClickHouse authority, every memory version insert holds a Keeper fence per
+identity key. `memory.lock`, `memory.unlock` and `memory.verify` check that the source
+row is still the head inside the fence, and answer 503 `ADMISSION_CONTENDED` with
+no version written when it moved. All value inserts take the same fences, including
+unconditional writes and batches, so the check and insert cannot interleave with another
+replica's version insert. A re-read outside the fence provides no such guarantee.
+The check compares values and metadata as well as versions, since writers can draw
+equal versions. Usage totals and JSON projection formatting do not identify a version.
+The fence's failure and rollout limits are described in
+[storage authority](storage-authority.md#why-two-stores).
 
 A caller that must know whether its new version took effect (`write_versions_by_ids`
 with `on_written`) re-reads each key's head under FINAL after the insert. The version is
@@ -1277,6 +1334,22 @@ Expiry is the writer's choice. `ttl_seconds`, `valid_to`, a type's or namespace'
 | `demote`              | Clears expiry and scales confidence down.                                     |
 | `anonymize`           | Replaces the value with a marker, tombstones embeddings, keeps the shell row. |
 
+Each post-action requests exact-head admission. Under the ClickHouse authority,
+the source row is compared while holding the same per-key Keeper fence as every
+memory version writer; under Postgres, transactional admission checks the head.
+The comparison includes authored content and metadata even at the same version;
+derived usage counters are excluded. Before planning, the sweep rechecks expiry on
+every selected authoritative head, including equal-version replacements. Postgres can
+refresh a candidate to a rewritten head that is still expired. Missing, deleted or
+renewed candidates are skipped and counted in `moved_skipped`. A change after source
+selection also refuses admission. The refused batch is re-read and retried once without
+moved candidates, counted in `moved_skipped`; another refusal counts the entire remaining
+batch there, including unchanged candidates.
+Dry runs write nothing and do not acquire the fences
+([storage authority](storage-authority.md#why-two-stores)). An acknowledged expiry still
+announces and mirrors its action if holder cleanup is cancelled, even if cancellation
+repeats during those follow-ups. The cancellation is raised after they finish.
+
 At the memory row's version, the sweep then mirrors the action: tombstone and anonymize
 retire the key's vectors in `memory_embeddings` and `entity_vectors`, and demote copies
 its `memory_embeddings` rows. The next pass never selects a key it wrote, so a failed
@@ -1307,6 +1380,9 @@ target or its grants, then rechecks the values after its own grant writes. A rol
 checks all planned live reinstatements in bounded slices before its first batch, then
 reads each batch's heads afresh. Under Postgres each commit holds the
 policy generations captured before the guard; a changed policy refuses the commit.
+ClickHouse namespace restores write bounded batches so their Keeper holders remain
+live through admission and insertion. A failed later batch leaves earlier inserts in
+place; retrying the restore writes the snapshot again.
 An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
@@ -1521,12 +1597,15 @@ a per-process copy of `loom.memory_webhooks`, read again every
 first write after each interval waits for one registry read
 (`server/core/polled_copy.py`). A failed read keeps the last copy. A write on a cold copy
 waits for the first read; if that read fails, writes announce nothing (noted as a
-degradation) until a read lands. `memory.clear` tombstones with one mutation per table
-(when a lock keeps some rows, the embeddings one names the hashes of the locked identities
-it read; past 2,500 of them the scope is split into hash buckets, one mutation each, so a
-mutation's command stays small in Keeper) and, only when a webhook of the namespace takes
-`memory.tombstoned`, reads back the rows that mutation stamped in one streamed read in
-sort-key order, so the scope is scanned once, with one outbox insert per 1000 rows.
+degradation) until a read lands. `memory.clear` sets its version cutoff above every
+observed scoped head, including writers with faster clocks. Under sequential consistency
+it pages older unlocked heads in sort-key order and writes complete tombstone versions, so
+history records the clear. Each committed page
+announces `memory.tombstoned` before retiring its older vectors. A scoped embeddings
+mutation removes residual orphan vectors below the clear's version. Locked or newer heads
+are excluded by their identity hashes; past 2,500 identities the cleanup uses hash buckets to bound each
+command. A write above the cutoff keeps its memory and vectors. Counts and events include
+only tombstones confirmed as the current heads.
 
 The `memory_webhook_deliver` worker reads the registry, marks dead in one statement each
 the events of webhooks removed in the last `memory_webhook_removal_window_leases` lease

@@ -3,6 +3,15 @@
 The translation generator splits prepared English text into bounded requests, then checks
 the assembled translation before writing it. English remains the source of truth.
 
+## Pending publication
+
+Selected imports validate current source stamps, model, ownership and content before
+staging. A body link to an absent same-language document uses its English destination
+only when that tracked source and its anchor exist. Native destinations present in the
+selected batch retain their links. README bodies and locales in an active prompt-refresh
+job retain exact text and refresh proofs. Publication still waits for all inbound and
+outbound links and README language dependencies to resolve.
+
 ## Request planning
 
 `english_requests` assigns heading anchors with one page-wide counter. It prefers safe
@@ -67,9 +76,28 @@ Historical raw lines that still occur in the current source must retain their or
 and multiplicity. A line absent from the current source can change inside a whole
 counterpart only when each endpoint's neighbouring lines remain present and have unique
 monotone origins. Earliest and latest embeddings of retained lines must agree at every
-endpoint. Replacing an endpoint line or inserting text at a unit or separator boundary
-refuses; the planner does not assign that text to a neighbouring request. All whole
-counterparts and their original separators must cover the complete current container.
+endpoint. Replacing an endpoint line or inserting text at an interior unit or separator
+boundary refuses; the planner does not assign that text to a neighbouring request.
+
+A terminal append can extend the final original whole when the old raw container is an
+exact proper prefix of the current raw container. Complete authenticated source maps
+must locate the old raw EOF inside the current prepared container, before its EOF.
+Maintained link-route changes can alter earlier prepared text or shorten the container;
+each changed original whole still needs its own current-input completion. The final original
+must already own the last heading section and end at historical EOF. Only closed,
+unindented, brace-free ordinary paragraphs under that heading may be appended. Added
+headings, lists, tables, code blocks, HTML, reference definitions and ambiguous
+site-extension or language-bar context refuse. Braces refuse even in literal prose
+because site attributes can appear inline or without a colon.
+Existing block content, every earlier cut and every original separator retain their
+proof. This terminal ownership proof maps only the final end to current EOF, including
+when historical EOF has repeated blank lines; it never relaxes an interior origin.
+The enlarged whole is changed input with the same original reference and current USER
+only. An already completed current input still requires its own origin and normal reuse
+eligibility. No added request, new historical slot or old-assistant replay is inferred.
+All whole counterparts and their original separators must cover the complete current
+container. For this terminal extension, consumers must supply the authenticated raw
+sources even when every old whole remains a substring of the current container.
 Ambiguous origins, reordered retained lines, incomplete originals and unsafe current
 parser cuts refuse. This proof is conservative: a replacement can still refuse when
 its text also occurs elsewhere and prevents unique ordered correspondence.

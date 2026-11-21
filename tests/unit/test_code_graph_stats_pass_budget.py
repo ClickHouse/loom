@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 from server.code.api.models_status import CodeIndexStatusOutput
 from server.code.app import index_status
@@ -607,6 +608,8 @@ async def test_a_cancelled_leg_issues_no_further_statements(
     assert repo.rows("code_unit_risk") == []
 
 
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.usefixtures("_pass_deadline_clock")
 async def test_a_pass_past_its_deadline_raises_timeout_and_freezes_the_statement_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -836,3 +839,101 @@ async def test_graph_stats_state_shows_unit_risk_progress() -> None:
         )
         == ""
     )
+
+
+@pytest.mark.parametrize("scheduler_s", [0.0, 0.25])
+@pytest.mark.asyncio(loop_scope="function")
+@pytest.mark.usefixtures("_pass_deadline_clock")
+async def test_pass_deadline_fixture_ignores_external_scheduler_elapsed(monkeypatch, scheduler_s):
+    import time as wall_time
+
+    real_monotonic = wall_time.monotonic
+    elapsed = 0.0
+    actual_pass = cgs.run_pass
+    actual_create_task = asyncio.create_task
+    owned = []
+
+    def monotonic():
+        return real_monotonic() + elapsed
+
+    async def run_pass():
+        nonlocal elapsed
+        elapsed += scheduler_s
+        await asyncio.sleep(0.001)
+        return await actual_pass()
+
+    def create_task(coro, *args, **kwargs):
+        task = actual_create_task(coro, *args, **kwargs)
+        owned.append(task)
+        return task
+
+    monkeypatch.setattr(wall_time, "monotonic", monotonic)
+    monkeypatch.setattr(cgs, "run_pass", run_pass)
+    monkeypatch.setattr(asyncio, "create_task", create_task)
+    try:
+        await test_a_pass_past_its_deadline_raises_timeout_and_freezes_the_statement_count(
+            monkeypatch
+        )
+    finally:
+        for task in owned:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*owned, return_exceptions=True)
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def _pass_deadline_clock(monkeypatch):
+    from tests.unit.clock_fake import ManualClock
+
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    async def to_thread(func, /, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    # Real pure calculations stay on this private clock instead of an executor.
+    monkeypatch.setattr(asyncio, "to_thread", to_thread)
+    # The cancellation protocol spends idle time, independently of CPU scheduling.
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    monkeypatch.setattr(cgs, "time", clock)
+    yield clock
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "graph-stats deadline leaves no task on its private loop"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_pass_deadline_clock_cancels_a_genuinely_blocked_query(
+    monkeypatch, _pass_deadline_clock
+):
+    loop = asyncio.get_running_loop()
+    clock = _pass_deadline_clock
+    assert loop.time.__self__ is clock and cgs.time is clock
+    actual_edges = _Repo.edges_for_symbols
+    cancelled = []
+
+    async def edges(repo, *args, **kwargs):
+        started = loop.time()
+        try:
+            return await actual_edges(repo, *args, **kwargs)
+        except asyncio.CancelledError:
+            cancelled.append(loop.time() - started)
+            raise
+
+    monkeypatch.setattr(_Repo, "edges_for_symbols", edges)
+    started = loop.time()
+    await test_a_pass_past_its_deadline_raises_timeout_and_freezes_the_statement_count(monkeypatch)
+    assert cancelled and all(elapsed == pytest.approx(0.2) for elapsed in cancelled)
+    assert loop.time() - started == pytest.approx(0.25)

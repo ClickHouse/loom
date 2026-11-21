@@ -15,6 +15,7 @@ that does not verify passes to the route, which answers it.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from starlette.responses import JSONResponse
@@ -23,6 +24,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from server.auth import tenancy
 from server.core.errors import (
     LoomServerError,
+    caller_text,
     classified,
     error_help_link,
     shown_unauthenticated,
@@ -72,11 +74,18 @@ class TenancyMiddleware:
         if not acts_in_token_org(path):
             await self.app(scope, receive, send)
             return
-        from server.auth.jwt import AuthUnavailable, TokenError, verify_token
+        from server.auth.jwt import AuthUnavailable, TokenError, authenticate_token
 
         try:
             token = _bearer(scope)
-            info = verify_token(token) if token is not None else None
+            fallback = settings.self_signup_org if path in _SIGN_UP_ORG_ROUTES else None
+            info = None
+            if token is not None:
+                info = (
+                    await authenticate_token(token, fallback_org=fallback)
+                    if fallback is not None
+                    else await authenticate_token(token)
+                )
         except AuthUnavailable as e:
             # Cannot judge the token yet: refused, never passed on unchecked. The caller
             # gets the error's kind; the text is logged.
@@ -102,9 +111,27 @@ class TenancyMiddleware:
             return
         try:
             org = acting_org(path, info)
+            from server.auth.authz import check_acted_for
+
+            caller = (
+                replace(info, org=org) if not info.org and path in _SIGN_UP_ORG_ROUTES else info
+            )
+            await check_acted_for(caller, org)
             # The sign-up org a route falls back to is not the token's: no principal, so
             # it is recorded or refused, never placed, as for a sign-up.
             await tenancy.ensure_held(org, info if org == info.org else None)
+        except PermissionError as e:
+            log.info("tenancy middleware refused caller: %s", e)
+            await _refuse(
+                scope,
+                receive,
+                send,
+                path,
+                401,
+                {"code": "AUTH_INVALID", "message": caller_text(e)},
+                None,
+            )
+            return
         except LoomServerError as e:
             await _refuse(scope, receive, send, path, e.status_code, e.to_detail(), e.headers())
             return

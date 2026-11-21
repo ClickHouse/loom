@@ -16,6 +16,8 @@ on:
       - ".agents/plugins/**"
       - ".gitattributes"
       - ".github/workflows/plugin-platforms.yml"
+      - ".github/agent-clis/**"
+      - "scripts/code-toolchains/bind-native.cjs"
   pull_request:
     branches: [main, "release/**"]
     paths:
@@ -24,6 +26,8 @@ on:
       - ".agents/plugins/**"
       - ".gitattributes"
       - ".github/workflows/plugin-platforms.yml"
+      - ".github/agent-clis/**"
+      - "scripts/code-toolchains/bind-native.cjs"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
@@ -34,9 +38,6 @@ permissions:
 
 env:
   NODE_VERSION: "22"
-  # The agent versions the end-to-end sessions run.
-  CLAUDE_CODE_VERSION: "2.1.319"
-  CODEX_VERSION: "0.162.1"
 
 jobs:
   platform:
@@ -58,6 +59,8 @@ jobs:
         if: runner.os == 'Windows'
         run: git config --global core.autocrlf true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -70,11 +73,13 @@ jobs:
       - name: install the agent CLIs
         if: ${{ !cancelled() }}
         run: |
-          npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION"
-          root=$(npm root --global)
+          npm ci --prefix .github/agent-clis --ignore-scripts --no-fund --no-audit
+          node scripts/code-toolchains/bind-native.cjs .github/agent-clis claude
+          root=$(npm root --prefix .github/agent-clis)
           exe=''
           if [ "$RUNNER_OS" = Windows ]; then root=$(cygpath -m "$root"); exe=.exe; fi
-          codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-*/vendor/*/bin/codex$exe | head -1)
+          codex=$(ls "$root"/@openai/codex-*/vendor/*/bin/codex$exe | head -1)
+          test -n "$codex" && test -x "$codex" || { echo "The locked native agent executable is missing" >&2; exit 1; }
           echo "CLAUDE_BIN=$root/@anthropic-ai/claude-code/bin/claude.exe" >> "$GITHUB_ENV"
           echo "CODEX_BIN=$codex" >> "$GITHUB_ENV"
       - name: Claude Code session
@@ -120,15 +125,19 @@ jobs:
       ALPINE_IMAGE: node:22-alpine@sha256:0e1754758c2df4cfa3e68d59e2e1b7374bb7fd9ea6328eaaacf15cc934af8202
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # bash is for Claude Code's own shell tool; the hooks run under BusyBox sh.
       - name: suite and sessions in node:22-alpine
         run: |
-          docker run --rm -v "$PWD:/src:ro" -e CLAUDE_CODE_VERSION -e CODEX_VERSION "$ALPINE_IMAGE" sh -euc '
+          docker run --rm -v "$PWD:/src:ro" "$ALPINE_IMAGE" sh -euc '
             apk add --quiet git bash
             cp -r /src /tmp/repo && chown -R node /tmp/repo
-            npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" >/dev/null
-            root=$(npm root --global)
-            codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+            npm ci --prefix /tmp/repo/.github/agent-clis --ignore-scripts --no-fund --no-audit >/dev/null
+            node /tmp/repo/scripts/code-toolchains/bind-native.cjs /tmp/repo/.github/agent-clis claude
+            root=$(npm root --prefix /tmp/repo/.github/agent-clis)
+            codex=$(ls "$root"/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+            test -n "$codex" && test -x "$codex" || { echo "The locked native agent executable is missing" >&2; exit 1; }
             su node -s /bin/sh -c "
               set -e
               cd /tmp/repo
@@ -153,6 +162,8 @@ jobs:
         shell: wsl-bash {0}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: Vampire/setup-wsl@4c48163d9f981914dd8caa0fc335fe19cca5bff4 # v7.2.0
         with:
           distribution: Ubuntu-24.04
@@ -163,9 +174,11 @@ jobs:
           # A clone inside WSL, with Linux modes and line endings, as a WSL user's is.
           git -c safe.directory='*' clone --quiet --no-local . /home/ci/repo
           chown -R ci /home/ci/repo
-          npm install --global --no-fund --no-audit "@anthropic-ai/claude-code@$CLAUDE_CODE_VERSION" "@openai/codex@$CODEX_VERSION" >/dev/null
-          root=$(npm root --global)
-          codex=$(ls "$root"/@openai/codex/node_modules/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+          npm ci --prefix /home/ci/repo/.github/agent-clis --ignore-scripts --no-fund --no-audit >/dev/null
+          node /home/ci/repo/scripts/code-toolchains/bind-native.cjs /home/ci/repo/.github/agent-clis claude
+          root=$(npm root --prefix /home/ci/repo/.github/agent-clis)
+          codex=$(ls "$root"/@openai/codex-linux-*/vendor/*/bin/codex | head -1)
+          test -n "$codex" && test -x "$codex" || { echo "The locked native agent executable is missing" >&2; exit 1; }
           su ci -s /bin/sh -c "
             set -e
             cd /home/ci/repo
@@ -177,5 +190,3 @@ jobs:
             node integrations/claude-code-plugin/tests/e2e/agent-session.mjs claude --bin $root/@anthropic-ai/claude-code/bin/claude.exe --expect-tool Bash
             node integrations/claude-code-plugin/tests/e2e/agent-session.mjs codex --bin $codex
           "
-        env:
-          WSLENV: CLAUDE_CODE_VERSION:CODEX_VERSION

@@ -20,6 +20,7 @@ from server.code.workers import scip_go_delta as code_scip_go_delta
 from server.code.workers import scip_py_delta as code_scip_py_delta
 from server.code.workers import scip_ts_delta as code_scip_ts_delta
 from tests.unit.code_fixtures import repo_config
+from tests.unit.git_repo import git
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
 
@@ -40,6 +41,7 @@ class _Repo:
 
 
 def _cpp(tmp: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], Awaitable[Any]]:
+    git(tmp, "init", "-q")
     clang = tmp / "scip-clang"
     clang.write_text("")
     monkeypatch.setattr(code_scip_delta.settings, "code_scip_clang_path", str(clang))

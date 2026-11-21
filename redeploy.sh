@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pull main and redeploy loom blue/green behind the host proxy.
+# Deploy main or an explicit source commit behind the host proxy.
 #
 # Topology: nginx (`loom-proxy`, dev/docker-compose.proxy.yml) holds host
 # :7777 and forwards to the colour named in var/proxy/upstream.conf —
@@ -19,8 +19,10 @@
 # health-checked, and the upstream swapped back. No schema step: migrations
 # are additive (docs/operations/upgrades.md).
 #
-# Usage:  ./redeploy.sh [--force] | --rollback | --status   (from the deploy checkout)
-#   --force     rebuild even if no new commits
+# Usage: ./redeploy.sh [--force] | --target-commit <full-sha> [--reapply-config] | --rollback | --status
+#   --target-commit  deploy this exact clean HEAD without advancing to main
+#   --reapply-config rebuild the pinned commit with the current .env
+#   --force     rebuild main even if no new commits
 #   --rollback  swap the proxy back to the previous colour (starts it if stopped)
 #   --status    which colour serves, which build, what is idle
 #
@@ -141,6 +143,10 @@ wait_ready() {
           echo "!!! loom-$colour is up but a health flag is wrong — not swapping"
           return 1
         }
+      if [[ -n "${target_commit:-}" ]] && ! echo "$body" | jq -e --arg target "$target_commit" '.build_commit == $target' >/dev/null; then
+        echo "!!! loom-$colour does not report the full pinned commit — not swapping"
+        return 1
+      fi
       return 0
     fi
     sleep 2
@@ -255,29 +261,63 @@ rollback() {
 
 # ---- arguments ---------------------------------------------------------------
 
+usage() {
+  echo "usage: redeploy.sh [--force] | --target-commit <full-sha> [--reapply-config] | --rollback | --status"
+  exit 2
+}
+
 force=0
-case "${1:-}" in
-  --force) force=1 ;;
-  --rollback)
-    rollback
-    exit 0
-    ;;
-  --status)
-    status
-    exit 0
-    ;;
-  "") ;;
-  *)
-    echo "usage: redeploy.sh [--force] | --rollback | --status"
-    exit 2
-    ;;
-esac
+target_commit=""
+reapply_config=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force)
+      [[ "$force" -eq 0 ]] || usage
+      force=1
+      shift
+      ;;
+    --target-commit)
+      [[ $# -ge 2 && -z "$target_commit" && "$2" =~ ^[0-9a-f]{40}$ ]] || usage
+      target_commit=$2
+      shift 2
+      ;;
+    --reapply-config)
+      [[ "$reapply_config" -eq 0 ]] || usage
+      reapply_config=1
+      shift
+      ;;
+    --rollback | --status)
+      [[ $# -eq 1 && "$force" -eq 0 && -z "$target_commit" && "$reapply_config" -eq 0 ]] || usage
+      "${1#--}"
+      exit 0
+      ;;
+    *) usage ;;
+  esac
+done
+[[ "$reapply_config" -eq 0 || -n "$target_commit" ]] || usage
+[[ "$force" -eq 0 || (-z "$target_commit" && "$reapply_config" -eq 0) ]] || usage
+
+assert_target_source() {
+  [[ -n "$target_commit" ]] || return 0
+  local head source_status
+  head=$(git rev-parse --verify HEAD) || return 1
+  if [[ "$head" != "$target_commit" ]]; then
+    echo "!!! pinned target does not match HEAD — prepare the qualified checkout first"
+    return 1
+  fi
+  source_status=$(git status --porcelain --untracked-files=all) || return 1
+  if [[ -n "$source_status" ]]; then
+    echo "!!! pinned deployment requires clean tracked and untracked source"
+    return 1
+  fi
+}
 
 # ---- pull ------------------------------------------------------------------
 
 echo "==> fetching origin/main"
 git fetch --quiet origin main
 
+assert_target_source || exit 1
 behind=$(git rev-list --count HEAD..origin/main)
 
 # The colour compose builds from the WORKING TREE, so uncommitted edits ship.
@@ -286,7 +326,7 @@ dirty="$(git status --porcelain --untracked-files=no)"
 if [[ -n "$dirty" ]]; then
   echo "==> WARNING: deploying a dirty tree — these uncommitted edits will ship:"
   echo "$dirty" | sed 's/^/    /'
-  if [[ "$behind" -gt 0 ]]; then
+  if [[ -z "$target_commit" && "$behind" -gt 0 ]]; then
     echo
     echo "!!! refusing to pull with a dirty tree ($behind commit(s) behind origin/main)."
     echo "    commit or stash first, then re-run."
@@ -294,12 +334,12 @@ if [[ -n "$dirty" ]]; then
   fi
 fi
 
-if [[ "$behind" -eq 0 && "$force" -eq 0 ]]; then
+if [[ -z "$target_commit" && "$behind" -eq 0 && "$force" -eq 0 ]]; then
   echo "==> already at $(git log --oneline -1 origin/main) — nothing to deploy (use --force to rebuild anyway)"
   exit 0
 fi
 
-if [[ "$behind" -gt 0 ]]; then
+if [[ -z "$target_commit" && "$behind" -gt 0 ]]; then
   echo "==> $behind new commit(s):"
   git log --oneline HEAD..origin/main | sed 's/^/    /'
   risky=$(git diff --name-only HEAD..origin/main | grep -E '^(schemas/migrations/|dev/docker-compose|deploy/proxy/|Dockerfile$|\.env\.example$|pyproject\.toml$|requirements\.txt$|redeploy\.sh$)' || true)
@@ -331,8 +371,8 @@ dev/apparmor_check.sh "$COLOUR_COMPOSE" || exit 1
 # which answers health — fine), migrate dry-run --strict. Exit 3 = the running
 # build already is HEAD.
 if [[ -x dev/redeploy_preflight.sh ]]; then
-  preflight_args=(--target "$(git rev-parse --short HEAD)")
-  [[ "$force" -eq 1 ]] && preflight_args+=(--allow-same)
+  preflight_args=(--target "${target_commit:-$(git rev-parse --short HEAD)}")
+  [[ "$force" -eq 1 || "$reapply_config" -eq 1 ]] && preflight_args+=(--allow-same)
   [[ "${LOOM_PREFLIGHT_STRICT:-1}" == "0" ]] && preflight_args+=(--no-strict)
   set +e
   dev/redeploy_preflight.sh "${preflight_args[@]}"
@@ -341,7 +381,11 @@ if [[ -x dev/redeploy_preflight.sh ]]; then
   case "$preflight_rc" in
     0) ;;
     3)
-      echo "==> the running build already is $(git rev-parse --short HEAD) — nothing to deploy (use --force)"
+      rebuild_flag=--force
+      if [[ -n "$target_commit" ]]; then
+        rebuild_flag=--reapply-config
+      fi
+      echo "==> the running build already is $(git rev-parse --short HEAD) — nothing to deploy (use $rebuild_flag)"
       exit 0
       ;;
     *)
@@ -383,12 +427,14 @@ fi
 
 colour_compose() {
   LOOM_COLOUR=$idle LOOM_COLOUR_PORT=$idle_port \
-    LOOM_BUILD_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+    LOOM_BUILD_COMMIT="${target_commit:-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)}" \
     docker compose -p "loom-$idle" --env-file .env -f "$COLOUR_COMPOSE" "$@"
 }
 
+assert_target_source || exit 1
 echo "==> building loom-$idle (the old colour keeps serving)"
 colour_compose build
+assert_target_source || exit 1
 
 echo "==> starting loom-$idle (CH untouched, data preserved; the old colour keeps serving)"
 colour_compose up -d --no-build --force-recreate

@@ -13,6 +13,10 @@
       "category": "scope",
       "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
     },
+    "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs:code.callers:1ceea9354e14995739e0:1": {
+      "category": "reference",
+      "reason": "Sends only a validated identifier of at most 256 characters, scoped identity and fixed call-graph bounds. Secret redaction runs before sending; an identifier changed by redaction is refused. No prompt or transcript is sent."
+    },
     "integrations/claude-code-plugin/hooks/loom-session-start.mjs:<dynamic>:7cced0ded5a09a82695e:1": {
       "category": "delivery",
       "reason": "Forwards a supplied operation or callable; its producers in this client are scanned separately."
@@ -84,6 +88,10 @@
     "integrations/codex-plugin/hooks/loom-namespace-health.mjs:namespace.audit:bdd9c90350ecf148d06d:1": {
       "category": "scope",
       "reason": "Sends repository routing, namespace identity or fixed listing limits; no prompt, transcript or changed-file payload."
+    },
+    "integrations/codex-plugin/hooks/loom-prompt-pack.mjs:code.callers:1ceea9354e14995739e0:1": {
+      "category": "reference",
+      "reason": "Sends only a validated identifier of at most 256 characters, scoped identity and fixed call-graph bounds. Secret redaction runs before sending; an identifier changed by redaction is refused. No prompt or transcript is sent."
     },
     "integrations/codex-plugin/hooks/loom-session-start.mjs:<dynamic>:7cced0ded5a09a82695e:1": {
       "category": "delivery",
@@ -337,6 +345,10 @@
       "category": "reference",
       "reason": "Reads or removes stored records by their identity, prefix or exact version; automatic content writes remain classified."
     },
+    "sdk/typescript/src/integrations/openai-agents.ts:ops.capabilities:d29e857647f728e2169d:1": {
+      "category": "scope",
+      "reason": "Sends only identity scope and an empty operation catalogue request; retained SessionCapture contributors still guard discovery and append."
+    },
     "sdk/typescript/src/session.ts:<dynamic>:f81d27efc95e87cdbb46:1": {
       "category": "delivery",
       "reason": "Forwards the operation and body from separately scanned session capture producers without selecting additional content; this module pins transcript, carry-over, query and thread builders."
@@ -355,31 +367,35 @@
     }
   },
   "reviewed_source_sha256": {
-    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "b1fc9100f788940aff549b2966ab8bf4221ea797fd24c76b559cf40e7ef5aaa9",
+    "integrations/claude-code-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
     "integrations/claude-code-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
     "integrations/claude-code-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
+    "integrations/claude-code-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
     "integrations/claude-code-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
     "integrations/claude-code-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
     "integrations/claude-code-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
     "integrations/claude-code-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
     "integrations/claude-code-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
     "integrations/claude-code-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
+    "integrations/claude-code-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
     "integrations/claude-code-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",
     "integrations/claude-code-plugin/lib/session-brief.mjs": "0db8037ad3fd15de3dd525d3763674549186495dbe0c66dc7ae7b2bef3cab898",
-    "integrations/claude-code-plugin/lib/session-start.mjs": "3c265d690c4d859b4ad40ad41d635412423fe6bd049d91e1381ce79be24eb9d4",
+    "integrations/claude-code-plugin/lib/session-start.mjs": "505cb938886796f7fb688eaef3fc99c0c4eef2042adba8e66321d6d80e7d214a",
     "integrations/claude-code-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
-    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "b1fc9100f788940aff549b2966ab8bf4221ea797fd24c76b559cf40e7ef5aaa9",
+    "integrations/codex-plugin/hooks/loom-code-shunt.mjs": "e19668f1157efba96442e10b17d2e21a9e7303273b8a674c604db5d9f42c1b93",
     "integrations/codex-plugin/hooks/loom-flush.mjs": "81fe4926c6b1cb944e363af3fbb2d072f86c2508ce437c1b652a30c8aba98a91",
     "integrations/codex-plugin/hooks/loom-namespace-health.mjs": "bbef4979b8606df851e77a86687b7d3c88b84de8bdfc6f88d9ff5c3bc2d5203c",
+    "integrations/codex-plugin/hooks/loom-prompt-pack.mjs": "904270b1e5f45614a71c5c92efe4d1e5cfb656888e9b54d269c1228b0ef4e9c1",
     "integrations/codex-plugin/hooks/loom-session-start.mjs": "c660471b15ba60d7aac80f78254bac98e9527793bc7a9fecb4986c660c4e277d",
     "integrations/codex-plugin/lib/collections-line.mjs": "d50ec2cbae9ef0058fcf8e26ea024a79c67e57014c39447f58b54a6837654183",
     "integrations/codex-plugin/lib/first-session.mjs": "e9183d950899f3ef78bdd17ba677d25e9ff5baffddc97ca282fecc5a80a92651",
     "integrations/codex-plugin/lib/flush-job.mjs": "943dbf075ad27a9e8ac9c491dc1e523d0a690ec8fc9acc71e597a6b1cadf5a01",
     "integrations/codex-plugin/lib/loom-client.mjs": "d1cc7c8bb6674dfb6d2c76045e6e8c6cbce2fb806996fce8aafba5f917002cb6",
     "integrations/codex-plugin/lib/namespace-health.mjs": "02db4a35195b32675c3d929350ddeca8a8b991c08e46b206fb38586efbd5cc7e",
+    "integrations/codex-plugin/lib/prompt-pack.mjs": "8730ea72d40e6022a6e314f1f6703dd4f38f10c4e719886f319d88f7c3d15abf",
     "integrations/codex-plugin/lib/repo-scope.mjs": "127a7daefbe4cdaf014a58351f1b3cec068220985ac940a2952f161a8c881108",
     "integrations/codex-plugin/lib/session-brief.mjs": "0db8037ad3fd15de3dd525d3763674549186495dbe0c66dc7ae7b2bef3cab898",
-    "integrations/codex-plugin/lib/session-start.mjs": "3c265d690c4d859b4ad40ad41d635412423fe6bd049d91e1381ce79be24eb9d4",
+    "integrations/codex-plugin/lib/session-start.mjs": "505cb938886796f7fb688eaef3fc99c0c4eef2042adba8e66321d6d80e7d214a",
     "integrations/codex-plugin/lib/task-inbox.mjs": "33fbb1040e9b6db936928a66e4b90555a556220415f4e6394f6d2cd67821dcfc",
     "integrations/cursor/cursor-session-hook.sh": "71064260b50c8aee803523c4981fed8ebc9afab69be25e2ed472a727a538db03",
     "integrations/generic/ingest.sh": "23b2410ce557114d83598ebd603431bd387f6af0ee9f1a7f4decb347d89b3e12",
@@ -389,15 +405,15 @@
     "sdk/python/loom/integrations/haystack.py": "8ab24c9dfb4220b35c8194605a77368a9b7b8a29d27a0b6b30569668947a31e0",
     "sdk/python/loom/integrations/langgraph.py": "5d68e6ab1645d868477a13b14aa6d734c72f72057464cac9a21aa707add17e7b",
     "sdk/python/loom/integrations/llamaindex.py": "06eaa071115cad752d27bdc9bf7c4d5b6f5d7d39d9896267fcd459a4e06bf661",
-    "sdk/python/loom/integrations/openai_agents.py": "e6fe0384a361c2c5e48db26837d8c454e52b5f7fb010fd7f6541f24a22459a7a",
+    "sdk/python/loom/integrations/openai_agents.py": "143fe1df060b96550a33f77fa44416e291c2154552e433f8309275f61c8fca2a",
     "sdk/python/loom/memory.py": "e1384e84ddf58b503dc430eca1b2e734eb5e5680ac6904a64785bb50a63316d1",
-    "sdk/python/loom/run.py": "3d408cedd849fe9c16a9cb1a57dbe88367993aa225f6a8b23bac8c644e04723b",
+    "sdk/python/loom/run.py": "1d47d5f4d197f78de347d2cf66b9f59f4292846d214f7116c444035971c6ab42",
     "sdk/python/loom/session.py": "5f0fd61fcfdbf9d60888b111887fca8f32e24eb51ca9ff04a256901657c3202b",
     "sdk/typescript/src/integrations/claude-memory.ts": "c846f0011d7cf1ba4b30e99fbfd8adb6b29abff56856d0dbe14fba620007f6bc",
     "sdk/typescript/src/integrations/google-adk.ts": "26035863d6a81630e1a10c2045128b4483151ad9e4d13e9202d9c90054cf62d6",
     "sdk/typescript/src/integrations/langchain.ts": "2e6b93cbd2eb3ed57d910404845f8de9b06b9d3e9e2c59194100ad95f8819ce8",
     "sdk/typescript/src/integrations/mastra-memory.ts": "a0c21387e645579117bd00c4961efd1c65938c0a7128eb31c88256d49522710a",
-    "sdk/typescript/src/integrations/openai-agents.ts": "6d3206f230d8c1be4fb1bf7069185c212c8995b0d0cd41d827adb924535b4322",
+    "sdk/typescript/src/integrations/openai-agents.ts": "f185d90da6512833c590c4729aaf2bfb140ff469e4864fad6d761e29a66c1b0a",
     "sdk/typescript/src/session.ts": "49c162dd55f578d508a9c537891a991d7e46866ee3dbaf5f9b9e4d67242b5e05"
   }
 }

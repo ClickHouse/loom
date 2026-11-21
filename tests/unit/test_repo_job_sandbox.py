@@ -598,14 +598,27 @@ async def test_a_job_that_closes_its_output_still_dies_at_its_timeout(monkeypatc
     assert loop.time() - started < 5
 
 
-async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkeypatch) -> None:
+@pytest.mark.parametrize("spawn_delay_s", [0.0, 0.4])
+async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(
+    monkeypatch, spawn_delay_s: float
+) -> None:
     monkeypatch.setattr(sandbox, "_available", False)
+    output_closed = asyncio.Event()
     pids: list[int] = []
     real_exec = asyncio.create_subprocess_exec
 
     async def spy(*args, **kwargs):
+        await asyncio.sleep(spawn_delay_s)
         proc = await real_exec(*args, **kwargs)
         pids.append(proc.pid)
+        try:
+            assert proc.stdout is not None and proc.stderr is not None
+            assert await proc.stdout.read() == b""
+            assert await proc.stderr.read() == b""
+            output_closed.set()
+        finally:
+            if not output_closed.is_set():
+                await sandbox._kill_group(proc)
         return proc
 
     monkeypatch.setattr(sandbox.asyncio, "create_subprocess_exec", spy)
@@ -614,12 +627,20 @@ async def test_cancelling_a_job_that_closed_its_output_kills_and_reaps_it(monkey
             ["sh", "-c", "exec 1>&- 2>&-; sleep 30"], env={"PATH": "/usr/bin:/bin"}, timeout_s=30
         )
     )
-    await asyncio.sleep(0.3)
-    job.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await job
-    with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
-        os.kill(pids[0], 0)
+    try:
+        # EOF proves both outputs closed before cancellation reaches the child.
+        async with asyncio.timeout(5):
+            await output_closed.wait()
+        job.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+        with pytest.raises(ProcessLookupError):  # killed and reaped: no such pid any more
+            os.kill(pids[0], 0)
+    finally:
+        if not job.done():
+            job.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await job
 
 
 def test_a_refused_layout_is_a_health_problem(tmp_path: Path, monkeypatch) -> None:
@@ -733,6 +754,32 @@ def test_the_missing_sandbox_warning_says_what_the_git_waiver_changes(monkeypatc
     assert "not cloned or fetched" not in waived.message and "refused" not in waived.message
 
 
+@pytest.mark.parametrize(
+    ("proxy", "sandboxed", "reported"),
+    [
+        ("http://proxy.example:3128", True, True),
+        ("http://proxy.example:3128", False, False),
+        ("http://proxy.example:3128", None, False),  # not probed yet: unknown, not a guess
+        ("", True, False),
+    ],
+)
+def test_a_git_proxy_on_a_host_that_runs_the_sandbox_is_a_health_error(
+    monkeypatch, proxy: str, sandboxed: bool | None, reported: bool
+) -> None:
+    """The sandbox's network does not go through the operator's proxy, so network git
+    is refused there (`run_sandboxed`) and health says why."""
+    from server.observability.problems import HealthState, collect_problems, derive_status
+    from server.settings import settings
+
+    monkeypatch.setattr(settings, "code_git_proxy_url", proxy)
+    problems = collect_problems(settings, HealthState(repo_sandbox=sandboxed))
+    found = [p for p in problems if p.code == "repo_git_proxy_sandboxed"]
+    assert [p.severity for p in found] == (["error"] if reported else [])
+    if reported:
+        assert "LOOM_CODE_GIT_PROXY_URL" in found[0].message
+        assert derive_status(True, found) == "degraded"
+
+
 @pytest.mark.parametrize(("required", "rc", "ran"), [(True, 1, False), (False, 1, True)])
 async def test_scip_full_runs_its_harness_as_a_gated_repository_job(
     tmp_path: Path, monkeypatch, required: bool, rc: int, ran: bool
@@ -817,7 +864,11 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
 
     monkeypatch.setattr(compiler_tier, "git", _git)
     bare = tmp_path / "bare.git"
-    cfg = repo_config(github_token="ghs_test", git_remote="https://github.com/o/private")
+    cfg = repo_config(
+        github_token="ghs_test",
+        git_remote="https://github.com/o/private",
+        git_proxy_identity="acme.widgets-indexer",
+    )
     await scip_full.move_checkout(tmp_path / "checkout", bare, "a" * 40, cfg)
     fetch, _checkout, submodules = calls
     assert fetch[0][0] == "fetch" and fetch[1]["local_remote"] == bare
@@ -825,6 +876,7 @@ async def test_scip_full_moves_its_checkout_as_sandboxed_jobs(tmp_path: Path, mo
     assert submodules[0][0] == "submodule" and submodules[1]["network"] is True
     assert submodules[1]["token"] == "ghs_test"
     assert submodules[1]["remote"] == "https://github.com/o/private"
+    assert submodules[1]["proxy_identity"] == "acme.widgets-indexer"
 
 
 @pytest.mark.asyncio

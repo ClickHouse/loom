@@ -28,13 +28,20 @@ def test_code_without_a_parser_and_plain_text_are_kept_as_text() -> None:
         "notes.txt": b"hello",
         "setup.cfg": b"[flake8]\nmax-line-length = 100\n",
         "gradle/build.gradle": b"plugins {}",
-        "schema.graphql": b"type Q { a: ID }",
         "LICENSE": b"MIT",
         "Justfile": b"build:\n  cargo build",
     }.items():
         assert text_lang_for_path(path, src) == TEXT_LANG, path
         pf, err = parse_for_ingest(path, src)
         assert pf is not None and pf.lang == TEXT_LANG and pf.symbols == [] and err == "", path
+
+
+def test_thrift_goes_to_its_lane_not_to_text() -> None:
+    src = b"service Q { i32 a() }"
+    assert text_lang_for_path("api/service.thrift", src) == ""
+    pf, err = parse_for_ingest("api/service.thrift", src)
+    assert pf is not None and pf.lang == "thrift" and err == ""
+    assert {(s.kind, s.name) for s in pf.symbols} >= {("interface", "Q"), ("function", "a")}
 
 
 def test_binaries_oversized_and_empty_stay_out_and_claimed_types_are_untouched() -> None:

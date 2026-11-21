@@ -19,6 +19,13 @@
   "go/mono/svc/main.go | includes | file": 2,
   "go/sqlc/authors/postgresql/query.sql.go | calls | column": 9,
   "go/sqlc/authors/postgresql/query.sql.go | calls | table": 4,
+  "graphql/delivery/billing.graphql | uses_type | struct": 3,
+  "graphql/delivery/billing.graphql | uses_type | type": 1,
+  "graphql/delivery/schema.graphql | inherits | interface": 2,
+  "graphql/delivery/schema.graphql | uses_type | enum": 2,
+  "graphql/delivery/schema.graphql | uses_type | struct": 6,
+  "graphql/delivery/schema.graphql | uses_type | type": 2,
+  "graphql/delivery/schema.graphql | uses_type | union": 1,
   "helm/mychart/Chart.yaml | includes | file": 1,
   "helm/mychart/templates/_helpers.tpl | calls | function": 3,
   "helm/mychart/templates/deployment.yaml | calls | function": 4,
@@ -116,6 +123,11 @@
   "sql/views/rollup.sql | calls | column": 3,
   "sql/views/rollup.sql | calls | table": 4,
   "sql/views/rollup.sql | calls | view": 1,
+  "thrift/acme/machines.thrift | includes | file": 1,
+  "thrift/acme/machines.thrift | inherits | interface": 1,
+  "thrift/acme/machines.thrift | uses_type | enum": 2,
+  "thrift/acme/machines.thrift | uses_type | struct": 7,
+  "thrift/acme/machines.thrift | uses_type | type": 6,
   "tla/Ledger.cfg | calls | operator": 3,
   "tla/Ledger.cfg | includes | file": 1,
   "tla/Ledger.tla | calls | constant": 3,
@@ -355,6 +367,28 @@
     "function": 4,
     "statement": 4,
     "struct": 1
+   }
+  },
+  "graphql/delivery/billing.graphql": {
+   "facets": {},
+   "includes": [],
+   "lang": "graphql",
+   "symbols": {
+    "function": 2,
+    "struct": 1
+   }
+  },
+  "graphql/delivery/schema.graphql": {
+   "facets": {},
+   "includes": [],
+   "lang": "graphql",
+   "symbols": {
+    "enum": 1,
+    "function": 3,
+    "interface": 1,
+    "struct": 6,
+    "type": 1,
+    "union": 1
    }
   },
   "helm/mychart/Chart.yaml": {
@@ -1684,6 +1718,31 @@
     "statement": 5,
     "table": 2,
     "view": 2
+   }
+  },
+  "thrift/acme/machines.thrift": {
+   "facets": {},
+   "includes": [
+    "thrift/acme/shared.thrift"
+   ],
+   "lang": "thrift",
+   "symbols": {
+    "enum": 1,
+    "function": 4,
+    "interface": 1,
+    "struct": 3,
+    "type": 1
+   }
+  },
+  "thrift/acme/shared.thrift": {
+   "facets": {},
+   "includes": [],
+   "lang": "thrift",
+   "symbols": {
+    "function": 1,
+    "interface": 1,
+    "struct": 2,
+    "type": 1
    }
   },
   "tla/Ledger.cfg": {

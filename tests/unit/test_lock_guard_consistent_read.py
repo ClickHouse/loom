@@ -38,6 +38,13 @@ def _lagging_replica(monkeypatch: pytest.MonkeyPatch) -> tuple[_CH, list[dict[st
     ch = _CH()
     stale = _row()  # the version before the lock
     locked = _row(version=101, lock_mode="read_only", lock_reason="hold", locked_by="human:o")
+
+    async def head_versions(*args: Any, **kw: Any) -> list[dict[str, Any]]:
+        from server.memory.store import build_memory_version_row
+
+        return [build_memory_version_row(locked)]
+
+    monkeypatch.setattr(ch, "query_all", head_versions)
     reads: list[dict[str, Any]] = []
     monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
     monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)

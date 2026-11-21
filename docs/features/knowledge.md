@@ -27,6 +27,30 @@ Use [unified search](./unified-search.md) to retrieve both, then `knowledge.get`
 with `knowledge.upsert`; the memory claim is revised separately through the
 [memory write operations](./memory/writing.md).
 
+For a claim your agent writes, `memory.set` accepts `source_resource_id` and
+[`memory.provenance`](./memory/history-and-provenance.md#who-wrote-it-actor-and-source-class)
+returns that pointer. The writer supplies it; storing it does not verify that the
+document supports the claim.
+
+The [read-only Python walkthrough](https://github.com/ClickHouse/loom/blob/main/sdk/python/examples/README.md#fact_document_evidencepy)
+retrieves an existing fact and a caller-selected document section, preserving the
+returned provenance and passage fields for operator review. It makes no model call
+and leaves support unevaluated.
+
+[`loom decisions extract`](./tasks-and-decisions.md#extract-decisions-from-a-document)
+is a separate operator command for decisions stated in a document. It checks quotations
+against the document text, checks the claims with the configured model, and writes
+decisions with a source reference of the form
+`knowledge:<namespace>/<source_uri>#<section breadcrumb>`. It calls the model even in a
+dry run. Open the cited document with `knowledge.get`, or select a section with
+`knowledge.outline`.
+
+[`memory.evidence`](./memory/history-and-provenance.md#evidence-which-turns-a-fact-came-from)
+returns source conversation turns and consolidation lineage. Document search returns
+passages with their own citations; a passage retrieved beside a memory does not by itself
+establish that it supports the memory. The extractor's section reference does not add
+document quotation spans to `memory.evidence`.
+
 ## What Loom does with a document
 
 1. **Stores the text and, optionally, the original file.** `knowledge.add` takes

@@ -8,3 +8,8 @@ covers = ["migration:*"]
 [[files]]
 match = "tests/unit/test_migration_numeric_order.py"
 covers = ["migration:*"]
+
+[[files]]
+match = "tests/unit/test_bedrock_transport.py"
+covers = ["setting:bedrock_region"]
+notes = "Checks the configured region reaches every signing attempt and SDK endpoint resolution."

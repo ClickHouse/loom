@@ -65,11 +65,16 @@ describe("loomTools (OpenAI Agents SDK adapter)", () => {
 
 /** A Loom server keeping memory rows by (user, session, key), listed as the server lists
  * them: the newest second first, by key within a second, values cut to 2,048 characters. */
+const appendCapabilities = {
+  ops: [{ name: "memory.append_batch", required_role: "writer", request_fields: ["entries"] }],
+};
+
 function rowsHarness(unserved = 0, cap = 100) {
   const rows = new Map<string, { key: string; value: unknown; user: unknown; session: unknown; second: number }>();
   const hidden = new Set<string>();
   const disappear = new Set<string>();
   const clock = { second: 0 };
+  const behavior = { serveAppend: true, discoveryStatus: 200, appendStatus: 200, appendCode: "", blockedContent: "" };
   const calls: Array<{ op: string; body: Record<string, unknown> }> = [];
   const fetch = async (url: string, init: RequestInit) => {
     const op = url.split("/v1/")[1];
@@ -77,6 +82,38 @@ function rowsHarness(unserved = 0, cap = 100) {
     calls.push({ op, body });
     const id = (key: string) => JSON.stringify([body.user_id, body.session_id, key]);
     let reply: unknown = {};
+    if (op === "ops.capabilities") {
+      return new Response(JSON.stringify(behavior.serveAppend ? appendCapabilities : { ops: [] }), {
+        status: behavior.discoveryStatus,
+      });
+    }
+    if (op === "memory.append_batch") {
+      const entries = body.entries as Array<{ memory_key: string; value: string }>;
+      const staged = entries.map((entry) => ({
+        key: entry.memory_key,
+        value: JSON.parse(entry.value),
+        user: body.user_id,
+        session: body.session_id,
+        second: clock.second,
+      }));
+      if (
+        (behavior.blockedContent && staged.some((row) => row.value.content === behavior.blockedContent)) ||
+        (behavior.appendStatus !== 200 && behavior.appendCode !== "PUBLICATION_PENDING")
+      ) {
+        return new Response(JSON.stringify({ detail: { code: behavior.appendCode, message: "batch refused" } }), {
+          status: behavior.appendStatus === 200 ? 422 : behavior.appendStatus,
+        });
+      }
+      for (const row of staged) rows.set(id(row.key), row);
+      return new Response(
+        JSON.stringify(
+          behavior.appendCode === "PUBLICATION_PENDING"
+            ? { detail: { code: "PUBLICATION_PENDING", message: "committed; publication pending", committed: true } }
+            : { written: staged.map((row) => ({ memory_key: row.key, version: 1 })) },
+        ),
+        { status: behavior.appendStatus },
+      );
+    }
     if (op === "memory.set") {
       rows.set(id(body.memory_key), {
         key: body.memory_key,
@@ -119,6 +156,7 @@ function rowsHarness(unserved = 0, cap = 100) {
     rows,
     calls,
     clock,
+    behavior,
     hidden,
     disappear,
   };
@@ -157,7 +195,7 @@ function protectedHistoryHarness(
       const op = url.split("/v1/")[1];
       const body = JSON.parse(init.body as string) as Record<string, unknown>;
       calls.push({ op, body });
-      return new Response(JSON.stringify(reply(op, body)), {
+      return new Response(JSON.stringify(op === "ops.capabilities" ? appendCapabilities : reply(op, body)), {
         headers: { "content-type": "application/json" },
       });
     },
@@ -231,14 +269,33 @@ describe("LoomSession conversation protection", () => {
     expect(second.state.value).toBe("protected");
   });
 
-  it("stops the next native history write after the first marked acknowledgement", async () => {
+  it("observes a marked discovery response before any append", async () => {
+    const family = historyFamily();
+    const calls: string[] = [];
+    const client = new LoomClient({
+      baseUrl: "http://inert.invalid",
+      sessionProtection: family.root,
+      fetch: async (url) => {
+        calls.push(url.split("/v1/")[1]);
+        return new Response(JSON.stringify({ ...appendCapabilities, mirrored: true }));
+      },
+      logLevel: "off",
+    });
+    const session = new LoomSession(new Agent("o", "n", "bot", client), "s1");
+    await expect(session.addItems([msg("user", "private")])).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+    expect(calls).toEqual(["ops.capabilities"]);
+    expect(family.state.value).toBe("protected");
+  });
+
+  it("refuses a marked batch acknowledgement without starting another write", async () => {
     const family = historyFamily();
     const { agent, calls } = protectedHistoryHarness(family.root, () => ({ mirrored: true }));
     const session = new LoomSession(agent, "s1");
     await expect(session.addItems([msg("user", "first"), msg("assistant", "second")])).rejects.toBeInstanceOf(
       AutomaticCaptureSuppressed,
     );
-    expect(calls.map((call) => call.op)).toEqual(["memory.set"]);
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities", "memory.append_batch"]);
+    expect(calls[1].body.entries).toHaveLength(2);
     expect(family.state.value).toBe("protected");
   });
 
@@ -270,17 +327,22 @@ describe("LoomSession conversation protection", () => {
     expect(family.state.value).toBe("protected");
   });
 
-  it("rechecks the retained native history family after credentials mark and rebind it", async () => {
-    const first = historyFamily();
-    const current = protectedHistoryHarness(historyFamily().root);
-    const original = protectedHistoryHarness(first.root, undefined, async () => {
-      await first.root.mark();
-      Object.defineProperty(original.agent, "client", { value: current.client });
-      return "token";
-    });
-    await expect(new LoomSession(original.agent, "s1").getItems()).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
-    expect([...original.calls, ...current.calls]).toEqual([]);
-  });
+  it.each(["getItems", "addItems"] as const)(
+    "rechecks the retained native %s family after credentials rebind it",
+    async (method) => {
+      const first = historyFamily();
+      const current = protectedHistoryHarness(historyFamily().root);
+      const original = protectedHistoryHarness(first.root, undefined, async () => {
+        await first.root.mark();
+        Object.defineProperty(original.agent, "client", { value: current.client });
+        return "token";
+      });
+      const session = new LoomSession(original.agent, "s1");
+      const call = method === "getItems" ? session.getItems() : session.addItems([msg("user", "private")]);
+      await expect(call).rejects.toBeInstanceOf(AutomaticCaptureSuppressed);
+      expect([...original.calls, ...current.calls]).toEqual([]);
+    },
+  );
 
   it.each(["popItem", "clearSession"] as const)(
     "keeps explicit native %s usable and observes the retained family",
@@ -310,6 +372,83 @@ describe("LoomSession conversation protection", () => {
 });
 
 describe("LoomSession (OpenAI Agents SDK session)", () => {
+  it("does not discover or mutate for an empty append", async () => {
+    const { agent, calls } = rowsHarness();
+    await new LoomSession(agent, "s1").addItems([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("encodes every item before discovery so a malformed later item writes nothing", async () => {
+    const { agent, calls, rows } = rowsHarness();
+    const cyclic = { role: "user", content: "bad", providerData: {} };
+    cyclic.providerData = cyclic;
+    await expect(
+      new LoomSession(agent, "s1").addItems([msg("user", "valid"), cyclic as AgentInputItem]),
+    ).rejects.toThrow();
+    expect(calls).toEqual([]);
+    expect(rows.size).toBe(0);
+  });
+
+  it("refuses an oversized logical append without chunking or discovery", async () => {
+    const { agent, calls, rows } = rowsHarness();
+    await expect(
+      new LoomSession(agent, "s1").addItems(Array.from({ length: 1001 }, () => msg("user", "same"))),
+    ).rejects.toThrow("at most 1000");
+    expect(calls).toEqual([]);
+    expect(rows.size).toBe(0);
+  });
+
+  it("preserves existing history when the second entry makes the batch refuse", async () => {
+    const { agent, calls, rows, behavior } = rowsHarness();
+    const session = new LoomSession(agent, "s1");
+    await session.addItems([msg("user", "old")]);
+    const before = [...rows.values()];
+    calls.length = 0;
+    behavior.blockedContent = "blocked";
+    await expect(session.addItems([msg("user", "valid"), msg("user", "blocked")])).rejects.toThrow("batch refused");
+    expect([...rows.values()]).toEqual(before);
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities", "memory.append_batch"]);
+    expect(await session.getItems()).toEqual([msg("user", "old")]);
+  });
+
+  it("refuses a missing capability without attempting a point or ordinary bulk write", async () => {
+    const { agent, calls, rows, behavior } = rowsHarness();
+    behavior.serveAppend = false;
+    await expect(new LoomSession(agent, "s1").addItems([msg("user", "new")])).rejects.toThrow("memory.append_batch");
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities"]);
+    expect(rows.size).toBe(0);
+  });
+
+  it("propagates failed discovery without writing history", async () => {
+    const { agent, calls, rows, behavior } = rowsHarness();
+    behavior.discoveryStatus = 403;
+    await expect(new LoomSession(agent, "s1").addItems([msg("user", "new")])).rejects.toMatchObject({ status: 403 });
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities"]);
+    expect(rows.size).toBe(0);
+  });
+
+  it.each([404, 422])("does not downgrade when the append target refuses with %s", async (status) => {
+    const { agent, calls, rows, behavior } = rowsHarness();
+    behavior.appendStatus = status;
+    await expect(new LoomSession(agent, "s1").addItems([msg("user", "new")])).rejects.toMatchObject({ status });
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities", "memory.append_batch"]);
+    expect(rows.size).toBe(0);
+  });
+
+  it("surfaces committed publication-pending without resending or deleting the append", async () => {
+    const { agent, calls, rows, behavior } = rowsHarness();
+    behavior.appendStatus = 503;
+    behavior.appendCode = "PUBLICATION_PENDING";
+    const session = new LoomSession(agent, "s1");
+    await expect(session.addItems([msg("user", "a"), msg("user", "b")])).rejects.toMatchObject({
+      code: "PUBLICATION_PENDING",
+      detail: { committed: true },
+    });
+    expect(rows.size).toBe(2);
+    expect(calls.map((call) => call.op)).toEqual(["ops.capabilities", "memory.append_batch"]);
+    expect(await session.getItems()).toEqual([msg("user", "a"), msg("user", "b")]);
+  });
+
   it.each(["before", "after"])(
     "keeps the validated user when caller options change %s the first write",
     async (when) => {
@@ -319,7 +458,7 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
       if (when === "after") await session.addItems([msg("user", "first")]);
       options.userId = when === "before" ? "-" : "bob";
       await session.addItems([msg("user", "second")]);
-      expect(calls.filter((call) => call.op === "memory.set").map((call) => call.body.user_id)).toEqual(
+      expect(calls.filter((call) => call.op === "memory.append_batch").map((call) => call.body.user_id)).toEqual(
         when === "before" ? ["alice"] : ["alice", "alice"],
       );
       expect((await session.getItems()).length).toBe(when === "before" ? 1 : 2);
@@ -404,17 +543,27 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
       msg("assistant", "again"),
     ]);
     expect(await session.getItems(2)).toEqual([msg("user", "hi"), msg("assistant", "again")]);
-    const sets = calls.filter((c) => c.op === "memory.set").map((c) => c.body);
-    expect(new Set(sets.map((b) => b.memory_type))).toEqual(new Set(["episodic"]));
-    expect(new Set(sets.map((b) => b.user_id))).toEqual(new Set(["alice"]));
-    expect(String(sets[0].session_id)).toMatch(/^oai-ts-[0-9a-f]{20}$/);
+    const appends = calls.filter((c) => c.op === "memory.append_batch").map((c) => c.body);
+    expect(appends.map((b) => (b.entries as unknown[]).length)).toEqual([3, 1]);
+    const entries = appends.flatMap((b) => b.entries as Array<{ memory_key: string; value: string }>);
+    expect(new Set(entries.map((entry) => entry.memory_key)).size).toBe(4);
+    expect(entries.map((entry) => JSON.parse(entry.value))).toEqual([
+      msg("user", "hi"),
+      msg("assistant", "hello"),
+      msg("user", "hi"),
+      msg("assistant", "again"),
+    ]);
+    expect(new Set(appends.map((b) => b.user_id))).toEqual(new Set(["alice"]));
+    expect(String(appends[0].session_id)).toMatch(/^oai-ts-[0-9a-f]{20}$/);
   });
 
   it("separates native TypeScript history from Python history", async () => {
     const { agent, calls } = rowsHarness();
     await new LoomSession(agent, "s1", { userId: "alice" }).addItems([msg("user", "x")]);
     // The digest matches Python, but its oai-py- session stores a different item format.
-    expect(calls[0].body.session_id).toBe("oai-ts-65872b142b2cfb23bddc");
+    expect(calls.find((call) => call.op === "memory.append_batch")?.body.session_id).toBe(
+      "oai-ts-65872b142b2cfb23bddc",
+    );
   });
 
   it("keeps native tool history separate from Python tool results", async () => {
@@ -428,7 +577,11 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     await agent.call(
       "memory.set",
       {
-        memory_key: String(calls[0].body.memory_key),
+        memory_key: String(
+          (
+            calls.filter((call) => call.op === "memory.append_batch")[0].body.entries as Array<{ memory_key: string }>
+          )[0].memory_key,
+        ),
         value: JSON.stringify({ type: "function_call_output", call_id: "c1", output: "other" }),
         memory_type: "episodic",
       },
@@ -508,7 +661,12 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
     const { agent, calls, disappear } = rowsHarness();
     const session = new LoomSession(agent, "s1", { userId: "alice" });
     await session.addItems([msg("assistant", "x".repeat(5000))]);
-    disappear.add(String(calls[0].body.memory_key));
+    disappear.add(
+      String(
+        (calls.filter((call) => call.op === "memory.append_batch")[0].body.entries as Array<{ memory_key: string }>)[0]
+          .memory_key,
+      ),
+    );
     await expect(session[method]()).rejects.toThrow("unavailable");
   });
 
@@ -532,7 +690,9 @@ describe("LoomSession (OpenAI Agents SDK session)", () => {
   it("keeps non-ASCII user ids distinct", async () => {
     const { agent, calls } = rowsHarness();
     await new LoomSession(agent, "s1", { userId: "jos\u00e9" }).addItems([msg("user", "x")]);
-    expect(calls[0].body.session_id).toBe("oai-ts-c10f2e9c4ca65c3f8b98");
+    expect(calls.find((call) => call.op === "memory.append_batch")?.body.session_id).toBe(
+      "oai-ts-c10f2e9c4ca65c3f8b98",
+    );
   });
 
   it("trims long slash prefixes without scanning each suffix", async () => {

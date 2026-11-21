@@ -201,6 +201,10 @@ reviewed rework plan. Vocabulary is registered with `namespace.register_category
 `namespace.register_ontology`, `namespace.list_ontology` (entity types and relation verbs
 for the [entity graph](entity-graph.md)).
 
+Category search compares only vectors from the query's embedding model with the same
+dimension as the query vector. After changing models, re-register a category to make
+it searchable with that model.
+
 Snapshots and point-in-time rollback (`namespace.snapshot`, `namespace.restore`,
 `namespace.rollback`) are covered in
 [history and provenance](memory/history-and-provenance.md).

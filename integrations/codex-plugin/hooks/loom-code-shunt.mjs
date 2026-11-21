@@ -493,7 +493,14 @@ async function main() {
       return;
     }
     const outputMode = String(input.output_mode || "files_with_matches");
-    const ctx = { ...ctxBase, rel, isFile, pattern: input.pattern, outputMode };
+    const ctx = {
+      ...ctxBase,
+      rel,
+      isFile,
+      pattern: input.pattern,
+      outputMode,
+      modified: isFile && rel != null ? gitStatusClass(root, rel) : "",
+    };
     const verdict = await answerSymbolDeny(classifySymbolGrep(ctx, sessionId), repo, ctx, {
       cwd,
       files: isFile ? [String(input.path)] : [],
@@ -554,7 +561,13 @@ async function settleBashBulk(repo, { bulk, cwd, sessionId, ctxBase }) {
   } catch {
     return false;
   }
-  const ctx = { ...ctxBase, rel, isFile, pattern: bulk.pattern };
+  const ctx = {
+    ...ctxBase,
+    rel,
+    isFile,
+    pattern: bulk.pattern,
+    modified: isFile && rel != null ? gitStatusClass(root, rel) : "",
+  };
   const verdict = await answerSymbolDeny(classifySymbolGrep(ctx, sessionId), repo, ctx, {
     cwd,
     files: bulk.files || [bulk.dir],

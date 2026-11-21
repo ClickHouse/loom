@@ -83,7 +83,7 @@ def test_bridge_read_is_bounded_to_the_callers_user(ch: _CH) -> None:
     asyncio.run(bridge_rows_by_key(_input(), "Bernard Arnault"))
     [(sql, params)] = ch.calls
     assert "user_id = {user_id:String}" in sql and params["user_id"] == "u1"
-    assert "agent = {agent:String}" in sql and params["pat"] == "%bernard_arnault%"
+    assert "agent = {agent:String}" in sql and params["pat"] == r"%bernard\_arnault%"
 
 
 def test_mask_and_trust_reads_are_bounded_to_the_callers_user(ch: _CH) -> None:

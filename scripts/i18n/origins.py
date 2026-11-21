@@ -86,7 +86,73 @@ def _line_embeddings(old: list[str], new: list[str]) -> tuple[list[int | None], 
     return first, list(reversed(last))
 
 
-def _raw_projection(old: str, new: str, points: set[int]) -> dict[int, int]:
+def _terminal_append(historical, current, units, sources, positions, current_positions) -> bool:
+    from scripts.i18n import chunks
+
+    before, after = sources.historical_raw, sources.current_raw
+    # Maintained link rewrites can change the prepared prefix without changing raw ownership.
+    if (
+        not units
+        or not before.endswith("\n")
+        or len(after) <= len(before)
+        or not after.startswith(before)
+        or current_positions[len(before)] is None
+        or not current_positions[len(before)] < len(current.english)
+        or positions[-1] != len(historical.english)
+        or units[-1].end != len(historical.english)
+        or not units[-1].start < units[-1].end
+    ):
+        return False
+    suffix = after[len(before) :]
+    if not suffix.endswith("\n") or not (before.endswith("\n\n") or suffix.startswith("\n")):
+        return False
+    # Site attributes may use braces inline or without a colon.
+    if any(brace in suffix for brace in "{}"):
+        return False
+    # Indentation can continue a site-extension list even outside CommonMark's list.
+    if any(line.strip() and line != line.lstrip() for line in suffix.splitlines()):
+        return False
+    parser, old_tokens = chunks._github_parse(before)
+    _, current_tokens = chunks._github_parse(after)
+    environment = {}
+    appended = parser.parse(suffix, environment)
+    if not appended or environment.get("references"):
+        return False
+    # Container source maps may absorb blank separators; their content must not change.
+    fields = ("type", "tag", "nesting", "level", "content", "markup", "attrs", "info", "hidden")
+    if [tuple(getattr(t, field) for field in fields) for t in old_tokens] != [
+        tuple(getattr(t, field) for field in fields) for t in current_tokens[: len(old_tokens)]
+    ]:
+        return False
+    added = current_tokens[len(old_tokens) :]
+    paragraph = (("paragraph_open", 0), ("inline", 1), ("paragraph_close", 0))
+    if (
+        not added
+        or len(added) % 3
+        or any((token.type, token.level) != paragraph[i % 3] for i, token in enumerate(added))
+    ):
+        return False
+    if any(
+        child.type in {"html_inline", "image"} for token in added for child in token.children or []
+    ):
+        return False
+    if chunks._site_lists(suffix, []) or any(
+        line.lstrip().startswith(("!!!", "???")) for line in suffix.splitlines()
+    ):
+        return False
+    heading_lines = next(
+        (t.map for t in reversed(old_tokens) if t.type == "heading_open" and t.level == 0),
+        None,
+    )
+    if heading_lines is None:
+        return False
+    heading = positions[chunks._line_starts(before)[heading_lines[0]]]
+    return heading is not None and units[-1].start <= heading < units[-1].end
+
+
+def _raw_projection(
+    old: str, new: str, points: set[int], *, terminal_append: bool = False
+) -> dict[int, int]:
     from bisect import bisect_right
     from itertools import accumulate
 
@@ -96,6 +162,10 @@ def _raw_projection(old: str, new: str, points: set[int]) -> dict[int, int]:
     targets = [0, *accumulate(map(len, after))]
     projected = {}
     for point in points:
+        # Proven terminal ownership also covers repeated trailing blank-line neighbours.
+        if terminal_append and point == len(old):
+            projected[point] = len(new)
+            continue
         index = bisect_right(starts, point) - 1
         boundary = point in starts
         neighbours = (
@@ -142,7 +212,15 @@ def partition_counterparts(historical, current, units, sources: SourceOrigins):
     cuts = {p for unit in units for p in (unit.start, unit.end)}
     if any(p not in inverse or p in ambiguous for p in cuts):
         raise ValueError("original cut falls inside a source transformation")
-    raw = _raw_projection(sources.historical_raw, sources.current_raw, {inverse[p] for p in cuts})
+    terminal_append = new[-1] == len(current.english) and _terminal_append(
+        historical, current, units, sources, old, new
+    )
+    raw = _raw_projection(
+        sources.historical_raw,
+        sources.current_raw,
+        {inverse[p] for p in cuts},
+        terminal_append=terminal_append,
+    )
     ranges = []
     previous_old = previous_new = 0
     for unit in units:

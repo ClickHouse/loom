@@ -12,8 +12,8 @@ match wins, else the global default. No override and no global env var
 means no TTL: a table that still carries one from an earlier pass gets
 `ALTER TABLE … REMOVE TTL` (none of the managed tables has a schema TTL).
 
-Per-namespace retention applies uniformly across every managed table;
-per-table-per-namespace granularity is deliberately not exposed.
+Namespace retention never expires audit rows; their retention comes only from
+the audit setting. Namespace tiering may still move them to warm storage.
 """
 
 from __future__ import annotations
@@ -253,6 +253,9 @@ def compute_alters(
         r_days = max(0, target.retention_days(settings_obj) or 0)
         t_days = max(0, target.warm_days(settings_obj) or 0)
         overrides = ovr_all
+        if target.table == "loom.audit_log":
+            # Memory retention must not erase the evidence of its own deletion.
+            overrides = [{**o, "retention_days": 0} for o in ovr_all]
         if target.table in (*_PG_HELD, "loom.chunks") and pg.enabled():
             # Postgres holds memory and document heads: a TTL here would delete only
             # ClickHouse's copy (or only its vectors, leaving live memories search no

@@ -85,6 +85,10 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
         "protobuf scanner: messages, enums, services, rpcs, type sites and "
         "import candidates; applied by a targeted backfill over a namespace's .proto files"
     ),
+    "lang_thrift.py": (
+        "Thrift IDL scanner: structs, enums, typedefs, services, functions, type sites "
+        "and include candidates — a lane module outside the stamp like lang_proto.py"
+    ),
     "lang_jsonnet.py": (
         "jsonnet bindings, members and imports — a lane module outside the "
         "stamp like lang_proto.py; rows arrive by a targeted backfill"
@@ -92,6 +96,10 @@ NON_EXTRACTOR_MODULES: dict[str, str] = {
     "lang_lua.py": (
         "lua functions, call sites and require candidates — a lane module outside the "
         "stamp like lang_proto.py; rows arrive by a targeted backfill"
+    ),
+    "lang_graphql.py": (
+        "GraphQL schema types, root fields and type sites, a lane module outside "
+        "the stamp like lang_proto.py; rows arrive by a targeted backfill"
     ),
     "lang_k8s.py": (
         "plain Kubernetes manifests (documents, references, facets) — a lane "

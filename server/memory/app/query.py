@@ -432,7 +432,7 @@ async def _served_by_authority(
 
     if not input.include_tombstoned:
         return await memory_repo.served_rows(rows)
-    hidden = frozenset(status for status, flag in _STATUS_FLAGS if not served[flag])
+    hidden = frozenset(status for status, flag in _STATUS_FLAGS if not served[flag]) | {"rejected"}
     return await memory_repo.recovered_rows(
         rows, source_trace=input.source_trace or None, hidden_statuses=hidden, as_of=input.as_of
     )
@@ -454,6 +454,7 @@ async def _list_by_score(
         "org = {org:String}",
         "namespace = {ns:String}",
         "tombstoned_at IS NULL",
+        "status != 'rejected'",
         *scope_where(request_scope(), params),
     ]
     # `*` on an identity axis drops that axis from WHERE, the rule the recency path

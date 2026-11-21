@@ -41,6 +41,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "code.callers": (
         "sdk_method",
+        "plugin_hook",
         "dashboard",
     ),
     "code.context_pack": (
@@ -365,6 +366,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     ),
     "memory.agents_list": ("dashboard",),
     "memory.aggregate": ("sdk_method",),
+    "memory.append_batch": ("sdk_method",),
     "memory.apply": ("sdk_method",),
     "memory.ask": ("sdk_method",),
     "memory.assign_category": ("sdk_method",),

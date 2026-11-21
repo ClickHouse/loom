@@ -115,6 +115,7 @@ class MemoryRow(BaseModel):
     tags: list[str] = Field(default_factory=list)
     entities: list[str] = Field(default_factory=list)
     status: str = "active"
+    requires_review: bool = False
     # The stored `value` column VERBATIM — the bytes the writer serialised —
     # so a version row (tombstone, restore, touch, lock,
     # rollback) carries them unchanged. `value` above is the parsed form,
@@ -220,10 +221,31 @@ class MemoryRow(BaseModel):
         data.setdefault("pinned", False)
         data.setdefault("created_at", naive_utc_now())
         data.setdefault("expires_at", None)
+        data.setdefault("requires_review", data.get("status") in {"proposed", "rejected"})
         if "cross_promoted_from_memory_id" in data:
             lineage = uuid_or_none(data["cross_promoted_from_memory_id"])
             data["cross_promoted_from_memory_id"] = lineage or ""
         return cls(**data)
+
+
+def memory_head_state(row: MemoryRow | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    # Usage totals can be overlaid by the read and change without a version insert.
+    # Compare served values, not the projection's JSON encoding or preview metadata.
+    state = row.model_dump(
+        exclude={
+            "recall_count",
+            "last_recalled_at",
+            "evidence_count",
+            "value_text",
+            "value_json",
+            "value_truncated",
+        }
+    )
+    state["value"] = json.dumps(row.value, sort_keys=True, separators=(",", ":"), default=str)
+    state["updated_at"] = row.updated_at or row.created_at
+    return state
 
 
 # Canonical column list for loom.memory — single source of truth for
@@ -252,6 +274,7 @@ MEMORY_PERSISTED_COLS: tuple[str, ...] = (
     "redacted_at",
     "redaction_reason",
     "status",
+    "requires_review",
     "conflict_with",
     "duplicate_of",
     "evidence_count",
@@ -400,6 +423,8 @@ def build_memory_version_row(
             val = stored_value_text(existing)
         elif col == "pinned":
             val = 1 if val else 0
+        elif col == "requires_review":
+            val = int(bool(val) or getattr(existing, "status", "") in {"proposed"})
         elif col in ("tags", "entities", "conflict_with", "files", "concepts"):
             val = list(val or [])
         elif col == "cross_promoted_from_memory_id":
@@ -493,6 +518,7 @@ FIRST_VERSION_DEFAULTS: dict[str, Any] = {
     "tombstoned_at": None,
     "expires_at": None,
     "pinned": 0,
+    "requires_review": 0,
     "run_id": "-",
     "entities": [],
     "tags": [],
@@ -525,6 +551,9 @@ def build_first_version_row(new: Mapping[str, Any], *, now: datetime) -> dict[st
     row.setdefault("last_reinforced_at", now)
     row.setdefault("created_at", now)
     row.update(new)
+    row["requires_review"] = int(
+        bool(row.get("requires_review")) or row.get("status") in {"proposed"}
+    )
     if not row.get("memory_id"):
         row["memory_id"] = str(uuid.uuid4())
     return row
@@ -851,6 +880,11 @@ def _hydrate(row: dict[str, Any]) -> MemoryRow:
         run_id=row.get("run_id", "-") or "-",
         source_trace=row.get("source_trace", "") or "",
         status=row.get("status", "active"),
+        requires_review=bool(
+            row.get("requires_review")
+            if row.get("requires_review") is not None
+            else row.get("status") in {"proposed", "rejected"}
+        ),
         content_sha256=hash_text(row.get("content_sha256")),
         tags=list(row.get("tags") or []),
         entities=list(row.get("entities") or []),

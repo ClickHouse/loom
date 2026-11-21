@@ -96,7 +96,7 @@ async def knowledge_upload(
     namespace), as the ops check it; an admitted upload to a restricted
     namespace leaves the audit row an op leaves. Answers the upload's id,
     sha256, size, detected format and expiry."""
-    auth = verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
+    auth = await verify_bearer_header(request.headers.get("Authorization"), acts_for_end_users=True)
     if auth is None and settings.auth_actually_required():
         raise missing_bearer()
     name = filename.strip().replace("\\", "/").rsplit("/", 1)[-1]

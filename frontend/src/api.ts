@@ -628,6 +628,7 @@ export async function getMemory(
  *  or the caller cannot read its namespace. */
 export interface MemoryById {
   found: boolean;
+  content_sha256?: string;
   memory_id: string;
   namespace: string;
   memory_key: string;

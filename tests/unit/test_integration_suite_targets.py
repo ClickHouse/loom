@@ -114,6 +114,78 @@ def test_the_gate_catches_each_implicit_target(tmp_path: Path) -> None:
     ], found
 
 
+@pytest.mark.parametrize("fault", ["none", "second_create", "migration", "first_drop"])
+def test_cell_attach_owns_only_its_created_clickhouse_databases(monkeypatch, fault):
+    from server.core.schema import migrate
+    from server.settings import settings
+    from tests.integration import test_cell_attach as attach
+
+    for name in ("LOOM_PG_DSN", "LOOM_ROUTER_PG_DSN", "LOOM_CH_HOST"):
+        monkeypatch.setenv(name, "owned-test-target")
+    initial = settings.ch_database, settings.ch_telemetry_database
+    created, dropped, connections, migrations = [], [], [], []
+
+    class Driver:
+        closed = False
+
+        def command(self, sql):
+            assert not self.closed
+            action, _, name, *_ = sql.split()
+            if action == "CREATE":
+                if fault == "second_create" and created:
+                    raise RuntimeError("second create refused")
+                created.append(name)
+            else:
+                assert action == "DROP" and name in created
+                dropped.append(name)
+                if fault == "first_drop" and len(dropped) == 1:
+                    raise RuntimeError("first drop refused")
+
+        def close(self):
+            self.closed = True
+
+    def admin(**kwargs):
+        assert kwargs == {"database": ""}
+        driver = Driver()
+        connections.append(driver)
+        return driver
+
+    bootstrap = Driver()
+    monkeypatch.setattr(attach, "ch_client_from_env", admin)
+    monkeypatch.setattr(migrate, "client", lambda **kwargs: bootstrap)
+
+    def apply(args):
+        assert args == []
+        assert migrate.client() is bootstrap
+        migrations.append((settings.ch_database, settings.ch_telemetry_database))
+        assert migrations[-1] == tuple(created)
+        assert all(name.startswith("loom_it_attach") for name in created)
+        return 1 if fault == "migration" else 0
+
+    monkeypatch.setattr(migrate, "main", apply)
+    fixture = attach.cell_clickhouse_databases.__wrapped__()
+    if fault == "second_create":
+        with pytest.raises(RuntimeError, match="second create refused"):
+            next(fixture)
+        assert migrations == []
+    elif fault == "migration":
+        with pytest.raises(AssertionError):
+            next(fixture)
+    else:
+        assert next(fixture) == tuple(created)
+        assert bootstrap.closed and all(driver.closed for driver in connections)
+        if fault == "first_drop":
+            with pytest.raises(RuntimeError, match="first drop refused"):
+                next(fixture)
+        else:
+            with pytest.raises(StopIteration):
+                next(fixture)
+    assert dropped == list(reversed(created))
+    assert all(driver.closed for driver in connections)
+    assert (settings.ch_database, settings.ch_telemetry_database) == initial
+    assert len(migrations) == (0 if fault == "second_create" else 1)
+
+
 def test_the_gate_catches_a_clickhouse_cli_without_the_target_fixture(tmp_path: Path) -> None:
     probe = tmp_path / "test_probe.py"
     probe.write_text('CLI = ROOT / "dev" / "backup_loom.py"\n')

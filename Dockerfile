@@ -102,6 +102,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     && mkdir -p /usr/local/node && tar -C /usr/local/node --strip-components=1 -xJf /tmp/node.txz && rm /tmp/node.txz /tmp/node.txz.sha256
 ENV PATH=/usr/local/node/bin:$PATH
 COPY scripts/install-code-toolchains.sh /tmp/install-code-toolchains.sh
+COPY scripts/code-toolchains /tmp/code-toolchains
 RUN LOOM_CODE_TOOLCHAIN_PREFIX=/usr/local/node sh /tmp/install-code-toolchains.sh \
     && npm cache clean --force
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any
@@ -25,6 +25,7 @@ from server.core.errors import (
 )
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
+from server.embedding.documents import document_vector
 from server.embedding.embedder import Embedder
 from server.identity.app.request_scope import request_scope
 from server.memory.api.models_lifecycle import (
@@ -49,6 +50,7 @@ from server.memory.domain.promotion_source import promotion_source
 from server.memory.domain.search_types import SHARED_AGENT
 from server.memory.domain.trust import verification_state
 from server.memory.store import shared as shared_repo
+from server.memory.store import source_review
 from server.memory.store.rows import MemoryRow, next_version, version_over
 from server.observability.budget_shape import note_budget_shape
 from server.settings import settings
@@ -85,7 +87,6 @@ async def handle_memory_promote(
         )
 
     _refuse_unshareable(src)
-
     target_key = input.target_key or input.memory_key
     is_definition_promotion = is_definition(src) or target_key.startswith(DEFINITION_KEY_PREFIX)
     names: set[str] = set()
@@ -121,7 +122,7 @@ async def handle_memory_promote(
     embedder = get_embedder() if is_searchable_type(src.memory_type) else None
     if embedder is not None:
         try:
-            embedding = await embedder.embed(excerpt)
+            embedding = await document_vector(embedder, excerpt)
         except Exception as e:  # noqa: BLE001 — embed failure writes a stub the worker reconciles
             log.warning(
                 "memory.promote: inline embedding failed for "
@@ -186,13 +187,11 @@ async def handle_memory_promote(
         if embedder is None
         else _shared_vector_row(src, target_key, excerpt, embedder, embedding, now_naive)
     )
-    if is_definition_promotion:
-        await _write_definition(input.org, input.namespace, names, row, vector_row)
-    else:
-        version = next_version()
-        await shared_repo.insert_shared_row({**row, "version": version})
-        if vector_row is not None:
-            await shared_repo.insert_shared_embedding({**vector_row, "version": version})
+    async with source_review.publication(src) as mark:
+        if is_definition_promotion:
+            await _write_definition(input.org, input.namespace, names, row, vector_row, mark)
+        else:
+            await _write_shared(row, vector_row, mark)
 
     return MemoryPromoteOutput(
         shared_memory_key=target_key,
@@ -200,6 +199,17 @@ async def handle_memory_promote(
         reversible_until=reversible_until,
         ignored_args=ignored,
     )
+
+
+async def _write_shared(
+    row: dict[str, Any], vector: dict[str, Any] | None, mark: Callable[[bool], None]
+) -> None:
+    version = next_version()
+    mark(True)
+    await shared_repo.insert_shared_row({**row, "version": version})
+    if vector is not None:
+        await shared_repo.insert_shared_embedding({**vector, "version": version})
+    mark(False)
 
 
 async def _approved_definition_names(
@@ -255,6 +265,7 @@ async def _approved_definition_names(
 
 def _refuse_unshareable(src: MemoryRow) -> None:
     """Refuse a row the shared layer cannot carry: a block row or a 'high' one."""
+    source_review.require_reviewed(src)
     # Block rows are per-agent working memory; loom.shared has no char_limit,
     # so promoting one would silently drop its overflow cap. Refuse.
     if src.memory_type == "profile":
@@ -333,6 +344,7 @@ async def _write_definition(
     names: set[str],
     row: dict[str, Any],
     vector_row: dict[str, Any] | None,
+    mark: Callable[[bool], None],
 ) -> None:
     """Write the definition's shared row and its vector unless the namespace is at its
     ceiling or another shared definition holds one of its names, under the namespace's
@@ -344,9 +356,11 @@ async def _write_definition(
         # vector above the live row.
         head = await shared_repo.fetch_shared(org, namespace, key, strong=True)
         version = await _definition_version(org, namespace, key, head)
+        mark(True)
         await shared_repo.insert_shared_row({**row, "version": version})
         if vector_row is not None:
             await shared_repo.insert_shared_embedding({**vector_row, "version": version})
+        mark(False)
 
 
 async def _definition_version(

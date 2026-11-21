@@ -64,11 +64,17 @@ def _peer(mid: str = _ID_P, pinned: bool = False) -> ConflictPeer:
 class _StubCH:
     def __init__(self) -> None:
         self.inserts: list[tuple[str, list[dict[str, Any]]]] = []
+        self.head: MemoryRow | None = None
 
     async def insert(self, table: str, rows: list[dict[str, Any]], **_: Any) -> None:
         self.inserts.append((table, rows))
 
-    async def query_all(self, *_: Any, **__: Any) -> list[dict[str, Any]]:
+    async def query_all(self, sql: str, params: Any = None, **kwargs: Any) -> list[dict[str, Any]]:
+        if (
+            "FROM loom.memory FINAL" in sql
+            and "PREWHERE (org, namespace, agent, user_id, session_id, memory_key)" in sql
+        ):
+            return [self.head.model_dump()] if self.head is not None else []
         return [
             {
                 "memory_id": _ID_A,
@@ -98,6 +104,7 @@ def wired(monkeypatch: pytest.MonkeyPatch):
     def _wire(verdict: ConflictResult, row: MemoryRow | None = None) -> tuple[_StubCH, _Calls]:
         ch, calls = _StubCH(), _Calls()
         row = row or _row()
+        ch.head = row
         monkeypatch.setattr(mem_handlers, "get_client", lambda: ch)
         monkeypatch.setattr(_stack_mod, "get_client", lambda: ch)
         monkeypatch.setattr(_restore_mod, "get_client", lambda: ch)
@@ -181,7 +188,14 @@ async def test_clear_verdict_writes_an_active_version_and_resets_the_old_mark(wi
     assert not calls.marked and not calls.refined
     # Same-key supersession ran with the value-carrying one-row batch.
     assert calls.superseded == [
-        [{"memory_id": _ID_A, "memory_key": "deploy_day", "value": '"Deploys happen on Thursday"'}]
+        [
+            {
+                "memory_id": _ID_A,
+                "memory_key": "deploy_day",
+                "value": '"Deploys happen on Thursday"',
+                "user_id": "-",
+            }
+        ]
     ]
 
 

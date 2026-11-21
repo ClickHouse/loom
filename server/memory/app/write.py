@@ -739,10 +739,8 @@ async def _memory_set_once(input: MemorySetInput, *, embedder: Any = None) -> Me
     if not is_embedded(w.input.memory_type, w.effective_sensitivity):
         return await finished(w, _set_plain_insert(w, ch))
 
-    # Searchable: build + insert the embedding row too. The two inserts
-    # hit different tables and don't depend on each other; parallelize to
-    # pay 1×RTT instead of 2 (RTT dominates on CH Cloud). A vector the coded
-    # table cannot take fails the write before the calls it pays for.
+    # Searchable: prepare the embedding too, validating its width before calling
+    # the embedder. Memory commits before its embedding row is published.
     await codes_state.refuse_width("memory_embeddings", get_embedder().dim)
     await _set_embed(w, embedder)
 
@@ -802,6 +800,7 @@ def _stamp_lifecycle(
         return dup
     if input.proposed:
         memory_row["status"] = "proposed"
+        memory_row["requires_review"] = 1
     return ""
 
 

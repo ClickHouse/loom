@@ -716,15 +716,16 @@ async def _clickgap_write_category_links(w: _ClickgapWrite) -> None:
 async def _clickgap_enroll(stack: Any, org: str) -> Any:
     """Connect and enroll before selecting the importer's effective embedder."""
     from server import boot
-    from server.cli._ch import connect_checked
+    from server.cli._ch import check_acceptance, connect_verified
     from server.core.background import register_buffer_drainer
     from server.core.ch import get_client
     from server.embedding import get_embedder
     from server.insights.app.provider_command import model_command
 
-    await connect_checked(get_client(), orgs=(org,))
+    await connect_verified(get_client())
     register_buffer_drainer("boot-writes", boot.drain_writes)
     await stack.enter_async_context(model_command())
+    await check_acceptance(orgs=(org,))
     return get_embedder()
 
 
@@ -900,7 +901,12 @@ def _cmd_import_clickgap(args: argparse.Namespace) -> int:
             async with command_stack:
                 return await _run()
         finally:
-            await disconnect(get_client())
+            first = sys.exception()
+            try:
+                await disconnect(get_client())
+            except BaseException:  # a disconnect failure must not replace the command failure
+                if first is None:
+                    raise
 
     from contextlib import AsyncExitStack
 

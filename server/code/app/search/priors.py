@@ -290,8 +290,8 @@ def _apply_fusion_signals(
 #     gets x(1 + _STRUCTURAL_KIND_BOOST) and the table is not applied — the
 #     two would otherwise stack on functions and cancel on classes.
 # Tables: "default" is the design's table; "flat" halves every distance from 1.0; "structural" is
-# the identity table with only the phrasing rule. `flat` is the served table;
-# CodeSearchInput.kind_prior overrides per request for A/Bs. The kind Enum8 is
+# the identity table with only the phrasing rule. The deployment setting chooses
+# the table; CodeSearchInput.kind_prior overrides it per request. The kind Enum8 is
 # already selected by both legs: no SQL change, zero extra bytes.
 _KIND_PRIOR_TABLES: dict[str, dict[str, float]] = {
     "default": {
@@ -311,9 +311,6 @@ _KIND_PRIOR_TABLES: dict[str, dict[str, float]] = {
     "structural": {},
 }
 
-
-# The table served when the request names none: it cleared the paired gate on the issue lane.
-_SERVED_KIND_PRIOR = "flat"
 
 _STRUCTURAL_KIND_BOOST = 0.15  # x1.15 on the kind the query names
 
@@ -343,11 +340,11 @@ _FILE_MENTION_RE = re.compile(
 
 
 def _kind_prior_table(requested: str | None) -> dict[str, float] | None:
-    """The table a request runs under: the override when given, else `flat`;
+    """The table a request runs under: the override when given, else the setting;
     None (or {} for "structural") when off. An unknown
     name is treated as off — a typo in an A/B must not silently become an
     arm."""
-    name = (requested if requested is not None else _SERVED_KIND_PRIOR) or "off"
+    name = (requested if requested is not None else settings.code_search_kind_prior) or "off"
     name = str(name).strip().lower()
     if name == "off" or name not in _KIND_PRIOR_TABLES:
         return None

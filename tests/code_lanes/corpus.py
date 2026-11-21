@@ -110,6 +110,12 @@ LANES: tuple[Lane, ...] = (
         manifests=(("go.mod", _CONFIG),),
     ),
     Lane(
+        "graphql/",
+        "graphql",
+        "object, interface, input, enum, union and scalar types, root fields in a "
+        "type and in an `extend type`, and type uses across files",
+    ),
+    Lane(
         "helm/",
         "gotemplate",
         "a chart with a dependency, defines and includes, manifest documents and NOTES.txt",
@@ -148,6 +154,12 @@ LANES: tuple[Lane, ...] = (
     ),
     Lane("prisma/", "prisma", "models, relations, an enum and attributes of the vendored schema"),
     Lane("proto/", "proto", "a package, an import, messages, an enum, a service and its RPCs"),
+    Lane(
+        "thrift/",
+        "thrift",
+        "an include, a typedef, an enum, a struct, a union, an exception, a service "
+        "extending an included one, and its functions",
+    ),
     Lane(
         "python/",
         "python",
@@ -426,7 +438,7 @@ def _summarize() -> dict[str, Any]:
                         pf.includes.append(hit)
         elif pf.lang == "rust":
             pf.includes = resolve_uses(rel, pf.includes, present)
-        elif pf.lang in ("proto", "gotemplate", "lua"):
+        elif pf.lang in ("proto", "thrift", "gotemplate", "lua"):
             # Import candidates settle against the corpus paths
             lane = _lane_module(pf.lang)
             pf.includes = lane.resolve_imports(rel, list(pf.includes), present)
@@ -553,7 +565,7 @@ def _summarize() -> dict[str, Any]:
                 ]
         if pf.lang == "prisma":
             es = [*es, *prisma_edges(pf)]
-        if pf.lang in ("proto", "gotemplate", "lua"):
+        if pf.lang in ("proto", "thrift", "gotemplate", "lua", "graphql"):
             # The reference sites over the lane's table
             lane = _lane_module(pf.lang)
             es = [*es, *bind_sites(pf, lane.reference_sites(pf), gated, lane.SITE_RULES)]
@@ -580,6 +592,7 @@ def _summarize() -> dict[str, Any]:
         if pf.lang in ts_langs or pf.lang in (
             "rust",
             "proto",
+            "thrift",
             "gotemplate",
             "lua",
             "config",
@@ -596,10 +609,20 @@ def _summarize() -> dict[str, Any]:
 
 def _lane_module(lang: str) -> Any:
     """The tree-less lane modules, as `ingest._lane_module`."""
-    from server.code.domain.extract import lang_gotemplate, lang_lua, lang_proto
+    from server.code.domain.extract import (
+        lang_gotemplate,
+        lang_graphql,
+        lang_lua,
+        lang_proto,
+        lang_thrift,
+    )
 
     if lang == "lua":
         return lang_lua
+    if lang == "thrift":
+        return lang_thrift
+    if lang == "graphql":
+        return lang_graphql
     return lang_proto if lang == "proto" else lang_gotemplate
 
 

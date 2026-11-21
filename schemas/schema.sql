@@ -924,7 +924,8 @@ CREATE TABLE IF NOT EXISTS loom.code_repos
     `version` UInt64 DEFAULT toUInt64(toUnixTimestamp64Nano(now64(9))),
     `exclude_generated` Bool DEFAULT false,
     `scip_producer` LowCardinality(String) DEFAULT '',
-    `row_kind` LowCardinality(String) DEFAULT ''
+    `row_kind` LowCardinality(String) DEFAULT '',
+    `git_proxy_identity` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 ORDER BY (org, namespace)
@@ -2467,6 +2468,7 @@ CREATE TABLE IF NOT EXISTS loom.memory
     `redacted_at` Nullable(DateTime),
     `redaction_reason` String DEFAULT '',
     `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7) DEFAULT 'active',
+    `requires_review` UInt8 DEFAULT toUInt8(status IN ('proposed', 'rejected')),
     `conflict_with` Array(UUID) DEFAULT [],
     `duplicate_of` String DEFAULT '',
     `evidence_count` UInt32 DEFAULT 1,
@@ -3181,6 +3183,7 @@ CREATE TABLE IF NOT EXISTS loom.memory_versions
     `redacted_at` Nullable(DateTime),
     `redaction_reason` String DEFAULT '',
     `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7) DEFAULT 'active',
+    `requires_review` UInt8 DEFAULT toUInt8(status IN ('proposed', 'rejected')),
     `conflict_with` Array(UUID) DEFAULT [],
     `duplicate_of` String DEFAULT '',
     `evidence_count` UInt32 DEFAULT 1,
@@ -3558,7 +3561,8 @@ CREATE TABLE IF NOT EXISTS loom.oauth_state
     `version` UInt64 DEFAULT toUnixTimestamp64Nano(now64(9)),
     `family` String DEFAULT '',
     `upstream_refresh` String DEFAULT '',
-    `generation` UInt32 DEFAULT 0
+    `generation` UInt32 DEFAULT 0,
+    `verified_email` String DEFAULT ''
 )
 ENGINE = ReplacingMergeTree(version)
 PARTITION BY record_type
@@ -5886,6 +5890,7 @@ CREATE MATERIALIZED VIEW IF NOT EXISTS loom.memory_versions_mv TO loom.memory_ve
     `redacted_at` Nullable(DateTime),
     `redaction_reason` String,
     `status` Enum8('active' = 1, 'conflicted' = 2, 'tombstoned' = 3, 'duplicate' = 4, 'superseded' = 5, 'rejected' = 6, 'proposed' = 7),
+    `requires_review` UInt8,
     `conflict_with` Array(UUID),
     `duplicate_of` String,
     `evidence_count` UInt32,
@@ -5949,6 +5954,7 @@ AS SELECT
     redacted_at,
     redaction_reason,
     status,
+    requires_review,
     conflict_with,
     duplicate_of,
     evidence_count,

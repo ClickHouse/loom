@@ -39,6 +39,38 @@ def repo_config(**overrides: Any) -> RepoConfig:
     return RepoConfig(**fields)
 
 
+def _linear_failure_context() -> dict[str, Any]:
+    """Cumulative worker state after failure, separate from individual sample costs."""
+    return {
+        "process_cpu_ns_at_failure": time.process_time_ns(),
+        "monotonic_ns_at_failure": time.monotonic_ns(),
+        "allocated_blocks_at_failure": sys.getallocatedblocks(),
+        "gc_enabled_at_failure": gc.isenabled(),
+        "gc_threshold_at_failure": gc.get_threshold(),
+        "gc_count_at_failure": gc.get_count(),
+        "gc_stats_at_failure": gc.get_stats(),
+        "trace_active_at_failure": sys.gettrace() is not None,
+        "profile_active_at_failure": sys.getprofile() is not None,
+    }
+
+
+def linear_sample_context() -> dict[str, Any]:
+    """State outside a cost call; clock deltas include the observer's own work."""
+    try:
+        return {
+            "process_cpu_ns": time.process_time_ns(),
+            "monotonic_ns": time.monotonic_ns(),
+            "thread_cpu_ns": time.thread_time_ns(),
+            "allocated_blocks": sys.getallocatedblocks(),
+            "gc_enabled": gc.isenabled(),
+            "gc_count": gc.get_count(),
+            "trace_active": sys.gettrace() is not None,
+            "profile_active": sys.getprofile() is not None,
+        }
+    except Exception as error:  # noqa: BLE001 — observation must not change the cost judge
+        return {"context_error": type(error).__name__}
+
+
 def assert_linear(
     cost: Callable[[Any], float],
     small: Any,
@@ -51,10 +83,33 @@ def assert_linear(
     quadratic one takes 16) or under `floor` seconds. On a loaded host the best of three
     runs of each counts. No absolute bound: a linear cost at `big` takes several times
     as long on a slow runner as on a fast one."""
+    samples: list[dict[str, Any]] = []
+    original = cost
+
+    def observed(size: Any) -> float:
+        before = linear_sample_context()
+        value = original(size)
+        samples.append({"cost_s": value, "before": before, "after": linear_sample_context()})
+        return value
+
+    cost = observed
     a, b = cost(small), cost(big)
     if b > ratio * a:
         a, b = min(a, cost(small), cost(small)), min(b, cost(big), cost(big))
-    assert b < ratio * a or b < floor, (a, b)
+    try:
+        assert b < ratio * a or b < floor, (a, b)
+    except AssertionError as error:
+        try:
+            # JSON encoding and cumulative context follow the failed judge.
+            import json
+
+            context = {**_linear_failure_context(), "samples": samples}
+            note = "linear_cost_context=" + json.dumps(context, sort_keys=True)
+        except Exception as context_error:  # Preserve the failed judge.
+            error.add_note("linear_cost_context_error=" + type(context_error).__name__)
+            raise error from context_error
+        error.add_note(note)
+        raise
 
 
 @contextmanager

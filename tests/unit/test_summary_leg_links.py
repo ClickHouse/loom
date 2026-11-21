@@ -16,10 +16,25 @@ def test_digest_row_carries_links_and_session_into_the_hit() -> None:
         async def query_all(
             self, sql: str, params: dict[str, Any] | None = None
         ) -> list[dict[str, Any]]:
+            if "FROM loom.memory FINAL" in sql:
+                return [
+                    {
+                        "agent": "writer",
+                        "source_user": "-",
+                        "source_session": "s1",
+                        "memory_key": key,
+                        "version": 1,
+                        "source_served": True,
+                    }
+                    for key in ("caroline_trip", "caroline_hobby")
+                ]
             assert "derived_from" in sql
             return [
                 {
+                    "agent": "writer",
+                    "user_id": "-",
                     "session_id": "s1",
+                    "version": 2,
                     "summary_text": "On 2023-05-08 the user …",
                     "distance": 0.3,
                     "valid_at_iso": "2023-05-08 00:00:00",

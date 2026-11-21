@@ -23,12 +23,13 @@ bats test, a Jinja template, a platform-suffixed Go file), so don't reformat or
 | sql/dbmate/, sql/flyway/, sql/liquibase/, sql/prisma/, sql/sqitch/ | synthetic, in each migration tool's file layout and header syntax | — |
 | shell/lib/, shell/scripts/ | synthetic: sourced libraries and islands of SQL in shell | — |
 | hosts/.gitlab-ci.yml, hosts/Jenkinsfile | synthetic CI configs | — |
+| graphql/ | synthetic GraphQL schemas | — |
 | python/ | synthetic: layouts (src, legacy, namespace, vendored, notebooks, stubs, plugins), imports, members, a Django-style site, a ClickHouse-style integration test | — |
 | go/app/, go/constructs/, go/mono/ | synthetic: a module, build-constrained files and a two-module monorepo | — |
 | java/ | synthetic: a Spring / JDBC repository, a generic interface and a generic class implementing it | — |
 | js/, ts/constructs/, ts/synthetic/ | synthetic: CommonJS, IIFE, class expressions, overloads, React components, SQL in template literals | — |
 | vue/ | synthetic single-file components and a composable | — |
-| proto/, helm/ | synthetic | — |
+| proto/, thrift/, helm/ | synthetic | — |
 | lua/ | synthetic: a vector module and a menu scene that requires it | — |
 | rust/synthetic/ | synthetic: a trait and its impl, a declarative macro, an async function | — |
 | sql/views/ | synthetic: a ClickHouse table, a materialized view into its rollup, a view and a CTE | — |

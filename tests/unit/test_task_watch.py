@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
@@ -234,7 +235,9 @@ async def test_a_present_bearer_is_honoured_even_when_auth_is_off(
         gateway=False,
         has_role=lambda role: False,
     )
-    monkeypatch.setattr("server.auth.bearer.verify_token", lambda tok: principal)
+    monkeypatch.setattr(
+        "server.auth.bearer.authenticate_token", AsyncMock(side_effect=lambda tok: principal)
+    )
 
     async def fetch_inbox(org: str, inbox: str) -> dict[str, Any] | None:
         return {"org": org, "inbox": inbox, "owner_namespace": "ns"}

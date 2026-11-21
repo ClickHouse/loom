@@ -11,7 +11,6 @@ import math
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +31,7 @@ from server.memory.domain.redaction_lineage import REDACTED_VALUE
 from server.memory.store import pg_memory
 from server.memory.store.pg_publish import ClaimExpired
 from server.memory.store.rows import MemoryRow, _hydrate, identity_key
+from tests.unit.test_memory_verify import _row as _memory_head
 
 
 @pytest.mark.parametrize(
@@ -132,16 +132,48 @@ def test_a_row_that_leaves_out_its_default_fields_reads_as_the_full_row() -> Non
             now=datetime(2026, 1, 2, 3, 4, 5),
         )
     )
-    sparse = {
-        c: v
-        for c, v in full.items()
-        if c not in pg_memory.SPARSE_DEFAULTS or v != pg_memory.SPARSE_DEFAULTS[c]
-    }
+    sparse = pg_memory.sparse_row(full)
     assert len(sparse) < len(full)
+    assert sparse["value"] == full["value"]
+    assert all(
+        c not in sparse
+        for c, v in pg_memory.SPARSE_DEFAULTS.items()
+        if full[c] == v and c != "requires_review"
+    )
+    assert sparse["requires_review"] == 0
     assert pg_memory.decode_row(sparse) == pg_memory.decode_row(full)
     first, second = pg_memory.decode_row(sparse), pg_memory.decode_row(sparse)
     first["tags"].append("x")
     assert second["tags"] == []
+    # A value other than its default is stored, a falsy one included.
+    changed = {
+        "evidence_count": 0,
+        "pinned": 1,
+        "tags": ["x"],
+        "status": "superseded",
+        "char_limit": 0,
+    }
+    kept = pg_memory.sparse_row({**full, **changed})
+    assert {c: kept[c] for c in changed} == changed
+    assert pg_memory.decode_row(kept) == pg_memory.decode_row({**full, **changed})
+
+
+def test_the_fields_read_as_stored_are_never_left_out() -> None:
+    """The profile reach matches on `row->>'agent'` and `row->>'memory_type'`
+    (`memory_revisions_profile`, `_profile_built_from`), other statements read the key and
+    session, the value and the creation time as stored, and the erasure export reads the
+    type, value and confidence from the stored JSON: none has a default a row may leave
+    out."""
+    read_as_stored = {
+        "agent",
+        "memory_type",
+        "memory_key",
+        "session_id",
+        "value",
+        "created_at",
+        "confidence",
+    }
+    assert not read_as_stored & pg_memory.SPARSE_DEFAULTS.keys()
 
 
 def test_a_row_round_trips_at_clickhouse_precision() -> None:
@@ -683,9 +715,11 @@ async def test_a_cli_connection_to_another_deployments_postgres_is_refused(
     class _Pool:
         terminated = False
 
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
         def terminate(self) -> None:
             _Pool.terminated = True
@@ -1226,23 +1260,24 @@ def test_a_nul_character_is_refused_before_the_commit() -> None:
 async def test_a_write_that_starts_over_embeds_each_text_once() -> None:
     from server.memory.app.reused_vectors import ReusedVectors
 
-    calls: list[str] = []
+    calls: list[tuple[str, str]] = []
 
     class _Counting:
         model_name, dim = "m", 1
 
         async def embed(self, text: str) -> list[float]:
-            calls.append(text)
-            return [float(len(text))]
+            calls.append(("query", text))
+            return [float(len(text) + 10)]
 
         async def embed_many(self, texts: list[str]) -> list[list[float]]:
-            return [await self.embed(t) for t in texts]
+            calls.extend(("document", text) for text in texts)
+            return [[float(len(text))] for text in texts]
 
     vectors = ReusedVectors(_Counting())
     assert await vectors.embed_many(["a", "bb", "a"]) == [[1.0], [2.0], [1.0]]
-    assert await vectors.embed("bb") == [2.0]
+    assert await vectors.embed("bb") == [12.0]
     assert await vectors.embed_many(["ccc", "a"]) == [[3.0], [1.0]]
-    assert calls == ["a", "bb", "ccc"]
+    assert calls == [("document", "a"), ("document", "bb"), ("query", "bb"), ("document", "ccc")]
 
 
 class _Unavailable(Exception):
@@ -1403,7 +1438,12 @@ def test_only_an_op_whose_answer_replays_marks_its_key_committed() -> None:
     the committed replay would answer in memory.set's shape."""
     from server.core import idempotency
 
-    for op, marks in (("memory.set", True), ("memory.bulk_set", True), ("profile.set", False)):
+    for op, marks in (
+        ("memory.set", True),
+        ("memory.bulk_set", True),
+        ("memory.append_batch", True),
+        ("profile.set", False),
+    ):
         idempotency._bound.set(("o", "k", 1))
         idempotency._bound_op.set(op)
         assert (idempotency.bound_key() is not None) is marks, op
@@ -2588,10 +2628,13 @@ def test_a_write_that_read_a_version_before_its_redaction_starts_over() -> None:
     """A redaction since the read is a head that moved: the write reads again and
     rebuilds from the scrubbed head, never from the text the redaction removed."""
 
-    read = {"pinned": 0, "lock_mode": "", "status": "active", "redacted_at": None}
-    redacted = {**read, "version": 7, "redacted_at": "2026-01-01 00:00:00"}
+    from server.memory.store.rows import build_memory_version_row
+    from tests.unit.test_memory_verify import _row
+
+    read = build_memory_version_row(_row(version=7))
+    redacted = {**read, "redacted_at": datetime(2026, 1, 1)}
     for exact in (False, True):  # compare-and-set too: a redaction keeps the version
-        then = SimpleNamespace(**read, version=7, tombstoned_at=None, lock_until=None)
+        then = _hydrate(read)
         recheck = pg_memory.heads_unchanged({("k",): then}, exact=exact)
         recheck(("k",), {**read, "version": 7})
         with pytest.raises(pg_memory.HeadMoved):
@@ -3332,7 +3375,9 @@ async def test_a_copy_writer_commits_only_over_the_version_it_read(
     monkeypatch.setattr(lifecycle, "get_by_id", _get_by_id)
     monkeypatch.setattr(pg_publish, "commit", _commit)
     monkeypatch.setattr(pg_publish, "publish", _publish)
-    base = {"pinned": False, "status": "active", "lock_mode": "", "tombstoned_at": None}
+    from server.memory.store.rows import build_memory_version_row
+
+    base = build_memory_version_row(read)
     heads.append({**base, "version": 1})  # the version read
     assert (
         await lifecycle.write_versions_by_ids(
@@ -3440,25 +3485,14 @@ async def test_a_lock_over_a_head_redacted_since_its_read_answers_contended(
         raise AssertionError("committed over a changed head")
 
     monkeypatch.setattr(pg_publish, "commit", _commit)
-    monkeypatch.setattr("server.memory.store.lifecycle.check_memory_rows", lambda rows: None)
-    read.update(
-        {
-            "org": "o",
-            "namespace": "n",
-            "agent": "a",
-            "user_id": "-",
-            "session_id": "-",
-            "memory_key": "k",
-            "version": 1,
-            "pinned": False,
-            "status": "active",
-        }
-    )
+    from server.memory.store.rows import build_memory_version_row
+
+    read.update(build_memory_version_row(_memory_head(version=1)))
     row = {**read, "version": 2, "lock_mode": "read_only"}
     with pytest.raises(pg_memory.AdmissionContendedError):
         await lifecycle.insert_versions_over_heads(
             [row],
-            [SimpleNamespace(**read)],
+            [_hydrate(read)],
             ch=object(),
         )
 
@@ -3771,6 +3805,8 @@ async def test_a_clickhouse_restore_whose_document_fails_is_announced_once_and_l
 
     async def _insert(rows: Any, **_: Any) -> None:
         ran.append("insert")
+        if on_inserted := _.get("on_inserted"):
+            on_inserted()
 
     async def _mirror() -> None:
         raise RuntimeError("clickhouse refused the document")
@@ -4798,6 +4834,46 @@ async def test_a_recovery_listing_lists_what_the_authority_holds(
     assert await lifecycle.recovered_rows(gone, as_of=now) == []
 
 
+@pytest.mark.parametrize("widen", [False, True])
+@pytest.mark.parametrize("status", ["active", "rejected"])
+async def test_recovery_listing_never_swaps_in_a_rejected_authority_head(
+    monkeypatch: pytest.MonkeyPatch, widen: bool, status: str
+) -> None:
+    from server.core.datetimes import naive_utc_now
+    from server.memory.api.models_crud import MemoryListInput
+    from server.memory.app.query import _served_by_authority
+    from server.memory.app.served_superseded import served_flags
+
+    now = naive_utc_now()
+    projected = _hydrate(
+        _row("k", created_at=now, value='"preview"', confidence=1.0, content_sha256="sha")
+    )
+    head = projected.model_copy(
+        update={"version": 3, "status": status, "tombstoned_at": now, "value": "whole text"}
+    )
+
+    async def heads(keys: Any, *, include_tombstoned: bool) -> dict[Any, Any]:
+        return {identity_key(projected): head.model_dump()}
+
+    monkeypatch.setattr(pg, "enabled", lambda: True)
+    monkeypatch.setattr(pg_memory, "heads_by_keys", heads)
+    request = MemoryListInput(
+        org="o",
+        namespace="n",
+        agent="a",
+        user_id="u",
+        session_id="s",
+        include_tombstoned=True,
+        include_duplicates=widen,
+        include_superseded=widen,
+        include_proposed=widen,
+    )
+    rows = await _served_by_authority(request, [projected], served_flags(request))
+    assert [(row.memory_key, row.status, row.version, row.value) for row in rows] == (
+        [("k", "active", 3, projected.value)] if status == "active" else []
+    )
+
+
 async def test_a_send_deadline_measures_the_server_clock_it_lacks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4842,6 +4918,8 @@ async def test_an_update_whose_retirement_fails(
         raise RuntimeError("retire refused")
 
     async def _ok(*a: object, **kw: object) -> None:
+        if on_inserted := kw.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _commit(rows: Any, *, targets: int, **kw: object) -> Any:
@@ -4918,23 +4996,30 @@ async def test_an_expiry_pass_leaves_a_moved_head_for_the_next_one(
     """One head that moved since the pass read it refuses the batch: the heads are read
     again and the batch goes once more without it, which the next pass sees."""
     from server.memory.app import expiry
+    from server.settings import settings
 
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
     batches: list[list[str]] = []
 
-    async def _over_heads(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    async def _over_heads(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         batches.append([r["memory_key"] for r in rows])
         if any(r["memory_key"] == "moved" for r in rows):
             raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     async def _heads(rows: list[Any]) -> list[Any]:
-        return [SimpleNamespace(version=r.version + (r.memory_key == "moved")) for r in rows]
+        return [
+            r.model_copy(update={"version": r.version + (r.memory_key == "moved")}) for r in rows
+        ]
 
     monkeypatch.setattr("server.memory.store.insert_versions_over_heads", _over_heads)
     monkeypatch.setattr("server.memory.store.authority_heads", _heads)
     res = expiry.ExpiryResult(tombstoned=2, demoted=1)
     rows = [{"memory_key": k} for k in ("a", "moved", "b")]
     reads = [
-        MemoryRow.model_construct(
+        _memory_head(
             version=1, org="o", namespace="n", agent="a", user_id="-", session_id="-", memory_key=k
         )
         for k in ("a", "moved", "b")
@@ -4954,12 +5039,18 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
     left out; a batch refused once more (a head moved after the re-read) is left whole,
     counted for the next pass and not as a failure."""
     from server.memory.app import expiry
+    from server.settings import settings
 
-    async def _always_moved(rows: list[dict[str, Any]], read: Any, *, ch: Any) -> None:
+    monkeypatch.setattr(settings, "storage_authority", "postgres")
+
+    async def _always_moved(
+        rows: list[dict[str, Any]], read: Any, *, ch: Any, exact: bool, on_commit: Any
+    ) -> None:
+        assert exact
         raise pg_memory.AdmissionContendedError("the memory changed while it was read")
 
     def _row(key: str, *, redacted: bool = False) -> Any:
-        return MemoryRow.model_construct(
+        return _memory_head(
             org="o",
             namespace="n",
             agent="a",
@@ -4972,7 +5063,7 @@ async def test_an_expiry_batch_refused_again_is_left_whole_for_the_next_pass(
             lock_mode="",
             lock_until=None,
             status="active",
-            redacted_at="now" if redacted else None,
+            redacted_at=datetime(2026, 1, 1) if redacted else None,
         )
 
     async def _heads(rows: list[Any]) -> list[Any]:
@@ -5982,9 +6073,11 @@ async def test_verify_deployment_checks_a_pool_already_open(
             return {"epoch": 1, "deployment_id": "other"}
 
     class _Pool:
-        @contextlib.asynccontextmanager
-        async def acquire(self) -> AsyncIterator[_Conn]:
-            yield _Conn()
+        async def acquire(self, **_: object) -> _Conn:
+            return _Conn()
+
+        async def release(self, conn: _Conn, **_: object) -> None:
+            return None
 
     async def _open() -> _Pool:
         return _Pool()
@@ -6401,6 +6494,10 @@ async def test_a_high_set_on_clickhouse_is_fenced_after_a_failed_lift(
     fenced: list[Any] = []
 
     async def _nothing(*_a: Any, **_k: Any) -> Any:
+        if on_send := _k.get("on_send"):
+            on_send()
+        if on_inserted := _k.get("on_inserted"):
+            on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> int:
@@ -6841,7 +6938,9 @@ async def test_a_postgres_bulk_batch_of_high_rows_is_fenced_once_its_commit_may_
     monkeypatch.setattr(bulk_set, "_commit_batch", _commit)
     monkeypatch.setattr(bulk_set, "_land_batch", _land)
     monkeypatch.setattr(high_fence, "fence_committed", _fence)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[])
+    state = SimpleNamespace(
+        memory_rows=[{"org": "o", "namespace": "n"}], embedding_rows=[], strict_append=False
+    )
     state.results = []
     with contextlib.suppress(pg.PostgresUnavailableError, asyncio.CancelledError):
         await bulk_set._bulk_insert(None, state)
@@ -6855,7 +6954,9 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
 
     fenced: list[Any] = []
 
-    async def _inserted(*_a: Any) -> None:
+    async def _inserted(*_a: Any, on_send: Any, on_inserted: Any) -> None:
+        on_send()
+        on_inserted()
         return None
 
     async def _lift_fails(*_a: Any, **_k: Any) -> dict[Any, int]:
@@ -6874,7 +6975,7 @@ async def test_a_clickhouse_bulk_batch_is_fenced_after_a_failed_lift(
     monkeypatch.setattr(bulk_set, "_high_winners", lambda state: winners)
     monkeypatch.setattr(bulk_set, "fence_high", _fence)
     monkeypatch.setattr(bulk_set, "_bulk_announce", _announce)
-    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}])
+    state = SimpleNamespace(memory_rows=[{"org": "o", "namespace": "n"}], strict_append=False)
     state.embedding_rows = []
     with pytest.raises(RuntimeError, match="lift failed"):
         await bulk_set._land_batch(None, state, None, {})
@@ -6996,6 +7097,7 @@ async def test_a_bulk_batch_writing_a_key_twice_owes_a_document_only_for_its_emb
     key = {"org": "o", "namespace": "n", "agent": "a", "user_id": "-", "session_id": "-"}
     first, last = key | {"memory_key": "k", "version": 1}, key | {"memory_key": "k", "version": 2}
     state = SimpleNamespace(
+        strict_append=False,
         memory_rows=[first, last],
         embedding_rows=[
             r | {"embedding": [0.1]} for r in ([first, last] if both_embedded else [last])

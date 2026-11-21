@@ -1,9 +1,9 @@
 """Every Postgres statement of the memory authority (the Postgres storage profile).
 
-`loom.memory_current` holds the head of each key as the complete loom.memory row,
-which is what `loom.memory FINAL` would serve: a row replaces the head only when
-its version is not older, as ReplacingMergeTree(version) decides. Each commit
-also appends the rows to `loom.memory_revisions`, numbered per namespace by the
+`loom.memory_current` holds the head of each key, the row `loom.memory FINAL` would
+serve, stored without the fields at their default (`sparse_row`): a row replaces the
+head only when its version is not older, as ReplacingMergeTree(version) decides. Each
+commit also appends the rows to `loom.memory_revisions`, numbered per namespace by the
 namespace's generation, and records what they owe ClickHouse in
 `loom.memory_deliveries`. The transaction is short and does no other I/O.
 
@@ -17,7 +17,8 @@ from __future__ import annotations
 import logging
 import math
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
@@ -35,6 +36,7 @@ from server.core.numbers import FLOAT32_MAX, float32
 from server.core.pg_lease import lease_deadline
 from server.memory.domain import lock as _lock
 from server.memory.domain.memory_types import is_embedded
+from server.memory.domain.proposal_review import enforce_review
 from server.memory.domain.redaction_lineage import (
     REDACTED_VALUE,
     Version,
@@ -47,6 +49,7 @@ from server.memory.store.rows import (
     MemoryRow,
     _hydrate,
     identity_key,
+    memory_head_state,
     parse_memory_value,
 )
 from server.observability import pg_pipeline
@@ -117,11 +120,24 @@ def encode_row(row: Mapping[str, Any]) -> dict[str, Any]:
 SPARSE_DEFAULTS: Mapping[str, Any] = FIRST_VERSION_DEFAULTS
 
 
+def sparse_row(encoded: Mapping[str, Any]) -> dict[str, Any]:
+    """An encoded row as it is stored: without the fields at their default
+    (`SPARSE_DEFAULTS`). Review provenance stays explicit, including false, so a
+    missing legacy flag cannot turn a rejected proposal into an established fact."""
+    return {
+        c: v
+        for c, v in encoded.items()
+        if c == "requires_review" or c not in SPARSE_DEFAULTS or v != SPARSE_DEFAULTS[c]
+    }
+
+
 def decode_row(stored: Mapping[str, Any]) -> dict[str, Any]:
     """The insertable loom.memory row back from its JSON, each field it leaves out at its
     default (`SPARSE_DEFAULTS`), as ClickHouse fills it."""
     out = {c: list(v) if isinstance(v, list) else v for c, v in SPARSE_DEFAULTS.items()}
     out.update(stored)
+    if "requires_review" not in stored:
+        out["requires_review"] = int(out.get("status") in {"proposed", "rejected"})
     for col in DATETIME_COLS:
         val = out.get(col)
         if isinstance(val, str):
@@ -190,7 +206,7 @@ def heads_unchanged(
     (`read[key]`, or None). By default the head may carry a value committed since (the
     newer version wins, as in ClickHouse) but not another protection (a delete, a pin, a
     lock, a status or a redaction since). `exact` (compare-and-set, a copy) also requires
-    the same version, in the same redaction state, as the row read; a write that read no
+    the same value and metadata as the row read, even when versions tie; a write that read no
     row is checked by protection alone. Raises HeadMoved."""
 
     def recheck(key: IdentityKey, head: dict[str, Any] | None) -> None:
@@ -206,15 +222,9 @@ def heads_unchanged(
 
 def unchanged(read: Any, head: Any) -> bool:
     """Whether `head` is still the very row `read` (`heads_unchanged(exact=True)`)."""
-    return protection(head) == protection(read) and _version_seen(head) == _version_seen(read)
-
-
-def _version_seen(row: Any) -> tuple[int, bool] | None:
-    """A row's version and whether it is redacted: a redaction scrubs in place, a
-    deleted head included."""
-    if row is None:
-        return None
-    return int(_field(row, "version")), _field(row, "redacted_at") is not None
+    read_row = _hydrate(read) if isinstance(read, dict) else read
+    head_row = _hydrate(head) if isinstance(head, dict) else head
+    return memory_head_state(read_row) == memory_head_state(head_row)
 
 
 class AdmissionContendedError(LoomServerError):
@@ -489,11 +499,26 @@ LEFT JOIN loom.memory_deliveries d
   ON d.org = c.org AND d.namespace = c.namespace AND d.seq = c.seq
 """
 
+# Lock each exact head only after its six-column key has been sorted.
+# FOR UPDATE keeps the lateral probe separate from the batch's join planning.
 _LOCK_HEADS = f"""
 SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
-{_EXACT_KEYS}
+FROM (
+    SELECT *
+    FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
+      AS k(org, namespace, agent, user_id, session_id, memory_key)
+    ORDER BY k.org COLLATE "C", k.namespace COLLATE "C", k.agent COLLATE "C",
+             k.user_id COLLATE "C", k.session_id COLLATE "C", k.memory_key COLLATE "C"
+) k
+CROSS JOIN LATERAL (
+    SELECT c.org, c.namespace, c.agent, c.user_id, c.session_id, c.memory_key, c.row
+    FROM loom.memory_current c
+    WHERE c.org = k.org AND c.namespace = k.namespace AND c.agent = k.agent
+      AND c.user_id = k.user_id AND c.session_id = k.session_id
+      AND c.memory_key = k.memory_key
+    FOR UPDATE OF c
+) c
 {_KEY_ORDER}
-FOR UPDATE OF c
 """
 
 _UPSERT_HEADS = """
@@ -645,6 +670,27 @@ def deleted_decision(row: Mapping[str, Any]) -> bool:
     return row.get("memory_type") == "decision" and row.get("tombstoned_at") is not None
 
 
+def _batch_indexes(
+    stored: list[dict[str, Any]],
+) -> tuple[
+    dict[tuple[str, str], int], list[tuple[str, str]], dict[IdentityKey, int], list[IdentityKey]
+]:
+    per_scope: dict[tuple[str, str], int] = {}
+    for r in stored:
+        s = (r["org"], r["namespace"])
+        per_scope[s] = per_scope.get(s, 0) + 1
+    scopes = sorted(per_scope)
+    # The newest version of each key is its head; a batch may carry a key twice.
+    # Each key's head, as its index in `stored`.
+    heads: dict[IdentityKey, int] = {}
+    for i, r in enumerate(stored):
+        k = identity_key(r)
+        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
+            heads[k] = i
+    keys = sorted(heads)
+    return per_scope, scopes, heads, keys
+
+
 async def commit_versions(
     rows: Sequence[Mapping[str, Any]],
     audits: Sequence[Mapping[str, Any]],
@@ -670,24 +716,13 @@ async def commit_versions(
     if any(r["namespace"] in POLICY_SCOPE_NAMES for r in stored):
         # A namespace's generation shares its key with the policy generations.
         raise ValidationError("'*' and '' are not namespace names")
+    sparse = [sparse_row(r) for r in stored]
     per_row = [targets] * len(stored) if isinstance(targets, int) else list(targets)
     per_row = [
         t | (DECISION_RECORD if deleted_decision(r) else 0)
         for t, r in zip(per_row, stored, strict=True)
     ]
-    per_scope: dict[tuple[str, str], int] = {}
-    for r in stored:
-        s = (r["org"], r["namespace"])
-        per_scope[s] = per_scope.get(s, 0) + 1
-    scopes = sorted(per_scope)
-    # The newest version of each key is its head; a batch may carry a key twice.
-    # Each key's head, as its index in `stored`.
-    heads: dict[IdentityKey, int] = {}
-    for i, r in enumerate(stored):
-        k = identity_key(r)
-        if k not in heads or int(r["version"]) >= int(stored[heads[k]]["version"]):
-            heads[k] = i
-    keys = sorted(heads)
+    per_scope, scopes, heads, keys = _batch_indexes(stored)
     async with pg.transaction() as conn:
         await _bound_lock_waits(conn)
         if admission is not None:
@@ -713,6 +748,7 @@ async def commit_versions(
         recheck = admission.recheck if admission is not None else None
         locked = await conn.fetch(_LOCK_HEADS, *_key_arrays(keys))
         current = {identity_key(h): decode_row(h["row"]) for h in locked}
+        enforce_review(stored, current)
         for k in keys:
             head = current.get(k)
             if recheck is not None:
@@ -733,7 +769,7 @@ async def commit_versions(
             [int(r["version"]) for r in head_rows],
             [seqs[heads[k]][2] for k in keys],
             [str(r.get("content_sha256") or "") for r in head_rows],
-            head_rows,
+            [sparse[heads[k]] for k in keys],
         )
         await conn.execute(
             _INSERT_REVISIONS,
@@ -747,7 +783,7 @@ async def commit_versions(
             [str(r.get("actor") or "") for r in stored],
             [str(r.get("source_class") or "") for r in stored],
             [request_id] * len(stored),
-            stored,
+            sparse,
             [encode_audit(a) for a in audits],
         )
         await conn.execute(
@@ -1595,6 +1631,22 @@ async def heads_by_keys(
         sql += " WHERE c.row->>'tombstoned_at' IS NULL"
     rows = await _read(sql, *_key_arrays(keys), durable=durable)
     return {identity_key(r["row"]): decode_row(r["row"]) for r in rows}
+
+
+@asynccontextmanager
+async def locked_source(source: MemoryRow) -> AsyncIterator[None]:
+    """Hold an unchanged durable source while its shared projection is published."""
+    key = identity_key(source)
+    durable = await heads_by_keys([key], include_tombstoned=True, durable=True)
+    if not unchanged(source, durable.get(key)):
+        raise AdmissionContendedError("The promotion's source changed")
+    async with pg.rolled_back() as conn:
+        await _bound_lock_waits(conn)
+        rows = await conn.fetch(_LOCK_HEADS, *_key_arrays([key]))
+        current = decode_row(rows[0]["row"]) if rows else None
+        if not unchanged(source, current):
+            raise AdmissionContendedError("The promotion's source changed")
+        yield
 
 
 async def heads_owing(

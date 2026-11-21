@@ -64,7 +64,7 @@ files ([switches](../features/code-index/overview.md#language-support)).
 ## Infrastructure as code
 
 Terraform and HCL, Kubernetes manifests, Helm charts and Go templates, Jsonnet, CMake,
-Protocol Buffers and shell scripts are indexed with their references, includes and calls,
+Protocol Buffers, Thrift IDL and shell scripts are indexed with their references, includes and calls,
 so an agent follows a Helm `include` to its `define`, or a Terraform reference to what it
 names. Dockerfile, Makefile, Jenkinsfile and CI YAML jobs become symbols with
 `LOOM_CODE_HOST_ISLANDS` on, after a backfill of those files when the namespace is already

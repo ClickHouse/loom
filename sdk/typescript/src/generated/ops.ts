@@ -230,6 +230,10 @@ export interface CodeAskInput {
 
 export interface CodeAskOutput {
   answer?: string;
+  partial?: boolean;
+  partial_reason?: string;
+  note?: string;
+  coverage?: "" | "full" | "partial" | "none";
   citations?: Array<Record<string, unknown>>;
   source: "cached" | "synthesized" | "abstained";
   cache_similarity?: number;
@@ -1281,6 +1285,8 @@ export interface CodeRepoAddInput {
   classification?: "standard" | "restricted";
   /** Token for a private HTTPS remote; stored encrypted, never returned. */
   access_token?: string;
+  /** The user name this repository's git presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   path_prefixes?: string[];
   exclude?: string[];
   exclude_generated?: boolean;
@@ -1317,6 +1323,8 @@ export interface CodeRepoRemoteBranchesInput {
   repo: string;
   /** Token for a private HTTPS remote; used once. */
   access_token?: string;
+  /** The user name this read presents to the deployment's git proxy; only a platform admin may set it. Default '': the deployment's default identity. */
+  git_proxy_identity?: string;
   /** Case-insensitive substring of the branch name to match. */
   query?: string;
   /** How many matching branches to return (default 60). */
@@ -4769,6 +4777,57 @@ export interface MemoryAggregateOutput {
   sql_executed?: string;
 }
 
+export interface AppendBatchEntry {
+  memory_key: string;
+  value: Record<string, unknown> | unknown[] | string | number | boolean;
+  source_trace?: string;
+  source_class?: string | null;
+}
+
+export interface MemoryAppendBatchInput {
+  org: string;
+  namespace: string;
+  agent: string;
+  user_id?: string;
+  session_id?: string;
+  run_id?: string;
+  entries: AppendBatchEntry[];
+}
+
+export interface BulkSetResult {
+  memory_key: string;
+  version: number;
+  memory_id?: string;
+  conflict_verdict?: string;
+  peers?: MemorySetPeer[];
+  next?: string;
+  pinned_blocker_id?: string;
+}
+
+export interface MemorySetPeer {
+  memory_id?: string;
+  memory_key?: string;
+  excerpt?: string;
+  valid_at?: string | null;
+  similarity?: number;
+}
+
+export interface MemoryBulkSetOutput {
+  written: BulkSetResult[];
+  skipped_pinned?: string[];
+  skipped_locked?: string[];
+  skipped_blacklisted?: string[];
+  merged?: string[];
+  value_updates_linked?: number;
+  rejected_pinned?: string[];
+  duplicates?: string[];
+  conflicted?: string[];
+  unchecked?: number;
+  retyped?: string[];
+  identity_duplicates?: Record<string, string>;
+  stage_ms?: Record<string, number>;
+}
+
 export interface ApplyTarget {
   keys?: string[] | null;
   filter?: ApplyFilter | null;
@@ -5276,40 +5335,6 @@ export interface MemoryBulkSetInput {
   entries: BulkSetEntry[];
   contextualize?: boolean;
   detect_updates?: boolean | null;
-}
-
-export interface BulkSetResult {
-  memory_key: string;
-  version: number;
-  memory_id?: string;
-  conflict_verdict?: string;
-  peers?: MemorySetPeer[];
-  next?: string;
-  pinned_blocker_id?: string;
-}
-
-export interface MemorySetPeer {
-  memory_id?: string;
-  memory_key?: string;
-  excerpt?: string;
-  valid_at?: string | null;
-  similarity?: number;
-}
-
-export interface MemoryBulkSetOutput {
-  written: BulkSetResult[];
-  skipped_pinned?: string[];
-  skipped_locked?: string[];
-  skipped_blacklisted?: string[];
-  merged?: string[];
-  value_updates_linked?: number;
-  rejected_pinned?: string[];
-  duplicates?: string[];
-  conflicted?: string[];
-  unchecked?: number;
-  retyped?: string[];
-  identity_duplicates?: Record<string, string>;
-  stage_ms?: Record<string, number>;
 }
 
 export interface MemoryClearInput {
@@ -6598,6 +6623,7 @@ export interface MemoryProposalDecideInput {
   namespace: string;
   memory_keys: string[];
   decision: "accept" | "reject";
+  approved_sha256?: Record<string, string>;
   reason?: string;
 }
 
@@ -6625,6 +6651,7 @@ export interface MemoryProposalsInput {
 export interface MemoryProposal {
   memory_key: string;
   memory_id: string;
+  content_sha256?: string;
   agent?: string;
   memory_type?: string;
   value_preview?: string;
@@ -8217,6 +8244,7 @@ export interface SnapshotMemoryRow {
   updated_at?: string | null;
   value_json?: string;
   status?: "active" | "conflicted" | "tombstoned" | "duplicate" | "superseded" | "rejected" | "proposed";
+  requires_review?: boolean | null;
   conflict_with?: string[];
   duplicate_of?: string;
   evidence_count?: number;
@@ -10637,6 +10665,7 @@ export type OpName =
   | "learnings.review"
   | "memory.agents_list"
   | "memory.aggregate"
+  | "memory.append_batch"
   | "memory.apply"
   | "memory.ask"
   | "memory.assign_category"
@@ -11015,6 +11044,7 @@ export interface OpMap {
   "learnings.review": { input: LearningsReviewInput; output: LearningsReviewOutput };
   "memory.agents_list": { input: MemoryAgentsListInput; output: MemoryAgentsListOutput };
   "memory.aggregate": { input: MemoryAggregateInput; output: MemoryAggregateOutput };
+  "memory.append_batch": { input: MemoryAppendBatchInput; output: MemoryBulkSetOutput };
   "memory.apply": { input: MemoryApplyInput; output: MemoryApplyOutput };
   "memory.ask": { input: MemoryAskInput; output: MemoryAskOutput };
   "memory.assign_category": { input: MemoryAssignCategoryInput; output: MemoryAssignCategoryOutput };
@@ -11393,6 +11423,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "learnings.review", group: "learnings", method: "review", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 150, audit: true, readOnly: false },
   { name: "memory.agents_list", group: "memory", method: "agentsList", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 80, audit: false, readOnly: true },
   { name: "memory.aggregate", group: "memory", method: "aggregate", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 250, audit: false, readOnly: true },
+  { name: "memory.append_batch", group: "memory", method: "appendBatch", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 300, audit: false, readOnly: false },
   { name: "memory.apply", group: "memory", method: "apply", idempotent: false, role: "writer", maturity: "experimental", budgetP99Ms: 3000, audit: true, readOnly: false },
   { name: "memory.ask", group: "memory", method: "ask", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 8000, audit: false, readOnly: true },
   { name: "memory.assign_category", group: "memory", method: "assignCategory", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 60, audit: true, readOnly: false },
@@ -11441,7 +11472,7 @@ export const OPS: readonly OpSpec[] = [
   { name: "memory.owner_report", group: "memory", method: "ownerReport", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 800, audit: false, readOnly: true },
   { name: "memory.pin", group: "memory", method: "pin", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 200, audit: false, readOnly: false },
   { name: "memory.promote", group: "memory", method: "promote", idempotent: false, role: "admin", maturity: "experimental", budgetP99Ms: 100, audit: true, readOnly: false },
-  { name: "memory.proposal_decide", group: "memory", method: "proposalDecide", idempotent: true, role: "writer", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
+  { name: "memory.proposal_decide", group: "memory", method: "proposalDecide", idempotent: true, role: "admin", maturity: "experimental", budgetP99Ms: 800, audit: true, readOnly: false },
   { name: "memory.proposals", group: "memory", method: "proposals", idempotent: true, role: "viewer", maturity: "experimental", budgetP99Ms: 400, audit: false, readOnly: true },
   { name: "memory.provenance", group: "memory", method: "provenance", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 100, audit: false, readOnly: true },
   { name: "memory.recall", group: "memory", method: "recall", idempotent: true, role: "viewer", maturity: "stable", budgetP99Ms: 400, audit: false, readOnly: true },
@@ -11601,4 +11632,4 @@ export const OP_BY_NAME: Readonly<Record<OpName, OpSpec>> = Object.fromEntries(
   OPS.map((o) => [o.name, o]),
 ) as Readonly<Record<OpName, OpSpec>>;
 
-export const GENERATED_OP_COUNT = 375;
+export const GENERATED_OP_COUNT = 376;

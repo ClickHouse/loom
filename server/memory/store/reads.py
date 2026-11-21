@@ -823,7 +823,8 @@ _BULK_FETCH_SQL = """
             memory_key, memory_type, value, confidence, version, pinned,
             created_at, updated_at, expires_at, on_expire, expire_reason,
             valid_at, valid_to, temporal_anchor, temporal_confidence,
-            status, run_id, source_trace, source_resource_id, char_limit, tags, entities,
+            status, requires_review, run_id, source_trace, source_resource_id, char_limit,
+            tags, entities,
             content_sha256, duplicate_of, superseded_by, recall_count, last_recalled_at,
             verified_by, verified_at, verified_sha256, sensitivity, actor, source_class,
             lock_mode, lock_reason, lock_until, locked_by, locked_at
@@ -1101,6 +1102,7 @@ async def list_by_namespace(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
+        "status != 'rejected'",
     ]
     if not include_tombstoned:
         where.append("tombstoned_at IS NULL")
@@ -1174,7 +1176,7 @@ async def list_by_namespace(
             memory_key, memory_type, value, 0 AS value_truncated, confidence, version, pinned,
             char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at, redacted_at,
-            status, run_id, source_trace, tags, entities,
+            status, requires_review, run_id, source_trace, tags, entities,
             evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
@@ -1209,7 +1211,7 @@ async def _locate_then_preview(
             memory_key, memory_type, value_len > 2048 AS value_truncated,
             confidence, version, pinned, char_limit,
             created_at, updated_at, expires_at, valid_at, tombstoned_at, redacted_at,
-            status, run_id, source_trace, tags, entities,
+            status, requires_review, run_id, source_trace, tags, entities,
             evidence_count, recall_count, last_recalled_at, sensitivity,
             content_sha256, verified_by, verified_at, verified_sha256, actor, source_class
         FROM loom.memory FINAL
@@ -1377,6 +1379,7 @@ async def count_by_namespace(
     where = [
         "org = {org:String}",
         "namespace = {ns:String}",
+        "status != 'rejected'",
     ]
     if not include_tombstoned:
         where.append("tombstoned_at IS NULL")

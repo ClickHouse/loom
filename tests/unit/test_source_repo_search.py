@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 
 from server.core.diagnostics import codes_only
 from server.knowledge.api.models_knowledge import (
@@ -16,6 +18,7 @@ from server.knowledge.api.models_knowledge import (
 from server.knowledge.app import knowledge_search as search
 from server.knowledge.app import repo_docs, source_access
 from server.knowledge.app.source_corpus import LostCorpus
+from tests.unit.clock_fake import ManualClock
 
 
 def hit(uri, score, namespace):
@@ -276,9 +279,60 @@ async def test_actual_checked_children_publish_only_their_cached_ordinary_rerend
         renderer.render.assert_awaited_once_with([], 7)
 
 
-async def test_additive_final_permission_renewal_is_bounded_without_failing_the_base(monkeypatch):
+@pytest_asyncio.fixture(loop_scope="function")
+async def renewal_clock(monkeypatch):
+    before = set(asyncio.all_tasks())
+    loop = asyncio.get_running_loop()
+    idle_clock = ManualClock(t=loop.time())
+    selector = loop._selector
+    real_select = selector.select
+
+    def select(timeout=None):
+        if timeout is not None:
+            idle_clock.advance(max(0.0, timeout))
+            timeout = 0
+        return real_select(timeout)
+
+    # The watchdog measures idle time; CPU scheduling cannot spend its budget.
+    monkeypatch.setattr(loop, "time", idle_clock.monotonic)
+    monkeypatch.setattr(selector, "select", select)
+    clock = ManualClock()
+    active = []
+
+    @asynccontextmanager
+    async def timeout_at(deadline):
+        async with asyncio.timeout(None) as scope:
+            active.append((deadline, scope))
+            try:
+                yield scope
+            finally:
+                active.pop()
+
+    # Repository expiry remains explicit and separate from the loop watchdog.
+    monkeypatch.setattr(
+        repo_docs,
+        "asyncio",
+        SimpleNamespace(
+            get_running_loop=lambda: SimpleNamespace(time=clock.monotonic), timeout_at=timeout_at
+        ),
+    )
+    yield clock, active
+    leaked = asyncio.all_tasks() - before - {asyncio.current_task()}
+    for task in leaked:
+        task.cancel()
+    await asyncio.gather(*leaked, return_exceptions=True)
+    assert not leaked, "repository renewal leaves no task on its private loop"
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_additive_final_permission_renewal_is_bounded_without_failing_the_base(
+    monkeypatch, renewal_clock
+):
     events, children = install(monkeypatch)
+    clock, active = renewal_clock
     original = search.run_checked_search
+    entered = []
+    cancelled = []
     cleaned = []
 
     async def run(request, plan):
@@ -287,7 +341,15 @@ async def test_additive_final_permission_renewal_is_bounded_without_failing_the_
 
             async def wait_forever():
                 try:
+                    entered.append("repo")
+                    deadline, scope = active[-1]
+                    assert deadline - clock.monotonic() == 0.005
+                    clock.advance(0.005)
+                    scope.reschedule(asyncio.get_running_loop().time())
                     await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.append("repo")
+                    raise
                 finally:
                     cleaned.append("extra proof drained")
 
@@ -300,7 +362,40 @@ async def test_additive_final_permission_renewal_is_bounded_without_failing_the_
         repo_docs.knowledge_with_repo_docs(INPUT, repo_namespace="repo"), timeout=0.1
     )
     assert [h.source_uri for h in out.results] == ["private:home"]
+    assert entered == ["repo"]
+    assert cancelled == ["repo"]
     assert cleaned == ["extra proof drained"]
+    assert not children["home"].lost and "check:home" in events
+
+
+@pytest.mark.asyncio(loop_scope="function")
+async def test_expiry_before_renewal_does_not_start_the_extra_proof(monkeypatch, renewal_clock):
+    events, children = install(monkeypatch)
+    clock, _ = renewal_clock
+    original = repo_docs.run_repo_search
+    entered = []
+    cleaned = []
+
+    async def wait_forever():
+        entered.append("repo")
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.append("extra proof drained")
+
+    async def expire_before_renewal(request, plan):
+        result = await original(request, plan)
+        children["repo"].proofs.check = wait_forever
+        clock.advance(request.extra_deadline - clock.monotonic())
+        return result
+
+    monkeypatch.setattr(repo_docs, "run_repo_search", expire_before_renewal)
+    monkeypatch.setattr(repo_docs.settings, "knowledge_repo_docs_timeout_s", 0.005)
+    out = await asyncio.wait_for(
+        repo_docs.knowledge_with_repo_docs(INPUT, repo_namespace="repo"), timeout=0.1
+    )
+    assert [h.source_uri for h in out.results] == ["private:home"]
+    assert entered == [] and cleaned == []
     assert not children["home"].lost and "check:home" in events
 
 

@@ -25,7 +25,6 @@ def _configure(monkeypatch: pytest.MonkeyPatch, entries: list[dict]) -> None:
     monkeypatch.setattr(settings, "code_git_dir", "var/code_repos/clickhouse.git")
     monkeypatch.setattr(settings, "code_git_remote", "https://github.com/ClickHouse/ClickHouse.git")
     monkeypatch.setattr(settings, "code_repos_json", json.dumps(entries))
-    monkeypatch.setattr(repos, "_publish_config_errors", lambda errors: captured.update(errors))
 
 
 captured: dict[str, str] = {}
@@ -46,7 +45,7 @@ def test_release_branch_of_the_scalar_repo_still_inherits_its_clone(
             {"namespace": "code-clickhouse-26-1", "git_branch": "26.1"},
         ],
     )
-    by_ns = {c.namespace: c for c in repos._configured_from_env()}
+    by_ns = {c.namespace: c for c in repos._configured_from_env(settings, captured)}
     rel = by_ns["code-clickhouse-26-1"]
     assert rel.git_dir == "var/code_repos/clickhouse.git"
     assert rel.git_remote == "https://github.com/ClickHouse/ClickHouse.git"
@@ -65,7 +64,7 @@ def test_a_different_repo_derives_its_remote_from_repo(monkeypatch: pytest.Monke
             }
         ],
     )
-    (cfg,) = repos._configured_from_env()
+    (cfg,) = repos._configured_from_env(settings, captured)
     assert cfg.git_remote == "https://github.com/langfuse/langfuse.git"
     assert cfg.git_dir == "var/code_repos/langfuse.git"
     assert not captured
@@ -83,7 +82,7 @@ def test_an_explicit_remote_is_kept(monkeypatch: pytest.MonkeyPatch) -> None:
             }
         ],
     )
-    (cfg,) = repos._configured_from_env()
+    (cfg,) = repos._configured_from_env(settings, captured)
     assert cfg.git_remote == "git@github.com:acme/x.git"
 
 
@@ -97,7 +96,7 @@ def test_a_different_repo_without_git_dir_gets_a_clone_of_its_own(
             {"namespace": "code-langfuse", "repo": "langfuse/langfuse"},
         ],
     )
-    by_ns = {c.namespace: c for c in repos._configured_from_env()}
+    by_ns = {c.namespace: c for c in repos._configured_from_env(settings, captured)}
     lf = by_ns["code-langfuse"]
     assert lf.git_dir == "var/code_repos/langfuse.git"
     assert lf.git_dir != by_ns["code-clickhouse"].git_dir

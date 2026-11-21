@@ -19,15 +19,15 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Use cases
 
 - [Use cases](docs/use-cases/index.md): Each page answers one question people and agents ask when they look for a tool: what Loom does for that need and where to start.
-- [Long-term and shared memory for AI agents](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they share: a fact one agent saves in a session can be found by the next session, by another agent, or by a person at the dashboard.
-- [Memory, recall, audit and erasure for autonomous agents](docs/use-cases/autonomous-agents.md): Loom gives autonomous agents memory they recall later, an audit record of who wrote what, and erasure of a scope everywhere Loom keeps it.
+- [Memory for coding agents across sessions and tools](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they share: a fact one agent saves in a session can be found by the next session, by another agent, or by a person at the dashboard.
+- [Memory, recall, audit and erasure for autonomous agents](docs/use-cases/autonomous-agents.md): Loom is a self-hosted backend for autonomous agents: memory they recall across runs, reusable procedures the agent executes, run records, an audit record of who wrote what, and scope-wide erasure.
 - [Code intelligence for C++, Python, TypeScript, Go, Rust, Java and infrastructure code](docs/use-cases/code-intelligence-by-language.md): Loom's code index answers a coding agent's structure questions in the languages a repository holds: where a symbol is defined, who calls it, and what a change touches.
 - [A code index for coding agents](docs/use-cases/code-intelligence.md): Loom gives coding agents a shared index of your git repositories, served over MCP, so an agent asks a structure question and gets the lines that answer it instead of reading whole files.
 - [Lower model cost for coding agents](docs/use-cases/coding-agent-cost.md): With the Loom plugin and code index, Claude Code answered questions about the ClickHouse codebase at 6% to 21% lower model cost than without it on all three measured question sets.
 - [Document search and RAG for agents](docs/use-cases/document-search.md): Loom indexes your documents (Markdown and text, and PDF, `.docx` and `.pptx` files that its extractor service converts) and lets agents search them with citations over MCP, HTTP or the SDKs.
 - [Memory linked to code for coding agents](docs/use-cases/memory-linked-to-code.md): Loom links coding agents' memories to the functions, classes and files they name, follows them through refactors, and flags a memory when its code changes.
-- [Shared context for multi-agent workflows](docs/use-cases/multi-agent.md): Loom gives the agents in a multi-agent workflow one place to share context: memory every agent in a namespace reads, task inboxes for handing work from one agent to another, and a record of decisions.
-- [Agent runs, traces and PR history](docs/use-cases/runs-and-pr-history.md): Loom records the work coding agents do, as runs and searchable session conversations, and connects it to your code history.
+- [Shared memory for a software factory and multi-agent workflows](docs/use-cases/multi-agent.md): Loom is a self-hosted MCP server for multi-agent memory, with namespace-scoped tokens and separate read and write roles.
+- [Agent runs, traces and PR history](docs/use-cases/runs-and-pr-history.md): Loom records agent runs and conversations, checks bug drafts for duplicates and ranks candidate regression PRs without building the code.
 - [Self-hosted agent memory on ClickHouse](docs/use-cases/self-hosted-clickhouse.md): Loom runs on your own infrastructure, with Docker or on Kubernetes with its Helm chart, and stores agent memory, documents, conversations and code indexes as tables in ClickHouse.
 
 ## FAQ and glossary
@@ -53,7 +53,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Unified search and context packs](docs/features/unified-search.md): `loom_search` searches memory, profile, knowledge, past conversations and readable issues and PRs across the caller's namespaces in one round trip.
 - [Code index for coding agents over MCP](docs/features/code-index/overview.md): With code workers enabled for a repository, Loom indexes it into ClickHouse and answers structure questions through the `code.*` operations: where a symbol is defined, who calls it, what a change reaches, which merged PR touched a line.
 - [Code index freshness](docs/features/code-index/freshness.md): The index trails the repository: it indexes merged commits on a configured branch, pass by pass, and each tier advances its own watermark.
-- [History, PRs and releases](docs/features/code-index/history-and-prs.md): These ops need merged-PR history; the `code_pr_history` worker is off by default (`LOOM_CODE_PR_HISTORY_ENABLED`).
+- [History, PRs and releases](docs/features/code-index/history-and-prs.md): ClickHouse Loom's PR-history operations need merged-PR history.
 - [Code operations](docs/features/code-index/operations.md): This page maps questions to `code.*` ops.
 - [Adding repositories](docs/features/code-index/repositories.md): A fresh install indexes no repository.
 - [Integrations](docs/features/integrations/index.md): Integrations put Loom's tools in front of a model, capture its conversations, or receive its telemetry.
@@ -97,6 +97,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Optimize a namespace from its audit](docs/guides/optimize-namespace.md): A writer that uses `memory.set` as an object store (JSON blobs under hash keys, leases as memories, documents as claims) leaves every table consistent and recall useless.
 - [Tune Loom's performance](docs/guides/performance-tuning.md): Every lever on this page is a setting or a request field.
 - [Query Loom from Postgres](docs/guides/query-from-postgres.md): This guide reads a tenant's memories, conversations and usage from the org's own Postgres, where they can be joined with the application's tables.
+- [Answer questions about a repository](docs/guides/repository-questions.md): Use `code.search` to retrieve source and documentation, and `code.ask` to produce a cited answer from that evidence.
 - [Teaching with Loom](docs/guides/teaching.md): Loom can serve as the lab environment for a course on AI agents, information retrieval, databases or software engineering.
 - [Tokens and grants](docs/guides/tokens-and-grants.md): Every call carries one JWT.
 - [Trace and resume long agent runs](docs/guides/trace-and-resume.md): A long run (process 300 files, crawl a repository, work through a plan) can stop part way: a crash, a full context window, a deploy, a pause.
@@ -106,6 +107,9 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 
 - [Exporting usage to a data warehouse](docs/operations/analytics-export.md): `loom export-analytics` writes one UTC day of usage and a snapshot of the namespaces to an S3 bucket as Parquet files, one file per entity per day, for a data warehouse to load.
 - [Backup and recovery](docs/operations/backup-and-recovery.md): A Loom backup is a ClickHouse backup, plus the document bucket while any catalog row names an object in it, and under the Postgres authority a backup of Postgres too.
+- [Attaching the first cell](docs/operations/cell-attach.md): `loom cell attach` turns a prepared first cell (`loom cell prepare`, mode `recording`, directory row `attaching`) into a `serving` one: it places every org the cell holds in the router's directory, raises the cell's mode to `enforced` and…
+- [Cell control upgrades and recovery](docs/operations/cell-control.md): Cell control mutations require generation-aware clients and router handlers, and direct access to the cell's Postgres.
+- [Update a cell's configuration or addresses](docs/operations/cell-update.md): `loom cell update` reserves a configuration before the cell accepts it.
 - [ClickHouse Cloud and Managed Postgres](docs/operations/clickhouse-cloud.md): This guide runs Loom on Kubernetes over two managed services: ClickHouse Cloud for projections, vectors, history and analytics, and ClickHouse Managed Postgres as the memory authority.
 - [Code index operations](docs/operations/code-index-operations.md): This page covers how to enable the code index workers, configure repositories and keep the index current; the code index runs only when an operator enables its workers and configures repositories.
 - [Deployment](docs/operations/deployment.md): Loom is one server image plus ClickHouse (and Postgres, under `LOOM_STORAGE_AUTHORITY=postgres`), with the document extractor service as an image of its own (container images).
@@ -164,6 +168,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 - [Memory architecture](docs/architecture/memory-architecture.md): The memory plane stores facts in `loom.memory`, makes them searchable through `loom.memory_embeddings`, and derives evidence, chunks, graph rows and statistics from them.
 - [n8n adapter](docs/architecture/n8n-adapter.md): The n8n community package stores conversation history and durable facts in a Loom deployment through the TypeScript SDK.
 - [OpenAI Agents conversation sessions](docs/architecture/openai-agents-sessions.md): `LoomSession` implements the native Python and TypeScript session interfaces over Loom episodic memories.
+- [Pipecat demonstration recording](docs/architecture/pipecat-demo-recording.md): The optional `pipecat-demo.yml` workflow renders a timestamped execution visualization of an authenticated native Pipecat text-memory check.
 - [Provider reconfiguration](docs/architecture/provider-reconfiguration.md): Loom stores dashboard model configuration as encrypted, versioned rows in `loom.provider_configuration`.
 - [Rolling upgrades: builds N-1 and N side by side](docs/architecture/rolling-upgrades.md): Every Loom process is a full replica behind one URL, and an upgrade replaces them one at a time.
 - [Security](docs/architecture/security.md): Loom separates tenants by columns: every row carries the identity tuple, and every read filters on it.

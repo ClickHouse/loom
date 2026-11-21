@@ -131,6 +131,7 @@ LOOM_CODE_REPOS_JSON='[
 | `scip_extra_producers`               | further compiler-tier producers over the same tree (a Python repository with a TypeScript frontend), each in its own checkout |
 | `git_extra_branches`                 | globs of other remote branches the shared mirror should carry                                                                 |
 | `github_token`                       | per-entry override of `LOOM_CODE_GITHUB_TOKEN`                                                                                |
+| `git_proxy_identity`                 | the user name its git presents to an operator's [git proxy](#git-through-a-forward-proxy); unset, the deployment's default    |
 
 Name a `git_remote` host in ASCII, as punycode for an internationalised name: a page
 add refuses any other, so the two spell a host alike.
@@ -303,11 +304,23 @@ scip-python, scip-typescript, scip-go, and for C/C++ clang 21, lld, CMake, ninja
 scip-clang. Upstream builds scip-clang for x86_64 Linux only, so the arm64 image has
 the rest of the C/C++ toolchain but no scip-clang: point `LOOM_CODE_SCIP_CLANG_PATH` at
 your own build, or the C/C++ tier records `scip-clang missing` as a skip. Each worker
-creates a missing working tree as an empty repository and fetches each commit into it
-from the entry's mirror, so a new leader starts from nothing. A worker whose project
-prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
+initializes a missing or empty working tree directory as a Git repository and fetches
+each commit into it from the entry's mirror, so a new leader starts from nothing.
+An existing checkout must be the root of a standalone Git working tree, with its
+`.git` directory inside the checkout. Compiler Git jobs need writable metadata
+there. Linked worktrees, external Git metadata, regular files, bare repositories and
+nonempty directories without their own working tree are refused without replacing
+their contents. Use a separate empty path for the compiler checkout, or point
+`scip_checkout_dir` at an existing standalone checkout root.
+A worker whose project prerequisites are absent records a skip in `workers.status`; the Tree-sitter tier
 remains available. TypeScript projects have their dependencies installed
 automatically in their checkout.
+
+Compiler reconciliation batches file paths and symbol keys by both item count and
+serialized UTF-8 size. Long qualified names and multibyte paths therefore split into
+smaller reads within the default ClickHouse HTTP form-field limit. A symbol key
+larger than one field is reconstructed from bounded parameters; names and identifiers
+remain exact.
 
 The C/C++ harness runs the repository's CMake configure (compile database only, no
 build) on the first run in a tree, or when its `CMakeCache.txt` is missing, was made in
@@ -557,6 +570,10 @@ download`, and git sends it only to URLs under the remote's owner
 (`https://host/owner/`; the whole host for a remote with no owner path). Inside the
 sandbox an `ssh` remote has no host SSH key: use an HTTPS remote with an access token.
 
+The sandbox's egress proxy connects to the remote itself and is not chained through an
+operator's proxy: a host that runs the sandbox runs no network git while
+`LOOM_CODE_GIT_PROXY_URL` is set ([git through a forward proxy](#git-through-a-forward-proxy)).
+
 **Which stacks run the sandbox.** The blue/green colours `redeploy.sh` deploys
 (`dev/docker-compose.colour.yml`) set the container options below. The other Compose
 files (`compose.yaml`, `dev/docker-compose.cloud.yml`) do not: an
@@ -753,6 +770,11 @@ where such a call can arrive with auth on: the rule refuses it, and the setting 
 needs every caller authenticated. It is also refused together with
 `LOOM_CODE_SANDBOX_REQUIRED=true`, under which no repository job runs as a plain process.
 
+Where `LOOM_CODE_GIT_PROXY_URL` is set, those git jobs connect to the operator's proxy
+alone: it decides what they reach, and an `ssh` remote is refused
+([git through a forward proxy](#git-through-a-forward-proxy)). The rules for loading the
+setting stay as they are.
+
 The setting also resumes the git jobs of entries that members added before
 `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` was set. They keep the remotes their adders
 named and are cloned and fetched the same way. Before turning it on, list the branches in
@@ -768,6 +790,117 @@ offers no **Add repository** or **Add branch** while it stands: call `code.repo.
 Each Go entry has its own module cache under `LOOM_CODE_SCIP_GO_MODCACHE`
 (`<root>/<org>/<namespace>`): `go` does not re-check the sums of modules already in its
 cache, so a cache one repository's job wrote is never another's.
+
+### Git through a forward proxy
+
+A deployment whose pods reach git remotes only through a forward proxy sets
+`LOOM_CODE_GIT_PROXY_URL`. Every network git of the code index then connects through
+that proxy: a mirror's clone, fetch and `ls-remote`, the `ls-remote` before an add, and
+a checkout's `git submodule update`, in the workers and in every serving process, which
+keep mirrors of their own. While the setting is set git never connects directly: a job
+that cannot go through the proxy is refused. This holds with git 2.31 or later: Loom
+hands git these settings through its environment (`GIT_CONFIG_COUNT`), and an older git
+reads none of them, the proxy included.
+
+| Setting                           | Meaning                                                                                             |
+| --------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `LOOM_CODE_GIT_PROXY_URL`         | the proxy, `http://host:port` or `https://host:port`: the port named, no credentials, path or query |
+| `LOOM_CODE_GIT_PROXY_TOKEN_FILE`  | a file holding the proxy password, read again for every git job, so a rotated token is taken up     |
+| `LOOM_CODE_GIT_PROXY_CA_FILE`     | a PEM bundle git verifies the remotes with through the proxy                                        |
+| `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` | a PEM bundle git verifies an `https://` proxy's own certificate with                                |
+| `LOOM_CODE_GIT_PROXY_IDENTITY`    | the proxy user of an entry that names no `git_proxy_identity`                                       |
+
+The other four need the first, the proxy's own bundle an `https://` one, and a value
+that does not fit is refused when the settings load.
+
+**What the proxy receives.** Git opens `CONNECT <remote host>:443` with
+`Proxy-Authorization: Basic` on its first request: the user is the entry's identity, the
+password the file's content (empty without a file). No request comes without them. The
+entry's access token goes to the remote, inside the tunnel, never to the proxy. A proxy
+that terminates TLS for a remote can then decide, by the identity, which repository a
+job reaches and with which credential. An `http://` proxy URL sends the identity and the
+token to the proxy in clear on every job: use one only over a path you trust, or give
+the proxy an `https://` URL, which git verifies before it sends them (_The CA bundles_
+below).
+
+**The identity.** An entry presents its own `git_proxy_identity`, else
+`LOOM_CODE_GIT_PROXY_IDENTITY`: letters, digits and `. _ ~ @ -`, at most 128 characters.
+An operator entry names it in `LOOM_CODE_REPOS_JSON`; an entry with a malformed one is
+skipped. `code.repo.add` and `code.repo.remote_branches` take it from a platform admin
+only: the caller `LOOM_CODE_SELF_SERVICE_PLATFORM_ADMIN_ONLY` asks for, with or without
+that setting. A branch added with `code.repo.add_branch` inherits it, and adding one to
+such an index takes a platform admin too. Branches of one repository share a mirror: the
+ingest pass fetches them in one negotiation only where remote, token and identity are
+the same, and each host's own fetch round fetches the mirror as its first entry.
+
+**Repositories added with `code.repo.add`.** The proxy is used where repository jobs
+run as plain processes, and there `code.repo.remote_branches`, `code.repo.add` and
+`code.repo.add_branch` answer `SANDBOX_UNAVAILABLE` unless
+`LOOM_CODE_SELF_SERVICE_GIT_UNSANDBOXED` is set (_Self-registered repositories without
+the sandbox_). With it, the `ls-remote` of those ops and the entry's clone and fetches
+go through the proxy under the entry's identity, so the proxy decides which host they
+reach. An entry in `LOOM_CODE_REPOS_JSON` needs no such setting.
+
+**The password.** It is in the environment of the one git process that uses it, read
+from the file for that job: not in an argument, a remote URL, a stored git config, a
+build's environment or a sandboxed job. Loom masks it in what git prints (as the file
+holds it, percent-encoded and in the header's base64 form) before that output is logged
+or recorded. That keeps it out of a build's sight, not out of its reach: on a host that
+uses the proxy, repository jobs are plain processes, so a compiler tier's build runs as
+Loom's user and can read the token file. Run compiler tiers there only for repositories
+you trust.
+
+**The CA bundles.** There are two, one for each TLS connection, and neither stands in
+for the other. `LOOM_CODE_GIT_PROXY_TLS_CA_FILE` is git's `http.proxySSLCAInfo` (in git
+since release 2.27, older than the git every repository job already needs): the bundle
+git verifies an `https://` proxy's own certificate with, before it sends the identity
+and the token. Without it git checks the proxy against its default roots, so a proxy
+whose certificate comes from an authority of your own needs it. The certificate must
+also name the host the URL spells, as a DNS name or, for an address, as an IP address:
+git checks the name as well as the authority.
+`LOOM_CODE_GIT_PROXY_CA_FILE` is git's `http.sslCAInfo`, which replaces git's default
+roots for the remotes of these jobs: it must hold every authority the remotes present
+through the proxy, the proxy's own for a remote whose TLS it terminates and the public
+roots for a remote it tunnels untouched. Loom reads neither file: git does, and a path
+that names no file fails the job there.
+
+A certificate git cannot verify fails the job in git's own words, the same for the
+proxy's certificate and a remote's (`SSL certificate problem: unable to get local issuer
+certificate` with one TLS library; the wording is the library's). A certificate that
+names another host fails the same way, in other words of the library. When it is the
+proxy's, git ends the connection before its first request, so neither the identity nor
+the token leaves. A fetch records git's words on the `fetch` tier, as an unclassified
+error. A clone shows `git clone failed (exit 128)` with git's words in the server log,
+and the `ls-remote` before an add shows `git ls-remote failed for <repository>`: check
+the two bundles and the name on the proxy's certificate when an entry's first contact
+fails that way.
+
+**Refused jobs.** Each of these stops the job before any process starts, with a fixed
+reason that the entry's `fetch` tier, its stage and the mirror counts in `/v1/health`
+show:
+
+- the password file cannot be read or holds no token;
+- neither the entry nor `LOOM_CODE_GIT_PROXY_IDENTITY` names an identity;
+- the remote is not an `https://` URL: the proxy setting carries no ssh, and a
+  submodule with an ssh URL fails as a transport git does not allow;
+- the host runs repository jobs in the sandbox, whose egress proxy is not chained
+  through this one. `/v1/health` and `loom doctor` report `repo_git_proxy_sandboxed`:
+  use the proxy where repository jobs run as plain processes (_Without the sandbox_).
+
+A refusal by the proxy itself reads as kind `egress` on the tier
+([when a tier fails](#when-a-tier-fails)), for an entry's clone as for its fetches. The
+clone and the `ls-remote` before an add, which show a fixed reason in place of git's
+words, name the proxy and the status it answered (`the operator's git proxy
+(LOOM_CODE_GIT_PROXY_URL) refused the connection (407)`). A `407` means the proxy did
+not take the identity or the token, any other answer is the proxy's own rule for them.
+
+**What does not use it.** A compiler tier's dependency download (the TypeScript package
+install, the Go tier's `go mod download`) runs repository code, so it gets neither the
+proxy nor its password and connects as before. Loom's HTTP clients (the GitHub API for
+PR history and fork lookups, issuer keys, document sources) do not read these settings.
+
+[Kubernetes](./kubernetes.md#git-through-a-forward-proxy) shows the mounts for the
+token and the CA bundles.
 
 ### Mirror housekeeping
 

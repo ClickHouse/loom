@@ -93,6 +93,11 @@ class _World(_AuthorityWorld):
             return {"role": "viewer"}
         return await super().query_one(query, params, **kw)
 
+    async def deactivated(self, email: str) -> bool:
+        if email == "reader@example.com":
+            return False
+        return await super().deactivated(email)
+
     async def mirrors(self, org: str, namespaces: list[str], **kw: Any):
         assert org == "team" and kw == {"live_only": True}
         return {_MIRROR: "shared-space"} if "shared-space" in namespaces else {}
