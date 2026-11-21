@@ -6,6 +6,18 @@ import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
+RETIRED_CHAT_SOURCES = (
+    "deploy/librechat/assistant.librechat.yaml",
+    "integrations/librechat/.env.example",
+    "integrations/librechat/.gitignore",
+    "integrations/librechat/README.md",
+    "integrations/librechat/agent.yaml",
+    "integrations/librechat/docker-compose.yml",
+    "integrations/librechat/librechat.yaml",
+    "integrations/librechat/qualification/cases.json",
+    "integrations/librechat/qualification/fixture.json",
+    "integrations/librechat/qualification/qualify.py",
+)
 
 
 def test_compose_needs_no_assistant_database_or_sidecar() -> None:
@@ -20,15 +32,36 @@ def test_compose_needs_no_assistant_database_or_sidecar() -> None:
     assert "persistent-volume-claim retention policy" in guide
 
 
+def _assert_retired_chat_sources_absent(root: Path) -> None:
+    # Retained qualification data is external state, not a bundled runtime.
+    for name in RETIRED_CHAT_SOURCES:
+        assert not (root / name).exists()
+
+
 def test_packaged_sources_contain_no_bundled_chat_runtime() -> None:
     from scripts.release.build_stack_bundle import FILES
 
-    for root in ("deploy", "integrations"):
-        assert not (ROOT / root / "librechat").exists() or not list(
-            (ROOT / root / "librechat").rglob("*.*")
-        )
+    _assert_retired_chat_sources_absent(ROOT)
     assert all("librechat" not in name for name in FILES)
     assert "ASSISTANT_AGENT" not in (ROOT / "server/core/paths.py").read_text()
+
+
+@pytest.mark.parametrize("name", [".state.json", "results.json", "results-example.json"])
+def test_retained_chat_qualification_is_not_bundled_source(tmp_path, name) -> None:
+    retained = tmp_path / "integrations/librechat/qualification" / name
+    retained.parent.mkdir(parents=True)
+    retained.write_text("retained synthetic data")
+    _assert_retired_chat_sources_absent(tmp_path)
+    assert retained.read_text() == "retained synthetic data"
+
+
+@pytest.mark.parametrize("name", RETIRED_CHAT_SOURCES)
+def test_retired_chat_source_is_rejected(tmp_path, name) -> None:
+    source = tmp_path / name
+    source.parent.mkdir(parents=True)
+    source.write_text("synthetic retired source")
+    with pytest.raises(AssertionError):
+        _assert_retired_chat_sources_absent(tmp_path)
 
 
 def test_chart_contains_only_native_assistant_enablement() -> None:
