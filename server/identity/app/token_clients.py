@@ -12,7 +12,7 @@ _STDIO_VIA_NPX = {"claude-desktop", "cline"}
 
 # Coding agents mount the `coding` toolset, on the URL, as the dashboard's snippets do
 # (frontend/src/lib/clients.ts CODING_TOOLSET_CLIENTS) and `loom install` does.
-CODING_CLIENTS = frozenset({"claude-code", "codex", "cursor", "gemini"})
+CODING_CLIENTS = frozenset({"claude-code", "codex", "cursor", "gemini", "opencode"})
 CODING_TOOLSET = "coding"
 
 
@@ -64,6 +64,13 @@ CONFIG_PATHS = {
         "linux": "~/.gemini/settings.json",
         "win32": "%USERPROFILE%\\.gemini\\settings.json",
     },
+    # OpenCode roots its global config at $XDG_CONFIG_HOME, else ~/.config, on every
+    # platform (Windows too), and reads opencode.json or opencode.jsonc there.
+    "opencode": {
+        "darwin": "~/.config/opencode/opencode.json",
+        "linux": "~/.config/opencode/opencode.json",
+        "win32": "%USERPROFILE%\\.config\\opencode\\opencode.json",
+    },
 }
 
 
@@ -75,8 +82,19 @@ MCP_CLIENTS = tuple(CONFIG_PATHS)
 _CONFIG_KEYS = {"vscode": "servers", "zed": "context_servers", "codex": "mcp_servers"}
 
 
+# OpenCode 2.x keeps its servers one level down, under `mcp.servers`.
+_NESTED_CONFIG_KEYS = {"opencode": ("mcp", "servers")}
+
+
 def config_key(client: str) -> str:
-    return _CONFIG_KEYS.get(client, "mcpServers")
+    """The config's top-level key for its MCP servers (`mcp` for OpenCode, whose
+    servers sit under `mcp.servers`: see config_path_keys)."""
+    return config_path_keys(client)[0]
+
+
+def config_path_keys(client: str) -> tuple[str, ...]:
+    """The keys from the config's root to the object that holds its MCP servers."""
+    return _NESTED_CONFIG_KEYS.get(client) or (_CONFIG_KEYS.get(client, "mcpServers"),)
 
 
 def _coding_url(mcp_url: str) -> str:
@@ -93,6 +111,9 @@ def mcp_entry(client: str, url: str, minted: str) -> dict[str, object]:
     streamable-HTTP key; `url` means SSE there), else the URL and its header."""
     if client == "gemini":
         return {"httpUrl": url, "headers": {"Authorization": f"Bearer {minted}"}}
+    if client == "opencode":
+        # What `opencode mcp add --url … --header …` writes: a remote server and its header.
+        return {"type": "remote", "url": url, "headers": {"Authorization": f"Bearer {minted}"}}
     if client == "codex":
         # Codex reads the bearer from an env var; the token never sits in config.toml.
         return {"url": url, "bearer_token_env_var": "LOOM_API_KEY"}
@@ -123,10 +144,13 @@ def client_config(client: str, mcp_url: str, minted: str) -> dict[str, object]:
         # User scope, kept in ~/.claude.json; the dashboard prints the same line.
         header = f"Authorization: Bearer {minted}"
         command = f'claude mcp add --transport http loom "{url}" -H "{header}" -s user'
-    key = config_key(client)
+    keys = config_path_keys(client)
+    config: dict[str, object] = {"loom": mcp_entry(client, url, minted)}
+    for key in reversed(keys):
+        config = {key: config}
     return {
-        "config_key": key,
-        "config": {key: {"loom": mcp_entry(client, url, minted)}},
+        "config_key": keys[0],
+        "config": config,
         "config_toml": toml,
         "command": command,
         "env": env,

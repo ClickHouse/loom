@@ -23,7 +23,7 @@ MAX_FIXTURE_BYTES = 64 * 1024
 # The languages whose summary row records includes resolved against the
 # corpus's own paths; the others record the specifier as written.
 RESOLVED_INCLUDE_LANGS = frozenset(
-    {"typescript", "javascript", "rust", "proto", "gotemplate", "python"}
+    {"typescript", "javascript", "rust", "proto", "thrift", "gotemplate", "python"}
 )
 _EDGE_KEY = re.compile(r"^(?P<path>.+) \| (?P<kind>[a-z_]+) \| (?P<target>[a-z_?]+)$")
 _SECRET = re.compile(

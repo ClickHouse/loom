@@ -273,6 +273,7 @@ LANG_BY_EXTENSION: dict[str, str] = {
     ".rego": "config",
     ".mdc": "doc",
     ".proto": "proto",
+    ".thrift": "thrift",
     ".graphql": "graphql",
     ".gql": "graphql",
     ".tpl": "gotemplate",

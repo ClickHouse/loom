@@ -275,7 +275,20 @@ def _claim_async_state(gate, events, stdin_fd=None):
             )
             if coroutine is None:
                 break
-        state["tasks"].append({"cancelling": task.cancelling(), "frames": frames})
+        waiter = getattr(task, "_fut_waiter", None)
+        row = {
+            "cancelling": task.cancelling(),
+            "done": task.done(),
+            "cancelled": task.cancelled(),
+            "waiter_present": waiter is not None,
+            "waiter_done": waiter.done() if waiter is not None else False,
+            "waiter_cancelled": waiter.cancelled() if waiter is not None else False,
+            "frames": frames,
+        }
+        pending = getattr(task, "_must_cancel", None)
+        if isinstance(pending, bool):
+            row["pending_cancellation"] = pending
+        state["tasks"].append(row)
     return state
 
 
@@ -645,3 +658,49 @@ def test_claim_cancel_diagnostic_failure_has_no_exception_text(monkeypatch):
 
     monkeypatch.setattr(os, "write", closed)
     _write_claim_async_state(42, retirement.RetirementGate(), [])
+
+
+@pytest.mark.parametrize("consumed", [False, True])
+def test_claim_cancel_diagnostic_distinguishes_waiter_states(consumed):
+    import asyncio
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        first = loop.create_future()
+        following = loop.create_future()
+        waiting = asyncio.Event()
+        continued = asyncio.Event()
+
+        async def wait_for_input():
+            waiting.set()
+            try:
+                await first
+            except asyncio.CancelledError:
+                if not consumed:
+                    raise
+                continued.set()
+                await following
+
+        task = asyncio.create_task(wait_for_input())
+        try:
+            await waiting.wait()
+            task.cancel()
+            if consumed:
+                await continued.wait()
+            state = _claim_async_state(retirement.RetirementGate(), [])
+            observed = next(
+                row
+                for row in state["tasks"]
+                if any(frame[1] == "wait_for_input" for frame in row["frames"])
+            )
+            assert observed["cancelling"] == 1
+            assert observed["done"] is False and observed["cancelled"] is False
+            assert observed["waiter_present"] is True
+            assert observed["waiter_done"] is (not consumed)
+            assert observed["waiter_cancelled"] is (not consumed)
+            assert observed["pending_cancellation"] is False
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
