@@ -9,6 +9,76 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+LOOM_TOOL_PREFIXES = ("mcp__loom__", "mcp__plugin_loom_loom__")
+
+
+def is_loom_tool(name: str) -> bool:
+    return name.startswith(LOOM_TOOL_PREFIXES)
+
+
+def initialization(trial: Path) -> dict:
+    result = dict.fromkeys(
+        (
+            "loom_connection_at_start",
+            "loom_tools_advertised",
+            "loom_plugin_loaded",
+            "loom_code_skill_loaded",
+            "loom_memory_skill_loaded",
+        )
+    )
+    path = trial / "agent/claude-code.txt"
+    if not path.exists():
+        return result
+    for line in path.read_text().splitlines():
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(row, dict) or row.get("type") != "system" or row.get("subtype") != "init":
+            continue
+        mcp_servers = row.get("mcp_servers")
+        if not isinstance(mcp_servers, list):
+            mcp_servers = None
+        servers = [
+            server
+            for server in mcp_servers or []
+            if isinstance(server, dict)
+            and server.get("name") in {"loom", "plugin:loom:loom", "plugin_loom_loom"}
+        ]
+        status = (
+            servers[0].get("status")
+            if len(servers) == 1
+            else "disabled"
+            if mcp_servers is not None and not servers
+            else None
+        )
+        tools, plugins = row.get("tools"), row.get("plugins")
+        if not isinstance(tools, list) or not all(isinstance(name, str) for name in tools):
+            tools = None
+        if not isinstance(plugins, list) or not all(isinstance(p, dict) for p in plugins):
+            plugins = None
+        result.update(
+            loom_connection_at_start=status
+            if status in {"connected", "pending", "failed", "disabled", "needs-auth"}
+            else None,
+            loom_tools_advertised=sum(is_loom_tool(name) for name in tools)
+            if tools is not None
+            else None,
+            loom_plugin_loaded=any(p.get("name") == "loom" for p in plugins)
+            if plugins is not None
+            else None,
+        )
+        skills = row.get("skills")
+        if not isinstance(skills, list) or not all(isinstance(name, str) for name in skills):
+            skills = None
+        names = {name.split(":")[-1] for name in skills} if skills is not None else None
+        result.update(
+            loom_code_skill_loaded="loom-code" in names if names is not None else None,
+            loom_memory_skill_loaded="loom-memory" in names if names is not None else None,
+        )
+        return result
+    return result
+
 
 def number(value):
     return value if type(value) in (int, float) and math.isfinite(value) and value >= 0 else None
@@ -59,6 +129,7 @@ def measurements(raw: dict, trial: Path) -> dict:
     )
     extra = metrics.get("extra") or {}
     return {
+        **initialization(trial),
         "measurement_source": "native Harbor Claude Code trajectory and trial timing",
         "solver": "claude-code",
         "solver_version": ((trajectory or {}).get("agent") or {}).get("version"),
@@ -72,9 +143,7 @@ def measurements(raw: dict, trial: Path) -> dict:
         "model_cache_read_tokens": number(metrics.get("total_cached_tokens")),
         "model_cache_write_tokens": number(extra.get("total_cache_creation_input_tokens")),
         "tool_total_requests": len(calls) if calls is not None else None,
-        "loom_tool_calls": sum(
-            count for name, count in counts.items() if name.startswith("mcp__loom__")
-        )
+        "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))
         if counts is not None
         else None,
         "tool_counts": dict(counts) if counts is not None else None,

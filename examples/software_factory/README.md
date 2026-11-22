@@ -29,6 +29,10 @@ linked to code. Facts come from public sources before the issue's base revision;
 none are inserted into the issue prompt. The memory contrast measures both access
 to historical knowledge and native memory capability, rather than linking alone.
 
+This example uses MCP directly; it does not install the Loom plugin or its hooks.
+The server supplies initialization guidance. Reports record startup connection
+state, advertised Loom tools and loaded Loom skills separately from selected calls.
+
 There are three public issues, three repeats and five arms: 45 primary attempts.
 Six A/A attempts measure baseline variation separately. Six base/reference controls
 qualify the grader without model calls. Twelve blind judgments assess submitted

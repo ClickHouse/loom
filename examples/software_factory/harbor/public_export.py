@@ -17,6 +17,7 @@ from .runtime import read, verify, write
 
 KIND = "factory-public-results"
 COUNTERS = (
+    "loom_tools_advertised",
     "tool_total_requests",
     "agent_test_requests",
     "agent_test_runs",
@@ -317,6 +318,10 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
                 judge_fixed=result.get("judge_fixed"),
                 harbor_reward_valid=result.get("harbor_reward_valid"),
                 generation_cost_source=result.get("generation_cost_source"),
+                loom_connection_at_start=result.get("loom_connection_at_start"),
+                loom_plugin_loaded=result.get("loom_plugin_loaded"),
+                loom_code_skill_loaded=result.get("loom_code_skill_loaded"),
+                loom_memory_skill_loaded=result.get("loom_memory_skill_loaded"),
             )
             trial = Path(result["harbor_trial"])
             for name in (
@@ -331,6 +336,10 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
                         path.read_bytes()
                     ).hexdigest()
             public.append(row)
+            instruction = root / "tasks" / f"slot-{entry['order']:02d}" / "instruction.md"
+            hashes[str(entry["order"]) + "/task/instruction.md"] = hashlib.sha256(
+                instruction.read_bytes()
+            ).hexdigest()
         payload = {
             "kind": KIND,
             "complete": complete,

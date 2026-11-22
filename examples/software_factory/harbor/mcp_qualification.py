@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 from examples.software_factory.factory.model import digest
@@ -67,6 +68,13 @@ def qualify(client, url, token, binding):
             raise PermissionError("Native MCP code scope did not resolve the frozen repository")
         return {
             "qualified": True,
+            "instructions_sha256": hashlib.sha256(
+                initialized.get("instructions", "").encode("utf-8")
+            ).hexdigest(),
+            "instructions_chars": len(initialized.get("instructions", "")),
+            "code_routes_named": sorted(
+                name for name in required if name in initialized.get("instructions", "")
+            ),
             "code_scope": {
                 key: binding[key] for key in ("org", "code_namespace", "memory_namespace")
             },

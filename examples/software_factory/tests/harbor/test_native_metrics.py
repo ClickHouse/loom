@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest import TestCase
 
-from examples.software_factory.harbor.native_metrics import measurements
+from examples.software_factory.harbor.native_metrics import initialization, measurements
 
 
 class NativeMeasurements(TestCase):
@@ -21,7 +21,16 @@ class NativeMeasurements(TestCase):
             trajectory = {
                 "agent": {"name": "claude-code", "version": "pinned"},
                 "steps": [
-                    {"tool_calls": [call]},
+                    {
+                        "tool_calls": [
+                            call,
+                            {
+                                **call,
+                                "tool_call_id": "plugin",
+                                "function_name": "mcp__plugin_loom_loom__loom_code_search",
+                            },
+                        ]
+                    },
                     {
                         "extra": {"agent_id": "child"},
                         "tool_calls": [
@@ -50,8 +59,8 @@ class NativeMeasurements(TestCase):
                 }
             }
             row = measurements(raw, root)
-            self.assertEqual(row["tool_total_requests"], 2)
-            self.assertEqual(row["loom_tool_calls"], 1)
+            self.assertEqual(row["tool_total_requests"], 3)
+            self.assertEqual(row["loom_tool_calls"], 2)
             self.assertEqual(row["model_total_tokens"], 105)
             self.assertEqual(row["model_cache_read_tokens"], 70)
             self.assertEqual(row["model_cache_write_tokens"], 20)
@@ -70,3 +79,34 @@ class NativeMeasurements(TestCase):
                 "model_total_tokens",
             ):
                 self.assertIsNone(row[key])
+
+    def test_startup_readiness_keeps_pending_and_missing_distinct_from_disabled(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent").mkdir()
+            self.assertTrue(all(value is None for value in initialization(root).values()))
+            path = root / "agent/claude-code.txt"
+            base = {"type": "system", "subtype": "init", "mcp_servers": []}
+            path.write_text(json.dumps(base) + "\n")
+            row = initialization(root)
+            self.assertEqual(row["loom_connection_at_start"], "disabled")
+            self.assertIsNone(row["loom_tools_advertised"])
+            self.assertIsNone(row["loom_plugin_loaded"])
+            path.write_text(
+                json.dumps(
+                    {
+                        **base,
+                        "mcp_servers": [{"name": "plugin:loom:loom", "status": "pending"}],
+                        "tools": ["Bash", "mcp__plugin_loom_loom__loom_code_search"],
+                        "plugins": [{"name": "loom"}],
+                        "skills": ["loom:loom-code", "loom:loom-memory"],
+                    }
+                )
+                + "\n"
+            )
+            row = initialization(root)
+            self.assertEqual(row["loom_connection_at_start"], "pending")
+            self.assertEqual(row["loom_tools_advertised"], 1)
+            self.assertTrue(row["loom_plugin_loaded"])
+            self.assertTrue(row["loom_code_skill_loaded"])
+            self.assertTrue(row["loom_memory_skill_loaded"])
