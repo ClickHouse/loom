@@ -67,6 +67,8 @@ def fit_pack_budget(pack: str, token_budget: int) -> tuple[str, bool]:
     if not token_budget or estimate_tokens(pack) <= token_budget:
         return pack, False
     marker = "\n… [context truncated to token budget]"
+    if estimate_tokens(marker) > token_budget:
+        return "", True
     blocks: list[list[str]] = []
     for line in pack.splitlines():
         if line.startswith("## ") and blocks:

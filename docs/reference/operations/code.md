@@ -1355,7 +1355,7 @@ A merged PR's review brief: the point read of what the ingest built at merge —
 | `pr_number` | `int` | `0` | The PR to brief; 0 = find it by `merge_sha`. |
 | `merge_sha` | `str` | `''` | The PR's merge commit (hex, up to 40 chars); '' = find it by `pr_number`. |
 | `sections` | `list[Literal['paths', 'symbols', 'tests', 'settings', 'history', 'blame', 'qa', 'risk', 'do_not_flag', 'rationale']]` | *(computed)* | Serve only these of the tier's sections; empty = every section the tier carries. |
-| `tier` | `Literal['trivial', 'standard', 'full']` | `'standard'` | Which sections and default budget: trivial (paths, symbols), standard (+ tests, settings, history, risk, rationale) or full (+ blame, qa). |
+| `tier` | `Literal['trivial', 'standard', 'full']` | `'standard'` | Which sections: trivial (paths, symbols), standard (+ tests, settings, history, risk, rationale) or full (+ blame, qa). |
 | `token_budget` | `int` | `0` | Estimated-token cap on served sections; 0 (default) is unlimited. |
 | `store` | `bool` | `True` | Whether a brief this call builds on a miss is stored for the next reader (the default). |
 | `open` | `bool` | `False` | The PR is OPEN — brief its head (`refs/pull/N/head` on the mirror) diffed against its merge-base with the indexed branch, with the post-image overlay on the impact read (added functions are seeds). |

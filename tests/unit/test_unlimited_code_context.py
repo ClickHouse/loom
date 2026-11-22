@@ -78,3 +78,32 @@ def test_explicit_unlimited_ask_overrides_the_deployment_cap(monkeypatch):
         )["token_budget"]
         == 0
     )
+
+
+@pytest.mark.parametrize("budget", [1, 3, 9, 10, 200])
+def test_small_explicit_pack_caps_include_the_truncation_marker(budget):
+    from server.code.app.index.packs import estimate_tokens
+    from server.code.app.index.task_pack import render
+
+    context, truncated = fit_pack_budget("# A long heading\n" + "context\n" * 500, budget)
+    assert truncated and estimate_tokens(context) <= budget
+    task = render("A long task title " * 20, [], [], [], [], [], [], budget)
+    assert estimate_tokens(task) <= budget
+
+
+@pytest.mark.asyncio
+async def test_map_header_obeys_a_tiny_explicit_cap(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from server.code.app import context, fan_in
+    from server.embedding import embedder
+
+    context._MAP_CACHE.clear()
+    monkeypatch.setattr(embedder, "get_embedder", lambda: SimpleNamespace(model_name="test"))
+    monkeypatch.setattr(context, "_call_graph_hubs", AsyncMock(return_value=([], {})))
+    monkeypatch.setattr(fan_in, "top_under", AsyncMock(return_value=[]))
+    repo = SimpleNamespace(top_summaries=AsyncMock(return_value=[]))
+    assert await context._render_map(repo, "org", "code", "", 1) == ""
+    assert await context._render_map(repo, "org", "code", "", 0)
+    context._MAP_CACHE.clear()

@@ -249,7 +249,7 @@ async def _render_map(
 ) -> str:
 
     from server.code.app import fan_in as code_fan_in
-    from server.code.app.index.packs import estimate_tokens
+    from server.code.app.index.packs import estimate_tokens, fit_pack_budget
     from server.embedding.embedder import get_embedder
 
     key = (org, ns, module_prefix, token_budget)
@@ -288,7 +288,7 @@ async def _render_map(
             if token_budget and estimate_tokens("\n".join(lines)) > token_budget:
                 lines.pop()
                 break
-    text = "\n".join(lines)
+    text, _ = fit_pack_budget("\n".join(lines), token_budget)
     _MAP_CACHE.put(key, text)
     return text
 
