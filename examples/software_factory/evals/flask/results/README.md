@@ -7,13 +7,13 @@ public historical issues. Twelve blind comparisons supply a separate fixed ratin
 Earlier development results informed the harness; these tasks were selected before
 their solver outcomes. Three task clusters cannot establish generalization.
 
-| Treatment | Hidden solved | Blind fixed | Provider USD | Mean agent seconds | Mean E2E seconds | Loom calls |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| No Loom | 3/9 | 3/9 | 0.2273954 | 43.616 | 59.965 | 0 |
-| Tree-sitter | 3/9 | 3/9 | 0.1918547 | 41.167 | 59.559 | 55 |
-| Tree-sitter and memory | 3/9 | 6/9 | 0.2911961 | 51.125 | 69.984 | 65 |
-| SCIP | 2/9 | 4/9 | 0.1813363 | 37.362 | 55.797 | 42 |
-| SCIP and memory | 3/9 | 5/9 | 0.2217326 | 45.358 | 64.135 | 51 |
+| Treatment              | Hidden solved | Blind fixed | Provider USD | Mean agent seconds | Mean E2E seconds | Loom calls |
+| ---------------------- | ------------: | ----------: | -----------: | -----------------: | ---------------: | ---------: |
+| No Loom                |           3/9 |         3/9 |    0.2273954 |             43.616 |           59.965 |          0 |
+| Tree-sitter            |           3/9 |         3/9 |    0.1918547 |             41.167 |           59.559 |         55 |
+| Tree-sitter and memory |           3/9 |         6/9 |    0.2911961 |             51.125 |           69.984 |         65 |
+| SCIP                   |           2/9 |         4/9 |    0.1813363 |             37.362 |           55.797 |         42 |
+| SCIP and memory        |           3/9 |         5/9 |    0.2217326 |             45.358 |           64.135 |         51 |
 
 No arm meets the combined quality, cost and time target. SCIP has one full-suite
 regression; the other primary arms have none. No solver writes memory.
@@ -37,3 +37,8 @@ Its manifest verifies the published bytes. Private native trajectories, credenti
 and raw billing ledger rows are outside this bundle; the exporter validates raw
 evidence before publishing scalar results and hashes. Reproduction writes a fresh
 private artifact set to the selected output directory.
+
+The published protocol and chart JSON use repository formatting; their parsed
+values are identical to the recorded export. The manifest hashes these published
+bytes. The original export remains available in
+[the publication commit](https://github.com/ClickHouse/loom/tree/5c53ac7c64c65410b0eecfcd9616a725b2c2ade9/examples/software_factory/evals/flask/results/historical-issues-implementation-scope).
