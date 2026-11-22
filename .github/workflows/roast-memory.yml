@@ -1,0 +1,42 @@
+name: Ruby workflow memory example
+
+on:
+  pull_request:
+    paths:
+      - "examples/roast-memory/**"
+      - "sdk/ruby/**"
+      - ".github/workflows/roast-memory.yml"
+  push:
+    branches: [main]
+    paths:
+      - "examples/roast-memory/**"
+      - "sdk/ruby/**"
+      - ".github/workflows/roast-memory.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: examples/roast-memory
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1
+        with:
+          ruby-version: "3.4.4"
+          bundler: "2.6.9"
+      - name: Build and install the checkout SDK
+        working-directory: sdk/ruby
+        run: |
+          gem build clickhouse-loom.gemspec --output clickhouse-loom.gem
+          gem install ./clickhouse-loom.gem --no-document
+      - name: Install pinned workflow dependencies
+        run: bundle install
+      - name: Qualify real Ruby cogs and SDK against synthetic HTTP
+        run: bundle exec ruby qualification_test.rb
