@@ -295,8 +295,9 @@ async def test_delete_contention_refuses_stale_head_and_writer_retries(
 
 
 @pytest.mark.parametrize("stamp_mode", ["write", "raise", "no_write"])
+@pytest.mark.parametrize("limit", [1, 3])
 async def test_a_fixed_refused_answer_settles_only_after_its_terminal_stamp(
-    ch, wired, monkeypatch, stamp_mode: str
+    ch, wired, monkeypatch, stamp_mode: str, limit: int
 ) -> None:
     from types import SimpleNamespace
 
@@ -307,7 +308,7 @@ async def test_a_fixed_refused_answer_settles_only_after_its_terminal_stamp(
     from server.settings import settings
 
     org, llm = wired
-    limit = settings.memory_conflict_resolver_max_attempts
+    monkeypatch.setattr(settings, "memory_conflict_resolver_max_attempts", limit)
     calls: list[str] = []
     attempts: list[int] = []
     stamp_counts: list[int] = []
@@ -365,7 +366,10 @@ async def test_a_fixed_refused_answer_settles_only_after_its_terminal_stamp(
             await _settle_resolver(observed_pass, calls, limit)
         assert len(calls) == limit + 1
         assert not stamped and await queue.owed_rows(limit=10)
-        assert stamp_counts == ([limit, limit + 1] if stamp_mode == "raise" else [limit])
+        expected_stamps = (
+            [limit, limit + 1] if stamp_mode == "raise" else [limit] * ((limit + 1) // limit)
+        )
+        assert stamp_counts == expected_stamps
     assert await _heads(ch, org) == before, "the refused action must not change either head"
 
 
