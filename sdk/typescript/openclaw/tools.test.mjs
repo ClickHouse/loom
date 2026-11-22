@@ -16,7 +16,7 @@ const config = parseConfig(input);
 const context = { agentId: "main", sessionKey: "agent:main:main", assertInvocationCurrent() {} };
 
 function setup(call = async (_operation, body) => ({ status: "active", memory_key: body.memory_key }), ctx = context) {
-  return createTools(config, ctx, { call });
+  return createTools(config, ctx, () => ({ call }));
 }
 
 test("configuration rejects missing identity, wildcard, unknown keys and credential-bearing URLs", () => {
@@ -85,16 +85,12 @@ test("different configured users and sessions cannot overwrite the same key", as
   const keys = [];
   for (const patch of [{}, { userId: "other-user" }, { sessionKey: "agent:main:other" }]) {
     const cfg = parseConfig({ ...input, ...patch });
-    const [save] = createTools(
-      cfg,
-      { ...context, sessionKey: cfg.sessionKey },
-      {
-        async call(_op, body) {
-          keys.push(body.memory_key);
-          return { status: "active", memory_key: body.memory_key };
-        },
+    const [save] = createTools(cfg, { ...context, sessionKey: cfg.sessionKey }, () => ({
+      async call(_op, body) {
+        keys.push(body.memory_key);
+        return { status: "active", memory_key: body.memory_key };
       },
-    );
+    }));
     await save.execute("call", { key: "editor", text: "fact" });
   }
   assert.equal(new Set(keys).size, 3);
@@ -226,4 +222,22 @@ test("save reports server merges and unconfirmed writes without inventing succes
     assert.deepEqual(response.details, expected);
     assert.doesNotMatch(JSON.stringify(response), /private-other-session-key/);
   }
+});
+
+test("authority revoked during an awaited response hides recalled data", async () => {
+  let current = true;
+  const [, search] = setup(
+    async () => {
+      await Promise.resolve();
+      current = false;
+      return { abstain: false, results: [] };
+    },
+    {
+      ...context,
+      assertInvocationCurrent() {
+        if (!current) throw new Error("invocation closed");
+      },
+    },
+  );
+  await assert.rejects(search.execute("call", { query: "editor" }));
 });

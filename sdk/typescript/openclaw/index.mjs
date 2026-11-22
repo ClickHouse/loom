@@ -19,14 +19,20 @@ export default definePluginEntry({
     const config = parseConfig(api.pluginConfig);
     const token = process.env[config.tokenEnv]?.trim();
     if (!token) throw new Error(`Set ${config.tokenEnv} in the Gateway environment before enabling ClickHouse Loom`);
-    const client = new LoomClient({
-      baseUrl: config.baseUrl,
-      apiKey: token,
-      timeoutMs: 10000,
-      logLevel: "off",
-    });
+    const makeClient = (assertCurrent) =>
+      new LoomClient({
+        baseUrl: config.baseUrl,
+        apiKey: token,
+        timeoutMs: 10000,
+        logLevel: "off",
+        fetch(...args) {
+          // SDK pacing and retries must recheck the host's live authority before each send.
+          assertCurrent();
+          return fetch(...args);
+        },
+      });
     api.registerTool(
-      { contextVersion: 2, create: (context) => createTools(config, context, client) },
+      { contextVersion: 2, create: (context) => createTools(config, context, makeClient) },
       { names: ["clickhouse_loom_save", "clickhouse_loom_search"], optional: true, workspaceAccess: false },
     );
   },

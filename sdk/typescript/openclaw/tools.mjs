@@ -48,7 +48,7 @@ function result(details) {
   return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 }
 
-export function createTools(config, context, client) {
+export function createTools(config, context, makeClient) {
   // One configured native session owns this connection. Model arguments never select identity.
   if (context.agentId !== config.agentId || context.sessionKey !== config.sessionKey) return null;
   if (typeof context.assertInvocationCurrent !== "function")
@@ -62,10 +62,15 @@ export function createTools(config, context, client) {
   };
   const keyPrefix = `openclaw/${createHash("sha256").update(JSON.stringify(identity)).digest("hex").slice(0, 32)}/`;
   async function call(operation, input, signal) {
-    context.assertInvocationCurrent();
-    signal?.throwIfAborted();
+    const assertCurrent = () => {
+      context.assertInvocationCurrent();
+      signal?.throwIfAborted();
+    };
+    assertCurrent();
     try {
-      return await client.call(operation, input, { signal });
+      const response = await makeClient(assertCurrent).call(operation, input, { signal });
+      assertCurrent();
+      return response;
     } catch {
       // Server responses may contain private content; expose no response body or credential.
       throw new Error("ClickHouse Loom request failed; check the Gateway token, namespace grant and Loom endpoint");
