@@ -195,7 +195,6 @@ def test_coding_descriptions_derive_from_the_core_texts():
         "memory.set",
         "loom_activate",
         "code.impact",
-        "context.pack",
     }
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
@@ -476,13 +475,13 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
     assert f"Skip it when {FIRST_STEP_HOOK}." in coding
     rules = mcp_primer._loom_rules("core", None)
     assert (
-        "**1. Task context.** First step of each task: call `loom_context_pack` with the task as `query`"
+        "**1. Task context.** With a default memory namespace, call `loom_context_pack` first with the task as `query`"
         in rules
     )
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
-    assert summary.startswith("A task's memories, decisions and procedures: call it first")
+    assert summary.startswith("Task context: call first with a default memory namespace")
     # loom_op's help catalog shows its own cut of the same sentence
     assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(
         f"unless {FIRST_STEP_HOOK}."
@@ -518,6 +517,24 @@ def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(d
 def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
     tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
     description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
-    assert "call it first when a default memory namespace exists" in description
+    assert "call first with a default memory namespace" in description
     assert "call it first in each task" not in description
     assert "Pass the task as `query`" in description
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])
+def test_shared_routing_covers_capabilities_and_safe_operation_discovery(toolset) -> None:
+    for text in (mcp_primer._loom_rules(toolset, None), mcp_primer._coding_instructions(toolset)):
+        for purpose in ("saved knowledge", "documents", "code", "issues", "tasks", "records"):
+            assert purpose in text
+        assert '`op="help"`' in text
+        assert "never invent an unlisted tool name" in text
+        assert "make only calls needed for the task" in text
+        assert "Writes need user intent and permission" in text
+
+
+def test_assistant_routing_stays_with_listed_read_tools() -> None:
+    text = mcp_primer._assistant_primer(None)
+    assert "relevant listed Loom read tools" in text
+    assert "cannot write or route unlisted operations" in text
+    assert "loom_op" not in text

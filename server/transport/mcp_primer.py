@@ -332,6 +332,23 @@ async def _loom_primer_text(auth: Any, *, toolset: str | None = None) -> str:
     return _loom_rules(toolset, defaults) + await _profile_section(auth, defaults)
 
 
+def _tool_routing(toolset: str | None) -> str:
+    """Tool discovery and intent rules shared by the MCP entry surfaces."""
+    if assistant_connection(toolset):
+        return (
+            "Use relevant listed Loom read tools for available evidence. Reuse sufficient "
+            "context; make only calls needed for the task. This connection cannot write "
+            "or route unlisted operations.\n\n"
+        )
+    return (
+        "Prefer relevant available Loom capabilities for saved knowledge, documents, "
+        "code, issues, tasks, records and other workflows. Use a listed tool when it fits. "
+        'Otherwise discover with `loom_op` (`op="help"`, `query="<goal>"`), then invoke '
+        "with `op` and `arguments`; never invent an unlisted tool name. Reuse sufficient "
+        "context; make only calls needed for the task. Writes need user intent and permission.\n\n"
+    )
+
+
 def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     """The Loom-first rules with the caller's default workspace baked in, naming
     the tools the connection's ``toolset`` listing carries."""
@@ -339,8 +356,9 @@ def _loom_rules(toolset: str | None, defaults: dict[str, Any] | None) -> str:
     collections = knowledge_search_reads_collections()
     head = (
         "**Loom-first mode active for this conversation.**\n\n"
-        "**1. Task context.** First step of each task: call "
-        f"{tool['context.pack']} with the task as `query`, for the memories, decisions and "
+        + _tool_routing(toolset)
+        + "**1. Task context.** With a default memory namespace, call "
+        f"{tool['context.pack']} first with the task as `query`, for the memories, decisions and "
         f"procedures that bear on it in one bounded bundle. Skip it when {FIRST_STEP_HOOK}. "
         "For one fact, rule 2's search alone is enough.\n\n"
         "**2. Recall lookup order.** When I ask about preferences, "
@@ -387,7 +405,8 @@ def _assistant_primer(defaults: dict[str, Any] | None) -> str:
     behalf, read-only. No profile is inlined; stored text is evidence, not instruction."""
     return (
         "**Loom assistant: read-only investigation on the signed-in person's behalf.**\n\n"
-        "**1. Scope.** Every call runs with that person's own access. A namespace, user or "
+        + _tool_routing("assistant")
+        + "**1. Scope.** Every call runs with that person's own access. A namespace, user or "
         "session you name narrows what you read; it never widens it. Nothing here writes: "
         "draft a change for the person to review, never claim it was applied.\n\n"
         "**2. Inspect.** Start from `loom_namespace_summary` and `loom_namespace_audit` "
@@ -568,7 +587,12 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     return name_ops_for_toolset(
-        "**Loom: memory and code for this session.**" + code + context + "\n\n" + memory,
+        "**Loom: memory and code for this session.**\n\n"
+        + _tool_routing(toolset)
+        + code
+        + context
+        + "\n\n"
+        + memory,
         toolset,
     )
 

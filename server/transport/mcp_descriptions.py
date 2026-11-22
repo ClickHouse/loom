@@ -1188,11 +1188,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "conversation.delete": (
         "Soft-delete (tombstone) one conversation thread. Only call on explicit delete request."
     ),
-    # ---- Context pack (the first step of each task) ----
+    # ---- Context pack ----
     "context.pack": (
-        "A task's memories, decisions and procedures: call it first in each task, unless "
-        f"{FIRST_STEP_HOOK}. Pass the task as `query`; working memory and the profile come "
-        "too, `include_knowledge` / `include_conversations` add docs and chats. "
+        "Task context: call first with a default memory namespace, unless "
+        f"{FIRST_STEP_HOOK}. Pass the task as `query` for memories, decisions, procedures, "
+        "working memory and the profile; `include_knowledge` / `include_conversations` "
+        "add docs and chats. "
         "`include_runs=true` adds a manifest of your recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "
@@ -2215,13 +2216,6 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
 # removed. Derived, not copied, so the prose cannot drift from the core tier.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
-    "context.pack": TOOL_DESCRIPTIONS["context.pack"]
-    .replace(
-        "call it first in each task, unless ",
-        "call it first when a default memory namespace exists, unless ",
-        1,
-    )
-    .replace("; for activation only, loom_activate", "", 1),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (
