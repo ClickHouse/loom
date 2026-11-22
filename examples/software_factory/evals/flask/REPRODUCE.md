@@ -82,6 +82,12 @@ same frozen protocol before inference. Harbor retries are disabled; Claude Code
 keeps its native provider behavior. Twelve blind fixed judgments run after coding
 and do not send feedback to the solver.
 
+Native MCP connections send `Connection: close`. The pinned egress proxy can reuse
+an upstream HTTP connection after the server has closed it, causing the next tool
+request to reset before reaching Loom. Closing each request avoids that stale
+connection across all Loom arms, without retries or execution deadlines. This
+does not change Loom's server defaults or the tools available to Claude.
+
 Harbor trajectories supply tool calls, tokens and native reported cost, with a
 marked estimate when reported cost is unavailable. Agent time is Harbor's native
 agent execution interval. End-to-end time also includes setup, artifact transfer,

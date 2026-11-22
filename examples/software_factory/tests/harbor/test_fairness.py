@@ -30,6 +30,7 @@ class NativeTreatment(TestCase):
         self.assertEqual(server["url"], "http://owned-loom:7777/mcp?toolset=coding")
         self.assertEqual(server["headers"]["X-Loom-Code-Scope"], "org/code")
         self.assertEqual(server["headers"]["Authorization"], "Bearer ${LOOM_ATTEMPT_TOKEN_1}")
+        self.assertEqual(server["headers"]["Connection"], "close")
         for slot in (baseline, loom):
             settings = tomllib.loads(agent_settings(protocol, slot))["agent"]
             self.assertEqual(settings["user"], "agent")

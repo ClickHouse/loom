@@ -14,6 +14,7 @@ def qualify(client, url, token, binding):
         "Authorization": "Bearer " + token,
         "X-Loom-Code-Scope": binding["org"] + "/" + binding["code_namespace"],
         "Accept": "application/json, text/event-stream",
+        "Connection": "close",
     }
 
     def request(identifier, method, params):

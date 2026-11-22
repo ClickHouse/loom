@@ -37,6 +37,8 @@ def mcp_settings(protocol: dict, slot: dict) -> str:
     headers = {
         "Authorization": "Bearer ${" + token_variable(slot["order"]) + "}",
         "X-Loom-Code-Scope": binding["org"] + "/" + binding["code_namespace"],
+        # The pinned egress proxy reuses closed upstream HTTP sockets after idle periods.
+        "Connection": "close",
     }
     return (
         '\n[[environment.mcp_servers]]\nname = "loom"\ntransport = "streamable-http"\nurl = '
