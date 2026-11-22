@@ -339,7 +339,7 @@ jobs:
               issue = managed.get(key)
               if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
                   continue
-              text = f"<!-- loom-native-sdk:v1 {key} -->\n<!-- loom-native-sdk-state:v1 {result} -->\n\nThe {key} SDK check reports **{result}** on trusted main. [Read the native build, tests and package logs]({url}).\n\nReproduce the named workflow job using the existing SDK tests. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              text = f"<!-- loom-native-sdk:v1 {key} -->\n<!-- loom-native-sdk-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe {key} SDK check reports **{result}** on trusted main. [Read the native build, tests and package logs]({url}).\n\nReproduce the named workflow job using the existing SDK tests. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
               if issue is None:
                   if result == "failure":
                       api("POST", repo, {"title": titles[key], "body": text})
