@@ -37,13 +37,13 @@ To log on a best-effort basis instead, build the store with
 
 ## How messages are stored
 
-| LangChain4j message | Loom `role` | Loom `content` |
-| --- | --- | --- |
-| `SystemMessage` | `system` | its text |
-| `UserMessage` | `user` | its text |
-| `AiMessage` | `assistant` | its text (empty for a reply that only requests tools) |
-| `ToolExecutionResultMessage` | `tool` | its text |
-| `CustomMessage` | `system` | empty |
+| LangChain4j message          | Loom `role` | Loom `content`                                        |
+| ---------------------------- | ----------- | ----------------------------------------------------- |
+| `SystemMessage`              | `system`    | its text                                              |
+| `UserMessage`                | `user`      | its text                                              |
+| `AiMessage`                  | `assistant` | its text (empty for a reply that only requests tools) |
+| `ToolExecutionResultMessage` | `tool`      | its text                                              |
+| `CustomMessage`              | `system`    | empty                                                 |
 
 When the role and the text cannot rebuild a message exactly (tool execution requests, a
 user name, images, attributes, a custom message), the turn's `metadata` also holds the

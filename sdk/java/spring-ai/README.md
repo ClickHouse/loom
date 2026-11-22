@@ -38,12 +38,12 @@ To log on a best-effort basis instead, build the repository with
 
 ## How messages are stored
 
-| Spring AI message | Loom `role` | Loom `content` |
-| --- | --- | --- |
-| `UserMessage` | `user` | its text |
-| `AssistantMessage` | `assistant` | its text (empty for a reply that only calls tools) |
-| `SystemMessage` | `system` | its text |
-| `ToolResponseMessage` | `tool` | the responses' data, one per line |
+| Spring AI message     | Loom `role` | Loom `content`                                     |
+| --------------------- | ----------- | -------------------------------------------------- |
+| `UserMessage`         | `user`      | its text                                           |
+| `AssistantMessage`    | `assistant` | its text (empty for a reply that only calls tools) |
+| `SystemMessage`       | `system`    | its text                                           |
+| `ToolResponseMessage` | `tool`      | the responses' data, one per line                  |
 
 What the role and the text cannot carry goes into the turn's `metadata` under `spring_ai`:
 the message's metadata map, an assistant's tool calls, and each tool response's id and
