@@ -228,6 +228,12 @@ def _tool_refs(toolset: str | None) -> dict[str, str | None]:
         "working_memory.set",
         "mentor.guide",
         "collection.list",
+        "code.symbol",
+        "code.search",
+        "code.grep",
+        "code.callers",
+        "code.impact",
+        "code.context_pack",
     ):
         reached = name in listed or loom_op_reachable(OPERATIONS_BY_NAME[name], toolset)
         out[name] = f"`{name}`" if reached else None
@@ -466,7 +472,7 @@ async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
 
 async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
     """Session-start instructions for the `initialize` result: the rules, the
-    default workspace, the code scope, the mentor hint, then the profile, so on
+    code scope, the default workspace, the mentor hint, then the profile, so on
     the `coding` toolset a client that cuts long instructions (Claude Code at
     2,048 characters) keeps every rule. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
@@ -476,7 +482,7 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
         return _assistant_primer(await _caller_defaults(auth, assistant=True))
     defaults = await _caller_defaults(auth)
     coding = _is_coding_toolset(toolset)
-    rules = _coding_instructions(toolset) if coding else _loom_rules(toolset, defaults)
+    rules = _coding_instructions(toolset, defaults) if coding else _loom_rules(toolset, defaults)
     scope = current_code_scope()
     scope_line = (
         f"\n\n**Code index scope for this connection:** `{scope[0]}/{scope[1]}` — "
@@ -494,7 +500,7 @@ async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str
     profile = await _profile_section(auth, defaults) if auth is not None else ""
     mentor = await _mentor_line(auth, defaults, toolset)
     # the rules and the mentor line are rendered apart: mark each op once across both
-    return keep_first_marks(rules + workspace + scope_line + mentor) + profile
+    return keep_first_marks(rules + scope_line + workspace + mentor) + profile
 
 
 def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
@@ -507,17 +513,14 @@ def _coding_workspace_line(defaults: dict[str, Any] | None) -> str:
 
 
 def _is_coding_toolset(toolset: str | None) -> bool:
-    """A connection listing the `coding` roster (alone or in a union): a coding agent's,
-    whose plugin brings its own session primer."""
+    """A connection listing the `coding` roster, alone or in a union."""
     from server.operations.toolsets import toolset_parts
 
     return "coding" in toolset_parts(toolset)
 
 
-def _coding_instructions(toolset: str | None) -> str:
-    """The memory rules `initialize` sends over the `coding` toolset, in a few lines. A
-    coding agent re-reads them every turn and its plugin carries the code-index
-    guidance; other listings get `_loom_rules`, and `loom_activate` the full primer."""
+def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = None) -> str:
+    """Code and memory routing for coding clients, including clients without hooks."""
     tool = _tool_refs(toolset)
     save = tool["memory.set"]
     memory = (
@@ -533,15 +536,39 @@ def _coding_instructions(toolset: str | None) -> str:
         if save
         else "This connection is read-only: memory writes are not available."
     )
-    # Agents with code tools do not look memory up on their own: the first step is what
-    # brings the team's memory in, unless a plugin's hooks load it for the session.
-    return name_ops_for_toolset(
-        "**Loom: memory and code for this session.**"
-        + f"\n\nFirst step of each task: call {tool['context.pack']} with "
+    routes = [
+        f"{tool[name]} {purpose}"
+        for name, purpose in (
+            ("code.symbol", "for a named definition"),
+            ("code.search", "for a concept"),
+            ("code.grep", "for exact text or an error"),
+            ("code.callers", "for callers"),
+            ("code.impact", "for change effects"),
+            ("code.context_pack", "for a task briefing"),
+        )
+        if tool[name]
+    ]
+    code = (
+        "\n\nInvestigating indexed code: prefer "
+        + "; ".join(routes)
+        + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
+        "A definition does not supply callers. Use returned code and linked lessons; "
+        "retrieve only missing evidence. Use local tools for uncommitted or unindexed "
+        "code, explicit local-tool requests, or an unavailable or abstaining index. "
+        "Skip retrieval when current context already answers the question."
+        if routes
+        else ""
+    )
+    # A code-only token can have no default memory workspace.
+    context = (
+        f"\n\nFirst step of each task: call {tool['context.pack']} with "
         + "the task as `query`. "
         + f"Skip it when {FIRST_STEP_HOOK}."
-        + "\n\nCode questions: the loom_code_* tools, as each tool's description says. "
-        + memory,
+        if defaults and defaults.get("namespace") and tool["context.pack"]
+        else ""
+    )
+    return name_ops_for_toolset(
+        "**Loom: memory and code for this session.**" + code + context + "\n\n" + memory,
         toolset,
     )
 

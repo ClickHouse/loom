@@ -2215,6 +2215,13 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 # TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
 # removed. Derived, not copied, so the prose cannot drift from the core tier.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "context.pack": TOOL_DESCRIPTIONS["context.pack"]
+    .replace(
+        "call it first in each task, unless ",
+        "call it first when a default memory namespace exists, unless ",
+        1,
+    )
+    .replace("; for activation only, loom_activate", "", 1),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (

@@ -213,6 +213,12 @@ The server leaves eager loading to the host by default. An operator can set
 This affects loading metadata, not tool availability or permission. Tool search may
 add a discovery step when a task needs a deferred tool; no task or cost gain is guaranteed.
 
+MCP-only coding connections receive code-tool routing in the initialization
+instructions, including literal search and deferred-tool discovery. This guidance
+does not depend on plugin hooks. A connection without a default memory namespace
+does not request a first-step memory pack; its code tools use the supplied code
+scope. Instructions guide tool choice and do not prove a lookup occurred.
+
 Managed settings can also set hook environment variables. Clearing the launcher's
 environment does not clear those settings; inspect the effective configuration and
 respect its policy. See [settings precedence](https://code.claude.com/docs/en/settings#settings-precedence).

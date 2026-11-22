@@ -19,6 +19,15 @@ from server.memory.store.rows import MEMORY_PERSISTED_COLS, next_version
 from tests.integration._resources import minted_identity
 
 
+@pytest.fixture
+async def connected_blacklist_policy():
+    """Direct retrieval also reads the process's blacklist store."""
+    client = get_client()
+    await client.connect()
+    yield
+    await client.disconnect()
+
+
 def _memory(ch: Any, me: dict[str, str], key: str, **fields: Any) -> None:
     row = {
         "org": me["org"],
@@ -88,7 +97,7 @@ async def test_file_context_excludes_a_fact_past_its_validity_end(
 
 
 async def test_session_summaries_inherit_known_source_state_and_version(
-    mint_test_token: Any, ch_client: Any
+    mint_test_token: Any, ch_client: Any, connected_blacklist_policy
 ) -> None:
     me = minted_identity(mint_test_token, "summary-sources")
     vector = [1.0] + [0.0] * 3071
@@ -128,7 +137,7 @@ async def test_session_summaries_inherit_known_source_state_and_version(
     # The same key under another user must neither suppress nor revive this user's digest.
     _memory(ch_client, me, "shared-key", session_id="active", user_id="outsider", status="rejected")
     _memory(ch_client, me, "shared-key", session_id="rejected", user_id="outsider", status="active")
-    ch = get_client()
+    ch = CHClient()
     await ch.connect()
     try:
         hits = await fetch_session_summaries(
@@ -447,7 +456,7 @@ async def test_a_lock_that_overtakes_clear_keeps_its_old_vector(
 
 
 async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
-    mint_test_token: Any, ch_client: Any
+    mint_test_token: Any, ch_client: Any, connected_blacklist_policy
 ) -> None:
     me = minted_identity(mint_test_token, "summary-next")
     query = [1.0] + [0.0] * 3071
@@ -479,7 +488,7 @@ async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
             "derived_from": ["source"],
         }
         ch_client.insert("loom.session_summaries", [list(row.values())], column_names=list(row))
-    ch = get_client()
+    ch = CHClient()
     await ch.connect()
     try:
         hits = await fetch_session_summaries(
