@@ -190,7 +190,9 @@ async def test_the_typed_value_stage_ends_with_the_policy(monkeypatch) -> None:
     assert all(_POLICY not in s for s in llm.systems if s not in value_stage)
 
 
-async def test_the_session_digest_uses_committed_policy_filtered_facts_only(monkeypatch) -> None:
+async def test_the_session_digest_uses_committed_policy_filtered_facts_only(
+    monkeypatch, no_blacklisted_values
+) -> None:
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 

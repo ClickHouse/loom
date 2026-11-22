@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
-from server.core.ch import CHClient
+from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.memory.app.retrieval.summaries import fetch_session_summaries
 from server.memory.domain.summary_provenance import render_summary
@@ -128,7 +128,7 @@ async def test_session_summaries_inherit_known_source_state_and_version(
     # The same key under another user must neither suppress nor revive this user's digest.
     _memory(ch_client, me, "shared-key", session_id="active", user_id="outsider", status="rejected")
     _memory(ch_client, me, "shared-key", session_id="rejected", user_id="outsider", status="active")
-    ch = CHClient()
+    ch = get_client()
     await ch.connect()
     try:
         hits = await fetch_session_summaries(
@@ -479,7 +479,7 @@ async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
             "derived_from": ["source"],
         }
         ch_client.insert("loom.session_summaries", [list(row.values())], column_names=list(row))
-    ch = CHClient()
+    ch = get_client()
     await ch.connect()
     try:
         hits = await fetch_session_summaries(

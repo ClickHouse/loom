@@ -366,7 +366,9 @@ def test_the_fakes_check_the_customer_as_a_metered_provider_would(metered) -> No
         asyncio.run(FakeNGramEmbedder(dim=8).embed_many(["text"]))
 
 
-def test_a_reflection_is_written_for_the_org_of_its_pair(metered, monkeypatch) -> None:
+def test_a_reflection_is_written_for_the_org_of_its_pair(
+    metered, monkeypatch, no_blacklisted_values
+) -> None:
     # The contrast call and the reflection's write (which embeds) are both that org's.
     from server.memory.app import session_outcomes as so
 
@@ -1085,7 +1087,9 @@ def test_the_code_link_judge_names_the_links_org(metered, monkeypatch, caplog) -
     _no_refusal_logged(caplog)
 
 
-def test_the_period_digest_names_the_periods_org(metered, monkeypatch, caplog) -> None:
+def test_the_period_digest_names_the_periods_org(
+    metered, monkeypatch, caplog, no_blacklisted_values
+) -> None:
     from server.embedding.fake import FakeNGramEmbedder
     from server.memory.app.period_digest import PeriodDigestConfig, run_period_digest
     from tests.unit.test_period_digest import _digests, _FakeCH

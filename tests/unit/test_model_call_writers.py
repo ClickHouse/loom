@@ -293,7 +293,9 @@ def test_the_profile_fold_calls_for_its_facts_newest_writer(
     assert seen == [AS_AGENT_8]
 
 
-def test_a_reflection_judges_a_session_for_its_writer(writers: _Directory, monkeypatch) -> None:
+def test_a_reflection_judges_a_session_for_its_writer(
+    writers: _Directory, monkeypatch, no_blacklisted_values
+) -> None:
     from server.memory.app import session_outcomes as so
 
     seen: list[dict[str, str]] = []
