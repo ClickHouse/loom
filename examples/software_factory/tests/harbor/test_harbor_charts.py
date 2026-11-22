@@ -72,6 +72,7 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["observed"], 1)
         self.assertEqual(data["scheduled"], 6)
         self.assertFalse(data["complete"])
+        self.assertEqual(data["run_status"], "partial")
 
     def test_all_requested_metrics_preserve_known_zero_and_unknown_evaluations(self):
         self.assertEqual(

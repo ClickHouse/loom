@@ -125,7 +125,7 @@ def chart_data(protocol, entries, views_manifest):
         rows.append(row)
     complete = len(observed) == len(protocol["schedule"])
     evaluation_complete = complete and views_manifest.get("evaluation_complete", complete)
-    default_status = "complete" if evaluation_complete else "grading" if complete else "running"
+    default_status = "complete" if evaluation_complete else "grading" if complete else "partial"
     return {
         "schema_version": 1,
         "name": output.parent.name if output.name == "study" else output.name,

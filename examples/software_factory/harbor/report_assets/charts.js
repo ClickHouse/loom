@@ -271,7 +271,7 @@ function attemptsTable(rows) {
 function render() {
   const rows = selected(),
     complete = rows.filter((row) => row.state === "complete");
-  const status = data.run_status || (data.complete ? (data.evaluation_complete ? "complete" : "grading") : "running");
+  const status = data.run_status || (data.complete ? (data.evaluation_complete ? "complete" : "grading") : "partial");
   byId("run-status").textContent =
     {
       interrupted: "Stopped (not running)",
@@ -279,6 +279,7 @@ function render() {
       complete: "Complete",
       grading: "Judging",
       running: "Running",
+      partial: "Partial",
     }[status] || status;
   byId("completed-label").textContent = ["interrupted", "failed"].includes(status)
     ? "Completed before stop"
