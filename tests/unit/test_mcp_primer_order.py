@@ -82,3 +82,12 @@ def test_coding_rules_fit_2048_characters_before_any_profile() -> None:
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
     assert len(text) > CLIENT_LIMIT  # the profile alone runs past the cut
     assert len(_split(text)[0]) <= CLIENT_LIMIT
+
+
+def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
+    monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
+    text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
+    visible = text[:CLIENT_LIMIT]
+    assert "Code index scope for this connection" in visible
+    assert "`loom_code_symbol` for a named definition" in visible
+    assert "`loom_code_grep` for exact text or an error" in visible
