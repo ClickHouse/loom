@@ -139,7 +139,13 @@ class PublicLauncher(unittest.TestCase):
             }
             (profile / "eval.json").write_text(json.dumps(data))
             (profile / "project-lock.json").write_text(
-                json.dumps({"model_id": "claude-haiku-5-5", "tasks": [{"task_id": "cold"}]})
+                json.dumps(
+                    {
+                        "model_id": "claude-haiku-5-5",
+                        "source_roots": ["src"],
+                        "tasks": [{"task_id": "cold"}],
+                    }
+                )
             )
             (profile / "scenarios.json").write_text(json.dumps({"cases": [{"case_id": "history"}]}))
             (profile / "records.json").write_text(
@@ -169,7 +175,7 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(plan["blind_judges"]["requests"], 12)
         self.assertTrue(plan["blind_judges"]["fixed_only"])
         self.assertEqual(plan["blind_judges"]["model"], plan["model"])
-        self.assertEqual(plan["model"], "claude-sonnet-5-5")
+        self.assertEqual(plan["model"], "claude-opus-5-5")
         self.assertEqual(plan["native_provider"], "anthropic")
         self.assertEqual(plan["native_model"], "claude-sonnet-5-5")
         self.assertEqual(plan["arms"], list(PRIMARY))
