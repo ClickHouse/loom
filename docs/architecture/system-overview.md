@@ -210,6 +210,8 @@ and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-
   and MCP. Exact symbol matches include their complete retained source in automatic
   body mode; incomplete source is disclosed as elided.
   MCP result shaping retains requested definition bodies without a separate size cap.
+  Chunk responses omit a presentation prefix only when its entire text already
+  occurs in the retained source; distinct context and continuation headers stay.
 - **Spend context on evidence.** Reuse sufficient context and retrieve missing
   evidence. A default memory namespace enables the task pack; a hook that already
   supplied context avoids a duplicate lookup. Instructions also reach MCP-only

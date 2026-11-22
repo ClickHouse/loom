@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
+from server.code.domain.symbol_body import retained_source_lines
+
 # Characters per token by content kind, measured with o200k_base over 300 randomly
 # sampled chunks per kind from a ClickHouse index (cl100k within 1%): cpp 4.33, h 4.38,
 # py 4.20, md 4.23, json 4.75 — the plain bytes/4 is right, slightly conservative, for
@@ -186,6 +188,20 @@ class CodeUnit(BaseModel):
         return f"{self.path}:{self.start_line}-{self.end_line}"
 
 
+def _without_repeated_context(unit: CodeUnit) -> CodeUnit:
+    """Keep retrieval context unless its entire text already occurs in the source."""
+    if unit.kind != "function" or unit.start_line < 1 or not unit.body:
+        return unit
+    lines = retained_source_lines(
+        {"content": unit.body, "start_line": unit.start_line, "end_line": unit.end_line}
+    )
+    if lines is None:
+        return unit
+    source = "".join(lines)
+    prefix = unit.body[: len(unit.body) - len(source)].strip()
+    return unit.model_copy(update={"body": source}) if prefix and prefix in source else unit
+
+
 def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
     return CodeUnit(
         unit_id=str(row.get("chunk_id") or ""),
@@ -253,6 +269,8 @@ def budget_units(
     # A head is the unit as its elided card would serve — pointer, next
     # hint, JSON envelope included — so the reservation is the wire cost.
     # Bodyless cards already carry the pointer the caller will receive.
+    if bodies != "none":
+        units = [_without_repeated_context(u) for u in units]
     heads = [estimate_unit_tokens(_card_of(u) if u.body else u) for u in units]
     kept = 0
     reserved = 0
