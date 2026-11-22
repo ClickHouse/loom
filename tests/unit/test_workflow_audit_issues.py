@@ -138,6 +138,14 @@ class WorkflowAuditIssues(unittest.TestCase):
         self.assertEqual(len(self.api.issues), 1)
         self.assertEqual(self.api.issues[0]["body"], "Human replaced the entire body")
 
+    def test_title_identity_survives_body_replacement_and_finding_absence(self):
+        AUDIT.publish(self.api, self.groups, URL)
+        self.api.issues[0]["body"] = "Human replaced the entire body"
+        self.assertEqual(AUDIT.publish(self.api, {}, URL)["updated"], 1)
+        self.assertEqual(AUDIT.publish(self.api, {}, URL)["unchanged"], 1)
+        self.assertEqual(len(self.api.issues), 1)
+        self.assertEqual(self.api.issues[0]["body"], "Human replaced the entire body")
+
     def test_closed_decision_is_never_reopened_or_commented(self):
         AUDIT.publish(self.api, self.groups, URL)
         self.api.issues[0]["state"] = "closed"

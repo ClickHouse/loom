@@ -18,13 +18,13 @@ _ROOT = "/repos/" + _REPO + "/issues"
 _BOT = "github-actions[bot]"
 # These rules describe maintainability, not vulnerability or exploit claims.
 _PUBLIC_RULES = {
-    "anonymous-definition": "Name the workflow jobs and steps so audit locations are clear.",
+    "anonymous-definition": "Name workflow and job definitions so audit locations are clear.",
     "superfluous-actions": "Review the action dependency and use a runner tool when equivalent.",
     "undocumented-permissions": "Document why each explicit workflow permission is needed.",
 }
 _MARKER = re.compile(r"<!-- loom-workflow-audit:v1 ([a-f0-9]{64}) -->")
 _STATE = re.compile(r"<!-- loom-workflow-state:v1 ([a-f0-9]{64}) -->")
-_TITLE = re.compile(r"\[workflow-audit:([a-f0-9]{16})\]$")
+_TITLE = re.compile(r"\[workflow-audit:([a-f0-9]{64})\]$")
 
 
 def fingerprint(rule: str, path: str) -> str:
@@ -191,18 +191,17 @@ class GitHub:
         raise RuntimeError("Workflow issue snapshot pagination budget exhausted")
 
 
-def managed_issues(
-    issues: list[Any], groups: dict[str, dict[str, Any]]
-) -> dict[str, dict[str, Any]]:
-    known = {key[:16]: key for key in groups}
+def managed_issues(issues: list[Any]) -> dict[str, dict[str, Any]]:
     output = {}
     for issue in issues:
         if "pull_request" in issue or issue.get("user", {}).get("login") != _BOT:
             continue
         matches = _MARKER.findall(issue.get("body") or "")
         title = _TITLE.search(issue.get("title") or "")
-        if not matches and title and title[1] in known:
-            matches = [known[title[1]]]  # A human can replace the body; never overwrite it.
+        if matches and title and matches[0] != title[1]:
+            raise ValueError("Conflicting workflow issue identity markers")
+        if not matches and title:
+            matches = [title[1]]  # A human can replace the body; never overwrite it.
         if not matches:
             continue
         if len(matches) != 1 or matches[0] in output:
@@ -217,7 +216,7 @@ def managed_issues(
 
 def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[str, int]:
     issues = api.issue_snapshot()
-    managed = managed_issues(issues, groups)
+    managed = managed_issues(issues)
     counts = {"created": 0, "updated": 0, "unchanged": 0, "closed_preserved": 0, "deferred": 0}
     for key in sorted(set(groups) | set(managed)):
         group, issue = groups.get(key), managed.get(key)
@@ -228,7 +227,7 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
             counts["deferred"] += 1
             continue
         if issue is None:
-            title = f"Review {group['rule']} in {group['path']} [workflow-audit:{key[:16]}]"
+            title = f"Review {group['rule']} in {group['path']} [workflow-audit:{key}]"
             if len(title) > 250:
                 raise ValueError("Workflow issue title exceeds budget")
             api.request("POST", _ROOT, {"title": title, "body": status_body(key, group, run_url)})

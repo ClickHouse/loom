@@ -413,11 +413,11 @@ write permission.
 Only low or informational observations from these maintenance rules can become public
 issues:
 
-| Rule                       | Task                                                |
-| -------------------------- | --------------------------------------------------- |
-| `anonymous-definition`     | Add names that make workflow audit locations clear. |
-| `superfluous-actions`      | Review an action that duplicates a runner tool.     |
-| `undocumented-permissions` | Explain why an explicit permission is needed.       |
+| Rule                       | Task                                                          |
+| -------------------------- | ------------------------------------------------------------- |
+| `anonymous-definition`     | Name workflow and job definitions to clarify audit locations. |
+| `superfluous-actions`      | Review an action that duplicates a runner tool.               |
+| `undocumented-permissions` | Explain why an explicit permission is needed.                 |
 
 Other rules and higher severity observations remain in the complete audit and are sent
 by a separate trusted job to the existing code scanning view. That job has contents
@@ -435,7 +435,8 @@ run links do not create another task or status comment. A changed observation co
 or determination adds one status comment; absence and later reappearance also update
 the latest status. Titles and issue bodies are never rewritten, issues are never
 closed or reopened automatically, and an existing closed decision is preserved.
-Keep an automation identity marker in the title or body when editing a managed task.
+The complete identity fingerprint is retained in the title and body, including when a
+finding disappears. Keep one marker when editing a managed task.
 Removing both markers removes its association with the audit.
 
 Publication uses one trusted concurrency group without canceling a running trusted
