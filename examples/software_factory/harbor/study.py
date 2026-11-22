@@ -323,7 +323,10 @@ def prepare(previous: Path, output: Path) -> Path:
                     "delete": True,
                     "extra_docker_compose": [str(sandbox_policy)],
                 },
-                "agents": [agent if control is None else {"name": "oracle"}],
+                # Oracle converts its shell timeout to int; only coding accepts infinity.
+                "agents": [
+                    agent if control is None else {"name": "oracle", "override_timeout_sec": 300}
+                ],
                 "tasks": selected,
                 "quiet": True,
             }
