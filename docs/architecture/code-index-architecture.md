@@ -242,8 +242,10 @@ Identical chunks in one file get an ordinal suffix.
 
 Class skeletons carry compacted presentation text, not physical source coordinates.
 The chunker retains class source outside method chunks as `other` chunks, including
-documentation, declarations and data members. These source runs keep their original
-line spans even when they are shorter than the general leftover-chunk threshold.
+documentation, declarations, data members and blank separators. These source runs
+keep their original line spans even when they are shorter than the general
+leftover-chunk threshold. Body reconstruction requires every source line; missing
+separators cause an incomplete read even when all member bodies are present.
 Skeletons remain available for class summaries, and unmappable chunks still disclose
 partial grep coverage. Retaining source adds chunk rows and can add embedding work.
 The shared chunker's stamp moves only the chunk stage, across language families;
