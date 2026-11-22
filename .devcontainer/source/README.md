@@ -22,7 +22,7 @@ The released-stack try-out is configured separately by the parent configuration.
 ## Run a bounded check in a public fork
 
 The **contributor lab** workflow uses standard public runners without provider secrets
-and require no provider account. Fork the repository, push a task branch and choose that branch
+and requires no provider account. Fork the repository, push a task branch and choose that branch
 under **Actions → contributor lab → Run workflow**. Select one track. A relevant change
 to the lab itself runs all tracks in its pull request. Each selected test command has a
 two-minute limit; the whole disposable-container job has a fifteen-minute limit.

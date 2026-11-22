@@ -8,8 +8,7 @@ on:
         type: choice
         required: true
         default: functional
-        options:
-          [functional, security, performance, stress, usability, quality, all]
+        options: [functional, security, performance, stress, usability, quality, all]
   pull_request:
     branches: [main, "release/**"]
     paths:
@@ -61,6 +60,7 @@ jobs:
             /schemas/
             /extractor/
             /tests/__init__.py
+            /tests/_shards.py
             /tests/conftest.py
             /tests/unit/__init__.py
             /tests/unit/conftest.py
