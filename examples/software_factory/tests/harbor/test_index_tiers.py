@@ -226,7 +226,7 @@ class TierContracts(unittest.TestCase):
                 "order": 0,
                 "task_id": "task",
                 "repeat": 0,
-                "arm": "loom-scip",
+                "arm": "loom-scip-memory",
                 "mode": "natural",
                 "index_tier": "scip",
                 "memory_enabled": True,

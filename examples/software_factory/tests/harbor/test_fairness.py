@@ -517,10 +517,8 @@ class FairnessProof(unittest.TestCase):
                         request={
                             "org": self.protocol["attempt_scopes"][str(order)]["org"],
                             "namespace": "code",
-                            "include_lessons": True,
-                            "lesson_namespaces": [
-                                self.protocol["attempt_scopes"][str(order)]["memory_namespace"]
-                            ],
+                            "include_lessons": False,
+                            "lesson_namespaces": [],
                         },
                     )
                 )

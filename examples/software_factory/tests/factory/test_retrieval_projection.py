@@ -209,7 +209,8 @@ class ProjectionContracts(unittest.TestCase):
         self.assertNotIn("body", card)
         invalid = {**item, "outline": [{**child, "end_line": 3}]}
         refused = self.context.project("code.symbol", {"definitions": [invalid]})
-        self.assertEqual(refused["candidates"], [])
+        self.assertNotIn("candidates", refused)
+        self.assertTrue(refused["abstain"])
         self.assertTrue(refused["rejected"])
 
     def test_successful_projection_retains_raw_native_response_in_private_ledger(self):

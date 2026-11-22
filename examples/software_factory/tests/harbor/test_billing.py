@@ -41,7 +41,7 @@ class ProviderBilling(unittest.TestCase):
                     order=1,
                     task_id="task",
                     mode="natural",
-                    arm="loom-treesitter",
+                    arm="loom-treesitter-memory",
                     index_tier="treesitter",
                     memory_enabled=True,
                 ),
@@ -234,7 +234,7 @@ class ProviderBilling(unittest.TestCase):
             order=2,
             task_id="task",
             mode="natural",
-            arm="loom-scip",
+            arm="loom-scip-memory",
             index_tier="scip",
             memory_enabled=True,
         )
@@ -288,15 +288,17 @@ class ProviderBilling(unittest.TestCase):
     def test_memory_operations_require_enabled_tools_and_the_attempt_namespace(self):
         self.trace(operation="memory.set")
         slot = self.protocol["schedule"][1]
-        slot["memory_enabled"] = False
-        self.entries[1]["result"]["memory_enabled"] = False
+        slot.update(memory_enabled=False, arm="loom-treesitter")
+        self.protocol["attempt_scopes"]["1"]["memory_namespace"] = None
+        self.entries[1]["result"].update(memory_enabled=False, arm=slot["arm"])
         for entry in self.entries:
             entry["result"]["protocol_sha256"] = digest(self.protocol)
         receipt, loader = self.audit([])
         loader.assert_not_called()
         self.assertEqual(receipt["attempts"]["1"]["proof_status"], "unknown")
-        slot["memory_enabled"] = True
-        self.entries[1]["result"]["memory_enabled"] = True
+        slot.update(memory_enabled=True, arm="loom-treesitter-memory")
+        self.protocol["attempt_scopes"]["1"]["memory_namespace"] = "working-1"
+        self.entries[1]["result"].update(memory_enabled=True, arm=slot["arm"])
         for entry in self.entries:
             entry["result"]["protocol_sha256"] = digest(self.protocol)
         row = {**self.ledger(), "namespace": "working-1", "operation": "memory.set"}
@@ -329,7 +331,7 @@ class ProviderBilling(unittest.TestCase):
             order=2,
             task_id="task",
             mode="natural",
-            arm="loom-scip",
+            arm="loom-scip-memory",
             index_tier="scip",
             memory_enabled=True,
         )

@@ -256,6 +256,7 @@ class RuntimeBindings(unittest.TestCase):
 
         class Provider:
             label = "unit-offline"
+            model_id = self.protocol["model_id"]
 
             def step(self, *args):
                 marks.append("inference")
