@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -146,7 +147,7 @@ async def test_plain_audit_failure_does_not_acknowledge_write(
     monkeypatch.setattr(audit, "emit_strict", emit)
     w = _write(kind=kind, high=high)
     with pytest.raises(BackendUnavailableError) as error:
-        await set_commit._set_plain_insert(w, object())
+        await set_commit.finished(w, set_commit._set_plain_insert(w, object()))
     assert error.value.extra["operation"] == "memory.set.audit"
     assert error.value.extra["outcome_unknown"] is True
     assert "memory was written" in error.value.message
@@ -242,15 +243,14 @@ async def test_receipt_failure_waits_for_supersession_before_returning(plain, mo
     monkeypatch.setattr("server.memory.app.key_supersession.supersede_same_key_rows", supersede)
     monkeypatch.setattr(audit, "emit_strict", AsyncMock(side_effect=RuntimeError("unavailable")))
     task = asyncio.create_task(
-        set_commit._set_post_insert(
-            w.input,
-            ch=object(),
-            cfg=type("Config", (), {"policy": "auto_reinforce"})(),
-            memory_id=w.memory_id,
-            content_sha256=w.new_sha,
-            source_class=w.source_class,
-            verdict="",
-            actor=w.writer_actor,
+        set_commit.finished(
+            w,
+            set_commit._set_post_insert(
+                w,
+                ch=object(),
+                cfg=SimpleNamespace(policy="auto_reinforce"),
+                verdict="",
+            ),
         )
     )
     await entered.wait()
@@ -299,3 +299,69 @@ async def test_strict_receipt_uses_the_selected_store_and_waits_for_ack(monkeypa
     assert result == expected["row_hash"]
     assert stored[0][:2] == ("loom.audit_log", [expected])
     assert stored[0][2]["wait_for_async_insert"] == 1
+
+
+@pytest.mark.parametrize("cancel", [False, True])
+async def test_failed_receipt_still_retires_a_high_revisions_graph(plain, monkeypatch, cancel):
+    graph = {"edges": {"old public pair"}, "triples": {"old public fact"}}
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def receipt(**kwargs):
+        entered.set()
+        await release.wait()
+        raise TimeoutError("audit unavailable")
+
+    async def drop(*args, **kwargs):
+        graph["edges"].clear()
+
+    async def reconcile(*args, revised, **kwargs):
+        assert revised
+        graph["triples"].clear()
+
+    monkeypatch.setattr(audit, "emit_strict", receipt)
+    monkeypatch.setattr(set_commit, "drop_undeclared_edges_beside", drop)
+    monkeypatch.setattr(set_commit, "project_stated_relations", reconcile)
+    w = _write(kind="semantic", high=True)
+    w.had_existing_row = True
+    w.existing = SimpleNamespace(sensitivity="low", entities=[])
+    task = asyncio.create_task(set_commit.finished(w, set_commit._set_plain_insert(w, object())))
+    await entered.wait()
+    if cancel:
+        task.cancel()
+        await asyncio.sleep(0)
+        task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError if cancel else BackendUnavailableError):
+        await task
+    assert graph == {"edges": set(), "triples": set()}
+
+
+async def test_failed_receipt_still_reconciles_an_embedded_revisions_graph(plain, monkeypatch):
+    graph = {"old stated relation"}
+    w = _write(kind="semantic")
+    w.had_existing_row = True
+    plain[0].append(w.memory_row)
+
+    async def reconcile(*args, revised, **kwargs):
+        assert revised
+        graph.clear()
+
+    monkeypatch.setattr(audit, "emit_strict", AsyncMock(side_effect=TimeoutError("unavailable")))
+    monkeypatch.setattr(set_commit, "project_stated_relations", reconcile)
+    monkeypatch.setattr("server.memory.app.key_supersession.supersede_same_key_rows", AsyncMock())
+    monkeypatch.setattr(
+        "server.memory.app.set_chunks.write_set_chunks_fail_open", AsyncMock(return_value=0)
+    )
+    with pytest.raises(BackendUnavailableError):
+        await set_commit.finished(
+            w,
+            set_commit._set_after_write(
+                w,
+                object(),
+                SimpleNamespace(policy="auto_reinforce"),
+                SimpleNamespace(verdict="clear"),
+                "",
+                [],
+            ),
+        )
+    assert graph == set()

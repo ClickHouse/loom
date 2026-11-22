@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
-from server.core.ch import CHClient
+from server.core.ch import CHClient, get_client
 from server.core.datetimes import naive_utc_now
 from server.memory.app.retrieval.summaries import fetch_session_summaries
 from server.memory.domain.summary_provenance import render_summary
@@ -17,6 +17,15 @@ from server.memory.store import lifecycle
 from server.memory.store.lifecycle import bulk_tombstone_scope
 from server.memory.store.rows import MEMORY_PERSISTED_COLS, next_version
 from tests.integration._resources import minted_identity
+
+
+@pytest.fixture
+async def connected_blacklist_policy():
+    """Direct retrieval also reads the process's blacklist store."""
+    client = get_client()
+    await client.connect()
+    yield
+    await client.disconnect()
 
 
 def _memory(ch: Any, me: dict[str, str], key: str, **fields: Any) -> None:
@@ -88,7 +97,7 @@ async def test_file_context_excludes_a_fact_past_its_validity_end(
 
 
 async def test_session_summaries_inherit_known_source_state_and_version(
-    mint_test_token: Any, ch_client: Any
+    mint_test_token: Any, ch_client: Any, connected_blacklist_policy
 ) -> None:
     me = minted_identity(mint_test_token, "summary-sources")
     vector = [1.0] + [0.0] * 3071
@@ -447,7 +456,7 @@ async def test_a_lock_that_overtakes_clear_keeps_its_old_vector(
 
 
 async def test_nearest_stale_summary_does_not_hide_the_next_valid_digest(
-    mint_test_token: Any, ch_client: Any
+    mint_test_token: Any, ch_client: Any, connected_blacklist_policy
 ) -> None:
     me = minted_identity(mint_test_token, "summary-next")
     query = [1.0] + [0.0] * 3071

@@ -275,16 +275,15 @@ class _SetWrite:
     # or access change after its check sends it back to the check, whatever round it is in.
     policy: dict[tuple[str, str], int] = field(default_factory=dict)
     peer_rows: list[dict[str, Any]] | None = None
-    # A commit whose publication is left to the delivery worker: raised once the write's
-    # follow-ups (conflict marks, supersession, audit) ran.
-    pending: pg_lease.PublicationPending | None = None
+    # A committed write's publication or receipt failure, raised after its follow-ups.
+    pending: pg_lease.PublicationPending | BackendUnavailableError | None = None
     max_distance: float = 0.0
-    # ClickHouse acknowledged the row, before cancellable holder cleanup.
+    # The primary row was acknowledged, before cancellable follow-ups.
     inserted: bool = False
 
 
 async def settled[T](w: _SetWrite, step: Awaitable[T]) -> T:
-    """`step`'s result, or the commit's PublicationPending once it ran: a write whose
+    """`step`'s result, or the committed write's pending error once it ran: a write whose
     publication is pending answers so, and a follow-up that fails after such a commit
     does not hide that it committed."""
     try:
@@ -299,7 +298,7 @@ async def settled[T](w: _SetWrite, step: Awaitable[T]) -> T:
 
 
 async def finished[T](w: _SetWrite, step: Awaitable[T]) -> T:
-    """`settled`, then the commit's PublicationPending if its publication is pending."""
+    """`settled`, then the committed write's deferred error when one is pending."""
     out = await settled(w, step)
     if w.pending is not None:
         raise w.pending
@@ -509,6 +508,7 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
             with traced("pg.commit.memory"):
                 committed = await commit_set_rows(w, [memory_row], MEMORY_ROW | AUDIT_ROW)
             answer.mark_committed()
+            w.inserted = True
             try:
                 wait = not _answers_at_commit(w)
                 with traced("pg.publish", wait=wait):
@@ -522,15 +522,18 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
 
 
 async def _receipt_for_set(w: _SetWrite, ch: Any, verdict: str = "") -> None:
-    await _audit_set_receipt(
-        w.input,
-        ch=ch,
-        memory_id=w.memory_id,
-        content_sha256=w.new_sha,
-        source_class=w.source_class,
-        verdict=verdict,
-        actor=w.writer_actor or "-",
-    )
+    try:
+        await _audit_set_receipt(
+            w.input,
+            ch=ch,
+            memory_id=w.memory_id,
+            content_sha256=w.new_sha,
+            source_class=w.source_class,
+            verdict=verdict,
+            actor=w.writer_actor or "-",
+        )
+    except BackendUnavailableError as error:
+        w.pending = w.pending or error
 
 
 async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
@@ -538,7 +541,7 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
     from server.observability.otel import traced
 
     memory_row = w.memory_row
-    sent = inserted = False
+    sent = False
     version = int(memory_row["version"])
 
     def mark_sent() -> None:
@@ -546,8 +549,7 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
         sent = True
 
     def mark_inserted() -> None:
-        nonlocal inserted
-        inserted = True
+        w.inserted = True
 
     async def safety() -> None:
         nonlocal version
@@ -564,7 +566,7 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
                     [memory_row], ch=ch, on_send=mark_sent, on_inserted=mark_inserted
                 )
         finally:
-            if inserted:
+            if w.inserted:
                 await finish_followups(
                     _await_point_followups([_receipt_for_set(w, ch), safety()]),
                     name="memory.set.followups",
@@ -605,7 +607,31 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
     if not pg.enabled():  # under Postgres the commit orders the write after a delete
         await _lift_above_deletes(w, ch)
     high = memory_row.get("sensitivity") == "high"
-    version = await _land_plain_row(w, ch, high=high)
+    try:
+        version = await _land_plain_row(w, ch, high=high)
+    finally:
+        if w.inserted:
+            await finish_followups(_plain_graph_followups(w, ch), name="memory.set.graph")
+    # Non-searchable types skip the conflict check entirely, so there is no
+    # verdict to map: the insert always happened.
+    count_write(input.namespace, "updated" if had_existing_row else "created")
+    return MemorySetOutput(
+        retyped_from=retyped_from,
+        version=version,
+        pinned=input.pinned,
+        memory_id=memory_id,
+        content_sha256=new_sha,
+        namespace=input.namespace,
+        memory_key=input.memory_key,
+        degraded=_degradations.current(),
+    )
+
+
+async def _plain_graph_followups(w: _SetWrite, ch: Any) -> None:
+    """A receipt failure must not leave the previous value's graph live."""
+    input, memory_id, new_sha = w.input, w.memory_id, w.new_sha
+    memory_row, had_existing_row = w.memory_row, w.had_existing_row
+    high = memory_row.get("sensitivity") == "high"
     # A high row's value is never mined into the graph; the entities its writer declared
     # still project. Fenced on its value as `_set_post_insert` projects it: a revision
     # awaits it, a first write leaves it running beside the response.
@@ -633,19 +659,6 @@ async def _set_plain_insert(w: _SetWrite, ch: Any) -> MemorySetOutput:
         revised=had_existing_row,
         op="memory.set",
         ch=ch,
-    )
-    # Non-searchable types skip the conflict check entirely, so there is no
-    # verdict to map: the insert always happened.
-    count_write(input.namespace, "updated" if had_existing_row else "created")
-    return MemorySetOutput(
-        retyped_from=retyped_from,
-        version=version,
-        pinned=input.pinned,
-        memory_id=memory_id,
-        content_sha256=new_sha,
-        namespace=input.namespace,
-        memory_key=input.memory_key,
-        degraded=_degradations.current(),
     )
 
 
@@ -1120,20 +1133,14 @@ async def _set_after_write(
     from server.observability import degradations as _degradations
 
     input, retyped_from, version, memory_id = w.input, w.retyped_from, w.version, w.memory_id
-    new_sha, source_class, writer_actor = w.new_sha, w.source_class, w.writer_actor
+    new_sha = w.new_sha
     embedder, had_existing_row = w.embedder, w.had_existing_row
 
     await _set_post_insert(
-        input,
+        w,
         ch=ch,
         cfg=_cfg,
-        memory_id=memory_id,
-        content_sha256=new_sha,
-        source_class=source_class,
         verdict="duplicate" if duplicate_of_id else conflict_result.verdict,
-        actor=writer_actor or "-",
-        revised=had_existing_row,
-        follows=w.follows,
     )
     await project_stated_relations(
         w.memory_row,
@@ -1200,17 +1207,11 @@ def _same_key_batch(input: MemorySetInput, memory_id: str) -> list[dict[str, Any
 
 
 async def _set_post_insert(
-    input: MemorySetInput,
+    w: _SetWrite,
     *,
     ch: Any,
     cfg: Any,
-    memory_id: str,
-    content_sha256: str,
-    source_class: str,
     verdict: str,
-    actor: str,
-    revised: bool = False,
-    follows: list[Follow] | None = None,
 ) -> None:
     """What a committed point write does after its row is in.
 
@@ -1226,6 +1227,8 @@ async def _set_post_insert(
     from server.memory.app.key_supersession import supersede_same_key_rows
     from server.observability.otel import traced
 
+    input, memory_id = w.input, w.memory_id
+
     async def _supersession() -> None:
         batch = _same_key_batch(input, memory_id)
         await supersede_same_key_rows(
@@ -1233,24 +1236,16 @@ async def _set_post_insert(
             namespace=input.namespace,
             new_rows=batch,
             ch=ch,
-            follows=[] if follows is None else follows,
+            follows=w.follows,
             policy=cfg.policy,
             agent=input.agent,
         )
 
     tail = [
         _supersession(),
-        _audit_set_receipt(
-            input,
-            ch=ch,
-            memory_id=memory_id,
-            content_sha256=content_sha256,
-            source_class=source_class,
-            verdict=verdict,
-            actor=actor,
-        ),
+        _receipt_for_set(w, ch, verdict),
         *_entity_projection_tail(
-            input, memory_id=memory_id, content_sha256=content_sha256, revised=revised
+            input, memory_id=memory_id, content_sha256=w.new_sha, revised=w.had_existing_row
         ),
     ]
     with traced("memory.set.post_insert", concurrent=len(tail)):

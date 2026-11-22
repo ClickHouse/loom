@@ -10,8 +10,10 @@ from server.core.ch import get_client
 from server.core.errors import BackendUnavailableError
 from server.core.hashing import sha256_value
 from server.memory.api.models_crud import MemorySetInput
+from server.memory.app import after_write
 from server.memory.app.write import handle_memory_set
 from server.observability import audit
+from tests.integration._eventually import eventually
 from tests.integration._resources import unique_org
 
 
@@ -46,7 +48,12 @@ async def test_failed_receipt_reports_committed_memory_and_retry_recovers(
     token = mint_test_token(org=org, namespaces=["facts"], roles=["writer"])
     value = f"replacement content {uuid.uuid4().hex}"
     inp = MemorySetInput(
-        **identity, memory_type=kind, sensitivity="high" if high else "low", value=value
+        **identity,
+        memory_type=kind,
+        sensitivity="high" if high else "low",
+        value=value,
+        entities=["NewName"],
+        relations=[],
     )
     original = audit.emit_strict
 
@@ -58,18 +65,35 @@ async def test_failed_receipt_reports_committed_memory_and_retry_recovers(
     async with httpx.AsyncClient(
         base_url=control_plane_url, headers={"Authorization": f"Bearer {token}"}, timeout=120
     ) as client:
+        graph_seed = (
+            {
+                "value": "OldName works with OtherName",
+                "entities": ["OldName", "OtherName"],
+                "relations": [["OldName", "works_with", "OtherName"]],
+            }
+            if kind == "semantic"
+            else {"value": "old public content"}
+        )
         seed = await client.post(
             "/v1/memory.set",
             json={
                 **identity,
                 "memory_type": kind,
-                "value": "old public content",
+                **graph_seed,
             },
         )
         assert seed.status_code == 200, seed.text
+        if kind == "semantic":
+
+            async def seeded():
+                counts = await graph_counts(connected, org)
+                return counts if counts["edges"] and counts["triples"] else None
+
+            await eventually(seeded, description="the seeded row's graph facts")
         monkeypatch.setattr(audit, "emit_strict", unavailable)
         if pg.enabled():
             await native_receipt_survives_optional_emit_failure(inp)
+            await after_write.drain(timeout_s=60)
             return
         with pytest.raises(BackendUnavailableError) as error:
             await handle_memory_set(inp)
@@ -79,6 +103,12 @@ async def test_failed_receipt_reports_committed_memory_and_retry_recovers(
         current = await client.post("/v1/memory.get", json=identity)
         assert current.status_code == 200, current.text
         assert current.json()["found"] and current.json()["value"] == value
+        await after_write.drain(timeout_s=60)
+        if kind == "semantic":
+            counts = await graph_counts(connected, org)
+            assert counts["triples"] == 0
+            if high:
+                assert counts["edges"] == 0
         if high:
             assert (
                 await connected.query_all(
@@ -113,3 +143,13 @@ async def native_receipt_survives_optional_emit_failure(inp):
         out.content_sha256,
     )
     assert rows and all(row["kind"] == "memory.revision" and len(row["hash"]) == 64 for row in rows)
+
+
+async def graph_counts(ch, org):
+    return await ch.query_one(
+        "SELECT (SELECT count() FROM loom.entity_edges WHERE org={org:String} "
+        "AND namespace='facts' AND valid_to IS NULL AND invalid_at IS NULL) AS edges, "
+        "(SELECT count() FROM loom.entity_triples WHERE org={org:String} "
+        "AND namespace='facts' AND valid_to IS NULL AND invalid_at IS NULL) AS triples",
+        params={"org": org},
+    )

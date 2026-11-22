@@ -116,16 +116,23 @@ def _set_input(value: str = "Alice deploys Project Phoenix on Tuesday") -> Any:
 async def _post_insert(
     value: str = "Alice deploys Project Phoenix on Tuesday", revised: bool = False
 ) -> None:
+    w = set_commit._SetWrite(
+        input=_set_input(value),
+        version=1,
+        retyped_from="",
+        existing=None,
+        expires_at=None,
+        memory_id="m1",
+        new_sha="sha",
+        source_class="asserted",
+        writer_actor="u",
+        had_existing_row=revised,
+    )
     await set_commit._set_post_insert(
-        _set_input(value),
+        w,
         ch=object(),
         cfg=type("Cfg", (), {"policy": "newest_wins"})(),
-        memory_id="m1",
-        content_sha256="sha",
-        source_class="asserted",
         verdict="clear",
-        actor="u",
-        revised=revised,
     )
 
 
