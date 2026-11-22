@@ -84,6 +84,26 @@ class RetrievalTools(unittest.TestCase):
 
         self.assertNotIn("symbol_tokens", asdict(Budget()))
 
+    def test_selected_grep_passes_the_explicit_regex_flag_without_identity_overrides(self):
+        requests = []
+        original = self.context.backend.request
+
+        def record(op, body):
+            requests.append((op, dict(body)))
+            receipt = original(op, body)
+            receipt["data"] = {"matches": []}
+            return receipt
+
+        self.context.backend.request = record
+        result = self.context.selected("code.grep", {"pattern": "foo|bar", "regex": True})
+        self.assertEqual(result["matches"], [])
+        self.assertTrue(requests[0][1]["regex"])
+        with self.assertRaises(ValueError):
+            self.context.selected(
+                "code.grep", {"pattern": "foo|bar", "regex": True, "namespace": "foreign"}
+            )
+        self.assertEqual(len(requests), 1)
+
     def test_only_explicit_model_reads_can_dispatch(self):
         self.assertFalse(hasattr(self.context, "lookup"))
         self.assertEqual(self.context.requests, 0)

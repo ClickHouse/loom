@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+from itertools import islice
 from pathlib import Path
 
 from examples.software_factory.factory.model import Task, digest
@@ -69,6 +70,39 @@ class Checkout:
 
     def state(self) -> str:
         return digest(self.files())
+
+    def search(
+        self, text: str, path_prefix: str = "", offset: int = 0, regex: bool = False
+    ) -> dict:
+        if not isinstance(text, str) or not text:
+            raise ValueError("Search text must be nonempty")
+        if not isinstance(path_prefix, str) or type(regex) is not bool:
+            raise ValueError("Search requires a text path_prefix and boolean regex")
+        if type(offset) is not int or offset < 0:
+            raise ValueError("Search offset must be a nonnegative integer")
+        # Match the native grep engine without unbounded backtracking on caller patterns.
+        if regex:
+            import re2
+
+            options = re2.Options()
+            options.log_errors = False
+            compiled = re2.compile(text, options=options)
+        else:
+            compiled = None
+        matches = (
+            {"path": path, "line": index, "text": line[:512]}
+            for path, content in self.readable_files().items()
+            if path.startswith(path_prefix)
+            for index, line in enumerate(content.splitlines(), 1)
+            if (compiled.search(line) is not None if compiled is not None else text in line)
+        )
+        page = list(islice(matches, offset, offset + 21))
+        more = len(page) > 20
+        return {
+            "matches": page[:20],
+            "has_more": more,
+            "next_offset": offset + 20 if more else None,
+        }
 
     def edit(self, path: str, old: str, new: str) -> dict:
         if path not in self.original:

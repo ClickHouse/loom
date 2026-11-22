@@ -24,6 +24,11 @@ All five optional code reads request lessons from the attempt's bound memory sco
 including `code.enclosing`. The memory audit checks the same scope on every code
 read. Cold and history-seeded arms have identical tool schemas.
 
+Ordinary search is available to every arm with optional RE2 regular expressions,
+literal matching by default, path prefixes and result pagination. Optional Loom
+grep accepts the same `regex` flag. Both tools document RE2 alternation syntax.
+The standalone controller pins the engine alongside its evaluation dependencies.
+
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
 It reconstructs its own checkout and overlays only those implementation files.

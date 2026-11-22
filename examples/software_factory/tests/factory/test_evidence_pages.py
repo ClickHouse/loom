@@ -50,6 +50,31 @@ class EvidencePages(unittest.TestCase):
         self.assertFalse(second["has_more"])
         self.assertNotEqual(first["matches"][0], second["matches"][0])
 
+    def test_ordinary_regex_search_is_available_to_the_baseline_with_paging(self):
+        arguments = {"text": r"^# needle \d+$", "regex": True, "path_prefix": "src/"}
+        first = self.factory.execute("search", arguments)
+        second = self.factory.execute("search", {**arguments, "offset": first["next_offset"]})
+        self.assertEqual(len(first["matches"]), 20)
+        self.assertEqual(len(second["matches"]), 20)
+        self.assertFalse(second["has_more"])
+        self.assertEqual(self.factory.execute("search", {"text": arguments["text"]})["matches"], [])
+        result = self.factory.execute(
+            "search", {"text": r"^# needle (?:0|2[0-9])$", "regex": True, "path_prefix": "src/"}
+        )
+        self.assertEqual(len(result["matches"]), 11)
+        docs = self.factory.execute(
+            "search", {"text": "teardown|missing", "regex": True, "path_prefix": "docs/"}
+        )
+        self.assertEqual([row["path"] for row in docs["matches"]], ["docs/lifecycle.rst"])
+
+    def test_ordinary_regex_refuses_unsupported_syntax_and_non_boolean_flags(self):
+        import re2
+
+        with self.assertRaises(re2.error):
+            self.factory.execute("search", {"text": "(?<=needle) value", "regex": True})
+        with self.assertRaises(ValueError):
+            self.factory.execute("search", {"text": "needle", "regex": "false"})
+
     def test_partial_long_line_can_be_read_without_losing_characters(self):
         first = self.factory.execute("read", {"path": self.path})
         self.assertTrue(first["truncated"])

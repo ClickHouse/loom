@@ -130,9 +130,15 @@ def tool_schemas(
         ),
         tool(
             "search",
-            "Find literal repository text. Narrow path_prefix when useful; "
+            "Find repository text (literal by default, RE2 when regex=true). "
+            "Use | for alternation. Narrow path_prefix when useful; "
             "follow next_offset for more matches.",
-            {"text": string, "path_prefix": string, "offset": {"type": "integer", "minimum": 0}},
+            {
+                "text": string,
+                "path_prefix": string,
+                "regex": {"type": "boolean"},
+                "offset": {"type": "integer", "minimum": 0},
+            },
             ["text"],
         ),
         tool(

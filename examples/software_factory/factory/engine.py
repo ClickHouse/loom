@@ -6,7 +6,7 @@ import copy
 import hashlib
 import json
 import time
-from itertools import count, islice
+from itertools import count
 from pathlib import Path
 
 from examples.software_factory.factory.model import (
@@ -196,28 +196,7 @@ class Factory:
                 "next_start_column": next_column if more else None,
             }
         if name == "search":
-            if not args["text"]:
-                raise ValueError("Search text must be nonempty")
-            prefix = args.get("path_prefix", "")
-            if not isinstance(prefix, str):
-                raise ValueError("Search path_prefix must be text")
-            offset = args.get("offset", 0)
-            if type(offset) is not int or offset < 0:
-                raise ValueError("Search offset must be a nonnegative integer")
-            matches = (
-                {"path": p, "line": i, "text": line[:512]}
-                for p, s in self.checkout.readable_files().items()
-                if p.startswith(prefix)
-                for i, line in enumerate(s.splitlines(), 1)
-                if args["text"] in line
-            )
-            page = list(islice(matches, offset, offset + 21))
-            more = len(page) > 20
-            return {
-                "matches": page[:20],
-                "has_more": more,
-                "next_offset": offset + 20 if more else None,
-            }
+            return self.checkout.search(**args)
         if name == "edit":
             return self.checkout.edit(**args)
         if name == "test":

@@ -8,7 +8,12 @@ from examples.software_factory.factory.retrieval_tools import request_body as co
 def requests():
     code = {
         "code.symbol": {"name": "qualification"},
-        "code.grep": {"pattern": "qualification", "path_prefix": "pkg/", "cursor": ""},
+        "code.grep": {
+            "pattern": "qualification",
+            "path_prefix": "pkg/",
+            "regex": True,
+            "cursor": "",
+        },
         "code.search": {"query": "qualification", "path_prefix": "pkg/", "cursor": ""},
         "code.outline": {"path": "pkg/source.py"},
         "code.enclosing": {"locations": ["pkg/source.py:1"]},

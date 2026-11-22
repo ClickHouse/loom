@@ -40,9 +40,15 @@ def schemas() -> list[dict]:
         ),
         tool(
             "loom_code_grep",
-            "Find literal source lines, including imports. Narrow path_prefix when a file is "
+            "Find source lines (literal by default, RE2 when regex=true), including imports. "
+            "Use | for alternation. Narrow path_prefix when a file is "
             "known; follow next_cursor with cursor for more matches.",
-            {"pattern": string, "path_prefix": string, "cursor": string},
+            {
+                "pattern": string,
+                "path_prefix": string,
+                "regex": {"type": "boolean"},
+                "cursor": string,
+            },
             ["pattern"],
         ),
         tool(
@@ -131,7 +137,7 @@ class QualifiedContext(Context):
         # The model cannot supply identity, index scope, provider or history settings.
         allowed = {
             "code.symbol": {"name"},
-            "code.grep": {"pattern", "path_prefix", "cursor"},
+            "code.grep": {"pattern", "path_prefix", "regex", "cursor"},
             "code.search": {"query", "path_prefix", "cursor"},
             "code.outline": {"path"},
             "code.enclosing": {"locations"},
