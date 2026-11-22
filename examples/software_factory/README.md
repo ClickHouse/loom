@@ -42,8 +42,7 @@ cost combines solver and Loom usage; setup and posthoc judging stay separate.
 Infrastructure and invoice reconciliation are outside that cost measure.
 
 The launcher automates dependencies, isolated services, indexes, historical
-memory and native Harbor jobs. Runs have no dollar cap unless `--budget-usd` is
-supplied. Harbor does not retry failed trials. Explicit resume preserves frozen
+memory and native Harbor jobs. Native coding runs have no dollar cap; capped launches are refused. Harbor does not retry failed trials. Explicit resume preserves frozen
 inputs and refuses interrupted paid requests that need reconciliation:
 
 ```bash

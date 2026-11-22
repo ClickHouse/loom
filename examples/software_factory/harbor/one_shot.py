@@ -93,6 +93,31 @@ def profile_for(source_root: Path, identifier: str):
     return load_profile({"suite": {"adapter": descriptor["adapter"]}})
 
 
+def spending_summary(meter, output):
+    """Keep native solver cost separate from metered setup, Loom and judge traffic."""
+    gateway = meter.summary()
+    path = output / "study/live-attempts.json"
+    entries = read(path) if path.exists() else []
+    costs = [entry["result"].get("generation_cost_usd") for entry in entries]
+    known = [value for value in costs if type(value) in (int, float)]
+    protocol = output / "study/protocol.json"
+    expected = len(read(protocol)["schedule"]) if protocol.exists() else None
+    complete = expected is not None and len(costs) == expected and len(known) == expected
+    return {
+        "metered_setup_loom_judging": gateway,
+        "native_solver": {
+            "observed_attempts": len(costs),
+            "expected_attempts": expected,
+            "known_cost_attempts": len(known),
+            "observed_known_cost_usd": sum(known),
+            "complete": complete,
+        },
+        "total_provider_cost_usd": gateway["spent_usd"] + sum(known)
+        if complete and gateway["complete"]
+        else None,
+    }
+
+
 def execute(args):
     from . import study
 
@@ -248,7 +273,7 @@ def execute(args):
             "owner": args.owner,
             "profile": args.eval,
             "protocol": str(protocol_path),
-            "spending": meter.summary(),
+            "spending": spending_summary(meter, output),
             "report": str(output / "study/reports/REPORT.md"),
         }
         write(output / "evaluation.json", summary)
@@ -256,7 +281,7 @@ def execute(args):
     finally:
         try:
             try:
-                write(output / "spending-summary.json", meter.summary())
+                write(output / "spending-summary.json", spending_summary(meter, output))
             finally:
                 if runtime is not None:
                     write(output / "cleanup-receipt.json", runtime.cleanup())

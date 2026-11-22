@@ -17,11 +17,25 @@ def token_variable(order: int) -> str:
 def agent_settings(protocol: dict, slot: dict) -> str:
     settings = '[agent]\ntimeout_sec = inf\nuser = "agent"\n'
     if slot["mode"] == "baseline":
-        return settings + 'network_mode = "no-network"\n'
-    hostname = urlsplit(protocol["loom_url"]).hostname
-    if not hostname:
-        raise ValueError("Native MCP requires an explicit Loom hostname")
-    return settings + 'network_mode = "allowlist"\nallowed_hosts = ' + json.dumps([hostname]) + "\n"
+        settings += 'network_mode = "no-network"\n'
+    else:
+        hostname = urlsplit(protocol["loom_url"]).hostname
+        if not hostname:
+            raise ValueError("Native MCP requires an explicit Loom hostname")
+        settings += 'network_mode = "allowlist"\nallowed_hosts = ' + json.dumps([hostname]) + "\n"
+    settings += "[agent.env]\n"
+    settings += "".join(
+        name + ' = ""\n'
+        for name in (
+            "HTTPS_PROXY",
+            "HTTP_PROXY",
+            "ALL_PROXY",
+            "https_proxy",
+            "http_proxy",
+            "all_proxy",
+        )
+    )
+    return settings
 
 
 def mcp_settings(protocol: dict, slot: dict) -> str:

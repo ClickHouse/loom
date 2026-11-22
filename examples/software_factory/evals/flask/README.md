@@ -24,10 +24,9 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --ou
 The launcher prepares isolated services, source indexes, dependency images and
 verifiers. Three repeats across five arms produce 45 primary attempts. Six
 separate baseline A/A controls produce 51 total attempts. Twelve blind fixed-only
-judgments use the same Haiku 5.5 model. Retries are disabled. Every attempt is fresh.
-Every arm receives the same final contract-review pass over its consolidated
-candidate diff. Review calls and any subsequent revision remain in the measured
-attempt; no hidden-test feedback enters the review.
+judgments use the same Sonnet 5.5 model. Harbor retries are disabled. Each attempt
+uses a fresh native Claude Code session. Claude chooses when to stop; no extra
+review turn is supplied by the evaluator.
 
 ## Historical knowledge
 
@@ -57,9 +56,9 @@ source revision is added to the task set.
 ## Verification and reporting
 
 The model sees the public issue and can list, read and search the public
-base-revision implementation, docs, examples and test sources. Only implementation
-source is editable. It can run visible checks, including its own regression tests.
-Reference patches, Git objects and evaluator inputs stay outside its tools.
+base-revision implementation, docs, examples and test sources. Claude can edit and test its ordinary checkout. Only implementation changes
+are submitted for hidden grading. Reference patches, future Git history and
+evaluator inputs stay outside its environment.
 The independent hidden verifier decides success. Full-suite regressions and the
 blind judge are separate measurements; authored tests do not establish success.
 

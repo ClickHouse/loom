@@ -96,7 +96,7 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=None):
                     raise ValueError("Baseline exposure is unknown")
                 rows, written = [], 0
             else:
-                if saved:
+                if saved and str(order) in saved["attempts"]:
                     observed = saved["attempts"][str(order)]
                 else:
                     observed = (ledger_loader or load_ledger)(protocol, binding)
@@ -145,7 +145,7 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=None):
             proof["reason"] = type(error).__name__
         proofs[str(order)] = proof
     ledger = {"protocol_sha256": digest(protocol), "attempts": queries}
-    if not saved:
+    if not saved or saved != ledger:
         write(saved_path, ledger)
     receipt = {
         "protocol_sha256": digest(protocol),

@@ -26,5 +26,5 @@ class NativeTreatment(TestCase):
             settings = tomllib.loads(agent_settings(protocol, slot))["agent"]
             self.assertEqual(settings["user"], "agent")
             self.assertEqual(
-                set(settings) - {"network_mode", "allowed_hosts"}, {"user", "timeout_sec"}
+                set(settings) - {"network_mode", "allowed_hosts"}, {"user", "timeout_sec", "env"}
             )

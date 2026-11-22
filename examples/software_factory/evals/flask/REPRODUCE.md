@@ -12,8 +12,7 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --ou
 
 Use a fresh output directory. Model changes define separate cohorts; compare arms within
 one cohort, and retain results from earlier models. The default model is `claude-sonnet-5-5` for the solver,
-native model-backed operations and blind judge. Runs have no dollar cap unless
-`--budget-usd` is supplied. An interrupted phase refuses automatic replay;
+native model-backed operations and blind judge. Native coding runs have no dollar cap; capped launches are refused. An interrupted phase refuses automatic replay;
 inspect retained receipts before explicit resume or cleanup:
 
 ```bash

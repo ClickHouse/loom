@@ -508,6 +508,8 @@ def output_lock(output):
 
 
 def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="flask"):
+    if amount is not None:
+        raise LaunchError("Native coding evaluations run without a spending cap")
     docker = docker or Docker()
     requested = Path(output).absolute()
     if requested.is_symlink():
