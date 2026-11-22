@@ -190,7 +190,12 @@ class CodeUnit(BaseModel):
 
 def _without_repeated_context(unit: CodeUnit) -> CodeUnit:
     """Keep retrieval context unless its entire text already occurs in the source."""
-    if unit.kind != "function" or unit.start_line < 1 or not unit.body:
+    if (
+        unit.kind != "function"
+        or unit.granularity != "unit"
+        or unit.start_line < 1
+        or not unit.body
+    ):
         return unit
     lines = retained_source_lines(
         {"content": unit.body, "start_line": unit.start_line, "end_line": unit.end_line}

@@ -48,3 +48,13 @@ def test_unmapped_source_keeps_its_presentation(mapping: dict) -> None:
     content = 'Build the route.\ndef route():\n    """Build the route."""\n'
     served, _ = budget_units([unit_from_chunk({**mapping, "content": content})], 0)
     assert served[0].body == content
+
+
+@pytest.mark.parametrize("granularity", ["file", "skeleton", "card"])
+def test_an_expanded_body_is_not_mapped_as_a_source_chunk(granularity: str) -> None:
+    content = 'Build the route.\ndef route():\n    """Build the route."""\n'
+    unit = unit_from_chunk(
+        {"kind": "function", "start_line": 1, "end_line": 2, "content": content}
+    ).model_copy(update={"granularity": granularity})
+    served, _ = budget_units([unit], 0)
+    assert served[0].body == content
