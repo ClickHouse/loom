@@ -191,7 +191,12 @@ def test_coding_descriptions_derive_from_the_core_texts():
     # Memory.pin and working_memory.append are not on the coding
     # listing, so they have no coding texts
     # Blast radius has a coding-tier text (the paging detail stays on qa/all)
-    assert set(CODING_TOOL_DESCRIPTIONS) == {"memory.set", "loom_activate", "code.impact"}
+    assert set(CODING_TOOL_DESCRIPTIONS) == {
+        "memory.set",
+        "loom_activate",
+        "code.impact",
+        "context.pack",
+    }
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
@@ -443,7 +448,7 @@ def test_the_primer_marks_each_unlisted_op_once_and_outside_parentheses(toolset:
 def test_the_primers_say_loom_search_reads_collections() -> None:
     full = mcp_primer._loom_rules("core", None)
     assert "and the collections you can read" in full
-    coding = mcp_primer._coding_instructions("coding")
+    coding = mcp_primer._coding_instructions("coding", {"namespace": "project"})
     assert "also reads the collections you can read" in coding
 
 
@@ -461,13 +466,12 @@ def test_the_primers_drop_the_collections_clause_when_search_does_not_span_them(
     assert "and the collections you can read" in full
 
 
-def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
-    """The coding instructions, the full primer and context.pack's description name the
-    first step and its one exception (`FIRST_STEP_HOOK`); the full primer keeps the
-    one-fact search, and the generated reference's summary keeps the exception."""
+def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -> None:
+    """A default memory workspace enables the task pack; the full primer and the
+    generated tool summary keep the hook exception and the one-fact search."""
     from scripts.codegen.page_summary import first_sentence  # the docs generator, kept lazy
 
-    coding = mcp_primer._coding_instructions("coding")
+    coding = mcp_primer._coding_instructions("coding", {"namespace": "project"})
     assert "First step of each task: call `loom_context_pack` with the task as `query`" in coding
     assert f"Skip it when {FIRST_STEP_HOOK}." in coding
     rules = mcp_primer._loom_rules("core", None)
@@ -484,3 +488,36 @@ def test_every_primer_and_the_tool_make_context_pack_the_first_step() -> None:
         f"unless {FIRST_STEP_HOOK}."
     )
     assert summary.endswith(f"unless {FIRST_STEP_HOOK}.")
+
+
+def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
+    coding = mcp_primer._coding_instructions("coding")
+    for name, purpose in (
+        ("loom_code_symbol", "for a named definition"),
+        ("loom_code_search", "for a concept"),
+        ("loom_code_grep", "for exact text or an error"),
+        ("loom_code_callers", "for callers"),
+        ("loom_code_impact", "for change effects"),
+        ("loom_code_context_pack", "for a task briefing"),
+    ):
+        assert f"`{name}` {purpose}" in coding
+    assert "ToolSearch" in coding
+    assert "linked lessons" in coding
+    assert "uncommitted or unindexed" in coding
+    assert "current context already answers" in coding
+
+
+@pytest.mark.parametrize("defaults", [None, {"namespace": ""}])
+def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(defaults) -> None:
+    coding = mcp_primer._coding_instructions("coding", defaults)
+    assert "loom_code_context_pack" in coding
+    assert "First step of each task" not in coding
+    assert "Recall before answering from memory" in coding
+
+
+def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
+    tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
+    description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
+    assert "call it first when a default memory namespace exists" in description
+    assert "call it first in each task" not in description
+    assert "Pass the task as `query`" in description
