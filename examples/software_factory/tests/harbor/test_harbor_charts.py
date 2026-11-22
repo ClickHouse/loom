@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from examples.software_factory.harbor.charts import METRICS, chart_data, generate_charts
+from examples.software_factory.harbor.charts import (
+    METRICS,
+    chart_data,
+    generate_charts,
+    paired_orders,
+)
 
 
 class HarborCharts(unittest.TestCase):
@@ -196,6 +201,39 @@ class HarborCharts(unittest.TestCase):
         self.assertEqual(data["run_status"], "grading")
         self.views["evaluation_complete"] = True
         self.assertEqual(chart_data(self.protocol, entries, self.views)["run_status"], "complete")
+
+    def test_comparison_requires_every_arm_in_the_same_task_and_repeat(self):
+        arms = list(self.views["views"])
+        rows = [
+            dict(order=i, task="one", repeat=0, arm=arm, state="complete", resolved=i != 0)
+            for i, arm in enumerate(arms)
+        ]
+        self.assertEqual(paired_orders(rows, arms), set(range(5)))
+        incomplete = copy.deepcopy(rows)
+        incomplete[-1]["state"] = "pending"
+        self.assertEqual(paired_orders(incomplete, arms), set())
+        incomplete[-1]["state"] = "error"
+        self.assertEqual(paired_orders(incomplete, arms), set())
+        different_repeat = copy.deepcopy(rows)
+        different_repeat[-1]["repeat"] = 1
+        self.assertEqual(paired_orders(different_repeat, arms), set())
+        self.assertEqual(paired_orders(rows + [copy.deepcopy(rows[0])], arms), set())
+        self.assertFalse(rows[0]["resolved"])
+
+    def test_raw_attempts_remain_visible_while_only_complete_blocks_are_compared(self):
+        entries = [
+            {"order": slot["order"], "result": copy.deepcopy(self.entries[0]["result"])}
+            for slot in self.protocol["schedule"][:5]
+        ]
+        entries[1]["result"]["resolved"] = False
+        data = chart_data(self.protocol, entries[:-1], self.views)
+        self.assertEqual(data["observed"], 4)
+        self.assertFalse(any(row["comparison_included"] for row in data["attempts"]))
+        self.assertEqual(data["attempts"][0]["cost"], 0.02)
+        data = chart_data(self.protocol, entries, self.views)
+        self.assertTrue(all(row["comparison_included"] for row in data["attempts"]))
+        self.assertFalse(data["attempts"][1]["resolved"])
+        self.assertFalse(data["complete"])
 
     def test_public_titles_cannot_close_the_embedded_json_script(self):
         public = self.root / "public.json"

@@ -99,9 +99,10 @@ function headings(id, cells) {
   for (const text of cells) row.append(node("th", text));
   byId(id).replaceChildren(row);
 }
-function summary(rows) {
+function summary(rows, plannedRows) {
   const cost = costMetric(rows),
     time = timeMetric();
+  const empty = plannedRows.some((row) => row.state === "complete") ? "Awaiting pairs" : empty;
   headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title]);
   const body = byId("summary-body");
   body.replaceChildren();
@@ -109,51 +110,62 @@ function summary(rows) {
     const observed = rows.filter((row) => row.arm === arm && row.state === "complete");
     const tried = new Set(observed.map((row) => row.task));
     const solved = new Set(observed.filter((row) => row.resolved === true).map((row) => row.task));
-    const planned = new Set(rows.filter((row) => row.arm === arm).map((row) => row.task));
+    const planned = new Set(plannedRows.filter((row) => row.arm === arm).map((row) => row.task));
     const row = node("tr");
     row.append(node("th", labelFor(arm)));
-    const issues = node("td", tried.size ? `${solved.size} / ${tried.size} tried` : "Not run", "numeric");
+    const issues = node("td", tried.size ? `${solved.size} / ${tried.size} tried` : empty, "numeric");
     if (tried.size < planned.size) issues.append(node("small", `${planned.size} issues scheduled`));
     row.append(
       issues,
       node(
         "td",
-        observed.length ? `${observed.filter((x) => x.resolved === true).length} / ${observed.length}` : "Not run",
+        observed.length ? `${observed.filter((x) => x.resolved === true).length} / ${observed.length}` : empty,
         "numeric",
       ),
     );
     for (const metric of [cost, time]) {
       const value = aggregate(rows, arm, metric);
-      const cell = node("td", value.n ? format(value.value, metric.kind) : "Not run", "numeric");
+      const cell = node("td", value.n ? format(value.value, metric.kind) : empty, "numeric");
       if (value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
       row.append(cell);
     }
     body.append(row);
   }
-  const partial = !data.complete || !matched(rows) || data.run_status === "interrupted" || data.run_status === "failed";
+  const partial = !data.complete || rows.length !== plannedRows.length || !matched(rows);
+  const blocks = new Set(rows.map((row) => `${row.task}:${row.repeat}`)).size;
+  const plannedBlocks = new Set(plannedRows.map((row) => `${row.task}:${row.repeat}`)).size;
+  const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
   byId("comparison-note").textContent =
+    `Comparing ${blocks} of ${plannedBlocks} issue/repeat blocks: ${blocks} matched attempts per arm. ` +
+    "Only blocks graded in all five arms contribute; failed hidden tests remain included. " +
+    `${waiting} completed attempt(s) await matching arms and remain in progress totals and individual records. ` +
     (partial
-      ? "Partial results. Issue coverage and repeat counts can differ between arms; these means do not establish a winner. "
-      : "Matched issues and repeats. Means describe this run; A/A controls show run-to-run variation. ") +
+      ? "Partial comparison; the remaining blocks can change the result. "
+      : "All planned blocks are matched. A/A controls show variation. ") +
     (cost.key === "generation_cost"
       ? "Costs below are solver-only; the combined provider-cost audit is not complete."
       : "Costs include solver and matched Loom provider charges. Infrastructure and judge costs are separate.");
 }
-function issuesTable(rows) {
+function issuesTable(rows, plannedRows) {
   headings("issues-heading", ["Issue", ...arms.map(labelFor)]);
   const body = byId("issues-body");
   body.replaceChildren();
-  for (const task of [...new Set(rows.map((row) => row.task))].sort()) {
+  for (const task of [...new Set(plannedRows.map((row) => row.task))].sort()) {
     const row = node("tr"),
       title = node("th", data.titles[task] || task, "issue-title");
     title.append(node("div", task, "status"));
     row.append(title);
+    const empty = plannedRows.some((entry) => entry.task === task && entry.state === "complete")
+      ? "Awaiting pairs"
+      : "Not run";
     for (const arm of arms) {
       const completed = rows.filter((entry) => entry.task === task && entry.arm === arm && entry.state === "complete");
-      const errors = rows.filter((entry) => entry.task === task && entry.arm === arm && entry.state === "error").length;
+      const errors = plannedRows.filter(
+        (entry) => entry.task === task && entry.arm === arm && entry.state === "error",
+      ).length;
       const cell = node(
         "td",
-        completed.length ? `${completed.filter((x) => x.resolved === true).length} / ${completed.length}` : "Not run",
+        completed.length ? `${completed.filter((x) => x.resolved === true).length} / ${completed.length}` : empty,
         "numeric",
       );
       if (errors) cell.append(node("small", `${errors} not graded`));
@@ -162,7 +174,7 @@ function issuesTable(rows) {
     body.append(row);
   }
 }
-function chart(rows) {
+function chart(rows, plannedRows) {
   const key = byId("chart-metric").value;
   const metric =
     key === "cost"
@@ -176,6 +188,7 @@ function chart(rows) {
     metric.kind === "rate"
       ? 1
       : data.complete &&
+          rows.length === plannedRows.length &&
           matched(rows) &&
           data.run_status !== "interrupted" &&
           data.run_status !== "failed" &&
@@ -245,6 +258,7 @@ function attemptsTable(rows) {
     "Arm",
     "Status",
     "Hidden tests",
+    "Comparison",
     cost.title,
     time.title,
     "Loom calls",
@@ -262,6 +276,7 @@ function attemptsTable(rows) {
       labelFor(row.arm),
       row.state === "complete" ? "Completed" : row.state === "error" ? "Error / not graded" : "Not run",
       row.state === "complete" ? (row.resolved ? "Pass" : "Fail") : "Not graded",
+      row.comparison_included ? "Matched" : "Awaiting matching arms",
       format(row[cost.key], "cost"),
       format(row[time.key], "time"),
       format(row.loom_tool_calls, "count"),
@@ -281,7 +296,8 @@ function attemptsTable(rows) {
 }
 function render() {
   const rows = selected(),
-    complete = rows.filter((row) => row.state === "complete");
+    complete = rows.filter((row) => row.state === "complete"),
+    paired = rows.filter((row) => row.comparison_included);
   const status = data.run_status || (data.complete ? (data.evaluation_complete ? "complete" : "grading") : "partial");
   byId("run-status").textContent =
     {
@@ -304,13 +320,19 @@ function render() {
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;
   byId("progress").textContent = `${complete.length} / ${rows.length}`;
   byId("error-count").textContent = rows.filter((row) => row.state === "error").length;
-  const comparison = reportLink(data.comparison_url);
+  const comparison = data.complete && paired.length === rows.length ? reportLink(data.comparison_url) : null;
   byId("comparison").hidden = !comparison;
   if (comparison) byId("comparison").href = comparison;
-  summary(rows);
-  issuesTable(rows);
-  chart(rows);
-  extraMetrics(rows);
+  summary(paired, rows);
+  issuesTable(paired, rows);
+  chart(paired, rows);
+  extraMetrics(paired);
+  const observed = rows.filter((row) => row.state !== "pending");
+  const knownSpend = observed.every((row) => finite(row.generation_cost));
+  const spend = knownSpend && observed.length ? observed.reduce((sum, row) => sum + row.generation_cost, 0) : null;
+  byId("spend-progress").textContent =
+    `Solver spend across all observed primary attempts: ${format(spend, "cost")}. ` +
+    "This includes unmatched attempts; the comparison table uses matched attempts only. A/A controls, setup and judging are separate.";
   attemptsTable(rows);
   const group = data.cohorts.groups[byId("cohort").value];
   byId("study-disclosure").textContent = [

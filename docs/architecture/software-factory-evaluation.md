@@ -132,3 +132,9 @@ The profile lock pins the solver and blind-judge model for every arm. The shared
 ledger prices that model and the resolved deployment model separately, including
 cache writes and reads. Unknown models refuse dispatch. A model change starts a
 new cohort; reports do not pool results across models.
+
+Live comparison means use only issue/repeat blocks with one graded attempt in
+every primary arm. Failed hidden tests stay in those blocks. Pending or ungraded
+blocks do not contribute partial means; their attempts and spend remain in raw
+progress and individual records. Issue and repeat filters preserve the same
+comparison set across arms. Final target claims require the complete cohort.

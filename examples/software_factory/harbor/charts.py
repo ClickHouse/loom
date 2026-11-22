@@ -50,6 +50,22 @@ def number(value):
     return value if type(value) in {int, float} and math.isfinite(value) and value >= 0 else None
 
 
+def paired_orders(rows, arms):
+    """Compare a task/repeat only after every arm has one graded attempt."""
+    blocks = {}
+    for row in rows:
+        blocks.setdefault((row["task"], row["repeat"]), []).append(row)
+    expected = set(arms)
+    return {
+        row["order"]
+        for block in blocks.values()
+        if len(block) == len(expected)
+        and {row["arm"] for row in block} == expected
+        and all(row["state"] == "complete" for row in block)
+        for row in block
+    }
+
+
 def chart_data(protocol, entries, views_manifest):
     output = Path(protocol["output_root"]).resolve()
     observed = {e["order"]: e["result"] for e in entries}
@@ -123,6 +139,9 @@ def chart_data(protocol, entries, views_manifest):
                     + quote(Path(result["harbor_trial"]).name, safe="")
                 )
         rows.append(row)
+    paired = paired_orders(rows, ARMS)
+    for row in rows:
+        row["comparison_included"] = row["order"] in paired
     complete = len(observed) == len(protocol["schedule"])
     evaluation_complete = complete and views_manifest.get("evaluation_complete", complete)
     default_status = "complete" if evaluation_complete else "grading" if complete else "partial"
