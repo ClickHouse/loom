@@ -102,7 +102,7 @@ function headings(id, cells) {
 function summary(rows, plannedRows) {
   const cost = costMetric(rows),
     time = timeMetric();
-  const empty = plannedRows.some((row) => row.state === "complete") ? "Awaiting pairs" : empty;
+  const empty = plannedRows.some((row) => row.state === "complete") ? "Awaiting pairs" : "Not run";
   headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title]);
   const body = byId("summary-body");
   body.replaceChildren();
