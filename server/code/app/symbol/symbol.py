@@ -223,13 +223,10 @@ async def _chunk_hashes(
 async def _symbol_bodies(
     repo: CodeRepo, org: str, ns: str, input: CodeSymbolInput, head: list[dict[str, Any]]
 ) -> list[tuple[str, list[dict[str, Any]], str, str]]:
-    """`(body, outline, next, granularity)` per definition, the reads gathered. A
-    200+ line class is not a body to join up to 12k chars: it ships its skeleton (method
-    bodies elided) plus the member outline with line spans, each member one code.symbol
-    away."""
+    """Complete bodies by default; explicitly capped large containers use outlines."""
 
     async def one(r: dict[str, Any]) -> tuple[str, list[dict[str, Any]], str, str]:
-        if input.include_body and _is_large_container(r):
+        if input.include_body and input.token_budget and _is_large_container(r):
             body, outline, outline_next = await _container_skeleton(
                 repo, org, ns, r, input.token_budget
             )
@@ -435,12 +432,14 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
         legs.cancel()
         raise
 
-    from server.code.domain.units import estimate_json_tokens
+    from server.code.domain.units import estimate_json_tokens, remaining_token_budget
 
     # the compact block is budgeted before the bodies are trimmed
     uses_tokens = estimate_json_tokens(brief) if brief else 0
     with code_span("symbol.budget"):
-        budgeted, tokens = budget_units(units, max(100, input.token_budget - uses_tokens))
+        budgeted, tokens = budget_units(
+            units, remaining_token_budget(input.token_budget, uses_tokens)
+        )
     tokens += uses_tokens
     if documented_in:
         tokens += estimate_json_tokens(documented_in)

@@ -506,3 +506,15 @@ def test_module_of():
     assert module_of("src/Foo.cpp") == "src"
     assert module_of("base/poco/Foundation/src/x.cpp") == "base/poco"
     assert module_of("Foo.cpp") == ""
+
+
+def test_unlimited_enclosing_keeps_all_distinct_bodies(monkeypatch):
+    monkeypatch.setattr(settings, "code_intel_enabled", True)
+    monkeypatch.setattr(settings, "code_org", "o")
+    monkeypatch.setattr(settings, "code_namespace", "n")
+    out, _fake, fetched = _run_bodies(
+        ["src/Foo.cpp:12", "src/Foo.cpp:22", "src/Other.cpp:3"], budget=0
+    )
+    assert out.bodies_returned == 3 and out.bodies_elided == 0
+    assert all(row["body"] and not row["body_elided"] for row in out.results)
+    assert len(fetched) == 3

@@ -345,3 +345,20 @@ Adding, branching, restricting and removing repositories (`code.repo.add`,
 - [history-and-prs.md](history-and-prs.md) — the PR plane, bisect, backports
 - [Python SDK reference](../../reference/python-sdk.md), [MCP reference](../../reference/mcp.md)
 - [operations reference](../../reference/operations.md#code) — generated arguments
+
+### Response token limits
+
+Code retrieval returns selected context without an implicit token cap. `code.symbol`,
+`code.enclosing`, `code.outline`, `code.trace`, `code.context_pack`, `code.map` and
+`code.review_brief` default `token_budget` to `0` (unlimited). A positive value opts
+into a cap. Symbol lookups return complete retained bodies, including large containers;
+explicitly capped container lookups can return a skeleton and member outline.
+
+`code.ask` uses `code_ask_token_budget` when the request omits a budget; the setting
+defaults to `0`. An explicit request value of `0` overrides a finite deployment cap.
+Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
+The internal code grounding reads for memory questions likewise default to no token cap.
+
+Result counts, requested body modes, access checks, source completeness checks and
+execution deadlines still apply. Unlimited does not reconstruct source absent from the
+index. Model generation limits are separate from retrieval context limits.

@@ -36,7 +36,9 @@ def _ask_search_kwargs(
     judged bench sweeps it to place the tokens-vs-quality knee."""
     return {
         "top_k": 10,
-        "token_budget": input.token_budget or settings.code_ask_token_budget,
+        "token_budget": (
+            input.token_budget if input.token_budget is not None else settings.code_ask_token_budget
+        ),
         # The same rerank resolution as code.search ("" = the deployment default, "none" = off):
         # ask synthesizes FROM these excerpts.
         "rerank_endpoint": input.rerank,

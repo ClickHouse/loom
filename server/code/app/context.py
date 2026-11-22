@@ -179,13 +179,12 @@ async def _task_briefing(
 
 
 async def _with_repo_docs(org: str, ns: str, text: str, token_budget: int) -> str:
-    """The orientation pack names the repository's documents after the map, in what the budget
-    leaves (at most 300 tokens); the documents themselves stay in the knowledge plane."""
+    """Append repository document pointers within an optional total context cap."""
     from server.code.app.index.packs import estimate_tokens
-    from server.knowledge.app.repo_docs import DOCS_SECTION_MAX_TOKENS, docs_section, list_repo_docs
+    from server.knowledge.app.repo_docs import docs_section, list_repo_docs
 
-    room = min(DOCS_SECTION_MAX_TOKENS, int(token_budget) - estimate_tokens(text))
-    if room < 40:
+    room = max(1, token_budget - estimate_tokens(text)) if token_budget else 0
+    if room and room < 40:
         return text
     from server.knowledge.app import source_publication
 
@@ -269,7 +268,7 @@ async def _render_map(
     for entry in blend_map_entries(rows, callers, cards):
         lines.append(entry)
         text = "\n".join(lines)
-        if estimate_tokens(text) > token_budget:
+        if token_budget and estimate_tokens(text) > token_budget:
             lines.pop()
             break
     # Most-called symbols under the prefix: a symbol-level section from the weekly stats, tests
@@ -286,7 +285,7 @@ async def _render_map(
                 f"- `{h['qualified_name']}` — {int(h['fan_in_nontest'])} call sites in "
                 f"{int(h['caller_files'])} files ({h['path']})"
             )
-            if estimate_tokens("\n".join(lines)) > token_budget:
+            if token_budget and estimate_tokens("\n".join(lines)) > token_budget:
                 lines.pop()
                 break
     text = "\n".join(lines)

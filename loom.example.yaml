@@ -983,8 +983,8 @@ settings:
   # code_test_gate_run_templates: ""
 
   # Retrieval context (tokens) code.ask hands to synthesis when the caller passes no
-  # token_budget. [restart]
-  # code_ask_token_budget: 4000
+  # token_budget; 0 means unlimited. [restart]
+  # code_ask_token_budget: 0
 
   # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in
   # code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model.
@@ -1039,8 +1039,8 @@ settings:
   # code_result_lessons: true
 
   # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
-  # characters a token. [live]
-  # code_result_lessons_tokens: 250
+  # characters a token; 0 means unlimited. [live]
+  # code_result_lessons_tokens: 0
 
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]
   # code_result_lessons_paths: 3
@@ -4139,11 +4139,11 @@ settings:
   # memory_ask_code_hop_symbols: 4
 
   # Token budget of the code.symbol read that grounds a code-entity question in the code
-  # plane. [live]
-  # memory_ask_code_symbol_token_budget: 400
+  # plane; 0 means unlimited. [live]
+  # memory_ask_code_symbol_token_budget: 0
 
-  # Token budget of the code.search read that grounds a code-entity question. [live]
-  # memory_ask_code_search_token_budget: 1400
+  # Token budget of the grounding code.search read; 0 means unlimited. [live]
+  # memory_ask_code_search_token_budget: 0
 
   # For each PR the query or grounding references, inject its authoritative
   # code_pr_history record (author, merged_at, title) as a high-trust grounding fact;

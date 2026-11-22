@@ -183,8 +183,8 @@ def _serve_history_anchors(
         [], history_units, top_k
     )
     result.route = f"history_{intent.kind}" if intent is not None else result.route
-    section_tokens = code_history.section_tokens(history_section)
-    history_section["tokens"] = section_tokens
+    history_section = code_history.fit_section_budget(history_section, token_budget)
+    section_tokens = int(history_section.get("tokens", 0))
     result.history = history_section
     with code_span("search.bodies", route=result.route):
         result.units, result.tokens_returned = budget_units(

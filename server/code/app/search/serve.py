@@ -22,6 +22,7 @@ async def _abstain_no_hits(
     st: _SearchState,
     *,
     abstain_threshold: float,
+    token_budget: int,
     track_path: str,
     embedder: Any,
 ) -> None:
@@ -35,7 +36,8 @@ async def _abstain_no_hits(
     if intent is not None and history_section:
         # nothing ranked, but the question was about a change: say what
         # the ledger knows even while abstaining on the code
-        history_section["tokens"] = code_history.section_tokens(history_section)
+        history_section = code_history.fit_section_budget(history_section, token_budget)
+        result.tokens_returned = int(history_section.get("tokens", 0))
         result.history = history_section
         if history_section.get("prs") or history_section.get("items"):
             result.route = f"history_{intent.kind}"
@@ -100,8 +102,8 @@ async def _serve_page(
         if history_section.get("prs") or history_section.get("items"):
             suffix = result.route[len("hybrid") :] if result.route.startswith("hybrid") else ""
             result.route = f"history_{intent.kind}" + suffix
-        section_tokens = code_history.section_tokens(history_section)
-        history_section["tokens"] = section_tokens
+        history_section = code_history.fit_section_budget(history_section, token_budget)
+        section_tokens = int(history_section.get("tokens", 0))
         result.history = history_section
     with code_span("search.bodies", route=result.route):
         result.units, result.tokens_returned = budget_units(

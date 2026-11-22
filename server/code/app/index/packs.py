@@ -17,7 +17,7 @@ from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_BUDGET_TOKENS = 2500
+_DEFAULT_BUDGET_TOKENS = 0
 
 
 # Section name -> the H2 header build_pr_pack renders. code.context_pack's
@@ -64,7 +64,7 @@ def estimate_tokens(text: str) -> int:
 
 def fit_pack_budget(pack: str, token_budget: int) -> tuple[str, bool]:
     """Trim cached PR packs at read time while retaining requested sections."""
-    if estimate_tokens(pack) <= token_budget:
+    if not token_budget or estimate_tokens(pack) <= token_budget:
         return pack, False
     marker = "\n… [context truncated to token budget]"
     blocks: list[list[str]] = []
@@ -203,7 +203,7 @@ async def build_pr_pack(
 
     text = "\n".join(lines)
     # Budget: trim whole sections from the bottom until it fits.
-    while estimate_tokens(text) > token_budget and "\n## " in text:
+    while token_budget and estimate_tokens(text) > token_budget and "\n## " in text:
         text = text[: text.rfind("\n## ")]
     return text
 

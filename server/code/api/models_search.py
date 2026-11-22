@@ -320,7 +320,7 @@ class CodeAskInput(_CodeIdentity):
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).
-    token_budget: int | None = Field(default=None, ge=200, le=12000)
+    token_budget: int | None = Field(default=None, ge=0)
 
 
 class CodeAskOutput(BaseModel):

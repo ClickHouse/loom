@@ -703,9 +703,16 @@ async def _page_by_research(
         }
     )
     out = await handle_code_search(fresh)
+    from server.code.app import history as code_history
+
+    out.history = code_history.fit_section_budget(out.history, budget)
+    history_tokens = int(out.history.get("tokens", 0))
     out.results, out.tokens_returned = budget_units(
-        out.results[offset : offset + size], budget, bodies=plan.bodies
+        out.results[offset : offset + size],
+        remaining_token_budget(budget, history_tokens),
+        bodies=plan.bodies,
     )
+    out.tokens_returned += history_tokens
     out.route = f"{out.route}+page_fallback"
     out.as_of = paging.disclose(out.as_of, page_commit="", offset=offset, fallback=reason)
     set_code_span_attributes(page_offset=offset, page_fallback=reason)

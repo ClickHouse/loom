@@ -125,6 +125,7 @@ async def search(
             ns,
             st,
             abstain_threshold=abstain_threshold,
+            token_budget=token_budget,
             track_path=track_path,
             embedder=embedder,
         )

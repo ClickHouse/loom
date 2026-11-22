@@ -83,3 +83,67 @@ async def test_search_keeps_full_bodies_unless_a_budget_is_supplied(
         overridden = await handle_code_search(request.model_copy(update={"token_budget": budget}))
         assert [u.body for u in overridden.results] == [u.body for u in unlimited.results]
         assert overridden.tokens_returned == unlimited.tokens_returned
+
+
+async def test_symbol_and_enclosing_keep_large_retained_bodies(
+    code_repo: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from server.code.api.models_navigation import CodeEnclosingInput
+    from server.code.api.models_symbol import CodeSymbolInput
+    from server.code.app.index.ingest import ingest_file
+    from server.code.app.symbol.enclosing import handle_code_enclosing
+    from server.code.app.symbol.symbol import handle_code_symbol
+    from server.embedding.fake import FakeNGramEmbedder
+    from server.settings import settings
+
+    org, ns = unique_org("code-bodies"), "code-bodies"
+    embedder = FakeNGramEmbedder(dim=settings.embedding_dim)
+    monkeypatch.setattr(settings, "embedding_model", embedder.model_name)
+    source = (
+        "def retained_large_body():\n    total = 0\n"
+        + "    total += 1\n" * 1000
+        + "    return total\n"
+    )
+    await ingest_file(
+        code_repo,
+        org,
+        ns,
+        path="src/large.py",
+        source=source.encode(),
+        commit_sha="a" * 40,
+        embedding_model=embedder.model_name,
+        embedder=embedder,
+    )
+    result = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="retained_large_body",
+            include_lessons=False,
+            include_history=False,
+            include_examples=False,
+        )
+    )
+    assert not result.abstain and result.definitions[0].body == source
+    bounded = await handle_code_symbol(
+        CodeSymbolInput(
+            org=org,
+            namespace=ns,
+            name="retained_large_body",
+            token_budget=200,
+            include_lessons=False,
+            include_history=False,
+            include_examples=False,
+        )
+    )
+    assert all(not unit.body for unit in bounded.definitions)
+    enclosing = await handle_code_enclosing(
+        CodeEnclosingInput(
+            org=org,
+            namespace=ns,
+            locations=["src/large.py:10"],
+            include_body=True,
+            include_lessons=False,
+        )
+    )
+    assert enclosing.results[0]["body"] == source and enclosing.bodies_elided == 0

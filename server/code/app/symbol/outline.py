@@ -96,7 +96,7 @@ def budget_outline(
     for r in rows:
         e = outline_entry(r)
         cost = estimate_json_tokens(e)
-        if used + cost > token_budget:
+        if token_budget and used + cost > token_budget:
             return out, used, f"code.symbol name={e['qualified_name']}"
         out.append(e)
         used += cost
@@ -131,7 +131,7 @@ async def _container_skeleton(
         if lo <= int(r.get("start_line") or 0) <= hi and str(r.get("qualified_name") or "") != qn
     ]
     spent = estimate_unit_tokens(unit_from_symbol(sym, body=body))
-    entries, _tokens, nxt = budget_outline(members, max(0, token_budget - spent - 40))
+    entries, _tokens, nxt = budget_outline(members, max(1, token_budget - spent - 40))
     if nxt or (members and not entries):
         nxt = f"code.outline path={path}"
     return body, entries, nxt

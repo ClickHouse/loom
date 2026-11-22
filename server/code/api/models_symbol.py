@@ -64,9 +64,8 @@ class CodeSymbolInput(_CodeIdentity):
     # team rules (over MCP the caller's memory home by default); one the caller cannot
     # read is skipped.
     lesson_namespaces: list[str] = Field(default_factory=list, max_length=4)
-    # Estimated-token budget for the answer; definitions past it are served elided
-    # (signature, doc, pointer), and the `uses_brief` block is paid out of it first.
-    token_budget: int = Field(default=2500, ge=200, le=12000)
+    # Estimated-token cap for definitions and `uses_brief`; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Definitions carry `fan_in` when the weekly stats are enabled; min_fan_in drops the
     # rest, sort_by='fan_in' puts the most-called definition of an overloaded/ambiguous
     # name first.

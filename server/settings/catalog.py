@@ -880,8 +880,8 @@ class CodeSettings(BaseModel):
     code_test_gate_run_templates: Annotated[str, JsonArray] = ""
 
     # Retrieval context (tokens) code.ask hands to synthesis when the caller
-    # passes no token_budget.
-    code_ask_token_budget: int = 4000
+    # passes no token_budget; 0 means unlimited.
+    code_ask_token_budget: int = Field(default=0, ge=0)
     # The code.ask answer cache's hit cosine. 0 = the per-embedding-model table
     # in code/app/answers_entry.py; a value in (0, 1] pins one threshold for
     # every model.
@@ -923,8 +923,8 @@ class CodeSettings(BaseModel):
     # their top files.
     code_result_lessons: Annotated[bool, LIVE] = True
     # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at
-    # 4 characters a token.
-    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=250, ge=50, le=2000)
+    # 4 characters a token; 0 means unlimited.
+    code_result_lessons_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
     # How many of an answer's files, in rank order, its `lessons` are read for.
     code_result_lessons_paths: Annotated[int, LIVE] = Field(default=3, ge=1, le=10)
     # --- repository access ---
@@ -3518,12 +3518,10 @@ class MemoryAskSettings(BaseModel):
     # question's own grounding rows. 0 = off.
     memory_ask_code_hop_symbols: Annotated[int, LIVE] = 4
     # Token budget of the code.symbol read that grounds a code-entity question in the
-    # code plane.
-    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=400, ge=200, le=12000)
-    # Token budget of the code.search read that grounds a code-entity question.
-    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(
-        default=1400, ge=200, le=12000
-    )
+    # code plane; 0 means unlimited.
+    memory_ask_code_symbol_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
+    # Token budget of the grounding code.search read; 0 means unlimited.
+    memory_ask_code_search_token_budget: Annotated[int, LIVE] = Field(default=0, ge=0)
 
     # For each PR the query or grounding references, inject its authoritative
     # code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the

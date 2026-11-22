@@ -311,7 +311,7 @@ async def _attach_enclosing_bodies(
     used = 0
     for r, body in zip(fetch, bodies, strict=True):
         cost = estimate_tokens(body)
-        if body and used + cost <= token_budget:
+        if body and (not token_budget or used + cost <= token_budget):
             used += cost
             served[str(r["symbol_id"])] = body
 

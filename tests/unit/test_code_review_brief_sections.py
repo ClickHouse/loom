@@ -542,9 +542,9 @@ async def test_serve_applies_tier_sections_and_budget_to_a_stored_payload() -> N
         _inputs(), call=_Calls(), repo=_Repo(), tracker_rows=_tracker_served, now=_fixed_now
     )
     secs, used, budget = rb.serve(payload, tier="trivial", requested=[])
-    assert list(secs) == ["paths", "symbols", "do_not_flag"] and budget == 700 and used <= 700
+    assert list(secs) == ["paths", "symbols", "do_not_flag"] and budget == 0
     secs, used, budget = rb.serve(payload, tier="full", requested=[])
-    assert list(secs) == list(rb.SECTION_ORDER) and budget == 4000
+    assert list(secs) == list(rb.SECTION_ORDER) and budget == 0
     secs, used, budget = rb.serve(payload, tier="full", requested=["blame"], budget=1)
     assert list(secs) == ["blame"] and secs["blame"]["rows"] == [] and secs["blame"]["truncated"]
     assert secs["blame"]["verdict"] == "candidates" and secs["blame"]["rows_total"] == 2

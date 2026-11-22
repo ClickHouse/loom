@@ -247,7 +247,7 @@ def render(
         lines += ["", "## Docs that explain it"]
         lines.extend(f"- {d['path']}" for d in docs)
     text = "\n".join(lines)
-    while estimate_tokens(text) > token_budget and "\n## " in text:
+    while token_budget and estimate_tokens(text) > token_budget and "\n## " in text:
         text = text[: text.rfind("\n## ")]
     return text
 

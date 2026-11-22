@@ -180,7 +180,7 @@ class CodeClient:
         locations: list[str],
         *,
         include_body: bool = False,
-        token_budget: int = 4000,
+        token_budget: int = 0,
         neighbours: bool | None = None,
         neighbour_k: int = 5,
     ) -> dict[str, Any]:
@@ -211,7 +211,7 @@ class CodeClient:
         path: str,
         *,
         kinds: list[str] | None = None,
-        token_budget: int = 1500,
+        token_budget: int = 0,
         include_lessons: bool = True,
     ) -> dict[str, Any]:
         """One file's declarations with line spans, in source order
@@ -237,7 +237,7 @@ class CodeClient:
         include_history: bool = True,
         include_examples: bool = True,
         include_lessons: bool = True,
-        token_budget: int = 2500,
+        token_budget: int = 0,
         uses: bool | None = None,
         uses_limit: int = 50,
         uses_brief: bool = False,
@@ -444,7 +444,7 @@ class CodeClient:
         trace: str,
         *,
         max_frames: int = 15,
-        token_budget: int = 3000,
+        token_budget: int = 0,
     ) -> dict[str, Any]:
         """Stack trace → each frame resolved to its definition, order kept."""
         return await self._agent.transport.post(
@@ -505,7 +505,7 @@ class CodeClient:
         self,
         *,
         pr_number: int = 0,
-        token_budget: int = 2500,
+        token_budget: int = 0,
         sections: list[str] | None = None,
     ) -> dict[str, Any]:
         """Precomputed briefing for a merged PR (or a repo orientation map
@@ -772,7 +772,7 @@ class CodeClient:
                 body[key] = value
         return await self._agent.transport.post("/v1/code.conventions", body)
 
-    async def map(self, *, token_budget: int = 1000, module_prefix: str = "") -> dict[str, Any]:
+    async def map(self, *, token_budget: int = 0, module_prefix: str = "") -> dict[str, Any]:
         return await self._agent.transport.post(
             "/v1/code.map",
             {"token_budget": token_budget, "module_prefix": module_prefix},
