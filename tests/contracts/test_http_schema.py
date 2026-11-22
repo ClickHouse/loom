@@ -23,11 +23,10 @@ _ORG, _NS = "contract-a", "shared"
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
+    from server.auth import authz
     from server.memory.store import blacklist
     from server.operations.registry import ALL_OPERATIONS
     from server.transport import http
-
-    from server.auth import authz
 
     calls: list[tuple[str, str]] = []
 
@@ -70,7 +69,7 @@ def transport(monkeypatch: pytest.MonkeyPatch):
     )
     schema = schemathesis.openapi.from_dict(app.openapi())
     strategy = schema[_PATH]["POST"].as_strategy()
-    with TestClient(app, raise_server_exceptions=False) as client:
+    with TestClient(app) as client:
         yield strategy, client, calls, {"Authorization": "Bearer " + token}
 
 
@@ -138,3 +137,14 @@ def test_fixed_invalid_types_and_bounds_are_validation_errors(transport, body) -
     assert response.status_code == 422, response.text
     assert response.json()["detail"]["code"] == "VALIDATION_FAILED"
     assert calls == []
+
+
+def test_a_unicode_unknown_name_keeps_the_success_and_exact_json_feedback(transport) -> None:
+    _, client, calls, headers = transport
+    response = client.post(
+        _PATH, json={"org": _ORG, "namespace": _NS, "\u2603": 1}, headers=headers
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["X-Loom-Ignored-Args"] == "%E2%98%83"
+    assert response.json()["ignored_args"] == ["\u2603"]
+    assert calls == [(_ORG, _NS)]

@@ -105,9 +105,9 @@ jobs:
           total = sum(int(suite.get("tests", "0")) for suite in suites)
           skipped = sum(int(suite.get("skipped", "0")) for suite in suites)
           failures = sum(int(suite.get("failures", "0")) + int(suite.get("errors", "0")) for suite in suites)
-          assert total == 9 and skipped == 0 and failures == 0, (total, skipped, failures)
+          assert total == 10 and skipped == 0 and failures == 0, (total, skipped, failures)
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
-              output.write(f"HTTP contract: {total} tests, {skipped} skipped, {failures} failures/errors. Three properties use max_examples=24; shrinking shares the subprocess time limit. Six fixed invalid-body cases also ran. Backing stores are synthetic; database isolation is not claimed.\n")
+              output.write(f"HTTP contract: {total} tests, {skipped} skipped, {failures} failures/errors. Three properties use max_examples=24; shrinking shares the subprocess time limit. Six fixed invalid-body cases and a Unicode-header regression also ran. Backing stores are synthetic; database isolation is not claimed.\n")
           PY
 
   maintenance:
