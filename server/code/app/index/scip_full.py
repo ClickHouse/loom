@@ -27,6 +27,7 @@ from server.code.app.index.tier_health import ToolOutputError
 from server.code.app.index.untrusted_files import FileRefused, open_regular
 from server.core.ch import set_query_tag
 from server.core.paths import SCIP_HARNESS_DIR
+from server.core.shielded import finish_cleanup
 from server.settings import settings
 
 if TYPE_CHECKING:
@@ -110,11 +111,15 @@ async def _produce_with_disk_budget(
         await _check_disk_space(paths, minimum)
         return result
     finally:
-        # The repository job's cancellation reaps its children before its output is removed.
-        for task in (job, monitor):
-            if not task.done() and not task.cancelling():
-                task.cancel()
-        await asyncio.gather(job, monitor, return_exceptions=True)
+
+        async def stop() -> None:
+            for task in (job, monitor):
+                if not task.done() and not task.cancelling():
+                    task.cancel()
+            await asyncio.gather(job, monitor, return_exceptions=True)
+
+        # Caller cancellation must not interrupt child reaping or race temporary cleanup.
+        await finish_cleanup(stop(), name="code.scip_full.stop")
 
 
 async def move_checkout(checkout: Path, bare: Path, target: str, cfg: RepoConfig) -> None:

@@ -595,3 +595,51 @@ def test_disk_sampling_period_is_positive_finite_and_bounded(interval):
 
     with pytest.raises(ValueError, match="code_scip_disk_check_interval_s"):
         Settings(code_scip_disk_check_interval_s=interval)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancellations", [1, 3])
+async def test_caller_cancellation_during_disk_teardown_waits_for_cleanup(
+    full_run, monkeypatch, cancellations
+):
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_finished = asyncio.Event()
+    interrupted = asyncio.Event()
+
+    async def harness(checkout, compiler, delta_path, **kwargs):
+        full_run.state.free = 0
+        try:
+            await asyncio.Event().wait()
+        finally:
+            assert delta_path.parent.is_dir()
+            cleanup_started.set()
+            try:
+                await release_cleanup.wait()
+            except asyncio.CancelledError:
+                interrupted.set()
+                raise
+            cleanup_finished.set()
+
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    job = asyncio.create_task(full_run.run())
+    try:
+        async with asyncio.timeout(2):
+            await cleanup_started.wait()
+            for _ in range(cancellations):
+                job.cancel()
+                await asyncio.sleep(0)
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await job
+        assert not interrupted.is_set()
+        assert cleanup_finished.is_set()
+        assert list(full_run.scratch.iterdir()) == []
+        assert full_run.published.read_text() == "accepted generation"
+        app.apply_delta.assert_not_awaited()
+        app.mark_done.assert_not_awaited()
+    finally:
+        release_cleanup.set()
+        if not job.done():
+            job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
