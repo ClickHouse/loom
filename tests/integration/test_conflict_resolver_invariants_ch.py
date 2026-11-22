@@ -152,11 +152,21 @@ class _Writer:
                 else:
                     self.wrote(key, session, out.version, ("value", value, True))
             elif op == "delete":
-                gone = await handle_memory_delete(
-                    MemoryDeleteInput(**ident, session_id=session, memory_key=key)
-                )
-                if gone.tombstoned:
-                    self.wrote(key, session, gone.version, ("deleted", None, False))
+                from server.memory.store.pg_memory import AdmissionContendedError
+
+                request = MemoryDeleteInput(**ident, session_id=session, memory_key=key)
+                for attempt in range(3):
+                    try:
+                        gone = await handle_memory_delete(request)
+                    except AdmissionContendedError:
+                        if attempt == 2:
+                            raise
+                        # Retry the same logical delete from a fresh head after its 503 hint.
+                        await asyncio.sleep(1)
+                    else:
+                        if gone.tombstoned:
+                            self.wrote(key, session, gone.version, ("deleted", None, False))
+                        break
             elif op == "undo" and head is not None and head["status"] == "superseded":
                 await handle_memory_restore(
                     MemoryRestoreInput(
@@ -179,6 +189,97 @@ class _Writer:
             self.spawn()
         while not all(t.done() for t in self.tasks):
             await asyncio.gather(*self.tasks)
+
+
+class _DeleteBarrier:
+    """Pause the first tombstone after its read and observe only that delete task."""
+
+    def __init__(self, monkeypatch: Any) -> None:
+        from server.memory.app import handlers
+        from server.memory.store import refusals
+
+        self.read, self.resume = asyncio.Event(), asyncio.Event()
+        self.attempts = 0
+        self.refused = 0
+        self.recorded = 0
+        self.deleting: asyncio.Task[Any] | None = None
+        self._tombstone = handlers._write_tombstone_row
+        self._record = refusals.record_clickhouse
+        monkeypatch.setattr(handlers, "_write_tombstone_row", self.tombstone)
+        monkeypatch.setattr(refusals, "record_clickhouse", self.record)
+
+    async def tombstone(self, *args: Any, **kwargs: Any) -> None:
+        from server.memory.store.pg_memory import AdmissionContendedError
+
+        self.attempts += 1
+        if self.attempts == 1:
+            self.read.set()
+            await self.resume.wait()
+        try:
+            await self._tombstone(*args, **kwargs)
+        except AdmissionContendedError:
+            self.refused += 1
+            raise
+
+    async def record(self, *args: Any, **kwargs: Any) -> None:
+        if asyncio.current_task() is self.deleting:
+            self.recorded += 1
+        await self._record(*args, **kwargs)
+
+
+@pytest.mark.parametrize("retry", [False, True])
+async def test_delete_contention_refuses_stale_head_and_writer_retries(
+    ch, wired, monkeypatch, retry: bool
+) -> None:
+    from server.memory.api.models_crud import MemoryDeleteInput
+    from server.memory.app.handlers import handle_memory_delete
+    from server.memory.store.pg_memory import AdmissionContendedError
+
+    org, _ = wired
+    key, session = "office_city", "s1"
+    await _set(org, session, key, "before competing write")
+    barrier = _DeleteBarrier(monkeypatch)
+    writer = _Writer(ch, org, 2)
+    monkeypatch.setattr(
+        writer.rng, "choice", lambda choices: "delete" if "delete" in choices else key
+    )
+    request = MemoryDeleteInput(
+        org=org, namespace=NS, agent="bot", user_id=USER, session_id=session, memory_key=key
+    )
+    deleting = barrier.deleting = asyncio.create_task(
+        writer.write([key]) if retry else handle_memory_delete(request)
+    )
+    try:
+        async with asyncio.timeout(20):
+            await barrier.read.wait()
+            await _set(org, session, key, "after competing write")
+            competing = (await _heads(ch, org))[(key, session)]
+            barrier.resume.set()
+            if retry:
+                await deleting
+            else:
+                with pytest.raises(AdmissionContendedError) as raised:
+                    await deleting
+                assert raised.value.code == "ADMISSION_CONTENDED"
+                assert raised.value.extra["retry_after_s"] == 1
+    finally:
+        barrier.resume.set()
+        if not deleting.done():
+            deleting.cancel()
+        await asyncio.gather(deleting, return_exceptions=True)
+    assert barrier.refused == 1
+    head = (await _heads(ch, org))[(key, session)]
+    if retry:
+        assert barrier.attempts == 2 and barrier.recorded == 1
+        assert head["tombstoned_at"] is not None and _text(head["value"]) == "after competing write"
+        assert head["version"] > competing["version"]
+        assert writer.steps == 1
+        assert writer.want == {(key, session): ("deleted", None, False)}
+        assert writer.versions == {(key, session): head["version"]}
+    else:
+        assert barrier.attempts == 1 and barrier.recorded == 0
+        assert head == competing
+        assert not writer.want and writer.steps == 0
 
 
 # Every table a resolver write lands in.
