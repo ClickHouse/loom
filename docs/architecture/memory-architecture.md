@@ -1388,7 +1388,10 @@ place; retrying the restore writes the snapshot again.
 An Undo checks before recording its acceptance. Tombstone-only copies remain allowed.
 
 Rollback restores heads, not exact state. `version` is a wall-clock stamp, so the head
-at T is the largest version at or before T. Triples, records, summaries and aggregates
+at T is the largest version at or before T. The cutoff is computed with integer
+epoch arithmetic, preserving each datetime microsecond without floating-point rounding.
+Naive datetimes are UTC; equivalent timezone representations have the same cutoff.
+Triples, records, summaries and aggregates
 are rebuilt by their workers (`memory/domain/rollback.py` plans the rollback,
 `memory/app/namespace_rollback.py` applies it, `identity/app/namespace_rollback.py` is the handler).
 

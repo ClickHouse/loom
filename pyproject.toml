@@ -84,6 +84,7 @@ dev = [
   "clickhouse-loom-server[aws]",       # the export-analytics tests exercise boto3
   "clickhouse-loom-server[extractor]", # the extractor's parser tests parse every format
   "pytest>=8.0",
+  "hypothesis>=6.170.17,<7",           # bounded domain properties; no service or runtime dependency
   "pytest-asyncio>=0.24",
   "pytest-httpx>=0.32",
   "pytest-rerunfailures>=15.0",

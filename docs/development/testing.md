@@ -49,6 +49,31 @@ Keep CI's system tools beside the locked Python environment. Release-script test
 example, call `jq`. Record missing tools or an unsupported platform separately from a
 failure introduced by the diff.
 
+### Generated memory-domain checks
+
+`tests/unit/test_memory_domain_generated.py` uses the dev-only Hypothesis dependency
+for bounded checks over the real rollback and provenance helpers. Timestamp properties
+compare integer nanoseconds with a separate calendar-based oracle, including dates
+before the epoch, datetime boundaries, naive UTC and equivalent offset representations.
+The lifecycle state machine compares plans with versioned snapshots through writes,
+tombstones, hard-erased heads and rollbacks. Repeated keys vary agent, user and session
+identity. Caller declarations can lower provenance but cannot claim a server class.
+
+The generated examples are deterministic, the example database is disabled and failures
+print a minimized example with a replay blob. The lifecycle run has 35 examples of at
+most 25 steps; other properties have at most 60 examples. These checks require no service,
+provider, network call or account. Run only this module with the locked dev environment:
+
+```bash
+uv run --extra dev python -m unittest tests.unit.test_memory_domain_generated
+```
+
+Keep the failing example as an explicit regression. To replay a reported blob during a
+repair, use Hypothesis's printed `@reproduce_failure` decorator with the same locked
+Hypothesis version. The state machine receives already scoped rows: it tests identity
+preservation and erased-head safety, not transport authorization or database isolation.
+Those contracts still require the existing integration suites.
+
 ### Native worker diagnostics
 
 The third unit part requests native worker diagnostics for local workers. Their interpreter,
