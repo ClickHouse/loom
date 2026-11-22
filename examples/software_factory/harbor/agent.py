@@ -118,6 +118,12 @@ class FactoryAgent(BaseAgent):
             slot=None if self.qualification else slot,
             binding=binding,
         )
+        spec = protocol["harbor_specs"][task.task_id]
+        if (
+            digest(task.read_only_files) != spec["read_only_sha256"]
+            or task.read_only_roots != spec["read_only_roots"]
+        ):
+            raise PermissionError("Read-only repository evidence differs from frozen source")
         if descriptor != {"schedule_order": order, "problem": task.problem}:
             raise PermissionError("Harbor instruction differs from the frozen task")
         if self.model_name != protocol["model_id"]:

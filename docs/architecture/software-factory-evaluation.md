@@ -9,8 +9,11 @@ coding agent. Evaluation dependencies are pinned separately from the server.
 Each task freezes a repository revision, dependency image, source fingerprint
 and pytest selectors. Agent and verifier images share that dependency image.
 The agent image contains base tests. The verifier image contains the independent
-hidden tests. The factory can read and edit implementation source and request
-the fixed visible checks; it has no shell tool or verifier capability.
+hidden tests. The factory can read the same public base-revision implementation,
+docs, examples and test sources in every arm. Other repository text is read-only;
+only implementation source can enter the candidate patch. List, read and search
+tools discover this evidence without exposing Git objects or verifier inputs.
+The factory can request fixed visible checks; it has no shell tool or verifier capability.
 
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
@@ -19,7 +22,8 @@ It runs pytest without provider credentials or network access. A successful
 reward requires hidden checks, the agent's final visible check and normal agent
 completion. Missing or malformed test results are infrastructure failures.
 
-The cohort protocol freezes inputs before inference. It disables retries and
+The cohort protocol freezes inputs before inference, including separate hashes
+for editable implementation and read-only repository evidence. It disables retries and
 concurrent trials and preserves the paired task order. No-Loom trials construct
 no Loom backend and receive no Loom tool definitions. Optional Tree-sitter and SCIP
 retrieval retain their model-selected call and dispatch counters. Read-only task tokens,

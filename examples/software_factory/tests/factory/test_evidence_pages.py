@@ -22,7 +22,15 @@ class EvidencePages(unittest.TestCase):
         task = load_fixture(ROOT / case["task"]["path"])
         path, original = next(iter(task.files.items()))
         files = {path: original + "".join(f"# needle {i}\n" for i in range(40)) + "#" * 17000}
-        task = replace(task, files=files, source_sha256=digest(files))
+        task = replace(
+            task,
+            files=files,
+            source_sha256=digest(files),
+            read_only_files={
+                "docs/lifecycle.rst": "Public context teardown contract.\n",
+                "tests/test_lifecycle.py": "def test_existing_behavior():\n    assert True\n",
+            },
+        )
         self.path = path
         self.factory = Factory(
             task,
@@ -62,3 +70,44 @@ class EvidencePages(unittest.TestCase):
         result = self.factory.execute("test", {})
         self.assertEqual(result["scope"], "fixed_existing_tests")
         self.assertFalse(result["task_completion_verified"])
+
+    def test_public_evidence_can_be_discovered_read_and_searched(self):
+        listing = self.factory.execute("list_files", {"prefix": "tests/"})
+        self.assertEqual(listing["paths"], ["tests/test_lifecycle.py"])
+        self.assertFalse(listing["has_more"])
+        content = self.factory.execute("read", {"path": listing["paths"][0]})
+        self.assertIn("test_existing_behavior", content["content"])
+        hits = self.factory.execute("search", {"text": "teardown contract"})
+        self.assertEqual(hits["matches"][0]["path"], "docs/lifecycle.rst")
+        scoped = self.factory.execute(
+            "search", {"text": "teardown contract", "path_prefix": "src/"}
+        )
+        self.assertEqual(scoped["matches"], [])
+
+    def test_evidence_is_excluded_from_edits_and_candidate_artifacts(self):
+        before = self.factory.checkout.state()
+        with self.assertRaisesRegex(ValueError, "Only implementation"):
+            self.factory.execute(
+                "edit", {"path": "tests/test_lifecycle.py", "old": "True", "new": "False"}
+            )
+        self.assertEqual(self.factory.checkout.state(), before)
+        self.assertEqual(set(self.factory.checkout.files()), {self.path})
+        self.assertEqual(self.factory.checkout.diff(), "")
+        with self.assertRaises(PermissionError):
+            self.factory.execute("read", {"path": "verifier/hidden.py"})
+        with self.assertRaises(PermissionError):
+            self.factory.execute("read", {"path": ".git/config"})
+
+    def test_listing_continuation_and_invalid_offsets(self):
+        self.factory.checkout.read_only.update({f"docs/page-{i:03}.rst": "" for i in range(125)})
+        first = self.factory.execute("list_files", {"prefix": "docs/page-"})
+        self.assertTrue(first["has_more"])
+        second = self.factory.execute(
+            "list_files", {"prefix": "docs/page-", "offset": first["next_offset"]}
+        )
+        self.assertEqual(len(first["paths"] + second["paths"]), 125)
+        self.assertFalse(second["has_more"])
+        self.assertFalse(set(first["paths"]) & set(second["paths"]))
+        for offset in (-1, True, "0"):
+            with self.assertRaises(ValueError):
+                self.factory.execute("list_files", {"offset": offset})

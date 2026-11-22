@@ -87,11 +87,14 @@ class Factory:
             "Stay within the task checkout. Available tests are a limited check; passing "
             "them does not establish task completion. Check the task requirements and "
             "related callers before finishing.\n"
+            "Use list_files to discover public base-revision docs, tests and examples. "
+            "These files are read-only evidence; only source_paths may be edited.\n"
             + json.dumps(
                 {
                     "repository": task.repository,
                     "base_commit": task.base_commit,
                     "source_paths": sorted(task.files),
+                    "read_only_roots": task.read_only_roots,
                 }
             )
             + "\n"
@@ -164,6 +167,8 @@ class Factory:
             raise TimeoutError("Tool or wall budget exhausted")
         if name not in {t["name"] for t in self.tools}:
             raise PermissionError("Unavailable tool")
+        if name == "list_files":
+            return self.checkout.list_files(**args)
         if name == "read":
             start, column = args.get("start_line", 1), args.get("start_column", 0)
             content = self.checkout.read(args["path"], start, column)
@@ -182,12 +187,16 @@ class Factory:
         if name == "search":
             if not args["text"]:
                 raise ValueError("Search text must be nonempty")
+            prefix = args.get("path_prefix", "")
+            if not isinstance(prefix, str):
+                raise ValueError("Search path_prefix must be text")
             offset = args.get("offset", 0)
             if type(offset) is not int or offset < 0:
                 raise ValueError("Search offset must be a nonnegative integer")
             matches = (
                 {"path": p, "line": i, "text": line[:512]}
-                for p, s in self.checkout.files().items()
+                for p, s in self.checkout.readable_files().items()
+                if p.startswith(prefix)
                 for i, line in enumerate(s.splitlines(), 1)
                 if args["text"] in line
             )
@@ -328,6 +337,7 @@ class Factory:
             provider=self.provider.label,
             budget=vars(self.budget),
             source_sha256=self.task.source_sha256,
+            read_only_sha256=digest(self.task.read_only_files),
             grader_sha256=self.grader.sha256,
             repository=self.task.repository,
             base_commit=self.task.base_commit,
@@ -409,6 +419,7 @@ class Factory:
             "schema_version": 1,
             **self.history_identity(),
             "task_id": self.task.task_id,
+            "read_only_sha256": digest(self.task.read_only_files),
             "mode": self.mode,
             "kind": self.task.kind,
             "provider": self.provider.label,

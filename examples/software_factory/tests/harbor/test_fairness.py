@@ -116,7 +116,10 @@ class FairnessProof(unittest.TestCase):
                 },
             }
             self.protocol["harbor_specs"][task] = dict(
-                source_sha256=source, grader_sha256=digest(task)
+                source_sha256=source,
+                grader_sha256=digest(task),
+                read_only_sha256=digest({}),
+                read_only_roots=[],
             )
         for slot in self.protocol["schedule"]:
             baseline = slot["mode"] == "baseline"
@@ -187,7 +190,12 @@ class FairnessProof(unittest.TestCase):
             task = slot["task_id"]
             folder = self.root / "jobs/live" / str(order)
             (folder / "agent/factory").mkdir(parents=True)
-            meta = dict(repository="owner/repo", base_commit="a" * 40, source_paths=["src/a.py"])
+            meta = dict(
+                repository="owner/repo",
+                base_commit="a" * 40,
+                source_paths=["src/a.py"],
+                read_only_roots=[],
+            )
             prompt = [
                 dict(
                     role="user",
@@ -213,6 +221,7 @@ class FairnessProof(unittest.TestCase):
                 "schedule_order": order,
                 "protocol_sha256": digest(self.protocol),
                 "source_sha256": self.protocol["harbor_specs"][task]["source_sha256"],
+                "read_only_sha256": digest({}),
                 "harbor_trial": str(folder),
                 "provider_logical_requests": 1,
                 "provider_physical_requests": 1,
@@ -254,6 +263,7 @@ class FairnessProof(unittest.TestCase):
                 provider="anthropic-messages:claude-haiku-5-5",
                 budget=self.protocol["attempt_budget"],
                 source_sha256=result["source_sha256"],
+                read_only_sha256=result["read_only_sha256"],
                 grader_sha256=self.protocol["harbor_specs"][task]["grader_sha256"],
                 tools=tools,
                 prompt=prompt,
@@ -352,6 +362,10 @@ class FairnessProof(unittest.TestCase):
         self.assertEqual(proof["counts"]["observed_attempts"], 50)
         self.entries[0]["result"]["harbor_reward_valid"] = False
         self.assertFalse(self.audit()["checks"]["execution_integrity"]["passed"])
+
+    def test_read_only_evidence_identity_cannot_differ(self):
+        self.entries[0]["result"]["read_only_sha256"] = digest({"docs/other.rst": "Different"})
+        self.assertFalse(self.audit()["checks"]["identity"]["passed"])
 
     def test_schema_manual_hint_and_hidden_event_corruptions_fail(self):
         entry = self.entries[0]

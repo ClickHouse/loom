@@ -53,6 +53,35 @@ class FixtureExportTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             source.fixtures()
 
+    def test_task_evidence_is_public_text_at_the_exact_base(self):
+        self.put("src/flask/example.py", b"x = 1\n")
+        self.put("docs/contract.rst", b"Base contract.\n")
+        self.put("tests/test_example.py", b"def test_base(): pass\n")
+        self.put("tests/data/binary.bin", b"\xff\x80")
+        self.put(".gitignore", b"*.pyc\n")
+        source = FrozenSource(self.root, self.commit())
+        self.put("docs/contract.rst", b"Future hidden requirements.\n")
+        self.put("tests/test_example.py", b"def test_future(): pass\n")
+        task = source.task(
+            {
+                "task_id": "issue",
+                "repository": "pallets/flask",
+                "base_commit": source.commit,
+                "problem": "Fix issue",
+            },
+            "code",
+            "example",
+        )
+        self.assertEqual(task.files, {"src/flask/example.py": "x = 1\n"})
+        self.assertEqual(
+            task.read_only_files,
+            {
+                "docs/contract.rst": "Base contract.\n",
+                "tests/test_example.py": "def test_base(): pass\n",
+            },
+        )
+        self.assertEqual(task.read_only_roots, ["docs", "tests"])
+
     def test_fixture_paths_allow_dotfiles_without_path_escape_or_git_metadata(self):
         for name in ("tests/test_apps/.env", "tests/data/blob.bin", ".flaskenv"):
             self.assertTrue(fixture_path(name), name)

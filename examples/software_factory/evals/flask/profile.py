@@ -134,6 +134,8 @@ def stage_task(plan, task_id, output, build_image):
     )
     spec = {
         "source_sha256": task.source_sha256,
+        "read_only_sha256": digest(task.read_only_files),
+        "read_only_roots": task.read_only_roots,
         "dependency_image": config["image"],
         "grader_sha256": digest([historical.sha256, fixtures]),
         "fixtures_sha256": digest(fixtures),

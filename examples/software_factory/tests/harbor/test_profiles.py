@@ -49,7 +49,9 @@ class ProfileContracts(unittest.TestCase):
         source_files = {"src/flask/a.py": "value = 1\n"}
         source = Mock()
         source.fixtures.return_value = {}
-        task = SimpleNamespace(source_sha256=digest(source_files))
+        task = SimpleNamespace(
+            source_sha256=digest(source_files), read_only_files={}, read_only_roots=[]
+        )
         config = dict(
             image="pinned-dependency",
             visible_selectors=["tests/test_a.py::test_a"],

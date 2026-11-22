@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,6 +28,11 @@ class Task:
     symbol: str
     files: dict[str, str]
     source_sha256: str
+    read_only_files: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def read_only_roots(self) -> list[str]:
+        return sorted({name.split("/", 1)[0] for name in self.read_only_files})
 
 
 @dataclass(frozen=True)
@@ -106,8 +111,15 @@ def tool_schemas(
     string = {"type": "string"}
     tools = [
         tool(
+            "list_files",
+            "List readable repository paths. Implementation source is editable; "
+            "other files are read-only.",
+            {"prefix": string, "offset": {"type": "integer", "minimum": 0}},
+            [],
+        ),
+        tool(
             "read",
-            "Read a source page. Continue truncated reads with "
+            "Read source or public repository evidence. Continue truncated reads with "
             "next_start_line and next_start_column.",
             {
                 "path": string,
@@ -118,8 +130,9 @@ def tool_schemas(
         ),
         tool(
             "search",
-            "Find a literal in allowed source files; follow next_offset for more matches.",
-            {"text": string, "offset": {"type": "integer", "minimum": 0}},
+            "Find literal repository text. Narrow path_prefix when useful; "
+            "follow next_offset for more matches.",
+            {"text": string, "path_prefix": string, "offset": {"type": "integer", "minimum": 0}},
             ["text"],
         ),
         tool(

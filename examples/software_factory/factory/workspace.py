@@ -1,4 +1,4 @@
-"""Source-only capabilities; no shell, git history, arbitrary import or execution."""
+"""Repository reads and implementation edits without shell or Git capabilities."""
 
 from __future__ import annotations
 
@@ -12,15 +12,20 @@ class Checkout:
     def __init__(self, root: Path, task: Task):
         self.root = root.resolve()
         self.original = dict(task.files)
+        self.read_only = dict(task.read_only_files)
+        if self.original.keys() & self.read_only.keys():
+            raise ValueError("Read-only evidence overlaps editable source")
         self.root.mkdir(parents=True, exist_ok=False)
-        for name, content in task.files.items():
+        for name, content in {**self.original, **self.read_only}.items():
             path = self.path(name)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
 
     def path(self, name: str) -> Path:
-        if name not in self.original or any(p.startswith(".") for p in Path(name).parts):
-            raise PermissionError("Source file is outside the task allowlist")
+        if name not in self.original and name not in self.read_only:
+            raise PermissionError("Repository file is outside the task allowlist")
+        if any(p.startswith(".") for p in Path(name).parts):
+            raise PermissionError("Repository metadata is outside the task allowlist")
         candidate = self.root / name
         if candidate.is_symlink() or not candidate.resolve().is_relative_to(self.root):
             raise PermissionError("Source path escapes checkout")
@@ -45,10 +50,29 @@ class Checkout:
     def files(self) -> dict[str, str]:
         return {name: self.full_read(name) for name in self.original}
 
+    def readable_files(self) -> dict[str, str]:
+        return {name: self.full_read(name) for name in sorted({**self.original, **self.read_only})}
+
+    def list_files(self, prefix: str = "", offset: int = 0) -> dict:
+        if not isinstance(prefix, str) or type(offset) is not int or offset < 0:
+            raise ValueError("Use a text prefix and nonnegative integer offset")
+        names = sorted(
+            name for name in {**self.original, **self.read_only} if name.startswith(prefix)
+        )
+        page = names[offset : offset + 100]
+        more = offset + len(page) < len(names)
+        return {
+            "paths": page,
+            "has_more": more,
+            "next_offset": offset + len(page) if more else None,
+        }
+
     def state(self) -> str:
         return digest(self.files())
 
     def edit(self, path: str, old: str, new: str) -> dict:
+        if path not in self.original:
+            raise ValueError("Only implementation source is editable")
         before = self.full_read(path)
         if not old or before.count(old) != 1:
             return {"error": "Replacement must match exactly once"}

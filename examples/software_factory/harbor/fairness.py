@@ -66,7 +66,12 @@ def _prompt(protocol, slot, start, initial, public):
         return False
     prefix = text[: -len(problem)]
     metadata = [json.loads(line) for line in prefix.splitlines() if line.startswith("{")]
-    if len(metadata) != 1 or set(metadata[0]) != {"repository", "base_commit", "source_paths"}:
+    if len(metadata) != 1 or set(metadata[0]) != {
+        "repository",
+        "base_commit",
+        "source_paths",
+        "read_only_roots",
+    }:
         return False
     meta = metadata[0]
     scopes = [
@@ -78,6 +83,7 @@ def _prompt(protocol, slot, start, initial, public):
         meta["repository"] == issue["repository"]
         and meta["base_commit"] == issue["base_commit"]
         and isinstance(meta["source_paths"], list)
+        and meta["read_only_roots"] == protocol["harbor_specs"][slot["task_id"]]["read_only_roots"]
         and bool(scopes)
         and all(
             scope["source_scope"]["paths_sha256"] == digest(meta["source_paths"])
@@ -379,6 +385,8 @@ def audit_fairness(protocol, entries, *, billing=None):
             )
             expected_source = protocol["harbor_specs"][slot["task_id"]]["source_sha256"]
             identity &= result.get("source_sha256") == expected_source
+            expected_read_only = protocol["harbor_specs"][slot["task_id"]]["read_only_sha256"]
+            identity &= result.get("read_only_sha256") == expected_read_only
             check("identity", bool(identity), "Slot, source and protocol must match", order)
             folder = Path(result["harbor_trial"]).resolve()
             folders.append(str(folder))
@@ -396,6 +404,7 @@ def audit_fairness(protocol, entries, *, billing=None):
                     "task_id": slot["task_id"],
                     "mode": slot["mode"],
                     "source_sha256": expected_source,
+                    "read_only_sha256": expected_read_only,
                     "provider": "anthropic-messages:" + protocol["model_id"],
                     "budget": protocol["attempt_budget"],
                     "grader_sha256": protocol["harbor_specs"][slot["task_id"]]["grader_sha256"],

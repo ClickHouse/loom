@@ -191,6 +191,7 @@ class FrozenSource:
             symbol,
             files,
             digest(files),
+            {name: content for name, content in self.files().items() if name not in files},
         )
 
 

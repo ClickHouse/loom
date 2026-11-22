@@ -53,8 +53,9 @@ source revision is added to the task set.
 
 ## Verification and reporting
 
-The model sees the public issue and allowlisted implementation source. It can
-read, search, edit and run visible checks, including its own regression tests.
+The model sees the public issue and can list, read and search the public
+base-revision implementation, docs, examples and test sources. Only implementation
+source is editable. It can run visible checks, including its own regression tests.
 Reference patches, Git objects and evaluator inputs stay outside its tools.
 The independent hidden verifier decides success. Full-suite regressions and the
 blind judge are separate measurements; authored tests do not establish success.
