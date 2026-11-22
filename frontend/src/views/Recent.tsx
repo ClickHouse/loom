@@ -19,6 +19,7 @@ import {
   deleteMemory,
   restoreMemory,
   conflictKeys as fetchConflictKeys,
+  CONFLICT_KEYS_CAP,
   isAuthDisabled,
   type MemoryListEntry,
 } from "../api";
@@ -65,8 +66,8 @@ const MembersDialog = lazy(() => import("../flows/MembersDialog").then((m) => ({
 // DOM, same scroll, same find-in-page once it settles.
 const FIRST_SCREEN_CARDS = 12; // A screen shows eight or nine
 
-/** What the Status select shows. Every status but Live and Recently
- *  deleted reads the newest 1,000 and keeps the matching rows: none has a server filter. */
+/** What the Status select shows. Pinned is a server filter; Conflicted reads every
+ *  conflicted row by key; Verified reads the newest 1,000 and keeps the matching rows. */
 type Status = "live" | "pinned" | "conflicted" | "verified" | "deleted";
 const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
   { value: "live", label: "Live" },
@@ -199,8 +200,9 @@ function MemoryList() {
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
   // release behind matches any one tag exactly, and the list then requires every tag
-  // itself). Pinned, Conflicted and Verified have no server filter: the list reads the
-  // newest 1,000 and keeps the matching ones. What is typed is debounced, so `tag:…` sends
+  // itself). Pinned is asked of the server too, and Conflicted reads the conflicted rows by
+  // key; Verified reads the newest 1,000 and keeps the matching ones (a server a release
+  // behind lists Pinned the same way). What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
   const typedNow = useSameFilter(filterOf(parsed));
   const [typed, setTyped] = useState(typedNow);
@@ -274,6 +276,7 @@ function MemoryList() {
     loadError,
     truncated,
     serverMatches,
+    statusServed,
     newKeys,
     bulkValues,
     refreshing,
@@ -633,11 +636,15 @@ function MemoryList() {
         ? // What a search covers: the newest rows holding the word, when there are more.
           `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${keywordFor}"` : ""}${ranking ? " · finding related…" : ""}`
         : showDeleted || listFiltered
-          ? // A tag or agent filter is matched on the server, whose total is exact; a status
-            // is kept here among the rows read.
+          ? // A tag or agent filter, and Pinned, are matched on the server, whose total is
+            // exact; another status counts the rows kept here.
             matches(
               // Of the filter it read: not of a typed tag still on its way.
-              !showDeleted && listFilter.status === "live" && serverMatches !== null && filterRead && !filterPending
+              !showDeleted &&
+                (listFilter.status === "live" || statusServed) &&
+                serverMatches !== null &&
+                filterRead &&
+                !filterPending
                 ? serverMatches
                 : flatList.length,
             )
@@ -925,9 +932,11 @@ function MemoryList() {
 
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
-          {listFilter.tags.length > 0 || listFilter.agent
-            ? "Showing the newest matches. Add a tag or a search word to narrow them."
-            : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
+          {listFilter.status === "conflicted" && statusServed
+            ? `Showing the memories of the newest ${CONFLICT_KEYS_CAP.toLocaleString()} conflicted keys.`
+            : listFilter.tags.length > 0 || listFilter.agent || statusServed
+              ? "Showing the newest matches. Add a tag or a search word to narrow them."
+              : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}
@@ -1033,9 +1042,14 @@ function MemoryList() {
           pageSize={pageSize}
           shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
           total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
-          // A tag or agent read the server cut short holds its newest matches, not every one.
-          // A status is kept among the rows read, which the note under the toolbar says.
-          capped={truncated && listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")}
+          // A tag, agent or Pinned read the server cut short holds its newest matches, not
+          // every one. Another status is kept among the rows read, which the note under the
+          // toolbar says.
+          capped={
+            truncated &&
+            ((listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")) ||
+              (listFilter.status === "pinned" && statusServed))
+          }
           onPage={setPage}
           onPageSize={(n) => {
             setPageSize(n);

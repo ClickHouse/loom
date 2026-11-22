@@ -6317,6 +6317,7 @@ export interface MemoryListInput {
   tags?: string[];
   tags_every?: boolean;
   contains?: string | null;
+  pinned_only?: boolean;
   fields?: string[];
   known_version?: number | string | null;
 }

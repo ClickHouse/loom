@@ -27,6 +27,25 @@ const entry = (memory_key: string, over: Partial<MemoryListEntry> = {}): MemoryL
   ...over,
 });
 
+// A memory.bulk_get answer for each key asked.
+const detail = (over: Partial<MemoryDetail> = {}): MemoryDetail => ({
+  found: true,
+  value: "a conflicted value",
+  memory_type: "semantic",
+  confidence: 1,
+  version: 1,
+  pinned: false,
+  created_at: "2026-09-18T09:00:00Z",
+  agent: "support-bot",
+  ...over,
+});
+function bulkAnswers() {
+  vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
+    results: Object.fromEntries(keys.map((k) => [k, detail()])),
+    missing: [],
+  }));
+}
+
 const ROWS = [
   entry("a/pinned", { pinned: true }),
   entry("b/verified", { verification: "human", verified_by: "human:o@example.com", agent: "support-bot" }),
@@ -47,7 +66,7 @@ vi.mock("../api", async (importOriginal) => {
     isAuthDisabled: () => false,
   };
 });
-import { getMemory, listMemories, pinMemory } from "../api";
+import { bulkGetMemories, conflictKeys, getMemory, listMemories, pinMemory } from "../api";
 
 const owner: WhoAmI = {
   authenticated: true,
@@ -242,7 +261,7 @@ describe("Memories list chrome", () => {
       async (_id, limit = 50): Promise<MemoryListResponse> =>
         limit === 1000
           ? {
-              entries: Array.from({ length: 1000 }, (_, i) => entry(`p${i}`, { pinned: i < 60 })),
+              entries: Array.from({ length: 1000 }, (_, i) => entry(`p${i}`, i < 60 ? { verification: "human" } : {})),
               total: 5000,
               today: 0,
               truncated: true,
@@ -251,9 +270,9 @@ describe("Memories list chrome", () => {
     );
     render(<Recent />);
     await screen.findByText("d/plain");
-    await pick("Status", "pinned");
+    await pick("Status", "verified");
     await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
-    // 60 pinned among the newest rows read: not "the newest 60".
+    // 60 verified among the newest rows read: not "the newest 60".
     const pager = screen.getByRole("navigation", { name: "Memories pages" });
     expect(pager).toHaveTextContent("1–50 of 60");
     expect(pager).not.toHaveTextContent("newest");
@@ -265,7 +284,9 @@ describe("Memories list chrome", () => {
       async (_id, limit = 50): Promise<MemoryListResponse> =>
         limit === 1000
           ? {
-              entries: Array.from({ length: 100 }, (_, i) => entry(`t${i}`, { tags: ["api"], pinned: i < 60 })),
+              entries: Array.from({ length: 100 }, (_, i) =>
+                entry(`t${i}`, { tags: ["api"], ...(i < 60 ? { verification: "human" as const } : {}) }),
+              ),
               total: 340,
               today: 0,
               truncated: true,
@@ -276,7 +297,7 @@ describe("Memories list chrome", () => {
     await screen.findByText("d/plain");
     await userEvent.type(screen.getByLabelText("Search memories"), "tag:api");
     await waitFor(() => expect(toolbar()).toHaveTextContent("340 matches"));
-    await pick("Status", "pinned");
+    await pick("Status", "verified");
     await waitFor(() => expect(toolbar()).toHaveTextContent("60 matches"));
     expect(screen.getByRole("navigation", { name: "Memories pages" })).not.toHaveTextContent("newest");
   });
@@ -391,6 +412,7 @@ describe("Memories list chrome", () => {
   });
 
   it("filters by status: pinned, conflicted, verified", async () => {
+    bulkAnswers();
     render(<Recent />);
     await screen.findByText("d/plain");
     // No chip row under the toolbar.
@@ -527,5 +549,90 @@ describe("Memories list chrome", () => {
     ).toBeInTheDocument();
     expect(document.querySelector("[data-toast-kind]")).toHaveAttribute("data-toast-kind", "error");
     expect(screen.getByText("request id req-f")).toBeInTheDocument();
+  });
+});
+
+describe("Memories status filters over the whole namespace", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    localStorage.clear();
+    resetNamespaceRoleCache();
+    vi.mocked(listMemories).mockResolvedValue({ entries: ROWS, total: 1234, today: 2, truncated: false });
+    useStore.setState({
+      authed: true,
+      whoami: owner,
+      myNamespaces: [row],
+      identity: { org: "dev", namespace: "team", agent: "loom-ui" },
+      view: "memories",
+      inspectedMemoryKey: null,
+    });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, identity: null });
+  });
+
+  it("asks the server for pinned rows and counts them from its total", async () => {
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, _limit, opts): Promise<MemoryListResponse> =>
+        opts?.pinnedOnly
+          ? {
+              entries: Array.from({ length: 1000 }, (_, i) => entry(`pin${i}`, { pinned: true })),
+              total: 1500,
+              today: 0,
+              truncated: true,
+            }
+          : { entries: ROWS, total: 1234, today: 2, truncated: false },
+    );
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "pinned");
+    expect(await screen.findByText("pin0")).toBeInTheDocument();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ pinnedOnly: true });
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1,500 matches"));
+    expect(
+      screen.getByText("Showing the newest matches. Add a tag or a search word to narrow them."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the pinned rows among those read when the server does not know pinned_only", async () => {
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: ROWS,
+      total: 1234,
+      today: 2,
+      truncated: true,
+      ignored_args: ["pinned_only"],
+    });
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "pinned");
+    await waitFor(() => expect(shown()).toEqual(["a/pinned"]));
+    expect(toolbar()).toHaveTextContent("1 match");
+    expect(screen.getByText("Showing the pinned memories among the newest ones read.")).toBeInTheDocument();
+  });
+
+  it("lists a conflicted key that is not among the newest rows, reading the rows in batches of 1,000", async () => {
+    const keys = ["z/old-conflict", ...Array.from({ length: 1499 }, (_, i) => `conflict${i}`)];
+    vi.mocked(conflictKeys).mockResolvedValue(keys);
+    bulkAnswers();
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "conflicted");
+    expect(await screen.findByText("z/old-conflict")).toBeInTheDocument();
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1,500 matches"));
+    expect(vi.mocked(bulkGetMemories).mock.calls.map((c) => c[1].length)).toEqual([1000, 500]);
+    // The list read beside them is one row, for the namespace version.
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[1]).toBe(1);
+    expect(screen.queryByText(/conflicted keys\./)).toBeNull();
+  });
+
+  it("says how many conflicted keys it covers when the read reaches the server's cap", async () => {
+    vi.mocked(conflictKeys).mockResolvedValue(Array.from({ length: 5000 }, (_, i) => `conflict${i}`));
+    bulkAnswers();
+    render(<Recent />);
+    await screen.findByText("d/plain");
+    await pick("Status", "conflicted");
+    expect(await screen.findByText("Showing the memories of the newest 5,000 conflicted keys.")).toBeInTheDocument();
+    expect(vi.mocked(bulkGetMemories)).toHaveBeenCalledTimes(5);
   });
 });

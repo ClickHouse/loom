@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import {
   bulkGetMemories,
+  CONFLICT_KEYS_CAP,
+  conflictKeys,
   listMemories,
   searchMemory,
   type Identity,
   type MemoryDetail,
   type MemoryListEntry,
+  type MemoryListResponse,
   type SearchHit,
 } from "../api";
 import { CARD_VALUE_CHARS } from "../components/MemoryCard";
@@ -84,6 +87,43 @@ function detailToEntry(key: string, d: MemoryDetail): MemoryListEntry {
     session_id: d.session_id,
     value: d.value,
     source_trace: d.source_trace,
+    verified_by: d.verified_by,
+    verification: d.verification,
+  };
+}
+
+// The most keys one memory.bulk_get reads (`memory_keys` in MemoryBulkGetInput).
+const BULK_GET_KEYS = 1000;
+
+/**
+ * The Conflicted list: every conflicted row of the namespace, read by key. The conflicted
+ * keys come from one `conflicts.list` read and their rows from memory.bulk_get, a batch of
+ * 1,000 keys at a time, so a conflicted row older than the newest rows is listed too.
+ * `truncated` says the keys read reached the server's cap.
+ */
+export async function readConflicted(
+  identity: Identity,
+  namespaceVersion: string,
+  signal: AbortSignal,
+): Promise<MemoryListResponse> {
+  const keys = await conflictKeys(identity, { signal });
+  const entries: MemoryListEntry[] = [];
+  for (let i = 0; i < keys.length; i += BULK_GET_KEYS) {
+    const batch = keys.slice(i, i + BULK_GET_KEYS);
+    // agent="*" resolves each key whichever agent wrote it, as the search's reads do.
+    const b = await bulkGetMemories({ ...identity, agent: "*" }, batch, { signal });
+    for (const k of batch) {
+      const d = b.results[k];
+      // A profile section has its own view, as in listMemories.
+      if (d && d.memory_type !== "profile") entries.push(detailToEntry(k, d));
+    }
+  }
+  return {
+    entries,
+    truncated: keys.length >= CONFLICT_KEYS_CAP,
+    total: entries.length,
+    today: 0,
+    namespace_version: namespaceVersion,
   };
 }
 
@@ -335,7 +375,8 @@ export function useMemorySearch(
 
 /**
  * The Memories list's server read: a page of the namespace, or, under a filter, its newest
- * 1,000 matches in one read, refreshed every 8 s. `retry` reads the first page again.
+ * 1,000 matches in one read (Conflicted: every conflicted row, read by key), refreshed every
+ * 8 s. `retry` reads the first page again.
  */
 export function useMemoryListRead({
   identity,
@@ -363,6 +404,9 @@ export function useMemoryListRead({
   // the rows read: the read was cut short (a viewer token reads fewer rows than asked) and
   // the server matched the tags as the page does. Otherwise the rows on screen are the count.
   const [serverMatches, setServerMatches] = useState<number | null>(null);
+  // The status filter was answered over the whole namespace (Pinned by the server, or the
+  // Conflicted rows read by key), not kept among the newest rows read.
+  const [statusServed, setStatusServed] = useState(false);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const knownKeysRef = useRef<Set<string>>(new Set());
   // Values the list response did not carry (a server predating the preview
@@ -434,23 +478,34 @@ export function useMemoryListRead({
           // A filtered list is one read of its newest 1,000 matches, with no pages.
           const lim = showDeleted ? 500 : filtered ? 1000 : readSize;
           const off = showDeleted || filtered ? 0 : readPage * readSize;
-          const r = await listMemories(identity, lim, {
+          // Conflicted reads its rows by key; the list read it starts with is one row, sent
+          // for the namespace version (a poll of an unchanged namespace stops there).
+          const conflicted = filter.status === "conflicted" && !showDeleted;
+          const listed = await listMemories(identity, conflicted ? 1 : lim, {
             include_tombstoned: showDeleted,
             offset: off,
-            tags: filter.tags,
-            agent: filter.agent || undefined,
+            tags: conflicted ? undefined : filter.tags,
+            agent: conflicted ? undefined : filter.agent || undefined,
+            pinnedOnly: filter.status === "pinned" && !showDeleted,
             signal,
             known_version: isFirst ? undefined : knownVersion || undefined,
             fields: MEMORIES_LIST_FIELDS,
             previewChars: CARD_VALUE_CHARS,
           });
           if (!live()) return;
-          if (r.unchanged) return;
+          if (listed.unchanged) return;
+          const r = conflicted ? await readConflicted(identity, listed.namespace_version ?? "", signal) : listed;
+          if (!live()) return;
           knownVersion = r.namespace_version ?? "";
           setTruncated(filtered && r.truncated);
           if (filtered) {
             const ignored = r.ignored_args ?? [];
-            setServerMatches(r.truncated && !ignored.includes("tags_every") ? r.total : null);
+            // A replica a release behind names `pinned_only` and lists every row: the page
+            // then keeps the pinned ones among the newest it read, as before.
+            const served = conflicted || (filter.status === "pinned" && !ignored.includes("pinned_only"));
+            setStatusServed(served);
+            const statusExact = filter.status === "live" || (served && !conflicted);
+            setServerMatches(r.truncated && statusExact && !ignored.includes("tags_every") ? r.total : null);
           }
           // The namespace's total follows every browsed answer, the 8 s refresh included.
           if (!filtered && !showDeleted) setBrowsedTotal(r.total);
@@ -528,6 +583,7 @@ export function useMemoryListRead({
     loadError,
     truncated,
     serverMatches,
+    statusServed,
     newKeys,
     bulkValues,
     refreshing,
