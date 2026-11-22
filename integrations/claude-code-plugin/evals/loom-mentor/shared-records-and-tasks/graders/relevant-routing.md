@@ -1,4 +1,8 @@
-The agent loads the loom-mentor skill and selects discovery for the requested typed
-records and task reads. It prefers any fitting listed tool; otherwise it uses loom_op
-help with relevant query words before naming an operation. It does not invent an
-unlisted loom_* tool, scan every plane, or perform a write.
+---
+type: tool_used
+tool: mcp__plugin_loom_loom__loom_op
+input_match: '"op"\s*:\s*"help"'
+min: 1
+---
+
+The agent discovers operations and their arguments through help.
