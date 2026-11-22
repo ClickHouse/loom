@@ -131,7 +131,91 @@ def test_an_inert_probe_cannot_overwrite_an_active_daily_repair(
 
     monkeypatch.setattr(monitor, "tmux_run", unexpected_probe)
     with (tmp_path / "monitor.lock").open("w") as lock:
+        lock.write("active-lock-owner")
+        lock.flush()
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         monitor.main()
     assert "Another daily check owns the lock" in capsys.readouterr().out
     assert result.read_text() == "active-repair-evidence"
+    assert (tmp_path / "monitor.lock").read_text() == "active-lock-owner"
+
+
+@pytest.mark.parametrize("probe", ["--tmux-probe", "--timeout-probe"])
+def test_probe_flags_require_inert_mode_before_any_real_observation(monkeypatch, probe):
+    import sys
+
+    monkeypatch.setattr(sys, "argv", ["monitor.py", probe])
+
+    def unexpected_observation(*args, **kwargs):
+        raise AssertionError("A probe flag must never enter the live repair path")
+
+    monkeypatch.setattr(monitor, "check", unexpected_observation)
+    with pytest.raises(SystemExit) as exit_status:
+        monitor.main()
+    assert exit_status.value.code == 2
+
+
+def test_scope_migration_must_finish_before_the_pane_can_be_reattached(monkeypatch):
+    import json
+
+    answers = [
+        json.dumps(
+            [
+                dict(unit="unrelated.scope", description="another worker"),
+                dict(unit="owned.scope", description="tmux child pane 12 launched by process 11"),
+            ]
+        ),
+        "activating\n",
+        "active\n",
+    ]
+    calls = []
+
+    def output(argv, **kwargs):
+        calls.append(argv)
+        return answers.pop(0)
+
+    monkeypatch.setattr(monitor.subprocess, "check_output", output)
+    monkeypatch.setattr(monitor.time, "sleep", lambda seconds: None)
+    monitor.settle_pane_scope(11, 12)
+    assert answers == []
+    assert len(calls) == 3
+    assert all(argv[-1] == "owned.scope" for argv in calls[1:])
+
+
+def test_failed_owned_scope_is_refused_instead_of_starting_repair(monkeypatch):
+    import json
+
+    answers = [
+        json.dumps(
+            [dict(unit="owned.scope", description="tmux child pane 12 launched by process 11")]
+        ),
+        "failed\n",
+    ]
+    monkeypatch.setattr(monitor.subprocess, "check_output", lambda *a, **k: answers.pop(0))
+    with pytest.raises(RuntimeError, match="did not finish starting"):
+        monitor.settle_pane_scope(11, 12)
+
+
+def test_scope_absence_is_polled_before_scope_activation(monkeypatch):
+    import json
+
+    answers = [
+        "[]",
+        json.dumps(
+            [dict(unit="owned.scope", description="tmux child pane 12 launched by process 11")]
+        ),
+        "activating\n",
+        "active\n",
+    ]
+    monkeypatch.setattr(monitor.subprocess, "check_output", lambda *a, **k: answers.pop(0))
+    monkeypatch.setattr(monitor.time, "sleep", lambda seconds: None)
+    monitor.settle_pane_scope(11, 12)
+    assert answers == []
+
+
+def test_missing_owned_scope_fails_after_the_bounded_deadline(monkeypatch):
+    ticks = iter([0, 6])
+    monkeypatch.setattr(monitor.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(monitor.subprocess, "check_output", lambda *a, **k: "[]")
+    with pytest.raises(RuntimeError, match="did not appear"):
+        monitor.settle_pane_scope(11, 12)

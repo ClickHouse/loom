@@ -2,21 +2,24 @@
 """Run only inside the monitor's private tmux server and systemd cgroup."""
 
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+from monitor import process_identity
 
 TASK_DIR = Path(__file__).resolve().parent
 
 
 def main():
     owned = json.loads((TASK_DIR / "last-tmux-ownership.json").read_text())
+    if process_identity(os.getpid()) != owned["pane_identity"]:
+        raise RuntimeError("Repair runner identity changed")
     if Path("/proc/self/cgroup").read_text().strip() != owned["cgroup"]:
         raise RuntimeError("Repair runner is outside the bounded service cgroup")
     if "--probe-wait" in sys.argv:
-        import os
-
         (TASK_DIR / "probe-child.json").write_text(
             json.dumps(dict(pid=os.getpid(), cgroup=Path("/proc/self/cgroup").read_text()))
         )

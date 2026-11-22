@@ -25,9 +25,11 @@ window defers before network calls, leaving that activation free. Missing, faile
 visible state in `state.json`; preflight errors remain resumable on a later window.
 
 The repair runs in a private tmux server within the service cgroup. The monitor
-verifies both server and pane before starting the runner and kills only its own server.
+waits for the exact pane scope to become active and verifies server and pane
+identities before starting the runner and kills only its own server.
 The delegated service lets the user manager reattach its inert pane when a tmux
-build creates a sibling scope. A refused migration stops repair.
+build creates a sibling scope. A missing scope or refused migration stops repair. The tmux build must support
+systemd scopes.
 The service bounds time, memory and processes and kills its control group on exit.
 Logs retain at most one MiB of runner output. State retains at most 128 source heads.
 

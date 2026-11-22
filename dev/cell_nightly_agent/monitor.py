@@ -91,6 +91,59 @@ def repair_environment():
     return {key: os.environ[key] for key in allowed if key in os.environ}
 
 
+def process_identity(pid):
+    process = Path(f"/proc/{pid}")
+    uid = process.stat().st_uid
+    if uid != os.getuid():
+        raise RuntimeError("Owned repair process has a different UID")
+    fields = (process / "stat").read_text().rsplit(")", 1)[1].split()
+    return dict(pid=pid, uid=uid, birth=int(fields[19]))
+
+
+def settle_pane_scope(server_pid, pane_pid):
+    description = f"tmux child pane {pane_pid} launched by process {server_pid}"
+    deadline = time.monotonic() + 5
+    scope = None
+    while scope is None:
+        units = json.loads(
+            subprocess.check_output(
+                [
+                    "systemctl",
+                    "--user",
+                    "list-units",
+                    "--all",
+                    "--type=scope",
+                    "--output=json",
+                    "--no-pager",
+                ],
+                text=True,
+                timeout=10,
+            )
+        )
+        scopes = [unit["unit"] for unit in units if unit["description"] == description]
+        if len(scopes) > 1:
+            raise RuntimeError("Owned tmux pane has ambiguous scope ownership")
+        if scopes:
+            scope = scopes[0]
+        elif time.monotonic() >= deadline:
+            raise RuntimeError("Owned tmux scope did not appear")
+        else:
+            time.sleep(0.02)
+    # StartTransientUnit returns a queued job. Scope activation completes the
+    # original migration before we reattach the pane to the bounded service.
+    while True:
+        active = subprocess.check_output(
+            ["systemctl", "--user", "show", "--property=ActiveState", "--value", "--", scope],
+            text=True,
+            timeout=10,
+        ).strip()
+        if active == "active":
+            return
+        if active in ("failed", "deactivating") or time.monotonic() >= deadline:
+            raise RuntimeError("Owned tmux scope did not finish starting")
+        time.sleep(0.02)
+
+
 def tmux_run(probe=False):
     socket = TASK_DIR / f"tmux-{os.getpid()}.sock"
     command = ["tmux", "-S", str(socket), "-f", "/dev/null"]
@@ -98,6 +151,8 @@ def tmux_run(probe=False):
     ready.unlink(missing_ok=True)
     result_path = TASK_DIR / "repair-result.json"
     result_path.unlink(missing_ok=True)
+    if probe == "wait":
+        (TASK_DIR / "probe-child.json").unlink(missing_ok=True)
     runner = ["/usr/bin/python3", str(TASK_DIR / "repair.py")]
     if probe:
         runner.append("--probe-wait" if probe == "wait" else "--probe")
@@ -129,10 +184,11 @@ def tmux_run(probe=False):
                 command + ["display-message", "-p", "#{pid}"], text=True, timeout=10
             )
         )
+        server_identity = process_identity(server_pid)
         own_group = Path("/proc/self/cgroup").read_text()
         if Path(f"/proc/{server_pid}/cgroup").read_text() != own_group:
             raise RuntimeError("Owned tmux server escaped the service cgroup")
-        # Readiness follows tmux scope setup in the child, before cgroup inspection.
+        # Wait for the actual pane shell before inspecting its identity.
         deadline = time.monotonic() + 5
         while not ready.exists():
             if time.monotonic() >= deadline:
@@ -145,6 +201,13 @@ def tmux_run(probe=False):
         )
         if ready.read_text() != str(pane_pid):
             raise RuntimeError("Owned tmux pane bootstrap identity differs")
+        pane_identity = process_identity(pane_pid)
+        settle_pane_scope(server_pid, pane_pid)
+        if (
+            process_identity(server_pid) != server_identity
+            or process_identity(pane_pid) != pane_identity
+        ):
+            raise RuntimeError("Owned tmux process identity changed during startup")
         pane_group = Path(f"/proc/{pane_pid}/cgroup").read_text()
         if pane_group != own_group:
             # Some tmux builds create a sibling scope for each pane. Reattach only
@@ -170,6 +233,8 @@ def tmux_run(probe=False):
                 check=True,
                 timeout=10,
             )
+        if process_identity(pane_pid) != pane_identity:
+            raise RuntimeError("Owned tmux pane identity changed during attachment")
         if Path(f"/proc/{pane_pid}/cgroup").read_text() != own_group:
             raise RuntimeError("Owned tmux pane escaped the service cgroup")
         store(
@@ -177,6 +242,8 @@ def tmux_run(probe=False):
             dict(
                 server_pid=server_pid,
                 pane_pid=pane_pid,
+                server_identity=server_identity,
+                pane_identity=pane_identity,
                 socket=str(socket),
                 cgroup=own_group.strip(),
                 cleanup="KillMode=control-group plus exact owned server",
@@ -416,10 +483,12 @@ def main():
     parser.add_argument("--tmux-probe", action="store_true")
     parser.add_argument("--timeout-probe", action="store_true")
     args = parser.parse_args()
+    if (args.tmux_probe or args.timeout_probe) and not args.dry_run:
+        parser.error("probe flags require --dry-run")
     if args.dry_run and not (args.tmux_probe or args.timeout_probe):
         dry_run()
         return
-    with (TASK_DIR / "monitor.lock").open("w") as lock:
+    with (TASK_DIR / "monitor.lock").open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
