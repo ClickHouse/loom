@@ -215,7 +215,7 @@ class RuntimeBindings(unittest.TestCase):
             credentials_file="unused",
             inference={"credentials_file": "unused", "base_url": "http://unit-gateway"},
             attempt_budget={},
-            harbor_specs={"task": {}},
+            harbor_specs={"task": {"read_only_sha256": digest({}), "read_only_roots": []}},
         )
         namespace = "-" if qualification or slot["mode"] == "baseline" else "code"
         task = Task(
