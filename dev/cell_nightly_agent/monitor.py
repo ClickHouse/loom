@@ -78,14 +78,14 @@ def repair_environment():
     # Ambient provider keys are excluded; this is not a credential-file sandbox.
     allowed = (
         "PATH",
-        "TASK_DIR",
+        "HOME",
         "USER",
         "LOGNAME",
         "LANG",
         "LC_ALL",
         "XDG_RUNTIME_DIR",
         "DBUS_SESSION_BUS_ADDRESS",
-        "CODEX_TASK_DIR",
+        "CODEX_HOME",
         "SSH_AUTH_SOCK",
     )
     return {key: os.environ[key] for key in allowed if key in os.environ}
@@ -129,10 +129,43 @@ def tmux_run(probe=False):
         own_group = Path("/proc/self/cgroup").read_text()
         if Path(f"/proc/{server_pid}/cgroup").read_text() != own_group:
             raise RuntimeError("Owned tmux server escaped the service cgroup")
+        pane_pid = int(
+            subprocess.check_output(
+                command + ["display-message", "-p", "#{pane_pid}"], text=True, timeout=10
+            )
+        )
+        pane_group = Path(f"/proc/{pane_pid}/cgroup").read_text()
+        if pane_group != own_group:
+            # Some tmux builds create a sibling scope for each pane. Reattach only
+            # our inert shell through the user manager before it can run repair.
+            unit = own_group.strip().rsplit("/", 1)[-1]
+            if not unit.endswith(".service"):
+                raise RuntimeError("The repair monitor must run inside a user service")
+            subprocess.run(
+                [
+                    "busctl",
+                    "--user",
+                    "call",
+                    "org.freedesktop.systemd1",
+                    "/org/freedesktop/systemd1",
+                    "org.freedesktop.systemd1.Manager",
+                    "AttachProcessesToUnit",
+                    "ssau",
+                    unit,
+                    "",
+                    "1",
+                    str(pane_pid),
+                ],
+                check=True,
+                timeout=10,
+            )
+        if Path(f"/proc/{pane_pid}/cgroup").read_text() != own_group:
+            raise RuntimeError("Owned tmux pane escaped the service cgroup")
         store(
             TASK_DIR / "last-tmux-ownership.json",
             dict(
                 server_pid=server_pid,
+                pane_pid=pane_pid,
                 socket=str(socket),
                 cgroup=own_group.strip(),
                 cleanup="KillMode=control-group plus exact owned server",
@@ -140,7 +173,18 @@ def tmux_run(probe=False):
         )
         subprocess.run(
             command
-            + ["respawn-pane", "-k", "-t", "loom-cell-nightly-repair:0.0", shlex.join(runner)],
+            + [
+                "send-keys",
+                "-t",
+                "loom-cell-nightly-repair:0.0",
+                "-l",
+                "exec " + shlex.join(runner),
+            ],
+            check=True,
+            timeout=10,
+        )
+        subprocess.run(
+            command + ["send-keys", "-t", "loom-cell-nightly-repair:0.0", "Enter"],
             check=True,
             timeout=10,
         )
@@ -276,6 +320,7 @@ def run_repair(state, now, due, observation, key, fingerprint, case, cases):
     if case.get("fingerprint") != fingerprint:
         case.clear()
         case.update(fingerprint=fingerprint, attempts=0)
+    cases[key] = case
     attempt = case["attempts"] + 1
     case.update(
         attempts=attempt,
@@ -306,6 +351,11 @@ def run_repair(state, now, due, observation, key, fingerprint, case, cases):
 
 def check(state, now, config):
     due = window(now)
+    next_due = due + dt.timedelta(days=1)
+    # Leave the upcoming timer free; the service has a hard 60-minute lifetime.
+    if next_due - now <= dt.timedelta(minutes=65):
+        state.update(last_check=now.isoformat(), next_check=next_due.isoformat())
+        return dict(disposition="deferred_until_next_window", window=due.isoformat())
     if state.get("last_window") == due.isoformat():
         return dict(disposition="window_already_observed", window=due.isoformat())
     state.update(
@@ -329,7 +379,7 @@ def check(state, now, config):
         json.dumps(dict(head=key, kind=observation["kind"], prs=metadata), sort_keys=True).encode()
     ).hexdigest()
     cases = state.setdefault("cases", {})
-    case = cases.setdefault(key, {})
+    case = cases.get(key, {})
     action = plan(case, fingerprint, due)
     if action not in ("repair", "resume"):
         return dict(disposition=action, case=key, open_prs=[p["url"] for p in metadata])

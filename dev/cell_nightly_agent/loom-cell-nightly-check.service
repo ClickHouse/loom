@@ -11,6 +11,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 TimeoutStartSec=60min
 TimeoutStopSec=30s
 KillMode=control-group
+Delegate=yes
 MemoryMax=1536M
 TasksMax=128
 UMask=0077

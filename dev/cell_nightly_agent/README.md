@@ -20,11 +20,14 @@ through the manual workflow and its owned fixtures. An open repair PR uses
 Install the service and timer into `~/.config/systemd/user`, enable user lingering
 when the schedule must survive logout, then enable `loom-cell-nightly-check.timer`.
 The timer is persistent. A catch-up uses the most recent due 06:13 UTC window and
-cannot consume an upcoming window. Missing, failed, skipped and overdue runs leave
+cannot consume an upcoming window. Catch-up within 65 minutes of the next due
+window defers before network calls, leaving that activation free. Missing, failed, skipped and overdue runs leave
 visible state in `state.json`; preflight errors remain resumable on a later window.
 
 The repair runs in a private tmux server within the service cgroup. The monitor
-verifies that cgroup before starting the runner and kills only its own server.
+verifies both server and pane before starting the runner and kills only its own server.
+The delegated service lets the user manager reattach its inert pane when a tmux
+build creates a sibling scope. A refused migration stops repair.
 The service bounds time, memory and processes and kills its control group on exit.
 Logs retain at most one MiB of runner output. State retains at most 128 source heads.
 

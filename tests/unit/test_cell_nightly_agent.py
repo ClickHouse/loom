@@ -78,7 +78,7 @@ def test_existing_fix_is_reused_and_preflight_failure_does_not_consume_attempt(
     result = monitor.check(state, now, config)
     if not auth_ok:
         assert result["disposition"] == "blocked_auth"
-        assert state["cases"]["nightly-head"] == {}
+        assert "nightly-head" not in state["cases"]
         assert started == []
         return
     assert len(started) == 1
@@ -89,3 +89,26 @@ def test_existing_fix_is_reused_and_preflight_failure_does_not_consume_attempt(
     monitor.check(state, now + dt.timedelta(days=1), config)
     assert len(started) == 2
     assert state["cases"]["nightly-head"]["attempts"] == 2
+
+
+def test_existing_codex_auth_and_home_are_preserved_without_ambient_provider_keys(monkeypatch):
+    monkeypatch.setenv("HOME", "/synthetic/user")
+    monkeypatch.setenv("CODEX_HOME", "/synthetic/codex")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key-never-used")
+    environment = monitor.repair_environment()
+    assert environment["HOME"] == "/synthetic/user"
+    assert environment["CODEX_HOME"] == "/synthetic/codex"
+    assert "OPENAI_API_KEY" not in environment
+
+
+def test_catchup_cannot_occupy_the_service_across_the_next_daily_activation(monkeypatch):
+    now = monitor.parse("2030-01-02T05:40:00Z")
+
+    def unexpected_api(*args):
+        raise AssertionError("Near-boundary catchup must defer before slow preflight or repair")
+
+    monkeypatch.setattr(monitor, "gh", unexpected_api)
+    state = {}
+    assert monitor.check(state, now, {})["disposition"] == "deferred_until_next_window"
+    assert state["next_check"] == "2030-01-02T06:13:00+00:00"
+    assert "last_window" not in state

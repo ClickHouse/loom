@@ -11,6 +11,9 @@ TASK_DIR = Path(__file__).resolve().parent
 
 
 def main():
+    owned = json.loads((TASK_DIR / "last-tmux-ownership.json").read_text())
+    if Path("/proc/self/cgroup").read_text().strip() != owned["cgroup"]:
+        raise RuntimeError("Repair runner is outside the bounded service cgroup")
     if "--probe-wait" in sys.argv:
         import os
 
