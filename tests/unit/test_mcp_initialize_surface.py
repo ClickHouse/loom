@@ -50,6 +50,9 @@ def test_annotations_read_only_for_viewer_idempotent_ops() -> None:
 def test_annotations_destructive_for_delete_and_erasure_ops() -> None:
     for name in (
         "memory.delete",
+        "memory.clear",
+        "extraction_policy.clear",
+        "profile_schema.clear",
         "knowledge.delete",
         "erasure.request",
         "working_memory.delete",

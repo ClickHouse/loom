@@ -307,7 +307,7 @@ def _tool_annotations(op: Operation) -> dict[str, bool]:
       the VIEWER floor, not audited, not marked ``writes``. An audited or
       ``writes`` op a viewer may call (namespace.join, tracker.source.remove,
       code.outcome) changes state and is never advertised as read-only.
-    - ``destructiveHint``: the op name carries a delete/erase-shaped
+    - ``destructiveHint``: the op name carries a delete/erase/clear-shaped
       token and the verb isn't itself a read. Per spec it's only
       meaningful when readOnlyHint is false, so read-only ops always
       report False.
