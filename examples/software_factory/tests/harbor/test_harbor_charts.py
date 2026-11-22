@@ -183,6 +183,19 @@ class HarborCharts(unittest.TestCase):
             self.assertIn(f'id="{element}"', html)
         self.assertNotIn("<details open", html)
 
+    def test_completed_attempts_remain_judging_until_evaluation_finishes(self):
+        entries = [
+            {"order": slot["order"], "result": copy.deepcopy(self.entries[0]["result"])}
+            for slot in self.protocol["schedule"]
+        ]
+        self.views["evaluation_complete"] = False
+        data = chart_data(self.protocol, entries, self.views)
+        self.assertTrue(data["complete"])
+        self.assertFalse(data["evaluation_complete"])
+        self.assertEqual(data["run_status"], "grading")
+        self.views["evaluation_complete"] = True
+        self.assertEqual(chart_data(self.protocol, entries, self.views)["run_status"], "complete")
+
     def test_public_titles_cannot_close_the_embedded_json_script(self):
         public = self.root / "public.json"
         public.write_text(

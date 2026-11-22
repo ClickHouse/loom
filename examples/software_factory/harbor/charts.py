@@ -123,6 +123,9 @@ def chart_data(protocol, entries, views_manifest):
                     + quote(Path(result["harbor_trial"]).name, safe="")
                 )
         rows.append(row)
+    complete = len(observed) == len(protocol["schedule"])
+    evaluation_complete = complete and views_manifest.get("evaluation_complete", complete)
+    default_status = "complete" if evaluation_complete else "grading" if complete else "running"
     return {
         "schema_version": 1,
         "name": output.parent.name if output.name == "study" else output.name,
@@ -138,14 +141,10 @@ def chart_data(protocol, entries, views_manifest):
         "attempts": rows,
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),
-        "complete": len(observed) == len(protocol["schedule"]),
-        "run_status": views_manifest.get(
-            "run_status", "complete" if len(observed) == len(protocol["schedule"]) else "running"
-        ),
+        "complete": complete,
+        "run_status": views_manifest.get("run_status", default_status),
         "interruption_reason": views_manifest.get("interruption_reason", ""),
-        "evaluation_complete": views_manifest.get(
-            "evaluation_complete", len(observed) == len(protocol["schedule"])
-        ),
+        "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
         "target_reduction": 0.20,
         "cost_note": "Provider cost combines generation list-price estimates and "

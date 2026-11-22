@@ -144,16 +144,20 @@ class RuntimeBindings(unittest.TestCase):
             agent.assert_not_called()
 
     def test_only_seeded_arms_receive_history_and_fixture_hash_is_checked(self):
+        enabled = None
         for slot in self.slots:
+            if not ALL[slot["arm"]].memory_enabled:
+                with self.assertRaises(PermissionError):
+                    episode_notes(self.protocol, slot, self.root / str(slot["order"]))
+                continue
+            enabled = slot
             notes = episode_notes(self.protocol, slot, self.root / str(slot["order"]))
-            self.assertEqual(
-                notes.project,
-                {"decision": "Public project document."} if ALL[slot["arm"]].history_seeded else {},
-            )
+            self.assertEqual(notes.project, {"decision": "Public project document."})
             self.assertEqual(notes.execute("notes_list", {"scope": "working"})["keys"], [])
+        self.assertIsNotNone(enabled)
         Path(self.protocol["memory_histories"]["task"]["fixture_file"]).write_text("{}")
         with self.assertRaises(PermissionError):
-            episode_notes(self.protocol, self.slots[0], self.root / "changed")
+            episode_notes(self.protocol, enabled, self.root / "changed")
 
     def test_task_inputs_propagates_bound_scope_to_profile(self):
         profile = Mock()
