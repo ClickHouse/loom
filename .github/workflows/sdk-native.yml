@@ -119,10 +119,26 @@ jobs:
         with:
           persist-credentials: false
           sparse-checkout: sdk/dotnet
+      - name: Select a private SDK installation
+        run: |
+          printf 'DOTNET_INSTALL_DIR=%s/loom-dotnet-sdk\nDOTNET_ROOT=%s/loom-dotnet-sdk\nDOTNET_ROOT_X64=%s/loom-dotnet-sdk\n' "$RUNNER_TEMP" "$RUNNER_TEMP" "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install the supported LTS SDK
         uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: "10.0.404"
+      - name: Verify the isolated SDK and runtime
+        run: |
+          test "$(dotnet --version)" = '10.0.404'
+          dotnet --list-runtimes | tee "$RUNNER_TEMP/dotnet-runtimes.txt"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ["DOTNET_INSTALL_DIR"]).resolve()
+          rows = [line.split() for line in (Path(os.environ["RUNNER_TEMP"]) / "dotnet-runtimes.txt").read_text().splitlines()]
+          core = [row for row in rows if row[0] == "Microsoft.NETCore.App"]
+          assert len(core) == 1 and core[0][1].startswith("10."), "Unexpected test runtime"
+          assert Path(core[0][2].strip("[]")).resolve().is_relative_to(root)
+          PY
       - name: Build and run the existing handler and loopback tests
         run: dotnet test ClickHouse.Loom.sln --configuration Release --logger trx --results-directory "$RUNNER_TEMP/dotnet-results"
       - name: Require executed tests

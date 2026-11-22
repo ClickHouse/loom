@@ -397,7 +397,8 @@ independent consumer outside the source tree. Java adapter modules have their ow
 requirements and are not part of the core job.
 
 The .NET job builds the unchanged target assembly and runs it on the supported LTS
-runtime with explicit major-version roll-forward. This does not qualify the older
+runtime with explicit major-version roll-forward. Its isolated installation verifies
+the selected SDK and runtime, without using preinstalled runner versions. This does not qualify the older
 runtime or change the package target. Toolchains are selected in the workflow;
 checks do not certify every SDK's declared minimum version or a published registry
 package. Tests use their existing handler fakes or owned loopback servers. They need
