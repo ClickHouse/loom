@@ -5,8 +5,6 @@ pytest_add_cli_args_test_selection = [
 ]
 also_copy = [
   "server/__init__.py",
-  "tests/__init__.py",
-  "tests/fuzz/",
-  "tests/mutation/",
+  "tests/",
 ]
 max_stack_depth = 8
