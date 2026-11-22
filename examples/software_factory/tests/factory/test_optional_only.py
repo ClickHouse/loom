@@ -91,8 +91,10 @@ class OptionalOnly(unittest.TestCase):
         ):
             factory = Factory(task, Provider(), Grader(), Path(directory) / "run", mode="baseline")
             result = factory.run()
-        self.assertEqual(result["agent_time_s"], 9)
-        self.assertEqual(result["duration_s"], 109)
+        self.assertEqual(result["agent_time_s"], 12)
+        self.assertEqual(result["duration_s"], 112)
+        self.assertEqual(result["completion_reviews"], 1)
+        self.assertEqual(result["provider_logical_requests"], 3)
         self.assertEqual(result["agent_test_runs"], 2)
         self.assertEqual(result["agent_test_requests"], 3)
         self.assertEqual(result["automatic_final_test_runs"], 0)

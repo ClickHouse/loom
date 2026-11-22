@@ -179,7 +179,7 @@ class PublicLauncher(unittest.TestCase):
                 plan["memory"]["linked"],
                 plan["memory"]["unlinked"],
             ),
-            (30, 13, 17),
+            (30, 14, 16),
         )
         self.assertEqual(plan["memory"]["cold_cases"], 0)
         self.assertFalse(plan["memory"]["equal_plain_notes_all_arms"])
