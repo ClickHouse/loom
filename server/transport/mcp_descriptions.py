@@ -1194,7 +1194,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         f"{FIRST_STEP_HOOK}. Pass the task as `query` for memories, decisions, procedures, "
         "working memory and the profile; `include_knowledge` / `include_conversations` "
         "add docs and chats. "
-        "`include_runs=true` adds a manifest of your recent sessions and runs "
+        "`include_runs=true` lists recent sessions and runs "
         "(goal, outcome, tool calls, files) — shortlist there "
         "before opening one with memory.evidence or memory.digests. For one "
         "fact, prefer loom_search; for activation only, "

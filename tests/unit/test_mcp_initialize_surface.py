@@ -475,7 +475,4 @@ def test_coding_toolset_initialize_instructions_are_the_compact_form() -> None:
     full = asyncio.run(_initialize_instructions(None, "core"))
     assert "loom_code_*" in coding and "loom_search" in coding
     assert "Loom-first mode" not in coding and "Loom-first mode" in full
-    # The client cuts instructions at this boundary; unrelated edits to the full
-    # primer must not change the compact form's budget.
-    assert len(coding) <= 2048
     assert len(coding) < len(full)

@@ -491,9 +491,9 @@ async def _emit_initialize_event(auth: Any, client_name: str | None) -> None:
 
 async def _initialize_instructions(auth: Any, toolset: str | None = None) -> str:
     """Session-start instructions for the `initialize` result: the rules, the
-    code scope, the default workspace, the mentor hint, then the profile, so on
-    the `coding` toolset a client that cuts long instructions (Claude Code at
-    2,048 characters) keeps every rule. The profile comes only with a verified
+    code scope, the default workspace, the mentor hint, then the profile. The
+    server returns the complete text; clients control their own display and
+    context limits. The profile comes only with a verified
     bearer: an anonymous probe (discovery_only / open modes) must not read
     profile content.
     """
@@ -568,7 +568,7 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if tool[name]
     ]
     code = (
-        "\n\nInvestigating indexed code: prefer "
+        "\n\nInvestigating indexed code (`loom_code_*`): prefer "
         + "; ".join(routes)
         + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
         "A definition does not supply callers. Use returned code and linked lessons; "

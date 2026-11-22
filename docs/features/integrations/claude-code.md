@@ -221,6 +221,11 @@ A first-step memory pack requires a default memory namespace; code tools use
 the supplied code scope. Instructions guide tool choice and do not prove a
 lookup occurred.
 
+Loom returns the complete MCP initialization instructions without a character cap.
+The client can apply its own limits. In Claude Code,
+[`CLAUDE_CODE_MAX_MCP_DESCRIPTION_LENGTH`](https://code.claude.com/docs/en/mcp#change-the-description-length-limits)
+controls the client limit for server instructions and tool descriptions.
+
 The plugin's `loom-mentor` skill can load automatically when the relevant Loom
 operation is unclear. It covers capabilities beyond code and memory and defers
 to a fitting tool the agent already knows. Existing context can satisfy a task;
