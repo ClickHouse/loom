@@ -170,7 +170,7 @@ class Factory:
         ) or time.monotonic() > self.deadline:
             raise TimeoutError("Tool or wall budget exhausted")
         if name not in {t["name"] for t in self.tools}:
-            raise PermissionError("Unavailable tool")
+            raise ValueError("Unavailable tool; use a tool from the advertised schema")
         if name == "list_files":
             return self.checkout.list_files(**args)
         if name == "read":

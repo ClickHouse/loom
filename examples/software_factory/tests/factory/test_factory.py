@@ -82,7 +82,7 @@ class FactoryContracts(unittest.TestCase):
         line = self.task.files[path].splitlines()[0]
         definition = {"path": path, "start_line": 1, "end_line": 1, "body": line}
         cases = (
-            ({"elided": True}, "Retrieved body elided by context budget"),
+            ({"elided": True}, "Retrieved body elided; no complete source body returned"),
             ({"body": ""}, "Retrieved body unavailable"),
             ({"body": line + " mismatch"}, "Retrieved body differs from working source"),
         )

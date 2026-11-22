@@ -15,8 +15,9 @@ only implementation source can enter the candidate patch. List, read and search
 tools discover this evidence without exposing Git objects or verifier inputs.
 The factory can request fixed visible checks; it has no shell tool or verifier capability.
 An ordinary read outside the repository allowlist returns a refusal without
-content so the model can correct the path. Native authorization and index-scope
-failures still stop the attempt.
+content so the model can correct the path. Unadvertised tool names return an
+input error without executing a command or stopping the remaining tool batch.
+Native authorization and index-scope failures still stop the attempt.
 
 The common prompt identifies the index boundary: Loom code tools cover only
 `source_paths`; ordinary search and read also cover the public repository evidence.
@@ -36,6 +37,7 @@ describe retrieval and provenance; similarity is not a fact's truth probability.
 Namespace and source-path checks still apply before the model receives a result.
 
 An elided definition keeps its navigation card, separate from verified bodies.
+Elision alone does not establish that a context budget caused the missing body.
 Cards are accepted only for unchanged allowed files with valid spans. They never
 count as body inspection. Symbol reads accept either a name or a native symbol
 definition identifier, so the model can follow a definition card without repeating

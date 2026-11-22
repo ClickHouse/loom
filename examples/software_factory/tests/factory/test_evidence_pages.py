@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 from examples.software_factory.factory.adapters import ReplayProvider
 from examples.software_factory.factory.engine import Factory
@@ -72,6 +73,51 @@ class EvidencePages(unittest.TestCase):
             self.factory.execute("search", {"text": "(?<=needle) value", "regex": True})
         with self.assertRaises(ValueError):
             self.factory.execute("search", {"text": "needle", "regex": "false"})
+
+    def test_unknown_tool_is_refused_without_stopping_the_remaining_batch(self):
+        reply = {
+            "blocks": [
+                {
+                    "toolUse": {
+                        "toolUseId": "unknown",
+                        "name": "bash",
+                        "input": {"cmd": 'grep -n "filterwarnings" -A5 setup.cfg tox.ini'},
+                    }
+                },
+                {"toolUse": {"toolUseId": "listed", "name": "list_files", "input": {}}},
+            ],
+            "usage": {},
+            "physical_requests": 0,
+            "cost_usd": 0,
+        }
+        state = self.factory.checkout.state()
+        with patch.object(self.factory.provider, "step", return_value=reply):
+            self.assertTrue(self.factory.turn(1))
+        rows = [json.loads(line) for line in self.factory.ledger.path.read_text().splitlines()]
+        results = [row["result"] for row in rows if row["kind"] == "tool_result"]
+        self.assertIn("Unavailable tool", results[0]["error"])
+        self.assertIn(self.path, results[1]["paths"])
+        self.assertEqual(self.factory.checkout.state(), state)
+        self.assertFalse(any(row["kind"] == "tool_failure" for row in rows))
+
+    def test_authorization_failure_from_an_available_tool_still_stops_the_attempt(self):
+        reply = {
+            "blocks": [{"toolUse": {"toolUseId": "listed", "name": "list_files", "input": {}}}],
+            "usage": {},
+            "physical_requests": 0,
+            "cost_usd": 0,
+        }
+        with (
+            patch.object(self.factory.provider, "step", return_value=reply),
+            patch.object(self.factory, "execute", side_effect=PermissionError("Scope changed")),
+            self.assertRaises(PermissionError),
+        ):
+            self.factory.turn(1)
+        rows = [json.loads(line) for line in self.factory.ledger.path.read_text().splitlines()]
+        self.assertEqual(
+            [r["error_type"] for r in rows if r["kind"] == "tool_failure"], ["PermissionError"]
+        )
+        self.assertFalse(any(row["kind"] == "tool_result" for row in rows))
 
     def test_invalid_regex_is_a_tool_error_and_the_remaining_batch_runs(self):
         class Provider:

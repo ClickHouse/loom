@@ -38,7 +38,7 @@ class Context:
                 start, end = int(item["start_line"]), int(item["end_line"])
                 body = item.get("body", "")
                 if item.get("elided"):
-                    raise ValueError("Retrieved body elided by context budget")
+                    raise ValueError("Retrieved body elided; no complete source body returned")
                 if not body:
                     raise ValueError("Retrieved body unavailable")
                 if start < 1 or end < start or end > len(lines):
