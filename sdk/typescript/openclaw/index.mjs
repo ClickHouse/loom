@@ -1,6 +1,6 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { LoomClient } from "../dist/index.mjs";
-import { createTools, parseConfig } from "./tools.mjs";
+import { createTools, invocationFetch, parseConfig } from "./tools.mjs";
 
 export default definePluginEntry({
   id: "clickhouse-loom",
@@ -25,11 +25,7 @@ export default definePluginEntry({
         apiKey: token,
         timeoutMs: 10000,
         logLevel: "off",
-        fetch(...args) {
-          // SDK pacing and retries must recheck the host's live authority before each send.
-          assertCurrent();
-          return fetch(...args);
-        },
+        fetch: invocationFetch(assertCurrent),
       });
     api.registerTool(
       { contextVersion: 2, create: (context) => createTools(config, context, makeClient) },

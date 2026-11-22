@@ -48,6 +48,14 @@ function result(details) {
   return { content: [{ type: "text", text: JSON.stringify(details) }], details };
 }
 
+export function invocationFetch(assertCurrent, send = globalThis.fetch) {
+  return (...args) => {
+    // Pacing and retries can outlive the host invocation that admitted the call.
+    assertCurrent();
+    return send(...args);
+  };
+}
+
 export function createTools(config, context, makeClient) {
   // One configured native session owns this connection. Model arguments never select identity.
   if (context.agentId !== config.agentId || context.sessionKey !== config.sessionKey) return null;
