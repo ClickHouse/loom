@@ -11,7 +11,6 @@ import re
 import time
 from pathlib import Path, PurePosixPath
 from typing import Any
-from urllib.parse import urlencode
 
 _REPO = "ClickHouse/loom"
 _ROOT = "/repos/" + _REPO + "/issues"
@@ -137,7 +136,9 @@ class GitHub:
           issues(first:100,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
                  states:[OPEN,CLOSED],orderBy:{field:CREATED_AT,direction:ASC}) {
             nodes { number title body state author {login}
-                    comments(last:1) { totalCount nodes { body author {login} } } }
+                    comments(last:100,orderBy:{field:UPDATED_AT,direction:ASC}) {
+                      totalCount nodes { body author {login} }
+                    } }
             pageInfo {hasNextPage endCursor}
           }
         } }"""
@@ -157,8 +158,8 @@ class GitHub:
             for issue in nodes:
                 comments = issue["comments"]
                 latest = comments["nodes"]
-                if not isinstance(latest, list) or len(latest) > 1:
-                    raise ValueError("Invalid latest workflow issue comment")
+                if not isinstance(latest, list) or len(latest) > 100:
+                    raise ValueError("Invalid workflow issue comment window")
                 output.append(
                     {
                         "number": issue["number"],
@@ -167,12 +168,10 @@ class GitHub:
                         "state": issue["state"].lower(),
                         "user": issue["author"] or {},
                         "comment_count": comments["totalCount"],
-                        "latest_comment": {
-                            "body": latest[0]["body"],
-                            "user": latest[0]["author"] or {},
-                        }
-                        if latest
-                        else None,
+                        "recent_comments": [
+                            {"body": comment["body"], "user": comment["author"] or {}}
+                            for comment in latest
+                        ],
                     }
                 )
             if info["hasNextPage"] is False:
@@ -182,20 +181,6 @@ class GitHub:
                 raise ValueError("Invalid workflow issue snapshot cursor")
             seen.add(cursor)
         raise RuntimeError("Workflow issue snapshot pagination budget exhausted")
-
-    def pages(
-        self, path: str, *, query: dict[str, str] | None = None, limit: int = 10
-    ) -> list[Any]:
-        output = []
-        for page in range(1, limit + 1):
-            params = {**(query or {}), "per_page": "100", "page": str(page)}
-            items = self.request("GET", path + "?" + urlencode(params))
-            if not isinstance(items, list) or len(items) > 100:
-                raise ValueError("Invalid audit API page")
-            output.extend(items)
-            if len(items) < 100:
-                return output
-        raise RuntimeError("Workflow audit API pagination budget exhausted")
 
 
 def managed_issues(
@@ -243,20 +228,14 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
             continue
         number = issue["number"]
         states = _STATE.findall(issue.get("body") or "")
-        latest = issue.get("latest_comment") or {}
-        latest_states = (
-            _STATE.findall(latest.get("body") or "")
-            if latest.get("user", {}).get("login") == _BOT
-            else []
-        )
-        if latest_states:
-            states.extend(latest_states)
-        elif issue.get("comment_count", 0):
-            # Human replies do not replace the latest automated state.
-            comments = api.pages(f"{_ROOT}/{number}/comments", limit=3)
-            for comment in sorted(comments, key=lambda item: item["id"]):
-                if comment.get("user", {}).get("login") == _BOT:
-                    states.extend(_STATE.findall(comment.get("body") or ""))
+        comments = issue.get("recent_comments", [])
+        recent_states = []
+        for comment in comments:
+            if comment.get("user", {}).get("login") == _BOT:
+                recent_states.extend(_STATE.findall(comment.get("body") or ""))
+        if issue.get("comment_count", 0) > len(comments) and not recent_states:
+            raise RuntimeError("Latest automated state is outside the 100-comment history budget")
+        states.extend(recent_states)
         if states and state_hash(group) == states[-1]:
             counts["unchanged"] += 1
             continue

@@ -55,15 +55,8 @@ class FakeGitHub:
         for issue in output:
             comments = self.comments.get(issue["number"], [])
             issue["comment_count"] = len(comments)
-            issue["latest_comment"] = copy.deepcopy(comments[-1]) if comments else None
+            issue["recent_comments"] = copy.deepcopy(comments[-100:])
         return output
-
-    def pages(self, path, **kwargs):
-        self.charge()
-        self.calls.append(("LIST", path, kwargs))
-        if path.endswith("/comments"):
-            return copy.deepcopy(self.comments.get(int(path.split("/")[-2]), []))
-        return copy.deepcopy(self.issues)
 
     def request(self, method, path, payload=None):
         self.charge()
@@ -224,6 +217,42 @@ class WorkflowAuditIssues(unittest.TestCase):
         self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 60)
         self.assertLessEqual(self.api.run_calls, 40)
 
+    def test_sixty_human_last_threads_do_not_starve_tasks_or_updates(self):
+        groups = AUDIT.public_findings(
+            [finding(path=f".github/workflows/h{i}.yml") for i in range(60)]
+        )
+        for _ in range(6):
+            AUDIT.publish(self.api, groups, URL)
+        for issue in self.api.issues:
+            self.api.comments[issue["number"]] = [
+                {"id": 1, "user": {"login": "contributor"}, "body": "Human reply"}
+            ]
+        self.assertEqual(AUDIT.publish(self.api, groups, URL)["unchanged"], 60)
+        self.assertLessEqual(self.api.run_calls, 40)
+        changed = AUDIT.public_findings(
+            [finding(path=f".github/workflows/h{i}.yml") for i in range(60)] * 2
+        )
+        for _ in range(6):
+            AUDIT.publish(self.api, changed, URL)
+            self.assertLessEqual(self.api.run_calls, 40)
+        for comments in self.api.comments.values():
+            comments.append(
+                {"id": 3, "user": {"login": "contributor"}, "body": "Later human reply"}
+            )
+        self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 60)
+        self.assertLessEqual(self.api.run_calls, 40)
+        self.assertEqual(len(self.api.issues), 60)
+
+    def test_unknown_state_beyond_comment_window_fails_without_guessing(self):
+        AUDIT.publish(self.api, self.groups, URL)
+        self.api.comments[1] = [
+            {"id": i, "user": {"login": "contributor"}, "body": "Human reply"} for i in range(101)
+        ]
+        self.api.calls.clear()
+        with self.assertRaisesRegex(RuntimeError, "100-comment history budget"):
+            AUDIT.publish(self.api, self.groups, URL)
+        self.assertFalse(any(call[0] == "POST" for call in self.api.calls))
+
     def test_human_reply_does_not_replace_last_automated_state(self):
         AUDIT.publish(self.api, self.groups, URL)
         changed = AUDIT.public_findings([finding(), finding(row=5)])
@@ -309,7 +338,7 @@ class WorkflowAuditIssues(unittest.TestCase):
             rows = client.issue_snapshot()
             self.assertEqual(len(rows), 2)
             self.assertEqual(rows[0]["state"], "open")
-            self.assertEqual(rows[0]["latest_comment"]["body"], "Latest state")
+            self.assertEqual(rows[0]["recent_comments"][-1]["body"], "Latest state")
             self.assertEqual(request.call_count, 2)
             self.assertEqual(request.call_args.args[2]["variables"]["cursor"], "cursor-a")
         with patch.object(client, "request", side_effect=[page("same", True), page("same", True)]):

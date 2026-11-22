@@ -426,9 +426,9 @@ issue selector is not a scanner ignore or a claim that other findings are harmle
 Security-sensitive reports follow [SECURITY.md](../../SECURITY.md); automation does not
 send emails, publish exploit payloads or promise a bounty.
 
-Issue snapshots include the latest comment in bounded pages, so unchanged tasks do
-not each consume another API call. Human replies trigger a bounded history read when
-needed to recover the latest automated state. Each task has a stable rule-and-path fingerprint. Line shifts, commit hashes and new
+Issue snapshots include the last hundred comments in bounded pages, so unchanged tasks
+and human replies do not each consume another API call. If the latest automated state
+is beyond that window, publication fails explicitly rather than guesses or duplicates it. Each task has a stable rule-and-path fingerprint. Line shifts, commit hashes and new
 run links do not create another task or status comment. A changed observation count
 or determination adds one status comment; absence and later reappearance also update
 the latest status. Titles and issue bodies are never rewritten, issues are never
