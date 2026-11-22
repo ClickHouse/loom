@@ -203,6 +203,10 @@ and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-
 - **Keep one contract.** The operation registry supplies schemas and handlers for
   every transport. Descriptions explain when to call, inputs, and useful results.
   Listings follow registry order and do not embed caller-specific context.
+  Code search uses the deployment's body mode and response budget over both HTTP
+  and MCP. Exact symbol matches include their complete retained source in automatic
+  body mode; incomplete source is disclosed as elided.
+  MCP result shaping retains requested definition bodies without a separate size cap.
 - **Spend context on evidence.** Reuse sufficient context and retrieve missing
   evidence. A default memory namespace enables the task pack; a hook that already
   supplied context avoids a duplicate lookup. Instructions also reach MCP-only

@@ -364,10 +364,10 @@ def test_overloads_of_a_function_keep_every_body() -> None:
     assert [d["body"] for d in out["definitions"]] == ["void f(int) {}", "void f(char) {}"]
 
 
-def test_a_long_body_becomes_a_ranged_read_and_late_hits_keep_only_where_they_are() -> None:
-    from server.transport.code_lean import _BODY_MAX_CHARS, lean_code
+def test_a_long_body_is_preserved_and_late_hits_keep_only_where_they_are() -> None:
+    from server.transport.code_lean import lean_code
 
-    long_body = "x" * (_BODY_MAX_CHARS + 1)
+    long_body = "x" * 12000
     out = lean_code(
         "code.symbol",
         {
@@ -391,7 +391,8 @@ def test_a_long_body_becomes_a_ranged_read_and_late_hits_keep_only_where_they_ar
         },
     )
     f, g = out["definitions"]
-    assert "body" not in f and f["next"] == "Read a.cpp offset=10 limit=50"
+    assert f["body"] == long_body
+    assert not f.get("elided") and not f.get("next")
     assert g["body"] == "int g();" and "description" not in g
     hits = [{"path": f"p{i}.cpp", "description": f"d{i}"} for i in range(5)]
     got = lean_code("code.search", {"results": hits})["results"]

@@ -124,7 +124,9 @@ async def near_misses(
     ]
 
 
-async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) -> str:
+async def symbol_body(
+    repo: CodeRepo, org: str, ns: str, sym: dict[str, Any], *, model: str | None = None
+) -> str:
     """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
     start, end = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
@@ -132,9 +134,10 @@ async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) ->
         return ""
     # Hydration reads the configured label's retained text, without constructing a
     # provider or letting missing credentials select another model's chunks.
-    if not settings.embedding_model:
-        return ""
-    model = served_model_label(settings.embedding_model)
+    if model is None:
+        if not settings.embedding_model:
+            return ""
+        model = served_model_label(settings.embedding_model)
     rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     if len(rows) > 400:
         return ""
