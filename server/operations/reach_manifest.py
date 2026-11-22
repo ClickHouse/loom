@@ -61,12 +61,16 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.coverage.watch": ("sdk_method",),
     "code.enclosing": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
     ),
     "code.examples": ("sdk_method",),
     "code.files": ("sdk_method",),
     "code.first_build": ("sdk_method",),
-    "code.grep": ("sdk_method",),
+    "code.grep": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.history": ("sdk_method",),
     "code.impact": (
         "sdk_method",
@@ -75,6 +79,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.index_errors": ("dashboard",),
     "code.index_status": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -87,7 +92,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "sdk_method",
         "plugin_hook",
     ),
-    "code.outline": ("sdk_method",),
+    "code.outline": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "code.pr_check": ("sdk_method",),
     "code.recent_commits": ("dashboard",),
     "code.refresh": ("dashboard",),
@@ -108,11 +116,13 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "code.scip_status": ("sdk_example",),
     "code.search": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
     "code.symbol": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -445,6 +455,7 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
     "memory.link": ("sdk_method",),
     "memory.list": (
         "sdk_method",
+        "sdk_example",
         "plugin_hook",
         "dashboard",
     ),
@@ -533,7 +544,10 @@ STATIC_REACH: dict[str, tuple[str, ...]] = {
         "dashboard",
     ),
     "memory.unpin": ("dashboard",),
-    "memory.update": ("sdk_method",),
+    "memory.update": (
+        "sdk_method",
+        "sdk_example",
+    ),
     "memory.update_by_id": (
         "sdk_method",
         "sdk_example",
