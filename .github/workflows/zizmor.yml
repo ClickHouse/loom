@@ -56,6 +56,7 @@ jobs:
           import html
           import json
           import os
+          import secrets
           from pathlib import Path
 
           source = Path(os.environ["RUNNER_TEMP"]) / "zizmor.json"
@@ -79,11 +80,18 @@ jobs:
                      "Scanner: zizmor 1.32.0; offline; auditor persona; workflows and dependency-update configuration.\n\n"
                      "Report only: findings need source review; a green job is not a clean audit. "
                      "Scanner, collection and reporting errors fail the job. "
-                     "GitHub displays at most ten annotations per step. "
+                     "GitHub limits displayed annotations. "
                      "Every finding is listed below and emitted in the annotation step log.\n\n"
                      "<pre>" + html.escape("\n".join(lines)) + "</pre>\n")
           if len(summary.encode("utf-8")) > 900_000:
               raise ValueError("Complete findings exceed the job summary budget; inspect the annotation log")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
               output.write(summary)
+          command_token = secrets.token_hex(16)
+          print(f"::stop-commands::{command_token}")
+          print(json.dumps(
+              {"total": len(findings), "by_rule": dict(sorted(counts.items())), "lines": lines},
+              ensure_ascii=True,
+          ))
+          print(f"::{command_token}::")
           PYTHON
