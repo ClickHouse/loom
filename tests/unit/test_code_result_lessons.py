@@ -111,6 +111,37 @@ async def test_query_matching_preserves_constraints_pins_and_tie_order(
 
 
 @pytest.mark.asyncio
+async def test_query_matches_in_later_files_can_use_the_shared_token_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    unrelated = _hit("theme", value="Change the page theme.")
+    relevant = _hit("retry", files=("b.py",), value="A retry preserves the request identifier.")
+    lesson = path_lessons._lesson(relevant, "b.py")
+    assert lesson is not None
+    cap = path_lessons._tokens(lesson)
+    by_path = {"a.py": [unrelated], "b.py": [relevant]}
+    found = await _lessons(monkeypatch, by_path, ["a.py", "b.py"], budget=cap, query="retry")
+    assert [(row["path"], row["memory_key"]) for row in found] == [("b.py", "retry")]
+    browsing = await _lessons(monkeypatch, by_path, ["a.py", "b.py"], budget=cap)
+    assert [row["memory_key"] for row in browsing] == ["theme"]
+
+
+@pytest.mark.asyncio
+async def test_constraints_and_pins_in_later_files_precede_ordinary_query_matches(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    by_path = {
+        "a.py": [_hit("retry", value="Retry transient requests.")],
+        "b.py": [
+            _hit("rule", files=("b.py",), tags=("constraint",), value="Keep secrets out of logs.")
+        ],
+        "c.py": [{**_hit("pin", files=("c.py",)), "pinned": True}],
+    }
+    found = await _lessons(monkeypatch, by_path, ["a.py", "b.py", "c.py"], query="retry")
+    assert [row["memory_key"] for row in found] == ["rule", "pin", "retry"]
+
+
+@pytest.mark.asyncio
 async def test_rows_merge_in_path_order_once_each_with_the_code_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

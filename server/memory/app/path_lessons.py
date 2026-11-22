@@ -1,7 +1,7 @@
 """The memories a code answer carries for the files it returns: each file's pre-edit rows
 (`memory.for_file`'s listing: the rows that name the file and the rows linked to code in
-it), merged across the files in their rank order and cut to a token cap. Query matches
-follow constraints and pins within each read; ties keep confidence and recency order.
+it), merged across the files and cut to a shared token cap. Query matches follow
+constraints and pins across all selected files; ties retain path and listing order.
 Read only; it
 records no served row (a code-plane annotation is not a memory recall, `served_reads`).
 
@@ -91,13 +91,16 @@ class Lessons(NamedTuple):
     left_out: int = 0
 
 
-def _ordered_hits(hits: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
-    """Keep constraints and pins first, then query matches; ties retain listing order."""
+def _ordered_candidates(
+    candidates: list[tuple[str, dict[str, Any]]], query: str
+) -> list[tuple[str, dict[str, Any]]]:
+    """Rank the shared budget's candidates; ties retain path and listing order."""
     terms = set(snowball_stem_tokens(query_tokens(query)))
     if not terms:
-        return hits
+        return candidates
 
-    def rank(hit: dict[str, Any]) -> tuple[bool, bool, int]:
+    def rank(candidate: tuple[str, dict[str, Any]]) -> tuple[bool, bool, int]:
+        hit = candidate[1]
         words = snowball_stem_tokens(query_tokens(value_text(hit)[:EXCERPT_CHARS]))
         return (
             CONSTRAINT_TAG not in (hit.get("tags") or []),
@@ -105,7 +108,7 @@ def _ordered_hits(hits: list[dict[str, Any]], query: str) -> list[dict[str, Any]
             -len(terms.intersection(words)),
         )
 
-    return sorted(hits, key=rank)
+    return sorted(candidates, key=rank)
 
 
 async def lessons_for_paths(
@@ -131,7 +134,8 @@ async def lessons_for_paths(
     state, when one is known; and `supersedes_key`, the key of the older row it replaces,
     when the conflict check linked one. `timeout_s` bounds the file reads together;
     failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
-    ranks matching excerpts after constraints and pins, preserving listing order on ties."""
+    ranks matching excerpts after constraints and pins across the selected paths,
+    preserving path and listing order on ties."""
     if not namespaces or not paths:
         return Lessons([])
     # memory.for_file takes two extra namespaces and follows code links only into the
@@ -156,21 +160,25 @@ async def lessons_for_paths(
     seen: set[tuple[str, str]] = set()
     left: set[tuple[str, str]] = set()
     spent = 0
-    for inp, (hits, _skipped) in zip(reads, per_read, strict=True):
-        path = inp.path
-        for hit in _ordered_hits(hits, query):
-            key = (str(hit["namespace"]), str(hit["memory_key"]))
-            if key in seen or not _names_this_file(hit, path):
-                continue
-            stale = str(hit.get("memory_id")) in superseded
-            lesson = None if stale else _lesson(hit, path)
-            cost = _tokens(lesson) if lesson else 0
-            if lesson is None or spent + cost > token_budget:  # a shorter row may still fit
-                left.add(key)
-                continue
-            seen.add(key)
-            out.append(lesson)
-            spent += cost
+    candidates = [
+        (inp.path, hit)
+        for inp, (hits, _skipped) in zip(reads, per_read, strict=True)
+        for hit in hits
+        if _names_this_file(hit, inp.path)
+    ]
+    for path, hit in _ordered_candidates(candidates, query):
+        key = (str(hit["namespace"]), str(hit["memory_key"]))
+        if key in seen:
+            continue
+        stale = str(hit.get("memory_id")) in superseded
+        lesson = None if stale else _lesson(hit, path)
+        cost = _tokens(lesson) if lesson else 0
+        if lesson is None or spent + cost > token_budget:  # a shorter row may still fit
+            left.add(key)
+            continue
+        seen.add(key)
+        out.append(lesson)
+        spent += cost
     return Lessons(out, len(left - seen))
 
 

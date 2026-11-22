@@ -62,21 +62,25 @@ def candidates(certificate, path):
 
 def serve(paths, rows_by_path, query, budget):
     output, seen, spent = [], set(), 0
-    for path, rows in zip(paths, rows_by_path, strict=True):
-        ordered = path_lessons._ordered_hits(rows, query) if query is not None else rows
-        for row in ordered:
-            key = row["memory_key"]
-            if key in seen:
-                continue
-            lesson = path_lessons._lesson(row, path)
-            if lesson is None:
-                continue
-            cost = path_lessons._tokens(lesson)
-            if spent + cost > budget:
-                continue
-            output.append(key)
-            seen.add(key)
-            spent += cost
+    candidates = [
+        (path, row) for path, rows in zip(paths, rows_by_path, strict=True) for row in rows
+    ]
+    ordered = (
+        path_lessons._ordered_candidates(candidates, query) if query is not None else candidates
+    )
+    for path, row in ordered:
+        key = row["memory_key"]
+        if key in seen:
+            continue
+        lesson = path_lessons._lesson(row, path)
+        if lesson is None:
+            continue
+        cost = path_lessons._tokens(lesson)
+        if spent + cost > budget:
+            continue
+        output.append(key)
+        seen.add(key)
+        spent += cost
     return tuple(output)
 
 
