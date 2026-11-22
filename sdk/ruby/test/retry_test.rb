@@ -151,6 +151,32 @@ class RetryTest < LoomTest
     assert_empty @sleeps
   end
 
+  def test_a_429_with_a_zero_retry_after_spends_the_wait_budget_and_raises
+    6.times do
+      respond_json(429, { detail: { code: "RATE_LIMITED", message: "slow" } }, { "Retry-After" => "0" })
+    end
+
+    assert_raises(Loom::RateLimited) do
+      retrying(retry_policy: { max_attempts: 1 }, rate_limit_max_wait: 3).memory.get(memory_key: "k")
+    end
+
+    assert_equal [1.0, 1.0, 1.0], @sleeps
+    assert_equal 4, @server.requests.size
+  end
+
+  def test_a_zero_or_past_retry_after_under_a_tiny_wait_budget_raises_the_first_429
+    respond_json(429, { detail: { code: "RATE_LIMITED", message: "slow" } }, { "Retry-After" => "0" })
+    respond_json(429, { detail: { code: "RATE_LIMITED", message: "slow" } },
+                 { "Retry-After" => "Sun, 01 Nov 2026 00:00:00 GMT" })
+
+    tiny = retrying(retry_policy: { max_attempts: 1 }, rate_limit_max_wait: 0.001)
+    assert_raises(Loom::RateLimited) { tiny.memory.get(memory_key: "k") }
+    assert_raises(Loom::RateLimited) { tiny.memory.get(memory_key: "k") }
+
+    assert_empty @sleeps
+    assert_equal 2, @server.requests.size
+  end
+
   def test_a_refused_connection_is_resent_and_then_raised_as_a_network_error
     sleeps = []
     c = Loom::Client.new(base_url: "http://127.0.0.1:1", open_timeout: 2, sleeper: ->(s) { sleeps << s },
@@ -200,5 +226,9 @@ class RetryTest < LoomTest
     assert_in_delta 0.0, Loom::RetryAfter.parse("Sun, 22 Nov 2026 09:00:00 GMT", now)
     assert_nil Loom::RetryAfter.parse("soon", now)
     assert_in_delta 1.0, Loom::RetryAfter.for_rate_limit("3600", now)
+    assert_in_delta 1.0, Loom::RetryAfter.for_rate_limit("0", now)
+    assert_in_delta 1.0, Loom::RetryAfter.for_rate_limit("Sun, 22 Nov 2026 09:00:00 GMT", now)
+    assert_in_delta 0.1, Loom::RetryAfter.for_rate_limit("0.001", now)
+    assert_in_delta 0.5, Loom::RetryAfter.for_rate_limit("0.5", now)
   end
 end

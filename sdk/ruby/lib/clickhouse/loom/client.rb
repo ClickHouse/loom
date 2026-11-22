@@ -213,8 +213,8 @@ module ClickHouse
         pause_before_next(policy, state, RetryAfter.parse(response["Retry-After"] || error.detail["retry_after_s"]))
       end
 
-      # A 429 is pacing, not a retry: wait the Retry-After (1 s when absent or over 60 s)
-      # while the call's rate_limit_max_wait allows, and send again.
+      # A 429 is pacing, not a retry: wait the Retry-After (1 s when absent, zero, past or over
+      # 60 s; at least 0.1 s) while the call's rate_limit_max_wait allows, and send again.
       def wait_out_rate_limit(response, state)
         wait = RetryAfter.for_rate_limit(response["Retry-After"])
         return false unless @rate_limit_max_wait.positive? && state[:paced] + wait <= @rate_limit_max_wait

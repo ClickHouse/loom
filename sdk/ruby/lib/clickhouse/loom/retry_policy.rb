@@ -84,6 +84,9 @@ module ClickHouse
       # The longest wait believed; a 429 asking for longer is waited out for DEFAULT_SECONDS.
       MAX_SECONDS = 60.0
       DEFAULT_SECONDS = 1.0
+      # The shortest wait a 429 is paced by. Every paced resend then spends at least this
+      # much of rate_limit_max_wait, so a call resends at most rate_limit_max_wait / MIN_SECONDS times.
+      MIN_SECONDS = 0.1
 
       module_function
 
@@ -99,10 +102,13 @@ module ClickHouse
         nil
       end
 
-      # The bounded wait a 429 asks for.
+      # The bounded wait a 429 asks for. No wait, an unreadable one, zero, a past date or one
+      # over MAX_SECONDS is DEFAULT_SECONDS; a positive wait under MIN_SECONDS is MIN_SECONDS.
       def for_rate_limit(value, now = Time.now)
         wait = parse(value, now)
-        wait.nil? || wait > MAX_SECONDS ? DEFAULT_SECONDS : wait
+        return DEFAULT_SECONDS if wait.nil? || wait <= 0 || wait > MAX_SECONDS
+
+        [wait, MIN_SECONDS].max
       end
     end
   end

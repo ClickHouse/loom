@@ -111,7 +111,9 @@ The retry and idempotency rules of the TypeScript and Python SDKs:
 - The server's `Retry-After` (seconds or an HTTP-date) or `detail.retry_after_s` replaces
   the backoff when it is at most `max_retry_after` (60) seconds.
 - A `429` is pacing, not a retry: the call waits out `Retry-After` for at most
-  `rate_limit_max_wait` seconds, then raises `Loom::RateLimited`.
+  `rate_limit_max_wait` seconds, then raises `Loom::RateLimited`. A missing, zero or past
+  `Retry-After` (or one over 60 s) is waited as 1 s, and a shorter one as at least 0.1 s, so
+  every resend spends some of that budget.
 
 | `retry_policy` field      | Default                                                     |
 | ------------------------- | ----------------------------------------------------------- |
