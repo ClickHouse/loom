@@ -8,7 +8,7 @@ import random
 import time
 from pathlib import Path
 
-from examples.software_factory.factory.model import digest, tool
+from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.runtime import read, task_inputs, verify, write
 
 from .arms import CONTROLS, PRIMARY
@@ -26,19 +26,25 @@ RUBRIC = (
 
 
 def verdict_tool(labels):
-    return tool(
-        "record_verdict",
-        "Record whether each anonymous candidate fixes the issue.",
-        {
-            "fixed": {
-                "type": "object",
-                "properties": {label: {"type": ["boolean", "null"]} for label in labels},
-                "required": list(labels),
-                "additionalProperties": False,
-            },
-            "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+    properties = {
+        "fixed": {
+            "type": "object",
+            "properties": {label: {"type": ["boolean", "null"]} for label in labels},
+            "required": list(labels),
+            "additionalProperties": False,
         },
-    )
+        "reason": {"type": "string", "minLength": 1, "maxLength": 4000},
+    }
+    return {
+        "name": "record_verdict",
+        "description": "Record whether each anonymous candidate fixes the issue.",
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": list(properties),
+            "additionalProperties": False,
+        },
+    }
 
 
 def parse_verdict(response, labels):

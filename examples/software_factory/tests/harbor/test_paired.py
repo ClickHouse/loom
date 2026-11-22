@@ -208,10 +208,6 @@ class PairedAnalysisContracts(unittest.TestCase):
             analyze(order, entries, resamples=100)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class NativeFailureReporting(unittest.TestCase):
     def test_missing_baseline_trajectory_retains_the_attempt_and_unknown_calls(self):
         order, entries = inputs()
@@ -225,3 +221,7 @@ class NativeFailureReporting(unittest.TestCase):
         report = analyze(order, entries, resamples=100)
         self.assertTrue(report["complete"])
         self.assertEqual(report["arms"]["baseline"]["resolved"], 8)
+
+
+if __name__ == "__main__":
+    unittest.main()
