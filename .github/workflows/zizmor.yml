@@ -1,0 +1,89 @@
+name: workflow security findings
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+  push:
+    branches: [main, "release/**"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: zizmor offline report only
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out workflow definitions
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: /.github/
+          sparse-checkout-cone-mode: false
+      - name: Install checksum-verified scanner
+        shell: bash
+        run: |
+          tool_dir="$RUNNER_TEMP/zizmor-tool"
+          mkdir -p "$tool_dir"
+          curl --fail --silent --show-error --location --connect-timeout 10 --max-time 120 \
+            https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$tool_dir/zizmor.tar.gz"
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $tool_dir/zizmor.tar.gz" | sha256sum --check
+          tar --extract --gzip --file "$tool_dir/zizmor.tar.gz" --directory "$tool_dir" zizmor
+          test -x "$tool_dir/zizmor"
+      - name: Collect every offline finding
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
+            --persona=auditor --collect=workflows,dependabot --no-exit-codes \
+            --format=json . > "$RUNNER_TEMP/zizmor.json"
+      - name: Annotate findings
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
+            --persona=auditor --collect=workflows,dependabot --no-exit-codes --format=github .
+      - name: List all findings in the job summary
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          from collections import Counter
+          import html
+          import json
+          import os
+          from pathlib import Path
+
+          source = Path(os.environ["RUNNER_TEMP"]) / "zizmor.json"
+          if source.stat().st_size > 8 * 1024 * 1024:
+              raise ValueError("Findings exceed the report input budget; inspect the annotation log")
+          findings = json.loads(source.read_text())
+          counts = Counter(finding["ident"] for finding in findings)
+          lines = [f"Total findings: {len(findings)}", ""]
+          lines.extend(f"{rule}: {count}" for rule, count in sorted(counts.items()))
+          lines.append("")
+          for finding in findings:
+              primary = next(location for location in finding["locations"]
+                             if location["symbolic"]["kind"] == "Primary")
+              path = primary["symbolic"]["key"]["Local"]["verbatim_path"]
+              line = primary["concrete"]["location"]["start_point"]["row"] + 1
+              severity = finding["determinations"]["severity"]
+              confidence = finding["determinations"]["confidence"]
+              lines.append(f"{path}:{line}: {finding['ident']} [{severity}/{confidence}]")
+              lines.append(f"  {finding['desc']}")
+          summary = ("## Workflow security findings\n\n"
+                     "Scanner: zizmor 1.32.0; offline; auditor persona; workflows and dependency-update configuration.\n\n"
+                     "Report only: findings need source review; a green job is not a clean audit. "
+                     "Scanner, collection and reporting errors fail the job. "
+                     "GitHub displays at most ten annotations per step. "
+                     "Every finding is listed below and emitted in the annotation step log.\n\n"
+                     "<pre>" + html.escape("\n".join(lines)) + "</pre>\n")
+          if len(summary.encode("utf-8")) > 900_000:
+              raise ValueError("Complete findings exceed the job summary budget; inspect the annotation log")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+              output.write(summary)
+          PYTHON
