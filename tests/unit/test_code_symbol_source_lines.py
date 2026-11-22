@@ -19,7 +19,7 @@ from server.code.domain.symbol_body import complete_source_span
             'class Group:\n    """A group.\n\n    Details.\n    """\n\n'
             "    def first(self):\n        return 1\n\n    \n"
             "    def second(self):\n        return 2\n",
-            "Group",
+            "src.example::Group",
         ),
         (
             "src/example.cpp",
