@@ -197,7 +197,7 @@ jobs:
               issue = managed.get(key)
               if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
                   continue
-              text = f"<!-- loom-source-lab:v1 {key} -->\n<!-- loom-source-lab-state:v1 {result} -->\n\nThe disposable source-lab check reports **{result}** on trusted main. [Read the source image build and bounded synthetic check logs]({url}).\n\nReproduce the source-lab workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              text = f"<!-- loom-source-lab:v1 {key} -->\n<!-- loom-source-lab-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe disposable source-lab check reports **{result}** on trusted main. [Read the source image build and bounded synthetic check logs]({url}).\n\nReproduce the source-lab workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
               if issue is None:
                   if result == "failure":
                       api("POST", repo, {"title": titles[key], "body": text})
