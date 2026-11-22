@@ -12,7 +12,12 @@ from typing import Any
 import pytest
 
 from server.code.api.models_grep import CodeGrepInput, CodeGrepOutput
-from server.code.api.models_navigation import CodeOutlineInput, CodeOutlineOutput
+from server.code.api.models_navigation import (
+    CodeEnclosingInput,
+    CodeEnclosingOutput,
+    CodeOutlineInput,
+    CodeOutlineOutput,
+)
 from server.code.api.models_search import CodeSearchInput, CodeSearchOutput
 from server.code.app import result_lessons, search_memo
 from server.memory.app import code_plane_reads, path_lessons
@@ -615,6 +620,7 @@ async def test_the_op_handler_attaches_lessons_after_its_answer(
         "code.callees",
         "code.impact",
         "code.outline",
+        "code.enclosing",
         "code.context_pack",
     ],
 )
@@ -692,6 +698,7 @@ def test_every_code_result_op_is_wrapped_with_its_files() -> None:
     from server.code.app.context import handle_code_context_pack
     from server.code.app.grep import handle_code_grep
     from server.code.app.search.handler import handle_code_search
+    from server.code.app.symbol.enclosing import handle_code_enclosing
     from server.code.app.symbol.graph import handle_code_callees, handle_code_callers
     from server.code.app.symbol.impact import handle_code_impact
     from server.code.app.symbol.outline import handle_code_outline
@@ -703,6 +710,7 @@ def test_every_code_result_op_is_wrapped_with_its_files() -> None:
         "code.callees": (handle_code_callees, result_lessons.edge_paths),
         "code.impact": (handle_code_impact, result_lessons.impact_paths),
         "code.outline": (handle_code_outline, result_lessons.outline_paths),
+        "code.enclosing": (handle_code_enclosing, result_lessons.enclosing_paths),
         "code.context_pack": (handle_code_context_pack, result_lessons.pack_paths),
     }
     for name, (inner, paths_of) in wanted.items():
@@ -746,6 +754,50 @@ def test_grep_presence_and_uncovered_paths_have_no_lessons():
     assert result_lessons.grep_paths(inp.model_copy(update={"mode": "files"}), files) == [
         "src/b.py"
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skip", ["none", "argument", "narrowed", "unresolved"])
+async def test_enclosing_lessons_follow_only_resolved_files(
+    monkeypatch: pytest.MonkeyPatch, skip: str
+) -> None:
+    calls: list[dict[str, Any]] = []
+    _stub_reads(monkeypatch, ["mem-home", "code-repo"], calls)
+    monkeypatch.setattr(
+        "server.identity.app.request_scope.request_narrowed", lambda: skip == "narrowed"
+    )
+
+    async def enclosing(inp: CodeEnclosingInput) -> CodeEnclosingOutput:
+        resolved = skip != "unresolved"
+        return CodeEnclosingOutput(
+            results=[
+                {"path": "src/a.py", "start_line": 1 if resolved else 0, "end_line": 5},
+                {"path": "src/a.py", "start_line": 2 if resolved else 0, "end_line": 5},
+                {"path": "missing.py", "start_line": 0, "end_line": 0},
+            ],
+            resolved=2 if resolved else 0,
+            paths_indexed=1,
+            paths_total=2,
+            took_ms=0,
+        )
+
+    wrapped = result_lessons.WithLessons(enclosing, result_lessons.enclosing_paths)
+    out = await wrapped(
+        CodeEnclosingInput(
+            org="acme",
+            namespace="code-repo",
+            locations=["src/a.py:2", "src/a.py:3", "missing.py:1"],
+            lesson_namespaces=["mem-home", "denied"],
+            include_lessons=skip != "argument",
+        )
+    )
+    assert len(out.results) == 3
+    if skip != "none":
+        assert calls == [] and "lessons" not in out.model_dump()
+    else:
+        assert calls[0]["paths"] == ["src/a.py"]
+        assert calls[0]["nss"] == ["mem-home", "code-repo"]
+        assert out.lessons[0]["namespace"] == "mem-home"
 
 
 def test_grep_enrichment_uses_only_the_remaining_deadline(monkeypatch: pytest.MonkeyPatch):
