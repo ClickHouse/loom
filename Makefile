@@ -325,6 +325,7 @@ lint:
 	$(PYTHON) scripts/codegen/sdk_py_client_gen.py --check
 	$(PYTHON) scripts/codegen/sdk_py_admin_gen.py --check
 	$(PYTHON) scripts/codegen/sdk_ts_gen.py --check
+	$(PYTHON) scripts/codegen/sdk_rb_gen.py --check
 	$(PYTHON) scripts/codegen/agent_plugin_sync.py --check
 	$(PYTHON) scripts/codegen/settings_reference.py --check
 	$(PYTHON) scripts/codegen/settings_schema.py --check

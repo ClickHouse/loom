@@ -112,6 +112,11 @@ HTTP answers with a status and a `detail` body, MCP with a result that carries `
 0 disables the cap. Each request then passes these phases in order (`_make_endpoint`). A
 refusal ends the request.
 
+Refusals and handled operation errors retain the request id, schema version and any trace or rate-limit
+headers already established by admission. The error response also keeps its own
+headers, including retry and authentication challenges. Body framing and cookies
+from the injected success response do not transfer to an error response.
+
 | Phase                | Code                                   | Refusal                                                                                                                                                                                                                                                                                                                                                                                                |
 | -------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Begin                | `_begin_request`                       | None. Sets `X-Request-Id` (the caller's when it is 1 to 64 letters, digits, `.`, `_` or `-`, else a fresh UUID), `X-Schema-Version` and the query tag `"<op> <request_id>"`.                                                                                                                                                                                                                           |
