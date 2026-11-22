@@ -191,6 +191,18 @@ class _Writer:
             await asyncio.gather(*self.tasks)
 
 
+async def _settle_resolver(run_pass: Any, calls: list[str], max_attempts: int) -> None:
+    """Allow configured post-answer attempts, then require a quiet confirming pass."""
+    assert max_attempts >= 1
+    outcomes = []
+    for _ in range(max_attempts + 1):
+        before = len(calls)
+        outcomes.append(await run_pass())
+        if len(calls) == before:
+            return
+    raise AssertionError(f"resolver did not settle within {max_attempts} attempts: {outcomes}")
+
+
 class _DeleteBarrier:
     """Pause the first tombstone after its read and observe only that delete task."""
 
@@ -280,6 +292,81 @@ async def test_delete_contention_refuses_stale_head_and_writer_retries(
         assert barrier.attempts == 1 and barrier.recorded == 0
         assert head == competing
         assert not writer.want and writer.steps == 0
+
+
+@pytest.mark.parametrize("stamp_mode", ["write", "raise", "no_write"])
+async def test_a_fixed_refused_answer_settles_only_after_its_terminal_stamp(
+    ch, wired, monkeypatch, stamp_mode: str
+) -> None:
+    from types import SimpleNamespace
+
+    from server.core.errors import ValidationError
+    from server.memory.app import conflict_resolver as resolver
+    from server.memory.store import conflict_resolver as queue
+    from server.memory.workers import conflict_resolver as worker
+    from server.settings import settings
+
+    org, llm = wired
+    limit = settings.memory_conflict_resolver_max_attempts
+    calls: list[str] = []
+    attempts: list[int] = []
+    stamp_counts: list[int] = []
+    stamped: list[tuple[str, ...]] = []
+    real_stamp = queue.stamp_judged
+
+    async def judge(system: str, user: str, **kwargs: Any) -> Any:
+        calls.append(user)
+        peers = [
+            {
+                "peer_id": peer,
+                "reason": "scripted",
+                "same_entity": True,
+                "same_attribute": True,
+                "verdict": "update",
+                "confidence": 0.99,
+            }
+            for peer in re.findall(r"^\[(p\d+)\]", user, re.M)
+        ]
+        return SimpleNamespace(text=json.dumps({"peers": peers}))
+
+    async def refuse(*args: Any, **kwargs: Any) -> None:
+        # The real judge has answered; the unchanged row's action is refused.
+        raise ValidationError("The value is refused by a previous deletion", reason="forgotten")
+
+    async def observe_stamp(row: Any) -> None:
+        stamp_counts.append(worker._state.attempts[worker._attempt_key(row)][0])
+        if stamp_mode == "raise":
+            raise OSError("Synthetic terminal stamp refusal")
+        if stamp_mode == "write":
+            await real_stamp(row)
+            stamped.append(worker._attempt_key(row))
+
+    async def observed_pass() -> dict[str, Any]:
+        outcome = await worker.run_pass()
+        attempts.append(max((count for count, _ in worker._state.attempts.values()), default=0))
+        return outcome
+
+    monkeypatch.setattr(llm, "complete", judge)
+    monkeypatch.setattr(resolver, "_act_on_verdicts", refuse)
+    monkeypatch.setattr(queue, "stamp_judged", observe_stamp)
+    await _pair(ch, org, "refused_old", "refused_new", 140)
+    before = await _heads(ch, org)
+    if stamp_mode == "write":
+        await _settle_resolver(observed_pass, calls, limit)
+        assert len(calls) == limit and len(stamped) == 1
+        assert stamp_counts == [limit]
+        assert attempts == [*range(1, limit), 0, 0]
+        assert not await queue.owed_rows(limit=10)
+        drained = len(calls)
+        await worker.run_pass()
+        assert len(calls) == drained, "the terminal stamp stops further judge calls"
+    else:
+        with pytest.raises(AssertionError, match="did not settle"):
+            await _settle_resolver(observed_pass, calls, limit)
+        assert len(calls) == limit + 1
+        assert not stamped and await queue.owed_rows(limit=10)
+        assert stamp_counts == ([limit, limit + 1] if stamp_mode == "raise" else [limit])
+    assert await _heads(ch, org) == before, "the refused action must not change either head"
 
 
 # Every table a resolver write lands in.
@@ -380,7 +467,7 @@ async def test_the_resolver_keeps_its_invariants_under_concurrent_writes(
     await writer.run(0)
     writer.open = False
     want = writer.want
-    await run_pass()  # what the writes marked
+    await _settle_resolver(run_pass, calls, settings.memory_conflict_resolver_max_attempts)
     drained = len(calls)
     await run_pass()
     assert len(calls) == drained, "a pass after the queue drained makes no call"
