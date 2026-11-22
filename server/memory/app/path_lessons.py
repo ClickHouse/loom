@@ -1,6 +1,8 @@
 """The memories a code answer carries for the files it returns: each file's pre-edit rows
 (`memory.for_file`'s listing: the rows that name the file and the rows linked to code in
-it), merged across the files in their rank order and cut to a token cap. Read only; it
+it), merged across the files in their rank order and cut to a token cap. Query matches
+follow constraints and pins within each read; ties keep confidence and recency order.
+Read only; it
 records no served row (a code-plane annotation is not a memory recall, `served_reads`).
 
 Unlike the pre-edit block, a row that names the file only by another directory's path
@@ -20,7 +22,9 @@ from typing import Any, NamedTuple
 from server.memory.api.models_for_file import MemoryForFileInput
 from server.memory.app.code_plane_reads import PER_PATH_ROWS
 from server.memory.app.for_file import CHARS_PER_TOKEN, listing_rows, value_text
-from server.memory.domain.decision_schema import is_whole_row
+from server.memory.domain.decision_schema import CONSTRAINT_TAG, is_whole_row
+from server.memory.domain.lemmatize import snowball_stem_tokens
+from server.memory.domain.recall import query_tokens
 
 # A row's excerpt is cut here, unless it is a decision or a constraint, which is served
 # whole or not at all (a cut "never X unless Y" can say the opposite).
@@ -87,6 +91,23 @@ class Lessons(NamedTuple):
     left_out: int = 0
 
 
+def _ordered_hits(hits: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+    """Keep constraints and pins first, then query matches; ties retain listing order."""
+    terms = set(snowball_stem_tokens(query_tokens(query)))
+    if not terms:
+        return hits
+
+    def rank(hit: dict[str, Any]) -> tuple[bool, bool, int]:
+        words = snowball_stem_tokens(query_tokens(value_text(hit)[:EXCERPT_CHARS]))
+        return (
+            CONSTRAINT_TAG not in (hit.get("tags") or []),
+            not hit.get("pinned"),
+            -len(terms.intersection(words)),
+        )
+
+    return sorted(hits, key=rank)
+
+
 async def lessons_for_paths(
     org: str,
     namespaces: Sequence[str],
@@ -95,6 +116,7 @@ async def lessons_for_paths(
     *,
     token_budget: int,
     timeout_s: float | None = None,
+    query: str = "",
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -108,7 +130,8 @@ async def lessons_for_paths(
     `changed_since`, the commit that put its code in a `changed`, `unresolved` or `missing`
     state, when one is known; and `supersedes_key`, the key of the older row it replaces,
     when the conflict check linked one. `timeout_s` bounds the file reads together;
-    failed or unfinished reads leave the completed files' rows intact."""
+    failed or unfinished reads leave the completed files' rows intact. A nonempty `query`
+    ranks matching excerpts after constraints and pins, preserving listing order on ties."""
     if not namespaces or not paths:
         return Lessons([])
     # memory.for_file takes two extra namespaces and follows code links only into the
@@ -135,7 +158,7 @@ async def lessons_for_paths(
     spent = 0
     for inp, (hits, _skipped) in zip(reads, per_read, strict=True):
         path = inp.path
-        for hit in hits:
+        for hit in _ordered_hits(hits, query):
             key = (str(hit["namespace"]), str(hit["memory_key"]))
             if key in seen or not _names_this_file(hit, path):
                 continue

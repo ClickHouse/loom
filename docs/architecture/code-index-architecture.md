@@ -351,6 +351,17 @@ the matched files. Lessons are read after cached match data, within the request'
 remaining deadline. Presence queries and uncovered paths carry none;
 `include_lessons=false` skips the read.
 
+Search and grep rank each file's candidate lessons by query-term overlap after
+constraints and pinned rows. English inflections share stems; equal matches keep
+the listing's confidence and recency order. Other code reads retain listing order.
+This reorders the same readable candidates within the same response token budget;
+it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
+
+`bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
+from an evaluation's native memory certificates and grep answers. It retains every
+timestamp-tie order that reproduces the recorded answer. Cases whose reads cannot be
+reconstructed remain unknown. This offline replay measures lesson order, not solver success.
+
 Python compiler conversion keeps callable and class descriptors distinct from
 parameters, type parameters and fields. Call edges require a containing function
 span; a reference at module or class scope does not belong to the preceding function.

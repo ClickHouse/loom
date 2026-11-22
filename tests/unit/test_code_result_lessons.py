@@ -59,14 +59,55 @@ async def _lessons(
     nss: tuple[str, ...] = ("mem-home", "code-repo"),
     budget: int = 2000,
     seen: list[Any] | None = None,
+    query: str = "",
 ) -> list[dict[str, Any]]:
     monkeypatch.setattr(
         path_lessons, "listing_rows", _listing(by_path, [] if seen is None else seen)
     )
     found = await path_lessons.lessons_for_paths(
-        "acme", list(nss), "code-repo", paths, token_budget=budget
+        "acme", list(nss), "code-repo", paths, token_budget=budget, query=query
     )
     return found.rows
+
+
+@pytest.mark.asyncio
+async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recent = _hit("theme", value="Change the page theme.")
+    older = _hit("retry", value="A retry must preserve the request identifier.", state="changed")
+    # Listing order would spend the cap on the unrelated row.
+    lesson = path_lessons._lesson(older, "a.py")
+    assert lesson is not None
+    cap = path_lessons._tokens(lesson)
+    rows = await _lessons(
+        monkeypatch, {"a.py": [recent, older]}, ["a.py"], budget=cap, query="retries"
+    )
+    assert [r["memory_key"] for r in rows] == ["retry"]
+    assert rows[0]["code_state"] == "changed"
+
+
+@pytest.mark.asyncio
+async def test_query_matching_preserves_constraints_pins_and_tie_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = [
+        _hit("constraint", tags=("constraint",), value="Keep secrets out of logs."),
+        {**_hit("pinned", value="Stable team policy."), "pinned": True},
+        _hit("recent", value="Unrelated display note."),
+        _hit("older", value="Retry requests with their original identifier."),
+        _hit("same-score", value="Retry transient requests."),
+    ]
+    found = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], query="retry")
+    assert [r["memory_key"] for r in found] == [
+        "constraint",
+        "pinned",
+        "older",
+        "same-score",
+        "recent",
+    ]
+    unchanged = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], query="unmatched")
+    assert [r["memory_key"] for r in unchanged] == [r["memory_key"] for r in rows]
 
 
 @pytest.mark.asyncio
@@ -332,6 +373,7 @@ async def test_reach_only_readable_namespaces_and_the_top_paths(
     )
     assert calls[-1]["nss"] == ["mem-home", "code-repo"]
     assert calls[0]["token_budget"] == settings.code_result_lessons_tokens
+    assert calls[0]["query"] == "q"
 
 
 @pytest.mark.asyncio
@@ -657,6 +699,7 @@ async def test_grep_lessons_use_matched_files_and_respect_opt_out(
     out = await wrapped(inp)
     assert out.lessons[0]["memory_key"] == "k"
     assert calls[0]["paths"] == ["src/a.py"]
+    assert calls[0]["query"] == "ab"
     calls.clear()
     out = await wrapped(inp.model_copy(update={"include_lessons": False}))
     assert calls == [] and "lessons" not in out.model_dump()
