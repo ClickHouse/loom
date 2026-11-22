@@ -13,6 +13,7 @@ from urllib.parse import urlsplit
 
 from examples.software_factory.factory.model import digest
 
+from .project_guidance import guidance
 from .runtime import read, verify, write
 
 KIND = "factory-public-results"
@@ -138,6 +139,11 @@ def public_metadata(value):
             for row in value["tasks"]
         ],
     }
+    if "project_guidance" in value:
+        expected = guidance(suite["source_roots"])
+        if value["project_guidance"] != expected:
+            raise ValueError("Public project instructions differ from the shared template")
+        result["project_guidance"] = expected
 
     def public_text(text):
         if not isinstance(text, str) or not re.fullmatch(r"[A-Za-z0-9 ,;:+().'\-]{1,512}", text):

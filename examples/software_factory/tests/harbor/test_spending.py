@@ -164,6 +164,20 @@ class SpendingContracts(unittest.TestCase):
         self.addCleanup(restored.close)
         self.assertEqual(restored.summary(), journal.summary())
 
+    def test_opus_and_sonnet_use_published_cache_hit_prices(self):
+        for model in ("claude-opus-5-5", "claude-sonnet-5-5"):
+            journal = Spending(self.path.with_name(model + ".jsonl"), dollars=None, model=model)
+            self.addCleanup(journal.close)
+            usage = {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_input_tokens": 1000000,
+                "cache_creation_input_tokens": 0,
+                "cache_creation": {},
+            }
+            _, _, cost = journal.usage_cost(model, usage)
+            self.assertEqual(float(cost), 0.2 if model == "claude-opus-5-5" else 0.1)
+
     def test_failed_dispatch_retains_reservation_and_blocks_the_next(self):
         calls = []
 

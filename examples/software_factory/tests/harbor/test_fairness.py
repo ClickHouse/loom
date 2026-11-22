@@ -11,6 +11,7 @@ from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.fairness import audit_fairness
 from examples.software_factory.harbor.index import TABLES
 from examples.software_factory.harbor.native_environment import agent_settings, mcp_settings
+from examples.software_factory.harbor.project_guidance import guidance, stage
 from examples.software_factory.harbor.runtime import write
 
 
@@ -69,6 +70,10 @@ class PublicPromptBytes(TestCase):
                 write(root / name, snapshot)
             certificate = root / "index-certificate.json"
             write(certificate, {"schema_version": 1, "scopes": {}})
+            instructions = guidance(["src"])
+            workspace = root / "builds/task/agent/workspace"
+            workspace.mkdir(parents=True)
+            stage(workspace, instructions)
             slot = {
                 "order": 0,
                 "task_id": "task",
@@ -87,6 +92,7 @@ class PublicPromptBytes(TestCase):
                 "model_id": "claude-sonnet-5-5",
                 "index_tier": "per-arm",
                 "solver": {"version": "pinned"},
+                "project_guidance": instructions,
                 "files": {str(manifest): hashlib.sha256(manifest.read_bytes()).hexdigest()},
                 "historical_manifest": str(manifest),
                 "index_certificate_file": str(certificate),

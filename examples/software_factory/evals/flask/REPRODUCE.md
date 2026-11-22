@@ -11,8 +11,9 @@ ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --ou
 ```
 
 Use a fresh output directory. Model changes define separate cohorts; compare arms within
-one cohort, and retain results from earlier models. The default model is `claude-sonnet-5-5` for the solver,
-native model-backed operations and blind judge. Native coding runs have no dollar cap; capped launches are refused. An interrupted phase refuses automatic replay;
+one cohort, and retain results from earlier models. The solver and blind judge use
+`claude-opus-5-5`. Loom model-backed operations use its separately recorded default
+`claude-sonnet-5-5`. Native coding runs have no dollar cap; capped launches are refused. An interrupted phase refuses automatic replay;
 inspect retained receipts before explicit resume or cleanup:
 
 ```bash
@@ -58,6 +59,14 @@ Harbor uses its built-in `claude-code` agent, pinned by
 issue in an ordinary shallow checkout at its buggy base. Claude chooses its
 reads, edits, commands, retrieval, subagents and stopping point. There is no
 factory coding loop, injected source context, forced Loom call or final review turn.
+
+Every arm receives identical conditional retrieval guidance in `/workspace/CLAUDE.md`,
+including the no-Loom arm. The [shared template](../../harbor/project-guidance.md)
+routes supported lookups through Loom when configured and permits local editing,
+tests and fallback. The protocol and public reproduction manifest retain its exact
+text and SHA-256, and the fairness audit checks every task image's staged copy.
+This is an instructed cohort; keep it separate from runs without these instructions.
+The file contains no issue-specific hints, solution or hidden-test information.
 
 The model, Claude Code version, checkout image, one CPU and 2 GiB agent memory
 are shared across arms for each issue. During coding, the sandbox allows the

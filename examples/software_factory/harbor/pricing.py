@@ -2,11 +2,13 @@
 
 from decimal import Decimal
 
-MODELS = {"claude-haiku-5-5", "claude-sonnet-5-5"}
+MODELS = {"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"}
 SOURCE = "https://platform.claude.com/docs/en/about-claude/pricing"
 
 
 def rates(model, incoming, *, ceiling=False):
+    if model == "claude-opus-5-5":
+        return Decimal("4"), Decimal("20")
     if model == "claude-sonnet-5-5":
         return Decimal("2"), Decimal("10")
     if model == "claude-haiku-5-5":

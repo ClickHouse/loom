@@ -79,6 +79,10 @@ def audit_fairness(protocol, entries, *, billing=None):
             "same_version": agent.get("kwargs") == {"version": protocol["solver"]["version"]},
             "same_image": config["environment"]["docker_image"]
             == protocol["harbor_images"][slot["task_id"]]["agent"],
+            "same_project_guidance": hashlib.sha256(
+                (root / "builds" / slot["task_id"] / "agent/workspace/CLAUDE.md").read_bytes()
+            ).hexdigest()
+            == protocol["project_guidance"]["sha256"],
             "mcp_treatment": servers
             == tomllib.loads(mcp_settings(protocol, slot))
             .get("environment", {})

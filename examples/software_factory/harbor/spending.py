@@ -159,9 +159,12 @@ class Spending:
         )
         incoming, outgoing = self.rates(model, total)
         detail = usage["cache_creation"]
+        cache_read_multiplier = Decimal(
+            "0.05" if model in {"claude-sonnet-5-5", "claude-opus-5-5"} else "0.1"
+        )
         charged_input = (
             usage["input_tokens"]
-            + Decimal("0.1") * usage["cache_read_input_tokens"]
+            + cache_read_multiplier * usage["cache_read_input_tokens"]
             + Decimal("1.25") * detail.get("ephemeral_5m_input_tokens", 0)
             + Decimal("2") * detail.get("ephemeral_1h_input_tokens", 0)
         )

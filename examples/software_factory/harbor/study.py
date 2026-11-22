@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import time
+from functools import partial
 from pathlib import Path
 from statistics import fmean
 from urllib.parse import urlsplit
@@ -33,6 +34,8 @@ from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
 from .profiles import load_profile
+from .project_guidance import guidance
+from .project_guidance import stage as stage_guidance
 from .public_export import export_public
 from .scopes import selected_scopes
 
@@ -118,7 +121,7 @@ def stage_sandbox_policy(
     return target
 
 
-def build_image(folder: Path, dependency: str) -> str:
+def build_image(folder: Path, dependency: str, *, project_instructions: dict) -> str:
     inspected = json.loads(
         subprocess.run(
             ["docker", "image", "inspect", dependency],
@@ -132,6 +135,7 @@ def build_image(folder: Path, dependency: str) -> str:
     reference = inspected["RepoTags"][0]
     native = (folder / "workspace").is_dir()
     if native:
+        stage_guidance(folder / "workspace", project_instructions)
         version = read(HERE / "agent.json")["version"]
         recipe = (
             "FROM " + reference + "\nUSER root\n"
@@ -242,9 +246,12 @@ def prepare(previous: Path, output: Path) -> Path:
     }
     assert all(plan[k] == original[k] for k in plan["preparation"]["unchanged"])
     plan["harbor_specs"], images = {}, {}
+    plan["project_guidance"] = guidance(plan["suite"]["source_roots"])
+    plan["public_reproduction"]["project_guidance"] = plan["project_guidance"]
+    builder = partial(build_image, project_instructions=plan["project_guidance"])
     for task_id in sorted(plan["tasks"]):
         plan["harbor_specs"][task_id], images[task_id] = load_profile(plan).stage_task(
-            plan, task_id, output, build_image
+            plan, task_id, output, builder
         )
     plan["harbor_images"] = images
     write(output / "images.json", images)
@@ -350,6 +357,7 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [output / (n + "-job.json") for n in ("live", "base", "reference")]
     paths += [output / "index-content.json", output / "images.json"]
     paths += list((output / "builds").rglob("Dockerfile"))
+    paths += list((output / "builds").glob("*/agent/workspace/CLAUDE.md"))
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
     plan.pop("source_archive", None)
     write(protocol_path, plan)

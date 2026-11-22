@@ -22,6 +22,7 @@ from .arms import PRIMARY
 from .build_recipe import PYTHON_IMAGE, native_recipe
 from .catalog import load_evaluation
 from .host_tunnel import HostTunnel
+from .project_guidance import guidance
 
 ROOT = Path(__file__).resolve().parents[3]
 HERE = Path("examples/software_factory/harbor")
@@ -140,6 +141,7 @@ def plan(root=ROOT, evaluation="flask"):
             key: descriptor[key] for key in ("id", "title", "adapter", "descriptor_sha256")
         },
         "model": locked["model_id"],
+        "project_guidance": guidance(locked["source_roots"]),
         "native_provider": "anthropic",
         "native_model": native_model(root),
         "arms": list(ARMS),
