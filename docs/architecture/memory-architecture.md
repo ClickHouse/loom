@@ -1585,6 +1585,11 @@ Every write that creates or changes memory leaves one hash-only row in `loom.aud
 hash, source class and verdict. The row hash and the checkpoint chain are described in
 [audit](../features/observability/audit.md).
 
+A successful ClickHouse `memory.set` requires an acknowledged receipt. Receipt storage
+failure reports that the memory was written and returns `BACKEND_UNAVAILABLE`; safety
+follow-ups still finish. The separate memory and audit inserts do not form an atomic
+transaction. Postgres keeps the revision receipt and delivery obligation in its commit.
+
 ## Change webhooks
 
 After a write path's rows are in, it calls `announce` (`server/memory/app/webhooks.py`)

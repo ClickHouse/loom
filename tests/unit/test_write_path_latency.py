@@ -96,6 +96,7 @@ def post_insert(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(set_commit, "_project_set_entities_fail_open", _project)
     monkeypatch.setattr(ks, "supersede_same_key_rows", _supersede)
     monkeypatch.setattr(audit, "emit", _emit)
+    monkeypatch.setattr(audit, "emit_strict", _emit)
     monkeypatch.setattr(after_write, "schedule", _schedule)
     from server.memory.store import graph_projections
 

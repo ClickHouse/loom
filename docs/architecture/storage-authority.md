@@ -95,6 +95,12 @@ Acknowledged copies record their commit before holder cleanup, and still run the
 announcements and follow-ups when that cleanup is cancelled.
 Point writes retain their hash-only receipt and announcement after an acknowledged
 insert, including cancellation during holder release.
+On ClickHouse, a successful `memory.set` requires an acknowledged audit receipt.
+Receipt failure reports `BACKEND_UNAVAILABLE` for `memory.set.audit`, with
+`outcome_unknown=true`, after completing the committed row's safety follow-ups.
+The error says that memory was written: read the current row before retrying.
+The memory and audit inserts are separate; a process loss between them is not an
+atomic transaction. Postgres commits the revision receipt and delivery debt with the row.
 These follow-up sequences and the high-sensitivity fence finish despite repeated
 request cancellation, and propagate the original cancellation once they finish.
 Holder release uses bounded waves too, so a batch does not exhaust its own connection

@@ -18,6 +18,8 @@ from fastapi import HTTPException
 
 from server.core import pg, pg_lease
 from server.core.datetimes import to_naive_utc
+from server.core.error_summary import error_summary
+from server.core.errors import BackendUnavailableError
 from server.core.hashing import served_content_sha256
 from server.embedding import get_embedder
 from server.embedding.documents import document_vector, document_vectors
@@ -440,6 +442,7 @@ def _answers_at_commit(w: _SetWrite) -> bool:
 async def _audit_set_receipt(
     input: MemorySetInput,
     *,
+    ch: Any,
     memory_id: str,
     content_sha256: str,
     source_class: str,
@@ -449,8 +452,12 @@ async def _audit_set_receipt(
     """A committed point write's hash-only receipt, never its value."""
     from server.observability import audit as _audit_mod
 
+    # Native commits already own a durable revision receipt and its delivery debt.
+    native = pg.enabled()
+    emit = _audit_mod.emit if native else _audit_mod.emit_strict
+    destination = {} if native else {"ch": ch}
     try:
-        await _audit_mod.emit(
+        await emit(
             event_type="memory.set",
             org=input.org,
             namespace=input.namespace,
@@ -463,9 +470,24 @@ async def _audit_set_receipt(
                 "verdict": verdict,
                 "pinned": bool(input.pinned),
             },
+            **destination,
         )
-    except Exception as e:  # noqa: BLE001 — the audit row never fails the write
-        log.warning("memory.set: audit emit failed (non-fatal): %s", e)
+    except Exception as e:  # Report the receipt failure without implying a rollback.
+        log.error("memory.set: audit receipt was not acknowledged: %s", error_summary(e))
+        raise BackendUnavailableError(
+            "memory was written but its audit receipt was not acknowledged; "
+            "read the current memory before retrying",
+            operation="memory.set.audit",
+            outcome_unknown=True,
+        ) from e
+
+
+async def _await_point_followups(followups: list[Awaitable[Any]]) -> None:
+    """A failed receipt must not abandon the committed row's safety follow-ups."""
+    results = await asyncio.gather(*followups, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            raise result
 
 
 async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
@@ -499,9 +521,10 @@ async def _land_plain_row(w: _SetWrite, ch: Any, *, high: bool) -> int:
     return await _land_plain_clickhouse(w, ch, high=high)
 
 
-async def _receipt_for_set(w: _SetWrite, verdict: str = "") -> None:
+async def _receipt_for_set(w: _SetWrite, ch: Any, verdict: str = "") -> None:
     await _audit_set_receipt(
         w.input,
+        ch=ch,
         memory_id=w.memory_id,
         content_sha256=w.new_sha,
         source_class=w.source_class,
@@ -526,10 +549,9 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
         nonlocal inserted
         inserted = True
 
-    async def follow() -> None:
+    async def safety() -> None:
         nonlocal version
         try:
-            await _receipt_for_set(w)
             version = await _lift_after_insert(w, ch)
         finally:
             await _announce_set(w)
@@ -543,7 +565,10 @@ async def _land_plain_clickhouse(w: _SetWrite, ch: Any, *, high: bool) -> int:
                 )
         finally:
             if inserted:
-                await finish_followups(follow(), name="memory.set.followups")
+                await finish_followups(
+                    _await_point_followups([_receipt_for_set(w, ch), safety()]),
+                    name="memory.set.followups",
+                )
         return version
     finally:
         if high and sent:
@@ -1042,7 +1067,7 @@ async def _set_dual_write(w: _SetWrite, ch: Any, _cfg: Any, conflict_result: Any
     except BaseException:  # acknowledged rows still owe their receipt when publication is cancelled
         if w.inserted:
             verdict = "duplicate" if w.memory_row.get("duplicate_of") else conflict_result.verdict
-            await finish_followups(_receipt_for_set(w, verdict), name="memory.set.receipt")
+            await finish_followups(_receipt_for_set(w, ch, verdict), name="memory.set.receipt")
         raise
     # Its version was drawn when the write began: a slow write indexes its own BM25 stats.
     after_write.index_late_rows([embedding_row], ch=ch)
@@ -1217,6 +1242,7 @@ async def _set_post_insert(
         _supersession(),
         _audit_set_receipt(
             input,
+            ch=ch,
             memory_id=memory_id,
             content_sha256=content_sha256,
             source_class=source_class,
@@ -1228,7 +1254,7 @@ async def _set_post_insert(
         ),
     ]
     with traced("memory.set.post_insert", concurrent=len(tail)):
-        await asyncio.gather(*tail)
+        await finish_followups(_await_point_followups(tail), name="memory.set.post_insert")
 
 
 def _entity_projection_tail(
