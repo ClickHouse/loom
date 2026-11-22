@@ -33,6 +33,22 @@ def test_unlimited_still_honours_bodyless_mode() -> None:
     assert used == sum(estimate_unit_tokens(u) for u in served)
 
 
+def test_bodyless_cards_reserve_their_actual_source_pointer() -> None:
+    path = "nested/" * 150 + "module.py"
+    unit = CodeUnit(
+        path=path,
+        symbol="make_url",
+        elided=True,
+        granularity="card",
+        next=f"Read {path} offset=10 limit=2",
+    )
+    cost = estimate_unit_tokens(unit)
+    served, used = budget_units([unit], cost - 1)
+    assert not served and used == 0
+    served, used = budget_units([unit], cost)
+    assert served == [unit] and used == cost
+
+
 def test_fanout_uses_the_same_unlimited_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     from server.code.app.search_fanout import budget
 

@@ -10,9 +10,18 @@ from server.code.app import search as code_search
 
 
 class SourceRepo:
-    def __init__(self, name: str, text: str, *, missing: bool = False, failed: bool = False):
+    def __init__(
+        self,
+        name: str,
+        text: str,
+        *,
+        missing: bool = False,
+        failed: bool = False,
+        path: str = "module.py",
+    ):
         self.name, self.text = name, text
         self.missing, self.failed = missing, failed
+        self.path = path
         self.reads: list[tuple[str, int, int, str]] = []
 
     async def symbols_by_name(self, org: str, ns: str, name: str) -> list[dict[str, Any]]:
@@ -23,7 +32,7 @@ class SourceRepo:
             {
                 "symbol_id": "definition",
                 "qualified_name": name,
-                "path": "module.py",
+                "path": self.path,
                 "start_line": 10,
                 "end_line": 9 + len(self.text.splitlines()),
                 "signature": "()",
@@ -100,3 +109,14 @@ async def test_unavailable_source_keeps_the_definition_and_discloses_elision(fai
     assert result.units[0].body == "" and result.units[0].elided
     assert result.units[0].granularity == "card"
     assert result.units[0].next == "Read module.py offset=10 limit=2"
+
+
+async def test_missing_source_with_a_long_pointer_respects_an_explicit_budget() -> None:
+    repo = SourceRepo(
+        "make_url",
+        "def make_url():\n    return 1\n",
+        missing=True,
+        path="nested/" * 150 + "module.py",
+    )
+    result = await lookup(repo, token_budget=400)
+    assert not result.units and result.tokens_returned == 0

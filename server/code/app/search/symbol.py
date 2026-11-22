@@ -67,11 +67,11 @@ async def _symbol_shaped_route(
         for u in units:
             u.via = "symbol"
         selected = units[:top_k]
-        if bodies == "auto":
-            await _fill_symbol_bodies(repo, org, ns, model, selected)
-        else:
-            selected = [_card_of(unit) for unit in selected]
         with code_span("search.bodies", route="symbol_exact"):
+            if bodies == "auto":
+                await _fill_symbol_bodies(repo, org, ns, model, selected)
+            else:
+                selected = [_card_of(unit) for unit in selected]
             result.units, result.tokens_returned = budget_units(
                 selected, token_budget, bodies=bodies
             )

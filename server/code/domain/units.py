@@ -252,7 +252,8 @@ def budget_units(
     """
     # A head is the unit as its elided card would serve — pointer, next
     # hint, JSON envelope included — so the reservation is the wire cost.
-    heads = [estimate_unit_tokens(_card_of(u)) for u in units]
+    # Bodyless cards already carry the pointer the caller will receive.
+    heads = [estimate_unit_tokens(_card_of(u) if u.body else u) for u in units]
     kept = 0
     reserved = 0
     for h in heads:
