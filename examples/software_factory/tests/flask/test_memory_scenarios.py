@@ -10,8 +10,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from examples.software_factory.tests.fixtures.flask_history import evaluation, fixtures
 from examples.software_factory.factory.model import digest
+from examples.software_factory.tests.fixtures.flask_history import evaluation, fixtures
 
 SOURCES = {
     "src/flask/app.py": (

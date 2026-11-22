@@ -8,8 +8,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from examples.software_factory.evals.flask.historical import FrozenSource, git
-from examples.software_factory.tests.fixtures.flask_history import materialize
 from examples.software_factory.factory.model import digest
+from examples.software_factory.tests.fixtures.flask_history import materialize
 
 
 class MaterializeCases(unittest.TestCase):

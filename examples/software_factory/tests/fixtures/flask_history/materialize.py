@@ -10,13 +10,12 @@ import re
 import subprocess
 from pathlib import Path
 
+from examples.software_factory.evals.flask.bootstrap import LOCK
 from examples.software_factory.evals.flask.historical import FrozenSource, git
 from examples.software_factory.factory.model import digest
 
 from .evaluation import evaluator_spec
 from .fixtures import load_manifest, prepare_case
-
-from examples.software_factory.evals.flask.bootstrap import LOCK
 
 FAMILY = "authored-simulated-memory-history"
 FIXTURE_DATE = "2000-01-01T00:00:00+00:00"

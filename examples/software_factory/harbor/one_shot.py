@@ -59,7 +59,7 @@ class Phases:
         print(json.dumps({"phase": phase, "state": "started"}), flush=True)
         try:
             result = function()
-        except Exception as error:  # noqa: BLE001 — persist the failure site without exception payloads
+        except Exception as error:
             self.append(
                 "failed",
                 phase,
