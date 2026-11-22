@@ -19,7 +19,7 @@ Start with [the docs map](docs/index.md). To install Loom, a coding agent reads 
 ## Use cases
 
 - [Use cases](docs/use-cases/index.md): Each page answers one question people and agents ask when they look for a tool: what Loom does for that need and where to start.
-- [Memory for coding agents across sessions and tools](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API that gives AI agents long-term memory they share: a fact one agent saves in a session can be found by the next session, by another agent, or by a person at the dashboard.
+- [Memory for coding agents across sessions and tools](docs/use-cases/agent-memory.md): Loom is a self-hosted MCP server and HTTP API for coding agents that need to share project decisions, corrections and lessons across sessions and tools.
 - [Memory, recall, audit and erasure for autonomous agents](docs/use-cases/autonomous-agents.md): Loom is a self-hosted backend for autonomous agents: memory they recall across runs, reusable procedures the agent executes, run records, an audit record of who wrote what, and scope-wide erasure.
 - [Code intelligence for C++, Python, TypeScript, Go, Rust, Java and infrastructure code](docs/use-cases/code-intelligence-by-language.md): Loom's code index answers a coding agent's structure questions in the languages a repository holds: where a symbol is defined, who calls it, and what a change touches.
 - [A code index for coding agents](docs/use-cases/code-intelligence.md): Loom gives coding agents a shared index of your git repositories, served over MCP, so an agent asks a structure question and gets the lines that answer it instead of reading whole files.
