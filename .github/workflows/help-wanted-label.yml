@@ -21,7 +21,7 @@ concurrency:
 jobs:
   label:
     name: Mirror help wanted labels
-    if: github.repository == 'ClickHouse/loom' && (github.event.action != 'labeled' || github.event.label.name == 'help wanted')
+    if: github.repository == 'ClickHouse/loom'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

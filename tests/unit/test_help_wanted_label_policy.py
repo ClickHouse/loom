@@ -138,7 +138,7 @@ class LabelPolicyTests(unittest.TestCase):
         self.assertEqual(state["labels"], ["help wanted"])
         self.assertEqual(sum(call["method"] == "POST" for call in state["calls"]), 1)
 
-    def test_metadata_only_permissions_events_and_loop_guard(self) -> None:
+    def test_metadata_only_permissions_events_and_coalesced_reconciliation(self) -> None:
         job = self.workflow["jobs"]["label"]
         self.assertEqual(self.workflow["permissions"], {})
         self.assertEqual(job["permissions"], {"issues": "write"})
@@ -147,7 +147,9 @@ class LabelPolicyTests(unittest.TestCase):
             set(self.workflow["on"]), {"issues", "pull_request_target", "workflow_dispatch"}
         )
         self.assertNotIn("synchronize", self.workflow["on"]["pull_request_target"]["types"])
-        self.assertIn("github.event.label.name == 'help wanted'", job["if"])
+        # The latest unrelated label event can replace a pending help-wanted event.
+        # Every queued event must reconcile current state, including our own label.
+        self.assertEqual(job["if"], "github.repository == 'ClickHouse/loom'")
         self.assertTrue(all("uses" not in step for step in job["steps"]))
         self.assertEqual(job["steps"][0]["env"]["GH_HOST"], "github.com")
 
