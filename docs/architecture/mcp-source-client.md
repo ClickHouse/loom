@@ -74,9 +74,10 @@ provenance. A citation address alone does not establish tenant or reader authori
 
 Discovery, pagination, results, content and HTTP responses have finite limits. A session
 has an overall deadline, including idle time, as well as request bounds. The SDK context
-managers live in one task per open client. Cancelling an operation closes and joins that
-task before returning cancellation; another client's SDK scope remains independent.
-A cancelled client is terminal. Cancellation publishes no partial read evidence.
+managers live in one task per open client. A failed or cancelled operation makes its
+client terminal and closes and joins that task before returning, including when an SDK
+request deadline expires while HTTP response data is still arriving. Another client's
+SDK scope remains independent. Cancellation publishes no partial read evidence.
 Closing a request does not prove that remote processing has stopped. Errors expose bounded error
 codes rather than upstream content, endpoints or credentials.
 

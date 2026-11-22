@@ -643,7 +643,7 @@ class MCPSourceClient:
             try:
                 await asyncio.shield(owner)
             except asyncio.CancelledError as error:
-                interrupted = error
+                interrupted = interrupted or error
         if not owner.cancelled():
             owner.result()
         if interrupted is not None:
@@ -658,7 +658,7 @@ class MCPSourceClient:
         try:
             await self._close()
             failure = self._owner_failure
-            if error is None and failure is not None and failure != self._operation_failure:
+            if error is None and failure is not None and self._operation_failure is None:
                 raise MCPSourceError(failure)
         finally:
             self._leave_private()
@@ -675,12 +675,11 @@ class MCPSourceClient:
 
     async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         set_query_tag("mcp-source")
-        if self._session is None:
-            self._operation_failure = self._owner_failure or "closed"
-            raise MCPSourceError(self._operation_failure)
-        if self._operation_failure is not None:
-            raise MCPSourceError(self._operation_failure)
         try:
+            if self._session is None:
+                raise MCPSourceError(self._owner_failure or "closed")
+            if self._operation_failure is not None:
+                raise MCPSourceError(self._operation_failure)
             async with asyncio.timeout_at(self._deadline):
                 await self.validate_access()
                 result = await action(self._session)
@@ -688,26 +687,25 @@ class MCPSourceClient:
                 if self._operation_failure is not None:
                     raise MCPSourceError(self._operation_failure)
                 return result
-        except asyncio.CancelledError:
-            if self._transport and self._transport.failure:
-                self._operation_failure = self._transport.failure
-                raise MCPSourceError(self._operation_failure) from None
-            self._operation_failure = "closed"
+        except (
+            Exception,  # Terminal refusals must drain owned HTTP work before returning.
+            asyncio.CancelledError,
+        ) as error:
+            if isinstance(error, asyncio.CancelledError):
+                code: ErrorCode = "closed"
+            elif isinstance(error, MCPSourceError):
+                code = error.code
+            else:
+                code = (self._transport.failure if self._transport else None) or _error_code(error)
+            code = self._operation_failure or code
+            self._operation_failure = code
             try:
                 await self._close()
             except asyncio.CancelledError:
-                pass
-            raise
-        except MCPSourceError as error:
-            self._operation_failure = error.code
-            raise
-        except Exception as error:  # noqa: BLE001 — upstream errors may contain credentials or document content
-            code = (
-                self._transport.failure
-                if self._transport and self._transport.failure
-                else _error_code(error)
-            )
-            self._operation_failure = code
+                if not isinstance(error, asyncio.CancelledError):
+                    raise
+            if isinstance(error, asyncio.CancelledError):
+                raise
             raise MCPSourceError(code) from None
 
     async def discover(self) -> MCPDiscovery:
