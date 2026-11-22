@@ -191,7 +191,12 @@ def test_coding_descriptions_derive_from_the_core_texts():
     # Memory.pin and working_memory.append are not on the coding
     # listing, so they have no coding texts
     # Blast radius has a coding-tier text (the paging detail stays on qa/all)
-    assert set(CODING_TOOL_DESCRIPTIONS) == {"memory.set", "loom_activate", "code.impact"}
+    assert set(CODING_TOOL_DESCRIPTIONS) == {
+        "memory.set",
+        "loom_activate",
+        "code.impact",
+        "context.pack",
+    }
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
     assert "native memory" in TOOL_DESCRIPTIONS["memory.set"]
@@ -508,3 +513,11 @@ def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(d
     assert "loom_code_context_pack" in coding
     assert "First step of each task" not in coding
     assert "Recall before answering from memory" in coding
+
+
+def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
+    tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
+    description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
+    assert "call it first when a default memory namespace exists" in description
+    assert "call it first in each task" not in description
+    assert "Pass the task as `query`" in description
