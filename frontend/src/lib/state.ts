@@ -103,6 +103,9 @@ const VIEW_QUERY_KEYS: Partial<Record<View, readonly string[]>> = {
   // The Library also carries the place it shows (`?collection=`, or `?place=all`).
   knowledge: ["doc", "collection", "place"],
   sessions: ["thread"],
+  // The Review queue carries its open category (`?tab=conflicts|proposals|…`), so a
+  // proposal-only queue links straight to its pending proposals.
+  "admin:review_queue": ["tab"],
   // The Help view's page of the docs (`?page=features/knowledge.md`); its section is the
   // URL's anchor.
   help: ["page"],
@@ -338,13 +341,55 @@ export function pathnameView(): View | null {
  *  sign-in link brought that it refused is "refused"; a first visit carries null. */
 export type GateReason = "expired" | "ended" | "refused" | null;
 
-/** One namespace's admin badge answer: its open conflicts, whether Loom retired a memory
- *  on its own lately, whether it is over its LLM cap, and the agents new in the last 24 h. */
+/** One namespace's admin badge answer: its open conflicts, its pending proposals, whether
+ *  Loom retired a memory on its own lately, whether it is over its LLM cap, and the agents
+ *  new in the last 24 h. A count that failed to read is `null` — unknown, never a false
+ *  zero — and the review badge adds only the counts it knows. */
 export interface AdminBadges {
   conflicts: number | null;
+  /** Proposals still on trial (`status = 'proposed'`); accepted/rejected ones never count. */
+  pendingProposals: number | null;
   autoResolved: boolean;
   overCap: boolean;
   newAgents: number;
+}
+
+/** The session-cache key of one principal's badge answer for one scope: the counts are
+ *  cached per organization, namespace, principal and role, so they never cross an org,
+ *  namespace, account or permission boundary. */
+export function badgeCacheKey(
+  org: string,
+  namespace: string,
+  subject: string | undefined,
+  role: string | null,
+): string {
+  return `badges:${org}/${namespace}:${subject ?? "anon"}:${role ?? "unknown"}`;
+}
+
+/** The review items a badge answer knows about: open conflicts plus pending proposals.
+ *  `known` says whether every kind was read — a failed read makes the sum partial. */
+export function reviewCount(badges: AdminBadges | null): { total: number; known: boolean } {
+  if (!badges) return { total: 0, known: false };
+  const conflicts = badges.conflicts ?? 0;
+  const proposals = badges.pendingProposals ?? 0;
+  // `!= null` also treats a field an older cached answer lacked as unknown.
+  const known = badges.conflicts != null && badges.pendingProposals != null;
+  return { total: conflicts + proposals, known };
+}
+
+/** The badge's accessible label: what the number counts, per kind, and "at least" when
+ *  a kind's count failed to read (a partial count is never presented as the whole). */
+export function reviewBadgeLabel(badges: AdminBadges | null): string {
+  const { total, known } = reviewCount(badges);
+  if (!badges || total === 0) return "";
+  const parts: string[] = [];
+  if (badges.conflicts != null && badges.conflicts > 0)
+    parts.push(`${badges.conflicts} conflict${badges.conflicts === 1 ? "" : "s"}`);
+  if (badges.pendingProposals != null && badges.pendingProposals > 0)
+    parts.push(`${badges.pendingProposals} pending proposal${badges.pendingProposals === 1 ? "" : "s"}`);
+  const what = parts.length > 0 ? parts.join(", ") : "review items";
+  const n = total === 1 ? "1 item" : `${total} items`;
+  return known ? `${n} to review: ${what}` : `at least ${n} to review: ${what}`;
 }
 
 interface AppState {

@@ -15130,6 +15130,7 @@ class MemoryProposalsInput(TypedDict, total=False):
     tags: NotRequired[list[str]]
     only: NotRequired[Literal["", "ready"]]
     limit: NotRequired[int]
+    count_only: NotRequired[bool]
 
 
 class MemoryProposalsBody(TypedDict, total=False):
@@ -15139,6 +15140,7 @@ class MemoryProposalsBody(TypedDict, total=False):
     tags: NotRequired[list[str]]
     only: NotRequired[Literal["", "ready"]]
     limit: NotRequired[int]
+    count_only: NotRequired[bool]
 
 
 class MemoryProposalsOutput(TypedDict, total=False):

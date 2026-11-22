@@ -6654,6 +6654,7 @@ export interface MemoryProposalsInput {
   tags?: string[];
   only?: "" | "ready";
   limit?: number;
+  count_only?: boolean;
 }
 
 export interface MemoryProposal {

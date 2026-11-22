@@ -31,6 +31,10 @@ class MemoryProposalsInput(BaseModel):
     only: Literal["", "ready"] = ""
     # At most this many proposals returned, newest first.
     limit: int = Field(default=50, ge=1, le=500)
+    # A badge or a tab count needs the number, not the rows. With `count_only` the
+    # answer is `total` — the full in-scope count, not capped by the scan cap — and no
+    # row (no value column read).
+    count_only: bool = False
 
 
 class MemoryProposal(BaseModel):
@@ -61,7 +65,8 @@ class MemoryProposal(BaseModel):
 class MemoryProposalsOutput(BaseModel):
     # The proposals in scope, newest first, with graded counts and `ready`.
     proposals: list[MemoryProposal] = Field(default_factory=list)
-    # Proposals in scope before `only` and `limit`.
+    # Proposals in scope before `only` and `limit` — on a listing, capped by the scan
+    # cap; on a `count_only` call, the full uncapped in-scope count.
     total: int = 0
     # The namespace's proposal policy: `mode` (manual / auto) and thresholds.
     policy: ProposalPolicy = Field(default_factory=ProposalPolicy)

@@ -186,6 +186,20 @@ export async function listProposals(
   );
 }
 
+/** The pending proposals of the namespace — one bounded server-side `count()`
+ *  (`count_only`), no row bodies and no scan cap, so the number matches the whole
+ *  authorized queue, not the first page. Accepted and rejected proposals are not
+ *  pending and never counted. `null` when the answer carries no number: unknown,
+ *  never a false zero. */
+export async function countPendingProposals(id: Scope, opts: RequestOpts = {}): Promise<number | null> {
+  const r = await post<{ total?: number | null }>(
+    "/v1/memory.proposals",
+    { org: id.org, namespace: id.namespace, limit: 1, count_only: true },
+    opts.signal,
+  );
+  return typeof r.total === "number" ? r.total : null;
+}
+
 export async function decideProposals(
   id: Scope,
   keys: string[],

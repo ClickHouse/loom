@@ -10,7 +10,7 @@ async function painted(): Promise<void> {
 }
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MyNamespaceEntry, WhoAmI } from "../api";
-import { useStore, viewHref } from "../lib/state";
+import { useStore, viewHref, badgeCacheKey } from "../lib/state";
 import { Sidebar } from "./Sidebar";
 import { MobileNav } from "./MobileNav";
 import { invalidateShared } from "../lib/sharedReads";
@@ -24,6 +24,7 @@ vi.mock("../api", async (importOriginal) => {
   return {
     ...actual,
     countConflicts: vi.fn(async () => 0),
+    countPendingProposals: vi.fn(async () => 0), // The badge asks for a number, no rows
     getBudgetStatus: vi.fn(async () => ({ over_cap: false })),
     countNewAgents: vi.fn(async () => 0), // The badge asks for a number
   };
@@ -33,7 +34,7 @@ vi.mock("../api/audit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api/audit")>()),
   hasAutoResolved: vi.fn(async () => false),
 }));
-import { getBudgetStatus, countConflicts, countNewAgents } from "../api";
+import { getBudgetStatus, countConflicts, countNewAgents, countPendingProposals } from "../api";
 import { hasAutoResolved } from "../api/audit";
 
 const row = (namespace: string, role: MyNamespaceEntry["role"]): MyNamespaceEntry => ({
@@ -64,6 +65,14 @@ const viewer: WhoAmI = {
   namespaces: ["team-a"],
 };
 
+// The rail's Memory group, and the Admin drawer's container: with a stable rail Review
+// entry, "Review queue" can name a link in either, so the tests say which they mean. (The
+// nav landmark holds both, so it cannot serve as the rail's scope.)
+const memoryGroup = () => screen.getByText("Memory").parentElement as HTMLElement;
+const drawerBox = () => screen.getByRole("button", { name: /Admin/ }).parentElement as HTMLElement;
+/** The session-cache key the sidebar writes for the seeded principal and role. */
+const teamAKey = (role: string | null = "admin") => badgeCacheKey("dev", "team-a", viewer.subject, role);
+
 describe("Sidebar admin drawer", () => {
   beforeEach(() => {
     invalidateShared(); // the budget read is shared with the Usage page
@@ -76,14 +85,18 @@ describe("Sidebar admin drawer", () => {
     useStore.setState({ whoami: null, myNamespaces: null, identity: null });
   });
 
-  it("is hidden for a viewer, and none of the admin polls fire", async () => {
+  it("is hidden for a viewer, and none of the admin polls fire — but the rail still offers Review", async () => {
     seed(viewer, [row("team-a", "viewer")]);
     render(<Sidebar />);
     expect(screen.getByText("Memories")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Admin/ })).not.toBeInTheDocument();
+    // The stable rail entry: a caller who may view review work reaches it even with an
+    // empty queue and no badge polls.
+    expect(screen.getByRole("link", { name: /Review queue/ })).toBeInTheDocument();
     // Let any effect that would have polled run.
     await painted();
     expect(countConflicts).not.toHaveBeenCalled();
+    expect(countPendingProposals).not.toHaveBeenCalled();
     expect(getBudgetStatus).not.toHaveBeenCalled();
     expect(countNewAgents).not.toHaveBeenCalled();
     expect(hasAutoResolved).not.toHaveBeenCalled();
@@ -95,6 +108,7 @@ describe("Sidebar admin drawer", () => {
     expect(screen.getByRole("button", { name: /Admin/ })).toBeInTheDocument();
     await painted();
     expect(countConflicts).toHaveBeenCalledTimes(1);
+    expect(countPendingProposals).toHaveBeenCalledTimes(1);
     expect(getBudgetStatus).toHaveBeenCalledTimes(1);
   });
 
@@ -113,17 +127,22 @@ describe("Sidebar admin drawer", () => {
     render(<Sidebar />);
     await painted();
     expect(countConflicts).not.toHaveBeenCalled();
+    expect(countPendingProposals).not.toHaveBeenCalled();
     expect(getBudgetStatus).not.toHaveBeenCalled();
     expect(countNewAgents).not.toHaveBeenCalled();
   });
 
-  it("a viewer whose list_mine failed (unknown role) polls nothing", async () => {
+  it("a viewer whose list_mine failed (unknown role) polls nothing and sees no rail Review entry", async () => {
     seed(viewer, null);
     render(<Sidebar />);
     await painted();
     expect(countConflicts).not.toHaveBeenCalled();
+    expect(countPendingProposals).not.toHaveBeenCalled();
     expect(getBudgetStatus).not.toHaveBeenCalled();
     expect(countNewAgents).not.toHaveBeenCalled();
+    // An unknown role may not view review work, so the stable entry stays hidden rather
+    // than pointing at reads that would 403.
+    expect(screen.queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
   });
 
   it("an admin claim polls even when list_mine failed", async () => {
@@ -131,6 +150,7 @@ describe("Sidebar admin drawer", () => {
     render(<Sidebar />);
     await painted();
     expect(countConflicts).toHaveBeenCalledTimes(1);
+    expect(countPendingProposals).toHaveBeenCalledTimes(1);
     expect(getBudgetStatus).toHaveBeenCalledTimes(1);
     expect(countNewAgents).toHaveBeenCalledTimes(1);
   });
@@ -157,8 +177,10 @@ describe("Sidebar admin drawer", () => {
     expect(countNewAgents).toHaveBeenCalledTimes(2);
     expect(countNewAgents).toHaveBeenLastCalledWith(expect.objectContaining({ namespace: "team-b" }));
     expect(screen.getByRole("link", { name: /Agents/ })).toHaveTextContent("1");
-    const cached: unknown = JSON.parse(sessionStorage.getItem("loom_badge_v1:badges:dev/team-b") ?? "null");
-    expect(cached).toMatchObject({ v: { newAgents: 1 } });
+    const cached: unknown = JSON.parse(
+      sessionStorage.getItem(`loom_badge_v1:${badgeCacheKey("dev", "team-b", admin.subject, "admin")}`) ?? "null",
+    );
+    expect(cached).toMatchObject({ v: { newAgents: 1, pendingProposals: 0 } });
   });
 
   it("a switch to a namespace that is not polled clears the previous namespace's badges", async () => {
@@ -168,21 +190,23 @@ describe("Sidebar admin drawer", () => {
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
     await painted();
-    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("4");
+    expect(within(drawerBox()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("4");
     // team-b's role is unknown (list_mine failed): the drawer stays (fail-open) but nothing
-    // is polled, so nothing from team-a may stay on it.
+    // is polled, so nothing from team-a may stay on it, and the rail entry goes too (an
+    // unknown role may not view review work).
     act(() =>
       useStore.setState({ identity: { org: "dev", namespace: "team-b", agent: "loom-ui" }, myNamespaces: null }),
     );
     await painted();
     expect(screen.getByRole("button", { name: /Admin/ })).toBeInTheDocument();
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
     expect(countConflicts).toHaveBeenCalledTimes(1);
   });
 
   // With no open conflict, the queue's Auto-resolved tab still has something to show:
-  // the entry appears, with no count, so it is reachable without its URL.
-  it("shows the Review queue when Loom recently retired a memory on its own", async () => {
+  // the drawer's entry appears, with no count, so it is reachable without its URL.
+  it("shows the Review queue in the drawer when Loom recently retired a memory on its own", async () => {
     sessionStorage.clear();
     vi.mocked(hasAutoResolved).mockResolvedValueOnce(true);
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
@@ -190,17 +214,22 @@ describe("Sidebar admin drawer", () => {
     render(<Sidebar />);
     await painted();
     expect(hasAutoResolved).toHaveBeenCalledWith({ org: "dev", namespace: "team-a" });
-    expect(screen.getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
+    expect(within(drawerBox()).getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
   });
 
-  it("hides the Review queue with no open conflict and no recent auto-resolution", async () => {
+  it("keeps the rail's Review queue entry with no open conflict and no recent auto-resolution, and hides the drawer's", async () => {
     sessionStorage.clear();
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
     await painted();
     expect(hasAutoResolved).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
+    // The drawer's auto-appearing entry stays hidden, but the stable rail entry remains:
+    // Review is reachable even when its queue is empty.
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).not.toBeInTheDocument();
+    const railReview = within(memoryGroup()).getByRole("link", { name: /Review queue/ });
+    expect(railReview).not.toHaveTextContent(/\d/);
+    expect(railReview).toHaveAttribute("href", viewHref("admin:review_queue"));
   });
 
   it("is shown for a platform admin regardless of grants, with the Users entry", async () => {
@@ -268,13 +297,20 @@ describe("the admin list on every width", () => {
 
   it("redraws the open sheet when a new badge answer lands", async () => {
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
-    useStore.setState({ adminBadges: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } });
+    useStore.setState({
+      adminBadges: { conflicts: 3, pendingProposals: null, autoResolved: false, overCap: false, newAgents: 0 },
+    });
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
-    const review = () => within(sheet).getByRole("link", { name: /Review queue/ });
+    const admin = within(sheet).getByRole("navigation", { name: "Admin" });
+    const review = () => within(admin).getByRole("link", { name: /Review queue/ });
     expect(review()).toHaveTextContent("3");
-    act(() => useStore.setState({ adminBadges: { conflicts: 5, autoResolved: false, overCap: false, newAgents: 0 } }));
+    act(() =>
+      useStore.setState({
+        adminBadges: { conflicts: 5, pendingProposals: null, autoResolved: false, overCap: false, newAgents: 0 },
+      }),
+    );
     expect(review()).toHaveTextContent("5");
   });
 
@@ -300,17 +336,21 @@ describe("the admin list on every width", () => {
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
     await painted();
-    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    expect(within(drawerBox()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
     act(() => useStore.setState({ identity: { org: "other", namespace: "team-a", agent: "loom-ui" } }));
-    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).toBeNull();
     await painted();
     expect(countConflicts).toHaveBeenLastCalledWith({ org: "other", namespace: "team-a" });
-    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    // The drawer's badge is gone; the stable rail entry remains, without a number.
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+    expect(within(memoryGroup()).getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
   });
 
   it("draws Usage's warning dot and the Agents count on the More sheet", async () => {
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
-    useStore.setState({ adminBadges: { conflicts: null, autoResolved: false, overCap: true, newAgents: 2 } });
+    useStore.setState({
+      adminBadges: { conflicts: null, pendingProposals: null, autoResolved: false, overCap: true, newAgents: 2 },
+    });
     render(<MobileNav />);
     await userEvent.setup().click(screen.getByRole("button", { name: "More" }));
     const sheet = await screen.findByRole("dialog", { name: "More" });
@@ -330,21 +370,29 @@ describe("the admin list on every width", () => {
     unmount();
     await act(async () => settle(3));
     expect(useStore.getState().adminBadges).toBeNull();
-    expect(sessionStorage.getItem("loom_badge_v1:badges:dev/team-a")).toBeNull();
+    expect(sessionStorage.getItem(`loom_badge_v1:${teamAKey()}`)).toBeNull();
   });
 
   it("hides a badge whose read fails, though the session remembered one", async () => {
     sessionStorage.setItem(
-      "loom_badge_v1:badges:dev/team-a",
-      JSON.stringify({ at: Date.now(), v: { conflicts: 3, autoResolved: false, overCap: false, newAgents: 0 } }),
+      `loom_badge_v1:${teamAKey()}`,
+      JSON.stringify({
+        at: Date.now(),
+        v: { conflicts: 3, pendingProposals: 1, autoResolved: false, overCap: false, newAgents: 0 },
+      }),
     );
     vi.mocked(countConflicts).mockRejectedValueOnce(new Error("offline"));
+    vi.mocked(countPendingProposals).mockRejectedValueOnce(new Error("offline"));
     seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
-    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    // The remembered answer shows at once: 3 conflicts + 1 proposal = 4 review items.
+    expect(within(drawerBox()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("4");
     await painted();
-    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    // Both reads failed: the drawer's auto-appearing entry goes, and the rail's stable
+    // entry stays without a number — a failed count is unknown, never a false zero.
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).toBeNull();
+    expect(within(memoryGroup()).getByRole("link", { name: /Review queue/ })).not.toHaveTextContent(/\d/);
   });
 
   it("shows the reads' answers together, once the slowest settles", async () => {
@@ -355,10 +403,75 @@ describe("the admin list on every width", () => {
     useStore.setState({ view: "admin:health" });
     render(<Sidebar />);
     await painted();
-    expect(screen.queryByRole("link", { name: /Review queue/ })).toBeNull();
+    expect(within(drawerBox()).queryByRole("link", { name: /Review queue/ })).toBeNull();
     await act(async () => settle(2));
-    expect(screen.getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
+    expect(within(drawerBox()).getByRole("link", { name: /Review queue/ })).toHaveTextContent("3");
     expect(screen.getByRole("link", { name: /Agents/ })).toHaveTextContent("2");
+  });
+
+  // Pending proposals are review items too: they surface the Review queue and count in
+  // its badge, next to conflicts, with a label that says what the number counts.
+  it("counts pending proposals in the Review queue badge, labeled per kind", async () => {
+    sessionStorage.clear();
+    vi.mocked(countConflicts).mockResolvedValueOnce(2);
+    vi.mocked(countPendingProposals).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    const link = within(drawerBox()).getByRole("link", { name: /Review queue/ });
+    expect(link).toHaveTextContent("5");
+    expect(link).toHaveAccessibleName(/5 items to review: 2 conflicts, 3 pending proposals/);
+    // The rail entry carries the same count and label.
+    const railLink = within(memoryGroup()).getByRole("link", { name: /Review queue/ });
+    expect(railLink).toHaveTextContent("5");
+    expect(railLink).toHaveAccessibleName(/5 items to review/);
+  });
+
+  it("surfaces a proposal-only queue and links straight to its pending proposals", async () => {
+    sessionStorage.clear();
+    vi.mocked(countConflicts).mockResolvedValueOnce(0);
+    vi.mocked(countPendingProposals).mockResolvedValueOnce(4);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    const link = within(drawerBox()).getByRole("link", { name: /Review queue/ });
+    expect(link).toHaveTextContent("4");
+    expect(link).toHaveAccessibleName(/4 items to review: 4 pending proposals/);
+    expect(link).toHaveAttribute("href", `${viewHref("admin:review_queue")}?tab=proposals`);
+    expect(within(memoryGroup()).getByRole("link", { name: /Review queue/ })).toHaveAttribute(
+      "href",
+      `${viewHref("admin:review_queue")}?tab=proposals`,
+    );
+  });
+
+  it("a partial count is labeled 'at least', never a false total", async () => {
+    sessionStorage.clear();
+    vi.mocked(countConflicts).mockResolvedValueOnce(2);
+    vi.mocked(countPendingProposals).mockRejectedValueOnce(new Error("offline"));
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    useStore.setState({ view: "admin:health" });
+    render(<Sidebar />);
+    await painted();
+    const link = within(drawerBox()).getByRole("link", { name: /Review queue/ });
+    expect(link).toHaveTextContent("2");
+    expect(link).toHaveAccessibleName(/at least 2 items to review: 2 conflicts/);
+  });
+
+  it("the badge cache key carries org, namespace, principal and role", async () => {
+    sessionStorage.clear();
+    vi.mocked(countConflicts).mockResolvedValueOnce(3);
+    seed({ ...viewer, roles: ["WRITER"] }, [row("team-a", "admin")]);
+    render(<Sidebar />);
+    await painted();
+    expect(sessionStorage.getItem(`loom_badge_v1:${teamAKey("admin")}`)).not.toBeNull();
+    // Another principal on the same namespace is another cache entry.
+    expect(
+      sessionStorage.getItem(`loom_badge_v1:${badgeCacheKey("dev", "team-a", "someone-else", "admin")}`),
+    ).toBeNull();
+    // Another role is another entry (a permission boundary).
+    expect(sessionStorage.getItem(`loom_badge_v1:${teamAKey("viewer")}`)).toBeNull();
   });
 });
 

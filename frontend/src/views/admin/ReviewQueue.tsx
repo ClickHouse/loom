@@ -19,6 +19,7 @@ import {
   auditInstant,
   restoreMemory,
   getMemoryById,
+  countPendingProposals,
   autoResolveReasonText,
   type MemoryById,
   type AutoResolvedRow,
@@ -32,7 +33,8 @@ import {
 } from "../../api";
 import { DuplicatesPanel } from "./Duplicates";
 import { ProposalsPanel } from "./Proposals";
-import { useIdentity, useStore } from "../../lib/state";
+import { useIdentity, useStore, badgeCacheKey } from "../../lib/state";
+import { writeSession } from "../../lib/afterPaint";
 import { Panel } from "../../components/ui/Panel";
 import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger, Unavailable } from "../../components/ui";
 import { Skeleton, TableSkeleton } from "../../components/Skeleton";
@@ -76,6 +78,13 @@ const QUEUE_TABS: Record<QueueTab, string> = {
   proposals: "Proposals",
   duplicates: "Duplicates",
 };
+
+/** The category a deep link names (`?tab=`), when it is one the queue offers. */
+function initialQueueTab(): QueueTab {
+  if (typeof window === "undefined") return "conflicts";
+  const t = new URLSearchParams(window.location.search).get("tab");
+  return t && t in QUEUE_TABS ? (t as QueueTab) : "conflicts";
+}
 
 export function ReviewQueue() {
   const identity = useIdentity();
@@ -121,7 +130,57 @@ export function ReviewQueue() {
   // Shown to every role; one that cannot read them sees what it needs, and nothing is read.
   // No probe: the tab reads when it opens, so the page costs no read for them.
   const proposalsReason = callReason("memory.proposals", queueRole, whoami, identity.namespace);
-  const [tab, setTab] = useState<QueueTab>("conflicts");
+  // The category a deep link names (`?tab=proposals`, the sidebar's proposal-only link),
+  // when it is one the queue offers; otherwise Conflicts.
+  const [tab, setTab] = useState<QueueTab>(() => initialQueueTab());
+  // Set once the person picks a category themselves: the proposal-only default below
+  // must not override their choice.
+  const [tabTouched, setTabTouched] = useState(false);
+  // Per-kind counts for the tab triggers. The pending-proposals count is a bounded
+  // server-side summary (`count_only`: no row bodies, no scan cap), so it matches the
+  // complete authorized queue rather than one page; the conflicts count is the
+  // Conflicts panel's own fresh read, reported up through `onCount`. `null` = the read
+  // failed or was not allowed: unknown, never a false zero.
+  const [counts, setCounts] = useState<{ conflicts: number | null; proposals: number | null }>({
+    conflicts: null,
+    proposals: null,
+  });
+  const [countsReload, setCountsReload] = useState(0);
+  useAbortableEffect(
+    (signal, live) => {
+      if (!canCall("memory.proposals", role, whoami)) return;
+      let proposals: number | null = null;
+      countPendingProposals({ org: identity.org, namespace: identity.namespace }, { signal })
+        .then((n) => {
+          proposals = n;
+        })
+        .catch(() => {
+          /* unknown */
+        })
+        .finally(() => {
+          if (!live()) return;
+          setCounts((c) => (c.proposals === proposals ? c : { ...c, proposals }));
+          // The sidebar's badge reads the same number: write it back under the same
+          // per-scope, per-principal, per-role key, so a decision here refreshes the
+          // badge at once instead of at the next 60 s tick.
+          const badges = useStore.getState().adminBadges;
+          if (badges && proposals !== null) {
+            const merged = { ...badges, pendingProposals: proposals };
+            useStore.setState({ adminBadges: merged });
+            writeSession(badgeCacheKey(identity.org, identity.namespace, whoami?.subject, role), merged);
+          }
+        });
+    },
+    [identity.org, identity.namespace, countsReload, role, whoami],
+  );
+  // The Conflicts panel's own fresh count, as the tab's conflicts count.
+  const onConflictsCount = (n: number | null) => setCounts((c) => (c.conflicts === n ? c : { ...c, conflicts: n }));
+  // A proposal-only queue opens on its proposals: an empty Conflicts tab must not look
+  // like an empty overall queue. Only until the person picks a category themselves.
+  useEffect(() => {
+    if (tabTouched || tab !== "conflicts") return;
+    if (counts.conflicts === 0 && counts.proposals !== null && counts.proposals > 0) setTab("proposals");
+  }, [counts, tabTouched, tab]);
   // A tab that is no longer offered (its probe found nothing, or its access went) hands the
   // page back to Conflicts.
   const offered: Record<QueueTab, boolean> = {
@@ -140,14 +199,22 @@ export function ReviewQueue() {
   // inactive one) reads afresh, so a learning promoted or an exception removed since does
   // not come back from the probe.
   const [seedsUsed, setSeedsUsed] = useState({ learnings: false, exceptions: false });
+  // The scope effect runs on mount too; only an actual namespace switch resets the tab,
+  // so a `?tab=proposals` deep link keeps its category on first paint.
+  const scopeMounted = useRef(false);
   useAbortableEffect(
     (signal, live) => {
       setProbedLearnings(null);
       setProbedExceptions(null);
       setSeedsUsed({ learnings: false, exceptions: false });
       // A namespace switch starts from Conflicts: the previous namespace's probes (and a tab
-      // they revealed) must not outlive it.
-      setTab("conflicts");
+      // they revealed) must not outlive it. The deep link's category applied to the
+      // namespace it was opened on, so the touched flag resets with the tab.
+      if (scopeMounted.current) {
+        setTab("conflicts");
+        setTabTouched(false);
+      }
+      scopeMounted.current = true;
       setAutoOpened(false);
       listLearnings({ org: identity.org, namespace: identity.namespace }, "pending", LEARNINGS_READ, { signal })
         .then((r) => {
@@ -199,12 +266,14 @@ export function ReviewQueue() {
         value={tab}
         onValueChange={(t) => {
           setTab(t as QueueTab);
+          setTabTouched(true);
           if (t === "auto") setAutoOpened(true);
         }}
       >
         <Tabs.TriggersList className="mb-5" aria-label="Review queue">
           <TabTrigger value="conflicts" icon="warning">
             {QUEUE_TABS.conflicts}
+            {counts.conflicts !== null ? ` (${counts.conflicts})` : ""}
           </TabTrigger>
           {hasLearnings && (
             <TabTrigger value="learnings" icon="sparkle">
@@ -223,13 +292,14 @@ export function ReviewQueue() {
           )}
           <TabTrigger value="proposals" icon="question">
             {QUEUE_TABS.proposals}
+            {counts.proposals !== null ? ` (${counts.proposals})` : ""}
           </TabTrigger>
           <TabTrigger value="duplicates" icon="copy">
             {QUEUE_TABS.duplicates}
           </TabTrigger>
         </Tabs.TriggersList>
         <Tabs.Content value="conflicts">
-          <ConflictsPanel />
+          <ConflictsPanel onDecided={() => setCountsReload((n) => n + 1)} onCount={onConflictsCount} />
         </Tabs.Content>
         {hasLearnings && (
           <Tabs.Content value="learnings">
@@ -265,7 +335,7 @@ export function ReviewQueue() {
           {proposalsReason ? (
             <p className="m-0 text-sm text-text-muted">{proposalsReason}</p>
           ) : (
-            <ProposalsPanel key={scopeKey} />
+            <ProposalsPanel key={scopeKey} onDecided={() => setCountsReload((n) => n + 1)} />
           )}
         </Tabs.Content>
         <Tabs.Content value="duplicates">
@@ -280,7 +350,9 @@ export function ReviewQueue() {
 
 const CONFLICT_PAGE = 50;
 
-function ConflictsPanel() {
+/** `onDecided` fires after a resolve, so the page's per-kind counts are read again;
+ *  `onCount` reports the panel's own fresh conflict count as the tab's count. */
+function ConflictsPanel({ onDecided, onCount }: { onDecided?: () => void; onCount?: (n: number | null) => void }) {
   const identity = useIdentity();
   // Each decision stays in view for a role that cannot resolve, with what it needs.
   const resolveReason = useOpReason("conflicts.resolve", identity.namespace);
@@ -346,6 +418,13 @@ function ConflictsPanel() {
   // The rows on screen as of the latest render, for an answer from another visit.
   const rowsNow = useRef(rows);
   rowsNow.current = rows;
+  // The panel's count is the page's conflicts count for the tab label: report it on
+  // every change (null included — a failed read is unknown, not zero).
+  const onCountRef = useRef(onCount);
+  onCountRef.current = onCount;
+  useEffect(() => {
+    onCountRef.current?.(total);
+  }, [total]);
 
   useAbortableEffect(
     (signal, live) => {
@@ -484,6 +563,7 @@ function ConflictsPanel() {
       // open, and after this visit's own decision the next one takes its place.
       const before = (i: number) => shown.slice(0, i).filter((c) => gone.has(c.memory_id)).length;
       decided.current = true;
+      onDecided?.();
       setRows((prev) => prev && prev.filter((c) => !gone.has(c.memory_id)));
       // Kept on a row: a decision on the last one opens the one before it, so a Load more
       // after it does not move the open conflict.

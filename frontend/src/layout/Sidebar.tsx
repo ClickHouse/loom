@@ -3,8 +3,16 @@ import { Badge } from "@clickhouse/click-ui/Badge";
 import { Icon, type IconName } from "@clickhouse/click-ui/Icon";
 import { IconButton } from "../components/IconButton";
 import { Tip } from "../components/ui/Tooltip";
-import { useStore, viewHref, type AdminBadges, type View } from "../lib/state";
-import { countConflicts, countNewAgents, type MyNamespaceEntry, type WhoAmI } from "../api";
+import {
+  useStore,
+  viewHref,
+  badgeCacheKey,
+  reviewBadgeLabel,
+  reviewCount,
+  type AdminBadges,
+  type View,
+} from "../lib/state";
+import { countConflicts, countNewAgents, countPendingProposals, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
 import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
@@ -62,6 +70,13 @@ export interface NavItem {
   // differently from a neutral count (review queue). Number >= 999
   // collapses to a dot rather than a numeric label.
   badgeTone?: "default" | "warn" | "accent";
+  /** What the badge number counts, read to screen readers with the label ("3 items to
+   *  review: 2 conflicts, 1 pending proposal") — a bare number on a nav entry says
+   *  nothing about what waits. */
+  badgeLabel?: string;
+  /** Query the destination opens on (`?tab=proposals` for a proposal-only queue), so a
+   *  deep link, cmd-click and a plain click all land on the same category. */
+  query?: Record<string, string>;
 }
 
 // The rail is three labelled groups around the questions a user brings — what does my AI
@@ -226,22 +241,80 @@ export function adminItems(
       return { ...item, badge: badges.newAgents, badgeTone: "accent" };
     return item;
   });
-  const open = !!badges?.conflicts;
+  // The Review entry appears when any review item waits: open conflicts or pending
+  // proposals (the badge counts both), or a recent auto-resolution (icon only, no
+  // number — retired history is not review work waiting for a person).
+  const { total } = reviewCount(badges);
+  const open = total > 0;
   if (!open && !badges?.autoResolved) return items;
-  // Open conflicts warn with their count; recent auto-resolutions alone use the
-  // Auto-resolved tab's icon, no number.
   const review: NavItem = {
     id: "admin:review_queue",
     label: "Review queue",
     icon: open ? "warning" : "flash",
-    badge: badges?.conflicts || undefined,
+    badge: open ? total : undefined,
+    badgeLabel: open ? reviewBadgeLabel(badges) : undefined,
+    // A proposal-only queue links straight to its pending proposals, so an empty
+    // Conflicts tab does not look like an empty queue.
+    ...(open && (badges?.conflicts ?? 0) === 0 && (badges?.pendingProposals ?? 0) > 0
+      ? { query: { tab: "proposals" } }
+      : {}),
   };
   return [review, ...items];
+}
+
+/** The Review queue entry in the ordinary Memory rail, for a caller authorized to view
+ *  review work — every role that reaches `conflicts.list` or `memory.proposals` does
+ *  (both VIEWER on the server, so backend roles are unchanged). A memory namespace
+ *  only: a code or tracker namespace has no review queue. An unknown role shows
+ *  nothing rather than an entry whose reads would 403. The entry is stable — it does
+ *  not wait for a badge count, and a failed count leaves it in place without a
+ *  number. */
+export function reviewNavItem(
+  whoami: WhoAmI | null,
+  mine: MyNamespaceEntry[] | null,
+  namespace: string,
+  badges: AdminBadges | null,
+): NavItem | null {
+  if (!isMemoryNamespace(namespace, mine)) return null;
+  const role = roleOnNamespace(whoami, mine, namespace);
+  if (!role) return null;
+  if (!canCall("conflicts.list", role, whoami) && !canCall("memory.proposals", role, whoami)) return null;
+  const { total } = reviewCount(badges);
+  const proposalOnly =
+    badges !== null &&
+    badges.conflicts != null &&
+    badges.pendingProposals != null &&
+    badges.conflicts === 0 &&
+    badges.pendingProposals > 0;
+  return {
+    id: "admin:review_queue",
+    label: "Review queue",
+    icon: total > 0 ? "warning" : "question",
+    scope: "namespace",
+    badge: total > 0 ? total : undefined,
+    badgeLabel: total > 0 ? reviewBadgeLabel(badges) : undefined,
+    ...(proposalOnly ? { query: { tab: "proposals" } } : {}),
+  };
+}
+
+/** The rail groups with the Review queue entry in the Memory group when the caller may
+ *  view review work. The sidebar and the phone's More sheet both render this, so the
+ *  same entry — and its count — appears on desktop and mobile. */
+export function railGroups(
+  whoami: WhoAmI | null,
+  mine: MyNamespaceEntry[] | null,
+  namespace: string,
+  badges: AdminBadges | null,
+): NavGroup[] {
+  const review = reviewNavItem(whoami, mine, namespace, badges);
+  if (!review) return RAIL_GROUPS;
+  return RAIL_GROUPS.map((g) => (g.label === "Memory" ? { ...g, items: [...g.items, review] } : g));
 }
 
 export function Sidebar() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
+  const navigate = useStore((s) => s.navigate);
   const identity = useStore((s) => s.identity);
   const collapsed = useStore((s) => s.sidebarCollapsed);
   const toggleSidebar = useStore((s) => s.toggleSidebar);
@@ -276,7 +349,9 @@ export function Sidebar() {
   // first paint, on idle — a badge number is not what the person is waiting for — and the
   // last answer is remembered for the session, so a full reload shows the badges at once
   // from it and refreshes them behind.
-  const badgeKey = identity ? `badges:${identity.org}/${identity.namespace}` : "";
+  // The cache key carries the principal and the role as well as the scope: a remembered
+  // count never crosses an org, namespace, account or permission boundary.
+  const badgeKey = identity ? badgeCacheKey(identity.org, identity.namespace, whoami?.subject, roleHere) : "";
   // A badge belongs to one namespace: on a switch, show the new namespace's remembered
   // answer or nothing — never the previous namespace's numbers — and make its first read
   // ask agents.connected, so no tick carries the old count into the new cache key.
@@ -290,7 +365,13 @@ export function Sidebar() {
     let cancelled = false;
     const fetch_ = async () => {
       const tasks: Promise<void>[] = [];
-      const next: AdminBadges = { conflicts: null, autoResolved: false, overCap: false, newAgents: 0 };
+      const next: AdminBadges = {
+        conflicts: null,
+        pendingProposals: null,
+        autoResolved: false,
+        overCap: false,
+        newAgents: 0,
+      };
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
@@ -301,6 +382,20 @@ export function Sidebar() {
             })
             .catch(() => {
               /* hide */
+            }),
+        );
+      }
+      // Pending proposals count toward the review badge too: one bounded server-side
+      // count (`count_only`, no rows, uncapped), so the number matches the whole queue.
+      // A failed read leaves `null` — unknown, never a false zero.
+      if (canCall("memory.proposals", roleHere, whoami)) {
+        tasks.push(
+          countPendingProposals({ org: identity.org, namespace: identity.namespace })
+            .then((n) => {
+              next.pendingProposals = n;
+            })
+            .catch(() => {
+              /* unknown */
             }),
         );
       }
@@ -411,7 +506,7 @@ export function Sidebar() {
       {/* Main nav — anchors so cmd-click opens in a new tab. Padded, not margined, so the
           scroll box leaves room for the first and last items' focus ring. */}
       <nav className="flex-1 px-3 py-1 overflow-y-auto" aria-label="Sections">
-        {RAIL_GROUPS.map((g, gi) => (
+        {railGroups(whoami, myNamespaces, identity?.namespace ?? "", badges).map((g, gi) => (
           <div
             key={g.label ?? "top"}
             className={`${NAV_LIST} ${gi === 0 ? "" : collapsed ? "pt-2 mt-2 border-t border-border" : "pt-4"}`}
@@ -423,7 +518,7 @@ export function Sidebar() {
                 item={item}
                 active={view === item.id}
                 collapsed={collapsed}
-                onActivate={() => setView(item.id)}
+                onActivate={() => navigate(item.id, item.query ? { query: item.query } : {})}
               />
             ))}
           </div>
@@ -462,7 +557,7 @@ export function Sidebar() {
                         item={item}
                         active={view === item.id}
                         collapsed={false}
-                        onActivate={() => setView(item.id)}
+                        onActivate={() => navigate(item.id, item.query ? { query: item.query } : {})}
                       />
                     ))}
                   </div>
@@ -483,7 +578,7 @@ export function Sidebar() {
                 item={item}
                 active={view === item.id}
                 collapsed={true}
-                onActivate={() => setView(item.id)}
+                onActivate={() => navigate(item.id, item.query ? { query: item.query } : {})}
               />
             ))}
           </div>
@@ -552,9 +647,10 @@ function NavBtn({
   const hintId = useId();
   // Anchor (not button) so cmd/ctrl-click opens the view in a new tab,
   // middle-click works, and "Copy link" gives a usable URL.
+  const href = item.query ? `${viewHref(item.id)}?${new URLSearchParams(item.query).toString()}` : viewHref(item.id);
   const anchor = (
     <a
-      href={viewHref(item.id)}
+      href={href}
       onClick={(e) => {
         if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
         e.preventDefault();
@@ -571,6 +667,8 @@ function NavBtn({
           {hint}
         </span>
       )}
+      {/* What the badge counts, read with the label; the number alone says nothing. */}
+      {item.badgeLabel && <span className="sr-only">{item.badgeLabel}</span>}
       <span className={`flex items-center min-w-0 ${NAV_GAP}`}>
         <span className={NAV_ICON}>
           <Icon name={item.icon} size="sm" aria-hidden="true" />
@@ -589,9 +687,10 @@ function NavBtn({
   );
 }
 
-/** A collapsed item's name: its label, and its badge's count, which the name would
+/** A collapsed item's name: its label, and what its badge counts, which the name would
  *  otherwise hide. */
 function collapsedName(item: NavItem): string {
+  if (item.badgeLabel) return `${item.label}, ${item.badgeLabel}`;
   if (!item.badge) return item.label;
   return item.badge >= 999 ? `${item.label}, attention required` : `${item.label}, ${item.badge}`;
 }

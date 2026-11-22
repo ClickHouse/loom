@@ -38,6 +38,11 @@ vi.mock("../../api", async (importOriginal) => {
     restoreMemory: vi.fn(),
     getMemoryById: vi.fn(),
     listProposals: vi.fn(async () => ({ proposals: [], total: 0 })),
+    countPendingProposals: vi.fn(async () => 0),
+    decideProposals: vi.fn(async () => ({
+      decided: 1,
+      results: [{ memory_key: "deploy_window", decided: true, status: "rejected", reason: "" }],
+    })),
     proposeRevision: vi.fn(),
     listMemoryDuplicates: vi.fn(async () => ({ clusters: [] })),
     listDocumentDuplicates: vi.fn(async () => ({ doc_clusters: [] })),
@@ -59,6 +64,8 @@ vi.mock("../../components/Toast", async (importOriginal) => ({
 import { hasAutoResolved } from "../../api/audit";
 import {
   countConflicts,
+  countPendingProposals,
+  decideProposals,
   getMemoryById,
   listAllowlist,
   listAutoResolved,
@@ -179,6 +186,10 @@ describe("ReviewQueue", () => {
     vi.mocked(listAllowlist).mockReset();
     vi.mocked(listLearnings).mockReset();
     vi.mocked(listProposals).mockReset();
+    vi.mocked(countPendingProposals).mockReset();
+    vi.mocked(countPendingProposals).mockResolvedValue(0);
+    vi.mocked(countConflicts).mockReset();
+    vi.mocked(countConflicts).mockResolvedValue(0);
     vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
     vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
     vi.mocked(listAutoResolved).mockReset();
@@ -206,7 +217,8 @@ describe("ReviewQueue", () => {
   });
   afterEach(() => {
     cleanup();
-    useStore.setState({ whoami: null, myNamespaces: null });
+    useStore.setState({ whoami: null, myNamespaces: null, adminBadges: null });
+    window.history.replaceState(null, "", "/");
   });
 
   it("shows Duplicates to every role, read for an admin only; Proposals to a reader; none read for an unknown role", async () => {
@@ -1984,5 +1996,115 @@ describe("ReviewQueue", () => {
     const queue = await screen.findByRole("table", { name: "Conflicts" }, WAIT);
     expect(within(queue).queryByText("Loading data")).toBeNull();
     expect(within(queue).getByRole("status", { name: "Loading conflicts" })).toBeInTheDocument();
+  });
+});
+
+// Per-kind counts on the tabs, the proposal-only route, and the refresh after a decision:
+// the counts are bounded server-side summaries (count_only — no row bodies, no scan cap),
+// so they match the complete authorized queue, and a failed read is no number, not zero.
+describe("ReviewQueue counts and the proposal-only route", () => {
+  beforeEach(() => {
+    vi.mocked(countConflicts).mockReset();
+    vi.mocked(countConflicts).mockResolvedValue(0);
+    vi.mocked(countPendingProposals).mockReset();
+    vi.mocked(countPendingProposals).mockResolvedValue(0);
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [], next_before_version: null });
+    vi.mocked(listAllowlist).mockResolvedValue({ rows: [] });
+    vi.mocked(listLearnings).mockResolvedValue({ rows: [] });
+    vi.mocked(listProposals).mockReset();
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [], total: 0 });
+    vi.mocked(hasAutoResolved).mockResolvedValue(false);
+    resetNamespaceRoleCache();
+    invalidateShared();
+    useStore.setState({ adminBadges: null });
+  });
+  afterEach(() => {
+    cleanup();
+    useStore.setState({ whoami: null, myNamespaces: null, adminBadges: null });
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("labels the Conflicts and Proposals tabs with their server-side counts", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(2);
+    vi.mocked(countPendingProposals).mockResolvedValue(5);
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    expect(await screen.findByRole("tab", { name: /Conflicts \(2\)/ }, WAIT)).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: /Proposals \(5\)/ })).toBeInTheDocument();
+    // The count call is the bounded summary, scoped to the namespace.
+    expect(countPendingProposals).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a" }, expect.anything());
+  });
+
+  it("a failed count reads as no number on the tab, never a false zero", async () => {
+    vi.mocked(countPendingProposals).mockRejectedValue(new Error("offline"));
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    expect(await screen.findByRole("tab", { name: /Conflicts \(0\)/ }, WAIT)).toBeInTheDocument();
+    await waitFor(() => expect(countPendingProposals).toHaveBeenCalled(), WAIT);
+    // The failed read leaves the tab unlabeled — not "(0)".
+    expect(screen.getByRole("tab", { name: "Proposals" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Proposals \(/ })).toBeNull();
+  });
+
+  it("opens on the Proposals tab when only proposals wait: empty Conflicts is not an empty queue", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(0);
+    vi.mocked(countPendingProposals).mockResolvedValue(3);
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Proposals \(3\)/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    expect(await screen.findByText("Tuesdays", {}, WAIT)).toBeInTheDocument();
+  });
+
+  it("stays on Conflicts when both kinds wait, and when the person picks a tab the default does not override it", async () => {
+    vi.mocked(countConflicts).mockResolvedValue(1);
+    vi.mocked(countPendingProposals).mockResolvedValue(3);
+    vi.mocked(listConflicts).mockResolvedValue({ rows: [conflict("city")], next_before_version: null });
+    seed("ns-a", "writer");
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Conflicts \(1\)/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    await user.click(screen.getByRole("tab", { name: /Proposals \(3\)/ }));
+    expect(screen.getByRole("tab", { name: /Proposals \(3\)/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("a ?tab=proposals deep link opens the Proposals tab", async () => {
+    window.history.replaceState(null, "", "/admin/review_queue?tab=proposals");
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    seed("ns-a", "writer");
+    render(<ReviewQueue />);
+    await waitFor(
+      () => expect(screen.getByRole("tab", { name: /Proposals/ })).toHaveAttribute("aria-selected", "true"),
+      WAIT,
+    );
+    expect(await screen.findByText("Tuesdays", {}, WAIT)).toBeInTheDocument();
+  });
+
+  it("a decision re-reads the counts, and writes the new badge answer to the store", async () => {
+    vi.mocked(countPendingProposals).mockResolvedValueOnce(2).mockResolvedValue(1);
+    vi.mocked(listProposals).mockResolvedValue({ proposals: [proposal], total: 1 });
+    seed("ns-a", "admin");
+    useStore.setState({
+      adminBadges: { conflicts: 0, pendingProposals: 2, autoResolved: false, overCap: false, newAgents: 0 },
+    });
+    const user = userEvent.setup();
+    render(<ReviewQueue />);
+    await user.click(await screen.findByRole("tab", { name: /Proposals/ }, WAIT));
+    expect(await screen.findByText("Tuesdays", {}, WAIT)).toBeInTheDocument();
+    expect(countPendingProposals).toHaveBeenCalledTimes(1);
+    // Reject the proposal through its row menu.
+    await user.click(screen.getByRole("button", { name: "Actions for deploy_window" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Reject/ }, WAIT));
+    expect(decideProposals).toHaveBeenCalled();
+    // The pending count is read again, and the sidebar's badge answer is written back.
+    await waitFor(() => expect(countPendingProposals).toHaveBeenCalledTimes(2), WAIT);
+    await waitFor(() => expect(useStore.getState().adminBadges?.pendingProposals).toBe(1), WAIT);
+    await waitFor(() => expect(screen.getByRole("tab", { name: /Proposals \(1\)/ })).toBeInTheDocument(), WAIT);
   });
 });
