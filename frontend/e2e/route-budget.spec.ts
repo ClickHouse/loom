@@ -11,10 +11,11 @@ test.beforeAll(({ browser }, testInfo) => warmUp(browser, testInfo));
 
 const LCP_BUDGET_MS = 2000;
 const LONG_TASK_BUDGET_MS = 1500;
-// Every route reads at most 12 times, the sidebar's Auto-resolved audit.list included
-// (Settings, Conversations, Tasks, Review queue and Usage). The budget is that ceiling
-// plus one read of headroom, so a second new read on any route fails here.
-const CALL_BUDGET = 13;
+// Every route reads at most 13 times, the sidebar's Auto-resolved audit.list and pending
+// proposal count included (Settings, Conversations, Tasks, Review queue and Usage). The
+// budget is that ceiling plus one read of headroom, so a second new read on any route
+// fails here.
+const CALL_BUDGET = 14;
 
 const ROUTES: Array<[string, string]> = [
   ["Memories", "/memories"],

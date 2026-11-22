@@ -2031,8 +2031,9 @@ describe("ReviewQueue counts and the proposal-only route", () => {
     render(<ReviewQueue />);
     expect(await screen.findByRole("tab", { name: /Conflicts \(2\)/ }, WAIT)).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: /Proposals \(5\)/ })).toBeInTheDocument();
-    // The count call is the bounded summary, scoped to the namespace.
-    expect(countPendingProposals).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a" }, expect.anything());
+    // The count call is the bounded summary, scoped to the namespace (the shared read
+    // joins the sidebar badge's request, so it passes no per-caller signal).
+    expect(countPendingProposals).toHaveBeenCalledWith({ org: ORG, namespace: "ns-a" });
   });
 
   it("a failed count reads as no number on the tab, never a false zero", async () => {

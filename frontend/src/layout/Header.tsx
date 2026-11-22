@@ -19,8 +19,12 @@ const AddDocumentDialog = lazy(() =>
 );
 const loadHeaderSearch = () => import("../components/HeaderSearch");
 const HeaderSearch = lazy(() => loadHeaderSearch().then((m) => ({ default: m.HeaderSearch })));
-import { PendingApprovalsBell } from "../components/PendingApprovalsBell";
-import { TaskInboxBell } from "../components/TaskInboxBell";
+// The bells poll on an interval and open their lists on click, so their chunks load with
+// the header's paint, not into the boot chunk (keeps the index chunk inside its budget).
+const PendingApprovalsBell = lazy(() =>
+  import("../components/PendingApprovalsBell").then((m) => ({ default: m.PendingApprovalsBell })),
+);
+const TaskInboxBell = lazy(() => import("../components/TaskInboxBell").then((m) => ({ default: m.TaskInboxBell })));
 import { IconButton } from "../components/IconButton";
 import { Unavailable } from "../components/ui";
 import { Tip } from "../components/ui/Tooltip";
@@ -182,10 +186,14 @@ export function Header() {
 
         {/* Pending-approvals bell: surfaces grant requests on
             namespaces the user is admin of. Counts updated every 30s. */}
-        <PendingApprovalsBell />
+        <Suspense fallback={null}>
+          <PendingApprovalsBell />
+        </Suspense>
         {/* Task inbox bell: review items and blocked tasks in
             this namespace's inboxes. One task.counts call per two minutes. */}
-        <TaskInboxBell />
+        <Suspense fallback={null}>
+          <TaskInboxBell />
+        </Suspense>
 
         {whoami && (
           <Menu

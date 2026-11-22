@@ -27,7 +27,12 @@ for (const width of [1400, 375]) {
         const current = page.locator(
           "main [aria-current='page'], main [role='tab'][aria-selected='true'], main [aria-label='Show the documents of']",
         );
-        const tab = (await current.count()) > 0 ? (await current.first().textContent())?.trim() : undefined;
+        // A tab that carries a count reads "Conflicts (2)"; the document title names the
+        // tab without the count, so the expected title strips it.
+        const tab =
+          (await current.count()) > 0
+            ? (await current.first().textContent())?.trim().replace(/\s*\(\d+\)$/, "")
+            : undefined;
         await expect(page).toHaveTitle(tab && tab !== h1 ? `${tab} · ${h1} · Loom` : `${h1} · Loom`);
         // Click UI draws an icon, a badge and an ellipsis as a <div>: none sits in a <p>.
         const blocksInText = await page.evaluate(() =>

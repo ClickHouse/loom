@@ -18,6 +18,8 @@ import {
   type CodeRepoSummary,
   type Identity,
   type MyNamespaceEntry,
+  countConflicts,
+  countPendingProposals,
   getTaxonomy,
   getBudgetStatus,
   type BudgetStatus,
@@ -111,5 +113,22 @@ export function sharedBudgetStatus(id: Pick<Identity, "org" | "namespace">): Pro
 export function sharedHasAutoResolved(id: Pick<Identity, "org" | "namespace">): Promise<boolean> {
   return shared(`auto_resolved:${id.org}/${id.namespace}`, 25_000, () =>
     hasAutoResolved({ org: id.org, namespace: id.namespace }),
+  );
+}
+
+/** The namespace's open-conflict count, once per 25 s for every asker: the sidebar's review
+ *  badge and the Review queue's tab count ask the same question, so the second joins the
+ *  first's request instead of issuing another. */
+export function sharedConflictsCount(id: Pick<Identity, "org" | "namespace">): Promise<number> {
+  return shared(`conflicts_count:${id.org}/${id.namespace}`, 25_000, () =>
+    countConflicts({ org: id.org, namespace: id.namespace }),
+  );
+}
+
+/** The namespace's pending-proposal count (`count_only`, no rows, uncapped), once per 25 s
+ *  for every asker — same reason as `sharedConflictsCount`. */
+export function sharedPendingProposalsCount(id: Pick<Identity, "org" | "namespace">): Promise<number | null> {
+  return shared(`proposals_count:${id.org}/${id.namespace}`, 25_000, () =>
+    countPendingProposals({ org: id.org, namespace: id.namespace }),
   );
 }

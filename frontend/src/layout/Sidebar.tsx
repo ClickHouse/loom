@@ -12,9 +12,14 @@ import {
   type AdminBadges,
   type View,
 } from "../lib/state";
-import { countConflicts, countNewAgents, countPendingProposals, type MyNamespaceEntry, type WhoAmI } from "../api";
+import { countNewAgents, type MyNamespaceEntry, type WhoAmI } from "../api";
 import { readSession, useAfterPaint, writeSession } from "../lib/afterPaint";
-import { sharedBudgetStatus, sharedHasAutoResolved } from "../lib/sharedReads";
+import {
+  sharedBudgetStatus,
+  sharedConflictsCount,
+  sharedHasAutoResolved,
+  sharedPendingProposalsCount,
+} from "../lib/sharedReads";
 import { hasOrgAdminClaim, hasPlatformAdminClaim, isNamespaceAdmin } from "../lib/role";
 import { roleOnNamespace } from "../lib/namespaceRole";
 import { canCall } from "../lib/canCall";
@@ -375,8 +380,9 @@ export function Sidebar() {
       if (canCall("conflicts.list", roleHere, whoami)) {
         tasks.push(
           // The badge asks for the number, not 100 rows with their values (33 MB per tick
-          // on a large namespace).
-          countConflicts({ org: identity.org, namespace: identity.namespace })
+          // on a large namespace). Shared with the Review queue's tab count — one read
+          // per question per page.
+          sharedConflictsCount({ org: identity.org, namespace: identity.namespace })
             .then((n) => {
               next.conflicts = n;
             })
@@ -387,10 +393,11 @@ export function Sidebar() {
       }
       // Pending proposals count toward the review badge too: one bounded server-side
       // count (`count_only`, no rows, uncapped), so the number matches the whole queue.
-      // A failed read leaves `null` — unknown, never a false zero.
+      // A failed read leaves `null` — unknown, never a false zero. Shared with the
+      // Review queue's per-kind count.
       if (canCall("memory.proposals", roleHere, whoami)) {
         tasks.push(
-          countPendingProposals({ org: identity.org, namespace: identity.namespace })
+          sharedPendingProposalsCount({ org: identity.org, namespace: identity.namespace })
             .then((n) => {
               next.pendingProposals = n;
             })

@@ -30,7 +30,9 @@ test("the collapsed rail reads the review-queue and agents counts in the link na
   await page.route("**/v1/conflicts.list", (r) => r.fulfill({ json: { rows: [], total: 3 } }));
   await page.route("**/v1/agents.connected", (r) => r.fulfill({ json: { new_count: 2 } }));
   await page.goto("/memories");
-  await expect(page.getByRole("link", { name: "Review queue, 3" })).toBeVisible();
+  // The rail shows the Review queue twice — its stable Memory entry and the admin entry
+  // when items wait — so the count is read from the first of them.
+  await expect(page.getByRole("link", { name: "Review queue, 3" }).first()).toBeVisible();
   await expect(page.getByRole("link", { name: "Agents, 2" })).toBeVisible();
 });
 

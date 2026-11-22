@@ -19,7 +19,6 @@ import {
   auditInstant,
   restoreMemory,
   getMemoryById,
-  countPendingProposals,
   autoResolveReasonText,
   type MemoryById,
   type AutoResolvedRow,
@@ -52,7 +51,7 @@ import { callReason } from "../../lib/callReason";
 import { useOpReason } from "../../lib/useOpReason";
 import { GatedIconButton } from "../../components/ui/GatedIconButton";
 import { canCall } from "../../lib/canCall";
-import { sharedHasAutoResolved } from "../../lib/sharedReads";
+import { invalidateShared, sharedHasAutoResolved, sharedPendingProposalsCount } from "../../lib/sharedReads";
 import { useRowNav } from "../../lib/useRowNav";
 import { PageContainer } from "../../layout/PageContainer";
 
@@ -147,10 +146,13 @@ export function ReviewQueue() {
   });
   const [countsReload, setCountsReload] = useState(0);
   useAbortableEffect(
-    (signal, live) => {
+    (_signal, live) => {
       if (!canCall("memory.proposals", role, whoami)) return;
+      // A re-read after a decision asks again; the first read joins the sidebar badge's
+      // (one read per question per page).
+      if (countsReload > 0) invalidateShared(`proposals_count:${identity.org}/${identity.namespace}`);
       let proposals: number | null = null;
-      countPendingProposals({ org: identity.org, namespace: identity.namespace }, { signal })
+      sharedPendingProposalsCount({ org: identity.org, namespace: identity.namespace })
         .then((n) => {
           proposals = n;
         })
