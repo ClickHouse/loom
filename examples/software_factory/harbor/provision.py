@@ -837,6 +837,11 @@ class Provisioner:
         result = self._rpc(
             "backfill", {"org": group["org"], "namespace": group["namespace"], "commit": head}
         )
+        save(
+            self.output / "logs" / ("backfill-" + group["namespace"] + "-" + head + ".json"),
+            result,
+            private=True,
+        )
         self._observed("index", "code.backfill", result)
 
     def _compile(self, group, head, revision, compiler, token, allowed):

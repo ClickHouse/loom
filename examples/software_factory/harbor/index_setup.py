@@ -46,11 +46,38 @@ def check_chunks(rows, expected_chunks, expected_context, dimension):
             ),
             "Native chunk body/span differs from current source",
         )
+        details = {
+            key: row.get(key)
+            for key in (
+                "path",
+                "scope",
+                "chunk_id",
+                "indexed_commit",
+                "embedding_dim",
+                "context_source",
+            )
+        }
         require(
-            row["embedding_dim"] == dimension
-            and not row.get("embed_last_error")
-            and row.get("context_text") == expected_context[row["chunk_id"]],
-            "Native chunk lacks a real current-model embedding",
+            row["embedding_dim"] == dimension and not row.get("embed_last_error"),
+            "Native chunk embedding is invalid: "
+            + json.dumps(
+                {**details, "expected_dimension": dimension, "error": row.get("embed_last_error")}
+            ),
+        )
+        require(
+            row.get("context_text") == expected_context[row["chunk_id"]],
+            "Native chunk context differs from current source: "
+            + json.dumps(
+                {
+                    **details,
+                    "actual_sha256": hashlib.sha256(
+                        (row.get("context_text") or "").encode()
+                    ).hexdigest(),
+                    "expected_sha256": hashlib.sha256(
+                        expected_context[row["chunk_id"]].encode()
+                    ).hexdigest(),
+                }
+            ),
         )
     require(
         {row["chunk_id"] for row in rows} == set(expected_chunks),

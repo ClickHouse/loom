@@ -9,6 +9,15 @@ import io
 import json
 import subprocess
 import sys
+from pathlib import Path
+
+
+def memory_diagnostics():
+    return {
+        name: path.read_text()
+        for name in ("memory.events", "memory.peak", "memory.max")
+        if (path := Path("/sys/fs/cgroup") / name).is_file()
+    }
 
 
 def validate_requests(rows):
@@ -99,17 +108,11 @@ def external(request):
                 command, capture_output=True, text=True, check=True, timeout=1800
             )
         except subprocess.CalledProcessError as error:
-            from pathlib import Path
-
             diagnostics = {
                 "returncode": error.returncode,
                 "stdout": error.stdout,
                 "stderr": error.stderr,
-                "cgroup": {
-                    name: path.read_text()
-                    for name in ("memory.events", "memory.peak", "memory.max")
-                    if (path := Path("/sys/fs/cgroup") / name).is_file()
-                },
+                "cgroup": memory_diagnostics(),
             }
             print(json.dumps(diagnostics), file=sys.stderr)
             raise
@@ -118,6 +121,7 @@ def external(request):
             "exit_code": result.returncode,
             "stdout": result.stdout,
             "stderr": result.stderr,
+            "cgroup": memory_diagnostics(),
         }
     raise ValueError("Unknown external setup operation")
 
