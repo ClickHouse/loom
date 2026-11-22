@@ -37,7 +37,7 @@ def check_input(data: bytes) -> None:
     # A structured branch guarantees useful accepted cases even with malformed raw bytes.
     credential = data.hex()
     url = (
-        f"HTTPS://user{credential}:pass{credential}@EXAMPLE.INVALID:443/v1///"
+        f"HTTPS://user{credential}:pass{credential}@EXAMPLE.INVALID:443/v1X///"
         f"?api-version=v1&credential={credential}&MODEL=m#fragment{credential}"
     )
     public = embedding_space.public_identity(configuration(url))
@@ -45,11 +45,13 @@ def check_input(data: bytes) -> None:
         "custom",
         "synthetic-model",
         16,
-        "https://example.invalid:443/v1?api-version=v1&MODEL=m",
+        "https://example.invalid:443/v1X?api-version=v1&MODEL=m",
         True,
     )
     assert public == expected
     rotated = url.replace(f"user{credential}:pass{credential}@", "rotated:replacement@")
     assert embedding_space.public_identity(configuration(rotated)) == public
+    ambiguous = url.replace(f"user{credential}:pass{credential}@", "first:synthetic@alias@")
+    assert embedding_space.public_identity(configuration(ambiguous)) == public
     changed_space = url.replace("MODEL=m#", "MODEL=n#")
     assert embedding_space.public_identity(configuration(changed_space)) != public

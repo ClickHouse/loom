@@ -64,7 +64,7 @@ jobs:
       - name: Replay the corpus and deterministic public-identity cases
         run: |
           "$RUNNER_TEMP/identity-venv/bin/python" -m tests.fuzz.embedding_identity_fuzzer --replay tests/fuzz/corpus/embedding_identity
-          "$RUNNER_TEMP/identity-venv/bin/python" -m unittest tests.mutation.test_embedding_identity tests.fuzz.test_probe_publisher
+          "$RUNNER_TEMP/identity-venv/bin/python" -m unittest tests.mutation.test_embedding_identity tests.mutation.test_equivalence tests.fuzz.test_probe_publisher
       - name: Mutate only the public-identity function
         id: mutation
         env:

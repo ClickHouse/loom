@@ -49,6 +49,20 @@ class PublicEndpointIdentity(TestCase):
         with self.assertRaises(ValueError):
             embedding_space.public_identity(configuration("https://[invalid/"))
 
+    def test_every_userinfo_separator_before_the_final_host_is_removed(self) -> None:
+        url = "https://first:synthetic@alias@example.invalid/v1/?model=m"
+        self.assertEqual(
+            embedding_space.public_identity(configuration(url))[3],
+            "https://example.invalid/v1?model=m",
+        )
+
+    def test_a_meaningful_uppercase_path_suffix_is_preserved(self) -> None:
+        url = "https://example.invalid/pathX///?model=m"
+        self.assertEqual(
+            embedding_space.public_identity(configuration(url))[3],
+            "https://example.invalid/pathX?model=m",
+        )
+
 
 if __name__ == "__main__":
     import unittest

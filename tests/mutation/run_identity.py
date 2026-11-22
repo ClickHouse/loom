@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from importlib.metadata import version
 from pathlib import Path
 
 
@@ -24,6 +25,22 @@ def _run_mutations(command: list[str], stage: Path) -> int:
         except ProcessLookupError:
             pass
         process.wait(timeout=10)
+
+
+def _mark_reviewed_equivalents(rows, source_sha: str, tool_version: str, evidence) -> None:
+    if evidence["source_sha256"] != source_sha or evidence["mutmut_version"] != tool_version:
+        return
+    reviewed = {row["name"]: row for row in evidence["equivalents"]}
+    for row in rows:
+        if row["status"] != "survived" or row["name"] not in reviewed:
+            continue
+        entry = reviewed[row["name"]]
+        if hashlib.sha256(row["diff"].encode()).hexdigest() != entry["diff_sha256"]:
+            continue
+        if not isinstance(entry["reason"], str) or not entry["reason"].strip():
+            raise ValueError("An equivalent outcome requires its reviewed reason")
+        row["disposition"] = "reviewed-output-equivalent"
+        row["reason"] = entry["reason"]
 
 
 def main() -> None:
@@ -90,29 +107,51 @@ def main() -> None:
                 ).stdout
                 assert len(diff.encode()) <= 32768, "Survivor diff exceeds report budget"
                 row["diff"] = diff
-        output = {"target": "server.core.embedding_space.public_identity", "mutants": selected}
-        actionable = sum(row["status"] not in {"killed", "skipped"} for row in selected)
-        if os.environ.get("GITHUB_OUTPUT"):
-            with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-                stream.write(f"review_count={actionable}\n")
-        destination = Path(os.environ["IDENTITY_MUTATION_REPORT"])
-        destination.write_text(json.dumps(output, indent=2) + "\n")
-        summary = os.environ.get("GITHUB_STEP_SUMMARY")
-        if summary:
-            counts = {
-                status: sum(row["status"] == status for row in selected)
-                for status in sorted({row["status"] for row in selected})
-            }
-            with open(summary, "a") as stream:
-                stream.write(
-                    "Endpoint-identity mutation pilot: "
-                    + json.dumps(counts, sort_keys=True)
-                    + ".\n"
-                )
-                stream.write(
-                    "Survivors require review for a missing assertion or an equivalent mutation; this is not a vulnerability or whole-module coverage claim.\n"
-                )
-        print(json.dumps(output, indent=2))
+        source_sha = hashlib.sha256(
+            (root / "server/core/embedding_space.py").read_bytes()
+        ).hexdigest()
+        evidence = json.loads((root / "tests/mutation/equivalents.json").read_text())
+        _mark_reviewed_equivalents(selected, source_sha, version("mutmut"), evidence)
+        _publish_report(selected, source_sha)
+
+
+def _publish_report(selected, source_sha: str) -> None:
+    equivalent_count = sum(
+        row.get("disposition") == "reviewed-output-equivalent" for row in selected
+    )
+    output = {
+        "target": "server.core.embedding_space.public_identity",
+        "source_sha256": source_sha,
+        "reviewed_output_equivalents": equivalent_count,
+        "mutants": selected,
+    }
+    actionable = sum(
+        row["status"] not in {"killed", "skipped"}
+        and row.get("disposition") != "reviewed-output-equivalent"
+        for row in selected
+    )
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+            stream.write(f"review_count={actionable}\n")
+    destination = Path(os.environ["IDENTITY_MUTATION_REPORT"])
+    destination.write_text(json.dumps(output, indent=2) + "\n")
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        counts = {
+            status: sum(row["status"] == status for row in selected)
+            for status in sorted({row["status"] for row in selected})
+        }
+        with open(summary, "a") as stream:
+            stream.write(
+                "Endpoint-identity mutation pilot: " + json.dumps(counts, sort_keys=True) + ".\n"
+            )
+            stream.write(
+                f"Reviewed output-equivalent outcomes: {equivalent_count}; outcomes needing review: {actionable}. Raw statuses remain in the report.\n"
+            )
+            stream.write(
+                "Survivors require review for a missing assertion or an equivalent mutation; this is not a vulnerability or whole-module coverage claim.\n"
+            )
+    print(json.dumps(output, indent=2))
 
 
 if __name__ == "__main__":
