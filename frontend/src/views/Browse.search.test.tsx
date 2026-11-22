@@ -108,6 +108,25 @@ describe("Browse: a full page", () => {
     expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
   });
 
+  it("says a search that comes back full may be missing matches", async () => {
+    browseNamespaces.mockResolvedValueOnce(page(200));
+    render(<Browse />);
+    expect(await screen.findByText("team-000")).toBeInTheDocument();
+
+    browseNamespaces.mockResolvedValueOnce(page(200));
+    await userEvent.type(screen.getByLabelText("Search namespaces"), "team");
+    await waitFor(() => expect(browseNamespaces).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId("search-cut")).toHaveTextContent(/More namespaces may match “team”/);
+    expect(screen.getByText("200+ namespaces")).toBeInTheDocument();
+    expect(screen.queryByTestId("browse-cut")).toBeNull();
+
+    // A search that holds every match says nothing more.
+    browseNamespaces.mockResolvedValueOnce([row("team-ops")]);
+    await userEvent.type(screen.getByLabelText("Search namespaces"), "-ops");
+    expect(await screen.findByText("1 namespace")).toBeInTheDocument();
+    expect(screen.queryByTestId("search-cut")).toBeNull();
+  });
+
   it("shows a failed search as an error with Retry, not as no match", async () => {
     const { ApiError } = await import("../api");
     browseNamespaces.mockResolvedValueOnce(page(200));

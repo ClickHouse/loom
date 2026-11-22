@@ -96,11 +96,13 @@ export function Browse() {
   const [full, setFull] = useState(false);
   // The server's answer for a search over a full page, tagged with the text it answers.
   // `repos` keeps the repositories the server's search found: they leave the list but still
-  // point the typed name to the Repositories page.
+  // point the typed name to the Repositories page. `full`: the search too came back with
+  // BROWSE_LIMIT rows, so more namespaces may match than it holds.
   const [searched, setSearched] = useState<{
     q: string;
     rows: BrowseEntry[] | null;
     repos: string[];
+    full: boolean;
     error: unknown;
   } | null>(null);
   const [searchReads, setSearchReads] = useState(0);
@@ -275,6 +277,8 @@ export function Browse() {
             q: serverQuery,
             rows: found.filter((r) => !isCodeKind(r.kind)),
             repos: found.filter((r) => isCodeKind(r.kind)).map((r) => r.namespace),
+            // Counted before the code rows are dropped, as for the browse read.
+            full: found.length >= BROWSE_LIMIT,
             error: null,
           });
           setRequireMap((prev) => {
@@ -284,7 +288,7 @@ export function Browse() {
           });
         })
         .catch((e: unknown) => {
-          if (!ctl.signal.aborted) setSearched({ q: serverQuery, rows: null, repos: [], error: e });
+          if (!ctl.signal.aborted) setSearched({ q: serverQuery, rows: null, repos: [], full: false, error: e });
         });
     }, SEARCH_DEBOUNCE_MS);
     // A retype, or a reload of the page under it, aborts this read before it can land.
@@ -297,6 +301,9 @@ export function Browse() {
   // The server's matches are the answer (it also matches guide summaries): not filtered again here.
   const serverRows = answer?.rows ?? null;
   const searchError = answer?.error ?? null;
+  // The list on screen may be missing namespaces: a full page with no text typed, or a full
+  // answer to the text typed.
+  const cut = listQuery ? !!answer?.full : full;
   // Typed over a full page and not answered yet: the page's own matches show meanwhile, and
   // nothing says a name is missing until the server has said so.
   const searching = !!serverQuery && !answer;
@@ -414,7 +421,11 @@ export function Browse() {
 
       <ListToolbar
         label="Namespaces"
-        count={rows ? `${filtered.length} ${filtered.length === 1 ? "namespace" : "namespaces"}` : undefined}
+        count={
+          rows
+            ? `${filtered.length}${cut ? "+" : ""} ${filtered.length === 1 && !cut ? "namespace" : "namespaces"}`
+            : undefined
+        }
       >
         <div className="min-w-0 flex-1">
           <SearchField
@@ -498,6 +509,13 @@ export function Browse() {
           {rows !== null && full && !listQuery && (
             <p className="mb-2 text-xs text-text-muted" data-testid="browse-cut">
               Showing the first {BROWSE_LIMIT} namespaces. Search to find one past them.
+            </p>
+          )}
+
+          {rows !== null && listQuery && answer?.full && (
+            <p className="mb-2 text-xs text-text-muted" data-testid="search-cut">
+              More namespaces may match “{listQuery}” than the {BROWSE_LIMIT} the search returns. Type more of the name
+              to narrow it.
             </p>
           )}
 
