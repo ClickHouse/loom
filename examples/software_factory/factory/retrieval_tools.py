@@ -34,9 +34,11 @@ def schemas() -> list[dict]:
     return [
         tool(
             "loom_code_symbol",
-            "Read a known definition by qualified name. For an absent/imported name, "
-            "use loom_code_grep to find imports or uses.",
-            {"name": string},
+            "Read a known definition: provide name or a card's symbol_id/unit_id as symbol_id. "
+            "For an absent/imported name, use loom_code_grep to find imports or uses. "
+            "Elided bodies keep navigation cards; an outline can help select a smaller definition.",
+            {"name": string, "symbol_id": string},
+            [],
         ),
         tool(
             "loom_code_grep",
@@ -105,10 +107,25 @@ class QualifiedContext(Context):
                     "start_line",
                     "end_line",
                     "next",
+                    "elided",
+                    "body_elided",
                 )
                 if key in item
             },
         }
+
+    def navigation_cards(self, items, rejected):
+        candidates, seen = [], set()
+        for item in items:
+            try:
+                candidate = self.navigation(item)
+                identity = digest(candidate)
+                if identity not in seen:
+                    candidates.append(candidate)
+                    seen.add(identity)
+            except (PermissionError, KeyError, ValueError) as error:
+                rejected.append(str(error))
+        return candidates
 
     def grounded_definitions(self, items, rejected):
         definitions, seen = [], set()
@@ -136,7 +153,7 @@ class QualifiedContext(Context):
             raise PermissionError("Undeclared retrieval operation")
         # The model cannot supply identity, index scope, provider or history settings.
         allowed = {
-            "code.symbol": {"name"},
+            "code.symbol": {"name", "symbol_id"},
             "code.grep": {"pattern", "path_prefix", "regex", "cursor"},
             "code.search": {"query", "path_prefix", "cursor"},
             "code.outline": {"path"},
@@ -345,18 +362,20 @@ class QualifiedContext(Context):
                     if attached:
                         unit["lessons"] = attached
             out["abstain"] = not out["definitions"]
-            if op == "code.symbol" and data.get("candidates"):
-                candidates, seen = [], set()
-                for item in data["candidates"]:
-                    try:
-                        candidate = self.navigation(item)
-                        identity = digest(candidate)
-                        if identity not in seen:
-                            candidates.append(candidate)
-                            seen.add(identity)
-                    except (PermissionError, KeyError, ValueError) as error:
-                        rejected.append(str(error))
-                out["candidates"] = candidates
+            accepted = {
+                (unit["path"], unit["start_line"], unit["end_line"]) for unit in out["definitions"]
+            }
+            unserved = [
+                item
+                for item in original
+                if item.get("start_line")
+                and (item.get("elided") or item.get("body_elided"))
+                and (item.get("path"), item.get("start_line"), item.get("end_line")) not in accepted
+            ]
+            cards = self.navigation_cards([*unserved, *data.get("candidates", [])], rejected)
+            if cards or data.get("candidates"):
+                out["candidates"] = cards
+                out["navigation_only"] = bool(cards) and not out["definitions"]
         elif op == "code.grep":
             matches = []
             for hit in data.get("matches", []):

@@ -26,7 +26,7 @@ def requests():
             ),
         }
         for memories in ((), ("memory",))
-        for op, args in code.items()
+        for op, args in [*code.items(), ("code.symbol", {"symbol_id": "qualification"})]
     ]
     memory = {
         "loom_memory_search": {"query": "qualification"},

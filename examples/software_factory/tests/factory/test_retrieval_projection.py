@@ -132,6 +132,35 @@ class ProjectionContracts(unittest.TestCase):
                 self.assertEqual(result["definitions"], [])
                 self.assertTrue(result["rejected"])
 
+    def test_elided_definitions_keep_scoped_navigation_without_claiming_a_body(self):
+        for op, field in [("code.symbol", "definitions"), ("code.enclosing", "results")]:
+            with self.subTest(op=op):
+                item = self.definition(
+                    body="", elided=True, next='code.symbol(symbol_id="name-unit")'
+                )
+                result = self.context.project(op, {field: [item, item]})
+                self.assertEqual(result["definitions"], [])
+                self.assertTrue(result["abstain"])
+                self.assertTrue(result["navigation_only"])
+                self.assertEqual(len(result["candidates"]), 1)
+                card = result["candidates"][0]
+                self.assertEqual(card["unit_id"], "name-unit")
+                self.assertEqual(card["next"], item["next"])
+                self.assertTrue(card["elided"])
+                self.assertNotIn("body", card)
+        self.context.checkout.edit(self.path, self.source, "# changed\n" + self.source)
+        result = self.context.project("code.symbol", {"definitions": [item]})
+        self.assertEqual(result.get("candidates", []), [])
+        self.assertTrue(result["rejected"])
+
+    def test_a_native_symbol_identifier_can_be_followed_without_a_name(self):
+        self.data = {"definitions": [self.definition()]}
+        result = self.context.selected("code.symbol", {"symbol_id": "name-unit"})
+        self.assertEqual(result["definitions"][0]["body"], self.source)
+        self.assertEqual(self.calls[0][1]["symbol_id"], "name-unit")
+        self.assertNotIn("name", self.calls[0][1])
+        self.assertNotIn("token_budget", self.calls[0][1])
+
     def test_unchanged_body_does_not_keep_index_identity_for_an_edited_file(self):
         self.context.checkout.edit(self.path, self.source, self.source + "# local edit\n")
         result = self.context.project("code.symbol", {"definitions": [self.definition()]})

@@ -51,7 +51,7 @@ class NativeAnchorCapture(unittest.IsolatedAsyncioTestCase):
 
 class RequestContracts(unittest.TestCase):
     def test_code_and_memory_shapes_are_accepted(self):
-        self.assertEqual(validate_requests(requests())["validated"], 15)
+        self.assertEqual(validate_requests(requests())["validated"], 17)
 
     def test_enclosing_qualifies_cold_and_memory_namespace_lesson_shapes(self):
         rows = [row for row in requests() if row["operation"] == "code.enclosing"]
