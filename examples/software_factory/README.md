@@ -75,3 +75,10 @@ python -m unittest discover -s examples/software_factory/tests -t . -v
 
 The smoke uses scripted actions and an expression grader. It makes no model or
 network calls and measures no model quality, Loom adoption or cost savings.
+
+The private attempt ledger retains each authorized native code response beside the
+projected context given to the model. This makes omitted navigation or source context
+inspectable without another retrieval call. Member outlines and descriptions remain
+navigation metadata; only bodies matching the working source are treated as code.
+Public exports include allowlisted measurements and provenance hashes rather than
+these raw response bodies. Retrieval requests inherit Loom's response token defaults.

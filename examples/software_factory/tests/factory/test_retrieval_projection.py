@@ -140,7 +140,7 @@ class ProjectionContracts(unittest.TestCase):
                 )
                 result = self.context.project(op, {field: [item, item]})
                 self.assertEqual(result["definitions"], [])
-                self.assertTrue(result["abstain"])
+                self.assertFalse(result["abstain"])
                 self.assertTrue(result["navigation_only"])
                 self.assertEqual(len(result["candidates"]), 1)
                 card = result["candidates"][0]
@@ -189,3 +189,58 @@ class ProjectionContracts(unittest.TestCase):
         self.assertEqual(result["candidates"], [])
         self.assertTrue(result["abstain"])
         self.assertTrue(result["rejected"])
+
+    def test_skeleton_keeps_verified_outline_as_navigation(self):
+        child = {"qualified_name": "resolve_name", "start_line": 1, "end_line": 2}
+        item = self.definition(
+            body="def resolve_name(value): ...",
+            granularity="skeleton",
+            outline=[child],
+            description="Source summary",
+        )
+        result = self.context.project("code.symbol", {"definitions": [item]})
+        self.assertFalse(result["abstain"])
+        self.assertTrue(result["navigation_only"])
+        self.assertEqual(result["definitions"], [])
+        card = result["candidates"][0]
+        self.assertEqual(card["description"], "Source summary")
+        self.assertEqual(card["granularity"], "skeleton")
+        self.assertEqual(card["outline"], [{"path": self.path, **child}])
+        self.assertNotIn("body", card)
+        invalid = {**item, "outline": [{**child, "end_line": 3}]}
+        refused = self.context.project("code.symbol", {"definitions": [invalid]})
+        self.assertEqual(refused["candidates"], [])
+        self.assertTrue(refused["rejected"])
+
+    def test_successful_projection_retains_raw_native_response_in_private_ledger(self):
+        self.data = {"definitions": [self.definition()]}
+        result = self.context.selected("code.symbol", {"name": "resolve_name"})
+        native = [row for row in self.context.ledger.rows if row["kind"] == "native_context"]
+        self.assertEqual(len(native), 1)
+        self.assertEqual(native[0]["response"], self.data)
+        self.assertEqual(native[0]["response_sha256"], digest(self.data))
+        self.assertNotIn("response", result)
+
+    def test_navigation_keeps_its_bound_historical_lessons_without_a_body(self):
+        self.context.memory_namespaces = ("history",)
+        self.data = {
+            "definitions": [
+                self.definition(
+                    body="",
+                    elided=True,
+                    lessons=[
+                        {
+                            "namespace": "history",
+                            "memory_key": "compatibility",
+                            "excerpt": "Preserve old callers.",
+                        }
+                    ],
+                )
+            ]
+        }
+        result = self.context.project("code.symbol", self.data)
+        self.assertEqual(result["definitions"], [])
+        self.assertEqual(result["candidates"][0]["lessons"], self.data["definitions"][0]["lessons"])
+        self.data["definitions"][0]["lessons"][0]["namespace"] = "outside"
+        with self.assertRaises(PermissionError):
+            self.context.project("code.symbol", self.data)

@@ -81,6 +81,9 @@ class ProfileContracts(unittest.TestCase):
             self.assertEqual(spec["source_sha256"], task.source_sha256)
             for kind in ["agent", "verifier"]:
                 files = output / "builds/public-task" / kind / "factory"
+                self.assertTrue(
+                    (files / "lib/examples/software_factory/factory/patterns.py").is_file()
+                )
                 script = (
                     "import runpy; d=runpy.run_path("
                     + repr(str(files / "grader.py"))

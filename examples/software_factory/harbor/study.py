@@ -110,7 +110,9 @@ def build_image(folder: Path, dependency: str) -> str:
         + reference
         + "\nUSER root\nCOPY factory /factory\n"
         + ("COPY factory/tests /tests\n" if (folder / "factory/tests").exists() else "")
-        + "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/factory/lib\nWORKDIR /workspace\n"
+        + "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/factory/lib\n"
+        + "RUN python -c \"import runpy; runpy.run_path('/factory/grader.py', "
+        + "run_name='grader_import_check')\"\nWORKDIR /workspace\n"
     )
     receipt = folder / "image.id"
     with (folder / "build.log").open("wb") as log:

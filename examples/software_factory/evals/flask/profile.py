@@ -151,6 +151,7 @@ def stage_task(plan, task_id, output, build_image):
         library = files / "lib/examples/software_factory"
         for name in (
             "factory/model.py",
+            "factory/patterns.py",
             "factory/workspace.py",
             "harbor/cleanup.py",
             "evals/flask/historical.py",

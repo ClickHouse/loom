@@ -97,7 +97,7 @@ class QualifiedContext(Context):
                 or end > len(source.splitlines())
             ):
                 raise ValueError("Base-index navigation has an invalid source span")
-        return {
+        result = {
             "path": path,
             **{
                 key: item[key]
@@ -111,6 +111,8 @@ class QualifiedContext(Context):
                     "tier",
                     "confidence",
                     "signature",
+                    "description",
+                    "granularity",
                     "start_line",
                     "end_line",
                     "next",
@@ -120,6 +122,20 @@ class QualifiedContext(Context):
                 if key in item
             },
         }
+        if item.get("outline"):
+            result["outline"] = []
+            for entry in item["outline"]:
+                child = self.navigation(
+                    {key: value for key, value in entry.items() if key != "outline"}, path=path
+                )
+                if (
+                    child["path"] != path
+                    or (start is not None and child["start_line"] < start)
+                    or (end is not None and child["end_line"] > end)
+                ):
+                    raise ValueError("Member outline exceeds its declaration span")
+                result["outline"].append(child)
+        return result
 
     def navigation_cards(self, items, rejected):
         candidates, seen = [], set()
@@ -137,7 +153,7 @@ class QualifiedContext(Context):
     def grounded_definitions(self, items, rejected):
         definitions, seen = [], set()
         for item in items:
-            if not item.get("start_line"):
+            if not item.get("start_line") or item.get("granularity") == "skeleton":
                 continue
             identity = (item["path"], item["start_line"], item["end_line"])
             if identity in seen:
@@ -250,6 +266,12 @@ class QualifiedContext(Context):
         ):
             raise PermissionError("Index scope or accepted arguments are unverified")
         evidence = self.project(op, receipt["data"])
+        self.ledger.emit(
+            "native_context",
+            operation=op,
+            response=receipt["data"],
+            response_sha256=digest(receipt["data"]),
+        )
         encoded = json.dumps(evidence)
         if (
             self.budget.context_chars is not None
@@ -354,8 +376,24 @@ class QualifiedContext(Context):
         if op in {"code.symbol", "code.enclosing"}:
             original = data.get("definitions" if op == "code.symbol" else "results", [])
             out["definitions"] = self.grounded_definitions(original, rejected)
+            out["abstain"] = not out["definitions"]
+            accepted = {
+                (unit["path"], unit["start_line"], unit["end_line"]) for unit in out["definitions"]
+            }
+            unserved = [
+                item
+                for item in original
+                if item.get("start_line")
+                and (
+                    item.get("elided")
+                    or item.get("body_elided")
+                    or item.get("granularity") == "skeleton"
+                )
+                and (item.get("path"), item.get("start_line"), item.get("end_line")) not in accepted
+            ]
+            exact_cards = self.navigation_cards(unserved, rejected)
             if self.memory_namespaces:
-                for unit in out["definitions"]:
+                for unit in [*out["definitions"], *exact_cards]:
                     matching = [
                         item
                         for item in original
@@ -368,18 +406,12 @@ class QualifiedContext(Context):
                     )
                     if attached:
                         unit["lessons"] = attached
-            out["abstain"] = not out["definitions"]
-            accepted = {
-                (unit["path"], unit["start_line"], unit["end_line"]) for unit in out["definitions"]
-            }
-            unserved = [
-                item
-                for item in original
-                if item.get("start_line")
-                and (item.get("elided") or item.get("body_elided"))
-                and (item.get("path"), item.get("start_line"), item.get("end_line")) not in accepted
-            ]
-            cards = self.navigation_cards([*unserved, *data.get("candidates", [])], rejected)
+            cards = list(exact_cards)
+            for candidate in self.navigation_cards(data.get("candidates", []), rejected):
+                if candidate not in cards:
+                    cards.append(candidate)
+            if exact_cards:
+                out["abstain"] = bool(data.get("abstain", False))
             if cards or data.get("candidates"):
                 out["candidates"] = cards
                 out["navigation_only"] = bool(cards) and not out["definitions"]
