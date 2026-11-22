@@ -346,6 +346,32 @@ the C++ tier; `loom code scip-delta` runs one delta pass.
 Where both tiers hold the same row, reads prefer the compiler row, and every answer
 names the tier it read (`scip` or `treesitter`).
 
+Exact code grep answers can carry the caller's readable code-linked lessons for
+the matched files. Lessons are read after cached match data, within the request's
+remaining deadline. Presence queries and uncovered paths carry none;
+`include_lessons=false` skips the read.
+
+`code.enclosing` carries the same file lessons for resolved locations. Repeated
+locations share one file read; unresolved locations bring no lessons. The caller's
+readable memory namespaces, narrowed-token refusal, timeout and token cap apply
+through the shared result enrichment. Empty lesson fields stay off the wire.
+
+Search and grep rank candidate lessons across all selected files by query-term
+overlap after constraints and pinned rows. English inflections share stems; equal
+matches keep path order, then the listing's confidence and recency order.
+Other code reads retain path and listing order.
+This reorders the same readable candidates within the same response token budget;
+it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
+
+`bench/replay_code_lessons.py` compares recorded lesson order with query-aware order
+from an evaluation's native memory certificates and grep answers. It retains every
+timestamp-tie order that reproduces the recorded answer. Cases whose reads cannot be
+reconstructed remain unknown. This offline replay measures lesson order, not solver success.
+
+Python compiler conversion keeps callable and class descriptors distinct from
+parameters, type parameters and fields. Call edges require a containing function
+span; a reference at module or class scope does not belong to the preceding function.
+
 ## The extractor stamp
 
 Content-addressed chunks and hashed symbol ids key on the input, not on the code that

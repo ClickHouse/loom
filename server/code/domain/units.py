@@ -136,9 +136,9 @@ class CodeUnit(BaseModel):
     signature: str = ""
     body: str = ""  # whole unit, or "" when elided
     elided: bool = False
-    # sha256 of the unit's defining chunk in the index ("" when unknown). What
-    # a memory anchors to so "the code you describe was rewritten" is one
-    # comparison later, independent of whether the body was served.
+    # sha256 of the unit's defining retrieval chunk ("" when unknown), even when
+    # the body is elided. Large declarations can span several retrieval chunks.
+    # Memory-link freshness uses complete normalized declaration fingerprints.
     body_hash: str = ""
     description: str = ""
     tier: str = ""  # scip | treesitter | '' (chunks carry no tier)

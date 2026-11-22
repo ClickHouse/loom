@@ -207,9 +207,11 @@ class _SymbolLegs:
 async def _chunk_hashes(
     repo: CodeRepo, org: str, ns: str, head: list[dict[str, Any]]
 ) -> dict[str, str]:
-    """Defining-chunk hashes for every definition (body served or not): the
-    anchor a memory keeps so a rewrite is detectable later. Best-effort; a
-    repo without the helper (tests) or a CH error leaves "" = unknown."""
+    """Defining retrieval chunk hashes, including when the response elides a body.
+
+    Memory links use complete normalized declaration fingerprints. A repository
+    without this helper, or a failed read, leaves the retrieval hash unknown.
+    """
     try:
         return await repo.chunk_hashes_for_symbols(
             org, ns, [str(r.get("symbol_id") or "") for r in head], rows=head

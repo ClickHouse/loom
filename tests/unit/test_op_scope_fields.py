@@ -45,6 +45,8 @@ AUTHORIZED: dict[tuple[str, str], str] = {
     ("code.search", "namespaces"): _FANOUT,
     ("code.symbol", "namespaces"): _FANOUT,
     ("code.grep", "namespaces"): _FANOUT,
+    ("code.grep", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
+    ("code.enclosing", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
     ("code.symbol", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
     ("code.callees", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",
     ("code.callers", "lesson_namespaces"): "server.memory.app.code_plane_reads.lesson_namespaces",

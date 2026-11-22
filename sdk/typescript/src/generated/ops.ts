@@ -761,6 +761,8 @@ export interface CodeCoverageClaimOutput {
 }
 
 export interface CodeEnclosingInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -774,6 +776,8 @@ export interface CodeEnclosingInput {
 }
 
 export interface CodeEnclosingOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: Array<Record<string, unknown>>;
   resolved: number;
   paths_indexed: number;
@@ -864,6 +868,8 @@ export interface CodeFirstBuildOutput {
 }
 
 export interface CodeGrepInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -887,6 +893,8 @@ export interface CodeGrepInput {
 }
 
 export interface CodeGrepOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
   next_cursor?: string;
   has_more?: boolean;

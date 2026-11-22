@@ -116,7 +116,7 @@ class CodeOutlineOutput(_LessonsOut):
 # ============================================================
 
 
-class CodeEnclosingInput(_CodeIdentity):
+class CodeEnclosingInput(_CodeIdentity, _ResultLessons):
     """Batched `path:line` -> enclosing function. Built for the grep shim:
     real grep stays exact, then ONE round-trip names the function every hit
     sits in — the "which function is this line in?" question that otherwise
@@ -146,7 +146,7 @@ class CodeEnclosingInput(_CodeIdentity):
     neighbour_k: int = Field(default=5, ge=1, le=20)
 
 
-class CodeEnclosingOutput(BaseModel):
+class CodeEnclosingOutput(_LessonsOut):
     # one entry per input location, input order preserved:
     # {path, line, symbol, symbol_id, qualified_name, signature, tier, kind,
     #  start_line, end_line}

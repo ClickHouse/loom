@@ -583,6 +583,8 @@ Batched `path:line` -> enclosing function.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -596,6 +598,8 @@ Batched `path:line` -> enclosing function.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `results` | `list[dict[str, Any]]` | one entry per input location, input order preserved: {path, line, symbol, symbol_id, qualified_name, signature, tier, kind, start_line, end_line} kind is "function" / "method" / "fixture" for a line inside a function body; "class"… |
 | `resolved` | `int` | Locations that landed inside a function, type, or document section. |
 | `paths_indexed` | `int` | distinct input paths that have any symbol rows |
@@ -710,6 +714,8 @@ Exact-match lookup over the indexed corpus.
 
 | Input field | Type | Default | Meaning |
 | --- | --- | --- | --- |
+| `include_lessons` | `bool` | `True` | Attach `lessons`: the memories about the answer's top files (for code.context_pack, a `task` briefing's only). |
+| `lesson_namespaces` | `list[str]` | *(computed)* | The memory namespaces `lessons` reads besides the repository's team rules (over MCP the caller's memory home, filled in); one the caller cannot read is skipped. |
 | `org` | `str` | `''` | The tenant (first element of the identity tuple). |
 | `namespace` | `str` | `''` | The namespace the op reads or writes. |
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
@@ -733,6 +739,8 @@ Exact-match lookup over the indexed corpus.
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
+| `lessons` | `list[dict[str, Any]]` | The memories about the answer's top files, best first, capped at `code_result_lessons_tokens`; each row {path, memory_key, namespace, excerpt, code_state}, with `changed_since` and `supersedes_key` when they apply. |
+| `lessons_left_out` | `int` | How many rows about those files the lessons' token cap or a cut left out, with the rows another row read for the answer supersedes. |
 | `matches` | `list[dict[str, Any]]` | {path, line, text, scope, scope_start_line, scope_end_line} per matching LINE, path/line ordered. scope_* is the span of the enclosing unit named by `scope` (0/0 when the line sits in no unit) — enough to decide whether to fetch the body… |
 | `next_cursor` | `str` | Continuation: cursor for the next page of matching lines, "" when the extracted set is exhausted. has_more mirrors it. |
 | `has_more` | `bool` | True when `next_cursor` is set. |
