@@ -66,9 +66,9 @@ class CodeReviewBriefInput(_CodeIdentity, _PrPostImage):
     the calibrated risk priors (`jit_risk` and `author_revert_prior`, ranking signals,
     never a gate) — or a build on the first miss. `rationale`, read on every call and
     never stored, lists the repository's design decisions and constraints that govern the
-    PR's files. `tier` selects sections and a token budget (trivial 700: paths + symbols;
-    standard 2,500: + tests, settings, history, risk, rationale; full 4,000: + blame, qa);
-    `sections` narrows further; `token_budget` overrides the tier's."""
+    PR's files. `tier` selects sections (trivial: paths + symbols;
+    standard: + tests, settings, history, risk, rationale; full: + blame, qa);
+    `sections` narrows further; a positive `token_budget` limits the returned rows."""
 
     # The PR to brief; 0 = find it by `merge_sha`. Required with `open`.
     pr_number: int = Field(default=0, ge=0)
@@ -90,11 +90,11 @@ class CodeReviewBriefInput(_CodeIdentity, _PrPostImage):
         ]
     ] = Field(default_factory=list)
 
-    # Which sections and default budget: trivial (paths, symbols), standard (+ tests,
+    # Which sections: trivial (paths, symbols), standard (+ tests,
     # settings, history, risk, rationale) or full (+ blame, qa).
     tier: Literal["trivial", "standard", "full"] = "standard"
-    # Token budget for the served sections; 0 = the tier's (700 / 2,500 / 4,000).
-    token_budget: int = Field(default=0, ge=0, le=16_000)
+    # Estimated-token cap on served sections; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Whether a brief this call builds on a miss is stored for the next reader (the
     # default). A measurement consumer (`eval-*`, the bench sentinels) never stores,
     # whatever it passes.

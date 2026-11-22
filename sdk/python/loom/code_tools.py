@@ -81,12 +81,11 @@ def code_request(args: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         raise LoomError("target must be a symbol reference or path:line; use search for prose")
     body: dict[str, Any] = {"include_lessons": False}
     if kind == "search":
-        body.update(query=target, top_k=3, token_budget=2500)
+        body.update(query=target, top_k=3)
     else:
         body["name"] = target
         if kind == "symbol":
             body.update(
-                token_budget=2500,
                 include_body=True,
                 include_history=False,
                 include_examples=False,

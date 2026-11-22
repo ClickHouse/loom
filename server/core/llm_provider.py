@@ -13,13 +13,13 @@ from dataclasses import dataclass
 # The API-key environment variable of each keyed provider.
 KEY_ENV_BY_PROVIDER = {"openai": "OPENAI_API_KEY", "anthropic": "ANTHROPIC_API_KEY"}
 
-# The model each provider runs when LOOM_LLM_MODEL is unset: the cheapest current
-# model of each provider that does the extraction job well.
+# The model each provider runs when LOOM_LLM_MODEL is unset.
+# Explicit deployment and per-job model selections keep their configured values.
 DEFAULT_MODEL_BY_PROVIDER = {
     # Bedrock model access and inference profiles belong to the deployment.
     "bedrock": "",
     "openai": "gpt-6-luna",
-    "anthropic": "claude-haiku-5-5",
+    "anthropic": "claude-sonnet-5-5",
     # A server the operator runs (`local`): a 3B model Ollama pulls in about 2 GB.
     "local": "qwen2.5:3b",
     "fake": "fake-echo-1",

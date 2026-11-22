@@ -213,7 +213,7 @@ def render(
     token_budget: int,
 ) -> str:
     """The briefing as markdown, whole sections trimmed from the bottom."""
-    from server.code.app.index.packs import estimate_tokens
+    from server.code.app.index.packs import estimate_tokens, fit_pack_budget
 
     lines = [
         f"# Task briefing: {task.strip()[:200]}",
@@ -247,9 +247,9 @@ def render(
         lines += ["", "## Docs that explain it"]
         lines.extend(f"- {d['path']}" for d in docs)
     text = "\n".join(lines)
-    while estimate_tokens(text) > token_budget and "\n## " in text:
+    while token_budget and estimate_tokens(text) > token_budget and "\n## " in text:
         text = text[: text.rfind("\n## ")]
-    return text
+    return fit_pack_budget(text, token_budget)[0]
 
 
 async def _safe(coro: Any, default: Any) -> Any:

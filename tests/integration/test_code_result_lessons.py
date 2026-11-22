@@ -94,6 +94,59 @@ async def test_grep_attaches_requested_file_lessons_and_respects_opt_out(
         assert "lessons" not in payload.get("data", payload)
 
 
+async def test_enclosing_attaches_only_authorized_resolved_file_lessons(
+    control_plane_url: str, mint_test_token: Any, ch_client: Any
+) -> None:
+    org = unique_org("enclosing-lessons")
+    writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
+    _set(org, control_plane_url, writer, "notes/allowed", "Keep run callback order.", [PATH])
+    _set(org, control_plane_url, writer, "notes/unrelated", "Storage configuration.", [PATH])
+    _set(org, control_plane_url, writer, "notes/missing", "Unresolved file note.", ["absent.py"])
+    ch_client.insert(
+        "loom.code_symbols",
+        [[org, "code", "treesitter", "pkg::run", "run-id", "run", "function", PATH, 1, 5]],
+        column_names=[
+            "org",
+            "namespace",
+            "tier",
+            "qualified_name",
+            "symbol_id",
+            "name",
+            "kind",
+            "path",
+            "start_line",
+            "end_line",
+        ],
+    )
+    body = dict(
+        org=org,
+        namespace="code",
+        locations=[f"{PATH}:2", f"{PATH}:3", "absent.py:1"],
+        lesson_namespaces=["dev"],
+    )
+    for names, include in [(["code", "dev"], True), (["code", "dev"], False), (["code"], True)]:
+        reader = mint_test_token(org=org, namespaces=names, roles=["viewer"])
+        async with httpx.AsyncClient(
+            base_url=control_plane_url, headers={"Authorization": f"Bearer {reader}"}, timeout=10
+        ) as client:
+            response = await client.post(
+                "/v1/code.enclosing", json={**body, "include_lessons": include}
+            )
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload.get("data", payload)
+        assert data["resolved"] == 2 and len(data["results"]) == 3
+        if include and "dev" in names:
+            assert data["lessons"][0]["memory_key"] == "notes/allowed"
+            assert {row["memory_key"] for row in data["lessons"]} == {
+                "notes/allowed",
+                "notes/unrelated",
+            }
+            assert data["lessons"][0]["path"] == PATH
+        else:
+            assert "lessons" not in data
+
+
 async def test_lessons_match_the_result_file_by_path(
     control_plane_url: str, mint_test_token: Any, ch_client: Any
 ) -> None:

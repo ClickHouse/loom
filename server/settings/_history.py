@@ -69,4 +69,51 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "upfront. Set an explicit operation list to request eager loading."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_ask_token_budget",
+        old=4000,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_result_lessons_tokens",
+        old=250,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="memory_ask_code_symbol_token_budget",
+        old=400,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="memory_ask_code_search_token_budget",
+        old=1400,
+        new=0,
+        why=(
+            "Return selected retrieval context without an implicit token cap; "
+            "positive values opt in to a cap."
+        ),
+    ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_review_brief_rationale_tokens",
+        old=250,
+        new=0,
+        why="Return selected review rationale without an implicit token cap.",
+    ),
 )

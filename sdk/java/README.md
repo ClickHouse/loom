@@ -1,9 +1,16 @@
 # Loom Java client
 
-A minimal client for Loom's memory ops: `memory.set`, `memory.get`, `memory.search` and
-`memory.delete`. It is the first step towards a full Java SDK
-([#53](https://github.com/ClickHouse/loom/issues/53)); the Python and TypeScript SDKs
+A minimal client for Loom's memory ops (`memory.set`, `memory.get`, `memory.search` and
+`memory.delete`) and the conversation ops a chat memory needs (`conversation.append`,
+`get`, `create`, `delete`, `threads` and `set_logging`). It is a step towards a full Java
+SDK ([#53](https://github.com/ClickHouse/loom/issues/53)); the Python and TypeScript SDKs
 cover every op.
+
+Two chat memory modules build on it, each its own Maven project so the client keeps no
+framework dependency:
+
+- [`langchain4j/`](langchain4j/README.md): a LangChain4j `ChatMemoryStore`.
+- [`spring-ai/`](spring-ai/README.md): a Spring AI `ChatMemoryRepository`.
 
 Requires Java 17+. Dependencies: `java.net.http.HttpClient` and Jackson.
 
@@ -27,9 +34,28 @@ For a team server, pass `.token(...)` and your org and namespace, or build with
 A key that holds nothing is not an error: `get` returns a result whose `found()` is false.
 
 Each method has an overload taking a `Map` of the op's other input fields (`tags`,
-`memory_type`, `user_id`, `session_id`, …), named as
-[the operations reference](../../docs/reference/operations/memory.md) names them. Each
+`memory_type`, `user_id`, `session_id`, …), named as the operations reference
+([memory](../../docs/reference/operations/memory.md),
+[conversation](../../docs/reference/operations/conversation.md)) names them. Each
 result keeps the whole response as `raw()`.
+
+## Conversations
+
+```java
+loom.conversationSetLogging(true);                  // admin; off by default
+loom.conversationAppend("order-1234", "user", "Where is my order?");
+ConversationGetResult t = loom.conversationGet("order-1234", 100, 0); // a page of messages
+t.messages().forEach(m -> System.out.println(m.role() + ": " + m.content()));
+loom.conversationDelete("order-1234");             // admin; sends confirm_thread_id
+```
+
+An append the server did not keep (recording is off, or the turn was deleted meanwhile) is
+not an error: `stored()` is false and `reason()` says why. `requireStored()` turns that into
+a `LoomException` with `code()` `LOGGING_DISABLED` or `DELETED`.
+
+`ConversationWindow` keeps a chat memory's message list in one thread for the modules
+above: the log stays append-only and a window pointer in the thread's metadata says which
+turns the memory holds.
 
 ## Errors
 
@@ -54,6 +80,8 @@ try {
 The tests run against a local fake HTTP server; they need no running Loom.
 
 ```bash
-cd sdk/java
-mvn test
+mvn -f sdk/java verify
 ```
+
+`mvn -f sdk/java install` also installs a test jar holding that fake server, which the
+chat memory modules' tests use.

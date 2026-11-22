@@ -19,6 +19,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 from server.code.api.models_grep import CodeGrepInput
+from server.code.api.models_navigation import CodeEnclosingInput
 from server.code.api.models_search import CodeSearchInput
 from server.code.app import common, enrich, memory_links
 from server.code.app.search_legs import resolve_deadline_ms
@@ -62,7 +63,9 @@ def _bound_s(input: Any, started: float) -> float:
     return bound
 
 
-async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_lessons.Lessons:
+async def lessons_for(
+    input: Any, paths: Iterable[str], started: float, *, query: str = ""
+) -> path_lessons.Lessons:
     """The completed lessons for the answer's top `paths`; none when off, narrowed,
     past the call's deadline, or unable to read the scope. `started` is the call's
     monotonic start."""
@@ -98,6 +101,13 @@ async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_
                 top,
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
+                query=(
+                    input.query
+                    if isinstance(input, CodeSearchInput)
+                    else input.pattern
+                    if isinstance(input, CodeGrepInput)
+                    else query
+                ),
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
             logger.debug("code lessons skipped: %s", e)
@@ -116,7 +126,8 @@ class WithLessons:
     async def __call__(self, input: Any) -> Any:
         started = time.monotonic()
         out = await self.handler(input)
-        found = await lessons_for(input, self.paths_of(input, out), started)
+        query = _enclosing_query(out) if isinstance(input, CodeEnclosingInput) else ""
+        found = await lessons_for(input, self.paths_of(input, out), started, query=query)
         out.lessons, out.lessons_left_out = found.rows, found.left_out
         return out
 
@@ -153,6 +164,22 @@ def impact_paths(_input: Any, out: Any) -> list[str]:
 
 def outline_paths(_input: Any, out: Any) -> list[str]:
     return [out.path]
+
+
+def enclosing_paths(_input: Any, out: Any) -> list[str]:
+    # Unresolved locations are echoed by the handler; they are not indexed evidence.
+    return [str(row.get("path") or "") for row in out.results if row.get("start_line")]
+
+
+def _enclosing_query(out: Any) -> str:
+    # Resolved names distinguish the code being read from other code in the same file.
+    return " ".join(
+        dict.fromkeys(
+            str(row.get("symbol") or row.get("qualified_name") or "")
+            for row in out.results
+            if row.get("start_line")
+        )
+    )
 
 
 def pack_paths(_input: Any, out: Any) -> list[str]:

@@ -57,9 +57,8 @@ class CodeOutlineInput(_CodeIdentity, _ResultLessons):
     # Declaration kinds to list (`function`, `class`, `job`, …); the default covers every kind
     # the symbol table records for code, SQL tests, build files and data models.
     kinds: list[str] = Field(default_factory=lambda: list(OUTLINE_DEFAULT_KINDS), max_length=16)
-    # Whole-row budgeted: an entry ships complete (signature included) or
-    # not at all; the first elided entry names its own code.symbol call.
-    token_budget: int = Field(default=1500, ge=200, le=12000)
+    # Estimated-token cap on whole outline entries; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
 
 
 class CodeOutlineOutput(_LessonsOut):
@@ -116,7 +115,7 @@ class CodeOutlineOutput(_LessonsOut):
 # ============================================================
 
 
-class CodeEnclosingInput(_CodeIdentity):
+class CodeEnclosingInput(_CodeIdentity, _ResultLessons):
     """Batched `path:line` -> enclosing function. Built for the grep shim:
     real grep stays exact, then ONE round-trip names the function every hit
     sits in — the "which function is this line in?" question that otherwise
@@ -133,8 +132,8 @@ class CodeEnclosingInput(_CodeIdentity):
     # the rest ship elided with the pasteable `next` escalation. Default off: the grep
     # shim only wants the name on every line.
     include_body: bool = False
-    # With `include_body`: token budget for the bodies (200..12000); bodies past it ship elided.
-    token_budget: int = Field(default=4000, ge=200, le=12000)
+    # Estimated-token cap on included bodies; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # neighbours: a graph evidence block per distinct enclosing function:
     # up to neighbour_k callers, callees (compiler tier preferred, symbols
     # outside the repo dropped, parser guesses below 0.8 confidence dropped)
@@ -146,7 +145,7 @@ class CodeEnclosingInput(_CodeIdentity):
     neighbour_k: int = Field(default=5, ge=1, le=20)
 
 
-class CodeEnclosingOutput(BaseModel):
+class CodeEnclosingOutput(_LessonsOut):
     # one entry per input location, input order preserved:
     # {path, line, symbol, symbol_id, qualified_name, signature, tier, kind,
     #  start_line, end_line}
@@ -203,8 +202,8 @@ class CodeTraceInput(_CodeIdentity):
     trace: str = Field(min_length=1, max_length=100_000)
     # Resolve at most this many distinct frames, in trace order (1..40).
     max_frames: int = Field(default=15, ge=1, le=40)
-    # Token budget for `definitions` (200..12000); units past it are dropped.
-    token_budget: int = Field(default=3000, ge=200, le=12000)
+    # Estimated-token cap on definitions; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
 
 
 class CodeTraceOutput(BaseModel):
