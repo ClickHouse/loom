@@ -75,9 +75,6 @@ jobs:
     name: Endpoint identity coverage-guided fuzzing
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    permissions:
-      contents: read
-      actions: read # The fuzzing runner reads its own build and crash metadata.
     steps:
       - name: Check out only the parser and fuzz build inputs
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,27 +89,36 @@ jobs:
             /tests/fuzz/
             /.clusterfuzzlite/
       - name: Build the one parser fuzzer
+        id: build
         uses: docker://gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers@sha256:c531ed554dbd3ed24e2bd11570a0e2dfb042146806236cdfd2d7d0d648b6c473
         env:
           LANGUAGE: python
           SANITIZER: address
-          GITHUB_TOKEN: ${{ github.token }}
-          PROJECT_SRC_PATH: ${{ github.workspace }}
+          PROJECT_SRC_PATH: /github/workspace
           KEEP_UNAFFECTED_FUZZ_TARGETS: "true"
           UPLOAD_BUILD: "false"
           BAD_BUILD_CHECK: "true"
           ALLOWED_BROKEN_TARGETS_PERCENTAGE: "0"
           DRY_RUN: "false"
-          CFL_PLATFORM: github
+          CFL_PLATFORM: standalone
+          WORKSPACE: /github/workspace
+          FILESTORE: no_filestore
+          FILESTORE_ROOT_DIR: /github/workspace/out/ephemeral
+          NO_CLUSTERFUZZ_DEPLOYMENT: "true"
+          REPOSITORY: loom
           LOW_DISK_SPACE: "True"
+      - name: Require the one built target
+        run: |
+          test -x build-out/embedding_identity
+          test -s build-out/embedding_identity.pkg
       - name: Fuzz the parser within the selected time budget
+        id: fuzz
         uses: docker://gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers@sha256:ec2a38a69babe087df3025a6babcb2a5a3675811a5cf4bfba23cece85c10e8d1
         env:
           LANGUAGE: python
           SANITIZER: address
-          GITHUB_TOKEN: ${{ github.token }}
           FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 30 || 180 }}
-          MODE: code-change
+          MODE: batch
           PARALLEL_FUZZING: "false"
           OUTPUT_SARIF: "true"
           REPORT_TIMEOUTS: "true"
@@ -120,8 +126,29 @@ jobs:
           REPORT_UNREPRODUCIBLE_CRASHES: "false"
           MINIMIZE_CRASHES: "false"
           DRY_RUN: "false"
-          CFL_PLATFORM: github
+          CFL_PLATFORM: standalone
+          WORKSPACE: /github/workspace
+          FILESTORE: no_filestore
+          FILESTORE_ROOT_DIR: /github/workspace/out/ephemeral
+          NO_CLUSTERFUZZ_DEPLOYMENT: "true"
+          REPOSITORY: loom
           LOW_DISK_SPACE: "True"
+      - name: Report the bounded native probe outcome
+        if: always()
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          FUZZ_OUTCOME: ${{ steps.fuzz.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os
+          allowed = {"success", "failure", "cancelled", "skipped"}
+          build, fuzz = os.environ["BUILD_OUTCOME"], os.environ["FUZZ_OUTCOME"]
+          assert build in allowed and fuzz in allowed
+          text = f"Endpoint identity target: build={build}, bounded fuzzing={fuzz}. Inspect the native log for executed inputs and replay records."
+          print("::notice title=Endpoint identity probe::" + text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(text + "\n")
+          PY
 
   maintenance:
     name: Record trusted probe maintenance

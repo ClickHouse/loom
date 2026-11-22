@@ -25,7 +25,10 @@ The hosted workflow replays the corpus and runs the fixed cases. Its coverage-gu
 job uses the Python engine through the continuous-fuzzing runner, one target, one
 worker and explicit time, input, memory and per-input limits. The image, engine and
 executor references are pinned; engine selection matches the image's Python ABI.
-Crashes fail the job and retain the runner's replay evidence. Review any real
+Crashes fail the job and leave the runner's replay record in the job log. The supported
+standalone/no-filestore mode makes no artifact, corpus, build or cloud upload.
+Stateless batch runs start from the checked-in seeds without a differential-build
+claim or persistent corpus that needs pruning. Review any real
 security finding through the private route in [SECURITY.md](../../SECURITY.md),
 without pasting inputs into public issues. The build packages only the named
 standard-library module and these probes; no Loom service or provider is started.
