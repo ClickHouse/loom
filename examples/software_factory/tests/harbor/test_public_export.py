@@ -193,6 +193,25 @@ class PublicExportTests(unittest.TestCase):
         self.assertIsNone(rows[1]["judge_fixed"])
         self.assertIsNone(rows[1]["full_suite_regressions"])
 
+    def test_local_refusal_keeps_selected_calls_and_verified_zero_provider_cost(self):
+        order = next(
+            slot["order"] for slot in self.protocol["schedule"] if slot["mode"] != "baseline"
+        )
+        path = self.fixture.source / self.fixture.raw[order]["trial_name"] / "result.json"
+        raw = read(path)
+        factory = raw["agent_result"]["metadata"]["factory"]
+        factory.update(model_selected_loom_requests=1, loom_tool_calls=1)
+        for logical, expected in ((0, 0), (1, None)):
+            with self.subTest(logical_requests=logical):
+                factory["loom_logical_requests"] = logical
+                write(path, raw)
+                public_export.export_public(self.protocol, self.output)
+                row = read(self.output / "attempts.json")[order]
+                self.assertEqual(row["model_selected_loom_requests"], 1)
+                self.assertEqual(row["loom_tool_calls"], 1)
+                self.assertEqual(row["loom_provider_cost_usd"], expected)
+                self.assertEqual(row["loom_provider_total_tokens"], expected)
+
     def test_partial_bundle_has_pending_slots_and_cannot_claim_final(self):
         import shutil
 

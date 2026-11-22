@@ -584,7 +584,6 @@ def measurements(protocol, slots, inputs):
                 for key in (
                     "loom_logical_requests",
                     "loom_physical_requests",
-                    "model_selected_loom_requests",
                     "loom_transport_dispatches",
                 )
             )
