@@ -112,7 +112,11 @@ async def _container_skeleton(
     members did not fit. Fail-soft to the joined body when the skeleton
     chunk or the outline read is unavailable, so a repo without the readers
     (tests) or a chunker version that emitted no skeleton still answers."""
-    from server.code.domain.units import estimate_unit_tokens, unit_from_symbol
+    from server.code.domain.units import (
+        estimate_unit_tokens,
+        remaining_token_budget,
+        unit_from_symbol,
+    )
 
     path, qn = str(sym["path"]), str(sym["qualified_name"])
     lo, hi = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
@@ -131,7 +135,9 @@ async def _container_skeleton(
         if lo <= int(r.get("start_line") or 0) <= hi and str(r.get("qualified_name") or "") != qn
     ]
     spent = estimate_unit_tokens(unit_from_symbol(sym, body=body))
-    entries, _tokens, nxt = budget_outline(members, max(1, token_budget - spent - 40))
+    entries, _tokens, nxt = budget_outline(
+        members, remaining_token_budget(token_budget, spent + 40)
+    )
     if nxt or (members and not entries):
         nxt = f"code.outline path={path}"
     return body, entries, nxt

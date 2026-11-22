@@ -44,6 +44,7 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `250` | `0` | Return selected review rationale without an implicit token cap. |
 | 1.3.1 | `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `1400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
 | 1.3.1 | `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
 | 1.3.1 | `LOOM_CODE_RESULT_LESSONS_TOKENS` | `250` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
@@ -776,7 +777,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept. |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` | `int` | `10` | live | Changed paths the `rationale` section reads, source paths first; paths past it make `rationale` say `unknown` (`paths_not_read`). |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` | `int` | `8` | live | Decision and constraint rows the `rationale` section serves. |
-| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `250` | live | The `rationale` section's own token budget; its first row is served even past it. |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `0` | live | The `rationale` section's own token budget; 0 means unlimited. |
 
 ## Context
 

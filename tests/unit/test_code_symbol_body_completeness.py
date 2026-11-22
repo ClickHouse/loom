@@ -102,8 +102,14 @@ async def test_a_deliberate_pointer_request_reads_no_source() -> None:
 
 @pytest.mark.parametrize(
     ("reader_failed", "budget"),
-    [(False, 2500), (True, 2500), (False, 200)],
-    ids=["missing-skeleton", "failed-reader", "paged-outline"],
+    [(False, 2500), (True, 2500), (False, 200), (False, 0), (True, 0)],
+    ids=[
+        "missing-skeleton",
+        "failed-reader",
+        "paged-outline",
+        "unlimited-outline",
+        "unlimited-failed-reader",
+    ],
 )
 async def test_a_large_container_without_source_discloses_omission_and_keeps_outline(
     reader_failed: bool,
@@ -135,7 +141,7 @@ async def test_a_large_container_without_source_discloses_omission_and_keeps_out
         assert unit.next == "code.outline path=module.py"
     else:
         assert unit.next == "Read module.py offset=10 limit=300"
-    if budget == 2500:
+    if budget in (0, 2500):
         assert len(unit.outline) == (0 if reader_failed else 8)
     wire = lean_code("code.symbol", {"definitions": [unit.model_dump()]})["definitions"][0]
     assert wire["elided"] and wire["next"] == unit.next

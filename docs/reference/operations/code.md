@@ -1584,7 +1584,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `tokens_returned` | `int` | Estimated tokens of the answer: definitions, uses, cited documents, neighbours and hierarchy blocks together. |
 | `trace_run_id` | `str` | Id of this call's trace row; pass it to `code.outcome`. |
 | `uses` | `list[dict[str, Any]] \| dict[str, Any]` | uses=true: {path, line, text, scope, scope_start_line, scope_end_line, kind} per line mentioning the symbol's bare name, path/line ordered, the definition span(s) excluded. |
-| `uses_truncated` | `bool` | True when the `uses` list stopped at `uses_limit`. |
+| `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
 | `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` when a read-side name form bound; "" and off the wire for an exact hit. |

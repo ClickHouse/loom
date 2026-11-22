@@ -171,7 +171,7 @@ class CodeSymbolOutput(BaseModel):
     # truncated, epistemic} or {count_floor, skipped: "hub", epistemic}; `uses_tokens`
     # is what it cost out of token_budget (0 and off the wire when no block was built).
     uses: list[dict[str, Any]] | dict[str, Any] = Field(default_factory=list)
-    # True when the `uses` list stopped at `uses_limit`.
+    # True when `uses_limit` shortened the list or the token cap withheld `uses_brief`.
     uses_truncated: bool = False
     # Estimated tokens the compact `uses` block cost out of `token_budget`.
     uses_tokens: int = 0

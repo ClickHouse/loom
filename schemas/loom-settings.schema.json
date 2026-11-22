@@ -1630,10 +1630,10 @@
           "description": "Decision and constraint rows the `rationale` section serves."
         },
         "code_review_brief_rationale_tokens": {
-          "default": 250,
-          "minimum": 50,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "The `rationale` section's own token budget; its first row is served even past it."
+          "description": "The `rationale` section's own token budget; 0 means unlimited."
         },
         "code_risk_annotations": {
           "default": true,

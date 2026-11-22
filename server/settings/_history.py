@@ -109,4 +109,11 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
             "positive values opt in to a cap."
         ),
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="code_review_brief_rationale_tokens",
+        old=250,
+        new=0,
+        why="Return selected review rationale without an implicit token cap.",
+    ),
 )

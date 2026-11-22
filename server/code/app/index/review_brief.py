@@ -661,8 +661,8 @@ def rationale_section(
 ) -> dict[str, Any]:
     """The `rationale` section over the rows `decisions_for_paths` read and the PR's diff
     (None: it could not be read): each row's token check (`_checked_row`), `check` rows
-    first, then constraints, then the rest, whole rows up to `budget_tokens` (the first
-    always). The verdict reads every row: check | unknown | clear | none (no row has
+    first, then constraints, then the rest, whole rows within a positive `budget_tokens`
+    (0 is unlimited). The verdict reads every row: check | unknown | clear | none (no row has
     anything to check). It is `clear` or `none` only when every changed path and every
     matching row was checked; otherwise `unknown`, each flag and count naming its cause
     (the causes are listed under `rationale` in docs/features/code-index/history-and-prs.md)."""
@@ -702,9 +702,9 @@ def rationale_section(
         causes.append(f"paths_at_row_ceiling:{paths_full}")
     if links_skipped > 0:
         causes.append(f"links_not_read:{links_skipped}")
-    kept = rows[:1]
-    for r in rows[1:]:
-        if estimate_tokens([*kept, r]) > budget_tokens:
+    kept: list[dict[str, Any]] = []
+    for r in rows:
+        if budget_tokens and estimate_tokens([*kept, r]) > budget_tokens:
             break
         kept.append(r)
     out = section(SERVED, verdict=verdict, epistemic="lower_bound", causes=causes, rows=kept)

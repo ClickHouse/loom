@@ -107,3 +107,25 @@ async def test_map_header_obeys_a_tiny_explicit_cap(monkeypatch):
     assert await context._render_map(repo, "org", "code", "", 1) == ""
     assert await context._render_map(repo, "org", "code", "", 0)
     context._MAP_CACHE.clear()
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_pr_message_respects_an_explicit_cap(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from server.code.app import context
+
+    monkeypatch.setattr(
+        context, "CodeRepo", lambda: SimpleNamespace(context_pack=AsyncMock(return_value=None))
+    )
+    monkeypatch.setattr(context, "schedule_code_trace", lambda **kwargs: None)
+    output = await context.handle_code_context_pack(
+        CodeContextPackInput(
+            org="org",
+            namespace="code",
+            pr_number=1,
+            token_budget=1,
+        )
+    )
+    assert output.source == "unavailable" and not output.context and output.tokens_used <= 1

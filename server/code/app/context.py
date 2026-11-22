@@ -108,6 +108,7 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
             "The PR may not be indexed yet. Inspect its diff with code.impact "
             "or retry after indexing."
         )
+        context, _ = fit_pack_budget(context, input.token_budget)
         tokens = estimate_tokens(context)
         return CodeContextPackOutput(
             context=context,
@@ -136,6 +137,7 @@ async def handle_code_context_pack(input: CodeContextPackInput) -> CodeContextPa
     with code_span("context_pack.orientation"):
         map_text = await _render_map(repo, org, ns, "", input.token_budget)
     map_text = await _with_repo_docs(org, ns, map_text, input.token_budget)
+    map_text, _ = fit_pack_budget(map_text, input.token_budget)
     tokens = estimate_tokens(map_text)
     return CodeContextPackOutput(
         context=map_text,

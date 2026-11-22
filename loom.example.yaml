@@ -2408,9 +2408,8 @@ settings:
   # Decision and constraint rows the `rationale` section serves. [live]
   # code_review_brief_rationale_rows: 8
 
-  # The `rationale` section's own token budget; its first row is served even past it.
-  # [live]
-  # code_review_brief_rationale_tokens: 250
+  # The `rationale` section's own token budget; 0 means unlimited. [live]
+  # code_review_brief_rationale_tokens: 0
 
   # ===== context.pack, context offload, session briefs and the mentor's hints =====
 

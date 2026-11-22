@@ -1983,8 +1983,8 @@ class CodeSettings(BaseModel):
     code_review_brief_rationale_paths: Annotated[int, LIVE] = Field(default=10, ge=1, le=50)
     # Decision and constraint rows the `rationale` section serves.
     code_review_brief_rationale_rows: Annotated[int, LIVE] = Field(default=8, ge=1, le=50)
-    # The `rationale` section's own token budget; its first row is served even past it.
-    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=250, ge=50)
+    # The `rationale` section's own token budget; 0 means unlimited.
+    code_review_brief_rationale_tokens: Annotated[int, LIVE] = Field(default=0, ge=0)
 
 
 # ===== Context ================================================================
