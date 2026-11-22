@@ -19,7 +19,6 @@ import {
   deleteMemory,
   restoreMemory,
   conflictKeys as fetchConflictKeys,
-  CONFLICT_KEYS_CAP,
   isAuthDisabled,
   type MemoryListEntry,
 } from "../api";
@@ -66,8 +65,8 @@ const MembersDialog = lazy(() => import("../flows/MembersDialog").then((m) => ({
 // DOM, same scroll, same find-in-page once it settles.
 const FIRST_SCREEN_CARDS = 12; // A screen shows eight or nine
 
-/** What the Status select shows. Pinned is a server filter; Conflicted reads every
- *  conflicted row by key; Verified reads the newest 1,000 and keeps the matching rows. */
+/** What the Status select shows. Pinned and Conflicted are server filters; Verified reads
+ *  the newest 1,000 and keeps the matching rows. */
 type Status = "live" | "pinned" | "conflicted" | "verified" | "deleted";
 const STATUSES: ReadonlyArray<{ value: Status; label: string }> = [
   { value: "live", label: "Live" },
@@ -200,9 +199,9 @@ function MemoryList() {
   // A filter covers the whole namespace, not the page on screen. A tag or agent filter is
   // asked of the server, which returns the rows carrying every tag, in any case (a server a
   // release behind matches any one tag exactly, and the list then requires every tag
-  // itself). Pinned is asked of the server too, and Conflicted reads the conflicted rows by
-  // key; Verified reads the newest 1,000 and keeps the matching ones (a server a release
-  // behind lists Pinned the same way). What is typed is debounced, so `tag:…` sends
+  // itself). Pinned and Conflicted are asked of the server too; Verified reads the newest
+  // 1,000 and keeps the matching ones (a server a release behind lists Pinned and Conflicted
+  // the same way). What is typed is debounced, so `tag:…` sends
   // one read, not one per key; a chip applies at once.
   const typedNow = useSameFilter(filterOf(parsed));
   const [typed, setTyped] = useState(typedNow);
@@ -413,7 +412,9 @@ function MemoryList() {
       all = all.filter((e) => !e.tombstoned_at);
     }
     if (status === "pinned") all = all.filter((e) => e.pinned);
-    else if (status === "conflicted") all = all.filter((e) => conflictKeys.has(e.memory_key));
+    // A row's own status: another agent's or user's row under a conflicted key is not
+    // conflicted.
+    else if (status === "conflicted") all = all.filter((e) => e.status === "conflicted");
     else if (status === "verified") all = all.filter((e) => e.verification === "human" || e.verification === "process");
     // The agent chip and the `agent:` / `tag:` query syntax. What was typed keeps its case,
     // so a typed tag or agent and the rows' compare lowercased (humans and agents both
@@ -438,7 +439,7 @@ function MemoryList() {
         .sort((a, b) => (rank.get(a.memory_key) ?? Infinity) - (rank.get(b.memory_key) ?? Infinity));
     }
     return all;
-  }, [entries, searchHits, searchExtra, status, conflictKeys, showDeleted, agentFilter, typed.agent, activeTags]);
+  }, [entries, searchHits, searchExtra, status, showDeleted, agentFilter, typed.agent, activeTags]);
 
   // The agents the namespace's rows were written by, gathered as pages and filters load
   // (sentinels "*" and "-" are not writers); a new namespace starts again.
@@ -636,8 +637,8 @@ function MemoryList() {
         ? // What a search covers: the newest rows holding the word, when there are more.
           `${matches(flatList.length)}${keywordTotal > keywordKeys.size ? ` · the newest ${keywordKeys.size.toLocaleString()} of ${keywordTotal.toLocaleString()} holding "${keywordFor}"` : ""}${ranking ? " · finding related…" : ""}`
         : showDeleted || listFiltered
-          ? // A tag or agent filter, and Pinned, are matched on the server, whose total is
-            // exact; another status counts the rows kept here.
+          ? // A tag or agent filter, Pinned and Conflicted are matched on the server, whose
+            // total is exact; Verified counts the rows kept here.
             matches(
               // Of the filter it read: not of a typed tag still on its way.
               !showDeleted &&
@@ -932,11 +933,9 @@ function MemoryList() {
 
       {truncated && (
         <p className="mb-3 text-xs text-text-muted">
-          {listFilter.status === "conflicted" && statusServed
-            ? `Showing the memories of the newest ${CONFLICT_KEYS_CAP.toLocaleString()} conflicted keys.`
-            : listFilter.tags.length > 0 || listFilter.agent || statusServed
-              ? "Showing the newest matches. Add a tag or a search word to narrow them."
-              : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
+          {listFilter.tags.length > 0 || listFilter.agent || statusServed
+            ? "Showing the newest matches. Add a tag or a search word to narrow them."
+            : `Showing the ${filterNames.toLowerCase()} memories among the newest ones read.`}
         </p>
       )}
       {/* Where a page change takes the reader: a heading a screen reader announces. */}
@@ -1042,13 +1041,12 @@ function MemoryList() {
           pageSize={pageSize}
           shown={(listFiltered && filterRead) || (!listFiltered && browsedCurrent) ? pageList.length : 0}
           total={listFiltered ? (filterRead ? listTotal : undefined) : browsedTotal}
-          // A tag, agent or Pinned read the server cut short holds its newest matches, not
-          // every one. Another status is kept among the rows read, which the note under the
-          // toolbar says.
+          // A tag, agent, Pinned or Conflicted read the server cut short holds its newest
+          // matches, not every one. Verified is kept among the rows read, which the note under
+          // the toolbar says.
           capped={
             truncated &&
-            ((listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")) ||
-              (listFilter.status === "pinned" && statusServed))
+            ((listFilter.status === "live" && (listFilter.tags.length > 0 || listFilter.agent !== "")) || statusServed)
           }
           onPage={setPage}
           onPageSize={(n) => {

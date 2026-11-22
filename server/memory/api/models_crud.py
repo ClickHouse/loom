@@ -828,6 +828,10 @@ class MemoryListInput(_Identity):
     # than the rows one read returns is still listed. Hidden from the MCP listing:
     # agents get pinned rows from the session context.
     pinned_only: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
+    # Only rows whose status is `conflicted`, each listed as its own row (another agent's or
+    # user's row under the same key is not). The dashboard's Conflicted status reads with
+    # it. Hidden from the MCP listing: agents read conflicts with conflicts.list.
+    conflicted_only: bool = Field(default=False, json_schema_extra=MCP_HIDDEN)
     # Whitelist of entry field names; every entry carries only
     # those plus `memory_key` and `sensitivity`. Empty = every field. See
     # MemoryGetInput.fields.

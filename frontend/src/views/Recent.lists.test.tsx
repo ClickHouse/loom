@@ -27,29 +27,10 @@ const entry = (memory_key: string, over: Partial<MemoryListEntry> = {}): MemoryL
   ...over,
 });
 
-// A memory.bulk_get answer for each key asked.
-const detail = (over: Partial<MemoryDetail> = {}): MemoryDetail => ({
-  found: true,
-  value: "a conflicted value",
-  memory_type: "semantic",
-  confidence: 1,
-  version: 1,
-  pinned: false,
-  created_at: "2026-09-18T09:00:00Z",
-  agent: "support-bot",
-  ...over,
-});
-function bulkAnswers() {
-  vi.mocked(bulkGetMemories).mockImplementation(async (_id, keys) => ({
-    results: Object.fromEntries(keys.map((k) => [k, detail()])),
-    missing: [],
-  }));
-}
-
 const ROWS = [
   entry("a/pinned", { pinned: true }),
   entry("b/verified", { verification: "human", verified_by: "human:o@example.com", agent: "support-bot" }),
-  entry("c/conflicted", { agent: "support-bot" }),
+  entry("c/conflicted", { agent: "support-bot", status: "conflicted" }),
   entry("d/plain"),
 ];
 
@@ -66,7 +47,7 @@ vi.mock("../api", async (importOriginal) => {
     isAuthDisabled: () => false,
   };
 });
-import { bulkGetMemories, conflictKeys, getMemory, listMemories, pinMemory } from "../api";
+import { conflictKeys, getMemory, listMemories, pinMemory } from "../api";
 
 const owner: WhoAmI = {
   authenticated: true,
@@ -412,7 +393,6 @@ describe("Memories list chrome", () => {
   });
 
   it("filters by status: pinned, conflicted, verified", async () => {
-    bulkAnswers();
     render(<Recent />);
     await screen.findByText("d/plain");
     // No chip row under the toolbar.
@@ -611,28 +591,41 @@ describe("Memories status filters over the whole namespace", () => {
     expect(screen.getByText("Showing the pinned memories among the newest ones read.")).toBeInTheDocument();
   });
 
-  it("lists a conflicted key that is not among the newest rows, reading the rows in batches of 1,000", async () => {
-    const keys = ["z/old-conflict", ...Array.from({ length: 1499 }, (_, i) => `conflict${i}`)];
-    vi.mocked(conflictKeys).mockResolvedValue(keys);
-    bulkAnswers();
+  it("asks the server for conflicted rows and lists each by its own row", async () => {
+    const older = entry("shared-key", { agent: "agent-a", status: "conflicted", value: "the older conflicted value" });
+    vi.mocked(listMemories).mockImplementation(
+      async (_id, _limit, opts): Promise<MemoryListResponse> =>
+        opts?.conflictedOnly
+          ? { entries: [older], total: 1, today: 0, truncated: false }
+          : { entries: ROWS, total: 1234, today: 2, truncated: false },
+    );
     render(<Recent />);
     await screen.findByText("d/plain");
     await pick("Status", "conflicted");
-    expect(await screen.findByText("z/old-conflict")).toBeInTheDocument();
-    await waitFor(() => expect(toolbar()).toHaveTextContent("1,500 matches"));
-    expect(vi.mocked(bulkGetMemories).mock.calls.map((c) => c[1].length)).toEqual([1000, 500]);
-    // The list read beside them is one row, for the namespace version.
-    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[1]).toBe(1);
-    expect(screen.queryByText(/conflicted keys\./)).toBeNull();
+    expect(await screen.findByText("the older conflicted value")).toBeInTheDocument();
+    expect(vi.mocked(listMemories).mock.calls.at(-1)?.[2]).toMatchObject({ conflictedOnly: true });
+    await waitFor(() => expect(toolbar()).toHaveTextContent("1 match"));
   });
 
-  it("says how many conflicted keys it covers when the read reaches the server's cap", async () => {
-    vi.mocked(conflictKeys).mockResolvedValue(Array.from({ length: 5000 }, (_, i) => `conflict${i}`));
-    bulkAnswers();
+  // Agent A's older row is conflicted; agent B wrote the same key later and its row is not.
+  // A server a release behind lists both: the page keeps A by its own status, never B.
+  it("keeps the conflicted row, not another agent's newer row under the same key", async () => {
+    const newer = entry("shared-key", { agent: "agent-b", status: "active", value: "the newer active value" });
+    const older = entry("shared-key", { agent: "agent-a", status: "conflicted", value: "the older conflicted value" });
+    vi.mocked(conflictKeys).mockResolvedValue(["shared-key"]);
+    vi.mocked(listMemories).mockResolvedValue({
+      entries: [newer, older, ...ROWS],
+      total: 1234,
+      today: 2,
+      truncated: false,
+      ignored_args: ["conflicted_only"],
+    });
     render(<Recent />);
     await screen.findByText("d/plain");
     await pick("Status", "conflicted");
-    expect(await screen.findByText("Showing the memories of the newest 5,000 conflicted keys.")).toBeInTheDocument();
-    expect(vi.mocked(bulkGetMemories)).toHaveBeenCalledTimes(5);
+    expect(await screen.findByText("the older conflicted value")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("the newer active value")).toBeNull());
+    expect(screen.getAllByText("shared-key")).toHaveLength(1);
+    expect(toolbar()).toHaveTextContent("2 matches");
   });
 });

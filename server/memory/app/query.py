@@ -213,6 +213,7 @@ async def _hidden_under_prefix(
         tag_filter=tag_filter,
         contains=input.contains or None,
         pinned_only=input.pinned_only,
+        conflicted_only=input.conflicted_only,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,
         include_duplicates=True,
@@ -295,6 +296,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             tag_filter=tag_filter,
             contains=input.contains or None,
             pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             order_by="created_at_desc",
             limit=input.limit + 1,
             offset=input.offset,
@@ -327,6 +329,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         tag_filter,
         input.contains or "",
         bool(input.pinned_only),
+        bool(input.conflicted_only),
         bool(input.include_tombstoned),
         str(input.as_of or ""),
         tuple(sorted(_served.items())),
@@ -345,6 +348,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             tag_filter=tag_filter,
             contains=input.contains or None,
             pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
             **_served,
@@ -360,6 +364,7 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             tag_filter=tag_filter,
             contains=input.contains or None,
             pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
             **_served,
@@ -494,6 +499,8 @@ async def _list_by_score(
         params["contains"] = input.contains
     if input.pinned_only:
         where.append("pinned = 1")
+    if input.conflicted_only:
+        where.append("status = 'conflicted'")
     if input.as_of is not None:
         where.append(
             "(valid_at IS NOT NULL AND valid_at <= {as_of:DateTime} "

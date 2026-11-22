@@ -14612,6 +14612,7 @@ class MemoryListInput(TypedDict, total=False):
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 
@@ -14643,6 +14644,7 @@ class MemoryListBody(TypedDict, total=False):
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
     pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 
