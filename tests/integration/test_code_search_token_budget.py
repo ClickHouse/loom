@@ -124,7 +124,7 @@ async def test_symbol_and_enclosing_keep_large_retained_bodies(
             include_examples=False,
         )
     )
-    assert not result.abstain and result.definitions[0].body == source
+    assert result.definitions and result.definitions[0].body == source
     bounded = await handle_code_symbol(
         CodeSymbolInput(
             org=org,

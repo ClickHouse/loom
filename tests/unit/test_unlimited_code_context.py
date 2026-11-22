@@ -99,14 +99,13 @@ async def test_map_header_obeys_a_tiny_explicit_cap(monkeypatch):
     from server.code.app import context, fan_in
     from server.embedding import embedder
 
-    context._MAP_CACHE.clear()
+    monkeypatch.setattr(context, "_MAP_CACHE", context.TtlCache(900, maxsize=10))
     monkeypatch.setattr(embedder, "get_embedder", lambda: SimpleNamespace(model_name="test"))
     monkeypatch.setattr(context, "_call_graph_hubs", AsyncMock(return_value=([], {})))
     monkeypatch.setattr(fan_in, "top_under", AsyncMock(return_value=[]))
     repo = SimpleNamespace(top_summaries=AsyncMock(return_value=[]))
     assert await context._render_map(repo, "org", "code", "", 1) == ""
     assert await context._render_map(repo, "org", "code", "", 0)
-    context._MAP_CACHE.clear()
 
 
 @pytest.mark.asyncio
