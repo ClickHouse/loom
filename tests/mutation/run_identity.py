@@ -78,6 +78,18 @@ def main() -> None:
         assert selected and any(row["status"] == "killed" for row in selected), (
             "No tested public-identity mutants"
         )
+        for row in selected:
+            if row["status"] == "survived":
+                diff = subprocess.run(
+                    [sys.executable, "-m", "mutmut", "show", row["name"]],
+                    cwd=stage,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    check=True,
+                    timeout=10,
+                ).stdout
+                assert len(diff.encode()) <= 32768, "Survivor diff exceeds report budget"
+                row["diff"] = diff
         output = {"target": "server.core.embedding_space.public_identity", "mutants": selected}
         actionable = sum(row["status"] not in {"killed", "skipped"} for row in selected)
         if os.environ.get("GITHUB_OUTPUT"):
