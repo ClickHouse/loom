@@ -90,7 +90,7 @@ jobs:
           uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: ruff
-        run: ruff check server extractor sdk/python tests scripts .claude
+        run: ruff check server extractor sdk/python tests scripts .claude examples/software_factory
       - name: ruff format
         run: ruff format --check .
       # The Python SDK's op table, TypedDicts and per-op client are generated
@@ -294,6 +294,11 @@ jobs:
       # The published benchmark harnesses' scoring and dataset readers.
       - name: pytest bench harnesses
         run: pytest bench -q -p randomly --randomly-seed="${{ github.run_id }}${{ github.run_attempt }}"
+      - name: Offline software factory contracts
+        run: |
+          uv venv --python "${{ steps.python.outputs.python-path }}" .factory-venv
+          uv pip install --python .factory-venv/bin/python --require-hashes -r examples/software_factory/harbor/requirements.txt
+          PYTHONPATH="$PWD/sdk/python:$PWD" .factory-venv/bin/python -m unittest discover -s examples/software_factory/tests -t . -v
       # The generic ingest script's dry run goes through this checkout's CLI.
       - name: generic integration sample
         run: PYTHON=python bash integrations/generic/test.sh
