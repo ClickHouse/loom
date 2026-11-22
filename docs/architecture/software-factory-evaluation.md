@@ -97,7 +97,7 @@ Python smoke fixtures live under tests and are not repository evaluations.
 ## Historical memory treatment
 
 The Flask historical issue study uses the same three real issues in five
-arms. Each optional memory arm receives 30 curated historical facts, 13 linked to
+arms. Each optional memory arm receives 30 curated historical facts, 14 linked to
 code, in a private namespace. All four Loom arms expose identical optional memory
 tools. Cold controls have fresh writable namespaces proven empty by native
 listings. Other arms receive no seeded history. The issue,

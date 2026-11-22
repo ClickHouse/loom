@@ -221,8 +221,8 @@
     },
     {
       "key": "history/teardown-independence",
-      "value": "Teardown runs when a request context is removed, including failure paths; cleanup cannot assume successful dispatch.",
-      "files": [],
+      "value": "`Flask.do_teardown_request` runs when a request context is removed, including failure paths; cleanup cannot assume successful dispatch.",
+      "files": ["src/flask/app.py"],
       "source_ids": ["request-context"]
     },
     {
@@ -276,8 +276,8 @@
   ],
   "requirements": {
     "rows": 30,
-    "code_linked": 13,
-    "unlinked": 17,
+    "code_linked": 14,
+    "unlinked": 16,
     "max_words": 45,
     "max_chars": 400
   },

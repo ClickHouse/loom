@@ -17,7 +17,7 @@ cutoff. Target discussions, fixing PRs, reference patches, hidden requirements a
 later information cannot supply memory. Freeze the corpus before inference and
 never revise it based on that run's results.
 
-The memory treatment adds 30 short historical notes, 13 linked to code. Baseline
+The memory treatment adds 30 short historical notes, 14 linked to code. Baseline
 and cold index arms receive no seeded notes. All four Loom arms expose identical
 optional native search, reads and writes; code tools may return the bound namespace's lessons.
 The treatment therefore measures historical knowledge plus retrieval. A claim

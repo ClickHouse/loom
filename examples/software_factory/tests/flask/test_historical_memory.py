@@ -16,7 +16,7 @@ class HistoricalCorpus(unittest.TestCase):
     def test_same_dated_corpus_is_eligible_for_each_unchanged_historical_task(self):
         self.assertEqual(len(self.cases), 3)
         self.assertEqual(len(self.catalog["records"]), 30)
-        self.assertEqual(sum(bool(row["files"]) for row in self.catalog["records"]), 13)
+        self.assertEqual(sum(bool(row["files"]) for row in self.catalog["records"]), 14)
         for case in self.cases:
             historical.validate_catalog(self.catalog, case, self.paths)
 

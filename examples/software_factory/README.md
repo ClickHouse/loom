@@ -20,7 +20,7 @@ fixed-only judgments using the same model. Embedding uses the checked local
 `bge-small` weights. The plan reports Loom's separate native Anthropic model
 default; all provider requests contribute to the cost ledger. Runs have no dollar cap
 unless `--budget-usd` is supplied. Memory arms expose 30 short historical project records through native tools;
-13 are linked to code. Cold index controls receive empty writable namespaces
+14 are linked to code. Cold index controls receive empty writable namespaces
 and identical optional memory tools. Other arms receive no seeded history.
 
 Interrupted work is never retried automatically. Explicit resume preserves the

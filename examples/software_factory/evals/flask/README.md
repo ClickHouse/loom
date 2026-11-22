@@ -32,7 +32,7 @@ attempt; no hidden-test feedback enters the review.
 ## Historical knowledge
 
 [historical_memories.json](memory/historical_memories.json) contains 30 short
-project notes, including 13 code-linked notes. Public source URLs, content hashes,
+project notes, including 14 code-linked notes. Public source URLs, content hashes,
 publication and edit times, per-task cutoffs and excluded target discussions are
 recorded beside the notes. Setup verifies source content before ingestion.
 The facts concern prior architecture, compatibility and known pitfalls. The
