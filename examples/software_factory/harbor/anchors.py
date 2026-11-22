@@ -25,9 +25,10 @@ def file_hash(files, path):
 
 async def capture(request):
     """Run inside the owned native server, using exactly the memory worker's parser."""
-    from server.code.app.memory_links import parsed
+    from server.code.app.memory_links import parsed, refresh_repos
     from server.code.domain.declaration import fingerprint_version
 
+    await refresh_repos()
     anchors, files = {}, {}
     for link in request["links"]:
         path, symbol = link["path"], link.get("symbol", "")
