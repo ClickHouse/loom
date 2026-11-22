@@ -61,3 +61,261 @@ jobs:
       - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: /language:${{ matrix.language }}
+
+  analyze_sdks:
+    name: codeql SDK (${{ matrix.language }})
+    defaults:
+      run:
+        shell: bash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            database: go
+            build_mode: manual
+            checkout: sdk/go
+            source: sdk/go
+            suffix: ".go"
+            anchor: sdk/go/client.go
+            bundle_url: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-go-linux64.tar.zst
+            bundle_sha256: d79b33f86ec8b20af73d3456041349a2780c1081ee8c0eca624b9a25c5cb2e15
+          - language: ruby
+            database: ruby
+            build_mode: none
+            checkout: sdk/ruby
+            source: sdk/ruby/lib
+            suffix: ".rb"
+            anchor: sdk/ruby/lib/clickhouse/loom/client.rb
+            bundle_url: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-ruby-linux64.tar.zst
+            bundle_sha256: ab3a5abb89263a92a2e8b299dbb786c9f9d7b46593ba2d94c0ff63d8aadb9a15
+          - language: rust
+            database: rust
+            build_mode: none
+            checkout: sdk/rust
+            source: sdk/rust/src
+            suffix: ".rs"
+            anchor: sdk/rust/src/client.rs
+            bundle_url: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-rust-linux64.tar.zst
+            bundle_sha256: 1c2f867094b80e43c9a0e511090e57e0ea3bf107600b4b3763c52b9020b4ec4b
+          - language: java-kotlin
+            database: java
+            build_mode: none
+            checkout: sdk/java
+            source: sdk/java/src/main
+            suffix: ".java"
+            anchor: sdk/java/src/main/java/com/clickhouse/loom/LoomClient.java
+            bundle_url: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-java-linux64.tar.zst
+            bundle_sha256: dbeb8e2f4454bf4aad35fe16d8770dcc4a4ce0c3585d8952d57e41905396aff8
+          - language: csharp
+            database: csharp
+            build_mode: none
+            checkout: sdk/dotnet
+            source: sdk/dotnet/src/ClickHouse.Loom
+            suffix: ".cs"
+            anchor: sdk/dotnet/src/ClickHouse.Loom/LoomClient.cs
+            bundle_url: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.4/codeql-bundle-csharp-linux64.tar.zst
+            bundle_sha256: b991d23f6bc44fa34f81d0d4ba159a331f31c2a7f4ff5d53778ed0a19a0b48aa
+    env:
+      SDK_SOURCE: ${{ matrix.source }}
+      SDK_SUFFIX: ${{ matrix.suffix }}
+      SDK_ANCHOR: ${{ matrix.anchor }}
+      SDK_DATABASE: ${{ matrix.database }}
+    steps:
+      - name: Check out only the selected SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: ${{ matrix.checkout }}
+      - name: Require nonzero tracked SDK source before extraction
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          root, suffix = os.environ["SDK_SOURCE"], os.environ["SDK_SUFFIX"]
+          names = subprocess.check_output(["git", "ls-files", "--", root], text=True).splitlines()
+          names = [name for name in names if name.endswith(suffix) and not name.endswith("_test.go")]
+          assert 0 < len(names) <= 10000 and os.environ["SDK_ANCHOR"] in names
+          if os.environ["SDK_DATABASE"] == "java":
+              assert not list(Path(root).rglob("*.kt")), "Kotlin requires a built extraction path"
+          expected = {}
+          total = 0
+          for name in names:
+              path = Path(name)
+              assert not path.is_symlink() and path.is_file()
+              size = path.stat().st_size
+              assert 0 < size <= 2 * 1024 * 1024
+              total += size
+              assert total <= 20 * 1024 * 1024
+              expected[str(path.resolve()).lstrip("/")] = hashlib.sha256(path.read_bytes()).hexdigest()
+          destination = Path(os.environ["RUNNER_TEMP"]) / "sdk-codeql-source.json"
+          destination.write_text(json.dumps(expected))
+          print("Tracked production SDK source files:", len(expected))
+          PYCODE
+      - name: Download the pinned per-language analysis bundle
+        env:
+          BUNDLE_URL: ${{ matrix.bundle_url }}
+          BUNDLE_SHA256: ${{ matrix.bundle_sha256 }}
+        run: |
+          curl --fail --location --proto '=https' --tlsv1.2 --max-time 120 --max-filesize 335544320 \
+            "$BUNDLE_URL" --output "$RUNNER_TEMP/sdk-codeql.tar.zst"
+          printf '%s  %s\n' "$BUNDLE_SHA256" "$RUNNER_TEMP/sdk-codeql.tar.zst" | sha256sum --check -
+      - name: Install the supported Go compiler for traced extraction
+        if: matrix.language == 'go'
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - name: Install the Java SDK's declared JDK
+        if: matrix.language == 'java-kotlin'
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Initialize the selected SDK analysis
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          tools: ${{ runner.temp }}/sdk-codeql.tar.zst
+          db-location: ${{ runner.temp }}/sdk-codeql-databases
+          build-mode: ${{ matrix.build_mode }}
+          dependency-caching: false
+          config: |
+            paths:
+              - ${{ matrix.source }}
+            paths-ignore:
+              - "**/tests/**"
+              - "**/*_test.go"
+      - name: Build the Go SDK under the extractor
+        if: matrix.language == 'go'
+        working-directory: sdk/go
+        env:
+          GOTOOLCHAIN: local
+        run: go build ./...
+      - name: Analyze and upload security results
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:${{ matrix.language }}
+          ram: 2048
+          threads: 2
+      - name: Require actual SDK bytes in the extracted source archive
+        run: |
+          python3 - <<'PYCODE'
+          import hashlib, json, os, zipfile
+          from pathlib import Path
+          directory = Path(os.environ["RUNNER_TEMP"])
+          expected = json.loads((directory / "sdk-codeql-source.json").read_text())
+          archive = directory / "sdk-codeql-databases" / os.environ["SDK_DATABASE"] / "src.zip"
+          assert archive.is_file() and archive.stat().st_size <= 100 * 1024 * 1024
+          matched = set()
+          with zipfile.ZipFile(archive) as source:
+              entries = source.infolist()
+              assert len(entries) <= 100000
+              total = 0
+              for entry in entries:
+                  name = entry.filename.lstrip("/")
+                  if name not in expected:
+                      continue
+                  assert entry.file_size <= 2 * 1024 * 1024
+                  total += entry.file_size
+                  assert total <= 20 * 1024 * 1024
+                  assert hashlib.sha256(source.read(entry)).hexdigest() == expected[name]
+                  matched.add(name)
+          anchor = str((Path(os.environ["GITHUB_WORKSPACE"]) / os.environ["SDK_ANCHOR"]).resolve()).lstrip("/")
+          assert matched and anchor in matched, "The extracted archive contains no SDK client"
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"CodeQL 2.27.4 extracted {len(matched)} matching production SDK source files, including the client. Archive bytes match the checkout. This is source-presence evidence, not complete query coverage or a security-clean result.\n")
+          PYCODE
+
+  maintenance:
+    name: Record trusted SDK static analysis failures
+    needs: [analyze_sdks]
+    if: >-
+      always() && github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Record SDK static analysis failures on trusted main runs only.
+    steps:
+      - name: Reconcile failure tasks without executing project code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEQL_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from urllib.parse import urlencode
+          repo = "repos/ClickHouse/loom/issues"
+          bot = "github-actions[bot]"
+          marker = re.compile(r"<!-- loom-sdk-codeql:v1 (analyze_sdks) -->")
+          state = re.compile(r"<!-- loom-sdk-codeql-state:v1 (failure|success) -->")
+          titles = {"analyze_sdks": "[sdk-codeql-ci] Restore SDK static analysis"}
+          calls = 0
+          def api(method, endpoint, payload=None):
+              global calls
+              calls += 1
+              assert calls <= 40, "SDK static analysis issue API budget exhausted"
+              command = ["gh", "api", "--method", method, endpoint, "--hostname", "github.com"]
+              if payload is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, capture_output=True, timeout=20, check=True)
+              assert len(result.stdout) <= 2 * 1024 * 1024, "SDK static analysis issue response exceeds budget"
+              return json.loads(result.stdout)
+          managed = {}
+          for page in range(1, 11):
+              issues = api("GET", repo + "?" + urlencode({"state": "all", "creator": bot, "per_page": 100, "page": page}))
+              assert isinstance(issues, list)
+              for issue in issues:
+                  if "pull_request" in issue or issue.get("user", {}).get("login") != bot:
+                      continue
+                  keys = marker.findall(issue.get("body") or "")
+                  keys += [key for key, title in titles.items() if issue.get("title") == title]
+                  keys = set(keys)
+                  assert len(keys) <= 1, "Conflicting SDK static analysis issue markers"
+                  if keys:
+                      key = keys.pop()
+                      assert key not in managed, "Duplicate SDK static analysis task"
+                      managed[key] = issue
+              if len(issues) < 100:
+                  break
+          else:
+              raise RuntimeError("SDK static analysis issue pagination budget exhausted")
+          results = json.loads(os.environ["CODEQL_RESULTS"])
+          assert set(results) == set(titles)
+          run_id = os.environ["GITHUB_RUN_ID"]
+          assert run_id.isdecimal()
+          url = "https://github.com/ClickHouse/loom/actions/runs/" + run_id
+          changed = 0
+          for key in titles:
+              result = results[key]["result"]
+              assert result in {"success", "failure", "cancelled", "skipped"}
+              issue = managed.get(key)
+              if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
+                  continue
+              text = f"<!-- loom-sdk-codeql:v1 {key} -->\n<!-- loom-sdk-codeql-state:v1 {result} -->\n\nThe bounded SDK static analysis check reports **{result}** on trusted main. [Read the selected SDK extraction and analysis logs]({url}).\n\nReproduce the SDK static analysis workflow using synthetic data. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              if issue is None:
+                  if result == "failure":
+                      api("POST", repo, {"title": titles[key], "body": text})
+                      changed += 1
+                  continue
+              number = issue["number"]
+              assert isinstance(number, int) and number > 0
+              comments = api("GET", f"{repo}/{number}/comments?per_page=100")
+              assert isinstance(comments, list) and len(comments) < 100, "SDK static analysis comment history budget exhausted"
+              candidates = [issue] + sorted(comments, key=lambda row: (row["created_at"], row["id"]))
+              states = [state.findall(row.get("body") or "") for row in candidates if row.get("user", {}).get("login") == bot]
+              states = [value[-1] for value in states if value]
+              if not states or states[-1] != result:
+                  api("POST", f"{repo}/{number}/comments", {"body": text})
+                  changed += 1
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"SDK static analysis task reconciliation: {changed} task or status writes; closed decisions preserved.\n")
+          PY
