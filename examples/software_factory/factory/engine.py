@@ -175,10 +175,11 @@ class Factory:
             return self.checkout.list_files(**args)
         if name == "read":
             start, column = args.get("start_line", 1), args.get("start_column", 0)
+            end = args.get("end_line")
             try:
-                content = self.checkout.read(args["path"], start, column)
+                content = self.checkout.read(args["path"], start, column, end)
                 remaining = "".join(
-                    self.checkout.full_read(args["path"]).splitlines(True)[start - 1 :]
+                    self.checkout.full_read(args["path"]).splitlines(True)[start - 1 : end]
                 )[column:]
             except PermissionError:
                 return {

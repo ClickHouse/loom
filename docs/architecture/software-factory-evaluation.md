@@ -138,3 +138,11 @@ every primary arm. Failed hidden tests stay in those blocks. Pending or ungraded
 blocks do not contribute partial means; their attempts and spend remain in raw
 progress and individual records. Issue and repeat filters preserve the same
 comparison set across arms. Final target claims require the complete cohort.
+
+Grep projections retain enclosing-scope names and line ranges only while the
+indexed file is unchanged. The matching line is independently checked against the
+working source and remains available when navigation is stale. Optional inclusive
+`end_line` reads are available in every arm, so agents can request a precise range
+from either ordinary search or index navigation. Definition and enclosing tools
+serve verified bodies; their schemas describe that capability without requiring
+any retrieval call.

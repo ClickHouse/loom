@@ -133,6 +133,35 @@ class EvidencePages(unittest.TestCase):
         )
         self.assertFalse(second["truncated"])
 
+    def test_explicit_line_range_stops_without_reading_the_following_source(self):
+        result = self.factory.execute("read", {"path": self.path, "start_line": 2, "end_line": 3})
+        expected = "".join(self.factory.checkout.full_read(self.path).splitlines(True)[1:3])
+        self.assertEqual(result["content"], expected)
+        self.assertFalse(result["truncated"])
+        self.assertIsNone(result["next_start_line"])
+        for end in (0, 1, True, "3"):
+            with self.subTest(end=end), self.assertRaises(ValueError):
+                self.factory.execute("read", {"path": self.path, "start_line": 2, "end_line": end})
+
+    def test_line_range_retains_long_line_continuation(self):
+        source = self.factory.checkout.full_read(self.path)
+        line = len(source.splitlines())
+        first = self.factory.execute(
+            "read", {"path": self.path, "start_line": line, "end_line": line}
+        )
+        self.assertTrue(first["truncated"])
+        second = self.factory.execute(
+            "read",
+            {
+                "path": self.path,
+                "start_line": first["next_start_line"],
+                "start_column": first["next_start_column"],
+                "end_line": line,
+            },
+        )
+        self.assertEqual(first["content"] + second["content"], source.splitlines(True)[-1])
+        self.assertFalse(second["truncated"])
+
     def test_available_tests_do_not_claim_task_completion(self):
         result = self.factory.execute("test", {})
         self.assertEqual(result["scope"], "fixed_existing_tests")

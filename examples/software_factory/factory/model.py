@@ -119,12 +119,14 @@ def tool_schemas(
         ),
         tool(
             "read",
-            "Read source or public repository evidence. Continue truncated reads with "
-            "next_start_line and next_start_column.",
+            "Read source or public repository evidence. Optional end_line is inclusive. "
+            "Continue truncated reads with next_start_line and next_start_column, retaining "
+            "end_line if selected.",
             {
                 "path": string,
                 "start_line": {"type": "integer", "minimum": 1},
                 "start_column": {"type": "integer", "minimum": 0},
+                "end_line": {"type": "integer", "minimum": 1},
             },
             ["path"],
         ),

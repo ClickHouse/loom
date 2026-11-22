@@ -69,6 +69,46 @@ class ProjectionContracts(unittest.TestCase):
             **extra,
         }
 
+    def test_grep_keeps_verified_scope_ranges_for_both_function_and_unscoped_hits(self):
+        hit = dict(
+            path=self.path,
+            line=1,
+            text="def resolve_name(value):",
+            scope="src.names::resolve_name",
+            scope_start_line=1,
+            scope_end_line=2,
+        )
+        result = self.context.project("code.grep", {"matches": [hit]})
+        self.assertEqual(result["matches"], [hit])
+        self.assertEqual(result["rejected"], [])
+        plain = {**hit, "scope": "", "scope_start_line": 0, "scope_end_line": 0}
+        self.assertEqual(
+            self.context.project("code.grep", {"matches": [plain]})["matches"],
+            [{key: plain[key] for key in ("path", "line", "text", "scope")}],
+        )
+
+    def test_grep_keeps_source_line_but_withholds_stale_or_invalid_scope(self):
+        hit = dict(
+            path=self.path,
+            line=1,
+            text="def resolve_name(value):",
+            scope="src.names::resolve_name",
+            scope_start_line=2,
+            scope_end_line=2,
+        )
+        result = self.context.project("code.grep", {"matches": [hit]})
+        expected = {key: hit[key] for key in ("path", "line", "text")}
+        self.assertEqual(result["matches"], [expected])
+        self.assertTrue(result["rejected"])
+        self.context.checkout.edit(self.path, "return value.strip()", "return value")
+        hit["scope_start_line"] = 1
+        result = self.context.project("code.grep", {"matches": [hit]})
+        self.assertEqual(result["matches"], [expected])
+        self.assertEqual(result["rejected"], [])
+        result = self.context.project("code.grep", {"matches": [{**hit, "path": "docs/notes.rst"}]})
+        self.assertEqual(result["matches"], [])
+        self.assertTrue(result["rejected"])
+
     def test_symbol_miss_keeps_scoped_candidates_without_another_backend_call(self):
         candidate = {"path": self.path, "qualified_name": "src.names::resolve_name"}
         self.data = {

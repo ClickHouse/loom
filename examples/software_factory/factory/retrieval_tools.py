@@ -41,17 +41,17 @@ def schemas() -> list[dict]:
     return [
         tool(
             "loom_code_symbol",
-            "Read by name or symbol_id. Definition unit_id from symbol results and symbol_id "
-            "from enclosing results support exact lookup. Follow search cards using next/name. "
-            "For absent/imported names use loom_code_grep; an outline can narrow an elided class.",
+            "Read a definition body by name, path:line or symbol_id. Returns a source-verified "
+            "body when available, otherwise a navigation card. Names and definition IDs from "
+            "other code results can be used directly.",
             {"name": string, "symbol_id": string},
             [],
         ),
         tool(
             "loom_code_grep",
-            "Find source lines (literal by default, RE2 when regex=true), including imports. "
-            "Use | for alternation. Narrow path_prefix when a file is "
-            "known; follow next_cursor with cursor for more matches.",
+            "Find source lines and enclosing scope names/ranges when available, including "
+            "imports. Literal by default; regex=true uses RE2 (| for alternation). "
+            "Narrow path_prefix or follow next_cursor with cursor for more matches.",
             {
                 "pattern": {"type": "string", "minLength": 2, "maxLength": 1000},
                 "path_prefix": string,
@@ -74,8 +74,8 @@ def schemas() -> list[dict]:
         ),
         tool(
             "loom_code_enclosing",
-            "Read definitions containing selected path:line locations. Select relevant hits "
-            "before fetching; repeated definitions are returned once.",
+            "Read source-verified definition bodies for one or more path:line locations. "
+            "Locations from grep hits can be batched; repeated definitions are returned once.",
             {"locations": {"type": "array", "items": string, "minItems": 1}},
         ),
     ]
@@ -136,6 +136,37 @@ class QualifiedContext(Context):
                     raise ValueError("Member outline exceeds its declaration span")
                 result["outline"].append(child)
         return result
+
+    def grep_matches(self, hits, rejected):
+        matches = []
+        for hit in hits:
+            try:
+                path = hit["path"]
+                if not isinstance(path, str) or path not in self.task.files:
+                    raise PermissionError("Grep hit exceeds the indexed source scope")
+                source = self.checkout.full_read(path)
+                lines = source.split("\n")
+                line = int(hit["line"])
+                if line < 1 or line > len(lines) or lines[line - 1].strip() != hit["text"]:
+                    raise ValueError("Retrieved line differs from working source")
+                match = {"path": path, "line": line, "text": hit["text"]}
+                matches.append(match)
+                if source != self.task.files[path] or not isinstance(hit.get("scope"), str):
+                    continue
+                scope = hit["scope"]
+                start, end = hit.get("scope_start_line"), hit.get("scope_end_line")
+                if scope and (start is not None or end is not None):
+                    if (
+                        type(start) is not int
+                        or type(end) is not int
+                        or not 1 <= start <= line <= end <= len(source.splitlines())
+                    ):
+                        raise ValueError("Indexed grep scope has an invalid source span")
+                    match.update(scope_start_line=start, scope_end_line=end)
+                match["scope"] = scope
+            except (PermissionError, KeyError, ValueError) as error:
+                rejected.append(str(error))
+        return matches
 
     def navigation_cards(self, items, rejected):
         candidates, seen = [], set()
@@ -421,19 +452,7 @@ class QualifiedContext(Context):
                 out["candidates"] = cards
                 out["navigation_only"] = bool(cards) and not out["definitions"]
         elif op == "code.grep":
-            matches = []
-            for hit in data.get("matches", []):
-                try:
-                    lines = self.checkout.full_read(hit["path"]).split("\n")
-                    line = int(hit["line"])
-                    if line < 1 or line > len(lines) or lines[line - 1].strip() != hit["text"]:
-                        raise ValueError("Retrieved line differs from working source")
-                    matches.append(
-                        {k: hit[k] for k in ("path", "line", "text", "scope") if k in hit}
-                    )
-                except (PermissionError, KeyError, ValueError) as error:
-                    rejected.append(str(error))
-            out["matches"] = matches
+            out["matches"] = self.grep_matches(data.get("matches", []), rejected)
         else:
             entries = []
             for item in data.get("results" if op == "code.search" else "entries", []):

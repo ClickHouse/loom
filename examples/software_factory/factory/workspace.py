@@ -39,12 +39,16 @@ class Checkout:
             raise ValueError("Source budget exceeded")
         return path.read_text()
 
-    def read(self, name: str, start_line: int = 1, start_column: int = 0) -> str:
+    def read(
+        self, name: str, start_line: int = 1, start_column: int = 0, end_line: int | None = None
+    ) -> str:
         if type(start_line) is not int or start_line < 1:
             raise ValueError("start_line must be a positive integer")
         if type(start_column) is not int or start_column < 0:
             raise ValueError("start_column must be a nonnegative integer")
-        lines = self.full_read(name).splitlines(True)[start_line - 1 :]
+        if end_line is not None and (type(end_line) is not int or end_line < start_line):
+            raise ValueError("end_line must be an integer at or after start_line")
+        lines = self.full_read(name).splitlines(True)[start_line - 1 : end_line]
         if start_column > (len(lines[0].rstrip("\r\n")) if lines else 0):
             raise ValueError("start_column exceeds the source line")
         return "".join(lines)[start_column:][:16000]
