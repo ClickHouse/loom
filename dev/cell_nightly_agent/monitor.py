@@ -94,11 +94,14 @@ def repair_environment():
 def tmux_run(probe=False):
     socket = TASK_DIR / f"tmux-{os.getpid()}.sock"
     command = ["tmux", "-S", str(socket), "-f", "/dev/null"]
+    ready = TASK_DIR / f"pane-ready-{os.getpid()}"
+    ready.unlink(missing_ok=True)
     result_path = TASK_DIR / "repair-result.json"
     result_path.unlink(missing_ok=True)
     runner = ["/usr/bin/python3", str(TASK_DIR / "repair.py")]
     if probe:
         runner.append("--probe-wait" if probe == "wait" else "--probe")
+    bootstrap = ["/bin/sh", "-c", 'printf "%s" "$$" > "$1"; exec /bin/sh', "sh", str(ready)]
     try:
         subprocess.run(
             command
@@ -109,7 +112,7 @@ def tmux_run(probe=False):
                 "loom-cell-nightly-repair",
                 "-c",
                 str(TASK_DIR),
-                "/bin/sh",
+                "exec " + shlex.join(bootstrap),
             ],
             check=True,
             timeout=15,
@@ -129,11 +132,19 @@ def tmux_run(probe=False):
         own_group = Path("/proc/self/cgroup").read_text()
         if Path(f"/proc/{server_pid}/cgroup").read_text() != own_group:
             raise RuntimeError("Owned tmux server escaped the service cgroup")
+        # Readiness follows tmux scope setup in the child, before cgroup inspection.
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            if time.monotonic() >= deadline:
+                raise RuntimeError("Owned tmux pane did not finish bootstrap")
+            time.sleep(0.02)
         pane_pid = int(
             subprocess.check_output(
                 command + ["display-message", "-p", "#{pane_pid}"], text=True, timeout=10
             )
         )
+        if ready.read_text() != str(pane_pid):
+            raise RuntimeError("Owned tmux pane bootstrap identity differs")
         pane_group = Path(f"/proc/{pane_pid}/cgroup").read_text()
         if pane_group != own_group:
             # Some tmux builds create a sibling scope for each pane. Reattach only
@@ -209,6 +220,7 @@ def tmux_run(probe=False):
             timeout=10,
         )
         socket.unlink(missing_ok=True)
+        ready.unlink(missing_ok=True)
 
 
 def dry_run():
