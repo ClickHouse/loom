@@ -37,7 +37,9 @@ Namespace and source-path checks still apply before the model receives a result.
 An elided definition keeps its navigation card, separate from verified bodies.
 Cards are accepted only for unchanged allowed files with valid spans. They never
 count as body inspection. Symbol reads accept either a name or a native symbol
-identifier, so the model can follow an index card without repeating name discovery.
+definition identifier, so the model can follow a definition card without repeating
+name discovery. Search cards can identify chunks; their native `next` or name
+guides the follow-up instead.
 
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.

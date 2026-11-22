@@ -34,9 +34,9 @@ def schemas() -> list[dict]:
     return [
         tool(
             "loom_code_symbol",
-            "Read a known definition: provide name or a card's symbol_id/unit_id as symbol_id. "
-            "For an absent/imported name, use loom_code_grep to find imports or uses. "
-            "Elided bodies keep navigation cards; an outline can help select a smaller definition.",
+            "Read by name or symbol_id. Definition unit_id from symbol results and symbol_id "
+            "from enclosing results support exact lookup. Follow search cards using next/name. "
+            "For absent/imported names use loom_code_grep; an outline can narrow an elided class.",
             {"name": string, "symbol_id": string},
             [],
         ),
