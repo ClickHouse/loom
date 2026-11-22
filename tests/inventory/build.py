@@ -103,6 +103,7 @@ _DIRECT_CHILDREN: tuple[tuple[str, str], ...] = (
 )
 _WORKFLOW_PREFIXES: tuple[tuple[str, str], ...] = (
     ("tests/inventory/", "suite"),
+    ("tests/contracts/", "http-contract"),
     ("tests/analyzer/cases/", "analyzer-cases"),
     ("tests/analyzer/", "analyzer"),
     ("tests/code_lanes/", "code-lanes"),
