@@ -36,7 +36,9 @@ jobs:
           import urllib.request
 
           MAX_PAGES = 10
+          # Page size is a request hint; enforce the budget across all responses.
           PAGE_SIZE = 100
+          MAX_CHANGES = 1000
           MAX_BYTES = 1024 * 1024
           MAX_FINDINGS = 20
           SEVERITIES = {"low", "moderate", "high", "critical"}
@@ -110,7 +112,7 @@ jobs:
               if len(body) > MAX_BYTES:
                   raise ReviewError("Dependency review response exceeds its limit")
               changes = json.loads(body)
-              if not isinstance(changes, list) or len(changes) > PAGE_SIZE:
+              if not isinstance(changes, list):
                   raise ReviewError("Invalid dependency review response")
               return changes, link
 
@@ -158,6 +160,10 @@ jobs:
               for page in range(1, MAX_PAGES + 1):
                   changes, link = read_page(opener, f"{endpoint}?per_page={PAGE_SIZE}&page={page}", token)
                   total += len(changes)
+                  if total > MAX_CHANGES:
+                      raise ReviewError(
+                          "Dependency changes exceed the total record limit; review is incomplete"
+                      )
                   for change in changes:
                       matches = blocked_changes(change)
                       blocked += len(matches)

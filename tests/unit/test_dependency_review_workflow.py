@@ -186,7 +186,7 @@ class DependencyReviewTests(unittest.TestCase):
     def test_response_record_and_vulnerability_bounds_fail_closed(self):
         responses = [
             Response([], raw=b" " * (POLICY.MAX_BYTES + 1)),
-            Response([change()] * (POLICY.PAGE_SIZE + 1)),
+            Response([change()] * (POLICY.MAX_CHANGES + 1)),
             Response([{**change(), "vulnerabilities": change()["vulnerabilities"] * 101}]),
             Response([{**change(), "name": "x" * 4097}]),
         ]
@@ -226,6 +226,26 @@ class DependencyReviewTests(unittest.TestCase):
         with self.assertRaisesRegex(POLICY.ReviewError, "page limit"):
             POLICY.review(REPOSITORY, BASE, HEAD, "test-token", opener, REPOSITORY_ID)
         self.assertEqual(len(opener.requests), POLICY.MAX_PAGES)
+
+    def test_complete_response_can_exceed_requested_page_size(self):
+        result = review(Response([change("low")] * 842))
+        self.assertEqual(result["changes"], 842)
+        self.assertEqual(result["blocked_advisories"], 0)
+
+    def test_total_record_budget_applies_across_pages(self):
+        first = Response(
+            [change("low")] * 600,
+            headers={"Link": f'<{CANONICAL}?per_page=100&page=2>; rel="next"'},
+        )
+        result = review(first, Response([change("low")] * 399 + [change("high")]))
+        self.assertEqual(result["changes"], POLICY.MAX_CHANGES)
+        self.assertEqual(result["blocked_advisories"], 1)
+        first = Response(
+            [change("low")] * 600,
+            headers={"Link": f'<{CANONICAL}?per_page=100&page=2>; rel="next"'},
+        )
+        with self.assertRaisesRegex(POLICY.ReviewError, "total record limit"):
+            review(first, Response([change("low")] * 401))
 
     def test_report_is_bounded_without_losing_failure_count(self):
         row = {**change(), "name": "x\n::error::fixture" * 30}
