@@ -26,7 +26,13 @@ NONE: dict[str, str] = {}
     [
         # Explicit provider always wins, model defaults per provider.
         ("openai", "", NONE, ResolvedLLM("openai", "gpt-6-luna", "LOOM_LLM_PROVIDER")),
-        ("anthropic", "", NONE, ResolvedLLM("anthropic", "claude-haiku-5-5", "LOOM_LLM_PROVIDER")),
+        ("anthropic", "", NONE, ResolvedLLM("anthropic", "claude-sonnet-5-5", "LOOM_LLM_PROVIDER")),
+        (
+            "anthropic",
+            "claude-haiku-5-5",
+            ANTHROPIC,
+            ResolvedLLM("anthropic", "claude-haiku-5-5", "LOOM_LLM_PROVIDER"),
+        ),
         ("fake", "", BOTH, ResolvedLLM("fake", "fake-echo-1", "LOOM_LLM_PROVIDER")),
         ("fake", "gpt-4o-mini", OPENAI, ResolvedLLM("fake", "gpt-4o-mini", "LOOM_LLM_PROVIDER")),
         (" OpenAI ", "gpt-5", NONE, ResolvedLLM("openai", "gpt-5", "LOOM_LLM_PROVIDER")),
@@ -54,7 +60,7 @@ NONE: dict[str, str] = {}
             "",
             "",
             ANTHROPIC,
-            ResolvedLLM("anthropic", "claude-haiku-5-5", "ANTHROPIC_API_KEY is set"),
+            ResolvedLLM("anthropic", "claude-sonnet-5-5", "ANTHROPIC_API_KEY is set"),
         ),
         ("", "", BOTH, ResolvedLLM("openai", "gpt-6-luna", "OPENAI_API_KEY is set")),
         # Nothing at all: the keyless fake default the dev container relies on.
