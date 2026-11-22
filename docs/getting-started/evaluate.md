@@ -140,13 +140,14 @@ the repository Loom was tuned on. Label:
 - out-of-repository questions that should abstain;
 - the tests or dependants expected from an impact query.
 
-Run the code-agent acceptance report against an indexed repository:
+Run the code-agent acceptance report against an indexed repository. Replace the
+organization and namespace with values the token can read:
 
 ```bash
 export PYTHONPATH=$PWD
 .venv/bin/python bench/acceptance/code_agent.py \
   --base-url http://localhost:7777 --token-file /path/to/token \
-  --namespace <code-namespace>
+  --org <org> --namespace <code-namespace>
 ```
 
 The built-in fixture targets ClickHouse and is useful for checking a deployment. For a

@@ -257,7 +257,7 @@ See the [configuration reference](../../reference/configuration.md#runtime) for 
   crash can lose the unflushed queue (`LOOM_EVENTS_STREAM_FLUSH_INTERVAL_S` bounds the
   window when the events stream is on).
 - **A cap is not a hard limit.** The guard reads spend before a batch, so one batch can
-  overshoot, and embeddings are not gated.
+  overshoot. Direct memory-write and search embeddings are not gated.
 - **Failed requests can have spent.** `loom.ops.paid_errors` counts requests that failed
   after spending upstream; their cost is still on the ledger row.
 
