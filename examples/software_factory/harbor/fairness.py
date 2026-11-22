@@ -72,7 +72,8 @@ def audit_fairness(protocol, entries, *, billing=None):
         row = {
             "order": order,
             "unique_attempt": order not in seen,
-            "public_prompt": (task / "instruction.md").read_text() == public["problem"],
+            "public_prompt": (task / "instruction.md").read_bytes()
+            == public["problem"].encode("utf-8"),
             "native_solver": agent.get("name") == "claude-code" and not agent.get("import_path"),
             "same_model": agent.get("model_name") == protocol["model_id"],
             "same_version": agent.get("kwargs") == {"version": protocol["solver"]["version"]},
@@ -100,6 +101,7 @@ def audit_fairness(protocol, entries, *, billing=None):
         checks.append(row)
     receipt = {
         "protocol_sha256": digest(protocol),
+        "auditor_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "attempts": checks,
         "passed": len(checks) == len(protocol["schedule"]) and all(row["passed"] for row in checks),
     }
