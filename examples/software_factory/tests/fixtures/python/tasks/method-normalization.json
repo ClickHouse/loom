@@ -1,0 +1,13 @@
+{
+  "task_id": "method-normalization",
+  "kind": "authored-expression-fixture",
+  "repository": "authored/offline-fixtures",
+  "base_commit": "sha256:2008ca4a666bcc68403cac8c05c5a071488467b2959490279bfca3a0bb2ef71b",
+  "namespace": "fixture-method-normalization",
+  "problem": "Trim surrounding whitespace and uppercase the HTTP method.",
+  "symbol": "normalize_method",
+  "files": {
+    "src/subject.py": "def normalize_method(value):\n    return value\n"
+  },
+  "source_sha256": "2008ca4a666bcc68403cac8c05c5a071488467b2959490279bfca3a0bb2ef71b"
+}

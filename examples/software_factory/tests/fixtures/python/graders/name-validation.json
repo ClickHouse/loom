@@ -1,0 +1,32 @@
+{
+  "path": "src/subject.py",
+  "symbol": "valid_name",
+  "visible": [
+    {
+      "args": ["shop"],
+      "expected": true
+    },
+    {
+      "args": ["shop.api"],
+      "expected": false
+    },
+    {
+      "args": [""],
+      "expected": false
+    }
+  ],
+  "hidden": [
+    {
+      "args": ["a.b.c"],
+      "expected": false
+    },
+    {
+      "args": ["api_v2"],
+      "expected": true
+    },
+    {
+      "args": ["."],
+      "expected": false
+    }
+  ]
+}

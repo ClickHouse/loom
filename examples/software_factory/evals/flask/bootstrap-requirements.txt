@@ -1,0 +1,7 @@
+# Parquet decoding for the public dataset bootstrap; Python 3.12, Linux or macOS.
+# The four wheel hashes match the repository uv.lock.
+pyarrow==26.0.1 \
+    --hash=sha256:217497a51fd41abb74502ba2f4900872e0944c226945c02ee8a1cb4f81df3392 \
+    --hash=sha256:a2c5e9cec45b318917b630dc040cf197aef624d94866ab2c8e709708057123d2 \
+    --hash=sha256:6c18167774fb599d42444b7ac558a893d49e750fb14232b538955e6f0d1d51ea \
+    --hash=sha256:c718bf97a92a6dea97fd1062c3b9f9e2e83cb9cc926e752289fa4ffff41738f9
