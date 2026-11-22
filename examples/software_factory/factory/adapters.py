@@ -10,6 +10,12 @@ from pathlib import Path
 from examples.software_factory.factory.model import Task
 
 
+class _RetrievalInputError(ValueError):
+    """A selected operation rejected model input after its scope was checked."""
+
+    physical_requests: int = 0
+
+
 class ReplayProvider:
     label = "scripted-replay"
 
@@ -163,6 +169,8 @@ class SDKContext:
             self.runner.close()
 
     async def _request(self, op: str, body: dict) -> dict:
+        from loom.errors import ValidationError
+
         physical_before = self.physical_counter()
         before = await self.verify_scope(self.agent, body)
         if (
@@ -171,12 +179,16 @@ class SDKContext:
             or any(body.get(k) != self.expected_scope.get(k) for k in ("org", "namespace"))
         ):
             raise PermissionError("Index authorization is unverified")
-        result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1})
+        try:
+            result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1})
+        except ValidationError as error:
+            if error.category != "input":
+                raise
+            await self._after_scope(before, body)
+            raise _RetrievalInputError(str(error)) from error
         if result.data.get("ignored_args"):
             raise PermissionError("Index ignored request arguments")
-        after = await self.verify_scope(self.agent, body)
-        if before["scope"] != after["scope"] or after.get("permission") != "allowed":
-            raise PermissionError("Index scope changed during lookup")
+        after = await self._after_scope(before, body)
         return {
             "data": result.data,
             "scope": before["scope"],
@@ -191,12 +203,21 @@ class SDKContext:
             "usage": {"retrieval": "requires server provider ledger"},
         }
 
+    async def _after_scope(self, before: dict, body: dict) -> dict:
+        after = await self.verify_scope(self.agent, body)
+        if before["scope"] != after.get("scope") or after.get("permission") != "allowed":
+            raise PermissionError("Index scope changed during lookup")
+        return after
+
     def request(self, op: str, body: dict) -> dict:
         if op not in self.allowed_ops:
             raise ValueError("Operation is outside the declared retrieval policy")
         before = self.physical_counter()
         try:
             return self.runner.run(self._request(op, body))
+        except _RetrievalInputError as error:
+            error.physical_requests = self.physical_counter() - before
+            raise
         except Exception as error:  # Failed SDK attempts must retain physical request counts.
             failure = RuntimeError(f"{type(error).__name__}: {error}")
             failure.physical_requests = self.physical_counter() - before

@@ -18,6 +18,9 @@ An ordinary read outside the repository allowlist returns a refusal without
 content so the model can correct the path. Unadvertised tool names return an
 input error without executing a command or stopping the remaining tool batch.
 Native authorization and index-scope failures still stop the attempt.
+Selected native operations that reject model input return tool errors after
+their scope is checked again. Their failed physical requests remain counted;
+the adapter does not retry them. Cursor arguments describe their query binding.
 
 The common prompt identifies the index boundary: Loom code tools cover only
 `source_paths`; ordinary search and read also cover the public repository evidence.

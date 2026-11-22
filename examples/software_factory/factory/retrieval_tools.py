@@ -38,6 +38,10 @@ def request_body(op, args, *, org, namespace, memory_namespaces=()):
 
 def schemas() -> list[dict]:
     string = {"type": "string"}
+    cursor = {
+        "type": "string",
+        "description": "Continue the same query with unchanged parameters; omit for a new query.",
+    }
     return [
         tool(
             "loom_code_symbol",
@@ -56,7 +60,7 @@ def schemas() -> list[dict]:
                 "pattern": {"type": "string", "minLength": 2, "maxLength": 1000},
                 "path_prefix": string,
                 "regex": {"type": "boolean"},
-                "cursor": string,
+                "cursor": cursor,
             },
             ["pattern"],
         ),
@@ -64,7 +68,7 @@ def schemas() -> list[dict]:
             "loom_code_search",
             "Discover relevant code for a concept. Results may include source bodies and "
             "navigation cards; follow a card with loom_code_symbol when needed.",
-            {"query": string, "path_prefix": string, "cursor": string},
+            {"query": string, "path_prefix": string, "cursor": cursor},
             ["query"],
         ),
         tool(
