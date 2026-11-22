@@ -1,0 +1,24 @@
+{
+  "path": "src/subject.py",
+  "symbol": "join_path",
+  "visible": [
+    {
+      "args": ["/api/", "/users"],
+      "expected": "/api/users"
+    },
+    {
+      "args": ["/api", "users"],
+      "expected": "/api/users"
+    }
+  ],
+  "hidden": [
+    {
+      "args": ["/api///", "///v1/users"],
+      "expected": "/api/v1/users"
+    },
+    {
+      "args": ["", ""],
+      "expected": "/"
+    }
+  ]
+}

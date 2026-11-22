@@ -1,0 +1,9 @@
+{
+  "judge": {
+    "enabled": true,
+    "completed_receipts": 12,
+    "generation_cost_usd": 0.4134824,
+    "duration_s": 311.53032072300084,
+    "excluded_from_attempt_provider_cost_and_time": true
+  }
+}
