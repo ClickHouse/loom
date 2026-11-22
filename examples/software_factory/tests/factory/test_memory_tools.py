@@ -142,6 +142,42 @@ class EpisodeMemoryContracts(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.memory.execute("loom_memory_get", {"memory_key": "x"})
 
+    def test_native_search_abstention_and_hit_provenance_survive_projection(self):
+        self.data = {
+            "abstain": True,
+            "abstain_code": "no_match",
+            "abstain_reason": "No memories matched above the noise floor.",
+            "retrieval_confidence": 0.0,
+            "retrieval_risk": "abstain",
+            "results": [],
+        }
+        out = self.memory.execute("loom_memory_search", {"query": "registration"})
+        self.assertEqual(out, self.data)
+        self.data.update(
+            abstain=False,
+            abstain_code="",
+            abstain_reason="",
+            retrieval_confidence=0.719,
+            retrieval_risk="medium",
+            results=[
+                {
+                    "namespace": "working",
+                    "memory_key": "registration",
+                    "content_excerpt": "Past contract.",
+                    "rank_score": 0.828,
+                    "similarity": 0.798,
+                    "verified": False,
+                    "source_class": "asserted",
+                    "score_components": {"semantic": 0.798},
+                }
+            ],
+        )
+        out = self.memory.execute("loom_memory_search", {"query": "registration"})
+        self.assertEqual(out, self.data)
+        self.data["results"][0]["namespace"] = "foreign"
+        with self.assertRaises(PermissionError):
+            self.memory.execute("loom_memory_search", {"query": "registration"})
+
     def test_source_scope_cannot_expand_via_files_or_memory_hit_namespace(self):
         with self.assertRaises(PermissionError):
             self.memory.execute(

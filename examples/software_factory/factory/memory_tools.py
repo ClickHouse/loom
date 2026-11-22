@@ -29,6 +29,11 @@ def request_body(name, args, *, org, namespace, agent, user_id, session_id, repo
 
 
 FIELDS = {
+    "abstain",
+    "abstain_code",
+    "abstain_reason",
+    "retrieval_confidence",
+    "retrieval_risk",
     "found",
     "unchanged",
     "memory_key",
@@ -80,6 +85,11 @@ HIT_FIELDS = {
     "code_changed_since",
     "code",
     "score",
+    "rank_score",
+    "similarity",
+    "score_components",
+    "verified",
+    "source_class",
     "status",
     "tags",
     "files",
@@ -102,7 +112,8 @@ def schemas():
         tool(
             "loom_memory_search",
             "Search persisted project knowledge and historical observations. Empty results do not "
-            "establish that a fact is true or false.",
+            "establish that a fact is true or false. Retrieval scores rank matches; "
+            "they do not verify a memory's claim.",
             {"query": string},
         ),
         tool(

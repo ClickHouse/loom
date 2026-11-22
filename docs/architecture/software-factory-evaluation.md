@@ -29,6 +29,11 @@ literal matching by default, path prefixes and result pagination. Optional Loom
 grep accepts the same `regex` flag. Both tools document RE2 alternation syntax.
 The standalone controller pins the engine alongside its evaluation dependencies.
 
+Memory search keeps the native abstention reason, retrieval confidence and risk.
+Hits keep similarity, rank components, verification and source class. These fields
+describe retrieval and provenance; similarity is not a fact's truth probability.
+Namespace and source-path checks still apply before the model receives a result.
+
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
 It reconstructs its own checkout and overlays only those implementation files.
