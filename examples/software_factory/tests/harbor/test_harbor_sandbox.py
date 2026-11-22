@@ -22,11 +22,26 @@ class HarborSandboxPolicy(unittest.TestCase):
 
     def test_agent_overlay_round_trips_through_native_environment_config(self):
         with tempfile.TemporaryDirectory() as directory:
-            policy = harbor_study.stage_sandbox_policy(Path(directory))
+            policy = harbor_study.stage_sandbox_policy(
+                Path(directory), network="owned-evaluation-network"
+            )
             config = EnvironmentConfig(type="docker", extra_docker_compose=[policy])
             loaded = EnvironmentConfig.model_validate_json(config.model_dump_json())
             self.assertEqual(loaded.extra_docker_compose, [policy])
-            self.assert_constraints(policy)
+            data = yaml.safe_load(policy.read_text())
+            main = data["services"]["main"]
+            self.assertEqual(main["pids_limit"], 512)
+            self.assertEqual(main["cap_drop"], ["ALL"])
+            self.assertEqual(set(main["cap_add"]), {"SETUID", "SETGID", "KILL"})
+            self.assertEqual(main["security_opt"], ["no-new-privileges:true"])
+            self.assertNotIn("network_mode", main)
+            self.assertEqual(
+                data["services"]["harbor-docker-egress-control-sidecar"]["networks"],
+                ["default", "loom"],
+            )
+            self.assertEqual(
+                data["networks"]["loom"], {"external": True, "name": "owned-evaluation-network"}
+            )
 
     def test_separate_verifier_keeps_its_own_policy_when_job_overlays_are_cleared(self):
         with tempfile.TemporaryDirectory() as directory:
