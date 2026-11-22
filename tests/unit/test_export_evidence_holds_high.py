@@ -112,14 +112,18 @@ async def test_chunks_behind_a_high_key_holding_a_credential_or_unembedded_stay_
 
 
 @pytest.mark.asyncio
-async def test_digests_behind_a_high_key_or_holding_a_credential_stay_home(evidence) -> None:
+async def test_digests_behind_a_high_key_or_holding_a_credential_stay_home(
+    evidence, no_blacklisted_values
+) -> None:
     out = await evidence_transfer.handle_memory_export_evidence(_input("digests"))
     assert [d.session_id for d in out.digests] == ["s1"]
     assert out.held_high == 1
 
 
 @pytest.mark.asyncio
-async def test_include_high_releases_held_digests_and_audits_each(evidence) -> None:
+async def test_include_high_releases_held_digests_and_audits_each(
+    evidence, no_blacklisted_values
+) -> None:
     out = await evidence_transfer.handle_memory_export_evidence(
         _input("digests", include_high=True)
     )
