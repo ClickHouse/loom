@@ -75,6 +75,10 @@ class HostTunnel:
     def url(self):
         return f"http://factory:{self.token}@host.docker.internal:{self.server.server_port}"
 
+    @property
+    def host_url(self):
+        return f"http://factory:{self.token}@127.0.0.1:{self.server.server_port}"
+
     def __enter__(self):
         self.thread.start()
         return self

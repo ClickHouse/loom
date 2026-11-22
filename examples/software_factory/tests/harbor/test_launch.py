@@ -309,6 +309,27 @@ class PublicLauncher(unittest.TestCase):
             self.assertNotIn("CREDENTIAL_SENTINEL", output.getvalue())
             self.assertNotIn("CREDENTIAL_SENTINEL", repr(popen.call_args.args))
 
+    def test_build_auth_uses_host_proxy_and_steps_use_container_proxy(self):
+        docker = launch.Docker()
+        docker.proxy_url = "http://factory:PROXY_SENTINEL@host.docker.internal:1234"
+        docker.proxy_host_url = "http://factory:PROXY_SENTINEL@127.0.0.1:1234"
+        docker.proxy_token = "PROXY_SENTINEL"
+        process = type(
+            "Process", (), {"stdout": io.StringIO(docker.proxy_host_url), "wait": lambda _: 0}
+        )()
+        with (
+            patch.object(launch.subprocess, "Popen", return_value=process) as popen,
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            docker.run(["build", "."])
+        self.assertEqual(popen.call_args.kwargs["env"]["HTTPS_PROXY"], docker.proxy_host_url)
+        self.assertEqual(
+            popen.call_args.args[0],
+            ["docker", "build", "--build-arg", "HTTPS_PROXY=" + docker.proxy_url, "."],
+        )
+        self.assertEqual(docker.environment()["HTTPS_PROXY"], docker.proxy_url)
+        self.assertNotIn("PROXY_SENTINEL", output.getvalue())
+
     def test_output_lock_prevents_concurrent_resume_or_cleanup(self):
         docker = FakeDocker(interrupt=True)
         launch.execute("run", self.output, "10", root=self.root, docker=docker)

@@ -4,6 +4,7 @@ import socket
 import threading
 import unittest
 from unittest.mock import Mock
+from urllib.parse import urlsplit
 
 from examples.software_factory.harbor.host_tunnel import HostTunnel
 
@@ -12,6 +13,11 @@ class HostTunnelContracts(unittest.TestCase):
     def test_unauthenticated_clients_cannot_open_an_upstream(self):
         connect = Mock()
         with HostTunnel(connect=connect) as tunnel:
+            host, container = urlsplit(tunnel.host_url), urlsplit(tunnel.url)
+            self.assertEqual(host.hostname, "127.0.0.1")
+            self.assertEqual(container.hostname, "host.docker.internal")
+            self.assertEqual(host.port, container.port)
+            self.assertEqual(host.password, container.password)
             with socket.create_connection(("127.0.0.1", tunnel.server.server_port)) as client:
                 client.sendall(b"CONNECT example.com:443 HTTP/1.0\r\n\r\n")
                 self.assertIn(b"407", client.recv(4096).splitlines()[0])

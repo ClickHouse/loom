@@ -247,7 +247,7 @@ class Docker:
     def __init__(self):
         self.process = None
         self.key = os.environ.get("ANTHROPIC_API_KEY", "")
-        self.proxy_url = self.proxy_token = None
+        self.proxy_url = self.proxy_host_url = self.proxy_token = None
 
     def environment(self, secret=False):
         env = {key: value for key, value in os.environ.items() if key in HOST_ENV}
@@ -258,12 +258,15 @@ class Docker:
         return env
 
     def run(self, args, *, capture=False, missing=False, secret=False):
+        env = self.environment(secret)
         if self.proxy_url and args[0] == "build":
-            args = ["build", "--build-arg", "HTTPS_PROXY", *args[1:]]
+            # Registry authentication runs on the host; build steps run in Docker.
+            env["HTTPS_PROXY"] = self.proxy_host_url
+            args = ["build", "--build-arg", "HTTPS_PROXY=" + self.proxy_url, *args[1:]]
         if not capture:
             process = subprocess.Popen(
                 ["docker", *args],
-                env=self.environment(secret),
+                env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -285,7 +288,7 @@ class Docker:
             return ""
         result = subprocess.run(
             ["docker", *args],
-            env=self.environment(secret),
+            env=env,
             capture_output=True,
             text=True,
             check=False,
@@ -302,7 +305,7 @@ class Docker:
         return result.stdout.strip()
 
     def redact(self, text):
-        for value in (self.key, self.proxy_url, self.proxy_token):
+        for value in (self.key, self.proxy_url, self.proxy_host_url, self.proxy_token):
             if value:
                 text = text.replace(value, "[redacted]")
         return text
@@ -525,13 +528,14 @@ def execute(action, output, amount=None, *, root=ROOT, docker=None, evaluation="
         with HostTunnel() if use_tunnel else nullcontext() as tunnel:
             if tunnel is not None:
                 docker.proxy_url, docker.proxy_token = tunnel.url, tunnel.token
+                docker.proxy_host_url = tunnel.host_url
             try:
                 return _execute(
                     action, output, amount, root=root, docker=docker, descriptor=descriptor
                 )
             finally:
                 if tunnel is not None:
-                    docker.proxy_url = docker.proxy_token = None
+                    docker.proxy_url = docker.proxy_host_url = docker.proxy_token = None
 
 
 def _execute(action, output, amount, *, root, docker, descriptor):
