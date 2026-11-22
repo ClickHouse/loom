@@ -83,7 +83,9 @@ def status_body(key: str, group: dict[str, Any] | None, run_url: str) -> str:
         )
     return (
         f"<!-- loom-workflow-audit:v1 {key} -->\n"
-        f"<!-- loom-workflow-state:v1 {state} -->\n\n{message}\n\n"
+        f"<!-- loom-workflow-state:v1 {state} -->\n\n"
+        "### Company or project name\n\nClickHouse\n\n"
+        f"{message}\n\n"
         "This is an automated maintenance task, not a confirmed vulnerability. "
         "Review the source before changing behavior. Security-sensitive findings follow "
         "[SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md).\n\n"
