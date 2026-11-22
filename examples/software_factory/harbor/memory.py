@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 
 from examples.software_factory.factory.memory_tools import OPS
-from examples.software_factory.factory.model import digest
+from examples.software_factory.factory.model import RetrievalInputError, digest
 
 from .anchors import identity as anchor_identity
 from .anchors import matches as anchor_matches
@@ -44,6 +44,8 @@ class NativeMemoryContext:
         """The owning code context closes the shared resources exactly once."""
 
     async def _request(self, op, body):
+        from loom.errors import ValidationError
+
         code = self.code_context
         started = code.physical_counter()
         code_body = {key: code.expected_scope[key] for key in ("org", "namespace")}
@@ -54,6 +56,10 @@ class NativeMemoryContext:
         )
         try:
             result = await self.agent.call_with_meta(op, body, retry={"max_attempts": 1})
+        except ValidationError as error:
+            if error.category != "input":
+                raise
+            raise RetrievalInputError(str(error)) from error
         finally:
             after = await code.verify_scope(self.agent, code_body)
             _require(
@@ -88,6 +94,9 @@ class NativeMemoryContext:
         before = self.code_context.physical_counter()
         try:
             return self.runner.run(self._request(op, body))
+        except RetrievalInputError as error:
+            error.physical_requests = self.code_context.physical_counter() - before
+            raise
         except Exception as error:  # Failed native calls retain every physical dispatch.
             failure = RuntimeError(f"{type(error).__name__}: {error}")
             failure.physical_requests = self.code_context.physical_counter() - before

@@ -7,13 +7,7 @@ import copy
 import json
 from pathlib import Path
 
-from examples.software_factory.factory.model import Task
-
-
-class _RetrievalInputError(ValueError):
-    """A selected operation rejected model input after its scope was checked."""
-
-    physical_requests: int = 0
+from examples.software_factory.factory.model import RetrievalInputError, Task
 
 
 class ReplayProvider:
@@ -185,7 +179,7 @@ class SDKContext:
             if error.category != "input":
                 raise
             await self._after_scope(before, body)
-            raise _RetrievalInputError(str(error)) from error
+            raise RetrievalInputError(str(error)) from error
         if result.data.get("ignored_args"):
             raise PermissionError("Index ignored request arguments")
         after = await self._after_scope(before, body)
@@ -215,7 +209,7 @@ class SDKContext:
         before = self.physical_counter()
         try:
             return self.runner.run(self._request(op, body))
-        except _RetrievalInputError as error:
+        except RetrievalInputError as error:
             error.physical_requests = self.physical_counter() - before
             raise
         except Exception as error:  # Failed SDK attempts must retain physical request counts.

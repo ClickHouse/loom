@@ -55,6 +55,12 @@ class TestRefusal(ValueError):
     """A grader refused before starting a test process."""
 
 
+class RetrievalInputError(ValueError):
+    """A selected native operation rejected input after its scope was checked."""
+
+    physical_requests: int = 0
+
+
 class Grader(Protocol):
     sha256: str
 

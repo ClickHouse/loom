@@ -8,6 +8,8 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from loom.errors import ValidationError
+
 from examples.software_factory.factory.adapters import SDKContext
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.memory import (
@@ -108,6 +110,27 @@ class NativeBinding(unittest.TestCase):
         with self.assertRaises(RuntimeError) as raised:
             self.native.request("memory.set", {"org": "attempt", "namespace": "working"})
         self.assertEqual(raised.exception.physical_requests, 3)
+
+    def test_selected_input_error_is_recoverable_only_with_unchanged_scope(self):
+        async def invalid(op, body, **kwargs):
+            self.count += 1
+            self.calls.append((op, body, kwargs))
+            raise ValidationError("Too many file references")
+
+        self.code.agent.call_with_meta = invalid
+        with self.assertRaises(ValueError) as raised:
+            self.native.request("memory.set", {"org": "attempt", "namespace": "working"})
+        self.assertEqual(raised.exception.physical_requests, 3)
+        self.assertIsInstance(raised.exception.__cause__, ValidationError)
+        self.assertEqual(len(self.calls), 1)
+
+        self.bad_after, self.calls = True, []
+        before = self.count
+        with self.assertRaises(RuntimeError) as refused:
+            self.native.request("memory.set", {"org": "attempt", "namespace": "working"})
+        self.assertEqual(refused.exception.physical_requests, 3)
+        self.assertEqual(self.count - before, 3)
+        self.assertIsInstance(refused.exception.__cause__, PermissionError)
 
 
 def value_sha(value):
