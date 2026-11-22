@@ -341,6 +341,7 @@ class Provisioner:
             for part in (
                 "factory/model.py",
                 "harbor/anchors.py",
+                "harbor/compiler_parity.py",
                 "harbor/native_setup.py",
                 "harbor/index_setup.py",
                 "harbor/source_tree.py",
@@ -893,6 +894,7 @@ class Provisioner:
             and status["response"].get("commit_sha") == head,
             "Native compiler batch was not applied",
         )
+        return delta
 
     def _status(self, group, head, token, revision):
         deadline = time.monotonic() + 120
@@ -1183,13 +1185,16 @@ class Provisioner:
         source_receipts = {}
         anchor_fingerprints = {}
         heads = {}
+        compiler_snapshots = {}
         phases = ("A", "B") if authored else ("B",)
         for revision in phases:
             head, files = self._source(task, fixture, revision)
             heads[revision] = head
             self._backfill(group, task, head)
             if group["index_tier"] == "scip":
-                self._compile(group, head, revision, compiler_receipt, admin, files)
+                compiler_snapshots[head] = self._compile(
+                    group, head, revision, compiler_receipt, admin, files
+                )
                 # Compiler symbols change the resolver's name table; reconcile native
                 # parser edges against that completed table before certifying it.
                 self._backfill(group, task, head)
@@ -1331,6 +1336,7 @@ class Provisioner:
                     "source_sha256": digest(files),
                     "producer": group["producer"],
                     "producer_count_fields": group["producer_count_fields"],
+                    "compiler_snapshots": compiler_snapshots,
                 },
             )
             status = self._status(group, head, admin, revision)

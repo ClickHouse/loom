@@ -183,11 +183,10 @@ async def audit_index(request):
         {edge_key(row) for row in tree_edges} == expected_edges,
         "Native edge set differs from current resolution",
     )
-    compiler_symbols = [row for row in tables["code_symbols"] if row["tier"] == "scip"]
-    compiler_edges = [row for row in tables["code_edges"] if row["tier"] == "scip"]
-    require(
-        all(row["indexed_commit"] == head for row in compiler_symbols + compiler_edges),
-        "Compiler rows do not name their actual full snapshot",
+    from examples.software_factory.harbor.compiler_parity import audit_snapshot
+
+    compiler_symbols, compiler_edges = audit_snapshot(
+        request.get("compiler_snapshots"), tables, files, head
     )
     producer_symbols = {
         row["symbol_id"]
@@ -218,6 +217,9 @@ async def audit_index(request):
         "base_commit": head,
         "source_sha256": digest(files),
         "ancestor_commits": sorted(ancestors),
+        "compiler_snapshots_sha256": digest(request["compiler_snapshots"])
+        if request.get("compiler_snapshots") is not None
+        else None,
         "not_indexed": not_indexed,
         "unit_sha256": {
             table: digest(
@@ -243,7 +245,7 @@ async def audit_index(request):
             "current_chunk_body_span_set",
             "current_declaration_metadata_set",
             "current_native_edge_set",
-            "compiler_snapshot_commit",
+            "current_compiler_snapshot_units",
         ],
     }
     scope = dict(

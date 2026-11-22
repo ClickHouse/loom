@@ -11,6 +11,7 @@ COPY sdk ./sdk
 COPY schemas ./schemas
 COPY examples/software_factory/factory/model.py ./examples/software_factory/factory/model.py
 COPY examples/software_factory/harbor/anchors.py ./examples/software_factory/harbor/anchors.py
+COPY examples/software_factory/harbor/compiler_parity.py ./examples/software_factory/harbor/compiler_parity.py
 COPY examples/software_factory/harbor/native_setup.py ./examples/software_factory/harbor/native_setup.py
 COPY examples/software_factory/harbor/index_setup.py ./examples/software_factory/harbor/index_setup.py
 COPY examples/software_factory/harbor/source_tree.py ./examples/software_factory/harbor/source_tree.py

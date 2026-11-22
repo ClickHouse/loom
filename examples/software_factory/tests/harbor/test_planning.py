@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from examples.software_factory.factory.model import digest
@@ -131,7 +132,13 @@ class SharedPlanning(unittest.TestCase):
         )
 
     def freeze(self, factory=lambda lock, plan: dict(dataset=dict(repository="example/widget"))):
-        with patch.object(planning, "controller_identity", return_value=self.identity):
+        with (
+            patch.object(planning, "controller_identity", return_value=self.identity),
+            patch(
+                "examples.software_factory.harbor.runtime.load_profile",
+                return_value=SimpleNamespace(task_inputs=lambda *_args, **_kwargs: None),
+            ),
+        ):
             path = planning.freeze_plan(
                 self.prepared,
                 self.setup,

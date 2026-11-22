@@ -285,18 +285,21 @@ class ProviderBilling(unittest.TestCase):
         self.assertIn("request_id IN {ids:Array(String)}", args[6])
         self.assertEqual(json.loads(run.call_args.kwargs["input"]), {"org": "org", "ids": ["one"]})
 
-    def test_memory_operations_require_the_memory_arm_and_its_namespace(self):
+    def test_memory_operations_require_enabled_tools_and_the_attempt_namespace(self):
         self.trace(operation="memory.set")
+        slot = self.protocol["schedule"][1]
+        slot["memory_enabled"] = False
+        self.entries[1]["result"]["memory_enabled"] = False
+        for entry in self.entries:
+            entry["result"]["protocol_sha256"] = digest(self.protocol)
         receipt, loader = self.audit([])
         loader.assert_not_called()
         self.assertEqual(receipt["attempts"]["1"]["proof_status"], "unknown")
-        slot = self.protocol["schedule"][1]
-        slot.update(arm="loom-treesitter-memory", memory_enabled=True)
-        self.protocol["attempt_scopes"]["1"]["memory_namespace"] = "working"
+        slot["memory_enabled"] = True
+        self.entries[1]["result"]["memory_enabled"] = True
         for entry in self.entries:
             entry["result"]["protocol_sha256"] = digest(self.protocol)
-        self.entries[1]["result"].update(arm=slot["arm"], memory_enabled=True)
-        row = {**self.ledger(), "namespace": "working", "operation": "memory.set"}
+        row = {**self.ledger(), "namespace": "working-1", "operation": "memory.set"}
         receipt, _ = self.audit([row])
         self.assertEqual(receipt["attempts"]["1"]["proof_status"], "known")
         receipt, _ = self.audit([{**row, "namespace": "parse"}])
