@@ -1,0 +1,12 @@
+[tool.mutmut]
+source_paths = ["server/core/"]
+pytest_add_cli_args_test_selection = [
+  "tests/mutation/test_embedding_identity.py",
+]
+also_copy = [
+  "server/__init__.py",
+  "tests/__init__.py",
+  "tests/fuzz/",
+  "tests/mutation/",
+]
+max_stack_depth = 8

@@ -1,0 +1,217 @@
+name: endpoint identity probes
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - server/core/embedding_space.py
+      - tests/fuzz/**
+      - tests/mutation/**
+      - .clusterfuzzlite/**
+      - .github/workflows/identity-testing.yml
+  push:
+    branches: [main]
+    paths:
+      - server/core/embedding_space.py
+      - tests/fuzz/**
+      - tests/mutation/**
+      - .clusterfuzzlite/**
+      - .github/workflows/identity-testing.yml
+  schedule:
+    - cron: "17 4 * * 3"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: endpoint-identity-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  replay_and_mutation:
+    name: Endpoint identity corpus and mutation pilot
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    outputs:
+      review_count: ${{ steps.mutation.outputs.review_count }}
+    steps:
+      - name: Check out the maintained target and its probes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /server/__init__.py
+            /server/core/__init__.py
+            /server/core/embedding_space.py
+            /tests/__init__.py
+            /tests/fuzz/
+            /tests/mutation/
+      - name: Install the selected Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: false
+      - name: Create a disposable test environment
+        run: |
+          python3 -m venv "$RUNNER_TEMP/identity-venv"
+          "$RUNNER_TEMP/identity-venv/bin/python" -m pip install --require-hashes --only-binary=:all: -r tests/mutation/requirements.txt
+      - name: Replay the corpus and deterministic public-identity cases
+        run: |
+          "$RUNNER_TEMP/identity-venv/bin/python" -m tests.fuzz.embedding_identity_fuzzer --replay tests/fuzz/corpus/embedding_identity
+          "$RUNNER_TEMP/identity-venv/bin/python" -m unittest tests.mutation.test_embedding_identity tests.fuzz.test_probe_publisher
+      - name: Mutate only the public-identity function
+        id: mutation
+        env:
+          IDENTITY_MUTATION_REPORT: ${{ runner.temp }}/identity-mutation.json
+        run: '"$RUNNER_TEMP/identity-venv/bin/python" tests/mutation/run_identity.py'
+
+  coverage_guided:
+    name: Endpoint identity coverage-guided fuzzing
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read # The fuzzing runner reads its own build and crash metadata.
+    steps:
+      - name: Check out only the parser and fuzz build inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /server/__init__.py
+            /server/core/__init__.py
+            /server/core/embedding_space.py
+            /tests/__init__.py
+            /tests/fuzz/
+            /.clusterfuzzlite/
+      - name: Build the one parser fuzzer
+        uses: docker://gcr.io/oss-fuzz-base/clusterfuzzlite-build-fuzzers@sha256:c531ed554dbd3ed24e2bd11570a0e2dfb042146806236cdfd2d7d0d648b6c473
+        env:
+          LANGUAGE: python
+          SANITIZER: address
+          GITHUB_TOKEN: ${{ github.token }}
+          PROJECT_SRC_PATH: ${{ github.workspace }}
+          KEEP_UNAFFECTED_FUZZ_TARGETS: "true"
+          UPLOAD_BUILD: "false"
+          BAD_BUILD_CHECK: "true"
+          ALLOWED_BROKEN_TARGETS_PERCENTAGE: "0"
+          DRY_RUN: "false"
+          CFL_PLATFORM: github
+          LOW_DISK_SPACE: "True"
+      - name: Fuzz the parser within the selected time budget
+        uses: docker://gcr.io/oss-fuzz-base/clusterfuzzlite-run-fuzzers@sha256:ec2a38a69babe087df3025a6babcb2a5a3675811a5cf4bfba23cece85c10e8d1
+        env:
+          LANGUAGE: python
+          SANITIZER: address
+          GITHUB_TOKEN: ${{ github.token }}
+          FUZZ_SECONDS: ${{ github.event_name == 'pull_request' && 30 || 180 }}
+          MODE: code-change
+          PARALLEL_FUZZING: "false"
+          OUTPUT_SARIF: "true"
+          REPORT_TIMEOUTS: "true"
+          REPORT_OOMS: "true"
+          REPORT_UNREPRODUCIBLE_CRASHES: "false"
+          MINIMIZE_CRASHES: "false"
+          DRY_RUN: "false"
+          CFL_PLATFORM: github
+          LOW_DISK_SPACE: "True"
+
+  maintenance:
+    name: Record trusted probe maintenance
+    needs: [replay_and_mutation, coverage_guided]
+    if: >-
+      always() && github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Record bounded probe maintenance on trusted main runs only.
+    steps:
+      - name: Reconcile failure tasks without executing project code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from urllib.parse import urlencode
+          repo = "repos/ClickHouse/loom/issues"
+          bot = "github-actions[bot]"
+          marker = re.compile(r"<!-- loom-endpoint-probe:v1 (replay_and_mutation|coverage_guided) -->")
+          state = re.compile(r"<!-- loom-endpoint-probe-state:v1 (failure|success|review) -->")
+          titles = {"replay_and_mutation": "[endpoint-identity-ci] Review the bounded mutation pilot", "coverage_guided": "[endpoint-identity-ci] Diagnose the bounded fuzzer check"}
+          calls = 0
+          def api(method, endpoint, payload=None):
+              global calls
+              calls += 1
+              assert calls <= 40, "Probe issue API budget exhausted"
+              command = ["gh", "api", "--method", method, endpoint, "--hostname", "github.com"]
+              if payload is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, capture_output=True, timeout=20, check=True)
+              assert len(result.stdout) <= 2 * 1024 * 1024, "Probe issue response exceeds budget"
+              return json.loads(result.stdout)
+          managed = {}
+          for page in range(1, 11):
+              issues = api("GET", repo + "?" + urlencode({"state": "all", "creator": bot, "per_page": 100, "page": page}))
+              assert isinstance(issues, list)
+              for issue in issues:
+                  if "pull_request" in issue or issue.get("user", {}).get("login") != bot:
+                      continue
+                  keys = marker.findall(issue.get("body") or "")
+                  keys += [key for key, title in titles.items() if issue.get("title") == title]
+                  keys = set(keys)
+                  assert len(keys) <= 1, "Conflicting Probe issue markers"
+                  if keys:
+                      key = keys.pop()
+                      assert key not in managed, "Duplicate Probe maintenance task"
+                      managed[key] = issue
+              if len(issues) < 100:
+                  break
+          else:
+              raise RuntimeError("Probe issue pagination budget exhausted")
+          results = json.loads(os.environ["PROBE_RESULTS"])
+          assert set(results) == set(titles)
+          run_id = os.environ["GITHUB_RUN_ID"]
+          assert run_id.isdecimal()
+          url = "https://github.com/ClickHouse/loom/actions/runs/" + run_id
+          changed = 0
+          for key in titles:
+              result = results[key]["result"]
+              if key == "replay_and_mutation" and result == "success":
+                  count = results[key]["outputs"]["review_count"]
+                  assert count.isdecimal() and 0 <= int(count) <= 10000
+                  if int(count):
+                      result = "review"
+              assert result in {"success", "failure", "review", "cancelled", "skipped"}
+              issue = managed.get(key)
+              if result not in {"success", "failure", "review"} or (issue and issue["state"] == "closed"):
+                  continue
+              text = f"<!-- loom-endpoint-probe:v1 {key} -->\n<!-- loom-endpoint-probe-state:v1 {result} -->\n\nThe bounded {key} probe reports **{result}** on trusted main. [Read the bounded probe logs and mutation summary]({url}).\n\nReproduce the named workflow job. A mutation survivor needs review for a missing assertion or equivalent mutation; it is not a vulnerability claim. No crash input or source excerpt is published here. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              if issue is None:
+                  if result in {"failure", "review"}:
+                      api("POST", repo, {"title": titles[key], "body": text})
+                      changed += 1
+                  continue
+              number = issue["number"]
+              assert isinstance(number, int) and number > 0
+              comments = api("GET", f"{repo}/{number}/comments?per_page=100")
+              assert isinstance(comments, list) and len(comments) < 100, "Probe comment history budget exhausted"
+              candidates = [issue] + sorted(comments, key=lambda row: (row["created_at"], row["id"]))
+              states = [state.findall(row.get("body") or "") for row in candidates if row.get("user", {}).get("login") == bot]
+              states = [value[-1] for value in states if value]
+              if not states or states[-1] != result:
+                  api("POST", f"{repo}/{number}/comments", {"body": text})
+                  changed += 1
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"Probe task reconciliation: {changed} task or status writes; closed decisions preserved.\n")
+          PY
