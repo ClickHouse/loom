@@ -19,6 +19,13 @@ class NativePublicExport(TestCase):
         trial = self.root / "jobs/live/trial"
         (trial / "agent").mkdir(parents=True)
         self.trial = trial
+        self.instruction = b"Original issue\r\nPreserve source bytes.\r\n"
+        instruction = self.root / "tasks/slot-00/instruction.md"
+        instruction.parent.mkdir(parents=True)
+        instruction.write_bytes(self.instruction)
+        (trial / "agent/claude-code.txt").write_text(
+            json.dumps({"type": "system", "subtype": "init", "mcp_servers": []}) + "\n"
+        )
         slot = {
             "order": 0,
             "task_id": "task",
@@ -107,6 +114,14 @@ class NativePublicExport(TestCase):
         self.assertNotIn("PRIVATE_SENTINEL", path.read_text())
         self.assertNotIn(str(self.root), path.read_text())
         self.assertIn("0/result.json", public["native_artifact_sha256"])
+        self.assertEqual(
+            public["native_artifact_sha256"]["0/task/instruction.md"],
+            hashlib.sha256(self.instruction).hexdigest(),
+        )
+        self.assertEqual(
+            public["native_artifact_sha256"]["0/agent/claude-code.txt"],
+            hashlib.sha256((self.trial / "agent/claude-code.txt").read_bytes()).hexdigest(),
+        )
 
     def test_symlink_or_foreign_native_result_is_refused(self):
         native = self.trial / "result.json"

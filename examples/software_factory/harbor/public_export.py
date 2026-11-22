@@ -327,6 +327,7 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
             for name in (
                 "result.json",
                 "agent/trajectory.json",
+                "agent/claude-code.txt",
                 "verifier/grade.json",
                 "verifier/full-suite.json",
             ):
