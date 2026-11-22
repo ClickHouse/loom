@@ -42,7 +42,6 @@ WATERMARK = "scip_commit"
 FULL_AT = "scip_full_at"
 FULL_DONE_AT = "scip_full_done_at"
 PRODUCER = "clang"
-_DISK_CHECK_SECONDS = 0.5
 
 
 # A run's directory left this long is a crashed run's: past the longest a full run
@@ -79,7 +78,8 @@ async def _check_disk_space(paths: tuple[Path, ...], minimum: int) -> None:
         try:
             free = (await asyncio.to_thread(shutil.disk_usage, path)).free
         except OSError as exc:
-            raise FullIndexFailed(75, f"cannot measure full-index disk space: {exc}") from exc
+            logger.warning("cannot measure full-index disk space at %s", path, exc_info=True)
+            raise FullIndexFailed(75, "cannot measure full-index disk space") from exc
         if free <= minimum:
             raise FullIndexFailed(
                 75,
@@ -91,7 +91,7 @@ async def _check_disk_space(paths: tuple[Path, ...], minimum: int) -> None:
 async def _watch_disk_space(paths: tuple[Path, ...], minimum: int) -> None:
     set_query_tag("code.scip_full.disk_budget")
     while True:
-        await asyncio.sleep(_DISK_CHECK_SECONDS)
+        await asyncio.sleep(settings.code_scip_disk_check_interval_s)
         await _check_disk_space(paths, minimum)
 
 

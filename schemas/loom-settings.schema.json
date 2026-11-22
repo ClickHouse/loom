@@ -1728,6 +1728,13 @@
           "type": "integer",
           "description": "Seconds the C++ delta harness may run before it is killed."
         },
+        "code_scip_disk_check_interval_s": {
+          "default": 0.5,
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "type": "number",
+          "description": "Seconds between full-index disk-space checks, positive and finite, at most 0.5. Lower values detect pressure sooner at the cost of more metadata reads."
+        },
         "code_scip_full_enabled": {
           "default": true,
           "type": "boolean",

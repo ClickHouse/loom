@@ -491,8 +491,9 @@ process on both the checkout and scratch filesystems. The default is 5 GiB; the
 value must be positive and finite. Scratch files use `code_scip_work_dir`, or the
 system temporary directory when that setting is empty.
 
-The check runs before checkout preparation, every half second while preparing
-and producing the delta, and before applying it. A failed measurement or a
+The check runs before checkout preparation, during preparation and delta
+production, and before applying it. `code_scip_disk_check_interval_s` defaults to
+0.5 seconds and must be positive, finite and at most 0.5 seconds. A failed measurement or a
 detected reserve breach cancels production through the repository job's existing child
 cleanup. Its temporary output is removed after that cleanup. The candidate is
 not applied and the last published index and watermark remain in place. The
@@ -511,9 +512,10 @@ To restore a full-index schedule paused for disk pressure:
 2. Confirm the CLI that the scheduled command actually runs contains this guard,
    with its reviewed source and configuration. A merged change alone does not
    update an installed CLI.
-3. Verify both writable filesystems have more than the configured reserve free,
-   with headroom for the expected output and shared activity. An unavailable
-   measurement is not admission.
+3. Record the available space on both writable filesystems and verify the
+   installed guard refuses unavailable measurements and values at or below the
+   reserve. A run needs headroom above it for output and shared activity; a
+   qualified refusal is evidence of protection, not a completed index.
 4. Restore only the saved full-index entry into the current schedule, preserving
    unrelated entries. Check the installed schedule and the next run's outcome;
    a refusal or cancellation is not a completed full index.

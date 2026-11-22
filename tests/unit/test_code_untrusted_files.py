@@ -571,7 +571,14 @@ def _clang_host(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(scip_delta.settings, "code_scip_clang_path", str(tmp_path / "scip-clang"))
 
 
+@pytest.fixture
+def _full_index_space(monkeypatch):
+    # These file-validation cases need a known filesystem input to reach the delta.
+    monkeypatch.setattr(scip_full.shutil, "disk_usage", lambda path: SimpleNamespace(free=2**60))
+
+
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_full_index_space")
 @pytest.mark.parametrize("target", _LINK_TARGETS)
 async def test_the_full_index_refuses_a_linked_delta_and_keeps_no_copy(
     monkeypatch, tmp_path: Path, target
@@ -595,6 +602,7 @@ async def test_the_full_index_refuses_a_linked_delta_and_keeps_no_copy(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_full_index_space")
 async def test_the_full_index_reads_and_keeps_a_plain_delta(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(scip_full, "move_checkout", AsyncMock())
     monkeypatch.setattr(scip_full, "check_held", lambda: None)
@@ -616,6 +624,7 @@ async def test_the_full_index_reads_and_keeps_a_plain_delta(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("_full_index_space")
 async def test_the_full_index_keeps_an_invalid_delta_for_inspection(
     monkeypatch, tmp_path: Path
 ) -> None:

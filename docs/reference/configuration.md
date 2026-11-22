@@ -441,6 +441,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_SCIP_CLANG_JOBS` | `int` | `0` |  | scip-clang's parallel jobs in a delta or full run; 0 = half the CPUs the host shows (a container sees the node's). Each job holds a translation unit's AST: a few GiB for a large C++ tree. |
 | `LOOM_CODE_SCIP_WORK_DIR` | `str` | `''` |  | Where the C++ harness writes its index and delta (several GB for a full run of a large tree); "" = the system temp dir. |
 | `LOOM_CODE_SCIP_MIN_FREE_DISK_GB` | `float` | `5.0` |  | Full indexes refuse to start or cancel delta production at this many GiB free on the checkout or scratch filesystem. Positive; not a disk reservation. |
+| `LOOM_CODE_SCIP_DISK_CHECK_INTERVAL_S` | `float` | `0.5` |  | Seconds between full-index disk-space checks, positive and finite, at most 0.5. Lower values detect pressure sooner at the cost of more metadata reads. |
 | `LOOM_CODE_SCIP_DELTA_MAX_TUS` | `int` | `200` |  | Max translation units one delta indexes; past it only the changed `.cpp` files are indexed and the header fan-out heals on the next full run. |
 | `LOOM_CODE_SCIP_DELTA_TIMEOUT_SECONDS` | `int` | `3600` |  | Seconds the C++ delta harness may run before it is killed. |
 | `LOOM_CODE_SCIP_DELTA_FILE_MAX_MB` | `int` | `180` | live | Largest compiler-tier delta file the server reads, in MiB; a larger one fails the entry's pass. It bounds the work of an entry's pass and the path text kept (code-index-operations.md). |

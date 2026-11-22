@@ -1273,6 +1273,9 @@ class CodeSettings(BaseModel):
     # Full indexes refuse to start or cancel delta production at this many GiB
     # free on the checkout or scratch filesystem. Positive; not a disk reservation.
     code_scip_min_free_disk_gb: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    # Seconds between full-index disk-space checks, positive and finite, at most
+    # 0.5. Lower values detect pressure sooner at the cost of more metadata reads.
+    code_scip_disk_check_interval_s: float = Field(default=0.5, gt=0, le=0.5, allow_inf_nan=False)
     # Max translation units one delta indexes; past it only the changed `.cpp` files are
     # indexed and the header fan-out heals on the next full run.
     code_scip_delta_max_tus: int = 200

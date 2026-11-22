@@ -343,7 +343,7 @@ def full_run(tmp_path, monkeypatch):
     monkeypatch.setattr(app, "apply_delta", AsyncMock(side_effect=apply))
     monkeypatch.setattr(app, "mark_done", AsyncMock())
     monkeypatch.setattr(app.shutil, "disk_usage", disk_usage)
-    monkeypatch.setattr(app, "_DISK_CHECK_SECONDS", 0.001, raising=False)
+    monkeypatch.setattr(settings, "code_scip_disk_check_interval_s", 0.001)
     repo = SimpleNamespace(set_state=AsyncMock())
     cfg = SimpleNamespace(org="example", namespace="source")
 
@@ -446,11 +446,12 @@ async def test_each_writable_volume_is_checked(full_run, monkeypatch, failing_vo
 @pytest.mark.asyncio
 async def test_unreadable_free_space_fails_closed(full_run, monkeypatch):
     def unavailable(path):
-        raise OSError("filesystem unavailable")
+        raise OSError("private volume detail")
 
     monkeypatch.setattr(app.shutil, "disk_usage", unavailable)
-    with pytest.raises(app.FullIndexFailed, match="disk"):
+    with pytest.raises(app.FullIndexFailed, match="disk") as exc:
         await full_run.run()
+    assert "private volume detail" not in str(exc.value)
     app.move_checkout.assert_not_awaited()
     app.apply_delta.assert_not_awaited()
 
@@ -586,3 +587,11 @@ def test_disk_reserve_is_positive_and_finite(reserve):
 
     with pytest.raises(ValueError, match="code_scip_min_free_disk_gb"):
         Settings(code_scip_min_free_disk_gb=reserve)
+
+
+@pytest.mark.parametrize("interval", [0, -1, float("inf"), float("nan"), 0.5001])
+def test_disk_sampling_period_is_positive_finite_and_bounded(interval):
+    from server.settings import Settings
+
+    with pytest.raises(ValueError, match="code_scip_disk_check_interval_s"):
+        Settings(code_scip_disk_check_interval_s=interval)
