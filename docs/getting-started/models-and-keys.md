@@ -722,7 +722,13 @@ Provider outcomes are passive, process-local observations of actual calls; polli
 health makes no model request. No recorded outcome is not proof of working inference.
 A later recorded success clears that provider's failure. The `compatible` embedding
 provider does not populate `providers`, so `providers_degraded: false` does not validate
-that endpoint. Check its request errors and exercise retrieval. After checking configuration,
-use the [end-to-end smoke](../operations/monitoring.md#smoke-test) and try a generated
-answer to exercise both providers. The smoke makes model calls and can incur charges.
-For a stored memory missing from search, also check the embedding backlog described there.
+that endpoint. Check its request errors and exercise retrieval.
+
+After checking configuration, use the [end-to-end smoke](../operations/monitoring.md#smoke-test)
+with fresh authorized input and confirm a new embedding call. To check the LLM, use
+[repository Q&A](../guides/repository-questions.md) on a readable indexed namespace with
+`synthesize: true` and `no_cache: true`. An abstention can skip synthesis, so confirm a
+new provider outcome or request trace tied to the probe on the serving process.
+A missing observation leaves inference unverified; returned prose alone can come from
+cache. These probes make model calls and can incur charges. For a stored memory missing
+from search, also check the embedding backlog described in the smoke guide.

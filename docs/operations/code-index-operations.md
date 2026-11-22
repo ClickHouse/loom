@@ -220,9 +220,10 @@ docker exec loom-workers loom code backfill-prs --namespace code-myrepo --org ac
   an operator `git_dir` must be writable by the `loom` user. Network: a host with an
   empty disk makes one full clone per indexed repository; keep `LOOM_CODE_REPOS_ROOT`
   on a persistent volume so a rollout does not re-clone every mirror on every pod.
-- `backfill` parses, chunks, extracts symbols and edges, and embeds each file. It is
-  resumable: re-run it after an interruption. `--phase index` then `--phase embed` splits
-  the work, since the unembedded rows are the embed phase's queue. `--commit <sha>` pins
+- `backfill` parses, chunks, and extracts symbols and edges. With `--embed`, it also
+  embeds each file. It is resumable: re-run it after an interruption.
+  `--phase index` then `--phase embed` splits the work, since the unembedded rows are
+  the embed phase's queue. `--commit <sha>` pins
   the tree (and implies `--no-fetch`); `--concurrency N` parallelises files; `--limit N`
   indexes a sample.
 - The first full backfill of a namespace also re-derives every file's edges after the
@@ -430,13 +431,14 @@ memory the workers process has. The full index of such a tree takes about an hou
   `git gc --no-prune` every `LOOM_CODE_MIRROR_GC_INTERVAL_H`, under the same rules as
   the mirrors (below). Every git command a tier runs in a checkout has auto-gc and
   background maintenance off, so no fetch starts a repack.
-- **Entry locks.** A full pass and a delta never work on the same entry at once: each
-  takes the entry's lock file in `LOOM_CODE_SCIP_LOCK_DIR` (`var/cron/locks`),
+- **C/C++ entry locks.** The `code_scip_full` and `code_scip_delta` workers never work
+  on the same entry at once: each takes the entry's lock file in
+  `LOOM_CODE_SCIP_LOCK_DIR` (`var/cron/locks`),
   `scip.<org>.<namespace>.lock` with both names percent-encoded
   (`loom code scip-lock-path --org ORG --namespace NS` prints it). A full pass waits for
   a delta already on its entry; a delta skips an entry a full pass holds and names it
   under `skipped` ("entry lock held (full pass running)"). Different entries run side by
-  side. Every pass also takes the entry's key in ClickHouse (`scip_entry:<org>/<namespace>`
+  side. These passes also take the entry's key in ClickHouse (`scip_entry:<org>/<namespace>`
   in `loom._migration_lock`), so
   passes on two hosts exclude each other too; a dead holder's key expires after 120 s.
   A pass that cannot take the key (ClickHouse or Keeper unreachable) fails instead of
