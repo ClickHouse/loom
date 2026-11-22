@@ -87,7 +87,7 @@ async def access() -> None:
 
 @asynccontextmanager
 async def synthetic_server(
-    monkeypatch: pytest.MonkeyPatch, *, tools: bool = False
+    monkeypatch: pytest.MonkeyPatch, *, tools: bool = False, both: bool = False
 ) -> AsyncIterator[dict[str, Any]]:
     state: dict[str, Any] = {
         "requests": [],
@@ -154,6 +154,8 @@ async def synthetic_server(
             "text": state["text"],
         }
         result = {"documents": [document]} if params.name == "find" else document
+        if params.name == "find" and state.get("paginate") and "cursor" not in params.arguments:
+            result["cursor"] = state.get("page_cursor", "page-2")
         return types.CallToolResult(content=[], structuredContent=result)
 
     server: Server[Any] = Server("synthetic-source")
@@ -170,10 +172,10 @@ async def synthetic_server(
     async def tool_call(request: Any) -> types.ServerResult:
         return types.ServerResult(await call_tool(None, request.params))
 
-    if tools:
+    if tools or both:
         server.request_handlers[types.ListToolsRequest] = tool_listing
         server.request_handlers[types.CallToolRequest] = tool_call
-    else:
+    if not tools or both:
         server.request_handlers[types.ListResourcesRequest] = resource_listing
         server.request_handlers[types.ReadResourceRequest] = resource_read
     manager = StreamableHTTPSessionManager(
@@ -802,3 +804,106 @@ def test_schema_hardening_retains_supported_subset_validation() -> None:
     for invalid in ({"rows": [], "count": 1}, {"rows": ["one"], "count": 3}):
         with pytest.raises(source.MCPSourceError, match="schema"):
             source._validate(schema, invalid, 1024)
+
+
+def paginated_config() -> source.MCPSourceConfig:
+    conf = config(tools=True)
+    assert conf.search is not None
+    return replace(conf, search=replace(conf.search, next_cursor_path=("cursor",)))
+
+
+@pytest.mark.asyncio
+async def test_state_guard_mapped_search_accepts_final_optional_cursor_omission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with (
+        synthetic_server(monkeypatch, tools=True) as state,
+        client(paginated_config()) as remote,
+    ):
+        state["paginate"] = True
+        first = await remote.search("alpha")
+        assert first.next_cursor == "page-2" and not first.complete
+        final = await remote.search("alpha", first.next_cursor)
+        assert final.next_cursor is None and final.complete
+        assert len(final.items) == 1
+        assert all(item.receipt is None for item in final.items)
+
+
+@pytest.mark.asyncio
+async def test_state_guard_same_cursor_text_is_independent_across_scopes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async with (
+        synthetic_server(monkeypatch, tools=True, both=True) as state,
+        client(paginated_config()) as remote,
+    ):
+        state["paginate"], state["next"] = True, "page-2"
+        alpha = await remote.search("alpha")
+        beta = await remote.search("beta")
+        resources = await remote.list_resources()
+        assert alpha.next_cursor == beta.next_cursor == resources.next_cursor == "page-2"
+        assert (await remote.search("alpha", alpha.next_cursor)).complete
+        assert (await remote.search("beta", beta.next_cursor)).complete
+        state["next"] = None
+        assert (await remote.list_resources(resources.next_cursor)).complete
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["replay", "cross-scope", "reissue"])
+async def test_state_guard_scoped_cursor_still_refuses_replay_or_unissued_scope(
+    monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    async with (
+        synthetic_server(monkeypatch, tools=True) as state,
+        client(paginated_config()) as remote,
+    ):
+        state["paginate"] = True
+        first = await remote.search("alpha")
+        if mode == "replay":
+            assert (await remote.search("alpha", first.next_cursor)).complete
+        query = "beta" if mode == "cross-scope" else "alpha"
+        cursor = None if mode == "reissue" else first.next_cursor
+        with pytest.raises(
+            source.MCPSourceError, match="protocol" if mode == "reissue" else "denied"
+        ):
+            await remote.search(query, cursor)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cursor", ["", None, 17])
+async def test_state_guard_present_invalid_cursor_is_never_completion(
+    monkeypatch: pytest.MonkeyPatch, cursor: Any
+) -> None:
+    async with (
+        synthetic_server(monkeypatch, tools=True) as state,
+        client(paginated_config()) as remote,
+    ):
+        state["paginate"], state["page_cursor"] = True, cursor
+        with pytest.raises(source.MCPSourceError):
+            await remote.search("alpha")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["denied", "limit", "protocol"])
+async def test_state_guard_search_cannot_publish_after_terminal_failure(
+    monkeypatch: pytest.MonkeyPatch, code: source.ErrorCode
+) -> None:
+    task: asyncio.Task[source.MCPPage] | None = None
+
+    async def authority() -> None:
+        if asyncio.current_task() is task and state["calls"]:
+            assert remote._transport is not None
+            remote._transport.failure = code
+
+    async with synthetic_server(monkeypatch, tools=True) as state:
+        async with source.MCPSourceClient(
+            config(tools=True), source.MCPBearer(SECRET, ENDPOINT), validate_access=authority
+        ) as remote:
+            task = asyncio.create_task(remote.search("alpha"))
+            with pytest.raises(source.MCPSourceError, match=code):
+                await task
+            assert state["calls"][-1][0] == "find"
+            before = len(state["requests"])
+            with pytest.raises(source.MCPSourceError, match=code):
+                await remote.search("beta")
+            assert len(state["requests"]) == before
