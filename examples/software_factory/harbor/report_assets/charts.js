@@ -16,6 +16,16 @@ const names = {
 const arms = Object.keys(data.arms);
 const labelFor = (arm) => names[arm] || data.arms[arm] || arm;
 const byId = (id) => document.getElementById(id);
+function reportLink(value) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value, window.location.href);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
 const node = (tag, text, cls) => {
   const element = document.createElement(tag);
   if (text !== undefined) element.textContent = text;
@@ -259,9 +269,10 @@ function attemptsTable(rows) {
     ])
       item.append(node("td", text));
     const cell = node("td");
-    if (row.url) {
+    const target = reportLink(row.url);
+    if (target) {
       const link = node("a", "Open trajectory");
-      link.href = row.url;
+      link.href = target;
       cell.append(link);
     }
     item.append(cell);
@@ -293,8 +304,9 @@ function render() {
     `${new Set(complete.map((row) => row.task)).size} / ${new Set(rows.map((row) => row.task)).size}`;
   byId("progress").textContent = `${complete.length} / ${rows.length}`;
   byId("error-count").textContent = rows.filter((row) => row.state === "error").length;
-  byId("comparison").hidden = !data.comparison_url;
-  if (data.comparison_url) byId("comparison").href = data.comparison_url;
+  const comparison = reportLink(data.comparison_url);
+  byId("comparison").hidden = !comparison;
+  if (comparison) byId("comparison").href = comparison;
   summary(rows);
   issuesTable(rows);
   chart(rows);

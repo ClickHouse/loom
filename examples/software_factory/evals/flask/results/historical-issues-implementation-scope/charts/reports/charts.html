@@ -25,6 +25,16 @@ const colors = {
   "loom-scip": "#eea650",
   "loom-scip-memory": "#cf8ce8",
 };
+function reportLink(value) {
+  if (typeof value !== "string" || !value) return null;
+  try {
+    const url = new URL(value, window.location.href);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
 const node = (tag, text, cls) => {
   const item = document.createElement(tag);
   if (text !== undefined) item.textContent = text;
@@ -140,7 +150,9 @@ function render() {
   document.getElementById("subtitle").textContent = `${data.name} · ${data.model || "model unavailable"}`;
   document.getElementById("progress").textContent =
     `${data.observed}/${data.scheduled} attempts observed · ${data.complete ? (data.evaluation_complete ? "complete" : "evaluations running") : "running"}`;
-  document.getElementById("comparison").href = data.comparison_url || "/jobs";
+  const comparison = reportLink(data.comparison_url);
+  document.getElementById("comparison").hidden = !comparison;
+  if (comparison) document.getElementById("comparison").href = comparison;
   const rows = selected();
   document.getElementById("overview").replaceChildren(...charts(rows).children);
   const issues = document.getElementById("issues");
@@ -172,9 +184,10 @@ function render() {
       item.append(cell);
     }
     const link = node("td");
-    if (row.url) {
+    const target = reportLink(row.url);
+    if (target) {
       const anchor = node("a", "Open trajectory");
-      anchor.href = row.url;
+      anchor.href = target;
       link.append(anchor);
     }
     item.append(link);

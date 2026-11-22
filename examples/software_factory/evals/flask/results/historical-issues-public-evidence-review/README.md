@@ -9,3 +9,7 @@ All Loom arms have identical memory tools; only history-seeded arms receive prio
 Every scheduled failure and A/A control is retained. Unknown measurements are null. The charts compare primary arms; A/A controls have separate tables. Judge opinions are separate from independent hidden-test success. No automatic performance or merge claim is made.
 
 Repeat the published code and inputs with your own credentials. Model answers, latency and cost can vary between runs.
+
+Chart links accept HTTP and HTTPS URLs. The presentation link handling is updated;
+recorded chart data, measurements, protocol and execution provenance retain their
+original bytes.
