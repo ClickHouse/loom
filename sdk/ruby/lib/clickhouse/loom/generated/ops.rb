@@ -693,7 +693,7 @@ module ClickHouse
         end
 
         # `code.repos` (viewer, read-only).
-        # Lists the code namespaces (repo@branch entries) configured on this
+        # List readable repositories and permitted access-request metadata.
         def repos(body = nil, request_options: nil, **fields)
           call_op("code.repos", body, fields, request_options)
         end
