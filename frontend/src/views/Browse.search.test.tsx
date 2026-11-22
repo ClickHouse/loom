@@ -96,6 +96,18 @@ describe("Browse: a full page", () => {
     expect(await screen.findByRole("button", { name: "Request access" })).toBeInTheDocument();
   });
 
+  it("points a repository the server finds past the page to Repositories, not to a request", async () => {
+    browseNamespaces.mockResolvedValueOnce(page(200));
+    render(<Browse />);
+    expect(await screen.findByText("team-000")).toBeInTheDocument();
+
+    browseNamespaces.mockResolvedValueOnce([{ ...row("code-repo"), kind: "code" }]);
+    await userEvent.type(screen.getByLabelText("Search namespaces"), "code-repo");
+    expect(await screen.findByText(/is a repository/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Repositories" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Request access" })).toBeNull();
+  });
+
   it("shows a failed search as an error with Retry, not as no match", async () => {
     const { ApiError } = await import("../api");
     browseNamespaces.mockResolvedValueOnce(page(200));

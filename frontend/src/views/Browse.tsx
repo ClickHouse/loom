@@ -95,7 +95,14 @@ export function Browse() {
   // The browse read came back full (BROWSE_LIMIT rows): more may exist than the page holds.
   const [full, setFull] = useState(false);
   // The server's answer for a search over a full page, tagged with the text it answers.
-  const [searched, setSearched] = useState<{ q: string; rows: BrowseEntry[] | null; error: unknown } | null>(null);
+  // `repos` keeps the repositories the server's search found: they leave the list but still
+  // point the typed name to the Repositories page.
+  const [searched, setSearched] = useState<{
+    q: string;
+    rows: BrowseEntry[] | null;
+    repos: string[];
+    error: unknown;
+  } | null>(null);
   const [searchReads, setSearchReads] = useState(0);
   const [showAll, setShowAll] = useState(false);
   const publicList = useRef<HTMLDivElement | null>(null);
@@ -264,7 +271,12 @@ export function Browse() {
       browseNamespaces(identity.org, { query: serverQuery, limit: BROWSE_LIMIT, signal: ctl.signal })
         .then((found) => {
           if (ctl.signal.aborted) return;
-          setSearched({ q: serverQuery, rows: found.filter((r) => r.kind !== "code"), error: null });
+          setSearched({
+            q: serverQuery,
+            rows: found.filter((r) => !isCodeKind(r.kind)),
+            repos: found.filter((r) => isCodeKind(r.kind)).map((r) => r.namespace),
+            error: null,
+          });
           setRequireMap((prev) => {
             const next = { ...prev };
             for (const b of found) next[b.namespace] = !!b.requires_approval;
@@ -272,7 +284,7 @@ export function Browse() {
           });
         })
         .catch((e: unknown) => {
-          if (!ctl.signal.aborted) setSearched({ q: serverQuery, rows: null, error: e });
+          if (!ctl.signal.aborted) setSearched({ q: serverQuery, rows: null, repos: [], error: e });
         });
     }, SEARCH_DEBOUNCE_MS);
     // A retype, or a reload of the page under it, aborts this read before it can land.
@@ -301,11 +313,13 @@ export function Browse() {
   const typedRole = mineRows?.find((r) => r.namespace === typedName && r.status !== "pending")?.role;
   // The role the server would act on, for the request card: an admin claim admins every namespace.
   const typedReach = roleOnNamespace(whoami, mineRows, typedName);
-  const elsewhere = repoNames.includes(typedName)
-    ? "repository"
-    : isCollectionName(typedName) && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
-      ? "collection"
-      : null;
+  // A repository past the first page is known only from the server's search.
+  const elsewhere =
+    repoNames.includes(typedName) || answer?.repos.includes(typedName)
+      ? "repository"
+      : isCollectionName(typedName) && typedName.length > COLLECTION_PREFIX.length && !isPersonalCollection(typedName)
+        ? "collection"
+        : null;
   const offersRequest =
     NAMESPACE_NAME.test(typedName) &&
     !elsewhere &&
