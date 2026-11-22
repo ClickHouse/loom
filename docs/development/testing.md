@@ -396,6 +396,13 @@ with the race detector. The other jobs build their package and load or compile a
 independent consumer outside the source tree. Java adapter modules have their own
 requirements and are not part of the core job.
 
+The Go job also runs the pinned vulnerability analyzer on production packages under
+the selected Linux toolchain. Before scanning the SDK, it requires detection of a
+known vulnerable call and its absence after that dependency is fixed in a temporary
+control module. No control program is executed or added to the SDK dependencies.
+The scan covers known reachable calls for that build; reflection, other build tags
+and other supported Go versions need separate qualification.
+
 The .NET job builds the unchanged target assembly and runs it on the supported LTS
 runtime with explicit major-version roll-forward. Its isolated installation verifies
 the selected SDK and runtime, without using preinstalled runner versions. This does not qualify the older

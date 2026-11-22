@@ -57,6 +57,55 @@ jobs:
               output.write(f"Go: build and vet passed; {passed} tests passed with the race detector.\n")
           PY
 
+      - name: Check known reachable Go vulnerabilities and verify the analyzer
+        env:
+          GOTOOLCHAIN: local
+          GOTELEMETRY: "off"
+          GOMAXPROCS: "2"
+          GOFLAGS: -p=2
+          GOPROXY: https://proxy.golang.org
+          GOSUMDB: sum.golang.org
+        run: |
+          export GOBIN="$RUNNER_TEMP/govulncheck/bin"
+          timeout --kill-after=10s 180s go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          control="$RUNNER_TEMP/govulncheck/control"
+          mkdir -p "$control"
+          printf '%s\n' 'package main' 'import "golang.org/x/text/language"' 'func main() { _, _ = language.Parse("en") }' > "$control/main.go"
+          for version in 0.3.6 0.3.7; do
+            printf 'module example.invalid/loom-vulnerability-control\n\ngo 1.22\n\nrequire golang.org/x/text v%s\n' "$version" > "$control/go.mod"
+            (
+              cd "$control"
+              timeout --kill-after=10s 120s go mod tidy
+              timeout --kill-after=10s 120s "$GOBIN/govulncheck" -format=json ./... > "$RUNNER_TEMP/go-vulnerability-$version.json"
+            )
+          done
+          python3 - <<'PYVULN'
+          import json, os
+          from pathlib import Path
+          def reaches_control(path):
+              assert path.stat().st_size <= 4 * 1024 * 1024
+              raw = path.read_text()
+              decoder = json.JSONDecoder()
+              rows = []
+              while raw.strip():
+                  row, end = decoder.raw_decode(raw.lstrip())
+                  assert isinstance(row, dict)
+                  rows.append(row)
+                  raw = raw.lstrip()[end:]
+              assert rows, "The analyzer returned no JSON record"
+              return any(
+                  row.get("finding", {}).get("osv") == "GO-2021-0113"
+                  and any(frame.get("package") == "golang.org/x/text/language" and frame.get("function") == "Parse"
+                          for frame in row["finding"].get("trace", []))
+                  for row in rows
+              )
+          directory = Path(os.environ["RUNNER_TEMP"])
+          assert reaches_control(directory / "go-vulnerability-0.3.6.json"), "The known vulnerable call was not detected"
+          assert not reaches_control(directory / "go-vulnerability-0.3.7.json"), "The fixed control still reports that call"
+          PYVULN
+          timeout --kill-after=10s 180s "$GOBIN/govulncheck" ./...
+          printf '%s\n' 'Go vulnerability analysis passed for the selected Go 1.27.4 Linux build. The known vulnerable and fixed-call controls passed. This covers known reachable calls under this build, not reflection, all build tags or every supported Go version.' >> "$GITHUB_STEP_SUMMARY"
+
   java:
     name: Java SDK (tests and jar consumer)
     runs-on: ubuntu-24.04
