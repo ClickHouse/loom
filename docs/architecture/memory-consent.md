@@ -94,6 +94,13 @@ from the authoritative current heads and withhold any digest whose source is mis
 changed, retired, expired, sensitive, incomplete or awaiting review. A metadata touch
 keeps an unchanged fact valid. A legacy digest without a complete proof is withheld.
 
+Publication checks the complete digest text and each source fact against the effective
+blacklist before any write. Every digest reader repeats the pattern check, so a later
+pattern also withholds an existing digest without waiting for its source sweep.
+Under Postgres the publisher holds the checked policy generations through its final
+send; a changed generation refuses publication. The composition root supplies the
+pattern checker to stores, and an unwired or unreadable policy fails closed.
+
 Digest listing, outline and evidence export scan past withheld candidates to fill their
 requested rows. `memory_digest_listing_page_size` bounds candidates per query and
 `memory_digest_listing_max_pages` bounds queries per call; both default to 256. If that
@@ -106,6 +113,8 @@ digest from the same session.
 
 Period and contrast synthesis remain proposals. A model-generated restatement therefore
 waits for independent review before ordinary fact retrieval serves it.
+Period synthesis checks its generated text against the blacklist before embedding or
+writing, and binds the native commit to that checked policy.
 
 ## Rollout
 

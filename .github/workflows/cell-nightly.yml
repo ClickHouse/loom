@@ -1,0 +1,74 @@
+name: Cell nightly acceptance
+
+on:
+  schedule:
+    - cron: "43 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cell-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  clickhouse:
+    name: the ClickHouse release this run tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: resolve
+        run: |
+          image=$(bash dev/clickhouse_release.sh)
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+  cell-trigger-acceptance:
+    name: Cell trigger end-to-end acceptance
+    needs: clickhouse
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      LOOM_ENV_FILE: ""
+      LOOM_SETTINGS_FILE: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        id: python
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.12.19"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install the locked native dependencies
+        run: uv sync --locked --python "${{ steps.python.outputs.python-path }}" --extra dev --extra code
+      - name: Check native tools
+        run: |
+          command -v docker
+          command -v openssl
+          docker info >/dev/null
+      - name: Check triggers against real API writes and delivery passes
+        env:
+          CLICKHOUSE_IMAGE: ${{ needs.clickhouse.outputs.image }}
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/trigger-bytecode
+        run: .venv/bin/python -B scripts/gates/cell_trigger_acceptance.py --clickhouse-image "$CLICKHOUSE_IMAGE"
+      - name: Remove only this attempt's created stores
+        if: always()
+        run: .venv/bin/python -B scripts/gates/cell_trigger_acceptance.py --cleanup-only
+      - name: Retain sanitized trigger acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cell-trigger-acceptance
+          path: ${{ runner.temp }}/cell-trigger-artifacts
+          retention-days: 7
