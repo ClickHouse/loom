@@ -104,6 +104,19 @@ class RetrievalTools(unittest.TestCase):
             )
         self.assertEqual(len(requests), 1)
 
+        for pattern, regex in (
+            ("foo(", True),
+            ("(?<=foo) bar", True),
+            ("foo", "true"),
+            ("x", False),
+            ("x" * 1001, False),
+        ):
+            with self.subTest(pattern=pattern, regex=regex), self.assertRaises(ValueError):
+                self.context.selected("code.grep", {"pattern": pattern, "regex": regex})
+        self.assertEqual(len(requests), 1)
+        self.context.selected("code.grep", {"pattern": "foo(", "regex": False})
+        self.assertEqual(len(requests), 2)
+
     def test_only_explicit_model_reads_can_dispatch(self):
         self.assertFalse(hasattr(self.context, "lookup"))
         self.assertEqual(self.context.requests, 0)

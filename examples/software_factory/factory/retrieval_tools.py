@@ -7,6 +7,7 @@ import time
 
 from examples.software_factory.factory.context import Context
 from examples.software_factory.factory.model import digest, tool
+from examples.software_factory.factory.patterns import compile_regex
 
 OPERATIONS = {"code.symbol", "code.grep", "code.search", "code.outline", "code.enclosing"}
 TOOL_OPS = {"loom_" + op.replace(".", "_"): op for op in sorted(OPERATIONS)}
@@ -20,8 +21,14 @@ def request_body(op, args, *, org, namespace, memory_namespaces=()):
         body.update(include_body=True)
         body["locations"] = list(dict.fromkeys(body["locations"]))
     elif op == "code.grep":
-        if not body.get("pattern"):
-            raise ValueError("Search pattern must be nonempty")
+        pattern = body.get("pattern")
+        if not isinstance(pattern, str) or not 2 <= len(pattern) <= 1000:
+            raise ValueError("Search pattern must contain 2 to 1000 characters")
+        regex = body.get("regex", False)
+        if type(regex) is not bool:
+            raise ValueError("Search requires a boolean regex flag")
+        if regex:
+            compile_regex(pattern)
     if op in OPERATIONS:
         body["include_lessons"] = bool(memory_namespaces)
         if memory_namespaces:
@@ -46,7 +53,7 @@ def schemas() -> list[dict]:
             "Use | for alternation. Narrow path_prefix when a file is "
             "known; follow next_cursor with cursor for more matches.",
             {
-                "pattern": string,
+                "pattern": {"type": "string", "minLength": 2, "maxLength": 1000},
                 "path_prefix": string,
                 "regex": {"type": "boolean"},
                 "cursor": string,

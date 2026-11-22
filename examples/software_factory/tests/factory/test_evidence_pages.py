@@ -68,12 +68,54 @@ class EvidencePages(unittest.TestCase):
         self.assertEqual([row["path"] for row in docs["matches"]], ["docs/lifecycle.rst"])
 
     def test_ordinary_regex_refuses_unsupported_syntax_and_non_boolean_flags(self):
-        import re2
-
-        with self.assertRaises(re2.error):
+        with self.assertRaisesRegex(ValueError, "Invalid RE2 pattern"):
             self.factory.execute("search", {"text": "(?<=needle) value", "regex": True})
         with self.assertRaises(ValueError):
             self.factory.execute("search", {"text": "needle", "regex": "false"})
+
+    def test_invalid_regex_is_a_tool_error_and_the_remaining_batch_runs(self):
+        class Provider:
+            label = "offline-replay"
+            calls = 0
+
+            def step(self, *args):
+                self.calls += 1
+                blocks = (
+                    [
+                        {
+                            "toolUse": {
+                                "toolUseId": "bad",
+                                "name": "search",
+                                "input": {
+                                    "text": "_blueprint_order|_get_blueprint_order|reversed(",
+                                    "regex": True,
+                                },
+                            }
+                        },
+                        {
+                            "toolUse": {
+                                "toolUseId": "good",
+                                "name": "search",
+                                "input": {
+                                    "text": "needle",
+                                },
+                            }
+                        },
+                    ]
+                    if self.calls == 1
+                    else []
+                )
+                return dict(blocks=blocks, usage={}, physical_requests=0, cost_usd=0)
+
+        self.factory.provider = Provider()
+        result = self.factory.run()
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(result["completion_reviews"], 1)
+        self.assertEqual(result["tool_failed_requests"], 1)
+        rows = [json.loads(line) for line in self.factory.ledger.path.read_text().splitlines()]
+        results = [row["result"] for row in rows if row["kind"] == "tool_result"]
+        self.assertIn("Invalid RE2 pattern", results[0]["error"])
+        self.assertEqual(len(results[1]["matches"]), 20)
 
     def test_partial_long_line_can_be_read_without_losing_characters(self):
         first = self.factory.execute("read", {"path": self.path})

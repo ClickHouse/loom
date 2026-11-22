@@ -7,6 +7,7 @@ from itertools import islice
 from pathlib import Path
 
 from examples.software_factory.factory.model import Task, digest
+from examples.software_factory.factory.patterns import compile_regex
 
 
 class Checkout:
@@ -81,14 +82,7 @@ class Checkout:
         if type(offset) is not int or offset < 0:
             raise ValueError("Search offset must be a nonnegative integer")
         # Match the native grep engine without unbounded backtracking on caller patterns.
-        if regex:
-            import re2
-
-            options = re2.Options()
-            options.log_errors = False
-            compiled = re2.compile(text, options=options)
-        else:
-            compiled = None
+        compiled = compile_regex(text) if regex else None
         matches = (
             {"path": path, "line": index, "text": line[:512]}
             for path, content in self.readable_files().items()

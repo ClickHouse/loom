@@ -50,6 +50,16 @@ class NativeAnchorCapture(unittest.IsolatedAsyncioTestCase):
 
 
 class RequestContracts(unittest.TestCase):
+    def test_grep_tool_pattern_bounds_match_the_serving_model(self):
+        from examples.software_factory.factory.retrieval_tools import schemas
+        from server.code.api.models_grep import CodeGrepInput
+
+        tool = next(item for item in schemas() if item["name"] == "loom_code_grep")
+        projected = tool["input_schema"]["properties"]["pattern"]
+        native = CodeGrepInput.model_json_schema()["properties"]["pattern"]
+        for field in ("minLength", "maxLength"):
+            self.assertEqual(projected[field], native[field])
+
     def test_code_and_memory_shapes_are_accepted(self):
         self.assertEqual(validate_requests(requests())["validated"], 17)
 
