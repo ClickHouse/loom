@@ -10,7 +10,9 @@ uv run --no-sync python -m pytest -p tests.unit.conftest tests/contracts/test_ht
 [Schemathesis](https://schemathesis.readthedocs.io/en/stable/guides/python-apps/)
 generates the request cases in process. The **HTTP schema contract** workflow runs the same ten tests on standard public
 runners. Three properties use a twenty-four-example generation budget each from the actual
-`blacklist.list` OpenAPI request schema. They validate successful responses, require
+`blacklist.list` OpenAPI request schema. A generation-only copy selects declared
+fields and limits strings to thirty-two characters; the served schema and response
+validation remain unchanged. Unknown names have a separate fixed regression. They validate successful responses, require
 cross-org and cross-namespace refusal, and require missing or invalid tokens to fail
 before the backing store is called. Six fixed cases check invalid JSON types and
 limit bounds. A fixed Unicode-key case verifies the encoded header and unchanged JSON

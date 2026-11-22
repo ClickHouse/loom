@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -67,7 +68,17 @@ def transport(monkeypatch: pytest.MonkeyPatch):
         ttl_seconds=300,
         is_service_account=True,
     )
-    schema = schemathesis.openapi.from_dict(app.openapi())
+    document = deepcopy(app.openapi())
+    request = document["paths"][_PATH]["post"]["requestBody"]["content"]["application/json"][
+        "schema"
+    ]
+    assert request["type"] == "object"
+    request["additionalProperties"] = False
+    for field in request["properties"].values():
+        if field.get("type") == "string":
+            field["maxLength"] = min(field.get("maxLength", 32), 32)
+            assert field.get("minLength", 0) <= field["maxLength"]
+    schema = schemathesis.openapi.from_dict(document)
     strategy = schema[_PATH]["POST"].as_strategy()
     with TestClient(app) as client:
         yield strategy, client, calls, {"Authorization": "Bearer " + token}
