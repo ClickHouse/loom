@@ -771,11 +771,27 @@ async def test_enclosing_lessons_follow_only_resolved_files(
         resolved = skip != "unresolved"
         return CodeEnclosingOutput(
             results=[
-                {"path": "src/a.py", "start_line": 1 if resolved else 0, "end_line": 5},
-                {"path": "src/a.py", "start_line": 2 if resolved else 0, "end_line": 5},
-                {"path": "missing.py", "start_line": 0, "end_line": 0},
+                {
+                    "path": "src/a.py",
+                    "start_line": 1 if resolved else 0,
+                    "end_line": 5,
+                    "symbol": "cleanup",
+                },
+                {
+                    "path": "src/a.py",
+                    "start_line": 2 if resolved else 0,
+                    "end_line": 5,
+                    "qualified_name": "pkg::finish",
+                },
+                {
+                    "path": "src/a.py",
+                    "start_line": 1 if resolved else 0,
+                    "end_line": 5,
+                    "symbol": "cleanup",
+                },
+                {"path": "missing.py", "start_line": 0, "end_line": 0, "symbol": "missing"},
             ],
-            resolved=2 if resolved else 0,
+            resolved=3 if resolved else 0,
             paths_indexed=1,
             paths_total=2,
             took_ms=0,
@@ -786,17 +802,18 @@ async def test_enclosing_lessons_follow_only_resolved_files(
         CodeEnclosingInput(
             org="acme",
             namespace="code-repo",
-            locations=["src/a.py:2", "src/a.py:3", "missing.py:1"],
+            locations=["src/a.py:2", "src/a.py:3", "src/a.py:4", "missing.py:1"],
             lesson_namespaces=["mem-home", "denied"],
             include_lessons=skip != "argument",
         )
     )
-    assert len(out.results) == 3
+    assert len(out.results) == 4
     if skip != "none":
         assert calls == [] and "lessons" not in out.model_dump()
     else:
         assert calls[0]["paths"] == ["src/a.py"]
         assert calls[0]["nss"] == ["mem-home", "code-repo"]
+        assert calls[0]["query"] == "cleanup pkg::finish"
         assert out.lessons[0]["namespace"] == "mem-home"
 
 
