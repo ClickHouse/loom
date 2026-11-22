@@ -1,29 +1,39 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { build } from "esbuild";
 
+const source = "src/integrations/n8n";
+const destination = "dist/integrations/n8n";
+const entries = [
+  "credentials/LoomApi.credentials",
+  "nodes/Loom/Loom.node",
+  "nodes/LoomMemory/LoomMemory.node",
+  "nodes/LoomMemory/LoomChatHistory",
+  "nodes/client",
+];
 const result = await build({
-  entryPoints: {
-    "credentials/LoomApi.credentials": "credentials/LoomApi.credentials.ts",
-    "nodes/Loom/Loom.node": "nodes/Loom/Loom.node.ts",
-    "nodes/LoomMemory/LoomMemory.node": "nodes/LoomMemory/LoomMemory.node.ts",
-    "nodes/LoomMemory/LoomChatHistory": "nodes/LoomMemory/LoomChatHistory.ts",
-    "nodes/client": "nodes/client.ts",
-  },
-  outdir: "dist",
+  entryPoints: Object.fromEntries(entries.map((entry) => [entry, `${source}/${entry}.ts`])),
+  outdir: destination,
   bundle: true,
   platform: "node",
   format: "cjs",
-  target: "node24",
+  define: { "import.meta.url": "__filename" },
+  target: "node20",
   external: ["n8n-workflow"],
   metafile: true,
   legalComments: "eof",
 });
 
+// The custom-node loader requires .js files; the SDK's root package is ESM.
+writeFileSync(join(destination, "package.json"), JSON.stringify({ type: "commonjs" }));
+for (const file of ["credentials/loom.svg", "nodes/Loom/loom.svg", "nodes/LoomMemory/loom.svg", "LICENSE"]) {
+  cpSync(join(source, file), join(destination, file));
+}
+
 // Ship the licenses of bundled libraries alongside the nodes.
 const licenses = new Map();
 // This registry tarball omits its license; the copy is from its pinned source commit.
-const sourceLicenses = { "js-tiktoken@1.0.21": "vendor-licenses/js-tiktoken.txt" };
+const sourceLicenses = { "js-tiktoken@1.0.21": `${source}/vendor-licenses/js-tiktoken.txt` };
 const used = new Set(
   Object.values(result.metafile.outputs).flatMap((output) =>
     Object.entries(output.inputs)
@@ -53,4 +63,4 @@ for (const input of used) {
     `${metadata.name} ${metadata.version}\n${[...files.map((name) => readFileSync(join(directory, name), "utf8")), ...(sourceLicense ? [readFileSync(sourceLicense, "utf8")] : [])].join("\n")}`,
   );
 }
-writeFileSync("dist/THIRD_PARTY_LICENSES.txt", [...licenses.values()].join("\n\n---\n\n"));
+writeFileSync(join(destination, "THIRD_PARTY_LICENSES.txt"), [...licenses.values()].join("\n\n---\n\n"));

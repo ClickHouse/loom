@@ -1,7 +1,7 @@
 # n8n adapter
 
-The n8n community package stores conversation history and durable facts in a Loom
-deployment through the TypeScript SDK. The nodes add no storage service or local cache.
+The n8n adapter in the TypeScript SDK stores conversation history and durable facts in a Loom
+deployment. The nodes add no storage service or local cache.
 
 ## Interfaces and storage
 
@@ -24,15 +24,28 @@ server derives provenance from the token and operation and enforces namespace gr
 
 ## Packaging
 
-The package bundles the SDK and framework libraries to avoid runtime dependency
-conflicts with other community nodes. Its build includes their license files.
-`n8n-workflow` is the host-provided peer. Development dependencies pin the interfaces
-used by tests; they are not added to Loom's server or SDK dependencies.
+All JavaScript adapters ship in the `@clickhouse/loom` npm artifact. The n8n adapter
+has the same version and publication workflow as the SDK. Its public subpath exports
+the node, credential and history classes in ESM and CommonJS formats.
 
-The package targets self-hosted n8n, with the official node CLI's configuration for
-that target. It does not claim Cloud verification. The release-tag workflow builds
-and checks the package before publishing with an npm trusted publisher and provenance;
-no registry token is stored in the repository.
+The SDK build also produces native `.node.js` and `.credentials.js` files under
+`dist/integrations/n8n`. A nested package manifest marks these files as CommonJS,
+while the SDK root remains ESM. The native files bundle the SDK source and framework
+libraries, with their license files, to avoid runtime conflicts with other nodes.
+`n8n-workflow` is an optional, host-provided peer. The SDK's browser-compatible entry
+points do not import the adapter or its Node.js dependencies.
+
+Self-hosted n8n loads the native files through `N8N_CUSTOM_EXTENSIONS`. This bypasses
+the Community Nodes installer's package naming constraint using n8n's supported
+custom-directory loader. The package manifest also lists the nodes and credential
+for loaders that consume it. The adapter does not claim Cloud verification.
+
+The SDK's distribution tests install its tarball without peers and in a separate,
+locked n8n host. The hosts keep n8n's Zod 3 requirement apart from other frameworks'
+Zod 4 requirement. They load the node files and exercise the adapter against its
+pinned framework interfaces. The main release workflow publishes the
+verified SDK tarball through its existing npm trusted publisher. There is no
+integration-specific npm publisher, version or tag.
 
 ## Invariants
 
@@ -44,9 +57,10 @@ no registry token is stored in the repository.
 
 ## Source entry points
 
-- `integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts`: message persistence.
-- `integrations/n8n/nodes/LoomMemory/LoomMemory.node.ts`: framework memory adapter.
-- `integrations/n8n/nodes/Loom/Loom.node.ts`: durable memory and document actions.
-- `.github/workflows/n8n-publish.yml`: checks and trusted publishing.
+- `sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomChatHistory.ts`: message persistence.
+- `sdk/typescript/src/integrations/n8n/nodes/LoomMemory/LoomMemory.node.ts`: framework memory adapter.
+- `sdk/typescript/src/integrations/n8n/nodes/Loom/Loom.node.ts`: durable memory and document actions.
+- `sdk/typescript/scripts/build-n8n.mjs`: native node bundles and licenses.
+- `.github/workflows/release.yml`: shared SDK trusted publishing.
 
 [Framework setup](../features/integrations/frameworks.md#n8n)

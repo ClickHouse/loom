@@ -1,5 +1,5 @@
-import { Agent } from "@clickhouse/loom";
 import type { IExecuteFunctions, INodeProperties, ISupplyDataFunctions } from "n8n-workflow";
+import { Agent } from "../../../agent.js";
 
 export const identityProperties: INodeProperties[] = [
   { displayName: "Organization", name: "org", type: "string", default: "", required: true },

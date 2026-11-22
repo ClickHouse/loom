@@ -68,6 +68,16 @@
         "default": "./dist/integrations/mastra.cjs"
       }
     },
+    "./integrations/n8n": {
+      "import": {
+        "types": "./dist/integrations/n8n.d.mts",
+        "default": "./dist/integrations/n8n.mjs"
+      },
+      "require": {
+        "types": "./dist/integrations/n8n.d.cts",
+        "default": "./dist/integrations/n8n.cjs"
+      }
+    },
     "./integrations/openai-agents": {
       "import": {
         "types": "./dist/integrations/openai-agents.d.mts",
@@ -96,13 +106,14 @@
     "examples"
   ],
   "scripts": {
-    "build": "tsdown",
+    "build": "tsdown && node scripts/build-n8n.mjs",
     "type-check": "tsc --noEmit",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:dist": "vitest run -c vitest.dist.config.ts",
+    "test:dist": "vitest run -c vitest.dist.config.ts && node scripts/test-n8n.mjs",
+    "test:n8n:live": "node scripts/test-n8n.mjs --live",
     "test:integ": "vitest run -c vitest.integ.config.ts",
     "check:version": "node scripts/check-version.mjs",
     "check:readme": "node scripts/check-readme.mjs",
@@ -140,6 +151,16 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/integrations/n8n/credentials/LoomApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/integrations/n8n/nodes/Loom/Loom.node.js",
+      "dist/integrations/n8n/nodes/LoomMemory/LoomMemory.node.js"
+    ]
+  },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=1.8.0 <1.9.0 || >=1.11.0 <1.12.0",
     "@aws-sdk/client-secrets-manager": "^3.0.0",
@@ -147,7 +168,8 @@
     "@langchain/core": ">=1.0.0 <2.0.0",
     "@mastra/core": ">=1.83.0 <1.84.0",
     "@openai/agents": ">=0.22.0 <0.23.0",
-    "ai": ">=7.0.0 <8.0.0"
+    "ai": ">=7.0.0 <8.0.0",
+    "n8n-workflow": ">=2.47.2 <3"
   },
   "peerDependenciesMeta": {
     "@anthropic-ai/sdk": {
@@ -170,6 +192,9 @@
     },
     "ai": {
       "optional": true
+    },
+    "n8n-workflow": {
+      "optional": true
     }
   },
   "devDependencies": {
@@ -178,11 +203,14 @@
     "@biomejs/biome": "^2.5.14",
     "@google/adk": "2.5.0",
     "@langchain/core": "1.4.0",
+    "@langchain/classic": "1.0.27",
     "@mastra/core": "1.83.0",
     "@mastra/memory": "1.41.1",
     "@openai/agents": "0.22.0",
     "@types/node": "^22.0.0",
     "ai": "7.0.172",
+    "esbuild": "0.28.1",
+    "n8n-workflow": "2.47.2",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typedoc": "^0.28.20",
@@ -192,6 +220,9 @@
   },
   "overrides": {
     "gaxios@6.7.1": {
+      "uuid": "11.1.1"
+    },
+    "@langchain/classic": {
       "uuid": "11.1.1"
     }
   }

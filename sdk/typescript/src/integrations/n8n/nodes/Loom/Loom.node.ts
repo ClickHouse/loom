@@ -1,12 +1,6 @@
-import {
-  NodeConnectionTypes,
-  NodeOperationError,
-  type IExecuteFunctions,
-  type INodeExecutionData,
-  type INodeType,
-  type INodeTypeDescription,
-} from "n8n-workflow";
-import { client, identityProperties } from "../client";
+import type { IExecuteFunctions, INodeExecutionData, INodeType, INodeTypeDescription } from "n8n-workflow";
+import { NodeConnectionTypes, NodeOperationError } from "../../runtime.js";
+import { client, identityProperties } from "../client.js";
 
 export class Loom implements INodeType {
   description: INodeTypeDescription = {

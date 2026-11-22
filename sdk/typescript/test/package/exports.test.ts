@@ -184,9 +184,10 @@ describe("dist", () => {
     expect(readFileSync(join(dist, "integrations/claude-memory.mjs"), "utf8")).toMatch(/from "@anthropic-ai\/sdk/);
   });
 
-  it("no bundle imports a Node built-in", () => {
+  it("browser-compatible bundles import no Node built-ins", () => {
     const files = readdirSync(dist, { recursive: true }) as string[];
     for (const f of files.filter((n) => /\.(mjs|cjs)$/.test(n))) {
+      if (/^integrations\/n8n\.(mjs|cjs)$/.test(f)) continue;
       const text = readFileSync(join(dist, f), "utf8");
       expect(text, f).not.toMatch(/(require\(|from\s*)["'](node:|fs|path|crypto|http|https|util|os)["']/);
     }
