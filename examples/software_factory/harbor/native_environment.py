@@ -9,7 +9,6 @@ from urllib.parse import urlsplit
 
 from .scopes import binding_for
 
-
 PROXY_ENV = dict.fromkeys(
     ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"), ""
 )

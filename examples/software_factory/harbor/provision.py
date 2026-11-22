@@ -1087,6 +1087,21 @@ class Provisioner:
         for slot in schedule:
             if slot["memory_enabled"]:
                 validate_history_certificate(validation, slot, bindings[str(slot["order"])])
+        from .mcp_qualification import qualify
+
+        mcp_receipts = {}
+        for slot in schedule:
+            if slot["mode"] == "baseline":
+                continue
+            binding = bindings[str(slot["order"])]
+            roles = {binding["code_namespace"]: "viewer"}
+            if slot["memory_enabled"]:
+                roles[binding["memory_namespace"]] = "writer"
+            token_file = self._mint(binding["org"], roles, "qualification-" + str(slot["order"]))
+            mcp_receipts[str(slot["order"])] = qualify(
+                self.http, self.runtime["loom_url"], token_file.read_text().strip(), binding
+            )
+        save(self.output / "mcp-qualification.json", mcp_receipts)
         result = {
             "schema_version": 1,
             "runtime": self.runtime,
@@ -1113,6 +1128,7 @@ class Provisioner:
                 "runtime.json",
                 "owner.json",
                 "index-certificate.json",
+                "mcp-qualification.json",
                 "index-content.json",
                 "build-source-manifest.json",
                 "local-models.image",

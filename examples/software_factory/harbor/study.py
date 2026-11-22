@@ -174,7 +174,12 @@ def build_image(folder: Path, dependency: str) -> str:
         tools = native_tools(folder, reference)
         recipe = (
             "FROM " + reference + " AS dependencies\nFROM " + tools + "\nUSER root\n"
-            "COPY --from=dependencies /usr/local /usr/local\nRUN rm -rf /workspace\n"
+            "RUN rm -rf /usr/local /workspace\n"
+            "COPY --from=dependencies /usr/local /usr/local\n"
+            "COPY --from=dependencies /runtime-packages.lock /runtime-packages.lock\n"
+            "RUN python -m pip freeze --all | sort > /native-packages.lock "
+            "&& sort /runtime-packages.lock > /expected-packages.lock "
+            "&& cmp /native-packages.lock /expected-packages.lock\n"
             "COPY --chown=1000:1000 workspace /workspace\n"
             "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
             "WORKDIR /workspace\nUSER agent\n"

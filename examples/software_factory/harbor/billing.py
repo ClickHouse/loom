@@ -28,7 +28,8 @@ async def main():
     try:
         rows=await client.query_all(
             'SELECT org,namespace,subject,request_id,operation,success,error_code,'
-            'input_tokens,output_tokens,embedding_tokens,upstream_cost_usd,response_tokens '
+            'input_tokens,output_tokens,embedding_tokens,upstream_cost_usd,response_tokens,'
+            'agent,user_id,session_id,transport,latency_ms '
             'FROM loom.agent_events WHERE org={org:String} AND subject={subject:String}',params)
         written = 0
         if params['memory_namespace']:
@@ -108,9 +109,33 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=None):
                         row.get("namespace")
                         not in {binding["code_namespace"], binding["memory_namespace"]}
                         and not (
-                            row.get("operation") == "mcp.initialize"
-                            and row.get("namespace") == "-"
-                            and not slot.get("memory_enabled", False)
+                            row.get("namespace") == "-"
+                            and (
+                                (
+                                    row.get("operation") == "mcp.initialize"
+                                    and not slot.get("memory_enabled", False)
+                                )
+                                or (
+                                    row.get("success") is False
+                                    and row.get("error_code")
+                                    and row.get("transport") == "mcp"
+                                    and row.get("latency_ms") == 0
+                                    and all(
+                                        row.get(key) == "-"
+                                        for key in ("agent", "user_id", "session_id")
+                                    )
+                                    and all(
+                                        row.get(key) == 0
+                                        for key in (
+                                            "input_tokens",
+                                            "output_tokens",
+                                            "embedding_tokens",
+                                            "response_tokens",
+                                        )
+                                    )
+                                    and Decimal(str(row.get("upstream_cost_usd"))) == 0
+                                )
+                            )
                         )
                     )
                     for row in rows
