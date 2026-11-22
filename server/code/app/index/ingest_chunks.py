@@ -52,13 +52,16 @@ def chunk_context_texts(
     both embed the same bytes."""
     descriptions = _structural_descriptions(ns, chunks, to_insert, structural_prefixes)
     descriptions.update(llm_descriptions)  # an LLM one-liner beats the structural prefix
-    sig_by_scope = {s.qualified_name: s.signature for s in pf.symbols if s.kind == "function"}
+    signatures = {(s.qualified_name, s.id): s.signature for s in pf.symbols if s.kind == "function"}
     calls, callers = calls_by_idx or {}, callers_by_idx or {}
     texts = [
         build_context_text(
             path=path,
             scope=c.scope,
-            signature=sig_by_scope.get(c.scope, ""),
+            signature=next(
+                (signatures[c.scope, sid] for sid in c.symbol_ids if (c.scope, sid) in signatures),
+                "",
+            ),
             description=descriptions.get(i, ""),
             content=c.content,
             calls=calls.get(i, ()),
