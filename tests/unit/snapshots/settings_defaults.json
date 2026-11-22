@@ -386,6 +386,7 @@
  "code_search_rerank_kinds": "responsibility",
  "code_search_rerank_top": 20,
  "code_search_rrf_lexical_weight_responsibility": 1.0,
+ "code_search_token_budget": 0,
  "code_search_vector_model_default": "",
  "code_search_vector_models": "",
  "code_search_vector_shortlist": 0,

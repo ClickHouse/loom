@@ -647,6 +647,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_RISK_ANNOTATIONS` | `bool` | `True` |  | Per-result risk annotations (churn/amp/tested) and one-hop callee context on code.search results; reserves part of the token budget. Kill switch. |
 | `LOOM_CODE_UNIT_RISK_MAX_AGE_S` | `int` | `864000` |  | Age (seconds) past which a risk row is stale and annotated live; must exceed the weekly pass interval. |
 | `LOOM_CODE_SEARCH_BODIES_DEFAULT` | `'auto' \| 'none'` | `'auto'` |  | code.search `bodies` when the request omits it: "auto" fills bodies into the budget; "none" serves handles only. |
+| `LOOM_CODE_SEARCH_TOKEN_BUDGET` | `int` | `0` |  | code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default. |
 | `LOOM_CODE_SEARCH_MEMO_ENABLED` | `bool` | `True` |  | Memoise served code.search responses per (org, namespace, request shape) in loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true` bypasses it. |
 | `LOOM_CODE_SEARCH_MEMO_TTL_S` | `int` | `1800` |  | Seconds a memoised response, and a cursor's stored pool, stay replayable. |
 | `LOOM_CODE_SEARCH_MEMO_MAX_PAYLOAD_BYTES` | `int` | `200000` |  | Max bytes of a response the memo stores; a larger one is not memoised. 0 = no cap. |

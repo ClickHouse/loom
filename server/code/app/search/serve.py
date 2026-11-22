@@ -10,7 +10,7 @@ from server.code.app.search.routes import _scoped_route
 from server.code.app.search.state import _model_name, _SearchState
 from server.code.app.search.track import _track
 from server.code.app.spans import code_span
-from server.code.domain.units import CodeUnit, budget_units
+from server.code.domain.units import CodeUnit, budget_units, remaining_token_budget
 from server.code.store.index import CodeRepo
 from server.memory.domain.retrieval_calibration import RetrievalCalibration, finalize_abstain
 
@@ -105,7 +105,7 @@ async def _serve_page(
         result.history = history_section
     with code_span("search.bodies", route=result.route):
         result.units, result.tokens_returned = budget_units(
-            ranked[:top_k], max(200, token_budget - section_tokens), bodies=bodies
+            ranked[:top_k], remaining_token_budget(token_budget, section_tokens), bodies=bodies
         )
         result.tokens_returned += section_tokens
     if constrained and scope is not None:
