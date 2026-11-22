@@ -1,5 +1,9 @@
 # Flask evaluation results
 
+These development cohorts used the custom coding loop at their linked source
+revisions. They do not measure the native Claude Code execution used by the
+current entry point. Their results remain separate from native-agent cohorts.
+
 The [public-evidence cohort](historical-issues-public-evidence-review/README.md)
 contains all 51 attempts: 45 primary attempts and six baseline A/A controls on three
 historical issues. Twelve blind comparisons supply separate fixed ratings. Every

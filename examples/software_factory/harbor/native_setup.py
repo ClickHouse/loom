@@ -20,17 +20,6 @@ def memory_diagnostics():
     }
 
 
-def validate_requests(rows):
-    from server.operations.registry import OPERATIONS_BY_NAME
-
-    for row in rows:
-        model = OPERATIONS_BY_NAME[row["operation"]].input_model
-        if set(row["body"]) - set(model.model_fields):
-            raise ValueError("Adapter sends undeclared arguments to " + row["operation"])
-        model.model_validate(row["body"])
-    return {"validated": len(rows), "operations": sorted({row["operation"] for row in rows})}
-
-
 def external(request):
     operation = request["operation"]
     body = request.get("body", {})
@@ -129,8 +118,6 @@ def external(request):
 async def execute(request):
     operation = request["operation"]
     body = request.get("body", {})
-    if operation == "request_contracts":
-        return validate_requests(body["requests"])
     if operation in {"mint", "mint_setup", "init", "backfill", "start_memory_worker"}:
         return await asyncio.to_thread(external, request)
     from server.core.ch import get_client, set_query_tag

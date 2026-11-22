@@ -1,153 +1,95 @@
 # Software factory evaluation
 
-Harbor owns historical software-factory trial scheduling, Docker environments,
-artifact transfer and independent verification. The factory is a custom external
-agent. Its model client, prompts, source allowlist and retrieval policy belong
-to the factory, so changing evaluation infrastructure does not select a different
-coding agent. Evaluation dependencies are pinned separately from the server.
+The evaluator asks a coding agent to fix a public issue in its ordinary checkout.
+Harbor runs its built-in Claude Code agent, collects its native trajectory and
+passes the resulting implementation to a separate hidden verifier. The evaluator
+provides no custom coding loop, source tools, hooks, forced retrieval or completion
+review. Claude chooses its reads, edits, commands, retrieval and stopping point.
 
-Each task freezes a repository revision, dependency image, source fingerprint
-and pytest selectors. Agent and verifier images share that dependency image.
-The agent image contains base tests. The verifier image contains the independent
-hidden tests. The factory can read the same public base-revision implementation,
-docs, examples and test sources in every arm. Other repository text is read-only;
-only implementation source can enter the candidate patch. List, read and search
-tools discover this evidence without exposing Git objects or verifier inputs.
-The factory can request fixed visible checks; it has no shell tool or verifier capability.
-An ordinary read outside the repository allowlist returns a refusal without
-content so the model can correct the path. Unadvertised tool names return an
-input error without executing a command or stopping the remaining tool batch.
-Native authorization and index-scope failures still stop the attempt.
-Selected native operations that reject model input return tool errors after
-their scope is checked again. Their failed physical requests remain counted;
-the adapter does not retry them. Cursor arguments describe their query binding.
+## Shared execution and project profiles
 
-The common prompt identifies the index boundary: Loom code tools cover only
-`source_paths`; ordinary search and read also cover the public repository evidence.
-In the two memory arms, all five optional code reads request lessons from the
-attempt's bound memory scope, including `code.enclosing`. The memory audit checks
-that scope on every code read. Code-only arms disable memory tools and lessons;
-the four Loom arms share the same code-tool schemas.
+`examples/software_factory/harbor/` owns environment setup, frozen schedules,
+measurement and reports. `evals/<id>/` supplies public issues, repository revisions,
+source roots, dependency locks, historical facts, index recipes and grading. The
+implemented profile is a Python E2E evaluation of Flask. Language and source-root
+lists allow a future profile to describe a repository with several languages.
 
-Ordinary search is available to every arm with optional RE2 regular expressions,
-literal matching by default, path prefixes and result pagination. Optional Loom
-grep accepts the same `regex` flag. Both tools document RE2 alternation syntax.
-The standalone controller pins the engine alongside its evaluation dependencies.
+The public command builds pinned dependencies and isolated services, prepares the
+indexes and historical memory, qualifies the grading contract and starts Harbor.
+It records exact owned resources for cleanup. Native coding runs are uncapped;
+capped launches are refused. Provider credentials and raw sessions stay outside
+public result bundles.
 
-Memory search keeps the native abstention reason, retrieval confidence and risk.
-Hits keep similarity, rank components, verification and source class. These fields
-describe retrieval and provenance; similarity is not a fact's truth probability.
-Namespace and source-path checks still apply before the model receives a result.
+## Treatments
 
-An elided definition keeps its navigation card, separate from verified bodies.
-Elision alone does not establish that a context budget caused the missing body.
-Cards are accepted only for unchanged allowed files with valid spans. They never
-count as body inspection. Symbol reads accept either a name or a native symbol
-definition identifier, so the model can follow a definition card without repeating
-name discovery. Search cards can identify chunks; their native `next` or name
-guides the follow-up instead.
+Five arms receive the same original issue, model, pinned agent version, base
+checkout image, resources and hidden grading contract:
 
-The agent publishes candidate source as JSON. The separate verifier checks the
-base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
-It reconstructs its own checkout and overlays only those implementation files.
-It runs pytest without provider credentials or network access. A successful
-reward requires hidden checks, the agent's final visible check and normal agent
-completion. Missing or malformed test results are infrastructure failures.
+- No Loom connection.
+- Loom with a tree-sitter code index.
+- Loom with a tree-sitter code index and historical memory.
+- Loom with a SCIP code index.
+- Loom with a SCIP code index and historical memory.
 
-The cohort protocol freezes inputs before inference, including separate hashes
-for editable implementation and read-only repository evidence. It disables retries and
-concurrent trials and preserves the paired task order. No-Loom trials construct
-no Loom backend and receive no Loom tool definitions. Optional Tree-sitter and SCIP
-retrieval retain their model-selected call and dispatch counters. Read-only task tokens,
-repository and revision checks, and index fingerprints constrain retrieval.
+Loom connections use the native coding MCP roster. A connection header selects
+its code scope. Native namespace permissions and caller-home resolution select
+its optional memory scope. Code-only arms have no historical memory namespace or
+memory write permission; they see the same coding roster as memory arms. The
+model decides whether to call any advertised tool. No result-count or response
+budget override is supplied by the evaluation.
 
-Every arm receives one final contract-review turn after the model first finishes
-its patch. The common review text presents the consolidated candidate diff and
-asks the model to inspect gaps, revise and check the result with its existing
-tools. It supplies no verifier feedback or additional project knowledge. The
-review stays in the attempt's conversation; it is a deliberate second pass by
-the same model. Its requests, tokens, tool calls, cost and time remain included.
-The journal records the candidate state and diff hash. The fairness audit
-requires one review and reconstructs the exact subsequent provider messages.
-Four named index-status caches and the memory-link checked-head marker are
-excluded from the source fingerprint;
-unknown state keys and every source table remain covered.
+Every attempt has separate credentials. Each memory attempt starts with its own
+writable history, preventing earlier attempts from supplying solutions to later
+ones. The historical facts have public sources and cutoffs before each issue's
+base. Some facts link to native code symbols. Setup replays an older source head,
+advances to the buggy base, checks changed anchors and revises one independently
+sourced fact. This verifies a replayed memory lifecycle, rather than measuring
+months of autonomous learning. Historical knowledge is extra information, so the
+contrast does not isolate linking from access to that knowledge.
 
-The study retains raw Harbor results, factory event journals, model request
-receipts, Loom request identifiers and ATIF trajectories. Its scheduled-attempt
-report includes invalid rewards and infrastructure failures, alongside Harbor's
-valid-reward statistics. Partial cohorts remain partial. Generation estimates,
-backend provider charges and unpriced infrastructure are separate quantities.
-Timing includes environment setup and teardown, artifact transfer, independent
-verification and index audits, with native phase timing retained for diagnosis.
+## Grading and accounting
 
-The Python adapter keeps the existing factory runtime and uses Harbor's native
-Docker and verifier interfaces. This replaces the factory's custom live
-scheduler without adding evaluation machinery to the server's dependencies.
-Recorded cohorts remain separate and are never pooled with a migrated cohort.
+Base and reference controls use Harbor's built-in oracle without model calls.
+Unchanged source must fail the hidden checks; the published fix must pass. These
+controls qualify the same frozen grading contract before coding begins.
 
-Live graders also expose a bounded, self-contained pytest regression tool in
-every arm. Authored tests run as a nonroot sandbox child in scratch space,
-outside the candidate source artifact. Their failures guide revision; they
-never change the independent verifier's task-success criteria or evaluator
-test inputs. The offline expression grader exposes no such execution tool.
+The coding environment has the public base checkout and its tests. Hidden tests
+and reference fixes remain outside it. Harbor collects implementation files as a
+native artifact and restores them into the separate verifier. The verifier checks
+source paths and sizes, reconstructs its own workspace and runs the fixed hidden
+tests. Agent-authored tests do not replace the hidden tests. Full-suite regressions
+are measured against the unchanged base. A posthoc blind judge sees the original
+issue, public historical facts and candidate source differences; it cannot send
+feedback to the coding agent.
 
-A frozen Compose policy limits each agent and verifier to 64 processes and no
-network, drops capabilities except identity changes and process-group cleanup,
-and disables privilege escalation. Task configuration sets one CPU and 512 MiB.
-The agent receives the job overlay. The separate verifier carries the same
-policy in its task-owned Compose definition because Harbor clears job overlays
-when creating that environment. Both copies are covered by the protocol hashes.
+Harbor's trajectory supplies total tool calls, Loom calls, input/output/cache
+tokens, generation cost and agent time, including recorded subagent activity.
+Tokens already include cache usage in native prompt totals; reporting does not
+add cache tokens twice. Explicit test commands are observable in shell calls;
+tests hidden inside scripts are not classified as test runs.
 
-The example is repository-first: `examples/software_factory/factory/` holds the
-shared agent, `harbor/` holds execution and reporting, and `evals/flask/` holds
-the current Python E2E evaluation. Its suite lock declares a language list and
-source roots; a repository can span languages without splitting one task into
-separate language benchmarks. Harbor loads the frozen suite adapter explicitly.
-The Flask profile owns pytest grading and Python compiler evidence. Authored
-Python smoke fixtures live under tests and are not repository evaluations.
+Authenticated attempt subjects attribute Loom provider events and persisted
+memory versions. Initialization and refusal events retain their native scope
+semantics and cost. Initialization events do not stand in for selected tool
+calls. Missing usage remains unknown. Source index fingerprints before and after
+each attempt detect mutation. Setup and judging costs remain separate from agent
+cost; infrastructure and invoice reconciliation are outside that measure.
 
-## Historical memory treatment
+## Comparison and reproducibility
 
-The Flask historical issue study uses the same three real issues in five
-arms. Each optional memory arm receives 30 curated historical facts, 14 linked to
-code, in a private namespace. Only these two arms expose optional memory tools
-and code-linked lessons. Code-only arms receive no memory tools or namespace. The issue,
-source, ordinary tools, model and tests remain paired. No historical facts are
-inserted into the prompt; the model chooses memory and code tools.
+The profile contains three issues, three repeats and five arms: 45 primary
+attempts. Six baseline A/A attempts measure variability separately. The schedule
+balances arm positions and runs serially without Harbor retries. Every failure
+remains included. Repeats do not create independent issues, and three issues do
+not establish a general result across repositories.
 
-Historical source hashes and publication/edit cutoffs qualify before ingestion.
-Target discussions, reference fixes and hidden requirements cannot supply memory.
-Native write receipts, exact read-back values, versions and content hashes prove
-the history exists. The indexed source advances across real public revisions;
-native workers must flag changed anchors before a source-backed memory update
-relinks fresh. No synthetic source tree supplies the task. This represents
-replayed historical knowledge, rather than autonomous elapsed learning.
-Qualification compares native fingerprints for each linked symbol across the
-two revisions. An edit elsewhere in its file does not make an unchanged symbol
-stale. The qualifier uses the memory worker's complete declaration fingerprints,
-rather than retrieval chunk hashes. Native file links track existence and moves.
+Native results stay immutable. Derived Harbor views align matching issue/repeat
+rows across arms and record the original identifiers and source hashes. Reports
+contain per-arm, per-scenario and per-attempt measurements, with matched partial
+comparisons and explicit pending values. Public export derives allowlisted
+measurements from the original artifacts and publishes source fingerprints.
+No cost, time or quality benefit is established before qualified measurements.
 
-The comparison measures the combined contribution of historical information and
-its retrieval. Linking in isolation needs an additional matched-facts control.
-The harder task selection precedes its solver outcomes. Earlier development
-outcomes informed harness changes, and three tasks cannot establish generalization.
-
-The profile lock pins the solver and blind-judge model for every arm. The shared
-ledger prices that model and the resolved deployment model separately, including
-cache writes and reads. Unknown models refuse dispatch. A model change starts a
-new cohort; reports do not pool results across models.
-
-Live comparison means use only issue/repeat blocks with one graded attempt in
-every primary arm. Failed hidden tests stay in those blocks. Pending or ungraded
-blocks do not contribute partial means; their attempts and spend remain in raw
-progress and individual records. Issue and repeat filters preserve the same
-comparison set across arms. Final target claims require the complete cohort.
-
-Grep projections retain enclosing-scope names and line ranges only while the
-indexed file is unchanged. The matching line is independently checked against the
-working source and remains available when navigation is stale. Optional inclusive
-`end_line` reads are available in every arm, so agents can request a precise range
-from either ordinary search or index navigation. Definition and enclosing tools
-serve verified bodies; their schemas describe that capability without requiring
-any retrieval call.
+See the [example](../../examples/software_factory/README.md),
+[reproduction instructions](../../examples/software_factory/evals/flask/REPRODUCE.md)
+and [report layout](../../examples/software_factory/harbor/README.md).

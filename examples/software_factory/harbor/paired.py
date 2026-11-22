@@ -137,13 +137,9 @@ def analyze(schedule: dict, entries: list[dict], *, seed=741, resamples=2000) ->
         value = _metrics(result)
         if not row["memory_enabled"] and value["memory_rows_written"] != 0:
             raise ValueError("Memory-disabled treatment has nonzero or unverified writes")
-        if row["mode"] == "baseline" and any(
-            value[key] != 0
-            for key in (
-                "model_selected_loom_requests",
-                "loom_logical_requests",
-                "loom_physical_requests",
-            )
+        if row["mode"] == "baseline" and (
+            value["model_selected_loom_requests"] not in (None, 0)
+            or any(value[key] != 0 for key in ("loom_logical_requests", "loom_physical_requests"))
         ):
             raise ValueError("Baseline Loom exposure is nonzero or unverified")
         observed[order], metrics[order] = result, value

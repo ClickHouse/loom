@@ -93,7 +93,7 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=None):
         proof = {**dict.fromkeys(FIELDS), "proof_status": "unknown"}
         try:
             if slot["mode"] == "baseline":
-                if result.get("loom_tool_calls") != 0:
+                if result.get("loom_tool_calls") not in (None, 0):
                     raise ValueError("Baseline exposure is unknown")
                 rows, written = [], 0
             else:

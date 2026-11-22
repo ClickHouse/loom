@@ -5,8 +5,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from examples.software_factory.harbor.anchors import capture
-from examples.software_factory.harbor.contracts import requests
-from examples.software_factory.harbor.native_setup import validate_requests
 
 
 class NativeAnchorCapture(unittest.IsolatedAsyncioTestCase):
@@ -47,32 +45,3 @@ class NativeAnchorCapture(unittest.IsolatedAsyncioTestCase):
         ):
             await capture({"links": [{"path": "src/a.py"}]})
         parse.assert_not_awaited()
-
-
-class RequestContracts(unittest.TestCase):
-    def test_grep_tool_pattern_bounds_match_the_serving_model(self):
-        from examples.software_factory.factory.retrieval_tools import schemas
-        from server.code.api.models_grep import CodeGrepInput
-
-        tool = next(item for item in schemas() if item["name"] == "loom_code_grep")
-        projected = tool["input_schema"]["properties"]["pattern"]
-        native = CodeGrepInput.model_json_schema()["properties"]["pattern"]
-        for field in ("minLength", "maxLength"):
-            self.assertEqual(projected[field], native[field])
-
-    def test_code_and_memory_shapes_are_accepted(self):
-        self.assertEqual(validate_requests(requests())["validated"], 17)
-
-    def test_enclosing_qualifies_cold_and_memory_namespace_lesson_shapes(self):
-        rows = [row for row in requests() if row["operation"] == "code.enclosing"]
-        self.assertEqual([row["body"]["include_lessons"] for row in rows], [False, True])
-        self.assertEqual(
-            [row["body"].get("lesson_namespaces", []) for row in rows], [[], ["memory"]]
-        )
-        self.assertEqual(validate_requests(rows)["validated"], 2)
-
-    def test_unsupported_fields_still_refuse_before_a_dispatch(self):
-        row = next(row for row in requests() if row["operation"] == "code.enclosing")
-        row["body"]["undeclared_qualification_field"] = True
-        with self.assertRaisesRegex(ValueError, "undeclared arguments"):
-            validate_requests([row])

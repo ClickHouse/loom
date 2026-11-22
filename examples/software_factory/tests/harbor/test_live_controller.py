@@ -9,23 +9,6 @@ from examples.software_factory.harbor.runtime import ObservedProvider, verify
 
 
 class LiveControllerContracts(unittest.TestCase):
-    def test_supervision_without_a_deadline_reaps_a_completed_worker(self):
-        import os
-        import sys
-
-        from examples.software_factory.harbor.supervision import run_bounded
-
-        with tempfile.TemporaryDirectory() as directory:
-            result = run_bounded(
-                [sys.executable, "-c", "print('complete')"],
-                cwd=Path(directory),
-                env={"PATH": os.defpath},
-                output=Path(directory) / "supervision",
-                timeout_s=None,
-            )
-            self.assertEqual(result["exit_code"], 0)
-            self.assertFalse(result["timed_out"])
-
     def test_large_usage_is_observed_without_a_spend_or_input_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "journal.jsonl"

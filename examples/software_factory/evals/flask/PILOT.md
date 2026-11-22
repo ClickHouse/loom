@@ -3,7 +3,7 @@
 Compare five arms on the same historical Flask issue and base revision:
 `baseline`, `loom-treesitter`, `loom-treesitter-memory`, `loom-scip`, and
 `loom-scip-memory`. Claude chooses every Loom call. Baseline has no Loom client or
-schemas. Every arm has the same source tools, issue, model and test capabilities.
+schemas. Every arm uses the same native coding agent, issue, model and test capabilities.
 
 Three issues and three repeats produce 45 primary attempts. Add one baseline A/A
 pair per issue for 51 attempts. Freeze seed 741 and retain the interleaved arm
@@ -17,9 +17,9 @@ cutoff. Target discussions, fixing PRs, reference patches, hidden requirements a
 later information cannot supply memory. Freeze the corpus before inference and
 never revise it based on that run's results.
 
-The memory treatment adds 30 short historical notes, 14 linked to code. Baseline
-and code-only arms receive no memory. Only the two memory arms expose optional native
-memory search, reads and writes; their code tools may return linked lessons.
+The memory treatment adds 30 short historical notes, 14 linked to code. Baseline and code-only arms receive no historical memory. Every Loom arm sees
+the same native coding roster; only memory arms have a historical memory namespace
+and write permission. Their code tools may return linked lessons.
 The treatment therefore measures historical knowledge plus retrieval. A claim
 about linking alone requires another control with identical facts.
 
@@ -34,8 +34,8 @@ and code evolution, rather than elapsed autonomous learning.
 
 Freeze source, tasks, evaluator inputs, model, prices, images, schema exposure,
 prompts, provider limits and all namespace identities. Require base controls to
-fail and reference controls to pass the hidden verifier. Provider retries remain
-disabled. The ordinary source tools remain complete within the declared scope.
+fail and reference controls to pass the hidden verifier. Harbor retries are disabled. Claude Code retains its native provider behavior
+and ordinary checkout tools.
 
 Report hidden success, fixed-only blind judgments, full-suite regressions, total
 agent and Loom provider cost, agent time, full end-to-end time, tokens, agent tests,

@@ -17,8 +17,8 @@ class ReviewContracts(unittest.TestCase):
             "controller_source_identity": {
                 "commit": "b" * 40,
                 "dirty": False,
-                "files": {"examples/software_factory/factory/engine.py": "c" * 64},
-                "relative_files": {"examples/software_factory/factory/engine.py": "c" * 64},
+                "files": {"examples/software_factory/harbor/study.py": "c" * 64},
+                "relative_files": {"examples/software_factory/harbor/study.py": "c" * 64},
             },
             "server_source_identity": {
                 "files": {"server/main.py": "d" * 64},

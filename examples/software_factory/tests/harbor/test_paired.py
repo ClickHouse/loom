@@ -3,16 +3,11 @@
 from __future__ import annotations
 
 import copy
-import json
-import tempfile
 import unittest
-from pathlib import Path
-from unittest.mock import patch
 
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.live_support import schedule
 from examples.software_factory.harbor.paired import analyze
-from examples.software_factory.tests.smoke import main
 
 
 def inputs():
@@ -212,31 +207,21 @@ class PairedAnalysisContracts(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "distinct positions"):
             analyze(order, entries, resamples=100)
 
-    def test_cli_reads_explicit_controller_exports_without_clients(self):
-        order, entries = inputs()
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "schedule.json").write_text(json.dumps(order))
-            (root / "attempts.json").write_text(json.dumps(entries))
-            with patch(
-                "sys.argv",
-                [
-                    "factory",
-                    "paired",
-                    "--schedule",
-                    str(root / "schedule.json"),
-                    "--attempts",
-                    str(root / "attempts.json"),
-                    "--output",
-                    str(root / "report.json"),
-                ],
-            ):
-                self.assertEqual(main(), 0)
-            report = json.loads((root / "report.json").read_text())
-            self.assertTrue(report["complete"])
-            self.assertFalse(report["provenance_verified"])
-            self.assertEqual(report["declared_input"]["task_kind"], "authored-analysis-contract")
-
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeFailureReporting(unittest.TestCase):
+    def test_missing_baseline_trajectory_retains_the_attempt_and_unknown_calls(self):
+        order, entries = inputs()
+        base = next(row for row in entries if row["result"]["mode"] == "baseline")
+        base["result"].update(
+            resolved=False,
+            status="agent_error",
+            model_selected_loom_requests=None,
+            tool_total_requests=None,
+        )
+        report = analyze(order, entries, resamples=100)
+        self.assertTrue(report["complete"])
+        self.assertEqual(report["arms"]["baseline"]["resolved"], 8)

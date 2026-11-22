@@ -8,26 +8,18 @@ import json
 import re
 import shutil
 import uuid
-from dataclasses import asdict
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 from packaging.tags import compatible_tags, cpython_tags
 from packaging.utils import parse_wheel_filename
 
 from examples.software_factory.evals.flask.historical import FrozenSource, git
-from examples.software_factory.evals.flask.public_metadata import public_reproduction
-from examples.software_factory.factory.model import Budget, digest
-from examples.software_factory.harbor.index import snapshot
-from examples.software_factory.harbor.live_support import schedule
-from examples.software_factory.harbor.pricing import cost_basis
+from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.runtime import read, write
 from examples.software_factory.harbor.source import (
     check_files,
     command,
-    controller_identity,
-    server_identity,
     sha,
 )
 
@@ -468,214 +460,18 @@ asyncio.run(main())
     return validate_source_scope(tables, files, commit)
 
 
-def create_protocol(config_path: Path, output: Path) -> Path:
-    config, lock = read(config_path), read(LOCK)
-    endpoint = urlsplit(config["loom_url"])
-    if (
-        endpoint.scheme not in {"http", "https"}
-        or not endpoint.hostname
-        or endpoint.username
-        or endpoint.password
-    ):
-        raise ValueError("Use an explicit Loom HTTP(S) endpoint without embedded credentials")
-    if not re.fullmatch("[a-f0-9]{40}", config["server_commit"]):
-        raise ValueError("Pin the full serving build commit")
-    assets = Path(config["assets"]).resolve(strict=True)
-    asset_receipt = read(assets / "assets.json")
-    check_files(asset_receipt["files"])
-    images_path = assets / "images.json"
-    image_receipt = read(images_path)
-    images = image_receipt["images"]
-    check_files(image_receipt["artifact_files"])
-    # Resolve credential paths without copying their contents into study artifacts.
-    credentials = Path(config["credentials_file"]).resolve(strict=True)
-    identity = server_identity(
-        Path(config["server_source_root"]).resolve(strict=True),
-        config["server_container"],
-        config["container_source_root"],
-    )
-    if identity["commit"] != config["server_commit"]:
-        raise PermissionError("Serving source checkout and declared build commits differ")
-    output.mkdir(parents=True, exist_ok=False, mode=0o700)
-    tasks, statuses = {}, {}
-    for pin in lock["tasks"]:
-        task_id = pin["task_id"]
-        source = FrozenSource(Path(asset_receipt["source_git"]), pin["base_commit"])
-        source_files = source.files("src/flask")
-        indexes = {}
-        for tier in ("treesitter", "scip"):
-            scope = config["tasks"][task_id]["indexes"][tier]
-            token = Path(scope["reader_token_file"]).resolve(strict=True)
-            status = index_status(config["loom_url"], token, config["org"], scope["namespace"])
-            expected = {
-                "org": config["org"],
-                "namespace": scope["namespace"],
-                "repo": "pallets/flask",
-                "git_head": pin["base_commit"],
-                "build_commit": config["server_commit"],
-            }
-            if any(status.get(k) != v for k, v in expected.items()) or any(
-                status.get(k) for k in ("restricted", "abstained", "ignored_args")
-            ):
-                raise PermissionError("Loom reader scope, source watermark or build differs")
-            if status.get("path_prefixes") != ["src/flask"] or not status.get("counts", {}).get(
-                "code_files"
-            ):
-                raise PermissionError("Source-only src/flask index coverage is required")
-            counts = compiler_counts(
-                config["server_container"], config["org"], scope["namespace"], pin["base_commit"]
-            )
-            validate_tier(status, counts, tier, pin["base_commit"])
-            coverage = source_scope(
-                config["server_container"],
-                config["org"],
-                scope["namespace"],
-                source_files,
-                pin["base_commit"],
-            )
-            indexes[tier] = {
-                "namespace": scope["namespace"],
-                "reader_token_file": str(token),
-                "compiler_rows": counts,
-                "source_scope": coverage,
-            }
-            statuses[task_id + ":" + tier] = {
-                **expected,
-                "status_sha256": digest(status),
-                "compiler_rows": counts,
-                "source_scope": coverage,
-            }
-        if indexes["treesitter"]["namespace"] == indexes["scip"]["namespace"]:
-            raise PermissionError("The two index tiers require separate frozen namespaces")
-        image = images[task_id]["image"]
-        actual = json.loads(command(["docker", "image", "inspect", image]))[0]
-        if actual["Id"] != image or images[task_id]["tag"] not in actual.get("RepoTags", []):
-            raise PermissionError("Dependency image no longer has its recorded build reference")
-        record = next(r for r in read(assets / "trusted/tasks.json") if r["instance_id"] == task_id)
-        tasks[task_id] = {
-            "source_git": asset_receipt["source_git"],
-            "indexes": indexes,
-            "symbol": pin["symbol"],
-            "image": image,
-            "evaluation_file": str(assets / "trusted" / (task_id + ".json")),
-            "visible_selectors": pin["visible_selectors"],
-            "hidden_selectors": hidden_selectors(record),
-        }
-    if (
-        config.get("source_writers_stopped") is not True
-        or config.get("backend_generation_disabled") is not True
-    ):
-        raise PermissionError("Stop source writers and disable backend generation before freezing")
-    content = snapshot(config["server_container"], config["org"])
-    write(output / "index-content.json", content)
-    helper = output / "index-snapshot.py"
-    shutil.copyfile(HERE.parents[1] / "harbor/index.py", helper)
-    certificate = output / "index-certificate.json"
-    write(
-        certificate,
-        {
-            "kind": "operational-source-freeze",
-            "scopes": statuses,
-            "index_content_sha256": digest(content),
-            "server_source_identity": identity,
-            "source_writers_stopped": True,
-            "backend_generation_disabled": True,
-            "assertion_basis": "Operator attestation; content audited before and after every trial",
-            "database_write_denial": False,
-        },
-    )
-    rows = schedule(sorted(tasks), seed=lock["schedule_seed"])
-    budget = {name: None for name in asdict(Budget())}
-    budget.update(output_tokens=128000)
-    public_inputs = {
-        **asset_receipt["files"],
-        **image_receipt["artifact_files"],
-        str(assets / "assets.json"): sha(assets / "assets.json"),
-        str(images_path): sha(images_path),
-        str(helper): sha(helper),
-        str(certificate): sha(certificate),
-        str(output / "index-content.json"): sha(output / "index-content.json"),
-    }
-    journal = assets / "dependency-builds.json"
-    if journal.exists():
-        public_inputs[str(journal)] = sha(journal)
-    plan = {
-        "schema_version": 1,
-        "controller": "harbor",
-        "harbor_version": "0.27.0",
-        "model_id": lock["model_id"],
-        "provider": "Anthropic direct Messages API",
-        "endpoint": "https://api.anthropic.com/v1/messages",
-        "api_version": "2023-06-01",
-        "credentials_file": str(credentials),
-        "index_tier": "per-arm",
-        "suite": {
-            key: lock[key]
-            for key in ("id", "title", "repository", "languages", "source_roots", "adapter")
-        },
-        "org": config["org"],
-        "loom_url": config["loom_url"],
-        "server_container": config["server_container"],
-        "server_commit": config["server_commit"],
-        "server_source_identity": identity,
-        "controller_source_identity": controller_identity(),
-        "historical_manifest": str(assets / "historical.json"),
-        "tasks": tasks,
-        "reference_controls_file": str(assets / "trusted/tasks.json"),
-        "schedule": rows,
-        "schedule_sha256": digest(rows),
-        "schedule_seed": lock["schedule_seed"],
-        "attempt_budget": budget,
-        "visible_test_call_limit": None,
-        "max_physical_loom_requests": None,
-        "index_snapshot_script": str(helper),
-        "index_certificate_file": str(certificate),
-        "index_certificate_sha256": sha(certificate),
-        "public_inputs": public_inputs,
-        "cost_basis": cost_basis(lock["model_id"]),
-        "success_target": {
-            arm: {
-                "successes": 9,
-                "generation_cost_ratio_max": 0.8,
-                "end_to_end_ratio_max": 0.8,
-            }
-            for arm in ("loom-treesitter", "loom-scip")
-        },
-        "reporting": {"publish_charts": config.get("publish_charts", True)},
-        "judge": config.get(
-            "judge",
-            {
-                "enabled": True,
-                "model_id": lock["model_id"],
-                "seed": 741,
-                "output_tokens": 4096,
-            },
-        ),
-        "files": {},
-    }
-    plan["public_reproduction"] = public_reproduction(lock, plan)
-    write(output / "bootstrap-protocol.json", plan)
-    return output / "bootstrap-protocol.json"
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("assets", "build", "protocol"))
+    parser.add_argument("command", choices=("assets", "build"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--assets", type=Path)
-    parser.add_argument("--config", type=Path)
     args = parser.parse_args()
     if args.command == "assets" and args.output:
         result = create_assets(args.output.resolve())
     elif args.command == "build" and args.assets:
         result = build_dependencies(args.assets.resolve())
-    elif args.command == "protocol" and args.output and args.config:
-        result = create_protocol(args.config.resolve(), args.output.resolve())
     else:
-        parser.error(
-            "assets requires --output; build requires --assets; "
-            "protocol requires --config and --output"
-        )
+        parser.error("assets requires --output; build requires --assets")
     print(result)
 
 

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import ast
 import base64
-import hashlib
 import json
 import os
 import resource
@@ -14,7 +12,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from examples.software_factory.evals.flask.historical import (
@@ -24,21 +21,6 @@ from examples.software_factory.evals.flask.historical import (
     selected_statuses,
 )
 from examples.software_factory.factory.model import digest
-
-REGRESSION_SOURCE_BYTES = 16000
-REGRESSION_OUTPUT_CHARS = 4000
-
-
-def validate_regression_source(source: str) -> str:
-    if type(source) is not str or not source.strip():
-        raise ValueError("Regression source must be nonempty Python text")
-    if len(source.encode("utf-8")) > REGRESSION_SOURCE_BYTES:
-        raise ValueError("Regression source exceeds the 16000-byte bound")
-    try:
-        ast.parse(source)
-    except (SyntaxError, ValueError, RecursionError) as error:
-        raise ValueError("Regression source must be valid Python: " + str(error)[:500]) from error
-    return source
 
 
 def validate_candidate(files: dict, base: dict, expected_source: str) -> dict:
@@ -221,97 +203,5 @@ def run_regression_process(
     return process.returncode, timed_out
 
 
-def regression_status(xml: Path, exit_code: int, timed_out: bool) -> dict:
-    counts = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
-    status = "timed_out" if timed_out else "error"
-    if not timed_out and xml.exists() and xml.stat().st_size <= 1024 * 1024:
-        try:
-            root = ET.parse(xml).getroot()
-            cases = list(root.iter("testcase"))
-            counts = {
-                "tests": len(cases),
-                "failures": sum(c.find("failure") is not None for c in cases),
-                "errors": sum(c.find("error") is not None for c in cases),
-                "skipped": sum(c.find("skipped") is not None for c in cases),
-            }
-            if (
-                exit_code == 0
-                and cases
-                and not any(counts[k] for k in ("failures", "errors", "skipped"))
-            ):
-                status = "passed"
-            elif exit_code == 1 and counts["failures"]:
-                status = "failed"
-            elif not cases:
-                status = "no_tests"
-        except (ET.ParseError, ValueError):
-            pass  # Malformed authored-test output is failure evidence, never a passing grade.
-    return {"passed": status == "passed", "status": status, **counts}
-
-
-def bounded_output(path: Path, limit: int) -> tuple[str, bool]:
-    if not path.exists():
-        return "", False
-    # Output files are bounded by the child file-size limit; tails retain pytest's summary.
-    text = path.read_text(errors="replace")
-    return text[-limit:], len(text) > limit
-
-
-def regression(candidate_path: Path, authored_path: Path) -> dict:
-    started = time.monotonic()
-    if authored_path.stat().st_size > REGRESSION_SOURCE_BYTES:
-        raise ValueError("Regression source exceeds the 16000-byte bound")
-    source = validate_regression_source(authored_path.read_text())
-    _, candidate, workspace = stage_candidate(candidate_path)
-    with tempfile.TemporaryDirectory(prefix="factory-regression-") as directory:
-        scratch = Path(directory)
-        scratch.chmod(0o755)
-        test_file = scratch / "test_regression.py"
-        test_file.write_text(source)
-        test_file.chmod(0o444)
-        results = scratch / "results"
-        results.mkdir(mode=0o777)
-        results.chmod(0o777)
-        xml = results / "junit.xml"
-        command = [
-            sys.executable,
-            "-m",
-            "pytest",
-            "-q",
-            "-p",
-            "no:cacheprovider",
-            "-c",
-            os.devnull,
-            "--confcutdir=" + str(scratch),
-            "--rootdir=" + str(scratch),
-            "--import-mode=importlib",
-            "--junitxml=" + str(xml),
-            str(test_file),
-        ]
-        exit_code, timed_out = run_regression_process(command, workspace, results)
-        status = regression_status(xml, exit_code, timed_out)
-        stdout, stdout_truncated = bounded_output(results / "stdout", 3000)
-        stderr, stderr_truncated = bounded_output(results / "stderr", 1000)
-        output = (stdout + "\n" + stderr).strip()
-    return {
-        **status,
-        "exit_code": exit_code,
-        "timed_out": timed_out,
-        "output": output[:REGRESSION_OUTPUT_CHARS],
-        "output_truncated": (
-            stdout_truncated or stderr_truncated or len(output) > REGRESSION_OUTPUT_CHARS
-        ),
-        "state": candidate["state"],
-        "authored_test_sha256": hashlib.sha256(source.encode()).hexdigest(),
-        "duration_s": time.monotonic() - started,
-        "scope": "agent_authored_regression",
-        "task_completion_verified": False,
-    }
-
-
 if __name__ == "__main__":
-    if sys.argv[1] == "regression":
-        result = regression(Path(sys.argv[2]), Path(sys.argv[3]))
-    else:
-        result = grade(sys.argv[1], Path(sys.argv[2]))
-    print(json.dumps(result))
+    print(json.dumps(grade(sys.argv[1], Path(sys.argv[2]))))
