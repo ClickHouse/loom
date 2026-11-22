@@ -118,44 +118,6 @@ def stage_sandbox_policy(
     return target
 
 
-def native_tools(folder: Path, reference: str) -> str:
-    """Build the same pinned Claude installation once for all scenario images."""
-    target = folder.parent.parent / "native-tools"
-    receipt = target / "image.id"
-    tag = "loom-factory-native-tools:" + hashlib.sha256(str(target).encode()).hexdigest()[:20]
-    if not receipt.exists():
-        target.mkdir(parents=True, exist_ok=True)
-        version = read(HERE / "agent.json")["version"]
-        (target / "Dockerfile").write_text(
-            "FROM " + reference + "\nUSER root\n"
-            "RUN apt-get update && apt-get install -y --no-install-recommends "
-            "git curl bash nodejs npm procps ca-certificates "
-            "&& rm -rf /var/lib/apt/lists/*\n"
-            "RUN useradd --create-home --uid 1000 agent\nUSER agent\n"
-            "RUN curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh "
-            "| bash -s -- " + version + "\n"
-            'ENV PATH="/home/agent/.local/bin:${PATH}"\nRUN claude --version\n'
-        )
-        with (target / "build.log").open("wb") as log:
-            subprocess.run(
-                ["docker", "build", "--tag", tag, "--iidfile", str(receipt), str(target)],
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                timeout=1800,
-                check=True,
-            )
-    actual = subprocess.run(
-        ["docker", "image", "inspect", "--format", "{{.Id}}", tag],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=True,
-    ).stdout.strip()
-    if actual != receipt.read_text().strip():
-        raise PermissionError("Native tool image tag changed")
-    return tag
-
-
 def build_image(folder: Path, dependency: str) -> str:
     inspected = json.loads(
         subprocess.run(
@@ -171,18 +133,18 @@ def build_image(folder: Path, dependency: str) -> str:
     reference = inspected["RepoTags"][0]
     native = (folder / "workspace").is_dir()
     if native:
-        tools = native_tools(folder, reference)
+        version = read(HERE / "agent.json")["version"]
         recipe = (
-            "FROM " + reference + " AS dependencies\nFROM " + tools + "\nUSER root\n"
-            "RUN rm -rf /usr/local /workspace\n"
-            "COPY --from=dependencies /usr/local /usr/local\n"
-            "COPY --from=dependencies /runtime-packages.lock /runtime-packages.lock\n"
-            "RUN python -m pip freeze --all | sort > /native-packages.lock "
-            "&& sort /runtime-packages.lock > /expected-packages.lock "
-            "&& cmp /native-packages.lock /expected-packages.lock\n"
+            "FROM " + reference + "\nUSER root\n"
+            "RUN git --version && curl --version && bash --version && ps --version\n"
+            "RUN useradd --create-home --uid 1000 agent "
+            "&& mkdir -p /workspace && chown 1000:1000 /workspace\nUSER agent\n"
+            "RUN curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh "
+            "| bash -s -- " + version + "\n"
+            'ENV PATH="/home/agent/.local/bin:${PATH}"\nRUN claude --version\n'
             "COPY --chown=1000:1000 workspace /workspace\n"
             "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
-            "WORKDIR /workspace\nUSER agent\n"
+            "WORKDIR /workspace\nRUN test -w /workspace\n"
         )
     else:
         recipe = (

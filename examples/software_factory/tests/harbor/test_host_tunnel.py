@@ -23,6 +23,23 @@ class HostTunnelContracts(unittest.TestCase):
                 self.assertIn(b"407", client.recv(4096).splitlines()[0])
         connect.assert_not_called()
 
+    def test_invalid_or_oversized_destination_never_connects(self):
+        connect = Mock()
+        with HostTunnel(connect=connect) as tunnel:
+            for target in ("-" * 254 + ":443", "example.com:80", "bad_host:443"):
+                with socket.create_connection(("127.0.0.1", tunnel.server.server_port)) as client:
+                    client.sendall(
+                        (
+                            "CONNECT "
+                            + target
+                            + " HTTP/1.0\r\nProxy-Authorization: "
+                            + tunnel.authorization
+                            + "\r\n\r\n"
+                        ).encode()
+                    )
+                    self.assertIn(b"403", client.recv(4096).splitlines()[0])
+        connect.assert_not_called()
+
     def test_authenticated_tunnel_preserves_opaque_bytes_and_closes(self):
         upstream, provider = socket.socketpair()
         connect = Mock(return_value=upstream)

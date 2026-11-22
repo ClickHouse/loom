@@ -5,11 +5,13 @@ from __future__ import annotations
 import base64
 import contextlib
 import http.server
-import re
 import secrets
 import select
 import socket
+import string
 import threading
+
+HOST_CHARACTERS = frozenset(string.ascii_letters + string.digits + ".-")
 
 
 class HostTunnel:
@@ -32,12 +34,12 @@ class HostTunnel:
                 ):
                     self.send_error(407)
                     return
-                match = re.fullmatch(r"([A-Za-z0-9.-]+):443", self.path)
-                if not match:
+                host = self.path[:-4] if self.path.endswith(":443") else ""
+                if not host or len(host) > 253 or any(c not in HOST_CHARACTERS for c in host):
                     self.send_error(403)
                     return
                 try:
-                    upstream = owner.connect((match[1], 443), timeout=20)
+                    upstream = owner.connect((host, 443), timeout=20)
                 except OSError:
                     self.send_error(502)
                     return

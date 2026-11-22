@@ -87,6 +87,29 @@ def bound_output() -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
 
 
+def blob_bytes(mirror: Path, entries: list[tuple[str, str, int]]) -> dict[str, bytes]:
+    if not entries:
+        return {}
+    raw = git(
+        mirror, "cat-file", "--batch", data="".join(oid + "\n" for _, oid, _ in entries).encode()
+    )
+    result, cursor = {}, 0
+    for name, oid, size in entries:
+        end = raw.index(b"\n", cursor)
+        if raw[cursor:end] != f"{oid} blob {size}".encode():
+            raise PermissionError("Source blob identity differs from its tree entry")
+        cursor = end + 1
+        content = raw[cursor : cursor + size]
+        cursor += size
+        if len(content) != size or raw[cursor : cursor + 1] != b"\n":
+            raise PermissionError("Source blob is truncated")
+        cursor += 1
+        result[name] = content
+    if cursor != len(raw):
+        raise PermissionError("Unexpected bytes after the source export")
+    return result
+
+
 class FrozenSource:
     """Read only exact-base blobs; the agent never receives the object database."""
 
@@ -98,28 +121,29 @@ class FrozenSource:
             raise PermissionError("Source base differs from the frozen commit")
 
     def files(self, prefix: str | None = None) -> dict[str, str]:
-        args = ["ls-tree", "-rz", self.commit]
+        args = ["ls-tree", "-rlz", self.commit]
         if prefix is not None:
             if not ordinary(prefix):
                 raise PermissionError("Invalid implementation root")
             args += ["--", prefix]
-        files, total = {}, 0
+        entries, total = [], 0
         for record in git(self.mirror, *args).split(b"\0"):
             if not record:
                 continue
             metadata, raw_name = record.split(b"\t", 1)
-            mode, kind, oid = metadata.decode().split()
+            mode, kind, oid, raw_size = metadata.decode().split()
             name = raw_name.decode()
-            # Omitted base fixtures have a separate byte-preserving export.
             if not ordinary(name):
                 continue
             if mode not in {"100644", "100755"} or kind != "blob":
                 raise PermissionError("Source tree contains a nonregular file")
-            size = int(git(self.mirror, "cat-file", "-s", oid))
+            size = int(raw_size)
             total += size
-            if size > 1024 * 1024 or total > 20 * 1024 * 1024:
+            if size < 0 or size > 1024 * 1024 or total > 20 * 1024 * 1024:
                 raise ValueError("Frozen source exceeds the preparation budget")
-            content = git(self.mirror, "cat-file", "blob", oid)
+            entries.append((name, oid, size))
+        files = {}
+        for name, content in blob_bytes(self.mirror, entries).items():
             try:
                 files[name] = content.decode("utf-8")
             except UnicodeDecodeError:
@@ -145,26 +169,8 @@ class FrozenSource:
             if size < 0 or size > 1024 * 1024 or total > 20 * 1024 * 1024:
                 raise ValueError("Frozen source exceeds the preparation budget")
             entries.append((name, oid, size))
-        if not entries:
-            return {}
-        # One bounded batch preserves exact bytes without a process for every blob.
-        blobs = git(
-            self.mirror,
-            "cat-file",
-            "--batch",
-            data="".join(oid + "\n" for _, oid, _ in entries).encode(),
-        )
-        fixtures, cursor = {}, 0
-        for name, oid, size in entries:
-            end = blobs.index(b"\n", cursor)
-            if blobs[cursor:end] != f"{oid} blob {size}".encode():
-                raise PermissionError("Fixture blob identity differs from its tree entry")
-            cursor = end + 1
-            content = blobs[cursor : cursor + size]
-            cursor += size
-            if len(content) != size or blobs[cursor : cursor + 1] != b"\n":
-                raise PermissionError("Fixture blob is truncated")
-            cursor += 1
+        fixtures = {}
+        for name, content in blob_bytes(self.mirror, entries).items():
             if ordinary(name):
                 try:
                     content.decode("utf-8")
@@ -173,8 +179,7 @@ class FrozenSource:
                 else:
                     continue
             fixtures[name] = base64.b64encode(content).decode("ascii")
-        if cursor != len(blobs):
-            raise PermissionError("Unexpected bytes after the fixture export")
+
         return fixtures
 
     def task(self, public: dict, namespace: str, symbol: str) -> Task:
