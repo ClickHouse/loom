@@ -163,6 +163,7 @@ If the leakage suite cannot synthesize a body for your op, it reports it; add a 
 python scripts/codegen/sdk_py_gen.py                       # sdk/python/loom/ops.py
 python scripts/codegen/sdk_py_client_gen.py                # sdk/python/loom/client.py
 python scripts/codegen/sdk_ts_gen.py                       # sdk/typescript/src/generated/ops.ts
+python scripts/codegen/sdk_rb_gen.py                       # sdk/ruby/lib/clickhouse/loom/generated/*.rb
 python scripts/codegen/op_reach_census.py --write-manifest # server/operations/reach_manifest.py
 python scripts/codegen/docs_reference.py                   # generated regions of docs/reference/*.md
 make format

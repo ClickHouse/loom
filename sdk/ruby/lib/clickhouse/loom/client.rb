@@ -3,10 +3,16 @@
 require "json"
 require "net/http"
 require "openssl"
+require "securerandom"
 require "uri"
 
 require_relative "errors"
 require_relative "version"
+require_relative "configuration"
+require_relative "retry_policy"
+require_relative "operations"
+require_relative "generated/errors"
+require_relative "generated/ops"
 
 module ClickHouse
   module Loom
@@ -32,25 +38,72 @@ module ClickHouse
     # in the namespace; +tombstoned+ is true when a tombstone was written over one.
     DeleteResult = Struct.new(:found, :tombstoned, :version, keyword_init: true)
 
-    # Calls Loom's memory operations as one org, namespace and agent.
+    # Calls every Loom operation as one org, namespace and agent.
     #
-    # Every operation is POST /v1/<op> with a JSON body. The org, namespace and agent
-    # are bound once and sent with every call; a blank one is left out of the body, so
-    # the server's default applies. The client sends one request per call and never
-    # retries. It does not follow redirects, so a memory body and token never go to
-    # another origin: a 3xx answer raises an Error.
+    # client.memory.set(memory_key: "k", value: "v") posts /v1/memory.set: one method per
+    # served op, generated from the server's registry (Generated::OPS) and grouped by the
+    # op name's first segment. The org, namespace and agent are bound once and sent with
+    # every call; a keyword of the same name overrides one for that call, and a blank one
+    # is left out of the body, so the server's default applies. set, get, search and
+    # delete are the hand-written memory calls with typed answers.
+    #
+    # A call is resent as RetryPolicy describes, a 429 is waited out, and an op the server
+    # deduplicates gets one Idempotency-Key that every resend repeats. The client does not
+    # follow redirects, so a memory body and token never go to another origin: a 3xx
+    # answer raises an Error.
     class Client
-      # base_url: defaults to LOOM_BASE_URL, then DEFAULT_BASE_URL. api_key: defaults to
-      # LOOM_API_KEY; with neither, no Authorization header is sent, which a server with
-      # auth off accepts.
-      def initialize(base_url: nil, api_key: nil, org: nil, namespace: nil, agent: nil,
-                     open_timeout: 10, read_timeout: 60)
-        @base_url = first_non_blank(base_url, ENV.fetch("LOOM_BASE_URL", nil), DEFAULT_BASE_URL).sub(%r{/+\z}, "")
+      include Generated::GroupAccessors
+
+      # Raised before the request went out: resending cannot run the op twice.
+      UNSENT_ERRORS = [Errno::ECONNREFUSED, Errno::EHOSTUNREACH, Errno::ENETUNREACH, Errno::EADDRNOTAVAIL,
+                       SocketError, Net::OpenTimeout].freeze
+      NETWORK_ERRORS = [SystemCallError, SocketError, IOError, Timeout::Error, Net::ProtocolError,
+                        OpenSSL::SSL::SSLError].freeze
+
+      # The bound identity sent with every call ("org", "namespace", "agent"; blank ones left out).
+      attr_reader :identity
+      # The server every call goes to, and the resolved RetryPolicy.
+      attr_reader :base_url, :retry_policy
+
+      # Each argument left nil takes ClickHouse::Loom.configure's value, then the environment
+      # (LOOM_BASE_URL, LOOM_API_KEY), then the default: http://localhost:7777 and no
+      # Authorization header, which a server with auth off accepts. +retry_policy+ is a
+      # Hash of RetryPolicy fields set over the configured policy ({ max_attempts: 1 }
+      # disables retries); +rate_limit_max_wait+ is the seconds one call may spend waiting
+      # out 429 answers (default 15, 0 raises the first). +sleeper+ is called with the
+      # seconds to wait between attempts (a test seam; default Kernel#sleep).
+      def initialize(base_url: nil, api_key: nil, org: nil, namespace: nil, agent: nil, open_timeout: nil,
+                     read_timeout: nil, retry_policy: nil, rate_limit_max_wait: nil, sleeper: nil)
+        config = Loom.configuration
+        @base_url = first_non_blank(base_url, config.base_url, ENV.fetch("LOOM_BASE_URL", nil),
+                                    DEFAULT_BASE_URL).sub(%r{/+\z}, "")
         # An exported but empty LOOM_API_KEY must not send "Bearer " and turn a clear 401 into a puzzle.
-        @api_key = first_non_blank(api_key, ENV.fetch("LOOM_API_KEY", nil))
-        @identity = { org: org, namespace: namespace, agent: agent }.reject { |_, v| blank?(v) }
-        @open_timeout = open_timeout
-        @read_timeout = read_timeout
+        @api_key = first_non_blank(api_key, config.api_key, ENV.fetch("LOOM_API_KEY", nil))
+        @identity = { "org" => first_non_blank(org, config.org),
+                      "namespace" => first_non_blank(namespace, config.namespace),
+                      "agent" => first_non_blank(agent, config.agent) }.compact.freeze
+        @open_timeout = open_timeout || config.open_timeout || 10
+        @read_timeout = read_timeout || config.read_timeout || 60
+        @retry_policy = RetryPolicy.resolve(RetryPolicy.default, config.retry_policy, "ClickHouse::Loom.configure")
+        @retry_policy = RetryPolicy.resolve(@retry_policy, retry_policy, "Client")
+        @rate_limit_max_wait = Float(rate_limit_max_wait || config.rate_limit_max_wait || 15)
+        @sleeper = sleeper || ->(seconds) { sleep(seconds) }
+        @groups = {}
+      end
+
+      # The ops of one group: client.op_group("memory") is client.memory.
+      def op_group(name)
+        @groups[name.to_s] ||= Generated::GROUPS.fetch(name.to_s).new(self)
+      end
+
+      # Posts +input+ (a Hash) over the bound identity to /v1/<op> and returns the decoded
+      # answer. An op the generated table does not know (a newer server) is sent as it is:
+      # no Idempotency-Key unless one is given, and resent only when it provably never ran.
+      def call(op, input = nil, idempotency_key: nil, retry_policy: nil)
+        spec = Generated::OPS[op]
+        body = JSON.generate(@identity.merge((input || {}).transform_keys(&:to_s)))
+        policy = RetryPolicy.resolve(@retry_policy, retry_policy, "call #{op}")
+        send_with_retries(op, spec, body, request_headers(spec, idempotency_key), policy)
       end
 
       # Saves +value+ under +key+: plain text, or any Hash, Array or scalar. Writing a
@@ -73,8 +126,11 @@ module ClickHouse
 
       # Ranks the memories that answer +query+. With no agent bound, it reads every
       # agent's rows in the namespace; with one, only that agent's. +top_k+ left nil lets
-      # the server use 5; +tags+ keeps only rows carrying any of them.
-      def search(query, top_k: nil, memory_type: nil, tags: nil)
+      # the server use 5; +tags+ keeps only rows carrying any of them. With no argument at
+      # all it is the search.* group (client.search.query(...)), like every other group.
+      def search(query = nil, top_k: nil, memory_type: nil, tags: nil)
+        return op_group("search") if [query, top_k, memory_type, tags].all?(&:nil?)
+
         body = { query: query, top_k: top_k, memory_type: memory_type, tags: tags }.compact
         out = call("memory.search", body)
         hits = Array(out["results"]).map do |h|
@@ -91,39 +147,119 @@ module ClickHouse
         DeleteResult.new(found: out["found"] == true, tombstoned: out["tombstoned"] == true, version: out["version"])
       end
 
+      # Names the server and the identity, never the token.
+      def inspect
+        "#<#{self.class.name} #{@base_url} #{@identity.map { |k, v| "#{k}=#{v}" }.join(" ")}>"
+      end
+
       private
 
-      # Posts +input+ to /v1/<op> and returns the decoded 2xx answer.
-      def call(op, input)
-        response = post(op, JSON.generate(@identity.merge(input)))
-        request_id = response["X-Request-Id"].to_s
-        unless response.is_a?(Net::HTTPSuccess)
-          raise Error.from_response(op, response.code.to_i, response.body, request_id, response["Retry-After"])
-        end
+      def request_headers(spec, idempotency_key)
+        headers = { "Content-Type" => "application/json", "Accept" => "application/json",
+                    "User-Agent" => SDK_IDENT, "X-Loom-SDK" => SDK_IDENT, "X-Request-Id" => SecureRandom.uuid }
+        headers["Authorization"] = "Bearer #{@api_key}" if @api_key
+        # The server keeps no replay of a read-only op: its resend just runs again.
+        key = idempotency_key || (SecureRandom.uuid if spec&.deduplicated?)
+        headers["Idempotency-Key"] = key.to_s if key
+        headers
+      end
 
+      # One call: attempts until an answer to return or an error to raise. Every attempt
+      # sends the same body and headers, so the same Idempotency-Key and X-Request-Id.
+      def send_with_retries(op, spec, body, headers, policy)
+        state = { attempt: 1, sent: 0, slept: 0.0, paced: 0.0 }
+        loop do
+          headers["X-Loom-Retry-Count"] = state[:sent].to_s
+          state[:sent] += 1
+          response = attempt(op, spec, body, headers, policy, state)
+          next if response.nil?
+          return decode(op, response) if response.is_a?(Net::HTTPSuccess)
+
+          # The server's echo of X-Request-Id, else the id this call sent (an error answer may not echo it).
+          request_id = response["X-Request-Id"] || headers["X-Request-Id"]
+          error = Error.from_response(op, response.code.to_i, response.body, request_id,
+                                      response["Retry-After"], idempotent: spec&.idempotent == true)
+          next if resend_after_answer?(response, error, spec, policy, state)
+
+          raise error
+        end
+      end
+
+      # The answer of one attempt, or nil after a connection failure the policy resends.
+      def attempt(op, spec, body, headers, policy, state)
+        post(op, body, headers)
+      rescue *NETWORK_ERRORS => e
+        # A TLS failure (certificate verification stays on) does not pass by resending.
+        raise Error.network(op, e) if e.is_a?(OpenSSL::SSL::SSLError)
+
+        unsent = UNSENT_ERRORS.any? { |klass| e.is_a?(klass) }
+        # A timeout or a cut-off answer may follow a write: resent only where the server dedups.
+        resend = unsent ? policy.retry_connection_errors : may_rerun?(policy, spec)
+        # The error raised in the end stays not retryable either way, as before: the call may have run.
+        raise Error.network(op, e) unless resend && pause_before_next(policy, state, nil)
+
+        nil
+      end
+
+      def resend_after_answer?(response, error, spec, policy, state)
+        status = response.code.to_i
+        return wait_out_rate_limit(response, state) if status == 429
+        return false unless policy.statuses.include?(status) && !NEVER_RETRIED.key?(error.code)
+        # Only the server's configuration class stops a resend; retryable false alone does
+        # not (an INTERNAL_ERROR on an idempotent op is worth one).
+        return false if error.detail["category"] == "configuration"
+        return false unless spec&.idempotent || status == 408 || NEVER_RAN_CODES.include?(error.code)
+
+        pause_before_next(policy, state, RetryAfter.parse(response["Retry-After"] || error.detail["retry_after_s"]))
+      end
+
+      # A 429 is pacing, not a retry: wait the Retry-After (1 s when absent, zero, past or over
+      # 60 s; at least 0.1 s) while the call's rate_limit_max_wait allows, and send again.
+      def wait_out_rate_limit(response, state)
+        wait = RetryAfter.for_rate_limit(response["Retry-After"])
+        return false unless @rate_limit_max_wait.positive? && state[:paced] + wait <= @rate_limit_max_wait
+
+        state[:paced] += wait
+        @sleeper.call(wait)
+        true
+      end
+
+      def may_rerun?(policy, spec)
+        policy.retry_timeouts == :always || (policy.retry_timeouts == :idempotent && spec&.deduplicated?)
+      end
+
+      # Sleeps before the next attempt and counts it, or returns false when the policy says
+      # stop: attempts spent, or the backoff budget. +hint+ is the server's wait in seconds.
+      def pause_before_next(policy, state, hint)
+        return false if state[:attempt] >= policy.max_attempts
+
+        delay = policy.backoff_delay(state[:attempt])
+        delay = hint if policy.respect_retry_after && hint && hint <= policy.max_retry_after
+        return false if delay > policy.total_backoff_budget - state[:slept]
+
+        @sleeper.call(delay)
+        state[:slept] += delay
+        state[:attempt] += 1
+        true
+      end
+
+      # The decoded 2xx answer.
+      def decode(op, response)
         parsed = parse_object(response.body)
-        raise Error.invalid_response(op, response.code.to_i, response.body, request_id) if parsed.nil?
+        raise Error.invalid_response(op, response.code.to_i, response.body, response["X-Request-Id"]) if parsed.nil?
 
         parsed
       end
 
-      def post(op, body)
+      def post(op, body, headers)
         uri = URI("#{@base_url}/v1/#{op}")
         request = Net::HTTP::Post.new(uri)
-        request["Content-Type"] = "application/json"
-        request["Accept"] = "application/json"
-        request["User-Agent"] = SDK_IDENT
-        request["X-Loom-SDK"] = SDK_IDENT
-        request["Authorization"] = "Bearer #{@api_key}" if @api_key
+        headers.each { |name, value| request[name] = value }
         request.body = body
         Net::HTTP.start(uri.hostname, uri.port, use_ssl: uri.scheme == "https",
                                                 open_timeout: @open_timeout, read_timeout: @read_timeout) do |http|
           http.request(request)
         end
-      rescue SystemCallError, SocketError, IOError, Timeout::Error, Net::ProtocolError, OpenSSL::SSL::SSLError => e
-        # No complete answer, or a TLS handshake that failed: the call may have run, so it is not
-        # marked retryable. Certificate verification stays on.
-        raise Error.network(op, e)
       end
 
       def parse_object(text)
@@ -135,10 +271,6 @@ module ClickHouse
 
       def first_non_blank(*values)
         values.map { |v| v.to_s.strip }.find { |v| !v.empty? }
-      end
-
-      def blank?(value)
-        value.to_s.strip.empty?
       end
     end
   end
