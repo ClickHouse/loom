@@ -14,6 +14,9 @@ docs, examples and test sources in every arm. Other repository text is read-only
 only implementation source can enter the candidate patch. List, read and search
 tools discover this evidence without exposing Git objects or verifier inputs.
 The factory can request fixed visible checks; it has no shell tool or verifier capability.
+An ordinary read outside the repository allowlist returns a refusal without
+content so the model can correct the path. Native authorization and index-scope
+failures still stop the attempt.
 
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
@@ -28,6 +31,15 @@ concurrent trials and preserves the paired task order. No-Loom trials construct
 no Loom backend and receive no Loom tool definitions. Optional Tree-sitter and SCIP
 retrieval retain their model-selected call and dispatch counters. Read-only task tokens,
 repository and revision checks, and index fingerprints constrain retrieval.
+
+Every arm receives one final contract-review turn after the model first finishes
+its patch. The common review text presents the consolidated candidate diff and
+asks the model to inspect gaps, revise and check the result with its existing
+tools. It supplies no verifier feedback or additional project knowledge. The
+review stays in the attempt's conversation; it is a deliberate second pass by
+the same model. Its requests, tokens, tool calls, cost and time remain included.
+The journal records the candidate state and diff hash. The fairness audit
+requires one review and reconstructs the exact subsequent provider messages.
 Four named index-status caches and the memory-link checked-head marker are
 excluded from the source fingerprint;
 unknown state keys and every source table remain covered.

@@ -23,8 +23,8 @@ and judging, total provider spend is USD 1.8624293, of which USD 0.6420386 is ju
 
 This cohort executes
 [frozen source](https://github.com/ClickHouse/loom/tree/3479c03a6494f59e9056f3666830a0caf3859b4f).
-Its agents can read implementation source only. Public repository evidence and
-query-aware lesson ranking in the current implementation require a fresh cohort;
+Its agents can read implementation source only. Public repository evidence,
+query-aware lesson ranking and the final contract-review pass require a fresh cohort;
 they did not alter these results. Follow that revision's
 [reproduction instructions](https://github.com/ClickHouse/loom/blob/3479c03a6494f59e9056f3666830a0caf3859b4f/examples/software_factory/evals/flask/REPRODUCE.md)
 to repeat its method. Model outputs, latency and cost can vary.

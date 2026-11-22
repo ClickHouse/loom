@@ -93,10 +93,12 @@ class EvidencePages(unittest.TestCase):
         self.assertEqual(self.factory.checkout.state(), before)
         self.assertEqual(set(self.factory.checkout.files()), {self.path})
         self.assertEqual(self.factory.checkout.diff(), "")
-        with self.assertRaises(PermissionError):
-            self.factory.execute("read", {"path": "verifier/hidden.py"})
-        with self.assertRaises(PermissionError):
-            self.factory.execute("read", {"path": ".git/config"})
+        for path in ("verifier/hidden.py", ".git/config", "../outside.py"):
+            refused = self.factory.execute("read", {"path": path})
+            self.assertTrue(refused["refused"])
+            self.assertNotIn("content", refused)
+            with self.assertRaises(PermissionError):
+                self.factory.checkout.full_read(path)
 
     def test_listing_continuation_and_invalid_offsets(self):
         self.factory.checkout.read_only.update({f"docs/page-{i:03}.rst": "" for i in range(125)})

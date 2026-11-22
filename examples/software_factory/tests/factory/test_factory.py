@@ -23,6 +23,44 @@ from examples.software_factory.tests.smoke import ROOT, run_task
 
 
 class FactoryContracts(unittest.TestCase):
+    def test_final_review_sees_the_consolidated_candidate_diff(self):
+        factory = self.factory()
+        result = factory.run()
+        self.assertTrue(result["resolved"])
+        self.assertEqual(result["completion_reviews"], 1)
+        reviews = [row for row in factory.ledger.rows if row["kind"] == "completion_review"]
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["diff"], factory.checkout.diff())
+        self.assertEqual(reviews[0]["state"], factory.checkout.state())
+
+    def test_initial_completion_does_not_bypass_review_and_revision(self):
+        class EarlyFinish(ReplayProvider):
+            finished_early = False
+
+            def step(self, messages, tools, max_tokens):
+                if not self.finished_early:
+                    self.finished_early = True
+                    return {
+                        "blocks": [{"text": "Done"}],
+                        "usage": {},
+                        "physical_requests": 0,
+                        "cost_usd": 0,
+                    }
+                return super().step(messages, tools, max_tokens)
+
+        for mode in ("baseline", "natural"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                self.root = Path(directory)
+                provider = EarlyFinish(ROOT / self.frozen["replay"]["path"])
+                factory = self.factory(mode=mode, provider=provider)
+                result = factory.run()
+                self.assertTrue(result["resolved"])
+                review = next(
+                    row for row in factory.ledger.rows if row["kind"] == "completion_review"
+                )
+                self.assertEqual(review["diff"], "")
+                self.assertEqual(result["completion_reviews"], 1)
+
     def test_unlimited_attempt_policy_completes_without_budget_arithmetic(self):
         budget = Budget(
             turns=None,

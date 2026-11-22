@@ -29,6 +29,7 @@ ATTEMPT_CHECKS = (
     "schema_exposure",
     "generation_transport",
     "conversation",
+    "completion_review",
     "no_host_or_hidden_work",
     "loom_accounting",
     "memory_evidence",
@@ -107,12 +108,30 @@ def _wire_identity(messages):
 
 
 def _conversation(events, dispatches):
+    from examples.software_factory.factory.review import diff_sha256, review_message
+
     messages, number, active_loom = [], 0, None
+    reviews, state = 0, None
     host_free = True
     for row in events:
         kind = row["kind"]
         if kind == "start":
             messages = json.loads(json.dumps(row["prompt"]))
+            state = row["source_sha256"]
+        elif kind == "completion_review":
+            diff = row.get("diff")
+            if (
+                reviews
+                or not isinstance(diff, str)
+                or row.get("diff_sha256") != diff_sha256(diff)
+                or row.get("state") != state
+                or not messages
+                or messages[-1]["role"] != "assistant"
+                or any("toolUse" in block for block in messages[-1]["content"])
+            ):
+                return False, False
+            _append(messages, "user", [{"text": review_message(diff)}])
+            reviews += 1
         elif kind == "provider_request":
             if number >= len(dispatches):
                 return False, False
@@ -129,6 +148,8 @@ def _conversation(events, dispatches):
         elif kind == "tool_request":
             active_loom = {**TOOL_OPS, **MEMORY_OPS}.get(row["name"])
         elif kind == "tool_result":
+            if row.get("name") == "edit" and "state" in row["result"]:
+                state = row["result"]["state"]
             _append(
                 messages,
                 "user",
@@ -500,6 +521,14 @@ def audit_fairness(protocol, entries, *, billing=None):
                 order,
             )
             conversation, host_free = _conversation(events, dispatches)
+            reviews = [r for r in events if r["kind"] == "completion_review"]
+            check(
+                "completion_review",
+                type(result.get("completion_reviews")) is int
+                and result["completion_reviews"] == len(reviews) == 1,
+                "One common final review is included in the completed attempt's trace and costs",
+                order,
+            )
             check(
                 "conversation",
                 conversation,

@@ -20,6 +20,7 @@ from examples.software_factory.factory.model import (
     digest,
     tool_schemas,
 )
+from examples.software_factory.factory.review import diff_sha256, review_message
 from examples.software_factory.factory.workspace import Checkout
 
 
@@ -121,6 +122,7 @@ class Factory:
             )
         self.messages = [{"role": "user", "content": [{"text": prompt}]}]
         self.tool_count = 0
+        self.completion_reviews = 0
         self.verified_state = ""
         self.visible_passed = False
         self.agent_time_s = None
@@ -171,10 +173,17 @@ class Factory:
             return self.checkout.list_files(**args)
         if name == "read":
             start, column = args.get("start_line", 1), args.get("start_column", 0)
-            content = self.checkout.read(args["path"], start, column)
-            remaining = "".join(
-                self.checkout.full_read(args["path"]).splitlines(True)[start - 1 :]
-            )[column:]
+            try:
+                content = self.checkout.read(args["path"], start, column)
+                remaining = "".join(
+                    self.checkout.full_read(args["path"]).splitlines(True)[start - 1 :]
+                )[column:]
+            except PermissionError:
+                return {
+                    "error": "Requested path is outside the readable repository scope",
+                    "scope": "repository_allowlist",
+                    "refused": True,
+                }
             more = len(content) < len(remaining)
             lines = content.count("\n")
             next_column = len(content.rsplit("\n", 1)[-1]) if lines else column + len(content)
@@ -351,6 +360,17 @@ class Factory:
                 if self.budget.turns is not None and number >= self.budget.turns:
                     break
                 if not self.turn(number):
+                    if not self.completion_reviews:
+                        diff = self.checkout.diff()
+                        self.ledger.emit(
+                            "completion_review",
+                            state=self.checkout.state(),
+                            diff=diff,
+                            diff_sha256=diff_sha256(diff),
+                        )
+                        self.append("user", [{"text": review_message(diff)}])
+                        self.completion_reviews += 1
+                        continue
                     status = "completed"
                     break
             if self.verified_state != self.checkout.state():
@@ -419,6 +439,7 @@ class Factory:
             "schema_version": 1,
             **self.history_identity(),
             "task_id": self.task.task_id,
+            "completion_reviews": self.completion_reviews,
             "read_only_sha256": digest(self.task.read_only_files),
             "mode": self.mode,
             "kind": self.task.kind,

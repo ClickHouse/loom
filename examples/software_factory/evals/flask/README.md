@@ -25,6 +25,9 @@ The launcher prepares isolated services, source indexes, dependency images and
 verifiers. Three repeats across five arms produce 45 primary attempts. Six
 separate baseline A/A controls produce 51 total attempts. Twelve blind fixed-only
 judgments use the same Haiku 5.5 model. Retries are disabled. Every attempt is fresh.
+Every arm receives the same final contract-review pass over its consolidated
+candidate diff. Review calls and any subsequent revision remain in the measured
+attempt; no hidden-test feedback enters the review.
 
 ## Historical knowledge
 

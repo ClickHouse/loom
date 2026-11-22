@@ -278,7 +278,7 @@ class FairnessProof(unittest.TestCase):
                 self.provider_event("gen-" + str(order), [{"text": "Done"}]),
                 dict(kind="verification_deferred"),
             ]
-            journal(folder / "agent/factory/events.jsonl", events)
+            self.add_completion_review(folder, events, prompt, tools, result)
             self.entries.append(dict(order=order, result=result))
             for phase in ["before", "after"]:
                 save(
@@ -311,6 +311,41 @@ class FairnessProof(unittest.TestCase):
                 cache_read_input_tokens=0,
             ),
         )
+
+    def add_completion_review(self, folder, events, last_messages, tools, result):
+        from examples.software_factory.factory.review import diff_sha256, review_message
+
+        messages = copy.deepcopy(last_messages)
+        messages += [
+            {"role": "assistant", "content": [{"text": "Done"}]},
+            {"role": "user", "content": [{"text": review_message("")}]},
+        ]
+        transport = folder / "agent/provider-transport.jsonl"
+        rows = [json.loads(line) for line in transport.read_text().splitlines()]
+        request, response = copy.deepcopy(rows[:2])
+        request["payload"]["messages"] = wire_messages(messages)
+        response["request_id"] += "-review"
+        events = events[:-1] + [
+            dict(
+                kind="completion_review",
+                diff="",
+                diff_sha256=diff_sha256(""),
+                state=result["source_sha256"],
+            ),
+            dict(
+                kind="provider_request",
+                messages_sha256=digest(messages),
+                tools_sha256=digest(tools),
+            ),
+            self.provider_event(response["request_id"], [{"text": "Done"}]),
+            dict(kind="verification_deferred"),
+        ]
+        journal(folder / "agent/factory/events.jsonl", events)
+        journal(transport, rows + [request, response])
+        result["provider_logical_requests"] += 1
+        result["provider_physical_requests"] += 1
+        result["generation_cost_usd"] += 0.01
+        result["completion_reviews"] = 1
 
     def write_generation(self, folder, order, prompt, tools):
         usage = dict(
@@ -362,6 +397,19 @@ class FairnessProof(unittest.TestCase):
         self.assertEqual(proof["counts"]["observed_attempts"], 50)
         self.entries[0]["result"]["harbor_reward_valid"] = False
         self.assertFalse(self.audit()["checks"]["execution_integrity"]["passed"])
+
+    def test_completion_review_is_required_and_its_candidate_state_is_checked(self):
+        path = Path(self.entries[0]["result"]["harbor_trial"]) / "agent/factory/events.jsonl"
+        original = [json.loads(line) for line in path.read_text().splitlines()]
+        missing = [row for row in original if row["kind"] != "completion_review"]
+        journal(path, missing)
+        self.assertFalse(self.audit()["checks"]["completion_review"]["passed"])
+        for field in ("state", "diff_sha256"):
+            corrupted = copy.deepcopy(original)
+            review = next(row for row in corrupted if row["kind"] == "completion_review")
+            review[field] = "wrong"
+            journal(path, corrupted)
+            self.assertFalse(self.audit()["checks"]["conversation"]["passed"])
 
     def test_read_only_evidence_identity_cannot_differ(self):
         self.entries[0]["result"]["read_only_sha256"] = digest({"docs/other.rst": "Different"})
@@ -493,7 +541,7 @@ class FairnessProof(unittest.TestCase):
         ]
         journal(events_path, events)
         transport = folder / "agent/provider-transport.jsonl"
-        rows = [json.loads(line) for line in transport.read_text().splitlines()]
+        rows = [json.loads(line) for line in transport.read_text().splitlines()][:2]
         new = copy.deepcopy(rows)
         new[0]["payload"]["messages"] = wire_messages(second)
         new[1]["request_id"] += "-next"
@@ -523,6 +571,7 @@ class FairnessProof(unittest.TestCase):
             context_reuses=1,
             local_scope_refusals=1,
         )
+        self.add_completion_review(folder, events, second, tools, result)
         self.billing["attempts"][str(order)].update(
             physical_requests_matched=3,
             physical_requests_dispatched=3,

@@ -31,6 +31,7 @@ from .source import reporting_identity
 KIND = "factory-public-results"
 ALL_ARMS = tuple(ALL)
 COUNTERS = (
+    "completion_reviews",
     "agent_test_requests",
     "agent_test_runs",
     "loom_tool_calls",

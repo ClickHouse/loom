@@ -107,6 +107,7 @@ class PublicExportTests(unittest.TestCase):
                     "generation_cost_usd": 0.0 if order == 0 else raw["agent_result"]["cost_usd"],
                     "agent_time_s": 1.0,
                     "agent_test_runs": 0,
+                    "completion_reviews": 1,
                     "loom_tool_calls": 0,
                     "memory_rows_written": 0,
                     "loom_logical_requests": 0,
