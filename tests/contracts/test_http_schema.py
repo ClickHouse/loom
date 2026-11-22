@@ -12,7 +12,9 @@ from fastapi.testclient import TestClient
 from hypothesis import HealthCheck, given
 from hypothesis import settings as generated
 from hypothesis import strategies as st
+
 from server.auth.jwt import mint_token
+from server.operations.base import Role
 from server.settings import settings
 
 _PATH = "/v1/blacklist.list"
@@ -21,10 +23,11 @@ _ORG, _NS = "contract-a", "shared"
 
 @pytest.fixture
 def transport(monkeypatch: pytest.MonkeyPatch):
-    from server.auth import authz
     from server.memory.store import blacklist
     from server.operations.registry import ALL_OPERATIONS
     from server.transport import http
+
+    from server.auth import authz
 
     calls: list[tuple[str, str]] = []
 
@@ -61,7 +64,7 @@ def transport(monkeypatch: pytest.MonkeyPatch):
         subject="contract-reader",
         org=_ORG,
         namespaces=[_NS],
-        roles=["reader"],
+        roles=[Role.VIEWER.name.lower()],
         ttl_seconds=300,
         is_service_account=True,
     )
