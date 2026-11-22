@@ -173,7 +173,9 @@ async def lessons_for_paths(
         stale = str(hit.get("memory_id")) in superseded
         lesson = None if stale else _lesson(hit, path)
         cost = _tokens(lesson) if lesson else 0
-        if lesson is None or spent + cost > token_budget:  # a shorter row may still fit
+        if lesson is None or (
+            token_budget and spent + cost > token_budget
+        ):  # a shorter row may still fit
             left.add(key)
             continue
         seen.add(key)

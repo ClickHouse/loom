@@ -335,7 +335,6 @@ export async function codeSymbol(id: CodeId, name: string): Promise<CodeSymbolRe
     include_history: true,
     include_examples: false,
     include_lessons: false,
-    token_budget: 4000,
   });
 }
 
@@ -381,7 +380,7 @@ export async function codeMap(
 ): Promise<{ map: string; tokens_used: number; commit_sha: string }> {
   return post("/v1/code.map", {
     ...id,
-    token_budget: opts.token_budget ?? 1500,
+    token_budget: opts.token_budget,
     module_prefix: opts.module_prefix ?? "",
   });
 }
@@ -503,7 +502,7 @@ export async function listCodeContextPacks(
 export async function codeContextPack(
   id: CodeId,
   pr_number: number,
-  token_budget = 4000,
+  token_budget?: number,
 ): Promise<{ context: string; tokens_used: number; source: "precomputed" | "orientation"; merge_commit_sha: string }> {
   return post("/v1/code.context_pack", {
     ...id,

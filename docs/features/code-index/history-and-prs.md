@@ -83,8 +83,8 @@ a decision recorded or changed after the merge shows up on the next read. It rea
 first `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` (10) changed files, source files first, of
 those the brief stores, and keeps at most `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` (8)
 rows, those with something to check first. It serves whole rows, `check` rows first and
-then constraints, up to `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` (250) tokens, and always
-the first row; the tier's budget may still trim the section like any other. Each row
+then constraints. `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` defaults to `0` (unlimited);
+a positive setting or request token budget trims whole rows to fit. Each row
 carries the pre-edit block's line for it with its value cut at the line length (source,
 `(pinned)` and the code-change note kept), `pinned`, `code_state` and a `verdict`. Each
 changed file read is one `memory.for_file` read: four ClickHouse reads (files match, code

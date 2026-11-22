@@ -563,9 +563,10 @@
           "description": "Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off."
         },
         "code_ask_token_budget": {
-          "default": 4000,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget."
+          "description": "Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget; 0 means unlimited."
         },
         "code_backport_gaps_budget_s": {
           "default": 1800.0,
@@ -1603,11 +1604,10 @@
           "description": "How many of an answer's files, in rank order, its `lessons` are read for."
         },
         "code_result_lessons_tokens": {
-          "default": 250,
-          "maximum": 2000,
-          "minimum": 50,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token."
+          "description": "Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token; 0 means unlimited."
         },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,
@@ -1630,10 +1630,10 @@
           "description": "Decision and constraint rows the `rationale` section serves."
         },
         "code_review_brief_rationale_tokens": {
-          "default": 250,
-          "minimum": 50,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "The `rationale` section's own token budget; its first row is served even past it."
+          "description": "The `rationale` section's own token budget; 0 means unlimited."
         },
         "code_risk_annotations": {
           "default": true,
@@ -2163,6 +2163,12 @@
           "default": 1.0,
           "type": "number",
           "description": "Lexical list's RRF weight for a responsibility question (vector = 1.0). 1.0 = equal weights."
+        },
+        "code_search_token_budget": {
+          "default": 0,
+          "minimum": 0,
+          "type": "integer",
+          "description": "code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default."
         },
         "code_search_vector_model_default": {
           "default": "",
@@ -3915,11 +3921,10 @@
           "description": "Org of memory_ask_code_namespace; \"\" = code_org, then the ask's own org."
         },
         "memory_ask_code_search_token_budget": {
-          "default": 1400,
-          "maximum": 12000,
-          "minimum": 200,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Token budget of the code.search read that grounds a code-entity question."
+          "description": "Token budget of the grounding code.search read; 0 means unlimited."
         },
         "memory_ask_code_staleness": {
           "default": true,
@@ -3927,11 +3932,10 @@
           "description": "Check the code locations a retrieved memory asserts against the live index and flag rotted ones (symbol moved or renamed) so synthesis prefers the current site. Read-time, additive, gated by the code binding; ambiguous symbols are skipped (code_anchor), never false-flagged."
         },
         "memory_ask_code_symbol_token_budget": {
-          "default": 400,
-          "maximum": 12000,
-          "minimum": 200,
+          "default": 0,
+          "minimum": 0,
           "type": "integer",
-          "description": "Token budget of the code.symbol read that grounds a code-entity question in the code plane."
+          "description": "Token budget of the code.symbol read that grounds a code-entity question in the code plane; 0 means unlimited."
         },
         "memory_ask_consistency_check": {
           "default": false,

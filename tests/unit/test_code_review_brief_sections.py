@@ -542,9 +542,9 @@ async def test_serve_applies_tier_sections_and_budget_to_a_stored_payload() -> N
         _inputs(), call=_Calls(), repo=_Repo(), tracker_rows=_tracker_served, now=_fixed_now
     )
     secs, used, budget = rb.serve(payload, tier="trivial", requested=[])
-    assert list(secs) == ["paths", "symbols", "do_not_flag"] and budget == 700 and used <= 700
+    assert list(secs) == ["paths", "symbols", "do_not_flag"] and budget == 0
     secs, used, budget = rb.serve(payload, tier="full", requested=[])
-    assert list(secs) == list(rb.SECTION_ORDER) and budget == 4000
+    assert list(secs) == list(rb.SECTION_ORDER) and budget == 0
     secs, used, budget = rb.serve(payload, tier="full", requested=["blame"], budget=1)
     assert list(secs) == ["blame"] and secs["blame"]["rows"] == [] and secs["blame"]["truncated"]
     assert secs["blame"]["verdict"] == "candidates" and secs["blame"]["rows_total"] == 2
@@ -653,8 +653,10 @@ async def test_miss_builds_once_and_stores_then_the_next_read_is_a_point(
     )
     assert wired["built"][0]["changed_paths"] == PATHS
     assert [t for t, _ in repo.inserted] == ["code_review_briefs"]
-    assert out.decisions["randomized_setting"] is True and out.token_budget == 4000
-    assert set(out.sections) == set(rb.SERVED_ORDER) and out.tokens_used <= 4000
+    assert out.decisions["randomized_setting"] is True and out.token_budget == 0
+    assert set(out.sections) == set(rb.SERVED_ORDER)
+    assert out.tokens_used == sum(section["tokens"] for section in out.sections.values())
+    assert not any(section["truncated"] for section in out.sections.values())
     assert wired["traces"][-1]["route"] == "brief_built" and wired["traces"][-1]["abstain"] is False
     # the row it stored is what the next read serves, without a build
     stored_row = repo.inserted[0][1][0]
@@ -663,7 +665,7 @@ async def test_miss_builds_once_and_stores_then_the_next_read_is_a_point(
     wired["built"].clear()
     out2 = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354, tier="trivial"))
     assert out2.source == "precomputed" and wired["built"] == [] and repo2.inserted == []
-    assert list(out2.sections) == ["paths", "symbols", "do_not_flag"] and out2.token_budget == 700
+    assert list(out2.sections) == ["paths", "symbols", "do_not_flag"] and out2.token_budget == 0
     assert out2.built_at == "2026-09-15T20:00:00Z" and out2.indexed_commit == SHA
     assert repo2.reads == [(117354, "")]
     # a merge_sha-only read passes the sha through, lower-cased
@@ -786,8 +788,9 @@ async def test_rationale_reads_source_paths_first_and_the_rows_its_settings_allo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("budget", "expected_rows"), [(50, 0), (0, 3)])
 async def test_rationale_serves_whole_rows_up_to_its_token_setting(
-    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    wired: dict[str, Any], monkeypatch: pytest.MonkeyPatch, budget: int, expected_rows: int
 ) -> None:
     from server.code.app import memory_links
     from server.memory.app import code_plane_reads
@@ -810,12 +813,13 @@ async def test_rationale_serves_whole_rows_up_to_its_token_setting(
 
     monkeypatch.setattr(memory_links, "trunk_namespace", lambda org, ns: ns)
     monkeypatch.setattr(code_plane_reads, "decisions_for_paths", _decisions)
-    monkeypatch.setattr(settings, "code_review_brief_rationale_tokens", 50)
+    monkeypatch.setattr(settings, "code_review_brief_rationale_tokens", budget)
     wired["repo"] = _HandlerRepo(stored=None)
     out = await h.handle_code_review_brief(CodeReviewBriefInput(pr_number=117354))
     sec = out.sections["rationale"]
-    # the first row always; the second would pass 50 tokens
-    assert len(sec["rows"]) == 1 and sec["rows_total"] == 3 and sec["truncated"]
+    assert len(sec["rows"]) == expected_rows and sec["rows_total"] == 3
+    assert sec["truncated"] is (expected_rows < 3)
+    assert not budget or sec["tokens"] <= budget
 
 
 @pytest.mark.asyncio
