@@ -591,3 +591,210 @@ async def test_total_deadline_drains_active_http_before_return(
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
     assert fixture.pool_closes == 1
+
+
+@dataclass
+class HandoffFixture(HTTPFixture):
+    acquired: asyncio.Event = field(default_factory=asyncio.Event)
+    checking: asyncio.Event = field(default_factory=asyncio.Event)
+    authority_release: asyncio.Event = field(default_factory=asyncio.Event)
+    private_failure: bool = False
+    response_closes: int = 0
+
+    async def reply(self, request: httpx.Request) -> httpx.Response:
+        response = await super().reply(request)
+        if request.method == "POST":
+            method = json.loads(await request.aread())["method"]
+            if method in {"resources/read", "tools/call"}:
+                self.acquired.set()
+        return response
+
+    async def authority(self) -> None:
+        if self.acquired.is_set():
+            self.checking.set()
+            if self.private_failure:
+                raise RuntimeError("private callback details")
+            await self.authority_release.wait()
+
+    async def cleanup(self) -> None:
+        self.response_closes += 1
+        await super().cleanup()
+
+    def client(self) -> source.MCPSourceClient:
+        return source.MCPSourceClient(
+            self.config(), None, validate_access=self.authority, _transport=FixtureTransport(self)
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+@pytest.mark.parametrize("repeat", [False, True])
+async def test_response_handoff_cancel_awaits_acquired_finalizer(
+    monkeypatch: pytest.MonkeyPatch, kind: str, repeat: bool
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HandoffFixture(kind, block=False, phase="sse", hold_cleanup=repeat)
+    async with fixture.client() as remote:
+        task = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(fixture.checking.wait(), 1)
+            task.cancel("original handoff cancellation")
+            if repeat:
+                await asyncio.wait_for(fixture.closing.wait(), 1)
+                assert not task.done()
+                task.cancel("repeated handoff cancellation")
+                await asyncio.sleep(0)
+                assert not task.done()
+                assert not fixture.pool_closed.is_set()
+                fixture.cleanup_release.set()
+            with pytest.raises(asyncio.CancelledError) as cancelled:
+                await task
+            assert cancelled.value.args == ("original handoff cancellation",)
+            assert task.cancelled()
+            assert fixture.stopped.is_set(), "acquired response finalizer was abandoned"
+            assert fixture.response_closes == 1
+            assert fixture.pool_closed.is_set()
+            assert not fixture.started.is_set(), "unapproved response reached body iteration"
+        finally:
+            fixture.cleanup_release.set()
+            fixture.authority_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+@pytest.mark.parametrize("deadline", ["request", "total"])
+async def test_response_handoff_deadline_awaits_acquired_finalizer(
+    monkeypatch: pytest.MonkeyPatch, kind: str, deadline: str
+) -> None:
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HandoffFixture(kind, block=False, phase="sse")
+    config = fixture.config()
+    config = replace(
+        config, limits=replace(config.limits, request_seconds=10 if deadline == "total" else 2)
+    )
+    async with source.MCPSourceClient(
+        config, None, validate_access=fixture.authority, _transport=FixtureTransport(fixture)
+    ) as remote:
+        task = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(fixture.checking.wait(), 1)
+            clock.advance(6 if deadline == "total" else 3)
+            with pytest.raises(source.MCPSourceError, match="timeout"):
+                await task
+            assert fixture.stopped.is_set(), "deadline abandoned the acquired response"
+            assert fixture.response_closes == 1
+            assert fixture.pool_closed.is_set()
+            assert not fixture.started.is_set()
+        finally:
+            fixture.authority_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_response_handoff_private_failure_keeps_neighbor_independent(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HandoffFixture(
+        kind, block=False, phase="sse", private_failure=True, hold_cleanup=True
+    )
+    neighbor = HTTPFixture(kind, phase="sse")
+    async with fixture.client() as first, neighbor.client() as second:
+        other = asyncio.create_task(second.read(IDENTITY))
+        failed = asyncio.create_task(first.read(IDENTITY))
+        try:
+            await asyncio.wait_for(neighbor.started.wait(), 1)
+            await asyncio.wait_for(fixture.closing.wait(), 1)
+            assert not failed.done()
+            assert not neighbor.pool_closed.is_set()
+            assert not other.done()
+            neighbor.release.set()
+            evidence = await other
+            assert evidence.text == TEXT
+            assert evidence.receipt is not None
+            fixture.cleanup_release.set()
+            with pytest.raises(source.MCPSourceError) as refusal:
+                await failed
+            assert str(refusal.value) == "MCP source protocol"
+            assert fixture.stopped.is_set()
+            assert fixture.response_closes == 1
+            assert fixture.pool_closed.is_set()
+        finally:
+            fixture.cleanup_release.set()
+            neighbor.release.set()
+            for task in (other, failed):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(other, failed, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_response_handoff_authorized_neighbor_returns_receipt(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HandoffFixture(kind, block=False, phase="sse")
+    async with fixture.client() as remote:
+        task = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(fixture.checking.wait(), 1)
+            assert fixture.response_closes == 0
+            fixture.authority_release.set()
+            evidence = await task
+            assert evidence.text == TEXT
+            assert evidence.receipt is not None
+            assert fixture.response_closes == 1
+        finally:
+            fixture.authority_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_response_handoff_cancel_finalizer_outlives_total_deadline(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = HandoffFixture(kind, block=False, phase="sse", hold_cleanup=True)
+    async with fixture.client() as remote:
+        task = asyncio.create_task(remote.read(IDENTITY))
+        try:
+            await asyncio.wait_for(fixture.checking.wait(), 1)
+            task.cancel("original handoff cancellation")
+            await asyncio.wait_for(fixture.closing.wait(), 1)
+            clock.advance(6)
+            # Deliver all expired deadline callbacks while the finalizer is blocked.
+            for _ in range(100):
+                await asyncio.sleep(0)
+                if task.done():
+                    break
+            assert not task.done(), "the deadline interrupted acquired-response cleanup"
+            assert not fixture.pool_closed.is_set()
+            fixture.cleanup_release.set()
+            with pytest.raises(asyncio.CancelledError) as cancelled:
+                await task
+            assert cancelled.value.args == ("original handoff cancellation",)
+            assert fixture.stopped.is_set()
+            assert fixture.response_closes == 1
+            assert fixture.pool_closed.is_set()
+        finally:
+            fixture.cleanup_release.set()
+            fixture.authority_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)

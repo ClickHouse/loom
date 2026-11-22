@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import io
 import json
+import urllib.request
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -719,3 +721,84 @@ async def test_existing_pin_helper_is_used_once_and_transport_strips_foreign_hea
         assert request.headers["host"] == "source.example"
         assert request.headers["authorization"] == "Bearer " + SECRET
         assert all(name not in request.headers for name in ("cookie", "x-loom-org", "traceparent"))
+
+
+@pytest.mark.parametrize(
+    "node",
+    [
+        {"type": "string", "maxLength": 10, "items": {"$ref": "urn:synthetic:hidden"}},
+        {"type": "object", "additionalProperties": False, "items": {"$ref": "urn:hidden"}},
+        {"type": "number", "properties": {"text": {"$ref": "urn:hidden"}}},
+        {"type": "boolean", "additionalProperties": {"$ref": "urn:hidden"}},
+        {
+            "type": "null",
+            "items": {
+                "type": "array",
+                "maxItems": 1,
+                "items": {"$ref": "https://reference.example/hidden"},
+            },
+        },
+        {
+            "type": "array",
+            "maxItems": 1,
+            "items": STRING,
+            "properties": {"hidden": {"$ref": "urn:hidden"}},
+        },
+        {"type": "string", "maxLength": 10, "minimum": 0},
+        {"type": "integer", "required": ["hidden"]},
+    ],
+)
+def test_schema_hardening_rejects_type_inapplicable_keywords(node: dict[str, Any]) -> None:
+    read = mapping("fetch")
+    read.output_schema["properties"]["text"] = node
+    with pytest.raises(source.MCPSourceError, match="schema"):
+        client(source.MCPSourceConfig(ENDPOINT, ENDPOINT, approved_tools=("fetch",), read=read))
+
+
+@pytest.mark.parametrize("keyword", ["$ref", "$dynamicRef"])
+@pytest.mark.parametrize(
+    "uri",
+    ["urn:synthetic:no-retrieval", "https://reference.example/schema", "file:///synthetic/schema"],
+)
+def test_schema_hardening_runtime_never_retrieves_external_resources(
+    monkeypatch: pytest.MonkeyPatch, keyword: str, uri: str
+) -> None:
+    attempted: list[str] = []
+
+    def intercepted(request: Any) -> io.BytesIO:
+        attempted.append(request.full_url)
+        return io.BytesIO(b'{"type":"string"}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", intercepted)
+    # Deliberately bypass admission: a future admission defect must still be safe.
+    schema = {keyword: uri, "type": "string", "maxLength": 10}
+    with pytest.raises(source.MCPSourceError, match="schema"):
+        source._validate(schema, "body", 1024)
+    assert attempted == [], "validation escaped the pinned HTTP boundary"
+
+
+def test_schema_hardening_retains_supported_subset_validation() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "rows": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 1,
+                "items": {"type": "string", "maxLength": 10, "minLength": 1},
+            },
+            "count": {"type": "integer", "minimum": 1, "maximum": 2},
+            "weight": {"type": "number", "minimum": 0, "maximum": 1},
+            "present": {"type": "boolean", "const": True},
+            "absent": {"type": "null"},
+        },
+        "required": ["rows", "count"],
+    }
+    source._schema(schema)
+    source._validate(
+        schema, {"rows": ["one"], "count": 1, "weight": 0.5, "present": True, "absent": None}, 1024
+    )
+    for invalid in ({"rows": [], "count": 1}, {"rows": ["one"], "count": 3}):
+        with pytest.raises(source.MCPSourceError, match="schema"):
+            source._validate(schema, invalid, 1024)

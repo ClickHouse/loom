@@ -25,6 +25,8 @@ from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.exceptions import McpError
 from pydantic import AnyUrl
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 from server.core.ch import set_query_tag
 from server.core.diagnostics import private_work
@@ -216,25 +218,16 @@ def _origin(url: str) -> tuple[str, str, int]:
 
 
 # This subset has no references, regular expressions or combinatorial validators.
-_SCHEMA_KEYS = frozenset(
-    {
-        "type",
-        "properties",
-        "required",
-        "additionalProperties",
-        "items",
-        "maxItems",
-        "minItems",
-        "maxLength",
-        "minLength",
-        "minimum",
-        "maximum",
-        "enum",
-        "const",
-        "title",
-        "description",
-    }
-)
+_SCHEMA_KEYS = frozenset({"type", "enum", "const", "title", "description"})
+_SCHEMA_TYPE_KEYS = {
+    "object": {"properties", "required", "additionalProperties"},
+    "array": {"items", "maxItems", "minItems"},
+    "string": {"maxLength", "minLength"},
+    "integer": {"minimum", "maximum"},
+    "number": {"minimum", "maximum"},
+    "boolean": set(),
+    "null": set(),
+}
 
 
 def _schema(schema: dict[str, Any]) -> None:
@@ -244,17 +237,12 @@ def _schema(schema: dict[str, Any]) -> None:
     def visit(node: Any, depth: int) -> None:
         nonlocal remaining
         remaining -= 1
-        if remaining < 0 or depth > 8 or not isinstance(node, dict) or set(node) - _SCHEMA_KEYS:
+        if remaining < 0 or depth > 8 or not isinstance(node, dict):
             raise MCPSourceError("schema")
-        if not isinstance(node.get("type"), str) or node["type"] not in {
-            "object",
-            "array",
-            "string",
-            "integer",
-            "number",
-            "boolean",
-            "null",
-        }:
+        kind = node.get("type")
+        if not isinstance(kind, str) or kind not in _SCHEMA_TYPE_KEYS:
+            raise MCPSourceError("schema")
+        if set(node) - (_SCHEMA_KEYS | _SCHEMA_TYPE_KEYS[kind]):
             raise MCPSourceError("schema")
         if node["type"] == "object":
             if node.get("additionalProperties") is not False:
@@ -284,7 +272,12 @@ def _schema(schema: dict[str, Any]) -> None:
 
 def _validate(schema: dict[str, Any], value: Any, maximum: int) -> None:
     _json(value, maximum)
-    if not Draft202012Validator(schema).is_valid(value):
+    try:
+        # An explicit empty registry never retrieves external schema resources.
+        valid = Draft202012Validator(schema, registry=Registry()).is_valid(value)
+    except Unresolvable:
+        raise MCPSourceError("schema") from None
+    if not valid:
         raise MCPSourceError("schema")
 
 
@@ -352,77 +345,79 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
             raise MCPSourceError(self.failure) from None
 
     async def _handle(self, request: httpx.Request) -> httpx.Response:
-        async with asyncio.timeout_at(self.deadline):
-            if self.failure is not None:
-                raise MCPSourceError(self.failure)
-            if request.url != self.endpoint or request.method not in {"POST", "GET", "DELETE"}:
-                raise MCPSourceError("denied")
-            self.requests += 1
-            if self.requests > self.limits.max_requests:
-                raise MCPSourceError("limit")
-            await self.validate_access()
-            if self.target is None:
-                async with self.pin_lock:
-                    if self.target is None:
-                        refusal, pinned, host, sni = await pinned_target(
-                            str(self.endpoint), schemes=("https",)
-                        )
-                        if refusal or not host or not sni:
-                            raise MCPSourceError("denied")
-                        self.target = pinned, host, sni
-            pinned, host, sni = self.target
-            # Construct an allowlist of protocol headers, never propagate inbound headers.
-            headers = {
-                key: value
-                for key, value in request.headers.items()
-                if key
-                in {
-                    "accept",
-                    "content-type",
-                    "mcp-session-id",
-                    "mcp-protocol-version",
-                    "last-event-id",
-                    "mcp-method",
-                    "mcp-name",
-                }
-            }
-            if any(len(v) > 2048 for v in headers.values()):
-                raise MCPSourceError("limit")
-            headers.update({"host": host, "accept-encoding": "identity"})
-            if self.credential is not None:
-                headers["authorization"] = "Bearer " + self.credential.token
-            body = await request.aread()
-            if len(body) > 32_768:
-                raise MCPSourceError("limit")
-            outgoing = httpx.Request(
-                request.method,
-                pinned,
-                headers=headers,
-                content=body,
-                extensions={"timeout": request.extensions.get("timeout", {}), "sni_hostname": sni},
-            )
-            await self.validate_access()
-            response = await self.inner.handle_async_request(outgoing)
-            try:
+        response: httpx.Response | None = None
+        handed_off = False
+        try:
+            async with asyncio.timeout_at(self.deadline):
+                if self.failure is not None:
+                    raise MCPSourceError(self.failure)
+                if request.url != self.endpoint or request.method not in {"POST", "GET", "DELETE"}:
+                    raise MCPSourceError("denied")
+                self.requests += 1
+                if self.requests > self.limits.max_requests:
+                    raise MCPSourceError("limit")
                 await self.validate_access()
-            except Exception as error:  # noqa: BLE001 — a revoked response must close before returning its fixed refusal
-                await response.aclose()
-                raise MCPSourceError(_error_code(error)) from None
-            if response.is_redirect:
-                await response.aclose()
-                raise MCPSourceError("denied")
-            if response.status_code in {401, 403}:
-                await response.aclose()
-                raise MCPSourceError("denied")
-            # Reject compression so the wire budget also bounds decoded protocol bytes.
-            if response.headers.get("content-encoding", "identity") != "identity":
-                await response.aclose()
-                raise MCPSourceError("protocol")
-            if not isinstance(response.stream, httpx.AsyncByteStream):
-                await response.aclose()
-                raise MCPSourceError("protocol")
-            response.stream = _LimitedStream(response.stream, self)
-            return response
+                if self.target is None:
+                    async with self.pin_lock:
+                        if self.target is None:
+                            refusal, pinned, host, sni = await pinned_target(
+                                str(self.endpoint), schemes=("https",)
+                            )
+                            if refusal or not host or not sni:
+                                raise MCPSourceError("denied")
+                            self.target = pinned, host, sni
+                pinned, host, sni = self.target
+                # Construct an allowlist of protocol headers, never propagate inbound headers.
+                headers = {
+                    key: value
+                    for key, value in request.headers.items()
+                    if key
+                    in {
+                        "accept",
+                        "content-type",
+                        "mcp-session-id",
+                        "mcp-protocol-version",
+                        "last-event-id",
+                        "mcp-method",
+                        "mcp-name",
+                    }
+                }
+                if any(len(v) > 2048 for v in headers.values()):
+                    raise MCPSourceError("limit")
+                headers.update({"host": host, "accept-encoding": "identity"})
+                if self.credential is not None:
+                    headers["authorization"] = "Bearer " + self.credential.token
+                body = await request.aread()
+                if len(body) > 32_768:
+                    raise MCPSourceError("limit")
+                outgoing = httpx.Request(
+                    request.method,
+                    pinned,
+                    headers=headers,
+                    content=body,
+                    extensions={
+                        "timeout": request.extensions.get("timeout", {}),
+                        "sni_hostname": sni,
+                    },
+                )
+                await self.validate_access()
+                response = await self.inner.handle_async_request(outgoing)
+                await self.validate_access()
+                if response.is_redirect or response.status_code in {401, 403}:
+                    raise MCPSourceError("denied")
+                # Reject compression so the wire budget bounds decoded protocol bytes.
+                if response.headers.get("content-encoding", "identity") != "identity":
+                    raise MCPSourceError("protocol")
+                if not isinstance(response.stream, httpx.AsyncByteStream):
+                    raise MCPSourceError("protocol")
+                response.stream = _LimitedStream(response.stream, self)
+                handed_off = True
+                return response
+        finally:
+            if response is not None and not handed_off:
+                # Leave the deadline scope before joining an unclaimed response's finalizer.
+                with anyio.CancelScope(shield=True):
+                    await response.aclose()
 
     async def aclose(self) -> None:
         await self.inner.aclose()

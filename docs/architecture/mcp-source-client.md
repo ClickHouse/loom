@@ -61,6 +61,8 @@ The qualified content profile is text resources and mapped structured tool outpu
 resource blobs and tools that return only unstructured text are unsupported. Approved
 tool schemas use a bounded subset with closed objects, bounded arrays and strings,
 and no references, regular expressions or combinatorial validators.
+Keywords must belong to the schema's declared type. External schema retrieval is
+disabled independently of configuration validation.
 
 Each read produces normalized evidence: resource identity, citation URI, title, media
 type, content and any supplied revision. A read receipt binds the requested identity,
@@ -78,6 +80,8 @@ managers live in one task per open client. A failed or cancelled operation makes
 client terminal and closes and joins that task before returning, including when an SDK
 request deadline expires while HTTP response data is still arriving. Another client's
 SDK scope remains independent. Cancellation publishes no partial read evidence.
+The transport retains cleanup ownership while checking authority after response headers
+arrive and before handing the response to the protocol client.
 Closing a request does not prove that remote processing has stopped. Errors expose bounded error
 codes rather than upstream content, endpoints or credentials.
 
