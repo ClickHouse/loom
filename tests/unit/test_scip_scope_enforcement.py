@@ -85,6 +85,10 @@ async def test_a_kind_change_rewrites_an_unmoved_symbol():
             "end_line": 8,
             "kind": "const",
             "path": "src/a.tsx",
+            "name": "BaseButton",
+            "signature": "",
+            "decl_paths": [],
+            "doc_comment": "",
         }
     ]
     repo.live_edges_for_path.return_value = []
