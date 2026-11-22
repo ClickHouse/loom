@@ -137,6 +137,33 @@ class SpendingContracts(unittest.TestCase):
         )
         self.assertAlmostEqual(float(self.journal.spent), 0.0050505)
 
+    def test_solver_and_native_models_use_their_own_frozen_rates(self):
+        path = self.path.with_name("mixed-models.jsonl")
+        journal = Spending(
+            path, dollars=None, model="claude-sonnet-5-5", native_model="claude-haiku-5-5"
+        )
+        self.addCleanup(journal.close)
+        for role, model in (
+            ("solver", "claude-sonnet-5-5"),
+            ("judge", "claude-sonnet-5-5"),
+            ("loom", "claude-haiku-5-5"),
+        ):
+            ticket = journal.reserve({**self.payload, "model": model}, role=role)
+            journal.settle(ticket, self.response(model=model), "request-" + role)
+        costs = journal.summary()["by_role"]
+        self.assertAlmostEqual(costs["solver"]["spent_usd"], 0.0004)
+        self.assertAlmostEqual(costs["judge"]["spent_usd"], 0.0004)
+        self.assertAlmostEqual(costs["loom"]["spent_usd"], 0.00002)
+        self.assertEqual(
+            journal.rates("claude-sonnet-5-5", 100001), journal.rates("claude-sonnet-5-5", 0)
+        )
+        journal.close()
+        restored = Spending(
+            path, dollars=None, model="claude-sonnet-5-5", native_model="claude-haiku-5-5"
+        )
+        self.addCleanup(restored.close)
+        self.assertEqual(restored.summary(), journal.summary())
+
     def test_failed_dispatch_retains_reservation_and_blocks_the_next(self):
         calls = []
 

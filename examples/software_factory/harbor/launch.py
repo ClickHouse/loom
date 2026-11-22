@@ -156,7 +156,7 @@ def plan(root=ROOT, evaluation="flask"):
         "embedding": {"model": "local:bge-small", "provider": "local", **model_pin(root)},
         "memory": {
             "history_cases": warm,
-            "cold_cases": cold,
+            "cases_without_history": cold,
             "project_records": len(records),
             "linked": linked,
             "unlinked": len(records) - linked,
@@ -164,8 +164,7 @@ def plan(root=ROOT, evaluation="flask"):
             "historical_knowledge": "Only history-seeded arms receive the frozen historical corpus",
             "memory_namespaces": memory_attempts,
             "seeded_memory_attempts": seeded_attempts,
-            "cold_memory_attempts": memory_attempts - seeded_attempts,
-            "cold_memory_records": 0,
+            "memory_disabled_primary_attempts": cases * repeats * len(PRIMARY) - memory_attempts,
             "delivery": "Optional tools; project records are not inserted into the prompt",
         },
         "paid_requests": False,

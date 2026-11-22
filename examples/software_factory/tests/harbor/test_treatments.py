@@ -11,20 +11,30 @@ from examples.software_factory.harbor.memory import treatment_fixture
 
 
 class TreatmentContracts(unittest.TestCase):
-    def test_loom_schemas_are_identical_and_cold_controls_have_no_seeded_content(self):
+    def test_code_only_disables_memory_and_memory_arms_share_the_same_capability(self):
         fixture = {
             "public_documents": {"decision": "Historical fact"},
             "history_events": [{"key": "decision"}],
         }
-        schemas = []
+        code_schemas, memory_schemas = [], []
         for name, arm in PRIMARY.items():
             if arm.index_tier is None:
                 continue
-            schemas.append(tool_schemas(arm.mode, memory=arm.memory_enabled))
-            applied = treatment_fixture(fixture, name)
-            self.assertEqual(bool(applied["history_events"]), arm.history_seeded)
-            self.assertEqual(bool(applied["public_documents"]), arm.history_seeded)
-        self.assertTrue(all(schema == schemas[0] for schema in schemas))
+            schema = tool_schemas(arm.mode, memory=arm.memory_enabled)
+            code_schemas.append(
+                [tool for tool in schema if not tool["name"].startswith("loom_memory_")]
+            )
+            memory_tools = [tool for tool in schema if tool["name"].startswith("loom_memory_")]
+            self.assertEqual(bool(memory_tools), arm.memory_enabled)
+            if arm.memory_enabled:
+                memory_schemas.append(memory_tools)
+                self.assertIs(treatment_fixture(fixture, name), fixture)
+            else:
+                with self.assertRaises(PermissionError):
+                    treatment_fixture(fixture, name)
+        self.assertTrue(all(schema == code_schemas[0] for schema in code_schemas))
+        self.assertEqual(len(memory_schemas), 2)
+        self.assertEqual(memory_schemas[0], memory_schemas[1])
         self.assertEqual(fixture["public_documents"], {"decision": "Historical fact"})
 
     def test_six_families_keep_all_arms_repeats_and_controls(self):
@@ -52,7 +62,7 @@ class TreatmentContracts(unittest.TestCase):
     def test_memory_cannot_be_silently_enabled_or_aliased_to_a_tier(self):
         rows = schedule(["a", "b", "c"], seed=741)
         for arm, field, wrong in (
-            ("loom-treesitter", "memory_enabled", False),
+            ("loom-treesitter", "memory_enabled", True),
             ("loom-scip-memory", "memory_enabled", False),
             ("loom-scip-memory", "index_tier", "scip-memory"),
             ("baseline", "index_tier", "treesitter"),

@@ -169,9 +169,9 @@ class PublicLauncher(unittest.TestCase):
         self.assertEqual(plan["blind_judges"]["requests"], 12)
         self.assertTrue(plan["blind_judges"]["fixed_only"])
         self.assertEqual(plan["blind_judges"]["model"], plan["model"])
-        self.assertEqual(plan["model"], "claude-haiku-5-5")
+        self.assertEqual(plan["model"], "claude-sonnet-5-5")
         self.assertEqual(plan["native_provider"], "anthropic")
-        self.assertEqual(plan["native_model"], "claude-haiku-5-5")
+        self.assertEqual(plan["native_model"], "claude-sonnet-5-5")
         self.assertEqual(plan["arms"], list(PRIMARY))
         self.assertEqual(
             (
@@ -181,7 +181,9 @@ class PublicLauncher(unittest.TestCase):
             ),
             (30, 14, 16),
         )
-        self.assertEqual(plan["memory"]["cold_cases"], 0)
+        self.assertEqual(plan["memory"]["cases_without_history"], 0)
+        self.assertEqual(plan["memory"]["memory_namespaces"], 18)
+        self.assertEqual(plan["memory"]["memory_disabled_primary_attempts"], 27)
         self.assertFalse(plan["memory"]["equal_plain_notes_all_arms"])
         self.assertEqual(plan["embedding"]["revision"], "aa8f8b060edb00e03bfdd08813a2949946c8ba55")
         self.assertEqual(len(plan["embedding"]["files"]), 5)

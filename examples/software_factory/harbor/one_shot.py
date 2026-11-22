@@ -15,6 +15,7 @@ from pathlib import Path
 
 from .catalog import load_evaluation
 from .gateway import Gateway
+from .launch import native_model
 from .profiles import load_profile
 from .provision import Provisioner
 from .runtime import read, write
@@ -120,7 +121,13 @@ def execute(args):
         docker_config.parent.mkdir(mode=0o700, exist_ok=True)
         docker_config.write_text(json.dumps({"proxies": {"default": {"httpsProxy": proxy}}}))
         docker_config.chmod(0o600)
-    meter = Spending(output / "spending.jsonl", dollars=args.budget_usd, model="claude-haiku-5-5")
+    descriptor = load_evaluation(source, args.eval)
+    meter = Spending(
+        output / "spending.jsonl",
+        dollars=args.budget_usd,
+        model=read(descriptor["paths"]["suite_lock"])["model_id"],
+        native_model=native_model(source),
+    )
     gateway = runtime = None
     try:
         if meter.blocked:

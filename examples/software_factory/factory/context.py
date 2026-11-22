@@ -27,7 +27,7 @@ class Context:
         self.requests = 0
         self.chars = 0
 
-    def ground(self, data: dict) -> dict:
+    def ground(self, data: dict, *, allow_context_prefix: bool = False) -> dict:
         if data.get("abstain"):
             return {"abstain": True, "reason": "index_abstained"}
         accepted, rejected = [], []
@@ -41,13 +41,16 @@ class Context:
                     raise ValueError("Retrieved body elided by context budget")
                 if not body:
                     raise ValueError("Retrieved body unavailable")
-                if (
-                    start < 1
-                    or end < start
-                    or end > len(lines)
-                    or "\n".join(lines[start - 1 : end]) != body.removesuffix("\n")
-                ):
+                if start < 1 or end < start or end > len(lines):
                     raise ValueError("Retrieved body differs from working source")
+                expected = "\n".join(lines[start - 1 : end])
+                offered = body.removesuffix("\n")
+                prefix = ""
+                if offered != expected:
+                    if not allow_context_prefix or not expected or not offered.endswith(expected):
+                        raise ValueError("Retrieved body differs from working source")
+                    prefix = offered[: -len(expected)]
+                    body = body[len(prefix) :]
                 accepted.append(
                     {
                         "path": item["path"],
@@ -57,6 +60,8 @@ class Context:
                         "grounding": "exact_local_span",
                     }
                 )
+                if prefix and source == self.task.files[item["path"]]:
+                    accepted[-1]["retrieval_context"] = prefix
             except (PermissionError, KeyError, ValueError) as error:
                 rejected.append(str(error))
         return {

@@ -43,7 +43,8 @@ class LiveControllerContracts(unittest.TestCase):
                 }
 
             provider = ObservedProvider(
-                Mock(label="fixture", step=Mock(side_effect=dispatch)), path
+                Mock(label="fixture", model_id="claude-haiku-5-5", step=Mock(side_effect=dispatch)),
+                path,
             )
             result = provider.step([], [], 2048)
             self.assertAlmostEqual(result["generation_cost_usd"], 0.0032)

@@ -18,16 +18,9 @@ from .arms import ALL
 
 def treatment_fixture(fixture, arm):
     """Apply the frozen arm's history treatment before setup and receipt validation."""
-    if ALL[arm].history_seeded:
-        return fixture
-    return {
-        **fixture,
-        "kind": "cold",
-        "public_documents": {},
-        "public_documents_sha256": digest({}),
-        "history_events": [],
-        "history_events_sha256": digest([]),
-    }
+    if not ALL[arm].memory_enabled:
+        raise PermissionError("Memory is disabled for the selected arm")
+    return fixture
 
 
 class NativeMemoryContext:

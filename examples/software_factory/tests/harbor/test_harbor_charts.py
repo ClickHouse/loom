@@ -168,6 +168,21 @@ class HarborCharts(unittest.TestCase):
         self.assertIn('id="timing"', html)
         self.assertEqual(json.loads(Path(result["data"]).read_text())["attempts"][0]["cost"], 0.02)
 
+    def test_interrupted_report_keeps_observed_counts_and_scheduled_unknowns(self):
+        self.views.update(run_status="interrupted", interruption_reason="Setup evidence changed")
+        data = chart_data(self.protocol, self.entries, self.views)
+        self.assertEqual(data["run_status"], "interrupted")
+        self.assertEqual(data["interruption_reason"], "Setup evidence changed")
+        self.assertFalse(data["complete"])
+        self.assertEqual(data["observed"], 1)
+        self.assertEqual(data["scheduled"], 6)
+        self.assertIsNone(data["attempts"][1]["resolved"])
+        self.protocol["reporting"]["publish_charts"] = False
+        html = Path(generate_charts(self.protocol, self.entries, self.views)["html"]).read_text()
+        for element in ("run-status", "summary-body", "issues-body", "visual-comparison"):
+            self.assertIn(f'id="{element}"', html)
+        self.assertNotIn("<details open", html)
+
     def test_public_titles_cannot_close_the_embedded_json_script(self):
         public = self.root / "public.json"
         public.write_text(

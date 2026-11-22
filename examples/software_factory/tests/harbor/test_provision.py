@@ -186,7 +186,7 @@ class ProvisioningContracts(unittest.TestCase):
         self.assertEqual(removes, [["docker", "rm", "-f", "-v", "d" * 64]])
         self.assertTrue(result["complete"])
 
-    def test_shared_twelve_code_bindings_and_thirty_six_private_memory_scopes(self):
+    def test_shared_twelve_code_bindings_and_thirty_six_memory_only_scopes(self):
         from examples.software_factory.harbor.live_support import schedule
 
         tasks = {
@@ -217,10 +217,10 @@ class ProvisioningContracts(unittest.TestCase):
             for value in bindings.values()
             if value["memory_namespace"] is not None
         ]
-        self.assertEqual(len(memories), 72)
-        self.assertEqual(len(set(memories)), 72)
+        self.assertEqual(len(memories), 36)
+        self.assertEqual(len(set(memories)), 36)
         for group in groups.values():
-            self.assertEqual(len(group["memory_slots"]), 6)
+            self.assertEqual(len(group["memory_slots"]), 3)
         self.run.assert_not_called()
 
     def test_native_backfill_uses_fixed_commit_real_embeddings_and_no_fetch(self):

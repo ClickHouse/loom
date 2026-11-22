@@ -82,6 +82,7 @@ class HarborContracts(unittest.TestCase):
                 raw,
                 folder,
                 task_kind="historical-flask",
+                model_id="claude-haiku-5-5",
             )
             self.assertFalse(row["resolved"])
             self.assertEqual(row["generation_cost_usd"], 0.02)

@@ -14,7 +14,7 @@ class Arm:
 
     @property
     def memory_enabled(self):
-        return self.index_tier is not None
+        return self.history_seeded
 
     @property
     def mode(self):
@@ -29,11 +29,11 @@ class Arm:
 
 
 PRIMARY = {
-    "baseline": Arm(None, False, "Claude without Loom"),
-    "loom-treesitter": Arm("treesitter", False, "Claude + Loom, Tree-sitter, cold memory"),
-    "loom-treesitter-memory": Arm("treesitter", True, "Claude + Loom, Tree-sitter + memory"),
-    "loom-scip": Arm("scip", False, "Claude + Loom, SCIP, cold memory"),
-    "loom-scip-memory": Arm("scip", True, "Claude + Loom, SCIP + memory"),
+    "baseline": Arm(None, False, "No Loom"),
+    "loom-treesitter": Arm("treesitter", False, "Tree-sitter (no memory)"),
+    "loom-treesitter-memory": Arm("treesitter", True, "Tree-sitter + memory"),
+    "loom-scip": Arm("scip", False, "SCIP (no memory)"),
+    "loom-scip-memory": Arm("scip", True, "SCIP + memory"),
 }
 CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}
 ALL = {**PRIMARY, **CONTROLS}

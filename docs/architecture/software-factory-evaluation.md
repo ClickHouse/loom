@@ -20,9 +20,10 @@ failures still stop the attempt.
 
 The common prompt identifies the index boundary: Loom code tools cover only
 `source_paths`; ordinary search and read also cover the public repository evidence.
-All five optional code reads request lessons from the attempt's bound memory scope,
-including `code.enclosing`. The memory audit checks the same scope on every code
-read. Cold and history-seeded arms have identical tool schemas.
+In the two memory arms, all five optional code reads request lessons from the
+attempt's bound memory scope, including `code.enclosing`. The memory audit checks
+that scope on every code read. Code-only arms disable memory tools and lessons;
+the four Loom arms share the same code-tool schemas.
 
 Ordinary search is available to every arm with optional RE2 regular expressions,
 literal matching by default, path prefixes and result pagination. Optional Loom
@@ -105,9 +106,8 @@ Python smoke fixtures live under tests and are not repository evaluations.
 
 The Flask historical issue study uses the same three real issues in five
 arms. Each optional memory arm receives 30 curated historical facts, 14 linked to
-code, in a private namespace. All four Loom arms expose identical optional memory
-tools. Cold controls have fresh writable namespaces proven empty by native
-listings. Other arms receive no seeded history. The issue,
+code, in a private namespace. Only these two arms expose optional memory tools
+and code-linked lessons. Code-only arms receive no memory tools or namespace. The issue,
 source, ordinary tools, model and tests remain paired. No historical facts are
 inserted into the prompt; the model chooses memory and code tools.
 
@@ -127,3 +127,8 @@ The comparison measures the combined contribution of historical information and
 its retrieval. Linking in isolation needs an additional matched-facts control.
 The harder task selection precedes its solver outcomes. Earlier development
 outcomes informed harness changes, and three tasks cannot establish generalization.
+
+The profile lock pins the solver and blind-judge model for every arm. The shared
+ledger prices that model and the resolved deployment model separately, including
+cache writes and reads. Unknown models refuse dispatch. A model change starts a
+new cohort; reports do not pool results across models.

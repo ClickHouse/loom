@@ -150,7 +150,7 @@ class QualifiedContext(Context):
                 rejected.append(str(error))
         return candidates
 
-    def grounded_definitions(self, items, rejected):
+    def grounded_definitions(self, items, rejected, *, allow_context_prefix=False):
         definitions, seen = [], set()
         for item in items:
             if not item.get("start_line") or item.get("granularity") == "skeleton":
@@ -160,7 +160,12 @@ class QualifiedContext(Context):
                 continue
             seen.add(identity)
             grounded = self.ground(
-                {"definitions": [{**item, "elided": item.get("elided") or item.get("body_elided")}]}
+                {
+                    "definitions": [
+                        {**item, "elided": item.get("elided") or item.get("body_elided")}
+                    ]
+                },
+                allow_context_prefix=allow_context_prefix,
             )
             for unit in grounded["definitions"]:
                 try:
@@ -439,7 +444,9 @@ class QualifiedContext(Context):
                     rejected.append(str(error))
             out["entries"] = entries
             if op == "code.search" and any(item.get("body") for item in data.get("results", [])):
-                out["definitions"] = self.grounded_definitions(data["results"], rejected)
+                out["definitions"] = self.grounded_definitions(
+                    data["results"], rejected, allow_context_prefix=True
+                )
         out.update(
             rejected=rejected,
             index_commit=self.task.base_commit,

@@ -7,6 +7,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from examples.software_factory.factory.model import Budget, digest
+from examples.software_factory.harbor.pricing import cost_basis
 
 from .arms import PRIMARY, validate_schedule
 from .charts import METRICS
@@ -112,15 +113,7 @@ def freeze_plan(
         "visible_test_call_limit": None,
         "max_physical_loom_requests": None,
         "reporting": reporting or {},
-        "cost_basis": {
-            "type": "list-price estimates from actual provider usage; setup reported separately",
-            "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-            "input_usd_per_million": 0.1,
-            "output_usd_per_million": 0.5,
-            "prompts_over_100000_input": 0.5,
-            "prompts_over_100000_output": 2.5,
-            "infrastructure": "resource usage measured; monetary cost unknown",
-        },
+        "cost_basis": cost_basis(lock["model_id"]),
         "judge": {
             "enabled": True,
             "model_id": lock["model_id"],

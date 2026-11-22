@@ -57,11 +57,13 @@ def public_reproduction(lock, protocol):
         **public_reproduction_base(lock, protocol),
         "study_role": lock["study_role"],
         "memory_treatment": {
-            "availability": "All Loom arms have identical memory tools; "
-            "only history-seeded arms receive prior facts",
+            "availability": "Code-only arms disable memory tools and code-linked lessons; "
+            "the two memory arms receive historical facts and optional memory tools",
             "delivery": "Optional native memory tools and code-linked lessons; no prompt injection",
-            "measures": "Historical knowledge plus native retrieval versus certified empty memory; "
-            "not linking in isolation",
+            "measures": (
+                "Historical knowledge and native memory capability versus code indexing alone; "
+                "not linking in isolation"
+            ),
         },
         "dataset": {
             **{

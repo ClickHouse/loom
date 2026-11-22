@@ -10,7 +10,8 @@ python3 -m examples.software_factory plan --eval flask --json
 ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --eval flask --output ./factory-run
 ```
 
-Use a fresh output directory. The default model is `claude-haiku-5-5` for the solver,
+Use a fresh output directory. Model changes define separate cohorts; compare arms within
+one cohort, and retain results from earlier models. The default model is `claude-sonnet-5-5` for the solver,
 native model-backed operations and blind judge. Runs have no dollar cap unless
 `--budget-usd` is supplied. An interrupted phase refuses automatic replay;
 inspect retained receipts before explicit resume or cleanup:
@@ -45,8 +46,8 @@ public sources; source hashes and chronology are checked before ingestion.
 Only history-seeded arms receive the 30 seeded facts. Neither the issue nor the
 source or test contract changes between arms. The study contains no authored
 replacement issues. Native links are checked at the task's actual indexed base.
-All four Loom arms expose identical memory schemas. Cold controls receive private
-empty namespaces, proven by native listings; seeded arms replay history from
+Code-only arms disable memory. Only the two memory arms expose memory schemas
+and private writable namespaces; they replay history from
 2.0.0rc2, observe changed links at the task base, then revise one source-backed
 fact and verify that its anchor becomes fresh again.
 

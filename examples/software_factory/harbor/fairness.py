@@ -204,7 +204,11 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
     fixture = Path(frozen["fixture_file"])
     if hashlib.sha256(fixture.read_bytes()).hexdigest() != frozen["fixture_sha256"]:
         return False
-    notes = digest(treatment_fixture(read(fixture), slot["arm"])["public_documents"])
+    notes = (
+        digest(treatment_fixture(read(fixture), slot["arm"])["public_documents"])
+        if enabled
+        else digest({})
+    )
     for identity in (result, start):
         if (
             type(identity.get("memory_enabled")) is not bool

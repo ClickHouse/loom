@@ -125,7 +125,7 @@ def chart_data(protocol, entries, views_manifest):
         rows.append(row)
     return {
         "schema_version": 1,
-        "name": output.name,
+        "name": output.parent.name if output.name == "study" else output.name,
         "model": protocol.get("model_id"),
         "study_role": protocol.get("public_reproduction", {}).get("study_role"),
         "memory_treatment": protocol.get("public_reproduction", {}).get("memory_treatment", {}),
@@ -139,6 +139,10 @@ def chart_data(protocol, entries, views_manifest):
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),
         "complete": len(observed) == len(protocol["schedule"]),
+        "run_status": views_manifest.get(
+            "run_status", "complete" if len(observed) == len(protocol["schedule"]) else "running"
+        ),
+        "interruption_reason": views_manifest.get("interruption_reason", ""),
         "evaluation_complete": views_manifest.get(
             "evaluation_complete", len(observed) == len(protocol["schedule"])
         ),

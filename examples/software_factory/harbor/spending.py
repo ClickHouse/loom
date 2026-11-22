@@ -13,6 +13,8 @@ from pathlib import Path
 
 from examples.software_factory.factory.model import digest
 
+from .pricing import MODELS, rates
+
 ATTRIBUTION = {"org", "namespace", "feature", "order"}
 USAGE = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 PRICE_BASIS = (
@@ -30,8 +32,8 @@ class Spending:
             raise ValueError("Freeze a finite positive allowance") from None
         if (
             (self.limit is not None and (not self.limit.is_finite() or self.limit <= 0))
-            or model != "claude-haiku-5-5"
-            or native_model != "claude-haiku-5-5"
+            or model not in MODELS
+            or native_model not in MODELS
         ):
             raise ValueError("Freeze a positive allowance and the priced models")
         self.path = Path(path)
@@ -95,13 +97,9 @@ class Spending:
             self._phase = value
 
     def rates(self, model, incoming, *, ceiling=False):
-        if model != self.model:
-            raise ValueError("Unknown model price")
-        return (
-            (Decimal("0.5"), Decimal("2.5"))
-            if ceiling or incoming > 100000
-            else (Decimal("0.1"), Decimal("0.5"))
-        )
+        if model not in {self.model, self.native_model}:
+            raise ValueError("Model differs from the frozen solver and native models")
+        return rates(model, incoming, ceiling=ceiling)
 
     def _usage(self, reservation, response, request_id):
         if not isinstance(response, dict) or not isinstance(response.get("usage"), dict):

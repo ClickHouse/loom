@@ -244,3 +244,46 @@ class ProjectionContracts(unittest.TestCase):
         self.data["definitions"][0]["lessons"][0]["namespace"] = "outside"
         with self.assertRaises(PermissionError):
             self.context.project("code.symbol", self.data)
+
+    def test_search_keeps_source_after_a_retrieval_context_prefix(self):
+        for prefix in (
+            "A function summary.\n",
+            "A multi-line\nsource comment.\n",
+            "# … continued from resolve_name(value)\n",
+        ):
+            with self.subTest(prefix=prefix):
+                result = self.context.project(
+                    "code.search", {"results": [self.definition(body=prefix + self.source)]}
+                )
+                self.assertEqual(result["rejected"], [])
+                self.assertEqual(result["definitions"][0]["body"], self.source)
+                self.assertEqual(result["definitions"][0]["retrieval_context"], prefix)
+                self.assertEqual(result["definitions"][0]["grounding"], "exact_local_span")
+
+    def test_a_prefix_cannot_rescue_wrong_truncated_or_outside_source(self):
+        for extra in (
+            {"body": "Summary\n" + self.source.replace(".strip()", ".lower()")},
+            {"body": "Summary\n" + self.source.splitlines()[0]},
+            {"path": "outside/private.py", "body": "Summary\n" + self.source},
+            {"start_line": 3, "end_line": 5, "body": "Summary\n" + self.source},
+        ):
+            with self.subTest(extra=extra):
+                result = self.context.project(
+                    "code.search", {"results": [self.definition(**extra)]}
+                )
+                self.assertEqual(result.get("definitions", []), [])
+                self.assertTrue(result["rejected"])
+        strict = self.context.project(
+            "code.symbol", {"definitions": [self.definition(body="Summary\n" + self.source)]}
+        )
+        self.assertEqual(strict["definitions"], [])
+        self.assertTrue(strict["rejected"])
+
+    def test_verified_source_does_not_keep_a_prefix_from_an_edited_file(self):
+        self.context.checkout.edit(self.path, self.source, self.source + "# local change\n")
+        result = self.context.project(
+            "code.search", {"results": [self.definition(body="Summary\n" + self.source)]}
+        )
+        self.assertEqual(result["definitions"][0]["body"], self.source)
+        self.assertNotIn("retrieval_context", result["definitions"][0])
+        self.assertNotIn("unit_id", result["definitions"][0])

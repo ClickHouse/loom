@@ -16,7 +16,7 @@
   "repository_url": "https://github.com/pallets/flask.git",
   "python_image": "python@sha256:726d304906fa5eb468e5531e366548d1903286352f5adb54ef508ac01fbd80c6",
   "schedule_seed": 741,
-  "model_id": "claude-haiku-5-5",
+  "model_id": "claude-sonnet-5-5",
   "package_sha256": {
     "MarkupSafe==2.1.5": [
       "00e046b6dd71aa03a41079792f8473dc494d564611a8f89bbbd7cb93295ebdcf",

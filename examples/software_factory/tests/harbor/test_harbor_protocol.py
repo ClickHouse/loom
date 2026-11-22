@@ -41,6 +41,11 @@ class HarborProtocol(unittest.TestCase):
         with self.assertRaises(PermissionError):
             verify(changed)
 
+    def test_each_priced_model_can_be_frozen_but_unknown_models_refuse(self):
+        verify({**self.plan, "model_id": "claude-sonnet-5-5"})
+        with self.assertRaises(PermissionError):
+            verify({**self.plan, "model_id": "unpriced-model"})
+
     def test_input_freeze_verifies_public_provenance_and_every_server_source(self):
         paths = harbor_study.verified_input_files(self.plan)
         self.assertEqual(set(paths), {Path(p) for p in self.plan["files"]})

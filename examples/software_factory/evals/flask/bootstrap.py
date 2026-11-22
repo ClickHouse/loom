@@ -21,6 +21,7 @@ from examples.software_factory.evals.flask.public_metadata import public_reprodu
 from examples.software_factory.factory.model import Budget, digest
 from examples.software_factory.harbor.index import snapshot
 from examples.software_factory.harbor.live_support import schedule
+from examples.software_factory.harbor.pricing import cost_basis
 from examples.software_factory.harbor.runtime import read, write
 from examples.software_factory.harbor.source import (
     check_files,
@@ -631,15 +632,7 @@ def create_protocol(config_path: Path, output: Path) -> Path:
         "index_certificate_file": str(certificate),
         "index_certificate_sha256": sha(certificate),
         "public_inputs": public_inputs,
-        "cost_basis": {
-            "type": "generation list-price estimate from native uncached standard usage",
-            "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-            "input_usd_per_million": 0.1,
-            "output_usd_per_million": 0.5,
-            "prompts_over_100000_input": 0.5,
-            "prompts_over_100000_output": 2.5,
-            "infrastructure": "unknown; reported separately",
-        },
+        "cost_basis": cost_basis(lock["model_id"]),
         "success_target": {
             arm: {
                 "successes": 9,
@@ -653,7 +646,7 @@ def create_protocol(config_path: Path, output: Path) -> Path:
             "judge",
             {
                 "enabled": True,
-                "model_id": "claude-haiku-5-5",
+                "model_id": lock["model_id"],
                 "seed": 741,
                 "output_tokens": 4096,
             },

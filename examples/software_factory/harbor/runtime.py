@@ -13,6 +13,7 @@ from examples.software_factory.factory.anthropic_provider import accounting_usag
 from examples.software_factory.factory.model import TRANSPORT_TIMEOUT_S, digest
 from examples.software_factory.harbor.live_support import TransportAudit
 
+from .pricing import MODELS, rates
 from .profiles import load_profile
 
 
@@ -45,7 +46,7 @@ def verify(protocol):
     for path, expected in protocol["files"].items():
         if hashlib.sha256(Path(path).read_bytes()).hexdigest() != expected:
             raise PermissionError("A frozen runtime or evaluation input changed: " + path)
-    if protocol["model_id"] != "claude-haiku-5-5" or protocol["index_tier"] != "per-arm":
+    if protocol["model_id"] not in MODELS or protocol["index_tier"] != "per-arm":
         raise PermissionError("Model or index tier differs from the qualified protocol")
 
 
@@ -83,8 +84,8 @@ class ObservedProvider:
         try:
             usage = accounting_usage(response)
             incoming, outgoing = usage["inputTokens"], usage["outputTokens"]
-            input_rate, output_rate = (0.1, 0.5) if incoming <= 100000 else (0.5, 2.5)
-            cost = (incoming * input_rate + outgoing * output_rate) / 1000000
+            input_rate, output_rate = rates(self.provider.model_id, incoming)
+            cost = float((incoming * input_rate + outgoing * output_rate) / 1000000)
         except (ValueError, KeyError, TypeError):
             pass  # Raw usage remains available when the frozen pricing rule cannot price it.
         return {

@@ -305,7 +305,7 @@ def prepare(previous: Path, output: Path) -> Path:
     return protocol_path
 
 
-def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str) -> dict:
+def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_id: str) -> dict:
     context = raw.get("agent_result") or {}
     result = (context.get("metadata") or {}).get("factory")
     if result is None and (folder / "agent/factory-result.json").exists():
@@ -317,7 +317,7 @@ def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str) -> dic
             "arm": slot["arm"],
             "index_tier": slot["index_tier"],
             "kind": task_kind,
-            "provider": "anthropic-messages:claude-haiku-5-5",
+            "provider": "anthropic-messages:" + model_id,
             "resolved": False,
             "generation_cost_usd": context.get("cost_usd"),
             "provider_usage": [],
@@ -416,7 +416,11 @@ def export(protocol: dict, job_name="live") -> dict:
         raw = read(path)
         order = int(Path(raw["config"]["task"]["path"]).name.removeprefix("slot-"))
         result = result_record(
-            protocol["schedule"][order], raw, folder, task_kind=load_profile(protocol).TASK_KIND
+            protocol["schedule"][order],
+            raw,
+            folder,
+            task_kind=load_profile(protocol).TASK_KIND,
+            model_id=protocol["model_id"],
         )
         entries.append({"order": order, "result": result})
     entries.sort(key=lambda e: e["order"])
