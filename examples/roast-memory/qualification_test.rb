@@ -79,8 +79,9 @@ class RoastMemoryTest < Minitest::Test
       Open3.capture3(env, RbConfig.ruby, "-S", "bundle", "exec", "roast", "execute", "workflow.rb", chdir: __dir__)
     end
     refute_includes stdout + stderr, @env.fetch("LOOM_API_KEY")
-    receipt = stdout.lines.filter_map do |line|
-      JSON.parse(line) if line.start_with?("{")
+    receipt = (stdout + stderr).lines.filter_map do |line|
+      payload = line.split("ruby(:report) ❯ ", 2)[1]
+      JSON.parse(payload) if payload
     end.last
     refute_nil receipt, "Missing receipt; exit=#{result.exitstatus}"
     [receipt, result, stdout + stderr]

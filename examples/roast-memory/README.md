@@ -57,7 +57,8 @@ bundle exec roast execute workflow.rb
 
 The first command reports `{"status":"saved","noop":false}` only after an
 active save receipt with a memory id and positive version. `noop:true` reports an
-already satisfied write. Recall reports `status:found` with the stored value, or
+already satisfied write. Receipts appear in Roast's log output on stderr. Recall
+reports `status:found` with the stored value, or
 `status:abstain` only when the server answers `found:false`. An invalid receipt,
 configuration refusal, or SDK error reports `status:error` and fails the workflow.
 A backend error leaves the save outcome unknown; it does not prove no write
