@@ -22,7 +22,7 @@ def request_body(op, args, *, org, namespace, memory_namespaces=()):
     elif op == "code.grep":
         if not body.get("pattern"):
             raise ValueError("Search pattern must be nonempty")
-    if op in {"code.symbol", "code.search", "code.outline", "code.grep"}:
+    if op in OPERATIONS:
         body["include_lessons"] = bool(memory_namespaces)
         if memory_namespaces:
             body["lesson_namespaces"] = list(memory_namespaces)
@@ -165,7 +165,8 @@ class QualifiedContext(Context):
                     "request_dispatched": False,
                     "note": (
                         "This prefix matches none of the factory's source_paths. "
-                        "Use those paths for source lookup and the test tool for available tests. "
+                        "Use source_paths for indexed lookup and ordinary search/read for "
+                        "public repository docs, examples and test sources. "
                         "Loom's index coverage was not queried."
                     ),
                 }

@@ -90,6 +90,8 @@ class Factory:
             "related callers before finishing.\n"
             "Use list_files to discover public base-revision docs, tests and examples. "
             "These files are read-only evidence; only source_paths may be edited.\n"
+            "When available, Loom code tools index source_paths only. Use ordinary "
+            "search/read for public repository docs, examples and test sources.\n"
             + json.dumps(
                 {
                     "repository": task.repository,

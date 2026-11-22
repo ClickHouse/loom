@@ -53,10 +53,16 @@ class RequestContracts(unittest.TestCase):
     def test_code_and_memory_shapes_are_accepted(self):
         self.assertEqual(validate_requests(requests())["validated"], 15)
 
-    def test_unsupported_lesson_fields_refuse_before_a_dispatch(self):
-        for operation in ("code.enclosing",):
-            with self.subTest(operation=operation):
-                row = next(row for row in requests() if row["operation"] == operation)
-                row["body"]["include_lessons"] = False
-                with self.assertRaisesRegex(ValueError, "undeclared arguments"):
-                    validate_requests([row])
+    def test_enclosing_qualifies_cold_and_memory_namespace_lesson_shapes(self):
+        rows = [row for row in requests() if row["operation"] == "code.enclosing"]
+        self.assertEqual([row["body"]["include_lessons"] for row in rows], [False, True])
+        self.assertEqual(
+            [row["body"].get("lesson_namespaces", []) for row in rows], [[], ["memory"]]
+        )
+        self.assertEqual(validate_requests(rows)["validated"], 2)
+
+    def test_unsupported_fields_still_refuse_before_a_dispatch(self):
+        row = next(row for row in requests() if row["operation"] == "code.enclosing")
+        row["body"]["undeclared_qualification_field"] = True
+        with self.assertRaisesRegex(ValueError, "undeclared arguments"):
+            validate_requests([row])

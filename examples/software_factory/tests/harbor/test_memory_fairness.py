@@ -158,6 +158,29 @@ class NativeMemoryEvidence(unittest.TestCase):
         self.events[0]["request"]["lesson_namespaces"] = ["another-episode"]
         self.assertFalse(self.audit())
 
+    def test_enclosing_requires_the_same_bound_memory_lesson_scope(self):
+        self.events = [
+            dict(
+                kind="retrieval",
+                op="code.enclosing",
+                request=dict(
+                    org="episode-org",
+                    namespace="code",
+                    locations=["src/a.py:2"],
+                    include_lessons=True,
+                    lesson_namespaces=["working"],
+                ),
+            )
+        ]
+        self.assertTrue(self.audit())
+        self.events[0]["request"]["lesson_namespaces"] = ["another-episode"]
+        self.assertFalse(self.audit())
+        del self.events[0]["request"]["lesson_namespaces"]
+        self.assertFalse(self.audit())
+        self.events[0]["request"]["lesson_namespaces"] = ["working"]
+        self.events[0]["request"]["include_lessons"] = False
+        self.assertFalse(self.audit())
+
     def test_unknown_write_outcome_and_unproved_persistence_never_pass(self):
         self.result["memory_rows_written"] = None
         self.assertFalse(self.audit())

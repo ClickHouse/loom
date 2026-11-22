@@ -18,6 +18,12 @@ An ordinary read outside the repository allowlist returns a refusal without
 content so the model can correct the path. Native authorization and index-scope
 failures still stop the attempt.
 
+The common prompt identifies the index boundary: Loom code tools cover only
+`source_paths`; ordinary search and read also cover the public repository evidence.
+All five optional code reads request lessons from the attempt's bound memory scope,
+including `code.enclosing`. The memory audit checks the same scope on every code
+read. Cold and history-seeded arms have identical tool schemas.
+
 The agent publishes candidate source as JSON. The separate verifier checks the
 base fingerprint, exact source allowlist, file sizes and candidate fingerprint.
 It reconstructs its own checkout and overlays only those implementation files.

@@ -333,8 +333,9 @@ class FactoryEpisodeIntegration(unittest.TestCase):
             "A public source contract.",
         )
         self.assertFalse(any(t["name"].startswith("loom_") for t in factory.tools))
-        with self.assertRaises(PermissionError):
-            factory.execute("read", {"path": "shared-notes.json"})
+        refusal = factory.execute("read", {"path": "shared-notes.json"})
+        self.assertTrue(refusal["refused"])
+        self.assertNotIn("content", refusal)
 
     def test_memory_arm_preserves_native_lessons_and_requests_bound_namespaces(self):
         factory = self.factory(memory=True)
@@ -366,6 +367,27 @@ class FactoryEpisodeIntegration(unittest.TestCase):
         factory = self.factory(memory=True)
         lesson = {"namespace": "working", "memory_key": "decision", "excerpt": "Past contract."}
         result = factory.context.project("code.grep", {"matches": [], "lessons": [lesson]})
+        self.assertEqual(result["lessons"], [lesson])
+
+    def test_enclosing_requests_and_preserves_the_bound_file_lessons(self):
+        from examples.software_factory.factory.retrieval_tools import request_body
+
+        for memories in ((), ("working",)):
+            with self.subTest(memories=memories):
+                body = request_body(
+                    "code.enclosing",
+                    {"locations": ["src/a.py:2"]},
+                    org="org",
+                    namespace="code",
+                    memory_namespaces=memories,
+                )
+                self.assertEqual(body["include_lessons"], bool(memories))
+                self.assertEqual(body.get("lesson_namespaces", []), list(memories))
+                self.assertTrue(body["include_body"])
+                self.assertNotIn("token_budget", body)
+        factory = self.factory(memory=True)
+        lesson = {"namespace": "working", "memory_key": "decision", "excerpt": "Past contract."}
+        result = factory.context.project("code.enclosing", {"results": [], "lessons": [lesson]})
         self.assertEqual(result["lessons"], [lesson])
 
     def test_memory_augmented_code_reads_are_not_reused_across_mutable_memory(self):

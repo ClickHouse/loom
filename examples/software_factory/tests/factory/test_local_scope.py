@@ -46,6 +46,7 @@ class LocalSourceScope(unittest.TestCase):
                 self.assertEqual(result["scope"], "factory_source_allowlist")
                 self.assertEqual(result["server_coverage"], "not_queried")
                 self.assertFalse(result["request_dispatched"])
+                self.assertIn("ordinary search/read", result["note"])
                 self.assertNotIn("not_covered", result)
                 self.assertNotIn("freshness", result)
         self.backend.request.assert_not_called()

@@ -232,13 +232,9 @@ def _memory_evidence(protocol, slot, result, start, events, calls):
         ):
             return False
         if not memory:
-            if operation in {"code.symbol", "code.search", "code.outline", "code.grep"} and (
+            if operation in TOOL_OPS.values() and (
                 request.get("include_lessons") is not enabled
                 or request.get("lesson_namespaces", []) != ([namespace] if enabled else [])
-            ):
-                return False
-            if operation == "code.enclosing" and any(
-                key in request for key in ("include_lessons", "lesson_namespaces")
             ):
                 return False
             continue
