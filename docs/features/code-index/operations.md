@@ -129,6 +129,17 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
 `expand` (one LLM hop to bridge wording to identifiers) and `cursor` for the next page.
 
+`code.search` has no response token cap by default. Set
+`LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;
+`0` means unlimited. A request's `token_budget` overrides that default, including
+`token_budget: 0` for an unlimited response. This applies to HTTP and MCP, cursor pages
+and searches across repositories. `top_k` still limits the number of results per page,
+and `bodies: "none"` still returns pointers without code bodies (the MCP default).
+Small finite budgets prioritize result heads over optional risk annotations.
+
+For a Compose installation, put the variable in the `.env` file beside `compose.yaml`
+and recreate the server container after changing it.
+
 ## Follow a specification to code and back
 
 Repository Markdown and imported knowledge documents take different paths. An indexed
@@ -334,3 +345,20 @@ Adding, branching, restricting and removing repositories (`code.repo.add`,
 - [history-and-prs.md](history-and-prs.md) — the PR plane, bisect, backports
 - [Python SDK reference](../../reference/python-sdk.md), [MCP reference](../../reference/mcp.md)
 - [operations reference](../../reference/operations.md#code) — generated arguments
+
+### Response token limits
+
+Code retrieval returns selected context without an implicit token cap. `code.symbol`,
+`code.enclosing`, `code.outline`, `code.trace`, `code.context_pack`, `code.map` and
+`code.review_brief` default `token_budget` to `0` (unlimited). A positive value opts
+into a cap. Symbol lookups return complete retained bodies, including large containers;
+explicitly capped container lookups can return a skeleton and member outline.
+
+`code.ask` uses `code_ask_token_budget` when the request omits a budget; the setting
+defaults to `0`. An explicit request value of `0` overrides a finite deployment cap.
+Attached file lessons use `code_result_lessons_tokens`, also unlimited by default.
+The internal code grounding reads for memory questions likewise default to no token cap.
+
+Result counts, requested body modes, access checks, source completeness checks and
+execution deadlines still apply. Unlimited does not reconstruct source absent from the
+index. Model generation limits are separate from retrieval context limits.

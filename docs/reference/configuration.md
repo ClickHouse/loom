@@ -44,6 +44,11 @@ Every change to a setting's default, from `server/settings/_history.py`. A deplo
 
 | Release | Variable | Was | Is | Why |
 | --- | --- | --- | --- | --- |
+| 1.3.1 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `250` | `0` | Return selected review rationale without an implicit token cap. |
+| 1.3.1 | `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `1400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `400` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_CODE_RESULT_LESSONS_TOKENS` | `250` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
+| 1.3.1 | `LOOM_CODE_ASK_TOKEN_BUDGET` | `4000` | `0` | Return selected retrieval context without an implicit token cap; positive values opt in to a cap. |
 | 1.3.1 | `LOOM_MCP_ALWAYS_LOAD_TOOLS` | `'code.search,code.symbol'` | `''` | Leave tool loading to the host so sessions do not need unused code schemas upfront. Set an explicit operation list to request eager loading. |
 | 1.2.0 | `LOOM_KNOWLEDGE_INGEST_INTERVAL_SECONDS` | `2` | `0` | The ingest worker takes the next job as soon as one ends instead of waiting 2 s after every job, so a queue of small documents drains at the speed of its jobs; a pass that finds no job still waits `LOOM_KNOWLEDGE_INGEST_IDLE_INTERVAL_SECONDS`. |
 | 1.2.0 | `LOOM_CLICKSTACK_USER_ID_KEYS` | `'user_id,user.id,enduser.id'` | `'user_id,user.id,enduser.id,loom.user_id,langfuse.user.id'` | A user-scoped ClickStack erasure also matches the user-id keys Loom's own child spans carry, so they are erased with the request span. A deployment that sets the variable keeps its own list and should add both keys. |
@@ -242,7 +247,7 @@ The code plane: ingest, indexes, search, ask, review.
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_INTEL_ENABLED` | `bool` | `True` |  | Master kill switch, checked at the top of every code.* handler but the retirement (code.repo.remove), which only deletes. |
 | `LOOM_CODE_TEST_GATE_RUN_TEMPLATES` | `str` | `''` |  | code.test_gate run recipes (LOOM_CODE_TEST_GATE_RUN_TEMPLATES): JSON list of {"pattern": <regex over the repo-relative test path>, "run": <template>}, tried before the built-ins. Templates may use {path} {dir} {stem} {name} {parent}. A path no recipe matches is reported run_unknown, never guessed. |
-| `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `4000` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget. |
+| `LOOM_CODE_ASK_TOKEN_BUDGET` | `int` | `0` |  | Retrieval context (tokens) code.ask hands to synthesis when the caller passes no token_budget; 0 means unlimited. |
 | `LOOM_CODE_ASK_CACHE_THRESHOLD` | `float` | `0.0` |  | The code.ask answer cache's hit cosine. 0 = the per-embedding-model table in code/app/answers_entry.py; a value in (0, 1] pins one threshold for every model. |
 | `LOOM_CODE_ASK_CACHE_MAX_AGE_DAYS` | `int` | `14` |  | A cached code.ask answer older than this many days is a miss (checked and tombstoned at read time; no table TTL). 0 = no bound. |
 | `LOOM_CODE_ASK_NEGATIVE_CACHE_TTL_S` | `int` | `3600` |  | Seconds an abstain stays cached for its exact normalised question under the index head it abstained at. 0 = off. |
@@ -270,7 +275,7 @@ One code namespace indexes one repository. No repository is configured by defaul
 | Variable | Type | Default | Live | Meaning |
 | --- | --- | --- | --- | --- |
 | `LOOM_CODE_RESULT_LESSONS` | `bool` | `True` | live | Whether the code ops that return files carry `lessons`, the readable memories about their top files. |
-| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `250` | live | Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token. |
+| `LOOM_CODE_RESULT_LESSONS_TOKENS` | `int` | `0` | live | Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token; 0 means unlimited. |
 | `LOOM_CODE_RESULT_LESSONS_PATHS` | `int` | `3` | live | How many of an answer's files, in rank order, its `lessons` are read for. |
 
 ### Repository access
@@ -647,6 +652,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_RISK_ANNOTATIONS` | `bool` | `True` |  | Per-result risk annotations (churn/amp/tested) and one-hop callee context on code.search results; reserves part of the token budget. Kill switch. |
 | `LOOM_CODE_UNIT_RISK_MAX_AGE_S` | `int` | `864000` |  | Age (seconds) past which a risk row is stale and annotated live; must exceed the weekly pass interval. |
 | `LOOM_CODE_SEARCH_BODIES_DEFAULT` | `'auto' \| 'none'` | `'auto'` |  | code.search `bodies` when the request omits it: "auto" fills bodies into the budget; "none" serves handles only. |
+| `LOOM_CODE_SEARCH_TOKEN_BUDGET` | `int` | `0` |  | code.search response budget in tokens when the request omits token_budget; 0 = unlimited. An explicit request budget overrides this default. |
 | `LOOM_CODE_SEARCH_MEMO_ENABLED` | `bool` | `True` |  | Memoise served code.search responses per (org, namespace, request shape) in loom.code_search_memo and replay within the TTL (route "+memo"); `fresh=true` bypasses it. |
 | `LOOM_CODE_SEARCH_MEMO_TTL_S` | `int` | `1800` |  | Seconds a memoised response, and a cursor's stored pool, stay replayable. |
 | `LOOM_CODE_SEARCH_MEMO_MAX_PAYLOAD_BYTES` | `int` | `200000` |  | Max bytes of a response the memo stores; a larger one is not memoised. 0 = no cap. |
@@ -771,7 +777,7 @@ The code index's network git (clone, fetch, ls-remote, submodule update) through
 | `LOOM_CODE_REVIEW_BRIEF_MIRROR_MISS_TTL_S` | `float` | `600.0` | live | Seconds before the review brief reads a mirror again for an object it did not have (the mirror may have fetched it); a hit is kept. |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_PATHS` | `int` | `10` | live | Changed paths the `rationale` section reads, source paths first; paths past it make `rationale` say `unknown` (`paths_not_read`). |
 | `LOOM_CODE_REVIEW_BRIEF_RATIONALE_ROWS` | `int` | `8` | live | Decision and constraint rows the `rationale` section serves. |
-| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `250` | live | The `rationale` section's own token budget; its first row is served even past it. |
+| `LOOM_CODE_REVIEW_BRIEF_RATIONALE_TOKENS` | `int` | `0` | live | The `rationale` section's own token budget; 0 means unlimited. |
 
 ## Context
 
@@ -1411,8 +1417,8 @@ memory.ask: evidence assembly and answer synthesis.
 | `LOOM_MEMORY_ASK_COUNT_WINDOW` | `int` | `30` | live | Synthesis window for count-shaped questions ("how many X", op=count), whose answer set is scattered across sessions (a missed item sat at rank 18). 0 = no widening. |
 | `LOOM_MEMORY_ASK_CODE_ENRICHMENT` | `bool` | `True` | live | Kill-switch for code-plane enrichment: when a query names code-shaped identifiers (a symbol, a File.cpp, a snake_case setting), fuse the bound code index's file:line, symbol and recent PRs into the grounding pool. Additive and fail-open. The opt-in is the code namespace binding (_resolve_code_target): with no per-request override and no memory_ask_code_namespace, enrichment is skipped, hence default on. |
 | `LOOM_MEMORY_ASK_CODE_HOP_SYMBOLS` | `int` | `4` | live | Symbols the retrieved window names (not only the question) are looked up in the bound code index too, up to this many, one code.symbol definition each, appended after the question's own grounding rows. 0 = off. |
-| `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `int` | `400` | live | Token budget of the code.symbol read that grounds a code-entity question in the code plane. |
-| `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `int` | `1400` | live | Token budget of the code.search read that grounds a code-entity question. |
+| `LOOM_MEMORY_ASK_CODE_SYMBOL_TOKEN_BUDGET` | `int` | `0` | live | Token budget of the code.symbol read that grounds a code-entity question in the code plane; 0 means unlimited. |
+| `LOOM_MEMORY_ASK_CODE_SEARCH_TOKEN_BUDGET` | `int` | `0` | live | Token budget of the grounding code.search read; 0 means unlimited. |
 | `LOOM_MEMORY_ASK_PR_GROUNDING` | `bool` | `True` | live | For each PR the query or grounding references, inject its authoritative code_pr_history record (author, merged_at, title) as a high-trust grounding fact; the synthesizer prefers it over a memory's older claim (_PR_RECORD_NOTE). Gated by the code binding (_resolve_code_target); additive, fail-open, as-of aware. See _inject_pr_facts. A judged arm shows fewer control regressions with it on than off. |
 | `LOOM_MEMORY_ASK_PR_TEMPORAL_GATE` | `bool` | `True` | live | For an as_of query, drop grounding memories that cite a PR opened after the anchor (an under-dated bulk ingest can name a later PR). Open dates come from code_pr_history.opened_at; a no-op without as_of or a bound code index; a PR with an unknown open date is never gated. See _gate_future_prs. |
 | `LOOM_MEMORY_ASK_CODE_STALENESS` | `bool` | `True` | live | Check the code locations a retrieved memory asserts against the live index and flag rotted ones (symbol moved or renamed) so synthesis prefers the current site. Read-time, additive, gated by the code binding; ambiguous symbols are skipped (code_anchor), never false-flagged. |

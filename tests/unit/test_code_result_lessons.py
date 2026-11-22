@@ -852,3 +852,12 @@ def test_each_answer_names_its_files_best_first() -> None:
     assert result_lessons.pack_paths(None, pack) == []
     pack._paths = ["a.py", "b.py"]
     assert result_lessons.pack_paths(None, pack) == ["a.py", "b.py"]
+
+
+@pytest.mark.asyncio
+async def test_unlimited_lessons_keep_all_selected_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    rows = [
+        _hit(str(i), value="Historical constraint " * 40, tags=("constraint",)) for i in range(8)
+    ]
+    found = await _lessons(monkeypatch, {"a.py": rows}, ["a.py"], budget=0)
+    assert {row["memory_key"] for row in found} == {str(i) for i in range(8)}

@@ -24,9 +24,8 @@ class CodeContextPackInput(_CodeIdentity, _ResultLessons):
     # briefing — where it lives, what such a change also touches, the merged PRs that
     # did one — instead of the map.
     task: str = Field(default="", max_length=500)
-    # Token budget for `context` (200..8000): a precomputed pack is cut to it, a task briefing
-    # or orientation map is built within it.
-    token_budget: int = Field(default=2500, ge=200, le=8000)
+    # Estimated-token cap on context; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Precomputed packs only. Empty = whole pack. Otherwise keep the header
     # plus these sections, in pack order: symbols (touched symbols + callers),
     # co_change (usually changed together), tests, reviews (what reviewers
@@ -57,8 +56,8 @@ class CodeContextPackOutput(_LessonsOut):
 
 
 class CodeMapInput(_CodeIdentity):
-    # Token budget for the map (200..4000); entries past it are dropped.
-    token_budget: int = Field(default=1000, ge=200, le=4000)
+    # Estimated-token cap on map entries; 0 (default) is unlimited.
+    token_budget: int = Field(default=0, ge=0)
     # Only modules and hubs under this repo-relative prefix; '' = the whole repository.
     module_prefix: str = ""
 
