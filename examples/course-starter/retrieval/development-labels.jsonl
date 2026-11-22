@@ -1,0 +1,6 @@
+{"id": "dev-01", "split": "development", "question": "How far ahead can a room be reserved?", "answerable": true, "document": "notes.md", "section": "Reservation window", "evidence_substring": "up to fourteen days in advance"}
+{"id": "dev-02", "split": "development", "question": "At what time does the classroom fixture reset?", "answerable": true, "document": "notes.md", "section": "Fixture reset", "evidence_substring": "06:00 UTC each Monday"}
+{"id": "dev-03", "split": "development", "question": "How many times is an unsuccessful read retried?", "answerable": true, "document": "notes.md", "section": "Retry policy", "evidence_substring": "retries an unsuccessful read twice"}
+{"id": "dev-04", "split": "development", "question": "What is the character encoding of an export?", "answerable": true, "document": "notes.md", "section": "Export format", "evidence_substring": "UTF-8 JSON Lines"}
+{"id": "dev-05", "split": "development", "question": "How much does a room reservation cost?", "answerable": false, "document": null, "section": null, "evidence_substring": null}
+{"id": "dev-06", "split": "development", "question": "Which operating system does the fictional service use?", "answerable": false, "document": null, "section": null, "evidence_substring": null}

@@ -132,6 +132,11 @@ Exercises:
   on answerable and unanswerable questions and pick a cutoff that separates them. A hit's
   `score` is a fused rank in the default hybrid mode and does not separate them.
 
+The [course starter retrieval worksheet](../../examples/course-starter/retrieval/README.md)
+supplies a synthetic document, labeled practice questions and an assessment rubric.
+Its public evaluation labels teach the procedure; an instructor uses different
+private questions for an assessment.
+
 ## Lab 3: a code index
 
 Index a repository on the stack

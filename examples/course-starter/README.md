@@ -40,6 +40,10 @@ terminal, run `. .venv/bin/activate`.
 
 Each lab's written exercises go in `answers.md`; your teacher grades those.
 
+For a bounded Lab 2 extension, use the [retrieval worksheet](retrieval/README.md).
+It includes synthetic notes, development and evaluation labels, and a rubric for
+passage recall and similarity-cutoff mistakes.
+
 ## Check your work
 
 With Loom running and the virtual environment active, from this directory:
