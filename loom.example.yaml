@@ -1443,6 +1443,10 @@ settings:
   # large tree); "" = the system temp dir. [restart]
   # code_scip_work_dir: ""
 
+  # Full indexes refuse to start or cancel delta production at this many GiB free on the
+  # checkout or scratch filesystem. Positive; not a disk reservation. [restart]
+  # code_scip_min_free_disk_gb: 5.0
+
   # Max translation units one delta indexes; past it only the changed `.cpp` files are
   # indexed and the header fan-out heals on the next full run. [restart]
   # code_scip_delta_max_tus: 200

@@ -484,6 +484,40 @@ memory the workers process has. The full index of such a tree takes about an hou
   `run_typescript_delta.sh`, `run_python_delta.sh`, `run_go_monorepo_delta.sh`,
   `scip_to_delta.py`; see its README).
 
+### Full-index disk pressure
+
+Full indexes require more than `code_scip_min_free_disk_gb` GiB available to the
+process on both the checkout and scratch filesystems. The default is 5 GiB; the
+value must be positive and finite. Scratch files use `code_scip_work_dir`, or the
+system temporary directory when that setting is empty.
+
+The check runs before checkout preparation, every half second while preparing
+and producing the delta, and before applying it. A failed measurement or a
+detected reserve breach cancels production through the repository job's existing child
+cleanup. Its temporary output is removed after that cleanup. The candidate is
+not applied and the last published index and watermark remain in place. The
+failure is reported through the usual compiler-tier health record.
+
+This is a sampled guard, not a disk quota or an exclusive reservation. Leave
+room above the reserve for the expected index output, checkout writes and other
+work on the same filesystems. Per-process file-size limits do not bound the
+combined size of compiler shards. A run without enough headroom may stop before
+completion even when it passed the initial check.
+
+To restore a full-index schedule paused for disk pressure:
+
+1. Keep a private copy of its original schedule and installed script. Pause only
+   that full-index entry; leave other indexing and maintenance schedules intact.
+2. Confirm the CLI that the scheduled command actually runs contains this guard,
+   with its reviewed source and configuration. A merged change alone does not
+   update an installed CLI.
+3. Verify both writable filesystems have more than the configured reserve free,
+   with headroom for the expected output and shared activity. An unavailable
+   measurement is not admission.
+4. Restore only the saved full-index entry into the current schedule, preserving
+   unrelated entries. Check the installed schedule and the next run's outcome;
+   a refusal or cancellation is not a completed full index.
+
 ### Repository-job sandbox
 
 **Build-based tiers execute repository code.** The C/C++ tier runs the repository's own

@@ -1270,6 +1270,9 @@ class CodeSettings(BaseModel):
     # Where the C++ harness writes its index and delta (several GB for a full
     # run of a large tree); "" = the system temp dir.
     code_scip_work_dir: str = ""
+    # Full indexes refuse to start or cancel delta production at this many GiB
+    # free on the checkout or scratch filesystem. Positive; not a disk reservation.
+    code_scip_min_free_disk_gb: float = Field(default=5.0, gt=0, allow_inf_nan=False)
     # Max translation units one delta indexes; past it only the changed `.cpp` files are
     # indexed and the header fan-out heals on the next full run.
     code_scip_delta_max_tus: int = 200

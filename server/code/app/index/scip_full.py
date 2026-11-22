@@ -7,13 +7,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from server.code.app.index import compiler_tier
 from server.code.app.index.delta_file import open_delta
@@ -23,6 +25,7 @@ from server.code.app.index.sandbox import tool_mounts
 from server.code.app.index.scip_delta import ScipApplyStats, apply_delta
 from server.code.app.index.tier_health import ToolOutputError
 from server.code.app.index.untrusted_files import FileRefused, open_regular
+from server.core.ch import set_query_tag
 from server.core.paths import SCIP_HARNESS_DIR
 from server.settings import settings
 
@@ -39,6 +42,7 @@ WATERMARK = "scip_commit"
 FULL_AT = "scip_full_at"
 FULL_DONE_AT = "scip_full_done_at"
 PRODUCER = "clang"
+_DISK_CHECK_SECONDS = 0.5
 
 
 # A run's directory left this long is a crashed run's: past the longest a full run
@@ -68,6 +72,49 @@ class FullIndexFailed(ToolOutputError):
         super().__init__(f"harness exit {returncode}: {tail[-2000:]}")
         self.returncode = returncode
         self.tail = tail
+
+
+async def _check_disk_space(paths: tuple[Path, ...], minimum: int) -> None:
+    for path in paths:
+        try:
+            free = (await asyncio.to_thread(shutil.disk_usage, path)).free
+        except OSError as exc:
+            raise FullIndexFailed(75, f"cannot measure full-index disk space: {exc}") from exc
+        if free <= minimum:
+            raise FullIndexFailed(
+                75,
+                f"full-index disk reserve reached at {path}: {free} free bytes; "
+                f"more than {minimum} required",
+            )
+
+
+async def _watch_disk_space(paths: tuple[Path, ...], minimum: int) -> None:
+    set_query_tag("code.scip_full.disk_budget")
+    while True:
+        await asyncio.sleep(_DISK_CHECK_SECONDS)
+        await _check_disk_space(paths, minimum)
+
+
+async def _produce_with_disk_budget(
+    produce: Callable[[], Coroutine[Any, Any, tuple[int, str]]], paths: tuple[Path, ...]
+) -> tuple[int, str]:
+    minimum = math.ceil(settings.code_scip_min_free_disk_gb * 1024**3)
+    await _check_disk_space(paths, minimum)
+    job = asyncio.create_task(produce())
+    monitor = asyncio.create_task(_watch_disk_space(paths, minimum))
+    try:
+        done, _ = await asyncio.wait({job, monitor}, return_when=asyncio.FIRST_COMPLETED)
+        if monitor in done:
+            await monitor
+        result = await job
+        await _check_disk_space(paths, minimum)
+        return result
+    finally:
+        # The repository job's cancellation reaps its children before its output is removed.
+        for task in (job, monitor):
+            if not task.done() and not task.cancelling():
+                task.cancel()
+        await asyncio.gather(job, monitor, return_exceptions=True)
 
 
 async def move_checkout(checkout: Path, bare: Path, target: str, cfg: RepoConfig) -> None:
@@ -177,17 +224,23 @@ async def _index_and_apply(
     jobs: int,
     keep_delta: str,
 ) -> tuple[ScipApplyStats, str]:
-    await move_checkout(checkout, bare, target, cfg)
     with tempfile.TemporaryDirectory(prefix="scip_full_", dir=work_dir()) as tmp:
         delta_path = Path(tmp) / "delta.json"
-        rc, out = await run_full_harness(
-            checkout, scip_clang, delta_path, timeout_s=timeout_s, jobs=jobs
-        )
+
+        async def produce() -> tuple[int, str]:
+            await move_checkout(checkout, bare, target, cfg)
+            return await run_full_harness(
+                checkout, scip_clang, delta_path, timeout_s=timeout_s, jobs=jobs
+            )
+
+        paths = (checkout, Path(tmp))
+        rc, out = await _produce_with_disk_budget(produce, paths)
         if rc != 0:
             raise FullIndexFailed(rc, out)
         if keep_delta:  # kept as the harness wrote it, before it is parsed
             await asyncio.to_thread(_keep, delta_path, keep_delta)
         delta = await asyncio.to_thread(open_delta, delta_path)
+        await _check_disk_space(paths, math.ceil(settings.code_scip_min_free_disk_gb * 1024**3))
         # applied while the file is there: the rounds are read from it
         stats = await apply_delta(repo, cfg.org, cfg.namespace, delta)
     check_held()

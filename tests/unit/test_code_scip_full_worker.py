@@ -3,15 +3,22 @@ runs once per git_head."""
 
 from __future__ import annotations
 
+import asyncio
+import os
+import select
+import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from server.code.app.index import scip_full as app
 from server.code.app.index.scip_delta import ScipApplyStats
 from server.code.workers import crossref, scip_full
+from server.settings import settings
 from tests.unit.code_fixtures import repo_config
 
 
@@ -22,6 +29,7 @@ def _lock_dir(monkeypatch, tmp_path):
 
     monkeypatch.setattr(settings, "code_scip_lock_dir", str(tmp_path / "locks"))
     held_leases(monkeypatch)
+    monkeypatch.setattr(app.shutil, "disk_usage", lambda path: SimpleNamespace(free=2**60))
 
 
 def _cfg(tmp_path: Path, ns: str) -> Any:
@@ -307,3 +315,274 @@ def test_harness_tools_write_their_temp_files_beside_the_delta(tmp_path) -> None
     )
     tmpdir, made = out.stdout.split()
     assert Path(tmpdir).parent == tmp_path and Path(made).parent == Path(tmpdir)
+
+
+@pytest.fixture
+def full_run(tmp_path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    published = tmp_path / "published"
+    published.write_text("accepted generation")
+    state = SimpleNamespace(free=2**60, paths=[], cancelled=False)
+
+    def disk_usage(path):
+        state.paths.append(Path(path))
+        return SimpleNamespace(free=state.free)
+
+    async def apply(*args):
+        published.write_text("candidate generation")
+        return "applied"
+
+    monkeypatch.setattr(settings, "code_scip_work_dir", str(scratch))
+    monkeypatch.setattr(app, "check_held", lambda: None)
+    monkeypatch.setattr(app, "move_checkout", AsyncMock())
+    monkeypatch.setattr(app, "run_full_harness", AsyncMock(return_value=(0, "complete")))
+    monkeypatch.setattr(app, "open_delta", lambda path: object())
+    monkeypatch.setattr(app, "apply_delta", AsyncMock(side_effect=apply))
+    monkeypatch.setattr(app, "mark_done", AsyncMock())
+    monkeypatch.setattr(app.shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(app, "_DISK_CHECK_SECONDS", 0.001, raising=False)
+    repo = SimpleNamespace(set_state=AsyncMock())
+    cfg = SimpleNamespace(org="example", namespace="source")
+
+    async def run(**kwargs):
+        return await app.full_index(
+            repo,
+            cfg,
+            checkout,
+            tmp_path / "mirror",
+            tmp_path / "compiler",
+            "head",
+            timeout_s=10,
+            **kwargs,
+        )
+
+    return SimpleNamespace(
+        run=run,
+        state=state,
+        checkout=checkout,
+        scratch=scratch,
+        published=published,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("free", [0, 5 * 1024**3])
+async def test_low_space_refuses_before_checkout_or_harness(full_run, free):
+    full_run.state.free = free
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        await full_run.run()
+    app.move_checkout.assert_not_awaited()
+    app.run_full_harness.assert_not_awaited()
+    app.apply_delta.assert_not_awaited()
+    app.mark_done.assert_not_awaited()
+    assert full_run.published.read_text() == "accepted generation"
+    assert list(full_run.scratch.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_space_drop_cancels_producer_before_temporary_cleanup(full_run, monkeypatch):
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    delta_paths = []
+
+    async def harness(checkout, compiler, delta_path, **kwargs):
+        delta_paths.append(delta_path)
+        started.set()
+        full_run.state.free = 0
+        try:
+            await asyncio.Event().wait()
+        finally:
+            assert delta_path.parent.is_dir()
+            full_run.state.cancelled = True
+            stopped.set()
+
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        async with asyncio.timeout(2):
+            await full_run.run()
+    assert started.is_set() and stopped.is_set() and full_run.state.cancelled
+    assert all(not path.parent.exists() for path in delta_paths)
+    app.apply_delta.assert_not_awaited()
+    app.mark_done.assert_not_awaited()
+    assert full_run.published.read_text() == "accepted generation"
+
+
+@pytest.mark.asyncio
+async def test_pressure_at_harness_completion_does_not_publish(full_run, monkeypatch):
+    async def harness(*args, **kwargs):
+        full_run.state.free = 0
+        return 0, "complete"
+
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        await full_run.run()
+    app.apply_delta.assert_not_awaited()
+    app.mark_done.assert_not_awaited()
+    assert full_run.published.read_text() == "accepted generation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failing_volume", ["checkout", "scratch"])
+async def test_each_writable_volume_is_checked(full_run, monkeypatch, failing_volume):
+    def disk_usage(path):
+        path = Path(path)
+        low = (
+            path == full_run.checkout
+            if failing_volume == "checkout"
+            else path.is_relative_to(full_run.scratch)
+        )
+        return SimpleNamespace(free=0 if low else 2**60)
+
+    monkeypatch.setattr(app.shutil, "disk_usage", disk_usage)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        await full_run.run()
+    app.move_checkout.assert_not_awaited()
+    app.apply_delta.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unreadable_free_space_fails_closed(full_run, monkeypatch):
+    def unavailable(path):
+        raise OSError("filesystem unavailable")
+
+    monkeypatch.setattr(app.shutil, "disk_usage", unavailable)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        await full_run.run()
+    app.move_checkout.assert_not_awaited()
+    app.apply_delta.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sufficient_space_publishes_and_keeps_existing_success(full_run):
+    assert await full_run.run() == ("applied", "complete")
+    app.apply_delta.assert_awaited_once()
+    app.mark_done.assert_awaited_once()
+    assert full_run.published.read_text() == "candidate generation"
+    assert list(full_run.scratch.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_checkout_pressure_cancels_before_harness(full_run, monkeypatch):
+    stopped = asyncio.Event()
+
+    async def move(*args):
+        full_run.state.free = 0
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(app, "move_checkout", move)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        async with asyncio.timeout(2):
+            await full_run.run()
+    assert stopped.is_set()
+    app.run_full_harness.assert_not_awaited()
+    app.apply_delta.assert_not_awaited()
+    assert list(full_run.scratch.iterdir()) == []
+
+
+@pytest.mark.asyncio
+async def test_pressure_after_checkpoint_copy_does_not_publish(full_run, monkeypatch, tmp_path):
+    checkpoint = tmp_path / "checkpoint"
+
+    def keep(path, dest):
+        Path(dest).write_text("complete candidate")
+        full_run.state.free = 0
+
+    monkeypatch.setattr(app, "_keep", keep)
+    with pytest.raises(app.FullIndexFailed, match="disk"):
+        await full_run.run(keep_delta=str(checkpoint))
+    assert checkpoint.read_text() == "complete candidate"
+    assert full_run.published.read_text() == "accepted generation"
+    app.apply_delta.assert_not_awaited()
+    app.mark_done.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_waits_for_producer_cleanup(full_run, monkeypatch):
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def harness(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    job = asyncio.create_task(full_run.run())
+    try:
+        async with asyncio.timeout(2):
+            await started.wait()
+        job.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await job
+        assert stopped.is_set()
+        assert list(full_run.scratch.iterdir()) == []
+        app.apply_delta.assert_not_awaited()
+    finally:
+        if not job.done():
+            job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_disk_pressure_uses_original_job_child_cleanup(full_run, monkeypatch, tmp_path):
+    from server.code.app.index import sandbox
+
+    pidfile = tmp_path / "child.pid"
+    observed = {}
+
+    def disk_usage(path):
+        if pidfile.exists():
+            text = pidfile.read_text()
+            if text.isdigit():
+                if "pidfd" not in observed:
+                    observed["pidfd"] = os.pidfd_open(int(text))
+                return SimpleNamespace(free=0)
+        return SimpleNamespace(free=2**60)
+
+    async def harness(*args, **kwargs):
+        result = await sandbox.run_job(
+            [
+                sys.executable,
+                "-c",
+                "import os,pathlib,time; pathlib.Path("
+                + repr(str(pidfile))
+                + ").write_text(str(os.getpid())); time.sleep(30)",
+            ],
+            env={"PATH": os.defpath},
+            timeout_s=10,
+        )
+        return result.returncode, result.stdout.decode()
+
+    monkeypatch.setattr(sandbox, "sandbox_available", lambda: False)
+    monkeypatch.setattr(settings, "code_sandbox_required", False)
+    monkeypatch.setattr(app.shutil, "disk_usage", disk_usage)
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    try:
+        with pytest.raises(app.FullIndexFailed, match="disk"):
+            async with asyncio.timeout(3):
+                await full_run.run()
+        poll = select.poll()
+        poll.register(observed["pidfd"], select.POLLIN)
+        assert poll.poll(0), "the original job teardown must reap its child"
+        assert list(full_run.scratch.iterdir()) == []
+        assert full_run.published.read_text() == "accepted generation"
+        app.apply_delta.assert_not_awaited()
+    finally:
+        if "pidfd" in observed:
+            os.close(observed["pidfd"])
+
+
+@pytest.mark.parametrize("reserve", [0, -1, float("inf"), float("nan")])
+def test_disk_reserve_is_positive_and_finite(reserve):
+    from server.settings import Settings
+
+    with pytest.raises(ValueError, match="code_scip_min_free_disk_gb"):
+        Settings(code_scip_min_free_disk_gb=reserve)
