@@ -73,6 +73,9 @@ async def test_search_keeps_full_bodies_unless_a_budget_is_supplied(
     assert not unlimited.abstain and len(unlimited.results) == 5
     assert unlimited.tokens_returned > 3000
     assert all(u.body and not u.elided for u in unlimited.results)
+    # Equal lexical scores can change order across independent requests.
+    expected_bodies = {u.unit_id: u.body for u in unlimited.results}
+    assert len(expected_bodies) == 5
 
     for budget in (300, 1000):
         monkeypatch.setattr(settings, "code_search_token_budget", budget)
@@ -81,7 +84,9 @@ async def test_search_keeps_full_bodies_unless_a_budget_is_supplied(
         assert any(u.elided for u in bounded.results)
     for budget in (0, 20000):
         overridden = await handle_code_search(request.model_copy(update={"token_budget": budget}))
-        assert [u.body for u in overridden.results] == [u.body for u in unlimited.results]
+        assert len(overridden.results) == len(expected_bodies)
+        assert {u.unit_id: u.body for u in overridden.results} == expected_bodies
+        assert all(not u.elided for u in overridden.results)
         assert overridden.tokens_returned == unlimited.tokens_returned
 
 
