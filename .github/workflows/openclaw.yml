@@ -1,0 +1,47 @@
+name: OpenClaw integration
+
+on:
+  pull_request:
+    paths:
+      - "sdk/typescript/**"
+      - "integrations/openclaw/**"
+      - ".github/workflows/openclaw.yml"
+  push:
+    branches: [main]
+    paths:
+      - "sdk/typescript/**"
+      - "integrations/openclaw/**"
+      - ".github/workflows/openclaw.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installed-plugin:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.22.1"
+      - name: Build the existing unified SDK package
+        working-directory: sdk/typescript
+        run: |
+          npm ci
+          npm run build
+          node --test openclaw/tools.test.mjs
+          npm pack --pack-destination "$RUNNER_TEMP"
+      - name: Install the pinned host in a private prefix
+        run: npm install --prefix "$RUNNER_TEMP/openclaw-host" --save-exact openclaw@2026.11.6 clawhub@0.27.0
+      - name: Validate the built plugin with the official publisher tooling
+        run: |
+          node "$RUNNER_TEMP/openclaw-host/node_modules/clawhub/bin/clawdhub.js" package validate \
+            "$GITHUB_WORKSPACE/sdk/typescript" --openclaw-version 2026.11.6 \
+            --out "$RUNNER_TEMP/openclaw-inspector" --json
+      - name: Prove packed install and native tool invocation without inference
+        run: |
+          node integrations/openclaw/check-installed.mjs \
+            "$RUNNER_TEMP/openclaw-host/node_modules/openclaw/openclaw.mjs" \
+            "$RUNNER_TEMP/clickhouse-loom-$(node -p "require('./sdk/typescript/package.json').version").tgz"
