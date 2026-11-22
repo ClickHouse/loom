@@ -99,7 +99,8 @@ async def test_enclosing_attaches_only_authorized_resolved_file_lessons(
 ) -> None:
     org = unique_org("enclosing-lessons")
     writer = mint_test_token(org=org, namespaces=["*"], roles=["writer"])
-    _set(org, control_plane_url, writer, "notes/allowed", "Keep callback order.", [PATH])
+    _set(org, control_plane_url, writer, "notes/allowed", "Keep run callback order.", [PATH])
+    _set(org, control_plane_url, writer, "notes/unrelated", "Storage configuration.", [PATH])
     _set(org, control_plane_url, writer, "notes/missing", "Unresolved file note.", ["absent.py"])
     ch_client.insert(
         "loom.code_symbols",
@@ -136,7 +137,11 @@ async def test_enclosing_attaches_only_authorized_resolved_file_lessons(
         data = payload.get("data", payload)
         assert data["resolved"] == 2 and len(data["results"]) == 3
         if include and "dev" in names:
-            assert [row["memory_key"] for row in data["lessons"]] == ["notes/allowed"]
+            assert data["lessons"][0]["memory_key"] == "notes/allowed"
+            assert {row["memory_key"] for row in data["lessons"]} == {
+                "notes/allowed",
+                "notes/unrelated",
+            }
             assert data["lessons"][0]["path"] == PATH
         else:
             assert "lessons" not in data
