@@ -13,6 +13,17 @@ test("Claude can load the code guidance without a manual slash command", () => {
   assert.doesNotMatch(frontmatter, /^disable-model-invocation:\s*true\s*$/m);
 });
 
+test("Claude can discover general Loom routing when the needed capability is unclear", () => {
+  const mentor = fs.readFileSync(path.join(here, "..", "skills", "loom-mentor", "SKILL.md"), "utf8");
+  assert.doesNotMatch(mentor.split("---")[1], /^disable-model-invocation:\s*true\s*$/m);
+  for (const purpose of ["documents", "issue history", "queued work", "typed records", "decisions", "procedures"]) {
+    assert.ok(mentor.includes(purpose), purpose);
+  }
+  assert.match(mentor, /fitting listed tool directly/);
+  assert.match(mentor, /reuse sufficient context/);
+  assert.match(mentor, /Writes require the user's intent and permission/);
+});
+
 test("automatic code guidance defers to LOCAL-FIRST sessions", () => {
   const frontmatter = skill.split("---")[1];
   assert.match(frontmatter, /NOT for LOCAL-FIRST sessions/);
