@@ -1630,6 +1630,44 @@ outbox insert that fails never fails the write. During a rolling upgrade an N-1 
 writes no outbox rows ([rule 22](rolling-upgrades.md#the-rules)).
 [Change webhooks](../features/memory/writing.md#change-webhooks) has the caller's view.
 
+## Native session memory tools
+
+The optional host peer in `sdk/typescript/package.json` lets a native plugin use
+explicit save and search tools through the existing JavaScript SDK. The peer is
+pinned to the public plugin API it implements and is optional for ordinary SDK
+users. The plugin adds neither a provider nor automatic conversation capture:
+only a tool call sends the fact or query selected by the caller.
+
+Configuration fixes the complete `(org, namespace, agent, user_id, session_id)`
+identity. Tools are available only to the configured native agent and session;
+model arguments cannot select another identity. A digest of that tuple prefixes
+each physical key, and tool results expose the logical suffix for later revision.
+Saves request derived provenance and report the server's active, merged or
+unconfirmed outcome. Search requests private scope in the current namespace and
+session, disables automatic touching and returns bounded excerpts. The server
+still enforces token grants and determines the writer actor.
+
+Host invocation authority and transport cancellation are separate controls.
+`createTools` in `sdk/typescript/openclaw/tools.mjs` carries the current invocation
+check through awaited work. Its `invocationFetch` wrapper checks immediately
+before every network attempt, including after SDK pacing and retry waits. Another
+check before returning the response prevents releasing data to a closed
+invocation. SDK errors omit response bodies and credentials.
+
+The Gateway environment supplies the token. Anyone allowed to use its configured
+session shares that session's memory authority; separate trust domains need
+separate configuration and tokens. There is no local memory store, server wire
+change or schema migration. Normal memory erasure covers saved rows. Disabling
+the plugin stops tool access and leaves stored facts under normal retention and
+erasure rules.
+
+The [package quickstart](../../sdk/typescript/openclaw/README.md) describes opt-in
+installation. The hosted check in `integrations/openclaw/check-installed.mjs`
+installs the packed package in the pinned host and invokes both tools against a
+synthetic backend without inference. It verifies package loading and native tool
+plumbing; it does not establish real database persistence, semantic retrieval,
+channel behavior or marketplace acceptance.
+
 ## Invariants
 
 - Every new `memory` or `memory_embeddings` version carries every persisted column
