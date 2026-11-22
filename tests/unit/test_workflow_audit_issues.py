@@ -6,7 +6,7 @@ import copy
 import importlib.util
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -40,14 +40,33 @@ class FakeGitHub:
     def __init__(self):
         self.issues, self.comments, self.calls = [], {}, []
         self.fail_write = False
+        self.run_calls = 0
+
+    def charge(self, count=1):
+        self.run_calls += count
+        if self.run_calls > 40:
+            raise RuntimeError("Synthetic 40-call API budget exhausted")
+
+    def issue_snapshot(self):
+        self.run_calls = 0  # Each publication represents a new trusted workflow run.
+        self.charge(max(1, (len(self.issues) + 99) // 100))
+        self.calls.append(("SNAPSHOT", AUDIT._ROOT, None))
+        output = copy.deepcopy(self.issues)
+        for issue in output:
+            comments = self.comments.get(issue["number"], [])
+            issue["comment_count"] = len(comments)
+            issue["latest_comment"] = copy.deepcopy(comments[-1]) if comments else None
+        return output
 
     def pages(self, path, **kwargs):
+        self.charge()
         self.calls.append(("LIST", path, kwargs))
         if path.endswith("/comments"):
             return copy.deepcopy(self.comments.get(int(path.split("/")[-2]), []))
         return copy.deepcopy(self.issues)
 
     def request(self, method, path, payload=None):
+        self.charge()
         self.calls.append((method, path, payload))
         if method == "GET":
             return copy.deepcopy(
@@ -185,6 +204,36 @@ class WorkflowAuditIssues(unittest.TestCase):
             AUDIT.publish(self.api, self.groups, URL)
         self.assertEqual(sum(call[0] == "POST" for call in self.api.calls), 1)
 
+    def test_sixty_groups_finish_under_the_real_per_run_api_budget(self):
+        groups = AUDIT.public_findings(
+            [finding(path=f".github/workflows/g{i}.yml") for i in range(60)]
+        )
+        for remaining in range(50, -1, -10):
+            result = AUDIT.publish(self.api, groups, URL)
+            self.assertEqual(result["deferred"], remaining)
+            self.assertLessEqual(self.api.run_calls, 40)
+        self.assertEqual(len(self.api.issues), 60)
+        changed = AUDIT.public_findings(
+            [finding(path=f".github/workflows/g{i}.yml") for i in range(60)] * 2
+        )
+        updates = 0
+        for _ in range(6):
+            updates += AUDIT.publish(self.api, changed, URL)["updated"]
+            self.assertLessEqual(self.api.run_calls, 40)
+        self.assertEqual(updates, 60)
+        self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 60)
+        self.assertLessEqual(self.api.run_calls, 40)
+
+    def test_human_reply_does_not_replace_last_automated_state(self):
+        AUDIT.publish(self.api, self.groups, URL)
+        changed = AUDIT.public_findings([finding(), finding(row=5)])
+        AUDIT.publish(self.api, changed, URL)
+        self.api.comments[1].append(
+            {"id": 2, "user": {"login": "contributor"}, "body": "Human discussion"}
+        )
+        self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 1)
+        self.assertEqual(len(self.api.comments[1]), 2)
+
     def test_privileged_jobs_require_trusted_main_and_scan_their_own_checkout(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/zizmor.yml").read_text(), Loader=yaml.BaseLoader
@@ -227,6 +276,71 @@ class WorkflowAuditIssues(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "trusted default-branch"):
                 AUDIT.main()
+
+    def test_snapshot_batches_latest_comment_and_validates_cursor(self):
+        client = AUDIT.GitHub("synthetic-token")
+        node = {
+            "number": 7,
+            "title": "Existing task",
+            "body": "Human notes",
+            "state": "OPEN",
+            "author": {"login": AUDIT._BOT},
+            "comments": {
+                "totalCount": 2,
+                "nodes": [{"body": "Latest state", "author": {"login": AUDIT._BOT}}],
+            },
+        }
+
+        def page(cursor, more):
+            return {
+                "data": {
+                    "repository": {
+                        "issues": {
+                            "nodes": [node],
+                            "pageInfo": {"hasNextPage": more, "endCursor": cursor},
+                        }
+                    }
+                }
+            }
+
+        with patch.object(
+            client, "request", side_effect=[page("cursor-a", True), page("cursor-b", False)]
+        ) as request:
+            rows = client.issue_snapshot()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["state"], "open")
+            self.assertEqual(rows[0]["latest_comment"]["body"], "Latest state")
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(request.call_args.args[2]["variables"]["cursor"], "cursor-a")
+        with patch.object(client, "request", side_effect=[page("same", True), page("same", True)]):
+            with self.assertRaisesRegex(ValueError, "cursor"):
+                client.issue_snapshot()
+        with patch.object(
+            client, "request", return_value={"errors": [{"message": "Refused"}]}
+        ) as request:
+            with self.assertRaisesRegex(RuntimeError, "no fallback"):
+                client.issue_snapshot()
+            self.assertEqual(request.call_count, 1)
+
+    def test_graphql_transport_uses_fixed_host_and_rejects_redirects(self):
+        response = Mock(status=200)
+        response.read.return_value = b'{"data":{}}'
+        connection = Mock()
+        connection.getresponse.return_value = response
+        with patch.object(AUDIT.http.client, "HTTPSConnection", return_value=connection) as connect:
+            client = AUDIT.GitHub("synthetic-token")
+            self.assertEqual(client.request("POST", "/graphql", {"query": "fixed"}), {"data": {}})
+            connect.assert_called_once_with("api.github.com", timeout=10)
+            self.assertEqual(connection.request.call_args.args[:2], ("POST", "/graphql"))
+            connection.close.assert_called_once()
+        for status in (301, 403):
+            with (
+                self.subTest(status=status),
+                patch.object(AUDIT.http.client, "HTTPSConnection", return_value=connection),
+            ):
+                response.status = status
+                with self.assertRaisesRegex(RuntimeError, f"HTTP {status}"):
+                    AUDIT.GitHub("synthetic-token").request("POST", "/graphql", {"query": "fixed"})
 
     def test_transport_budgets_and_fixed_endpoint_fail_before_network(self):
         client = AUDIT.GitHub("synthetic-token")

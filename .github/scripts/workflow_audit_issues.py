@@ -103,7 +103,10 @@ class GitHub:
     def request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
         if self.calls >= 40 or time.monotonic() >= self.deadline:
             raise RuntimeError("Workflow audit API budget exhausted")
-        if not path.startswith(_ROOT) or method not in {"GET", "POST"}:
+        if not (
+            (path.startswith(_ROOT) and method in {"GET", "POST"})
+            or (path == "/graphql" and method == "POST")
+        ):
             raise ValueError("Unapproved audit API request")
         self.calls += 1
         connection = http.client.HTTPSConnection("api.github.com", timeout=10)
@@ -120,13 +123,65 @@ class GitHub:
             connection.request(method, path, body=body, headers=headers)
             response = connection.getresponse()
             data = response.read(2 * 1024 * 1024 + 1)
-            if response.status != (200 if method == "GET" else 201):
+            if response.status != (200 if method == "GET" or path == "/graphql" else 201):
                 raise RuntimeError(f"Workflow audit API returned HTTP {response.status}; no retry")
             if len(data) > 2 * 1024 * 1024:
                 raise RuntimeError("Workflow audit API response exceeds budget")
             return json.loads(data)
         finally:
             connection.close()
+
+    def issue_snapshot(self) -> list[dict[str, Any]]:
+        # Fetch the latest comment with each issue, rather than one read per unchanged task.
+        query = """query($cursor:String) { repository(owner:"ClickHouse",name:"loom") {
+          issues(first:100,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
+                 states:[OPEN,CLOSED],orderBy:{field:CREATED_AT,direction:ASC}) {
+            nodes { number title body state author {login}
+                    comments(last:1) { totalCount nodes { body author {login} } } }
+            pageInfo {hasNextPage endCursor}
+          }
+        } }"""
+        output: list[dict[str, Any]] = []
+        cursor = None
+        seen: set[str] = set()
+        for _ in range(10):
+            response = self.request(
+                "POST", "/graphql", {"query": query, "variables": {"cursor": cursor}}
+            )
+            if response.get("errors"):
+                raise RuntimeError("Workflow issue snapshot query failed; no fallback")
+            page = response["data"]["repository"]["issues"]
+            nodes, info = page["nodes"], page["pageInfo"]
+            if not isinstance(nodes, list) or len(nodes) > 100:
+                raise ValueError("Invalid workflow issue snapshot page")
+            for issue in nodes:
+                comments = issue["comments"]
+                latest = comments["nodes"]
+                if not isinstance(latest, list) or len(latest) > 1:
+                    raise ValueError("Invalid latest workflow issue comment")
+                output.append(
+                    {
+                        "number": issue["number"],
+                        "title": issue["title"],
+                        "body": issue["body"],
+                        "state": issue["state"].lower(),
+                        "user": issue["author"] or {},
+                        "comment_count": comments["totalCount"],
+                        "latest_comment": {
+                            "body": latest[0]["body"],
+                            "user": latest[0]["author"] or {},
+                        }
+                        if latest
+                        else None,
+                    }
+                )
+            if info["hasNextPage"] is False:
+                return output
+            cursor = info["endCursor"]
+            if not isinstance(cursor, str) or not cursor or cursor in seen:
+                raise ValueError("Invalid workflow issue snapshot cursor")
+            seen.add(cursor)
+        raise RuntimeError("Workflow issue snapshot pagination budget exhausted")
 
     def pages(
         self, path: str, *, query: dict[str, str] | None = None, limit: int = 10
@@ -168,7 +223,7 @@ def managed_issues(
 
 
 def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[str, int]:
-    issues = api.pages(_ROOT, query={"state": "all", "creator": _BOT, "sort": "created"})
+    issues = api.issue_snapshot()
     managed = managed_issues(issues, groups)
     counts = {"created": 0, "updated": 0, "unchanged": 0, "closed_preserved": 0, "deferred": 0}
     for key in sorted(set(groups) | set(managed)):
@@ -187,11 +242,21 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
             counts["created"] += 1
             continue
         number = issue["number"]
-        comments = api.pages(f"{_ROOT}/{number}/comments", limit=3)
         states = _STATE.findall(issue.get("body") or "")
-        for comment in sorted(comments, key=lambda item: item["id"]):
-            if comment.get("user", {}).get("login") == _BOT:
-                states.extend(_STATE.findall(comment.get("body") or ""))
+        latest = issue.get("latest_comment") or {}
+        latest_states = (
+            _STATE.findall(latest.get("body") or "")
+            if latest.get("user", {}).get("login") == _BOT
+            else []
+        )
+        if latest_states:
+            states.extend(latest_states)
+        elif issue.get("comment_count", 0):
+            # Human replies do not replace the latest automated state.
+            comments = api.pages(f"{_ROOT}/{number}/comments", limit=3)
+            for comment in sorted(comments, key=lambda item: item["id"]):
+                if comment.get("user", {}).get("login") == _BOT:
+                    states.extend(_STATE.findall(comment.get("body") or ""))
         if states and state_hash(group) == states[-1]:
             counts["unchanged"] += 1
             continue
