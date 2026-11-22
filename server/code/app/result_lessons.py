@@ -98,6 +98,13 @@ async def lessons_for(input: Any, paths: Iterable[str], started: float) -> path_
                 top,
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
+                query=(
+                    input.query
+                    if isinstance(input, CodeSearchInput)
+                    else input.pattern
+                    if isinstance(input, CodeGrepInput)
+                    else ""
+                ),
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
             logger.debug("code lessons skipped: %s", e)
