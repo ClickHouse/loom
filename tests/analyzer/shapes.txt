@@ -1546,6 +1546,7 @@ afdcda2bf23a	SELECT count() AS n FROM loom.memory_ask_precedents WHERE org = {or
 aff1e632ca9c	SELECT e.memory_key AS memory_key, e.memory_type AS memory_type, e.content_excerpt AS content_excerpt, e.status AS status, e.version AS version, e.agent AS agent, e.user_id AS user_id, e.session_id AS
 b0198f2a1337	SELECT uniqExact(path) AS n FROM loom.code_chunks FINAL WHERE org = {org:String} AND namespace = {ns:String} AND embedding_model = {model:String} AND tombstoned_at IS NULL AND startsWith(path, {prefix
 b062ee2ddb58	SELECT toString(r.record_id) AS record_id FROM loom.memory_records AS r FINAL WHERE r.org = {org:String} AND r.namespace = {ns:String} AND r.schema_name = {schema:String} AND r.status = ? AND r.tombst
+b07bc2344da4	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND tombstoned_at IS NULL AND status = ?
 b080660bbca3	SELECT chunk_id, path, scope, kind, start_line, end_line, content, symbol_ids, context_description, arraySum(arrayMap((tok, idf) -> idf * countSubstrings(concat(?, lexemes, ?), concat(?, tok, ?)), {to
 b0b2f5049b7f	SELECT count() AS n FROM loom.memory FINAL WHERE org = {org:String} AND namespace = {ns:String} AND status != ? AND tombstoned_at IS NULL AND agent = {agent:String} AND user_id = {uid:String} AND sess
 b0eeab7a67c1	SELECT org, namespace, agent, user_id, session_id, memory_key, embedding_model, length(embedding) AS vector_len FROM loom.memory_embeddings FINAL WHERE tombstoned_at IS NULL AND embedding_dim = ? AND

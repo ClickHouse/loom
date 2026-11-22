@@ -32,7 +32,7 @@ import {
 } from "../../api";
 import { DuplicatesPanel } from "./Duplicates";
 import { ProposalsPanel } from "./Proposals";
-import { useIdentity, useStore, badgeCacheKey } from "../../lib/state";
+import { useIdentity, useStore, badgeCacheKey, urlParam } from "../../lib/state";
 import { writeSession } from "../../lib/afterPaint";
 import { Panel } from "../../components/ui/Panel";
 import { LoadingSkeleton, PageHeader, SectionHeading, TabTrigger, Unavailable } from "../../components/ui";
@@ -135,19 +135,52 @@ export function ReviewQueue() {
   // Set once the person picks a category themselves: the proposal-only default below
   // must not override their choice.
   const [tabTouched, setTabTouched] = useState(false);
+  const navSeq = useStore((s) => s.navSeq);
+  const navSeen = useRef(navSeq);
+  // The initial URL is read once, above; a navigation that lands while the queue is
+  // already mounted (the sidebar's proposal-only `?tab=proposals` link) must switch
+  // the tab too, so re-read `?tab=` on later in-app navigations and on history moves.
+  const followLink = () => {
+    const t = urlParam("tab");
+    if (t && t in QUEUE_TABS) {
+      setTab(t as QueueTab);
+      setTabTouched(true);
+    }
+  };
+  useEffect(() => {
+    if (navSeen.current === navSeq) return; // mount: initialQueueTab() already read it
+    navSeen.current = navSeq;
+    followLink();
+  }, [navSeq]);
+  useEffect(() => {
+    window.addEventListener("popstate", followLink);
+    return () => window.removeEventListener("popstate", followLink);
+  }, []);
   // Per-kind counts for the tab triggers. The pending-proposals count is a bounded
   // server-side summary (`count_only`: no row bodies, no scan cap), so it matches the
   // complete authorized queue rather than one page; the conflicts count is the
   // Conflicts panel's own fresh read, reported up through `onCount`. `null` = the read
   // failed or was not allowed: unknown, never a false zero.
-  const [counts, setCounts] = useState<{ conflicts: number | null; proposals: number | null }>({
+  // Per-kind counts for the tab triggers are keyed to the scope (org, namespace,
+  // principal) that produced them: a scope change hides the old answer at once
+  // instead of showing it until the new read resolves — or forever, when the
+  // new role's read is refused and the effect returns early.
+  const countScope = `${identity.org}/${identity.namespace}/${whoami?.subject ?? ""}`;
+  const [counts, setCounts] = useState<{ scope: string; conflicts: number | null; proposals: number | null }>({
+    scope: `${identity.org}/${identity.namespace}/${whoami?.subject ?? ""}`,
     conflicts: null,
     proposals: null,
   });
+  // Only an answer produced by the current scope is shown.
+  const shownCounts = counts.scope === countScope ? counts : { conflicts: null, proposals: null };
   const [countsReload, setCountsReload] = useState(0);
   useAbortableEffect(
     (_signal, live) => {
-      if (!canCall("memory.proposals", role, whoami)) return;
+      if (!canCall("memory.proposals", role, whoami)) {
+        // Unreadable role: the count is unknown, never a stale zero or old scope's number.
+        setCounts((c) => (c.scope === countScope && c.proposals !== null ? { ...c, proposals: null } : c));
+        return;
+      }
       // A re-read after a decision asks again; the first read joins the sidebar badge's
       // (one read per question per page).
       if (countsReload > 0) invalidateShared(`proposals_count:${identity.org}/${identity.namespace}`);
@@ -161,7 +194,7 @@ export function ReviewQueue() {
         })
         .finally(() => {
           if (!live()) return;
-          setCounts((c) => (c.proposals === proposals ? c : { ...c, proposals }));
+          setCounts((c) => (c.proposals === proposals ? c : { ...c, scope: countScope, proposals }));
           // The sidebar's badge reads the same number: write it back under the same
           // per-scope, per-principal, per-role key, so a decision here refreshes the
           // badge at once instead of at the next 60 s tick.
@@ -173,16 +206,17 @@ export function ReviewQueue() {
           }
         });
     },
-    [identity.org, identity.namespace, countsReload, role, whoami],
+    [identity.org, identity.namespace, countsReload, role, whoami, countScope],
   );
   // The Conflicts panel's own fresh count, as the tab's conflicts count.
-  const onConflictsCount = (n: number | null) => setCounts((c) => (c.conflicts === n ? c : { ...c, conflicts: n }));
+  const onConflictsCount = (n: number | null) =>
+    setCounts((c) => (c.scope === countScope && c.conflicts !== n ? { ...c, conflicts: n } : c));
   // A proposal-only queue opens on its proposals: an empty Conflicts tab must not look
   // like an empty overall queue. Only until the person picks a category themselves.
   useEffect(() => {
     if (tabTouched || tab !== "conflicts") return;
-    if (counts.conflicts === 0 && counts.proposals !== null && counts.proposals > 0) setTab("proposals");
-  }, [counts, tabTouched, tab]);
+    if (shownCounts.conflicts === 0 && shownCounts.proposals !== null && shownCounts.proposals > 0) setTab("proposals");
+  }, [shownCounts, tabTouched, tab]);
   // A tab that is no longer offered (its probe found nothing, or its access went) hands the
   // page back to Conflicts.
   const offered: Record<QueueTab, boolean> = {
@@ -206,6 +240,8 @@ export function ReviewQueue() {
   const scopeMounted = useRef(false);
   useAbortableEffect(
     (signal, live) => {
+      // A scope change hides the old scope's counts immediately.
+      setCounts((c) => (c.scope === countScope ? c : { scope: countScope, conflicts: null, proposals: null }));
       setProbedLearnings(null);
       setProbedExceptions(null);
       setSeedsUsed({ learnings: false, exceptions: false });
@@ -233,7 +269,7 @@ export function ReviewQueue() {
           if (live()) setProbedExceptions([]);
         });
     },
-    [identity.org, identity.namespace],
+    [identity.org, identity.namespace, countScope],
   );
   useAbortableEffect(
     (_signal, live) => {
@@ -275,7 +311,7 @@ export function ReviewQueue() {
         <Tabs.TriggersList className="mb-5" aria-label="Review queue">
           <TabTrigger value="conflicts" icon="warning">
             {QUEUE_TABS.conflicts}
-            {counts.conflicts !== null ? ` (${counts.conflicts})` : ""}
+            {shownCounts.conflicts !== null ? ` (${shownCounts.conflicts})` : ""}
           </TabTrigger>
           {hasLearnings && (
             <TabTrigger value="learnings" icon="sparkle">
@@ -294,7 +330,7 @@ export function ReviewQueue() {
           )}
           <TabTrigger value="proposals" icon="question">
             {QUEUE_TABS.proposals}
-            {counts.proposals !== null ? ` (${counts.proposals})` : ""}
+            {shownCounts.proposals !== null ? ` (${shownCounts.proposals})` : ""}
           </TabTrigger>
           <TabTrigger value="duplicates" icon="copy">
             {QUEUE_TABS.duplicates}
