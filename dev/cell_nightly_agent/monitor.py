@@ -416,9 +416,17 @@ def main():
     parser.add_argument("--tmux-probe", action="store_true")
     parser.add_argument("--timeout-probe", action="store_true")
     args = parser.parse_args()
-    if args.dry_run:
+    if args.dry_run and not (args.tmux_probe or args.timeout_probe):
         dry_run()
-        if args.tmux_probe or args.timeout_probe:
+        return
+    with (TASK_DIR / "monitor.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("Another daily check owns the lock.")
+            return
+        if args.dry_run:
+            dry_run()
             print(
                 json.dumps(
                     dict(
@@ -427,12 +435,6 @@ def main():
                     )
                 )
             )
-        return
-    with (TASK_DIR / "monitor.lock").open("w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            print("Another daily check owns the lock.")
             return
         state_path = TASK_DIR / "state.json"
         state = json.loads(state_path.read_text()) if state_path.exists() else {}

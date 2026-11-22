@@ -112,3 +112,26 @@ def test_catchup_cannot_occupy_the_service_across_the_next_daily_activation(monk
     assert monitor.check(state, now, {})["disposition"] == "deferred_until_next_window"
     assert state["next_check"] == "2030-01-02T06:13:00+00:00"
     assert "last_window" not in state
+
+
+@pytest.mark.parametrize("probe", ["--tmux-probe", "--timeout-probe"])
+def test_an_inert_probe_cannot_overwrite_an_active_daily_repair(
+    monkeypatch, tmp_path, capsys, probe
+):
+    import fcntl
+    import sys
+
+    monkeypatch.setattr(monitor, "TASK_DIR", tmp_path)
+    monkeypatch.setattr(sys, "argv", ["monitor.py", "--dry-run", probe])
+    result = tmp_path / "repair-result.json"
+    result.write_text("active-repair-evidence")
+
+    def unexpected_probe(*args, **kwargs):
+        raise AssertionError("Probe must not start while the daily monitor owns the lock")
+
+    monkeypatch.setattr(monitor, "tmux_run", unexpected_probe)
+    with (tmp_path / "monitor.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        monitor.main()
+    assert "Another daily check owns the lock" in capsys.readouterr().out
+    assert result.read_text() == "active-repair-evidence"
