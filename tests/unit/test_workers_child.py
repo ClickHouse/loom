@@ -144,21 +144,23 @@ async def test_a_stop_cancelled_while_joining_the_watcher_kills_the_child(
     workers = child.ChildWorkers(_Lease(remaining=30.0), retire_child=AsyncMock())
     watching = workers._keep_running
     joining = asyncio.Event()
+    release_watch = asyncio.Event()
 
     async def slow_watch() -> None:
         try:
             await watching()
         except asyncio.CancelledError:
             joining.set()
-            await asyncio.Event().wait()
+            await release_watch.wait()
 
     monkeypatch.setattr(workers, "_keep_running", slow_watch)
-    workers.start_all()
-    await _until(ready.exists)
-    proc = workers._proc
-    assert proc is not None
-    stopping = asyncio.create_task(workers.stop_all())
+    stopping: asyncio.Task[None] | None = None
     try:
+        workers.start_all()
+        await _until(ready.exists)
+        proc = workers._proc
+        assert proc is not None
+        stopping = asyncio.create_task(workers.stop_all())
         await asyncio.wait_for(joining.wait(), timeout=5)
         stopping.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -166,10 +168,14 @@ async def test_a_stop_cancelled_while_joining_the_watcher_kills_the_child(
         await asyncio.wait_for(proc.wait(), timeout=5)
         assert proc.returncode == -signal.SIGKILL
     finally:
-        stopping.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await stopping
-        await workers.stop_all(drain_timeout_s=0)
+        release_watch.set()
+        try:
+            if stopping is not None:
+                stopping.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stopping
+        finally:
+            await workers.stop_all(drain_timeout_s=0)
 
 
 @pytest.mark.asyncio
