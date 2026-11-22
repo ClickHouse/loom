@@ -45,7 +45,15 @@ const backend = createServer(async (request, response) => {
       assert.equal(data.source_class, "derived");
       saved = data;
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ status: "ok", memory_id: "synthetic-id" }));
+      response.end(
+        JSON.stringify({
+          status: "active",
+          memory_key: data.memory_key,
+          memory_id: "synthetic-id",
+          noop: false,
+          dry_run: false,
+        }),
+      );
     } else {
       assert.equal(request.url, "/v1/memory.search");
       assert.equal(data.read_scope, "own_session");
@@ -53,7 +61,9 @@ const backend = createServer(async (request, response) => {
       assert.equal(data.scope, "private");
       assert.ok(saved);
       response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ abstain: false, results: [{ memory_key: saved.memory_key, content_excerpt: saved.value }] }));
+      response.end(
+        JSON.stringify({ abstain: false, results: [{ memory_key: saved.memory_key, content_excerpt: saved.value }] }),
+      );
     }
   } catch {
     response.writeHead(500);
@@ -72,9 +82,15 @@ let gateway;
 let gatewayLog = "";
 
 async function command(args) {
-  const child = spawn(process.execPath, [host, ...args], { env: environment, cwd: directory, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [host, ...args], {
+    env: environment,
+    cwd: directory,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   let output = "";
-  const collect = (chunk) => { output = (output + chunk).slice(-65536); };
+  const collect = (chunk) => {
+    output = (output + chunk).slice(-65536);
+  };
   child.stdout.on("data", collect);
   child.stderr.on("data", collect);
   const timeout = setTimeout(() => child.kill("SIGTERM"), 120000);
@@ -88,7 +104,12 @@ async function command(args) {
 }
 
 const config = {
-  gateway: { mode: "local", bind: "loopback", port: gatewayPort, auth: { mode: "token", token: "synthetic-gateway-token" } },
+  gateway: {
+    mode: "local",
+    bind: "loopback",
+    port: gatewayPort,
+    auth: { mode: "token", token: "synthetic-gateway-token" },
+  },
 };
 try {
   await writeFile(configPath, JSON.stringify(config));
@@ -100,35 +121,56 @@ try {
   installedConfig.plugins.entries["clickhouse-loom"] = {
     enabled: true,
     config: {
-      baseUrl: `http://127.0.0.1:${backendPort}`, tokenEnv: "LOOM_OPENCLAW_TOKEN",
-      org: "fixture-org", namespace: "fixture-notes", agentId: "main", userId: "fixture-user", sessionKey: "agent:main:main",
+      baseUrl: `http://127.0.0.1:${backendPort}`,
+      tokenEnv: "LOOM_OPENCLAW_TOKEN",
+      org: "fixture-org",
+      namespace: "fixture-notes",
+      agentId: "main",
+      userId: "fixture-user",
+      sessionKey: "agent:main:main",
     },
   };
   installedConfig.tools = { allow: ["clickhouse_loom_save", "clickhouse_loom_search"] };
-  installedConfig.agents = { list: [{ id: "main", default: true }, { id: "other" }] };
+  installedConfig.agents = {
+    ownership: "explicit",
+    defaults: { systemAgent: { agentId: "main" } },
+    entries: { main: {}, other: {} },
+  };
   await writeFile(configPath, JSON.stringify(installedConfig));
   const inspected = await command(["plugins", "inspect", "clickhouse-loom", "--runtime", "--json"]);
   assert.match(inspected, /clickhouse_loom_save/);
   assert.match(inspected, /clickhouse_loom_search/);
   gateway = spawn(process.execPath, [host, "gateway", "run", "--port", String(gatewayPort)], {
-    env: environment, cwd: directory, stdio: ["ignore", "pipe", "pipe"],
+    env: environment,
+    cwd: directory,
+    stdio: ["ignore", "pipe", "pipe"],
   });
-  gateway.stdout.on("data", (chunk) => { gatewayLog = (gatewayLog + chunk).slice(-65536); });
-  gateway.stderr.on("data", (chunk) => { gatewayLog = (gatewayLog + chunk).slice(-65536); });
+  gateway.stdout.on("data", (chunk) => {
+    gatewayLog = (gatewayLog + chunk).slice(-65536);
+  });
+  gateway.stderr.on("data", (chunk) => {
+    gatewayLog = (gatewayLog + chunk).slice(-65536);
+  });
   const endpoint = `http://127.0.0.1:${gatewayPort}`;
   let ready = false;
   for (let attempt = 0; attempt < 120; attempt++) {
     if (gateway.exitCode !== null) throw new Error(`Gateway exited: ${gatewayLog}`);
     try {
       const health = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(1000) });
-      if (health.ok) { ready = true; break; }
-    } catch { /* Only this owned Gateway's readiness is being awaited. */ }
+      if (health.ok) {
+        ready = true;
+        break;
+      }
+    } catch {
+      /* Only this owned Gateway's readiness is being awaited. */
+    }
     await pause(500);
   }
   assert.ok(ready, `Gateway readiness failed: ${gatewayLog}`);
   async function invoke(tool, args, sessionKey = "main") {
     const response = await fetch(`${endpoint}/tools/invoke`, {
-      method: "POST", signal: AbortSignal.timeout(15000),
+      method: "POST",
+      signal: AbortSignal.timeout(15000),
       headers: { "content-type": "application/json", authorization: "Bearer synthetic-gateway-token" },
       body: JSON.stringify({ tool, args, sessionKey }),
     });
@@ -146,13 +188,28 @@ try {
   const other = await invoke("clickhouse_loom_search", { query: "editor" }, "agent:other:main");
   assert.equal(other.status, 404, JSON.stringify(other));
   assert.equal(requests.length, 2, "another native agent must send no backend request");
-  console.log(JSON.stringify({ passed: true, host: "2026.11.6", real_package_install: true, real_gateway_tool_invocation: true, synthetic_backend_requests: 2, cross_agent_no_request: true, provider_calls: 0, actual_Loom_server_tested: false }));
+  console.log(
+    JSON.stringify({
+      passed: true,
+      host: "2026.11.6",
+      real_package_install: true,
+      real_gateway_tool_invocation: true,
+      synthetic_backend_requests: 2,
+      cross_agent_no_request: true,
+      provider_calls: 0,
+      actual_Loom_server_tested: false,
+    }),
+  );
 } finally {
   if (gateway && gateway.exitCode === null) {
     const stopped = once(gateway, "exit");
     gateway.kill("SIGTERM");
     const timeout = setTimeout(() => gateway.kill("SIGKILL"), 10000);
-    try { await stopped; } finally { clearTimeout(timeout); }
+    try {
+      await stopped;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
   backend.closeAllConnections();
   await new Promise((resolveClose) => backend.close(resolveClose));

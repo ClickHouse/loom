@@ -76,7 +76,7 @@ export function createTools(config, context, client) {
       name: "clickhouse_loom_save",
       label: "Save a ClickHouse Loom memory",
       description:
-        "Save one fact only when the user asks to remember it. Never store credentials or whole conversations. The key replaces an existing fact with that key in this configured session.",
+        "Save one fact only when the user asks to remember it. Never store credentials or whole conversations. Report saved:false honestly; the server can merge an existing fact without writing the requested key.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -89,18 +89,29 @@ export function createTools(config, context, client) {
       async execute(_id, input, signal) {
         const args = argumentsFor(input, ["key", "text"]);
         if (args.key.length > 256) throw new Error("key must be at most 256 characters");
-        await call(
+        const memoryKey = `${keyPrefix}${args.key}`;
+        const stored = await call(
           "memory.set",
           {
             ...identity,
-            memory_key: `${keyPrefix}${args.key}`,
+            memory_key: memoryKey,
             value: args.text,
             memory_type: "semantic",
             source_class: "derived",
           },
           signal,
         );
-        return result({ saved: true, key: args.key });
+        if (stored.noop && !stored.dry_run && stored.merged_into_key) {
+          return result(
+            stored.merged_into_key.startsWith(keyPrefix)
+              ? { saved: false, outcome: "already_present", key: stored.merged_into_key.slice(keyPrefix.length) }
+              : { saved: false, outcome: "not_saved_in_configured_scope" },
+          );
+        }
+        if (!stored.noop && !stored.dry_run && stored.status === "active" && stored.memory_key === memoryKey) {
+          return result({ saved: true, key: args.key });
+        }
+        return result({ saved: false, outcome: "not_confirmed" });
       },
     },
     {

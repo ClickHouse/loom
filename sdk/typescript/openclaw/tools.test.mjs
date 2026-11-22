@@ -15,7 +15,7 @@ const input = {
 const config = parseConfig(input);
 const context = { agentId: "main", sessionKey: "agent:main:main", assertInvocationCurrent() {} };
 
-function setup(call = async () => ({}), ctx = context) {
+function setup(call = async (_operation, body) => ({ status: "active", memory_key: body.memory_key }), ctx = context) {
   return createTools(config, ctx, { call });
 }
 
@@ -51,7 +51,10 @@ test("another or missing native agent/session gets no tools or IO", () => {
 
 test("save fixes the complete identity and downgrades provenance", async () => {
   const calls = [];
-  const [save] = setup(async (...args) => calls.push(args));
+  const [save] = setup(async (...args) => {
+    calls.push(args);
+    return { status: "active", memory_key: args[1].memory_key };
+  });
   const abort = new AbortController();
   const out = await save.execute("call-1", { key: "editor", text: "Prefer compact output." }, abort.signal);
   assert.deepEqual(out.details, { saved: true, key: "editor" });
@@ -88,6 +91,7 @@ test("different configured users and sessions cannot overwrite the same key", as
       {
         async call(_op, body) {
           keys.push(body.memory_key);
+          return { status: "active", memory_key: body.memory_key };
         },
       },
     );
@@ -101,7 +105,7 @@ test("save-search-save round trip revises the same fact and hides unrelated keys
   const [save, search] = setup(async (operation, body) => {
     if (operation === "memory.set") {
       rows.set(body.memory_key, body.value);
-      return {};
+      return { status: "active", memory_key: body.memory_key };
     }
     return {
       abstain: false,
@@ -202,4 +206,24 @@ test("failed backend errors do not disclose response bodies or tokens", async ()
     assert.equal(error.cause, undefined);
     return true;
   });
+});
+
+test("save reports server merges and unconfirmed writes without inventing success or leaking keys", async () => {
+  for (const [reply, expected] of [
+    [
+      (key) => ({ noop: true, merged_into_key: key.replace(/requested$/, "canonical") }),
+      { saved: false, outcome: "already_present", key: "canonical" },
+    ],
+    [
+      () => ({ noop: true, merged_into_key: "private-other-session-key" }),
+      { saved: false, outcome: "not_saved_in_configured_scope" },
+    ],
+    [(key) => ({ status: "duplicate", memory_key: key }), { saved: false, outcome: "not_confirmed" }],
+    [(key) => ({ status: "active", memory_key: key, dry_run: true }), { saved: false, outcome: "not_confirmed" }],
+  ]) {
+    const [save] = setup(async (_operation, body) => reply(body.memory_key));
+    const response = await save.execute("call", { key: "requested", text: "A fact already held elsewhere." });
+    assert.deepEqual(response.details, expected);
+    assert.doesNotMatch(JSON.stringify(response), /private-other-session-key/);
+  }
 });

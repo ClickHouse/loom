@@ -64,7 +64,7 @@ The configured session is the sharing boundary of this integration. Anyone allow
 
 ## Save and search
 
-In the configured session, ask: “Remember that I prefer compact output, under the key editor.” The optional `clickhouse_loom_save` tool accepts `key` and `text`. Saving the same key revises that fact. Ask “What output style did I ask you to remember?” to use `clickhouse_loom_search` with a `query`.
+In the configured session, ask: “Remember that I prefer compact output, under the key editor.” The optional `clickhouse_loom_save` tool accepts `key` and `text`. Saving the same key asks Loom to revise that fact. Check the returned `saved` value: a merge can leave the requested key unwritten. A merge within this integration returns the existing logical key; a merge outside its configured keyspace reports no session-local save and hides the other key. Duplicate, proposed and unconfirmed writes are not reported as active saved memories. Ask “What output style did I ask you to remember?” to use `clickhouse_loom_search` with a `query`.
 
 For a direct check without model inference, an operator can use OpenClaw's documented `POST /tools/invoke` endpoint on their private Gateway. Its bearer credential grants Gateway operator access; never share it with untrusted callers or expose this endpoint publicly. Send these bodies through that authenticated endpoint:
 
