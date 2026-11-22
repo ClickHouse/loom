@@ -79,12 +79,17 @@ has an overall deadline, including idle time, as well as request bounds. The SDK
 managers live in one task per open client. A failed or cancelled operation makes its
 client terminal and closes and joins that task before returning, including when an SDK
 request deadline expires while HTTP response data is still arriving. Another client's
-SDK scope remains independent. Cancellation publishes no partial read evidence.
+SDK scope remains independent. A known background transport failure or an expired
+deadline refuses discovery and result publication, including cached discovery.
+Cancellation publishes no partial read evidence.
 The transport retains cleanup ownership while checking authority after response headers
 arrive and before handing the response to the protocol client.
 Closing a request does not prove that remote processing has stopped. Errors expose bounded error
 codes rather than upstream content, endpoints or credentials.
 
+An omitted optional mapped cursor ends that listing. Issued cursors are bound to their
+operation and query, so a cursor from one query cannot authorize another. Reusing a
+cursor in the same listing is refused even when another listing uses the same text.
 A successful final page closes that listing operation. It does not establish a deletion
 history, complete reader permissions, revision support or a subscription contract.
 Partial pages, errors, refused access and notifications are never deletion evidence.

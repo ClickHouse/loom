@@ -79,6 +79,15 @@ def _error_code(error: BaseException) -> ErrorCode:
     return "protocol"
 
 
+def _guard_state(deadline: float, failure: ErrorCode | None, *, active: bool = True) -> None:
+    if failure is not None:
+        raise MCPSourceError(failure)
+    if not active:
+        raise MCPSourceError("closed")
+    if asyncio.get_running_loop().time() >= deadline:
+        raise MCPSourceError("timeout")
+
+
 @dataclass(frozen=True)
 class MCPLimits:
     timeout_seconds: float = 30
@@ -281,11 +290,17 @@ def _validate(schema: dict[str, Any], value: Any, maximum: int) -> None:
         raise MCPSourceError("schema")
 
 
-def _path(value: Any, path: tuple[str, ...] | None, default: Any = "") -> Any:
+def _path(
+    value: Any, path: tuple[str, ...] | None, default: Any = "", *, optional: bool = False
+) -> Any:
     if path is None:
         return default
     for key in path:
-        if not isinstance(value, dict) or key not in value:
+        if not isinstance(value, dict):
+            raise MCPSourceError("schema")
+        if key not in value:
+            if optional:
+                return default
             raise MCPSourceError("schema")
         value = value[key]
     return value
@@ -298,14 +313,15 @@ class _LimitedStream(httpx.AsyncByteStream):
     async def __aiter__(self) -> AsyncIterator[bytes]:
         try:
             async with asyncio.timeout_at(self.owner.deadline):
+                self.owner._check_state()
                 async for chunk in self.stream:
                     self.owner.received += len(chunk)
                     if self.owner.received > self.owner.limits.max_wire_bytes:
                         raise MCPSourceError("limit")
-                    await self.owner.validate_access()
+                    await self.owner._authorize()
                     yield chunk
         except Exception as error:  # noqa: BLE001 — only fixed diagnostics cross the transport boundary
-            self.owner.failure = _error_code(error)
+            self.owner.failure = self.owner.failure or _error_code(error)
             raise MCPSourceError(self.owner.failure) from None
 
     async def aclose(self) -> None:
@@ -337,11 +353,19 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         self.pin_lock = asyncio.Lock()
         self.failure: ErrorCode | None = None
 
+    def _check_state(self) -> None:
+        _guard_state(self.deadline, self.failure)
+
+    async def _authorize(self) -> None:
+        self._check_state()
+        await self.validate_access()
+        self._check_state()
+
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         try:
             return await self._handle(request)
         except Exception as error:  # noqa: BLE001 — HTTP exceptions may contain upstream credentials
-            self.failure = _error_code(error)
+            self.failure = self.failure or _error_code(error)
             raise MCPSourceError(self.failure) from None
 
     async def _handle(self, request: httpx.Request) -> httpx.Response:
@@ -349,14 +373,13 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
         handed_off = False
         try:
             async with asyncio.timeout_at(self.deadline):
-                if self.failure is not None:
-                    raise MCPSourceError(self.failure)
+                self._check_state()
                 if request.url != self.endpoint or request.method not in {"POST", "GET", "DELETE"}:
                     raise MCPSourceError("denied")
                 self.requests += 1
                 if self.requests > self.limits.max_requests:
                     raise MCPSourceError("limit")
-                await self.validate_access()
+                await self._authorize()
                 if self.target is None:
                     async with self.pin_lock:
                         if self.target is None:
@@ -400,9 +423,9 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                         "sni_hostname": sni,
                     },
                 )
-                await self.validate_access()
+                await self._authorize()
                 response = await self.inner.handle_async_request(outgoing)
-                await self.validate_access()
+                await self._authorize()
                 if response.is_redirect or response.status_code in {401, 403}:
                     raise MCPSourceError("denied")
                 # Reject compression so the wire budget bounds decoded protocol bytes.
@@ -413,6 +436,9 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 response.stream = _LimitedStream(response.stream, self)
                 handed_off = True
                 return response
+        except Exception as error:  # noqa: BLE001 — poison the session before awaiting private failure cleanup
+            self.failure = self.failure or _error_code(error)
+            raise MCPSourceError(self.failure) from None
         finally:
             if response is not None and not handed_off:
                 # Leave the deadline scope before joining an unclaimed response's finalizer.
@@ -510,8 +536,8 @@ class MCPSourceClient:
         self._discovery: MCPDiscovery | None = None
         self._schema_changed = False
         self._pages, self._results = 0, 0
-        self._issued_cursors: dict[str, tuple[str, str]] = {}
-        self._used_cursors: set[str] = set()
+        self._issued_cursors: set[tuple[tuple[str, str], str]] = set()
+        self._used_cursors: set[tuple[tuple[str, str], str]] = set()
         if len(config.approved_resource_ids) > config.limits.max_results:
             raise MCPSourceError("config")
         self._selected_ids = frozenset(
@@ -541,6 +567,26 @@ class MCPSourceClient:
         )
         return replace(evidence, receipt=receipt)
 
+    def _check_state(self, *, require_session: bool = False) -> None:
+        owner = self._owner_task
+        failure = self._operation_failure or self._owner_failure
+        if failure is None and self._transport is not None:
+            failure = self._transport.failure
+        # The lifecycle owner may perform SDK session termination during cleanup.
+        lifecycle = not require_session and asyncio.current_task() is owner
+        active = (
+            owner is not None
+            and not owner.done()
+            and (not self._closing or lifecycle)
+            and (not require_session or self._session is not None)
+        )
+        _guard_state(self._deadline, failure, active=active)
+
+    async def _authorize(self) -> None:
+        self._check_state()
+        await self.validate_access()
+        self._check_state()
+
     async def __aenter__(self) -> MCPSourceClient:
         if self._owner_task is not None or self._deadline:
             raise MCPSourceError("closed")
@@ -552,6 +598,7 @@ class MCPSourceClient:
         self._owner_task = asyncio.create_task(self._serve_session())
         try:
             await self._ready
+            self._check_state(require_session=True)
             return self
         except asyncio.CancelledError:
             try:
@@ -593,12 +640,12 @@ class MCPSourceClient:
                 self._session = None
 
     async def _initialize(self, stack: AsyncExitStack) -> None:
-        await self.validate_access()
+        await self._authorize()
         transport = _PinnedTransport(
             self._config,
             self.credential,
             self._deadline,
-            self.validate_access,
+            self._authorize,
             transport=self._test_transport,
         )
         self._transport = transport
@@ -623,7 +670,7 @@ class MCPSourceClient:
         )
         result = await self._session.initialize()
         self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
-        await self.validate_access()
+        await self._authorize()
 
     async def _close(self) -> None:
         set_query_tag("mcp-source.cleanup")
@@ -671,16 +718,14 @@ class MCPSourceClient:
     async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         set_query_tag("mcp-source")
         try:
-            if self._session is None:
-                raise MCPSourceError(self._owner_failure or "closed")
-            if self._operation_failure is not None:
-                raise MCPSourceError(self._operation_failure)
+            self._check_state(require_session=True)
             async with asyncio.timeout_at(self._deadline):
-                await self.validate_access()
+                await self._authorize()
+                self._check_state(require_session=True)
+                assert self._session is not None
                 result = await action(self._session)
-                await self.validate_access()
-                if self._operation_failure is not None:
-                    raise MCPSourceError(self._operation_failure)
+                await self._authorize()
+                self._check_state(require_session=True)
                 return result
         except (
             Exception,  # Terminal refusals must drain owned HTTP work before returning.
@@ -750,9 +795,10 @@ class MCPSourceClient:
     def _page_start(self, cursor: str | None, scope: tuple[str, str]) -> None:
         if cursor is not None:
             _string(cursor)
-            if self._issued_cursors.get(cursor) != scope or cursor in self._used_cursors:
+            key = scope, cursor
+            if key not in self._issued_cursors or key in self._used_cursors:
                 raise MCPSourceError("denied")
-            self._used_cursors.add(cursor)
+            self._used_cursors.add(key)
         self._pages += 1
         if self._pages > self._config.limits.max_pages:
             raise MCPSourceError("limit")
@@ -765,9 +811,10 @@ class MCPSourceClient:
             raise MCPSourceError("limit")
         if cursor is not None:
             _string(cursor)
-            if cursor in self._issued_cursors:
+            key = scope, cursor
+            if key in self._issued_cursors:
                 raise MCPSourceError("protocol")
-            self._issued_cursors[cursor] = scope
+            self._issued_cursors.add(key)
         return MCPPage(tuple(items), cursor, cursor is None)
 
     async def list_resources(self, cursor: str | None = None) -> MCPPage:
@@ -845,7 +892,9 @@ class MCPSourceClient:
                 raise MCPSourceError("schema")
             items = [self._evidence(row, mapping) for row in rows]
             return self._page(
-                items, _path(result, mapping.next_cursor_path, None), ("search", query)
+                items,
+                _path(result, mapping.next_cursor_path, None, optional=True),
+                ("search", query),
             )
 
         return await self._run(action)
