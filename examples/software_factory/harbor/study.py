@@ -29,7 +29,9 @@ from .billing import FIELDS as BILLING_FIELDS
 from .billing import audit_provider_costs
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
-from .metrics import known_total, paid_token_totals, token_totals
+from .metrics import known_total, paid_token_totals
+from .native_environment import agent_settings, load_credentials, mcp_settings
+from .native_metrics import measurements
 from .profiles import load_profile
 from .public_export import export_public
 from .scopes import selected_scopes
@@ -84,12 +86,74 @@ def verify_qualifications(protocol):
             raise PermissionError("Native Harbor controls do not qualify this exact protocol")
 
 
-def stage_sandbox_policy(folder: Path, *, verifier: bool = False) -> Path:
+def stage_sandbox_policy(
+    folder: Path, *, verifier: bool = False, network: str | None = None
+) -> Path:
     relative = Path("tests/docker-compose.yaml") if verifier else Path("sandbox-compose.yaml")
     target = folder / relative
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(HERE / "sandbox-compose.yaml", target)
+    if verifier:
+        shutil.copyfile(HERE / "sandbox-compose.yaml", target)
+    else:
+        if not network:
+            raise ValueError("Native agents require their owned Loom network")
+        target.write_text(
+            json.dumps(
+                {
+                    "services": {
+                        "main": {
+                            "pids_limit": 512,
+                            "cap_drop": ["ALL"],
+                            "cap_add": ["SETUID", "SETGID", "KILL"],
+                            "security_opt": ["no-new-privileges:true"],
+                        },
+                        "harbor-docker-egress-control-sidecar": {"networks": ["default", "loom"]},
+                    },
+                    "networks": {"loom": {"external": True, "name": network}},
+                },
+                indent=2,
+            )
+            + "\n"
+        )
     return target
+
+
+def native_tools(folder: Path, reference: str) -> str:
+    """Build the same pinned Claude installation once for all scenario images."""
+    target = folder.parent.parent / "native-tools"
+    receipt = target / "image.id"
+    tag = "loom-factory-native-tools:" + hashlib.sha256(str(target).encode()).hexdigest()[:20]
+    if not receipt.exists():
+        target.mkdir(parents=True, exist_ok=True)
+        version = read(HERE / "agent.json")["version"]
+        (target / "Dockerfile").write_text(
+            "FROM " + reference + "\nUSER root\n"
+            "RUN apt-get update && apt-get install -y --no-install-recommends "
+            "git curl bash nodejs npm procps ca-certificates "
+            "&& rm -rf /var/lib/apt/lists/*\n"
+            "RUN useradd --create-home --uid 1000 agent\nUSER agent\n"
+            "RUN curl -fsSL https://downloads.claude.ai/claude-code-releases/bootstrap.sh "
+            "| bash -s -- " + version + "\n"
+            'ENV PATH="/home/agent/.local/bin:${PATH}"\nRUN claude --version\n'
+        )
+        with (target / "build.log").open("wb") as log:
+            subprocess.run(
+                ["docker", "build", "--tag", tag, "--iidfile", str(receipt), str(target)],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=1800,
+                check=True,
+            )
+    actual = subprocess.run(
+        ["docker", "image", "inspect", "--format", "{{.Id}}", tag],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    ).stdout.strip()
+    if actual != receipt.read_text().strip():
+        raise PermissionError("Native tool image tag changed")
+    return tag
 
 
 def build_image(folder: Path, dependency: str) -> str:
@@ -105,22 +169,32 @@ def build_image(folder: Path, dependency: str) -> str:
     if inspected["Id"] != dependency or not inspected.get("RepoTags"):
         raise PermissionError("Dependency image has no verified local build reference")
     reference = inspected["RepoTags"][0]
-    (folder / "Dockerfile").write_text(
-        "FROM "
-        + reference
-        + "\nUSER root\nCOPY factory /factory\n"
-        + ("COPY factory/tests /tests\n" if (folder / "factory/tests").exists() else "")
-        + "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/factory/lib\n"
-        + "RUN python -c \"import runpy; runpy.run_path('/factory/grader.py', "
-        + "run_name='grader_import_check')\"\nWORKDIR /workspace\n"
-    )
+    native = (folder / "workspace").is_dir()
+    if native:
+        tools = native_tools(folder, reference)
+        recipe = (
+            "FROM " + reference + " AS dependencies\nFROM " + tools + "\nUSER root\n"
+            "COPY --from=dependencies /usr/local /usr/local\nRUN rm -rf /workspace\n"
+            "COPY --chown=1000:1000 workspace /workspace\n"
+            "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/workspace/src\n"
+            "WORKDIR /workspace\nUSER agent\n"
+        )
+    else:
+        recipe = (
+            "FROM " + reference + "\nUSER root\nCOPY factory /factory\n"
+            "COPY factory/tests /tests\n"
+            "ENV PYTHONDONTWRITEBYTECODE=1\nENV PYTHONPATH=/factory/lib\n"
+            "RUN python -c \"import runpy; runpy.run_path('/factory/grader.py', "
+            "run_name='grader_import_check')\"\nWORKDIR /workspace\n"
+        )
+    (folder / "Dockerfile").write_text(recipe)
     receipt = folder / "image.id"
     with (folder / "build.log").open("wb") as log:
         subprocess.run(
             [
                 "docker",
                 "build",
-                "--network=none",
+                "--network=default" if native else "--network=none",
                 "--iidfile",
                 str(receipt),
                 "--label",
@@ -129,7 +203,7 @@ def build_image(folder: Path, dependency: str) -> str:
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
-            timeout=180,
+            timeout=900,
             check=True,
         )
     actual = subprocess.run(
@@ -156,7 +230,7 @@ def prepare(previous: Path, output: Path) -> Path:
         raise ValueError("The owned server container must be supplied separately from its URL")
     output.mkdir(parents=True, exist_ok=False, mode=0o700)
     original = json.loads(json.dumps(plan))
-    sandbox_policy = stage_sandbox_policy(output)
+    sandbox_policy = stage_sandbox_policy(output, network=plan["runtime_network"])
     plan["sandbox_policy"] = {"path": str(sandbox_policy), "sha256": file_hash(sandbox_policy)}
     plan.update(
         output_root=str(output),
@@ -186,7 +260,7 @@ def prepare(previous: Path, output: Path) -> Path:
         "input_protocol_sha256": digest(original),
         "execution": (
             "Harbor native Docker agent environments and separate Docker verifiers; "
-            "external factory agent."
+            "unmodified built-in Claude Code agent."
         ),
         "unchanged": [
             "model_id",
@@ -200,9 +274,7 @@ def prepare(previous: Path, output: Path) -> Path:
             "Harbor trial wall time includes setup, agent execution, artifact transfer, "
             "hidden verification and teardown. End-to-end also includes both index audits."
         ),
-        "retry_policy": (
-            "Harbor max_retries=0; direct inference and Loom SDK retries remain disabled."
-        ),
+        "retry_policy": ("Harbor max_retries=0; Claude Code keeps its native provider behavior."),
     }
     assert all(plan[k] == original[k] for k in plan["preparation"]["unchanged"])
     plan["harbor_specs"], images = {}, {}
@@ -219,43 +291,58 @@ def prepare(previous: Path, output: Path) -> Path:
         # Harbor clears job overlays for separate verifiers; their task definition owns it.
         stage_sandbox_policy(task_dir, verifier=True)
         _, _, task, _ = task_inputs(plan, slot["task_id"])
-        write(
-            task_dir / "instruction.md", {"schedule_order": slot["order"], "problem": task.problem}
-        )
+        (task_dir / "instruction.md").write_text(task.problem)
         image = images[slot["task_id"]]
         (task_dir / "task.toml").write_text(
-            'schema_version = "1.4"\nartifacts = ["/logs/artifacts/candidate.json"]\n'
-            "[agent]\ntimeout_sec = inf\n"
-            "[environment]\ndocker_image = "
+            'schema_version = "1.4"\n'
+            '[[artifacts]]\nsource = "/workspace/src/flask"\ndestination = "implementation"\n'
+            'exclude = ["__pycache__", "*.pyc"]\n'
+            + agent_settings(plan, slot)
+            + "[environment]\ndocker_image = "
             + json.dumps(image["agent"])
-            + '\ncpus = 1\nmemory_mb = 512\nnetwork_mode = "no-network"\n'
-            '[verifier]\ntimeout_sec = 300\nenvironment_mode = "separate"\n'
+            + '\ncpus = 1\nmemory_mb = 2048\nnetwork_mode = "public"\n'
+            + mcp_settings(plan, slot)
+            + '[verifier]\ntimeout_sec = 300\nenvironment_mode = "separate"\n'
             "[verifier.environment]\ndocker_image = "
             + json.dumps(image["verifier"])
             + '\ncpus = 1\nmemory_mb = 512\nnetwork_mode = "no-network"\n'
         )
         tasks.append({"path": str(task_dir)})
     protocol_path = output / "protocol.json"
+    solver = read(HERE / "agent.json")
+    plan["solver"] = solver
     agent = {
-        "import_path": "examples.software_factory.harbor.agent:FactoryAgent",
+        "name": solver["name"],
         "model_name": plan["model_id"],
-        "kwargs": {"protocol_path": str(protocol_path)},
+        "kwargs": {"version": solver["version"]},
     }
+    controls = {}
+    for name in ("base", "reference"):
+        controls[name] = []
+        for task_id in sorted(plan["tasks"]):
+            position = next(
+                s["order"]
+                for s in plan["schedule"]
+                if s["task_id"] == task_id and s["mode"] == "baseline"
+            )
+            target = output / "controls" / name / f"slot-{position:02d}"
+            shutil.copytree(Path(tasks[position]["path"]), target)
+            solution = target / "solution"
+            solution.mkdir()
+            commands = "#!/bin/sh\nset -eu\ncd /workspace\n"
+            if name == "reference":
+                private = next(
+                    row
+                    for row in read(plan["reference_controls_file"])
+                    if row["instance_id"] == task_id
+                )
+                (solution / "reference.patch").write_text(private["patch"])
+                commands += "git apply /solution/reference.patch\n"
+            (solution / "solve.sh").write_text(commands + "true\n")
+            (solution / "solve.sh").chmod(0o755)
+            controls[name].append({"path": str(target)})
     for name, control in (("live", None), ("base", "base"), ("reference", "reference")):
-        selected = (
-            tasks
-            if control is None
-            else [
-                tasks[
-                    next(
-                        s["order"]
-                        for s in plan["schedule"]
-                        if s["task_id"] == t and s["mode"] == "baseline"
-                    )
-                ]
-                for t in sorted(plan["tasks"])
-            ]
-        )
+        selected = tasks if control is None else controls[control]
         config = JobConfig.model_validate(
             {
                 "job_name": name,
@@ -268,15 +355,7 @@ def prepare(previous: Path, output: Path) -> Path:
                     "delete": True,
                     "extra_docker_compose": [str(sandbox_policy)],
                 },
-                "agents": [
-                    {
-                        **agent,
-                        "kwargs": {
-                            **agent["kwargs"],
-                            **({"qualification": control} if control else {}),
-                        },
-                    }
-                ],
+                "agents": [agent if control is None else {"name": "oracle"}],
                 "tasks": selected,
                 "quiet": True,
             }
@@ -297,8 +376,10 @@ def prepare(previous: Path, output: Path) -> Path:
     paths += [Path(plan["reference_controls_file"])]
     paths += [HERE / "sandbox-compose.yaml", sandbox_policy]
     paths += [p for p in (output / "tasks").rglob("*") if p.is_file()]
+    paths += [p for p in (output / "controls").rglob("*") if p.is_file()]
     paths += [output / (n + "-job.json") for n in ("live", "base", "reference")]
     paths += [output / "index-content.json", output / "images.json"]
+    paths += list((output / "builds").rglob("Dockerfile"))
     plan["files"] = {str(p): file_hash(p) for p in sorted(set(paths))}
     plan.pop("source_archive", None)
     write(protocol_path, plan)
@@ -306,38 +387,43 @@ def prepare(previous: Path, output: Path) -> Path:
 
 
 def result_record(slot: dict, raw: dict, folder: Path, *, task_kind: str, model_id: str) -> dict:
-    context = raw.get("agent_result") or {}
-    result = (context.get("metadata") or {}).get("factory")
-    if result is None and (folder / "agent/factory-result.json").exists():
-        result = read(folder / "agent/factory-result.json")
-    if result is None:
-        result = {
-            "task_id": slot["task_id"],
-            "mode": slot["mode"],
-            "arm": slot["arm"],
-            "index_tier": slot["index_tier"],
-            "kind": task_kind,
-            "provider": "anthropic-messages:" + model_id,
-            "resolved": False,
-            "generation_cost_usd": context.get("cost_usd"),
-            "provider_usage": [],
-            "cost_status": "unknown",
-            "total_cost_usd": None,
+    agent = (raw.get("agent_info") or {}).get("name")
+    if agent not in {"claude-code", "oracle"}:
+        raise PermissionError("Expected Harbor's native Claude Code or qualification agent")
+    observed = (
+        measurements(raw, folder)
+        if agent == "claude-code"
+        else {
+            "solver": "oracle",
+            "generation_cost_usd": 0,
+            "model_input_tokens": 0,
+            "model_output_tokens": 0,
+            "model_total_tokens": 0,
+            "model_cache_read_tokens": 0,
+            "model_cache_write_tokens": 0,
+            "loom_tool_calls": 0,
+            "tool_total_requests": 0,
+            "provider_physical_requests": 0,
         }
-        if slot["mode"] == "baseline":
-            result.update(
-                {
-                    k: 0
-                    for k in (
-                        "loom_tool_calls",
-                        "model_selected_loom_requests",
-                        "loom_logical_requests",
-                        "loom_physical_requests",
-                    )
-                }
-            )
-    else:
-        result = json.loads(json.dumps(result))
+    )
+    result = {
+        "task_id": slot["task_id"],
+        "mode": slot["mode"],
+        "arm": slot["arm"],
+        "index_tier": slot["index_tier"],
+        "memory_enabled": slot["memory_enabled"],
+        "kind": task_kind,
+        "provider": "claude-code:" + model_id,
+        "status": "completed" if raw.get("exception_info") is None else "agent_error",
+        **observed,
+    }
+    result["model_selected_loom_requests"] = result.get("loom_tool_calls")
+    if slot["mode"] == "baseline" or agent == "oracle":
+        if result.get("loom_tool_calls") not in (0, None):
+            raise PermissionError("No-Loom or qualification agent called Loom")
+        result.update(loom_logical_requests=0, loom_physical_requests=0, memory_rows_written=0)
+    if not slot["memory_enabled"]:
+        result["memory_rows_written"] = 0
     grade_path = folder / "verifier/grade.json"
     result["hidden_grade"] = read(grade_path) if grade_path.exists() else None
     suite_path = folder / "verifier/full-suite.json"
@@ -385,11 +471,12 @@ def enrich_evaluations(protocol, entries, job_name):
         billing = receipt["attempts"]
     for entry in entries:
         result = entry["result"]
-        result.update(token_totals(result))
         billed = billing.get(str(entry["order"]), {})
         if billed.get("proof_status") != "known":
             billed = {}
         result.update({key: billed.get(key) for key in BILLING_FIELDS})
+        if job_name == "live" and billed.get("memory_rows_written") is not None:
+            result["memory_rows_written"] = billed["memory_rows_written"]
         result.update(paid_token_totals(result))
         components = [result.get("generation_cost_usd"), result.get("loom_provider_cost_usd")]
         result["total_provider_cost_usd"] = sum(components) if None not in components else None
@@ -422,6 +509,7 @@ def export(protocol: dict, job_name="live") -> dict:
             task_kind=load_profile(protocol).TASK_KIND,
             model_id=protocol["model_id"],
         )
+        result["protocol_sha256"] = digest(protocol)
         entries.append({"order": order, "result": result})
     entries.sort(key=lambda e: e["order"])
     enrich_evaluations(protocol, entries, job_name)
@@ -467,7 +555,7 @@ def export(protocol: dict, job_name="live") -> dict:
                     "agent_time_s",
                     "agent_test_requests",
                     "agent_test_runs",
-                    "completion_reviews",
+                    "tool_total_requests",
                     "loom_tool_calls",
                     "memory_rows_written",
                     "full_suite_regressions",
@@ -501,7 +589,7 @@ def export(protocol: dict, job_name="live") -> dict:
             "agent_time_s",
             "agent_test_requests",
             "agent_test_runs",
-            "completion_reviews",
+            "tool_total_requests",
             "loom_tool_calls",
             "memory_rows_written",
             "full_suite_regressions",
@@ -541,6 +629,8 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
     if kind == "live":
         verify_qualifications(protocol)
     config = JobConfig.model_validate(read(output / (kind + "-job.json")))
+    if kind == "live":
+        load_credentials(protocol)
     job = await Job.create(config)
     if config.n_concurrent_trials != 1 or config.retry.max_retries != 0:
         raise PermissionError("Frozen trial order requires serial execution without retries")

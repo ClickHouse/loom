@@ -30,10 +30,10 @@ class Arm:
 
 PRIMARY = {
     "baseline": Arm(None, False, "No Loom"),
-    "loom-treesitter": Arm("treesitter", False, "Tree-sitter (no memory)"),
-    "loom-treesitter-memory": Arm("treesitter", True, "Tree-sitter + memory"),
-    "loom-scip": Arm("scip", False, "SCIP (no memory)"),
-    "loom-scip-memory": Arm("scip", True, "SCIP + memory"),
+    "loom-treesitter": Arm("treesitter", False, "Loom + tree-sitter"),
+    "loom-treesitter-memory": Arm("treesitter", True, "Loom + tree-sitter + historical memory"),
+    "loom-scip": Arm("scip", False, "Loom + SCIP"),
+    "loom-scip-memory": Arm("scip", True, "Loom + SCIP + historical memory"),
 }
 CONTROLS = {name: PRIMARY["baseline"] for name in ("baseline-a", "baseline-b")}
 ALL = {**PRIMARY, **CONTROLS}

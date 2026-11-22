@@ -54,19 +54,31 @@ fact and verify that its anchor becomes fresh again.
 ## Execution and artifacts
 
 Three repeats of five arms plus six separate A/A controls produce 51 attempts.
-Execution is serial with retries disabled. Twelve blind fixed-only judgments are
-separate from native hidden-test rewards. The model chooses all retrieval calls.
-Code reads use the serving API defaults for result counts, token limits, search
-legs, ranking and body delivery. Every returned body is checked against the local
-source span. Code-linked lessons are enabled only for the attempt's bound memory
-namespace, including literal grep reads.
-Solver and Loom transports share a 300-second request allowance, with retries
-disabled. This allowance is separate from measured agent and end-to-end time.
+Harbor uses its built-in `claude-code` agent, pinned by
+[agent.json](../../harbor/agent.json). Every arm receives the original public
+issue in an ordinary shallow checkout at its buggy base. Claude chooses its
+reads, edits, commands, retrieval, subagents and stopping point. There is no
+factory coding loop, injected source context, forced Loom call or final review turn.
 
-Each attempt has a source-only checkout and an isolated test environment. Agent
-and verifier containers have no network, one CPU, 512 MiB and 64 processes. The
-agent cannot inspect Git objects, reference patches or the hidden verifier.
-Base/reference controls must qualify the same frozen protocol before inference.
+The model, Claude Code version, checkout image, one CPU and 2 GiB agent memory
+are shared across arms for each issue. During coding, the sandbox allows the
+provider endpoint and, for Loom arms, their Loom endpoint. Hidden tests and
+reference fixes remain in separate evaluator containers with no network,
+one CPU and 512 MiB. Agent-visible Git history contains only the task base.
+
+Native MCP configuration selects the code namespace and optional historical
+memory namespace. Retrieval uses Loom defaults; no result-count or token-budget
+overrides are supplied. Each attempt has separate credentials and each memory
+attempt has separate writable state. Base/reference controls must qualify the
+same frozen protocol before inference. Harbor retries are disabled; Claude Code
+keeps its native provider behavior. Twelve blind fixed judgments run after coding
+and do not send feedback to the solver.
+
+Harbor trajectories supply tool calls, tokens and native reported cost, with a
+marked estimate when reported cost is unavailable. Agent time is Harbor's native
+agent execution interval. End-to-end time also includes setup, artifact transfer,
+hidden verification and index audits. Explicit test commands can be counted from
+shell calls; commands that hide tests inside scripts are not classified as test runs.
 
 The trusted controller retains the dataset's evaluator and reference patches.
 Runtime outputs and task tokens belong outside version control. The resource

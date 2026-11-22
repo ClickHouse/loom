@@ -1,84 +1,66 @@
 # Software factory evaluations
 
-From the repository root, inspect the evaluation without installing Python packages
-or contacting a provider:
+Run the Python E2E example with a local Docker daemon:
 
 ```bash
 python3 -m examples.software_factory plan
-```
-
-Run with a local Docker daemon:
-
-```bash
 ANTHROPIC_API_KEY=... python3 -m examples.software_factory run --output ./factory-run
 ```
 
-The launcher builds pinned controller dependencies, mounts source read-only, and
-automates the inner setup and evaluation. The plan contains three historical issues, five arms,
-three repeats and six separate A/A controls: 51 attempts, plus 12 blind
-fixed-only judgments using the same model. Embedding uses the checked local
-`bge-small` weights. The plan reports Loom's separate native Anthropic model
-default; all provider requests contribute to the cost ledger. Runs have no dollar cap
-unless `--budget-usd` is supplied. Memory arms expose 30 short historical project records through native tools;
-14 are linked to code. The two code-only arms disable memory tools and linked-memory
-enrichment; they receive no memory namespace or historical notes.
+Harbor runs its built-in Claude Code agent in a normal checkout. Claude chooses
+its tools, edits, test commands and stopping point. The evaluator supplies the
+original issue and environment, then grades the submitted implementation in a
+separate container. It adds no coding loop, custom source tools, hooks, forced
+retrieval or completion review.
 
-Interrupted work is never retried automatically. Explicit resume preserves the
-frozen source and budget, and the inner controller refuses unsettled paid requests:
+The comparison has five arms:
+
+- Claude Code without Loom.
+- Claude Code with Loom's tree-sitter code index.
+- Claude Code with Loom's tree-sitter code index and historical memory.
+- Claude Code with Loom's SCIP code index.
+- Claude Code with Loom's SCIP code index and historical memory.
+
+All arms use the same model, pinned Claude Code version, issue, base checkout,
+resources and hidden verifier. Loom-enabled arms use the native MCP server and
+scoped credentials. Code-only arms have no memory namespace. Each memory attempt
+has its own writable namespace seeded with the same 30 historical facts, 14
+linked to code. Facts come from public sources before the issue's base revision;
+none are inserted into the issue prompt. The memory contrast measures both access
+to historical knowledge and native memory capability, rather than linking alone.
+
+There are three public issues, three repeats and five arms: 45 primary attempts.
+Six A/A attempts measure baseline variation separately. Six base/reference controls
+qualify the grader without model calls. Twelve blind judgments assess submitted
+fixes after coding; judgments do not provide feedback to the solver.
+
+Harbor's native trajectory supplies total tool calls, Loom tool calls, input,
+output and cache tokens, reported generation cost and agent time, including
+recorded subagent activity. Loom's server ledger supplies attributed provider
+usage and persisted memory writes. Missing measurements stay unknown. Provider
+cost combines solver and Loom usage; setup and posthoc judging stay separate.
+Infrastructure and invoice reconciliation are outside that cost measure.
+
+The launcher automates dependencies, isolated services, indexes, historical
+memory and native Harbor jobs. Runs have no dollar cap unless `--budget-usd` is
+supplied. Harbor does not retry failed trials. Explicit resume preserves frozen
+inputs and refuses interrupted paid requests that need reconciliation:
 
 ```bash
 ANTHROPIC_API_KEY=... python3 -m examples.software_factory resume --output ./factory-run
 python3 -m examples.software_factory cleanup --output ./factory-run
 ```
 
-Cleanup uses recorded resource identities and ownership labels. It retains local
-reports and receipts; it does not prune unrelated Docker data.
+Cleanup removes recorded owned resources and retains results. It does not prune
+unrelated Docker data. Reports and charts are generated before coding, after each
+finished attempt and at completion. See [Harbor reports](harbor/README.md).
 
-Use `--eval flask` on any command to select the published profile explicitly; it
-is the default. Each `evals/<id>/eval.json` names that project's public suite,
-scenarios, memory catalog and adapter. Profiles supply facts, build and index
-recipes, and tests; the Harbor runner, metrics, budget gateway and reports are
-shared. Resume and cleanup retain the selected profile identity.
+[Flask](evals/flask/README.md) is the implemented Python profile; its
+[reproduction instructions](evals/flask/REPRODUCE.md) describe the public issues,
+source pins and historical memory. `--eval flask` selects it explicitly.
 
-Every arm has ordinary source tools. Model-selected Loom
-tools add Tree-sitter or SCIP retrieval. Only the two memory arms expose native memory
-tools and code-linked historical lessons.
-Harbor owns trial environments, verification, reporting and charts.
-Each repository evaluation pins its public issues, source revisions, dependencies,
-index scopes and test adapters in its own directory.
-
-## Python E2E evaluation: Flask
-
-[Run the Flask evaluation](evals/flask/README.md) and follow its
-[reproduction instructions](evals/flask/REPRODUCE.md). The five arms compare baseline,
-model-selected Tree-sitter and SCIP retrieval, and each retrieval tier with native
-memory. All arms solve the same case source; no enforced Loom path exists.
-
-The layout separates the agent and evaluation machinery from repository choices:
-
-- `factory/`: shared loop, source tools, grounding and provider/SDK adapters.
-- `harbor/`: native runner, frozen protocols, accounting, reports, charts and export.
-- `evals/flask/`: task/dependency lock, setup, source and pytest adapters, and controls.
-- `tests/`: factory, Harbor and Flask tests; authored Python smoke fixtures are test
-  data rather than repository benchmarks.
-
-A repository suite declares `languages` and `source_roots` in its lock, so a
-future suite can cover several languages in one issue and one end-to-end result.
-Only the Flask/Python adapter is implemented here.
-
-Run the free authored smoke checks from the repository root:
-
-```bash
-python -m examples.software_factory.tests.smoke smoke --output /tmp/factory-smoke
-python -m unittest discover -s examples/software_factory/tests -t . -v
-```
-
-The smoke uses scripted actions and an expression grader. It makes no model or
-network calls and measures no model quality, Loom adoption or cost savings.
-
-The private attempt ledger retains each authorized native code response beside the
-projected context given to the model. This makes omitted navigation or source context
-inspectable without another retrieval call. Member outlines and descriptions remain
-navigation metadata; only bodies matching the working source are treated as code.
-Public exports include allowlisted measurements and provenance hashes rather than
-these raw response bodies. Retrieval requests inherit Loom's response token defaults.
+Shared execution, accounting and reports live in `harbor/`. Project-specific source,
+dependencies, index recipes, historical facts and grading live in `evals/<id>/`.
+A suite declares `languages` and `source_roots`, allowing a future profile to cover
+several languages in one checkout. `factory/` supplies data types and evaluator
+utilities; it does not execute the benchmark's coding agent.

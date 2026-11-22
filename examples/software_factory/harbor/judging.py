@@ -77,7 +77,7 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
     random.Random(seed).shuffle(ordered)
     files = []
     for _, candidate in ordered:
-        files.append(validate_candidate(candidate, task.files, task.source_sha256))
+        files.append(validate_candidate(candidate["files"], task.files, task.source_sha256))
     changed = sorted(
         path
         for path, content in task.files.items()
@@ -181,7 +181,7 @@ def run_judging(protocol, entries, *, provider=None, on_update=None):
             candidates = [
                 (
                     slot["order"],
-                    read(Path(observed[slot["order"]]["harbor_trial"]) / "agent/candidate.json"),
+                    read(Path(observed[slot["order"]]["harbor_trial"]) / "verifier/candidate.json"),
                 )
                 for slot in slots
             ]

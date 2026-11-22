@@ -1,37 +1,23 @@
-"""Export allowlisted public measurements from original native Harbor results."""
+"""Export public measurements while keeping native sessions and credentials private."""
 
 from __future__ import annotations
 
 import argparse
-import copy
-import csv
 import fcntl
 import hashlib
 import json
 import math
 import re
-import shutil
-import tempfile
-from collections import defaultdict
-from dataclasses import fields
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-from harbor.models.trial.result import TrialResult
+from examples.software_factory.factory.model import digest
 
-from examples.software_factory.factory.model import Budget, digest
-
-from .arms import ALL, validate_schedule
-from .billing import FIELDS as BILLING_FIELDS
-from .billing import _price, _trace
-from .charts import ARMS, generate_charts
-from .metrics import paid_token_totals, token_totals
-from .source import reporting_identity
+from .runtime import read, verify, write
 
 KIND = "factory-public-results"
-ALL_ARMS = tuple(ALL)
 COUNTERS = (
-    "completion_reviews",
+    "tool_total_requests",
     "agent_test_requests",
     "agent_test_runs",
     "loom_tool_calls",
@@ -262,652 +248,118 @@ def public_metadata(value):
     return result
 
 
-class Inputs:
-    def __init__(self, root):
-        self.root = Path(root).resolve()
-        self.paths = {}
-        self.source_files = {}
-
-    def raw(self, path, name):
-        path = Path(path)
-        parents = (
-            [parent for parent in path.parents if parent.is_relative_to(self.root)]
-            if path.is_relative_to(self.root)
-            else []
-        )
-        if path.is_symlink() or any(parent.is_symlink() for parent in parents):
-            raise PermissionError("Public export refuses symlinked native inputs")
-        raw = path.read_bytes()
-        hashed = hashlib.sha256(raw).hexdigest()
-        self.paths[path] = hashed
-        self.source_files[relative(name)] = hashed
-        return raw
-
-    def read(self, path, name):
-        return json.loads(self.raw(path, name))
-
-    def unchanged(self):
-        if any(
-            hashlib.sha256(path.read_bytes()).hexdigest() != expected
-            for path, expected in self.paths.items()
-        ):
-            raise PermissionError("Native evidence changed during public export")
-
-
-def schedule(protocol, metadata):
-    rows = protocol["schedule"]
-    if digest(rows) != protocol["schedule_sha256"]:
-        raise ValueError("Public comparison requires the complete frozen schedule")
-    tasks = {row["task_id"] for row in metadata["tasks"]}
-    if set(validate_schedule(rows)) != tasks:
-        raise ValueError("Schedule and published scenario set differ")
-    result = []
-    for order, row in enumerate(rows):
-        tier = ALL[row["arm"]].index_tier
-        result.append(
-            {
-                "order": order,
-                "task_id": row["task_id"],
-                "repeat": row["repeat"],
-                "arm": row["arm"],
-                "index_tier": tier,
-                "memory_enabled": ALL[row["arm"]].memory_enabled,
-                "history_seeded": ALL[row["arm"]].history_seeded,
-            }
-        )
-    return result
-
-
-def native_trials(root, kind, slots, inputs):
-    found = {}
-    for ordinal, folder in enumerate(sorted((root / "jobs" / kind).glob("*"))):
-        if not folder.is_dir():
-            continue
-        if folder.is_symlink():
-            raise PermissionError("Public export refuses symlinked native trials")
-        path = folder / "result.json"
-        if not path.exists():
-            continue
-        source_label = f"native/{kind}/record-{ordinal:02d}/result.json"
-        raw = inputs.read(path, source_label)
-        native = TrialResult.model_validate(raw)
-        match = re.fullmatch(r"slot-(\d+)", Path(raw["config"]["task"]["path"]).name)
-        if not match:
-            raise ValueError("Native trial does not identify a scheduled slot")
-        order = int(match[1])
-        if order not in range(len(slots)) or order in found or native.trial_name != folder.name:
-            raise ValueError("Duplicate or unscheduled native result")
-        if (
-            Path(raw["config"]["task"]["path"]).resolve()
-            != (root / "tasks" / f"slot-{order:02d}").resolve()
-        ):
-            raise ValueError("Native result belongs to another study")
-        inputs.source_files[f"native/{kind}/slot-{order:02d}/result.json"] = (
-            inputs.source_files.pop(source_label)
-        )
-        if not native.finished_at:
-            continue
-        if "reward_valid" in raw and raw["reward_valid"] is not native.reward_valid:
-            raise ValueError("Native reward validity differs from Harbor's exception policy")
-        # Opaque slot labels replace private original trial directory names.
-        found[order] = (folder, raw, native)
-    return found
-
-
-def full_suite(value):
+def export_public(protocol, output: Path, *, public_config=None, require_complete=False):
+    protocol = protocol if isinstance(protocol, dict) else read(protocol)
+    verify(protocol)
+    root, output = Path(protocol["output_root"]).resolve(), Path(output)
     if (
-        not isinstance(value, dict)
-        or value.get("valid") is not True
-        or not isinstance(value.get("tests"), dict)
+        output.is_symlink()
+        or output.resolve() == root
+        or output.resolve().is_relative_to(root / "jobs")
     ):
-        return None
-    statuses = value["tests"]
-    if (
-        not statuses
-        or value.get("status") != "completed"
-        or any(status not in {"PASSED", "FAILED", "SKIPPED"} for status in statuses.values())
-        or value.get("exit_code") != int(any(s == "FAILED" for s in statuses.values()))
-    ):
-        return None
-    return statuses
+        raise PermissionError("Public output must be separate from native results")
+    entries_path = root / "live-attempts.json"
+    entries = read(entries_path) if entries_path.exists() else []
+    from .billing import audit_provider_costs
+    from .profiles import load_profile
+    from .study import enrich_evaluations, result_record
 
-
-def aggregate(slots, attempts):
-    rows = [attempts[row["order"]] for row in slots]
-    observed = [row for row in rows if row["state"] != "pending"]
-
-    def total(key):
-        values = [row.get(key) for row in observed]
-        return sum(values) if values and None not in values else None
-
-    return {
-        "metric_scope": "observed_attempts_only",
-        "scheduled": len(rows),
-        "observed": len(observed),
-        "pending": len(rows) - len(observed),
-        "resolved": sum(row["resolved"] is True for row in observed),
-        "invalid_verification": sum(row["harbor_reward_valid"] is False for row in observed),
-        **{key: total(key) for key in (*NUMERIC, "judge_fixed")},
-    }
-
-
-def source_labels(protocol):
-    root = Path(protocol.get("working_directory", Path(__file__).resolve().parents[3])).resolve()
-    result = {}
-    for name, hashed in {
-        **protocol.get("files", {}),
-        **protocol.get("server_source_identity", {}).get("files", {}),
-    }.items():
-        path = Path(name)
-        try:
-            rel = path.relative_to(root)
-        except ValueError:
-            rel = None
-            for part in ("server", "schemas"):
-                if part in path.parts:
-                    candidate = Path(*path.parts[path.parts.index(part) :])
-                    if (root / candidate).is_file():
-                        rel = candidate
-                        break
-        if (
-            rel
-            and (root / rel).is_file()
-            and rel.parts[0] in {"server", "schemas", "sdk", "examples"}
-            and rel.suffix in {".py", ".json", ".sql", ".html", ".js", ".in", ".yaml", ".txt"}
-        ):
-            result[relative(str(rel))] = hexdigest(hashed)
-    return result
-
-
-def index_proofs(protocol, tasks):
-    output = []
-    for task in tasks:
-        indexes = protocol.get("tasks", {}).get(task["task_id"], {}).get("indexes", {})
-        for tier in ("treesitter", "scip"):
-            scope = indexes.get(tier)
-            if not scope:
-                continue
-            source = scope.get("source_scope", {})
-            proof = {
-                "task_id": task["task_id"],
-                "tier": tier,
-                "compiler_rows": {
-                    key: count(scope.get("compiler_rows", {}).get(key))
-                    for key in (
-                        "compiler_definitions",
-                        "compiler_references",
-                        "python_definitions",
-                        "python_references",
-                    )
-                },
-                "file_count": count(source.get("file_count")),
-            }
-            for key in ("source_sha256", "paths_sha256"):
-                proof[key] = hexdigest(source[key]) if source.get(key) else None
-            output.append(proof)
-    return output
-
-
-def measurements(protocol, slots, inputs):
-    root = Path(protocol["output_root"]).resolve()
-    trials = native_trials(root, "live", slots, inputs)
-    bases = native_trials(root, "base", slots, inputs)
-    base_suites = {}
-    for order, (folder, _, _) in bases.items():
-        path = folder / "verifier/full-suite.json"
-        if path.exists():
-            base_suites[slots[order]["task_id"]] = full_suite(
-                inputs.read(path, f"native/base/slot-{order:02d}/full-suite.json")
-            )
-    verdicts, costs = {}, {}
-    billing_complete, billing_receipt = False, {}
-    for name, target in (("judgements/verdicts.json", verdicts), ("provider-costs.json", costs)):
-        path = root / name
-        if path.exists():
-            saved = inputs.read(path, "evidence/" + name)
-            if saved.get("protocol_sha256") != digest(protocol):
-                raise ValueError("Supplementary measurements belong to another protocol")
-            target.update(saved.get("attempts", {}))
-            if name == "provider-costs.json":
-                billing_complete = saved.get("cohort_complete") is True
-                billing_receipt = saved
-    raw_ledger = ledger_rows(protocol, billing_receipt, inputs)
-    attempts, chart_entries = [], []
-    for slot in slots:
-        order = slot["order"]
-        item = {
-            **slot,
-            "state": "pending",
-            "resolved": None,
-            "harbor_reward_valid": None,
-            **dict.fromkeys(
-                (
-                    *NUMERIC,
-                    "judge_fixed",
-                    "full_suite_tests",
-                    "full_suite_failed",
-                    "full_suite_skipped",
-                )
-            ),
-        }
-        if order not in trials:
-            attempts.append(item)
-            continue
-        folder, raw, native = trials[order]
-        context = raw.get("agent_result") or {}
-        factory = (context.get("metadata") or {}).get("factory") or {}
-        if factory.get("task_id", slot["task_id"]) != slot["task_id"]:
-            raise ValueError("Native factory task differs from its scheduled identity")
-        if factory.get("protocol_sha256", digest(protocol)) != digest(protocol):
-            raise ValueError("Native factory metrics belong to another frozen protocol")
-        valid = native.reward_valid
-        reward = (raw.get("verifier_result") or {}).get("rewards", {}).get("reward")
-        if valid and (type(reward) not in (int, float) or reward not in (0, 1)):
-            raise ValueError("This comparison requires the native binary hidden reward")
-        item.update(
-            state="observed" if valid else "invalid_verifier",
-            resolved=valid and reward == 1,
-            harbor_reward_valid=valid,
-            **{key: count(factory.get(key)) for key in COUNTERS},
-            **token_totals(factory),
+    derived = []
+    for entry in entries:
+        order = entry["order"]
+        slot = protocol["schedule"][order]
+        trial = Path(entry["result"]["harbor_trial"])
+        if trial.is_symlink() or not trial.resolve().is_relative_to(root / "jobs/live"):
+            raise PermissionError("Public export requires the original native trial")
+        path = trial / "result.json"
+        if path.is_symlink():
+            raise PermissionError("Native result cannot be a symlink")
+        raw = read(path)
+        if Path(raw["config"]["task"]["path"]) != root / "tasks" / f"slot-{order:02d}":
+            raise PermissionError("Native task differs from the frozen attempt")
+        result = result_record(
+            slot,
+            raw,
+            trial,
+            task_kind=load_profile(protocol).TASK_KIND,
+            model_id=protocol["model_id"],
         )
-        item["agent_time_s"] = number(factory.get("agent_time_s"))
-        item["generation_cost_usd"] = number(
-            factory.get("generation_cost_usd")
-            if "generation_cost_usd" in factory
-            else context.get("cost_usd")
-        )
-        native_cost = number(context.get("cost_usd"))
-        if (
-            item["generation_cost_usd"] is not None
-            and native_cost is not None
-            and item["generation_cost_usd"] != native_cost
-        ):
-            item["generation_cost_usd"] = None
-        if native.started_at and native.finished_at:
-            item["harbor_wall_s"] = number((native.finished_at - native.started_at).total_seconds())
-        path = folder / "factory-measurement.json"
-        if path.exists():
-            item["end_to_end_s"] = number(
-                inputs.read(path, f"native/live/slot-{order:02d}/measurement.json").get(
-                    "end_to_end_s"
-                )
-            )
-        path = folder / "verifier/grade.json"
-        grade = (
-            inputs.read(path, f"native/live/slot-{order:02d}/grade.json") if path.exists() else {}
-        )
-        path = folder / "verifier/full-suite.json"
-        suite = (
-            full_suite(inputs.read(path, f"native/live/slot-{order:02d}/full-suite.json"))
-            if path.exists()
-            else None
-        )
-        if suite is not None:
-            item.update(
-                full_suite_tests=len(suite),
-                full_suite_failed=sum(s == "FAILED" for s in suite.values()),
-                full_suite_skipped=sum(s == "SKIPPED" for s in suite.values()),
-            )
-            base = base_suites.get(slot["task_id"])
-            if base is not None:
-                item["full_suite_regressions"] = sum(
-                    status == "PASSED" and suite.get(name) != "PASSED"
-                    for name, status in base.items()
-                )
-        verdict = verdicts.get(str(order), {})
-        if (
-            isinstance(grade, dict)
-            and grade.get("state")
-            and verdict.get("candidate_state") == grade["state"]
-            and type(verdict.get("judge_fixed")) is bool
-        ):
-            item["judge_fixed"] = verdict["judge_fixed"]
-        bill = costs.get(str(order), {})
-        trace = folder / "agent/loom-transport.jsonl"
-        traced = (
-            inputs.raw(trace, f"native/live/slot-{order:02d}/loom-transport.jsonl")
-            if trace.exists() or trace.is_symlink()
-            else b""
-        )
-        calls, binding = None, None
-        try:
-            events = [json.loads(line) for line in traced.splitlines()]
-            calls, binding = _trace(protocol, protocol["schedule"][order], factory, rows=events)
-        except (KeyError, ValueError, TypeError):
-            pass  # Missing or malformed billing evidence must remain unknown.
-        priced = _price(calls, binding, raw_ledger) if calls is not None else {}
-        if (
-            calls == []
-            and all(
-                factory.get(key) == 0 and type(factory.get(key)) is int
-                for key in (
-                    "loom_logical_requests",
-                    "loom_physical_requests",
-                    "loom_transport_dispatches",
-                )
-            )
-            and (
-                bill.get("proof_status") != "known"
-                or (
-                    bill.get("physical_requests_dispatched")
-                    == bill.get("physical_requests_matched")
-                    == 0
-                    and bill.get("loom_provider_cost_usd") == 0
-                    and bill.get("physical_request_ids_sha256") == digest([])
-                )
-            )
-        ):
-            item["loom_provider_cost_usd"] = 0
-            item.update(
-                loom_provider_input_tokens=0, loom_provider_output_tokens=0, loom_embedding_tokens=0
-            )
-        elif (
-            bill.get("proof_status") == "known"
-            and bool(calls)
-            and isinstance(binding, dict)
-            and bool(binding.get("code_namespace"))
-            and billing_complete
-            and len({identifier for identifier, _ in calls}) == len(calls)
-            and bill.get("physical_request_ids_sha256")
-            == digest(sorted(identifier for identifier, _ in calls))
-            and count(factory.get("loom_physical_requests")) is not None
-            and factory["loom_physical_requests"] > 0
-            and factory.get("loom_transport_dispatches") == factory["loom_physical_requests"]
-            and count(bill.get("physical_requests_dispatched")) == len(calls)
-            and count(bill.get("physical_requests_matched")) == len(calls)
-            and priced.get("proof_status") == "known"
-            and all(bill.get(key) == priced.get(key) for key in BILLING_FIELDS)
-        ):
-            item["loom_provider_cost_usd"] = number(bill.get("loom_provider_cost_usd"))
-            item.update(
-                {
-                    key: count(bill.get(key))
-                    for key in (
-                        "loom_provider_input_tokens",
-                        "loom_provider_output_tokens",
-                        "loom_embedding_tokens",
-                    )
-                }
-            )
-        item.update(paid_token_totals(item))
-        values = [item["generation_cost_usd"], item["loom_provider_cost_usd"]]
-        item["total_provider_cost_usd"] = sum(values) if None not in values else None
-        attempts.append(item)
-        chart_entries.append({"order": order, "result": item})
-    return attempts, chart_entries
-
-
-def write(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
-
-
-def tree_hashes(folder):
-    return {
-        str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(folder.rglob("*"))
-        if p.is_file()
-    }
-
-
-def evaluator_overhead(protocol, inputs):
-    folder = Path(protocol["output_root"]) / "judgements"
-    records = []
-    for path in sorted(folder.glob("pair-[0-9][0-9].json")):
-        record = inputs.read(path, f"evidence/judging/request-{len(records):02d}.json")
-        if record.get("protocol_sha256") != digest(protocol):
-            raise ValueError("Judge receipt belongs to another frozen protocol")
-        records.append(record)
-
-    def total(key):
-        values = [number(row.get(key)) for row in records]
-        return sum(values) if values and None not in values else None
-
-    return {
-        "judge": {
-            "enabled": protocol.get("judge", {}).get("enabled") is True,
-            "completed_receipts": len(records),
-            "generation_cost_usd": total("generation_cost_usd"),
-            "duration_s": total("duration_s"),
-            "excluded_from_attempt_provider_cost_and_time": True,
-        }
-    }
-
-
-def ledger_rows(protocol, receipt, inputs):
-    path = Path(protocol["output_root"]) / "provider-ledger.json"
-    if not path.exists() or not receipt.get("provider_ledger_sha256"):
-        return {}
-    encoded = inputs.raw(path, "evidence/provider-ledger.json")
-    if hashlib.sha256(encoded).hexdigest() != receipt["provider_ledger_sha256"]:
-        raise ValueError("Provider ledger differs from its billing receipt")
-    saved = json.loads(encoded)
-    if saved.get("protocol_sha256") != digest(protocol):
-        raise ValueError("Provider ledger belongs to another protocol")
-    grouped = defaultdict(list)
-    for query in saved["queries"]:
-        for row in query["rows"]:
-            if row.get("org") != query["org"] or row.get("request_id") not in query["request_ids"]:
-                raise ValueError("Provider ledger contains unrequested rows")
-            grouped[row["request_id"]].append(row)
-    return grouped
-
-
-def _export(protocol, output, metadata, require_complete):
-    if output.exists():
-        owner = output / ".public-export.json"
-        if (
-            not owner.is_file()
-            or owner.is_symlink()
-            or json.loads(owner.read_text()) != {"kind": KIND, "protocol_sha256": digest(protocol)}
-        ):
-            raise PermissionError("Refuse to overwrite an unowned public results directory")
-        manifest = json.loads((output / "manifest.json").read_text())
-        if any(p.is_symlink() for p in output.rglob("*")) or tree_hashes(output) != {
-            **manifest["files"],
-            "manifest.json": hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest(),
-        }:
-            raise PermissionError("Owned public output was modified outside the exporter")
-    root = Path(protocol["output_root"]).resolve()
-    if output == root or root.is_relative_to(output) or output.is_relative_to(root / "jobs"):
-        raise PermissionError("Public output must be separate from native Harbor results")
-    public = public_metadata(metadata)
-    if public["model"]["id"] != protocol["model_id"]:
-        raise ValueError("Public model differs from the measured protocol")
-    slots = schedule(protocol, public)
-    inputs = Inputs(root)
-    historical = inputs.read(protocol["historical_manifest"], "inputs/public-tasks.json")
-    bases = {r["task_id"]: r["base_commit"] for r in historical["tasks"]}
-    if any(bases.get(row["task_id"]) != row["base_commit"] for row in public["tasks"]):
-        raise ValueError("Public task bases differ from the actual task inputs")
-    attempts, chart_entries = measurements(protocol, slots, inputs)
-    job_path = root / "jobs/live/result.json"
-    job = inputs.read(job_path, "native/live/job-result.json") if job_path.exists() else {}
-    complete = all(row["state"] != "pending" for row in attempts) and bool(job.get("finished_at"))
+        result["protocol_sha256"] = digest(protocol)
+        derived.append({"order": order, "result": result})
+    if (root / "provider-ledger.json").exists():
+        audit_provider_costs(protocol, derived)
+    enrich_evaluations(protocol, derived, "live")
+    entries = derived
+    complete = len(entries) == len(protocol["schedule"])
     if require_complete and not complete:
-        raise ValueError("Incomplete cohort cannot be exported as a final comparison")
-    public.update(
-        schedule=slots,
-        schedule_sha256=digest(slots),
-        private_schedule_sha256=protocol["schedule_sha256"],
-        source_files=source_labels(protocol),
-        indexes=index_proofs(protocol, public["tasks"]),
-        execution={
-            "controller": "harbor",
-            "harbor_version": label(protocol["harbor_version"])
-            if protocol.get("harbor_version")
-            else None,
-            "attempt_budget": {
-                field.name: number(protocol["attempt_budget"].get(field.name))
-                for field in fields(Budget)
-                if field.name in protocol.get("attempt_budget", {})
-            },
-            "visible_test_call_limit": number(protocol.get("visible_test_call_limit")),
-            "max_physical_loom_requests": number(protocol.get("max_physical_loom_requests")),
-        },
-        policy={
-            "all_scheduled_attempts_included": True,
-            "aa_excluded_from_primary": True,
-            "objective_quality": "native independent hidden reward",
-            "cost": "generation list-price estimate plus correlated Loom ledger cost; "
-            "unknown remains null; invoices and infrastructure excluded",
-            "judge": "separate blinded subjective assessment; no candidate ranking",
-            "stochastic_outputs": True,
-        },
-    )
-    stage = Path(tempfile.mkdtemp(prefix=".public-export-", dir=output.parent))
-    try:
-        write(stage / ".public-export.json", {"kind": KIND, "protocol_sha256": digest(protocol)})
-        write(stage / "protocol.json", public)
-        write(stage / "attempts.json", attempts)
-        summary = {
-            "schema_version": 1,
-            "complete": complete,
-            "observed": len(chart_entries),
-            "scheduled": len(slots),
-            "primary": {},
-            "aa_controls": {},
-            "all_attempts": aggregate(slots, attempts),
-        }
-        for arm in ALL_ARMS:
-            target = summary["primary"] if arm in ARMS else summary["aa_controls"]
-            target[arm] = aggregate([row for row in slots if row["arm"] == arm], attempts)
-        write(stage / "summary.json", summary)
-        scenarios = [
-            {
-                "task_id": task,
-                "arms": {
-                    arm: aggregate(
-                        [row for row in slots if row["task_id"] == task and row["arm"] == arm],
-                        attempts,
-                    )
-                    for arm in ALL_ARMS
-                },
+        raise PermissionError("Native cohort is incomplete")
+    output.mkdir(parents=True, exist_ok=True)
+    marker = output / "ownership.json"
+    identity = {"kind": KIND, "protocol_sha256": digest(protocol)}
+    if marker.exists() and read(marker) != identity:
+        raise PermissionError("Public bundle belongs to another study")
+    guard = output / ".export.lock"
+    with guard.open("a") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        write(marker, identity)
+        public = []
+        hashes = {}
+        for entry in entries:
+            result = entry["result"]
+            slot = protocol["schedule"][entry["order"]]
+            row = {
+                key: slot[key]
+                for key in ("order", "task_id", "arm", "repeat", "memory_enabled", "index_tier")
             }
-            for task in sorted(bases)
-        ]
-        write(stage / "scenarios.json", scenarios)
-        write(stage / "evaluators.json", evaluator_overhead(protocol, inputs))
-        with (stage / "attempts.csv").open("w") as stream:
-            writer = csv.DictWriter(stream, fieldnames=list(attempts[0]))
-            writer.writeheader()
-            writer.writerows(attempts)
-        chart_root = stage / "charts"
-        write(chart_root / "tasks.json", {"tasks": public["tasks"]})
-        generate_charts(
-            {
-                "output_root": str(chart_root),
-                "model_id": public["model"]["id"],
-                "historical_manifest": str(chart_root / "tasks.json"),
-                "schedule": slots,
-                "public_reproduction": public,
-                "reporting": {"publish_charts": False},
-            },
-            chart_entries,
-            {},
-        )
-        data_path = chart_root / "reports/charts.json"
-        original = data_path.read_text().strip()
-        data = json.loads(original)
-        data.update(name="Public factory comparison", run_id=digest(public)[:16])
-        encoded = json.dumps(data, ensure_ascii=False).replace("<", "\\u003c")
-        html_path = chart_root / "reports/charts.html"
-        html = html_path.read_text()
-        if original not in html:
-            raise ValueError("Standalone chart data differs from its embedded document")
-        html_path.write_text(html.replace(original, encoded, 1))
-        data_path.write_text(encoded + "\n")
-        write(
-            stage / "provenance.json",
-            {
-                "source_protocol_sha256": digest(protocol),
-                "source_files": inputs.source_files,
-                "raw_native_files_unchanged": True,
-                "reporting_implementation": reporting_identity(),
-            },
-        )
-        (stage / "README.md").write_text(
-            "# Public factory results\n\n"
-            + ("Complete" if complete else "Pending")
-            + f" cohort: {len(chart_entries)} of {len(slots)} attempts observed.\n\n"
-            + "Study role: "
-            + public.get("study_role", "not declared")
-            + ".\n\n"
-            + " ".join(public.get("memory_treatment", {}).values())
-            + "\n\n"
-            + "Every scheduled failure and A/A control is retained. Unknown measurements are null. "
-            "The charts compare primary arms; A/A controls have separate tables. "
-            "Judge opinions are separate from independent hidden-test success. "
-            "No automatic performance or merge claim is made.\n\n"
-            "Repeat the published code and inputs with your own credentials. "
-            "Model answers, latency and cost can vary between runs.\n"
-        )
-        inputs.unchanged()
-        manifest = {
-            "schema_version": 1,
+            row.update({key: number(result.get(key)) for key in NUMERIC})
+            row.update(
+                resolved=result["resolved"],
+                judge_fixed=result.get("judge_fixed"),
+                harbor_reward_valid=result.get("harbor_reward_valid"),
+                generation_cost_source=result.get("generation_cost_source"),
+            )
+            trial = Path(result["harbor_trial"])
+            for name in (
+                "result.json",
+                "agent/trajectory.json",
+                "verifier/grade.json",
+                "verifier/full-suite.json",
+            ):
+                path = trial / name
+                if path.exists():
+                    hashes[str(entry["order"]) + "/" + name] = hashlib.sha256(
+                        path.read_bytes()
+                    ).hexdigest()
+            public.append(row)
+        payload = {
             "kind": KIND,
             "complete": complete,
-            "files": tree_hashes(stage),
+            "metadata": public_metadata(public_config or protocol["public_reproduction"]),
+            "solver": protocol["solver"],
+            "attempts": public,
+            "native_artifact_sha256": hashes,
+            "cost_scope": (
+                "Native Claude Code reported cost plus authenticated Loom provider ledger; "
+                "setup and judging separate."
+            ),
         }
-        write(stage / "manifest.json", manifest)
-        backup = None
-        if output.exists():
-            backup = Path(tempfile.mkdtemp(prefix=".public-backup-", dir=output.parent))
-            backup.rmdir()
-            output.rename(backup)
-        try:
-            stage.rename(output)
-        except BaseException:
-            if backup is not None:
-                backup.rename(output)
-            raise
-        if backup is not None:
-            shutil.rmtree(backup)
-        return manifest
-    finally:
-        if stage.exists():
-            shutil.rmtree(stage)
-
-
-def export_public(protocol, output: Path, *, public_config=None, require_complete=False):
-    """Offline export; refreshing an owned bundle never changes native results."""
-    protocol = copy.deepcopy(
-        protocol if isinstance(protocol, dict) else json.loads(Path(protocol).read_text())
-    )
-    metadata = public_config if public_config is not None else protocol["public_reproduction"]
-    if not isinstance(metadata, dict):
-        metadata = json.loads(Path(metadata).read_text())
-    output = Path(output)
-    if output.is_symlink():
-        raise PermissionError("Public output cannot be a symlink")
-    output = output.resolve()
-    root = Path(protocol["output_root"]).resolve()
-    if output == root or root.is_relative_to(output) or output.is_relative_to(root / "jobs"):
-        raise PermissionError("Public output must be separate from native Harbor results")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    lock = output.parent / ("." + output.name + ".public-export.lock")
-    if lock.is_symlink():
-        raise PermissionError("Public export lock cannot be a symlink")
-    with lock.open("a") as guard:
-        fcntl.flock(guard, fcntl.LOCK_EX)
-        return _export(protocol, output, metadata, require_complete)
+        write(output / "results.json", payload)
+        files = {"results.json": hashlib.sha256((output / "results.json").read_bytes()).hexdigest()}
+        write(output / "manifest.json", {**identity, "files": files})
+    return {"complete": complete, "files": files}
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--public-config", type=Path)
     parser.add_argument("--require-complete", action="store_true")
     args = parser.parse_args()
-    result = export_public(
-        args.protocol,
-        args.output,
-        public_config=args.public_config,
-        require_complete=args.require_complete,
+    print(
+        json.dumps(
+            export_public(args.protocol, args.output, require_complete=args.require_complete)
+        )
     )
-    print(json.dumps({"complete": result["complete"], "files": len(result["files"])}))
 
 
 if __name__ == "__main__":

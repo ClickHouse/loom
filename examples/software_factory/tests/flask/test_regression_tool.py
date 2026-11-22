@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import asyncio
-import json
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock, patch
 
 from examples.software_factory.evals.flask import grading as harbor_grading
 from examples.software_factory.factory.engine import Factory
@@ -94,54 +91,6 @@ class AuthoredRegressions(unittest.TestCase):
         with patch("builtins.exec", side_effect=AssertionError("Executed source")):
             validate("raise RuntimeError('must not execute while validating')\n")
 
-    def test_harbor_adapter_only_uploads_authored_source_and_uses_sandbox_exec(self):
-        from examples.software_factory.evals.flask.agent import VisibleGrader
-
-        factory = self.fixture.factory(mode="baseline")
-        captured = {}
-        source = "def test_regression():\n    assert 1 == 2, 'visible failure'\n"
-
-        async def upload(path, target):
-            captured[target] = await asyncio.to_thread(Path(path).read_text)
-
-        environment = SimpleNamespace(
-            upload_file=AsyncMock(side_effect=upload),
-            exec=AsyncMock(
-                return_value=SimpleNamespace(
-                    return_code=0,
-                    stdout=json.dumps(
-                        {
-                            "passed": False,
-                            "exit_code": 1,
-                            "state": factory.checkout.state(),
-                            "output": "visible failure",
-                        }
-                    ),
-                    stderr="",
-                )
-            ),
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            grader = VisibleGrader(environment, None, {"grader_sha256": "fixed"}, Path(directory))
-            grader.factory = factory
-            with (
-                patch("subprocess.run", side_effect=AssertionError("Host execution")),
-                patch("subprocess.Popen", side_effect=AssertionError("Host execution")),
-            ):
-                result = asyncio.run(grader.evaluate_regression(factory.checkout, source))
-        self.assertFalse(result["passed"])
-        self.assertIn("visible failure", result["output"])
-        self.assertEqual(captured["/tmp/factory-regression.py"], source)
-        candidate = json.loads(captured["/tmp/factory-candidate.json"])
-        self.assertEqual(candidate["files"], factory.checkout.files())
-        self.assertNotIn("test_regression.py", candidate["files"])
-        environment.exec.assert_awaited_once_with(
-            "python /factory/grader.py regression /tmp/factory-candidate.json "
-            "/tmp/factory-regression.py",
-            timeout_sec=40,
-        )
-        self.assertEqual(grader.calls, 0)
-
     def test_failed_authored_assertions_return_bounded_detail_without_grading_side_effects(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -210,17 +159,6 @@ class AuthoredRegressions(unittest.TestCase):
                     self.assertFalse(
                         harbor_grading.regression_status(xml, code, timed_out)["passed"]
                     )
-
-    def test_invalid_authored_source_never_reaches_harbor_execution(self):
-        from examples.software_factory.evals.flask.agent import VisibleGrader
-
-        environment = SimpleNamespace(upload_file=AsyncMock(), exec=AsyncMock())
-        with tempfile.TemporaryDirectory() as directory:
-            grader = VisibleGrader(environment, None, {"grader_sha256": "fixed"}, Path(directory))
-            with self.assertRaises(ValueError):
-                asyncio.run(grader.evaluate_regression(Mock(), "def invalid("))
-        environment.upload_file.assert_not_awaited()
-        environment.exec.assert_not_awaited()
 
 
 if __name__ == "__main__":

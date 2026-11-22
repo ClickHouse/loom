@@ -20,6 +20,7 @@ from pathlib import Path
 from examples.software_factory.evals.flask.historical import (
     fixture_path,
     junit_statuses,
+    ordinary,
     selected_statuses,
 )
 from examples.software_factory.factory.model import digest
@@ -40,17 +41,16 @@ def validate_regression_source(source: str) -> str:
     return source
 
 
-def validate_candidate(candidate: dict, base: dict, expected_source: str) -> dict:
+def validate_candidate(files: dict, base: dict, expected_source: str) -> dict:
     allowed = {k: v for k, v in base.items() if k.startswith("src/flask/")}
-    if digest(allowed) != expected_source or candidate.get("source_sha256") != expected_source:
-        raise PermissionError("Candidate and verifier source bases differ")
-    files = candidate["files"]
-    if not isinstance(files, dict) or set(files) != set(allowed):
-        raise PermissionError("Candidate may change only the frozen implementation files")
+    if digest(allowed) != expected_source:
+        raise PermissionError("Verifier source base differs from the frozen task")
+    if not isinstance(files, dict) or any(
+        not ordinary(path) or not path.startswith("src/flask/") for path in files
+    ):
+        raise PermissionError("Candidate source escapes the implementation root")
     if any(type(v) is not str or len(v.encode()) > 1024 * 1024 for v in files.values()):
         raise ValueError("Candidate file exceeds the source bound")
-    if candidate.get("state") != digest(files):
-        raise PermissionError("Candidate source fingerprint differs")
     return files
 
 
@@ -80,18 +80,37 @@ def validate_fixtures(fixtures: dict, base: dict, expected: str) -> dict[str, by
 def stage_candidate(candidate_path: Path) -> tuple[dict, dict, Path]:
     spec = json.loads(Path("/factory/spec.json").read_text())
     base = json.loads(Path("/factory/base.json").read_text())
-    if candidate_path.stat().st_size > 20 * 1024 * 1024:
-        raise ValueError("Candidate exceeds the source bound")
-    candidate = json.loads(candidate_path.read_text())
-    files = validate_candidate(candidate, base, spec["source_sha256"])
+    if candidate_path.is_symlink() or not candidate_path.is_dir():
+        raise ValueError("Native source artifact must be a directory")
+    files, total = {}, 0
+    for path in sorted(candidate_path.rglob("*")):
+        if path.is_symlink():
+            raise PermissionError("Candidate source contains a symbolic link")
+        if not path.is_file():
+            continue
+        if path.stat().st_size > 1024 * 1024:
+            raise ValueError("Candidate file exceeds the source bound")
+        content = path.read_bytes()
+        total += len(content)
+        if total > 20 * 1024 * 1024:
+            raise ValueError("Candidate exceeds the source bound")
+        files["src/flask/" + path.relative_to(candidate_path).as_posix()] = content.decode("utf-8")
+    files = validate_candidate(files, base, spec["source_sha256"])
+    candidate = {"state": digest(files), "files": files}
+    destination = Path("/logs/verifier")
+    destination.mkdir(parents=True, exist_ok=True)
+    (destination / "candidate.json").write_text(json.dumps(candidate) + "\n")
     fixtures = validate_fixtures(
         json.loads(Path("/factory/fixtures.json").read_text()), base, spec["fixtures_sha256"]
     )
-    workspace = Path("/workspace")
+    workspace = Path("/verified-workspace")
     if workspace.exists():
         shutil.rmtree(workspace)
     workspace.mkdir(mode=0o755)
-    for name, content in {**base, **files, **fixtures}.items():
+    remaining = {
+        name: content for name, content in base.items() if not name.startswith("src/flask/")
+    }
+    for name, content in {**remaining, **files, **fixtures}.items():
         path = workspace / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content if isinstance(content, bytes) else content.encode())
@@ -125,7 +144,7 @@ def grade(kind: str, candidate_path: Path) -> dict:
                 env={
                     "PATH": os.defpath,
                     "HOME": directory,
-                    "PYTHONPATH": "/workspace/src",
+                    "PYTHONPATH": str(workspace / "src"),
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTEST_ADDOPTS": "",
                 },
@@ -157,13 +176,8 @@ def grade(kind: str, candidate_path: Path) -> dict:
     if kind == "visible":
         result["selected"] = statuses
     else:
-        completed = (
-            candidate.get("agent_completed") is True
-            and candidate.get("visible_passed") is True
-            and candidate.get("verified_state") == candidate["state"]
-        )
         Path("/logs/verifier/grade.json").write_text(json.dumps(result) + "\n")
-        Path("/logs/verifier/reward.txt").write_text(str(int(result["passed"] and completed)))
+        Path("/logs/verifier/reward.txt").write_text(str(int(result["passed"])))
         from examples.software_factory.evals.flask.full_suite import evaluate
 
         full = evaluate(workspace, Path("/logs/verifier/full-suite"), run_regression_process)
@@ -183,7 +197,7 @@ def run_regression_process(
             env={
                 "PATH": os.defpath,
                 "HOME": str(results),
-                "PYTHONPATH": "/workspace/src",
+                "PYTHONPATH": str(workspace / "src"),
                 "PYTHONDONTWRITEBYTECODE": "1",
                 "PYTEST_ADDOPTS": "",
                 "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",

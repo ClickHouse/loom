@@ -14,7 +14,7 @@ The output directory contains:
 - `reports/scenarios/`: one summary per distinct task, across repeats and arms.
 - `reports/AA-CONTROLS.md` and `reports/aa-controls.json`: separate A/A controls.
 - `reports/charts.html` and `reports/charts.json`: bar charts for hidden success, blind fixed judgments, regressions, provider cost,
-  agent time, tests, Loom calls, memory writes and tokens, with scenario and attempt filters.
+  agent time, tests, Loom calls, memory writes and tokens and total tool calls, with scenario and attempt filters.
 - `reporting-manifest.json`: source job, derived jobs and report locations.
 
 With three scenarios, three repeats and five arms, the primary comparison has
@@ -26,8 +26,9 @@ tool counts remain unknown.
 
 Native Harbor duration is the recorded trial finish minus its start. Full study
 end-to-end duration also includes the post-trial index audit. Reports retain both.
-Generation cost is the study's list-price estimate, not an invoice or a measure
-of all infrastructure costs.
+Generation cost comes from native Claude Code, with Harbor's marked estimate
+when reported cost is unavailable. Loom provider cost is attributed separately
+from the server ledger. These values do not measure infrastructure or reconcile invoices.
 
 Charts are published under the installed Harbor viewer's static assets when that
 directory is writable. A Charts link is added to the viewer navigation without

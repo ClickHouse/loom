@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import asdict
 from pathlib import Path
 
-from examples.software_factory.factory.model import Budget, digest
+from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.pricing import cost_basis
 
 from .arms import PRIMARY, validate_schedule
@@ -67,8 +66,6 @@ def freeze_plan(
         task_id: {**config, "indexes": setup["tasks"][task_id]["indexes"]}
         for task_id, config in prepared["tasks"].items()
     }
-    budget = dict.fromkeys(asdict(Budget()))
-    budget["output_tokens"] = 128000
     plan = {
         "schema_version": 1,
         "controller": "harbor",
@@ -100,6 +97,7 @@ def freeze_plan(
         "historical_manifest": prepared["historical_manifest"],
         "reference_controls_file": prepared["reference_controls_file"],
         "server_container": runtime["server_container"],
+        "runtime_network": runtime["network"],
         "loom_url": runtime["loom_url"],
         "server_commit": runtime["server_commit"],
         "server_source_identity": runtime["server_source_identity"],
@@ -109,7 +107,7 @@ def freeze_plan(
         "index_content_file": setup["index_content_file"],
         "index_content_sha256": setup["index_content_sha256"],
         "public_inputs": {**prepared["public_inputs"], **setup["files"]},
-        "attempt_budget": budget,
+        "attempt_budget": None,
         "visible_test_call_limit": None,
         "max_physical_loom_requests": None,
         "reporting": reporting or {},
@@ -118,7 +116,7 @@ def freeze_plan(
             "enabled": True,
             "model_id": lock["model_id"],
             "seed": 741,
-            "output_tokens": budget["output_tokens"],
+            "output_tokens": 128000,
         },
         "success_target": {
             name: {"quality": 1, "provider_cost_ratio_max": 0.8, "agent_time_ratio_max": 0.8}

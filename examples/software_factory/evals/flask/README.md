@@ -1,7 +1,7 @@
 # Python E2E evaluation: Flask
 
 The factory solves the same three public historical Flask issues across five
-arms: no Loom, Tree-sitter, Tree-sitter with memory, SCIP, and SCIP with memory.
+arms: no Loom, Tree-sitter, tree-sitter with historical memory, SCIP, and SCIP with historical memory.
 Claude chooses every Loom call. Source revisions, issue text, model, ordinary
 source tools, resource limits and independent tests match across the arms.
 

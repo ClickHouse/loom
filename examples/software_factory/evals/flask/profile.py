@@ -12,15 +12,12 @@ from examples.software_factory.evals.flask.historical import FrozenSource, Histo
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.runtime import read, write
 
-from .agent import ControlProvider, VisibleGrader
 from .full_suite import regressions as full_suite_regressions
 from .grading import validate_candidate
 from .indexing import ScopeVerifier
 
 __all__ = [
     "ScopeVerifier",
-    "VisibleGrader",
-    "ControlProvider",
     "validate_candidate",
     "full_suite_regressions",
     "task_inputs",
@@ -146,6 +143,17 @@ def stage_task(plan, task_id, output, build_image):
     images = {}
     for kind in ("agent", "verifier"):
         build = output / "builds" / task_id / kind
+        if kind == "agent":
+            workspace = build / "workspace"
+            workspace.mkdir(parents=True)
+            git(workspace, "init", "--quiet")
+            git(workspace, "fetch", "--quiet", "--depth=1", str(source.mirror), task.base_commit)
+            git(workspace, "checkout", "--quiet", "--detach", "FETCH_HEAD")
+            git(workspace, "remote", "add", "origin", "https://github.com/pallets/flask.git")
+            if git(workspace, "rev-parse", "HEAD").decode().strip() != task.base_commit:
+                raise PermissionError("Native checkout differs from the frozen task base")
+            images[kind] = build_image(build, config["image"])
+            continue
         files = build / "factory"
         files.mkdir(parents=True)
         library = files / "lib/examples/software_factory"
@@ -175,17 +183,14 @@ def stage_task(plan, task_id, output, build_image):
                 p.write_text(content)
             git(tree, "apply", "-", data=private["test_patch"].encode())
             base = {str(p.relative_to(tree)): p.read_text() for p in tree.rglob("*") if p.is_file()}
-        else:
-            spec_agent = {k: v for k, v in spec.items() if k != "hidden_selectors"}
         write(files / "base.json", base)
         write(files / "fixtures.json", fixtures)
-        write(files / "spec.json", spec if kind == "verifier" else spec_agent)
+        write(files / "spec.json", spec)
         if kind == "verifier":
             tests = files / "tests"
             tests.mkdir()
             (tests / "test.sh").write_text(
-                "#!/bin/sh\nset -eu\n"
-                "python /factory/grader.py hidden /logs/artifacts/candidate.json\n"
+                "#!/bin/sh\nset -eu\npython /factory/grader.py hidden /workspace/src/flask\n"
             )
         images[kind] = build_image(build, config["image"])
     return spec, images

@@ -1401,13 +1401,12 @@ class Provisioner:
             roles = {group["namespace"]: "viewer"}
             if slot["memory_enabled"]:
                 roles[binding["memory_namespace"]] = "writer"
-            token = (
-                self._mint(group["org"], roles, "attempt-" + str(slot["order"]))
-                if slot["memory_enabled"]
-                else reader
-            )
+            token = self._mint(group["org"], roles, "attempt-" + str(slot["order"]))
             binding.update(
-                token_file=str(token), compiler_rows=counts, source_scope=b["source_scope"]
+                token_file=str(token),
+                token_subject="sa:attempt-" + str(slot["order"]),
+                compiler_rows=counts,
+                source_scope=b["source_scope"],
             )
         for slot in slots:
             binding = bindings[str(slot["order"])]

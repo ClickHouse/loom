@@ -5,26 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from examples.software_factory.evals.flask.agent import VisibleGrader
 from examples.software_factory.evals.flask.public_metadata import public_reproduction
-from examples.software_factory.factory.model import TestRefusal
 from examples.software_factory.harbor.public_export import public_metadata
 
 
 class ReviewContracts(unittest.TestCase):
-    def test_exhausted_visible_quota_is_a_predispatch_refusal(self):
-        with tempfile.TemporaryDirectory() as directory:
-            grader = VisibleGrader(
-                None,
-                None,
-                {"grader_sha256": "a" * 64, "visible_test_call_limit": 1},
-                Path(directory),
-            )
-            grader.calls = 1
-            with self.assertRaises(TestRefusal):
-                grader.run(None)
-            self.assertEqual(grader.calls, 1)
-
     def test_controller_and_server_source_pins_are_distinct_and_complete(self):
         lock = json.loads(Path("examples/software_factory/evals/flask/suite.lock.json").read_text())
         protocol = {
