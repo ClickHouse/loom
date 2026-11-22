@@ -104,12 +104,23 @@ def audit_provider_costs(protocol, entries, *, ledger_loader=None):
                 if not isinstance(rows, list) or any(
                     row.get("org") != binding["org"]
                     or row.get("subject") != binding["token_subject"]
-                    or row.get("namespace")
-                    not in {binding["code_namespace"], binding["memory_namespace"]}
+                    or (
+                        row.get("namespace")
+                        not in {binding["code_namespace"], binding["memory_namespace"]}
+                        and not (
+                            row.get("operation") == "mcp.initialize"
+                            and row.get("namespace") == "-"
+                            and not slot.get("memory_enabled", False)
+                        )
+                    )
                     for row in rows
                 ):
                     raise ValueError("Native ledger scope differs")
-                if result.get("loom_tool_calls") is None or len(rows) < result["loom_tool_calls"]:
+                operations = [row for row in rows if row.get("operation") != "mcp.initialize"]
+                if (
+                    result.get("loom_tool_calls") is None
+                    or len(operations) < result["loom_tool_calls"]
+                ):
                     raise ValueError("Native tool calls exceed attributed ledger rows")
             ids = [row["request_id"] for row in rows]
             if len(ids) != len(set(ids)):
