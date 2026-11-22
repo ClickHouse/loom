@@ -234,6 +234,9 @@ jobs:
 
   maintenance:
     name: Record trusted SDK static analysis failures
+    concurrency:
+      group: sdk-codeql-maintenance
+      cancel-in-progress: false
     needs: [analyze_sdks]
     if: >-
       always() && github.repository == 'ClickHouse/loom' &&
