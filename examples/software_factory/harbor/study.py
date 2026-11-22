@@ -30,7 +30,7 @@ from .billing import audit_provider_costs
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
 from .metrics import known_total, paid_token_totals
-from .native_environment import agent_settings, load_credentials, mcp_settings
+from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
 from .profiles import load_profile
 from .public_export import export_public
@@ -315,6 +315,7 @@ def prepare(previous: Path, output: Path) -> Path:
         "name": solver["name"],
         "model_name": plan["model_id"],
         "kwargs": {"version": solver["version"]},
+        "env": PROXY_ENV,
     }
     controls = {}
     for name in ("base", "reference"):

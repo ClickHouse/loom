@@ -57,7 +57,7 @@ def public_reproduction(lock, protocol):
         **public_reproduction_base(lock, protocol),
         "study_role": lock["study_role"],
         "memory_treatment": {
-            "availability": "Code-only arms disable memory tools and code-linked lessons; "
+            "availability": "Code-only arms have no historical memory namespace or memory write permission; "
             "the two memory arms receive historical facts and optional memory tools",
             "delivery": "Optional native memory tools and code-linked lessons; no prompt injection",
             "measures": (

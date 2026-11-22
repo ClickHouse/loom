@@ -10,6 +10,11 @@ from urllib.parse import urlsplit
 from .scopes import binding_for
 
 
+PROXY_ENV = dict.fromkeys(
+    ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy", "all_proxy"), ""
+)
+
+
 def token_variable(order: int) -> str:
     return f"LOOM_ATTEMPT_TOKEN_{order}"
 
@@ -23,18 +28,6 @@ def agent_settings(protocol: dict, slot: dict) -> str:
         if not hostname:
             raise ValueError("Native MCP requires an explicit Loom hostname")
         settings += 'network_mode = "allowlist"\nallowed_hosts = ' + json.dumps([hostname]) + "\n"
-    settings += "[agent.env]\n"
-    settings += "".join(
-        name + ' = ""\n'
-        for name in (
-            "HTTPS_PROXY",
-            "HTTP_PROXY",
-            "ALL_PROXY",
-            "https_proxy",
-            "http_proxy",
-            "all_proxy",
-        )
-    )
     return settings
 
 
@@ -48,7 +41,7 @@ def mcp_settings(protocol: dict, slot: dict) -> str:
     }
     return (
         '\n[[environment.mcp_servers]]\nname = "loom"\ntransport = "streamable-http"\nurl = '
-        + json.dumps(protocol["loom_url"].rstrip("/") + "/mcp")
+        + json.dumps(protocol["loom_url"].rstrip("/") + "/mcp?toolset=coding")
         + "\n[environment.mcp_servers.headers]\n"
         + "".join(
             json.dumps(name) + " = " + json.dumps(value) + "\n" for name, value in headers.items()

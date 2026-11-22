@@ -19,12 +19,12 @@ class NativeTreatment(TestCase):
             self.assertEqual(mcp_settings(protocol, baseline), "")
             config = tomllib.loads(mcp_settings(protocol, loom))
         server = config["environment"]["mcp_servers"][0]
-        self.assertEqual(server["url"], "http://owned-loom:7777/mcp")
+        self.assertEqual(server["url"], "http://owned-loom:7777/mcp?toolset=coding")
         self.assertEqual(server["headers"]["X-Loom-Code-Scope"], "org/code")
         self.assertEqual(server["headers"]["Authorization"], "Bearer ${LOOM_ATTEMPT_TOKEN_1}")
         for slot in (baseline, loom):
             settings = tomllib.loads(agent_settings(protocol, slot))["agent"]
             self.assertEqual(settings["user"], "agent")
             self.assertEqual(
-                set(settings) - {"network_mode", "allowed_hosts"}, {"user", "timeout_sec", "env"}
+                set(settings) - {"network_mode", "allowed_hosts"}, {"user", "timeout_sec"}
             )

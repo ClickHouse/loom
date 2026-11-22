@@ -78,21 +78,22 @@ def blind_input(task, candidates, *, seed, validate_candidate, public_documents=
     files = []
     for _, candidate in ordered:
         files.append(validate_candidate(candidate["files"], task.files, task.source_sha256))
+    paths = set(task.files).union(*(set(candidate) for candidate in files))
     changed = sorted(
         path
-        for path, content in task.files.items()
-        if any(candidate[path] != content for candidate in files)
+        for path in paths
+        if any(candidate.get(path) != task.files.get(path) for candidate in files)
     )
     visible = {
         "public_issue": task.problem,
         "public_documents": dict(documents),
-        "base_files": {path: task.files[path] for path in changed},
+        "base_files": {path: task.files.get(path) for path in changed},
         **{
-            label: {path: candidate[path] for path in changed}
+            label: {path: candidate.get(path) for path in changed}
             for label, candidate in zip("ABCDE"[: len(files)], files, strict=True)
         },
         "context": (
-            "Only files changed by a candidate are included. Empty changes mean unchanged source."
+            "Only files changed by a candidate are included. Null means the file is absent."
         ),
     }
     mapping = {

@@ -38,8 +38,7 @@ The facts concern prior architecture, compatibility and known pitfalls. The
 corpus contains no reference fixes or hidden test requirements.
 
 The two memory arms have optional native memory tools and private writable
-namespaces containing historical facts. Code-only arms have no memory tools,
-memory namespace or linked-memory enrichment. Facts are retrieved through
+namespaces containing historical facts. Code-only arms have no historical memory namespace or memory write permission. Facts are retrieved through
 memory tools and code-linked lessons, with none inserted into prompts. Ordinary
 project-note tools are disabled. This comparison measures the
 combined contribution of historical knowledge and its native retrieval. It does

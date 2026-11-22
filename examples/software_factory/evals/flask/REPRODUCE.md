@@ -45,8 +45,8 @@ public sources; source hashes and chronology are checked before ingestion.
 Only history-seeded arms receive the 30 seeded facts. Neither the issue nor the
 source or test contract changes between arms. The study contains no authored
 replacement issues. Native links are checked at the task's actual indexed base.
-Code-only arms disable memory. Only the two memory arms expose memory schemas
-and private writable namespaces; they replay history from
+Every Loom arm exposes the same native coding tool roster. Only the two memory
+arms have private writable memory namespaces; they replay history from
 2.0.0rc2, observe changed links at the task base, then revise one source-backed
 fact and verify that its anchor becomes fresh again.
 
