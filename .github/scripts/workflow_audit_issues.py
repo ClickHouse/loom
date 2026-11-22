@@ -9,6 +9,7 @@ import json
 import os
 import re
 import time
+from datetime import datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -136,8 +137,10 @@ class GitHub:
           issues(first:100,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
                  states:[OPEN,CLOSED],orderBy:{field:CREATED_AT,direction:ASC}) {
             nodes { number title body state author {login}
-                    comments(last:100,orderBy:{field:UPDATED_AT,direction:ASC}) {
-                      totalCount nodes { body author {login} }
+                    comments:timelineItems(last:100,itemTypes:[ISSUE_COMMENT]) {
+                      totalCount nodes { ... on IssueComment {
+                        fullDatabaseId createdAt body author {login}
+                      } }
                     } }
             pageInfo {hasNextPage endCursor}
           }
@@ -169,7 +172,12 @@ class GitHub:
                         "user": issue["author"] or {},
                         "comment_count": comments["totalCount"],
                         "recent_comments": [
-                            {"body": comment["body"], "user": comment["author"] or {}}
+                            {
+                                "id": int(comment["fullDatabaseId"]),
+                                "created_at": comment["createdAt"],
+                                "body": comment["body"],
+                                "user": comment["author"] or {},
+                            }
                             for comment in latest
                         ],
                     }
@@ -230,7 +238,10 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
         states = _STATE.findall(issue.get("body") or "")
         comments = issue.get("recent_comments", [])
         recent_states = []
-        for comment in comments:
+        # Status authority follows creation, not human edits to an older bot comment.
+        for comment in sorted(
+            comments, key=lambda item: (datetime.fromisoformat(item["created_at"]), item["id"])
+        ):
             if comment.get("user", {}).get("login") == _BOT:
                 recent_states.extend(_STATE.findall(comment.get("body") or ""))
         if issue.get("comment_count", 0) > len(comments) and not recent_states:

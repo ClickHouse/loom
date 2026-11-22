@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 import unittest
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -56,6 +57,13 @@ class FakeGitHub:
             comments = self.comments.get(issue["number"], [])
             issue["comment_count"] = len(comments)
             issue["recent_comments"] = copy.deepcopy(comments[-100:])
+            for comment in issue["recent_comments"]:
+                comment.setdefault(
+                    "created_at",
+                    (
+                        datetime(2000, 1, 1, tzinfo=UTC) + timedelta(seconds=comment["id"])
+                    ).isoformat(),
+                )
         return output
 
     def request(self, method, path, payload=None):
@@ -243,6 +251,18 @@ class WorkflowAuditIssues(unittest.TestCase):
         self.assertLessEqual(self.api.run_calls, 40)
         self.assertEqual(len(self.api.issues), 60)
 
+    def test_human_edit_of_an_older_status_does_not_change_state_authority(self):
+        AUDIT.publish(self.api, self.groups, URL)
+        changed = AUDIT.public_findings([finding(), finding(row=5)])
+        AUDIT.publish(self.api, changed, URL)
+        AUDIT.publish(self.api, self.groups, URL)
+        # An edit can move older B after newer A in an updated-time response.
+        self.api.comments[1].reverse()
+        self.api.comments[1][-1]["body"] += "\nHuman wording edit"
+        self.assertEqual(AUDIT.publish(self.api, changed, URL)["updated"], 1)
+        self.assertEqual(len(self.api.comments[1]), 3)
+        self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 1)
+
     def test_unknown_state_beyond_comment_window_fails_without_guessing(self):
         AUDIT.publish(self.api, self.groups, URL)
         self.api.comments[1] = [
@@ -316,7 +336,14 @@ class WorkflowAuditIssues(unittest.TestCase):
             "author": {"login": AUDIT._BOT},
             "comments": {
                 "totalCount": 2,
-                "nodes": [{"body": "Latest state", "author": {"login": AUDIT._BOT}}],
+                "nodes": [
+                    {
+                        "fullDatabaseId": "7081717711",
+                        "createdAt": "2026-01-01T00:00:01Z",
+                        "body": "Latest state",
+                        "author": {"login": AUDIT._BOT},
+                    }
+                ],
             },
         }
 
