@@ -88,6 +88,28 @@ def _guard_state(deadline: float, failure: ErrorCode | None, *, active: bool = T
         raise MCPSourceError("timeout")
 
 
+def _check_response(method: str, response: httpx.Response) -> None:
+    status = response.status_code
+    if response.is_redirect or status in {401, 403}:
+        raise MCPSourceError("denied")
+    if status == 405 and method in {"GET", "DELETE"}:
+        return
+    if method == "DELETE":
+        if status not in {200, 204}:
+            raise MCPSourceError("protocol")
+        return
+    if method == "POST" and status == 202:
+        return
+    if status != 200:
+        raise MCPSourceError("protocol")
+    media = response.headers.get("content-type", "").partition(";")[0].strip().lower()
+    allowed = (
+        {"text/event-stream"} if method == "GET" else {"application/json", "text/event-stream"}
+    )
+    if media not in allowed:
+        raise MCPSourceError("protocol")
+
+
 @dataclass(frozen=True)
 class MCPLimits:
     timeout_seconds: float = 30
@@ -290,6 +312,9 @@ def _validate(schema: dict[str, Any], value: Any, maximum: int) -> None:
         raise MCPSourceError("schema")
 
 
+_MISSING_CURSOR = object()
+
+
 def _path(
     value: Any, path: tuple[str, ...] | None, default: Any = "", *, optional: bool = False
 ) -> Any:
@@ -426,8 +451,7 @@ class _PinnedTransport(httpx.AsyncBaseTransport):
                 await self._authorize()
                 response = await self.inner.handle_async_request(outgoing)
                 await self._authorize()
-                if response.is_redirect or response.status_code in {401, 403}:
-                    raise MCPSourceError("denied")
+                _check_response(request.method, response)
                 # Reject compression so the wire budget bounds decoded protocol bytes.
                 if response.headers.get("content-encoding", "identity") != "identity":
                     raise MCPSourceError("protocol")
@@ -891,9 +915,10 @@ class MCPSourceClient:
             if not isinstance(rows, list):
                 raise MCPSourceError("schema")
             items = [self._evidence(row, mapping) for row in rows]
+            next_cursor = _path(result, mapping.next_cursor_path, _MISSING_CURSOR, optional=True)
             return self._page(
                 items,
-                _path(result, mapping.next_cursor_path, None, optional=True),
+                None if next_cursor is _MISSING_CURSOR else _string(next_cursor),
                 ("search", query),
             )
 

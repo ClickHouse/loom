@@ -853,6 +853,11 @@ class HeldRefusalStream(RefusalStream):
 @dataclass
 class StateRaceFixture(HTTPFixture):
     pause_at: str = "handoff"
+    background_status: int = 403
+    background_content_type: str = "text/event-stream"
+    read_status: int = 200
+    delete_status: int = 204
+    deletes: int = 0
     hold_refusal: bool = False
     refusal_release: asyncio.Event = field(default_factory=asyncio.Event)
     armed: bool = False
@@ -874,9 +879,17 @@ class StateRaceFixture(HTTPFixture):
                 if self.hold_refusal
                 else RefusalStream(self.denied)
             )
-            return httpx.Response(403, stream=stream)
+            return httpx.Response(
+                self.background_status,
+                stream=stream,
+                headers={
+                    "content-type": self.background_content_type,
+                    "x-private-upstream": "synthetic-private-header",
+                },
+            )
         if request.method == "DELETE":
-            return httpx.Response(204)
+            self.deletes += 1
+            return httpx.Response(self.delete_status)
         response = await super().reply(request)
         method = json.loads(await request.aread())["method"]
         if method == "initialize":
@@ -885,6 +898,7 @@ class StateRaceFixture(HTTPFixture):
             self.initialized.set()
         elif method in {"resources/read", "tools/call"}:
             self.acquired = True
+            response.status_code = self.read_status
         return response
 
     async def authority(self) -> None:
@@ -1142,3 +1156,236 @@ async def test_state_guard_refusal_poison_precedes_held_response_cleanup(
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+@pytest.mark.parametrize("operation", ["discover", "read"])
+@pytest.mark.parametrize(
+    "status,media",
+    [
+        (404, "text/event-stream"),
+        (500, "text/event-stream"),
+        (429, "text/event-stream"),
+        (200, "application/json"),
+        (204, "text/event-stream"),
+    ],
+)
+async def test_status_cursor_background_failure_poison_precedes_drain(
+    monkeypatch: pytest.MonkeyPatch, kind: str, operation: str, status: int, media: str
+) -> None:
+    loop = asyncio.get_running_loop()
+    clock = ManualClock(t=loop.time())
+    monkeypatch.setattr(loop, "time", clock.monotonic)
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(
+        kind,
+        block=False,
+        phase="sse",
+        pause_at="operation" if operation == "discover" else "chunk",
+        hold_refusal=True,
+        background_status=status,
+        background_content_type=media,
+    )
+    config = fixture.config()
+    config = replace(config, limits=replace(config.limits, request_seconds=0.3))
+    neighbor = HTTPFixture(kind, block=False, phase="sse")
+    async with (
+        source.MCPSourceClient(
+            config, None, validate_access=fixture.authority, _transport=FixtureTransport(fixture)
+        ) as remote,
+        neighbor.client() as independent,
+    ):
+        await asyncio.wait_for(fixture.initialized.wait(), 1)
+        await asyncio.wait_for(fixture.get_started.wait(), 1)
+        fixture.armed = True
+        task = asyncio.create_task(
+            remote.discover() if operation == "discover" else remote.read(IDENTITY)
+        )
+        fixture.caller = task
+        try:
+            await asyncio.wait_for(fixture.denied.wait(), 1)
+            assert remote._transport is not None and remote._transport.failure == "protocol"
+            fixture.resume.set()
+            clock.advance(0.4)
+            for _ in range(100):
+                await asyncio.sleep(0)
+                if remote._closing:
+                    break
+            assert remote._closing and not task.done()
+            assert not fixture.pool_closed.is_set()
+            evidence = await independent.read(IDENTITY)
+            assert evidence.receipt is not None and evidence.text == TEXT
+            fixture.refusal_release.set()
+            with pytest.raises(source.MCPSourceError) as refusal:
+                await task
+            assert str(refusal.value) == "MCP source protocol"
+            assert fixture.pool_closed.is_set()
+            if operation == "read":
+                assert fixture.stopped.is_set()
+            requests = fixture.requests
+            with pytest.raises(source.MCPSourceError, match="protocol"):
+                await remote.discover()
+            assert fixture.requests == requests
+            assert remote._transport.requests <= config.limits.max_requests
+            assert remote._transport.failure == "protocol"
+        finally:
+            fixture.resume.set()
+            fixture.refusal_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_status_cursor_optional_get_and_delete_405_are_allowed(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(
+        kind, block=False, phase="sse", background_status=405, delete_status=405
+    )
+    async with source.MCPSourceClient(
+        fixture.config(),
+        None,
+        validate_access=fixture.authority,
+        _transport=FixtureTransport(fixture),
+    ) as remote:
+        fixture.checking.set()
+        await asyncio.wait_for(fixture.denied.wait(), 1)
+        assert remote._transport is not None and remote._transport.failure is None
+        discovery = await remote.discover()
+        assert discovery.resources is (kind == "resources")
+        evidence = await remote.read(IDENTITY)
+        assert evidence.receipt is not None and evidence.text == TEXT
+    assert fixture.deletes == 1
+    assert fixture.pool_closed.is_set() and fixture.pool_closes == 1
+    assert remote._transport.failure is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [405, 201, 204, 206])
+async def test_status_cursor_post_unexpected_status_is_terminal_protocol(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(
+        "resources", block=False, phase="sse", background_status=405, read_status=status
+    )
+    config = fixture.config()
+    config = replace(config, limits=replace(config.limits, request_seconds=0.1))
+    async with source.MCPSourceClient(
+        config, None, validate_access=fixture.authority, _transport=FixtureTransport(fixture)
+    ) as remote:
+        fixture.checking.set()
+        await asyncio.wait_for(fixture.denied.wait(), 1)
+        with pytest.raises(source.MCPSourceError, match="protocol"):
+            await remote.read(IDENTITY)
+        assert remote._transport is not None and remote._transport.failure == "protocol"
+        assert fixture.stopped.is_set() and fixture.pool_closed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [202, 404, 500])
+async def test_status_cursor_delete_unexpected_status_is_not_silently_ignored(
+    monkeypatch: pytest.MonkeyPatch, status: int
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(
+        "resources", block=False, phase="sse", background_status=405, delete_status=status
+    )
+    with pytest.raises(source.MCPSourceError, match="protocol"):
+        async with source.MCPSourceClient(
+            fixture.config(),
+            None,
+            validate_access=fixture.authority,
+            _transport=FixtureTransport(fixture),
+        ) as remote:
+            fixture.checking.set()
+            await asyncio.wait_for(fixture.denied.wait(), 1)
+            evidence = await remote.read(IDENTITY)
+            assert evidence.receipt is not None
+    assert fixture.deletes == 1 and fixture.pool_closed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_status_cursor_cancellation_identity_survives_held_http_500(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(
+        kind, block=False, phase="sse", pause_at="chunk", background_status=500, hold_refusal=True
+    )
+    async with source.MCPSourceClient(
+        fixture.config(),
+        None,
+        validate_access=fixture.authority,
+        _transport=FixtureTransport(fixture),
+    ) as remote:
+        await asyncio.wait_for(fixture.initialized.wait(), 1)
+        await asyncio.wait_for(fixture.get_started.wait(), 1)
+        fixture.armed = True
+        task = asyncio.create_task(remote.read(IDENTITY))
+        fixture.caller = task
+        try:
+            await asyncio.wait_for(fixture.denied.wait(), 1)
+            assert remote._transport is not None and remote._transport.failure == "protocol"
+            task.cancel("original HTTP status cancellation")
+            await asyncio.wait_for(fixture.stopped.wait(), 1)
+            task.cancel("repeated HTTP status cancellation")
+            await asyncio.sleep(0)
+            assert not task.done()
+            assert not fixture.pool_closed.is_set()
+            fixture.refusal_release.set()
+            with pytest.raises(asyncio.CancelledError) as cancelled:
+                await task
+            assert cancelled.value.args == ("original HTTP status cancellation",)
+            assert fixture.pool_closed.is_set()
+            assert remote._transport.failure == "protocol"
+        finally:
+            fixture.resume.set()
+            fixture.refusal_release.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["resources", "tools"])
+async def test_status_cursor_valid_background_sse_keeps_normal_receipt(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    monkeypatch.setattr(source, "pinned_target", pin)
+    fixture = StateRaceFixture(kind, block=False, phase="sse")
+    streaming, closed = asyncio.Event(), asyncio.Event()
+
+    class Background(httpx.AsyncByteStream):
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            streaming.set()
+            yield b": keepalive\n\n"
+            await asyncio.Future[None]()
+
+        async def aclose(self) -> None:
+            closed.set()
+
+    async def reply(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                stream=Background(),
+                headers={"content-type": "text/event-stream; charset=utf-8"},
+            )
+        return await fixture.reply(request)
+
+    transport = FixtureTransport(fixture)
+    transport.handler = reply
+    async with source.MCPSourceClient(
+        fixture.config(), None, validate_access=fixture.authority, _transport=transport
+    ) as remote:
+        await asyncio.wait_for(streaming.wait(), 1)
+        evidence = await remote.read(IDENTITY)
+        assert evidence.text == TEXT and evidence.receipt is not None
+        assert remote._transport is not None and remote._transport.failure is None
+    assert closed.is_set() and fixture.pool_closed.is_set()
