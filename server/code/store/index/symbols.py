@@ -561,10 +561,11 @@ class SymbolsMixin(CodeRepoBase):
         *,
         rows: list[dict[str, Any]] | None = None,
     ) -> dict[str, str]:
-        """symbol_id -> content_hash of its DEFINING chunk. This is what a
-        code-referencing memory anchors to: equal hash = the
-        definition text is byte-identical to what the memory was written
-        against; different = the body changed even if name and file did not.
+        """symbol_id -> content_hash of its defining retrieval chunk.
+
+        Large declarations can span several chunks; classes have skeleton chunks.
+        Memory links use complete normalized declaration fingerprints from
+        `server.code.app.memory_links.parsed`.
 
         Two passes. (1) The lowest-start live chunk TAGGED with the id — but
         chunk symbol_ids come from the tree-sitter ingest, and the compiler

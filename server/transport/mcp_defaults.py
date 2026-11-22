@@ -9,12 +9,9 @@ a large repository, where the brief one carries the
 watermarks, lags and tiers. So over MCP the op defaults to `brief: true`,
 and a model that wants the rest passes `brief: false`.
 
-`code.search` over MCP answers within 1,500 tokens: every ranked unit's path, lines,
-symbol and description, and a body only where it fits. Every token a tool returns is
-re-read on each later turn of the session, and an agent opens the one unit it needs
-with a ranged read; the HTTP default (3,000) fills bodies first. Over MCP it
-returns pointers and descriptions, no bodies: an agent reads the range it picks,
-and a body it did not pick is paid for on every later turn.
+`code.search` over MCP returns pointers and descriptions by default, with bodies
+available on request. Its token budget follows the same deployment default as HTTP:
+unlimited unless configured or supplied by the caller.
 
 `code.symbol` over MCP leaves out the recent PRs (about a third of a definition's
 tokens): they serve a review, not a where/how lookup, and a model that wants them
@@ -36,7 +33,7 @@ from typing import Any
 
 MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.index_status": {"brief": True},
-    "code.search": {"token_budget": 1500, "bodies": "none"},
+    "code.search": {"bodies": "none"},
     "code.symbol": {"include_history": False},
     "code.grep": {"limit": 10},
 }

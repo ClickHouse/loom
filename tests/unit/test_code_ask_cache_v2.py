@@ -271,7 +271,11 @@ def test_the_key_covers_scope_rerank_budget_model_and_prompt(
         answers_entry.cache_key_for({"top_k": 10, "token_budget": 4000}, "gpt-4o-mini"),
     ):
         assert other.digest() != base.digest()
-    assert answers_entry.token_budget_bucket(None) == 4000  # the deployment default
+    assert answers_entry.token_budget_bucket(None) == 0  # unlimited deployment default
+    assert answers_entry.cache_key_for({"top_k": 10}, "gpt-4o").digest() != base.digest()
+    monkeypatch.setattr(settings, "code_ask_token_budget", 4000)
+    assert answers_entry.token_budget_bucket(None) == 4000
+    assert answers_entry.cache_key_for({"top_k": 10}, "gpt-4o").digest() == base.digest()
     assert answers_entry.token_budget_bucket(12000) == 12000
     v1 = answers_entry.prompt_version()
     monkeypatch.setattr(answers_entry, "_SYNTH_SYSTEM", answers_entry._SYNTH_SYSTEM + " Be brief.")

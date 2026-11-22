@@ -38,7 +38,7 @@ def complete_source_span(
 
     Missing source stays missing. An empty result asks the caller to disclose elision.
     """
-    if start <= 0 or end < start or end - start + 1 > max_chars:
+    if start <= 0 or end < start or (max_chars and end - start + 1 > max_chars):
         return ""
     if start == end and not all(
         int(r.get("start_line") or 0) == start
@@ -63,6 +63,6 @@ def complete_source_span(
     if any(not by_line[n].endswith("\n") for n in range(start, end)):
         return ""
     body = "".join(by_line[n] for n in range(start, end + 1))
-    if len(body) > max_chars:
+    if max_chars and len(body) > max_chars:
         return ""
     return body

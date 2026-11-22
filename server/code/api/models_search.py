@@ -51,10 +51,9 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
 
     # At most this many results per page (1-25).
     top_k: int = Field(default=5, ge=1, le=25)
-    # Response budget in tokens; results are whole units, overflow elides.
-    # None = route-aware default: 3000 for hybrid retrieval, 1200 for a
-    # symbol-shaped query. Explicit values are honored unchanged.
-    token_budget: int | None = Field(default=None, ge=200, le=12000)
+    # Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET
+    # (default 0). Whole unit bodies that exceed a finite budget are elided.
+    token_budget: int | None = Field(default=None, ge=0)
     # Keep only units whose path starts with this prefix; "" = the whole namespace. A prefix
     # outside the indexed prefixes abstains with `abstain_code=not_covered`.
     path_prefix: str = ""
@@ -317,7 +316,7 @@ class CodeAskInput(_CodeIdentity):
     no_cache: bool = False
     # Retrieval context handed to synthesis, in tokens. None = the
     # deployment default (settings.code_ask_token_budget).
-    token_budget: int | None = Field(default=None, ge=200, le=12000)
+    token_budget: int | None = Field(default=None, ge=0)
 
 
 class CodeAskOutput(BaseModel):

@@ -128,7 +128,7 @@ async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) ->
     """The whole retained definition, or no body when completeness is not established."""
     path = str(sym["path"])
     start, end = int(sym.get("start_line") or 0), int(sym.get("end_line") or 0)
-    if start <= 0 or end < start or end - start + 1 > 12000:
+    if start <= 0 or end < start:
         return ""
     # Hydration reads the configured label's retained text, without constructing a
     # provider or letting missing credentials select another model's chunks.
@@ -138,7 +138,7 @@ async def symbol_body(repo: CodeRepo, org: str, ns: str, sym: dict[str, Any]) ->
     rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     if len(rows) > 400:
         return ""
-    return complete_source_span(rows, start, end, max_chars=12000)
+    return complete_source_span(rows, start, end, max_chars=0)
 
 
 async def _file_row(repo: CodeRepo, org: str, ns: str, path: str) -> dict[str, Any] | None:
