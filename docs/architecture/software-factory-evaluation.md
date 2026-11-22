@@ -81,7 +81,8 @@ relinks fresh. No synthetic source tree supplies the task. This represents
 replayed historical knowledge, rather than autonomous elapsed learning.
 Qualification compares native fingerprints for each linked symbol across the
 two revisions. An edit elsewhere in its file does not make an unchanged symbol
-stale. File links compare the complete file content.
+stale. The qualifier uses the memory worker's complete declaration fingerprints,
+rather than retrieval chunk hashes. Native file links track existence and moves.
 
 The comparison measures the combined contribution of historical information and
 its retrieval. Linking in isolation needs an additional matched-facts control.

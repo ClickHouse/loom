@@ -413,11 +413,7 @@ class FairnessProof(unittest.TestCase):
         self.assertFalse(self.audit()["passed"])
 
     def test_cached_choices_and_local_refusals_are_not_counted_as_http(self):
-        entry = next(
-            e
-            for e in self.entries
-            if e["result"]["mode"] == "natural" and not e["result"]["memory_enabled"]
-        )
+        entry = next(e for e in self.entries if e["result"]["arm"] == "loom-treesitter")
         result = entry["result"]
         order = entry["order"]
         folder = Path(result["harbor_trial"])
@@ -459,7 +455,10 @@ class FairnessProof(unittest.TestCase):
                         request={
                             "org": self.protocol["attempt_scopes"][str(order)]["org"],
                             "namespace": "code",
-                            "include_lessons": False,
+                            "include_lessons": True,
+                            "lesson_namespaces": [
+                                self.protocol["attempt_scopes"][str(order)]["memory_namespace"]
+                            ],
                         },
                     )
                 )

@@ -1,4 +1,4 @@
-"""Native per-symbol fingerprints for historical memory lifecycle certificates."""
+"""Native memory declaration fingerprints for historical lifecycle certificates."""
 
 from __future__ import annotations
 
@@ -7,12 +7,7 @@ import re
 
 from examples.software_factory.factory.model import digest
 
-SYMBOL_OPTIONS = {
-    "include_body": False,
-    "include_history": False,
-    "include_examples": False,
-    "include_lessons": False,
-}
+KIND = "native-memory-declaration-fingerprints"
 
 
 def require(condition, message):
@@ -28,66 +23,59 @@ def file_hash(files, path):
     return hashlib.sha256(files[path].encode()).hexdigest() if path in files else None
 
 
-def symbol_hash(event, link):
-    response = event["response"]
-    require(not response.get("ignored_args"), "Anchor fingerprint ignored arguments")
-    definitions = response.get("definitions", [])
-    if not definitions:
-        require(response.get("abstain") is True, "Missing anchor has no explicit native abstention")
-        return None
-    matches = [
-        unit
-        for unit in definitions
-        if unit.get("path") == link["path"] and unit.get("symbol") == link["symbol"]
-    ]
-    require(len(matches) == 1, "Anchor fingerprint is ambiguous or resolves outside its source")
-    value = matches[0].get("body_hash")
-    require(
-        isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value),
-        "Native anchor has no body fingerprint",
-    )
-    return value
+async def capture(request):
+    """Run inside the owned native server, using exactly the memory worker's parser."""
+    from server.code.app.memory_links import parsed
+    from server.code.domain.declaration import fingerprint_version
 
-
-def capture(api, group, links, files, head, revision):
-    result = {}
-    for link in links:
-        key = identity(link)
-        if key in result:
-            continue
-        row = {"path": link["path"], "symbol": link.get("symbol", "")}
-        if row["symbol"]:
-            event = api(
-                "code.symbol",
-                {
-                    "org": group["org"],
-                    "namespace": group["namespace"],
-                    "name": row["symbol"],
-                    **SYMBOL_OPTIONS,
-                },
-                phase=revision,
+    anchors, files = {}, {}
+    for link in request["links"]:
+        path, symbol = link["path"], link.get("symbol", "")
+        if path not in files:
+            files[path] = await parsed(
+                request["org"], request["namespace"], request["commit"], path
             )
-            event["source_commit"] = head
-            row.update(receipt=event, body_hash=symbol_hash(event, row))
-        else:
-            row["body_hash"] = file_hash(files, row["path"])
-        require(
-            revision != "A" or row["body_hash"] is not None, "Initial anchor fingerprint is missing"
-        )
-        result[key] = row
-    return result
+        source = files[path]
+        value = None
+        if source is not None:
+            if symbol:
+                hashes = {d.body_hash for d in source.defs if d.qualified_name == symbol}
+                require(
+                    len(hashes) <= 1, "Native declarations disagree on their overload fingerprint"
+                )
+                value = next(iter(hashes), None)
+            else:
+                # Native file links track existence and moves, rather than declaration edits.
+                value = ""
+        anchors[identity(link)] = {
+            "path": path,
+            "symbol": symbol,
+            "body_hash": value,
+            "file_sha256": hashlib.sha256("\n".join(source.lines).encode()).hexdigest()
+            if source is not None
+            else None,
+        }
+    return {
+        "kind": KIND,
+        "org": request["org"],
+        "namespace": request["namespace"],
+        "commit": request["commit"],
+        "fingerprint_version": fingerprint_version(),
+        "anchors": anchors,
+    }
 
 
 def changes(fingerprints):
     require(set(fingerprints) == {"A", "B"}, "Anchor revisions are incomplete")
-    require(set(fingerprints["A"]) == set(fingerprints["B"]), "Anchor coverage changed")
+    before, after = (fingerprints[revision]["anchors"] for revision in ("A", "B"))
+    require(set(before) == set(after), "Anchor coverage changed")
     return {
         key: "missing"
-        if fingerprints["B"][key]["body_hash"] is None
+        if after[key]["body_hash"] is None
         else "fresh"
-        if row["body_hash"] == fingerprints["B"][key]["body_hash"]
+        if row["body_hash"] == after[key]["body_hash"]
         else "changed"
-        for key, row in fingerprints["A"].items()
+        for key, row in before.items()
     }
 
 
@@ -99,7 +87,7 @@ def matches(link, expected, head):
 
 
 def validate(cert, fixture, binding):
-    fingerprints, request_ids = cert["anchor_fingerprints"], set()
+    fingerprints = cert["anchor_fingerprints"]
     expected = {
         identity(link)
         for event in cert["events"]
@@ -107,34 +95,36 @@ def validate(cert, fixture, binding):
         for link in event["response"].get("code", [])
     }
     for revision in ("A", "B"):
+        snapshot = fingerprints[revision]
         require(
-            set(fingerprints[revision]) == expected, "Anchor proof does not cover initial links"
+            snapshot["kind"] == KIND
+            and snapshot["org"] == binding["org"]
+            and snapshot["namespace"] == binding["code_namespace"]
+            and snapshot["commit"] == cert["source_heads"][revision]
+            and snapshot.get("fingerprint_version") == fingerprints["A"].get("fingerprint_version")
+            and isinstance(snapshot.get("fingerprint_version"), str)
+            and bool(snapshot.get("fingerprint_version"))
+            and set(snapshot["anchors"]) == expected,
+            "Native anchor scope, revision, algorithm or coverage differs",
         )
-        for key, row in fingerprints[revision].items():
+        for key, row in snapshot["anchors"].items():
             require(key == identity(row), "Anchor identity differs from its fingerprint")
-            if row["symbol"]:
-                event = row["receipt"]
-                require(
-                    event["operation"] == "code.symbol"
-                    and event["phase"] == revision
-                    and event["source_commit"] == cert["source_heads"][revision]
-                    and event["status_code"] == 200
-                    and event["physical_requests"] == 1
-                    and event.get("request_id")
-                    and event["request_id"] not in request_ids
-                    and event["request"]
-                    == {
-                        "org": binding["org"],
-                        "namespace": binding["code_namespace"],
-                        "name": row["symbol"],
-                        **SYMBOL_OPTIONS,
-                    },
-                    "Native anchor fingerprint scope or revision is unproven",
-                )
-                request_ids.add(event["request_id"])
-                value = symbol_hash(event, row)
-            else:
-                value = file_hash(fixture["source_revisions"][revision], row["path"])
-            require(value == row["body_hash"], "Anchor fingerprint differs from its evidence")
+            content = file_hash(fixture["source_revisions"][revision], row["path"])
+            require(
+                row["file_sha256"] == content, "Native anchor source differs from frozen Git bytes"
+            )
+            value = row["body_hash"]
             require(revision != "A" or value is not None, "Initial anchor is absent")
+            require(
+                value is None
+                and (bool(row["symbol"]) or content is None)
+                or row["symbol"]
+                and content is not None
+                and isinstance(value, str)
+                and re.fullmatch(r"[a-f0-9]{64}", value)
+                or not row["symbol"]
+                and content is not None
+                and value == "",
+                "Native anchor has an invalid declaration fingerprint",
+            )
     return changes(fingerprints)

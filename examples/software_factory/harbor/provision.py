@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 
 from examples.software_factory.factory.model import digest
 
-from .anchors import capture as capture_anchors
 from .anchors import changes as anchor_changes
 from .anchors import identity as anchor_identity
 from .anchors import matches as anchor_matches
@@ -341,6 +340,7 @@ class Provisioner:
             "examples/software_factory/" + part
             for part in (
                 "factory/model.py",
+                "harbor/anchors.py",
                 "harbor/native_setup.py",
                 "harbor/index_setup.py",
                 "harbor/source_tree.py",
@@ -1194,13 +1194,14 @@ class Provisioner:
                     for event in fixture["history_events"]
                     if event["operation"] == "set" and event["revision"] == "A"
                 ]
-                anchor_fingerprints["B"] = capture_anchors(
-                    lambda op, body, **kw: self._api(op, body, admin, **kw),
-                    group,
-                    anchor_fingerprints["A"].values(),
-                    files,
-                    head,
-                    revision,
+                anchor_fingerprints["B"] = self._rpc(
+                    "anchor_fingerprints",
+                    {
+                        "org": group["org"],
+                        "namespace": group["namespace"],
+                        "commit": head,
+                        "links": list(anchor_fingerprints["A"]["anchors"].values()),
+                    },
                 )
                 changed = anchor_changes(anchor_fingerprints)
                 for slot in history_slots:
@@ -1305,13 +1306,14 @@ class Provisioner:
                     for row in latest[slot["order"]].values()
                     for link in row.get("code", [])
                 ]
-                anchor_fingerprints["A"] = capture_anchors(
-                    lambda op, body, **kw: self._api(op, body, admin, **kw),
-                    group,
-                    links,
-                    files,
-                    head,
-                    revision,
+                anchor_fingerprints["A"] = self._rpc(
+                    "anchor_fingerprints",
+                    {
+                        "org": group["org"],
+                        "namespace": group["namespace"],
+                        "commit": head,
+                        "links": links,
+                    },
                 )
             audit = self._rpc(
                 "audit",

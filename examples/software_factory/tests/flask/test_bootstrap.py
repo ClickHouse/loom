@@ -44,6 +44,47 @@ class BootstrapTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             bootstrap.select_records([self.row], [pin])
 
+    def test_complete_functions_retain_truncated_parameterized_cases(self):
+        row = {
+            **self.row,
+            "PASS_TO_PASS": json.dumps(
+                [
+                    'tests/test_x.py::test_existing[factory("foo",',
+                    "tests/test_x.py::test_existing[other]",
+                ]
+            ),
+        }
+        pin = {**self.pin, "record_sha256": digest(row)}
+        self.assertEqual(bootstrap.select_records([row], [pin]), [row])
+        self.assertEqual(
+            bootstrap.hidden_selectors(row),
+            [
+                "tests/test_x.py::test_fix",
+                "tests/test_x.py::test_existing",
+            ],
+        )
+
+    def test_supplemental_records_require_the_pinned_file_bytes(self):
+        import hashlib
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / "record.json"
+            path.write_text(json.dumps(self.row))
+            locked = {
+                "supplemental_records": [
+                    {
+                        "file": "record.json",
+                        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                    }
+                ]
+            }
+            with patch.object(bootstrap, "HERE", root):
+                self.assertEqual(bootstrap.supplemental_records(locked), ([self.row], [path]))
+                path.write_text(json.dumps({**self.row, "patch": "changed"}))
+                with self.assertRaises(PermissionError):
+                    bootstrap.supplemental_records(locked)
+
     def test_public_projection_does_not_expose_evaluator_material(self):
         public = bootstrap.public_task(self.row)
         self.assertEqual(set(public), {"task_id", "repository", "base_commit", "problem"})

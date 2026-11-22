@@ -387,6 +387,7 @@ class ProvisioningContracts(unittest.TestCase):
             for part in (
                 "factory/model.py",
                 "harbor/native_setup.py",
+                "harbor/anchors.py",
                 "harbor/index_setup.py",
                 "harbor/source_tree.py",
                 "harbor/Provisioner.Dockerfile",

@@ -254,7 +254,7 @@ class HistoryCertificate(unittest.TestCase):
                     {
                         "code_namespace": "code",
                         "path": path,
-                        "symbol": "",
+                        "symbol": "fixture.contract",
                         "state": "changed" if changed else "fresh",
                         "changed_since": "b" * 40 if changed else "",
                     }
@@ -306,7 +306,7 @@ class HistoryCertificate(unittest.TestCase):
         for key in values:
             get(key, "B")
         self.cert["final_snapshot"] = copy.deepcopy(list(latest.values()))
-        from examples.software_factory.harbor.anchors import file_hash, identity
+        from examples.software_factory.harbor.anchors import KIND, file_hash, identity
 
         links = [
             link
@@ -316,14 +316,24 @@ class HistoryCertificate(unittest.TestCase):
         ]
         self.cert["anchor_fingerprints"] = {
             revision: {
-                identity(link): {
-                    "path": link["path"],
-                    "symbol": "",
-                    "body_hash": file_hash(
-                        self.fixture["source_revisions"][revision], link["path"]
-                    ),
-                }
-                for link in links
+                "kind": KIND,
+                "org": "attempt-0",
+                "namespace": "code",
+                "commit": self.cert["source_heads"][revision],
+                "fingerprint_version": "fixture-v1",
+                "anchors": {
+                    identity(link): {
+                        "path": link["path"],
+                        "symbol": "fixture.contract",
+                        "body_hash": file_hash(
+                            self.fixture["source_revisions"][revision], link["path"]
+                        ),
+                        "file_sha256": file_hash(
+                            self.fixture["source_revisions"][revision], link["path"]
+                        ),
+                    }
+                    for link in links
+                },
             }
             for revision in ("A", "B")
         }

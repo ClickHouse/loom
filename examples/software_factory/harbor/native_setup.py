@@ -162,6 +162,10 @@ async def execute(request):
             from examples.software_factory.harbor.index_setup import audit_index
 
             return await audit_index(body)
+        if operation == "anchor_fingerprints":
+            from examples.software_factory.harbor.anchors import capture
+
+            return await capture(body)
         if operation == "embedding":
             from pathlib import Path
 

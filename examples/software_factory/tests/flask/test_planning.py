@@ -40,6 +40,9 @@ class ProjectMetadata(unittest.TestCase):
             )
             lock = dict(
                 id="flask",
+                study_role="development fixture",
+                supplemental_records=[],
+                selector_policy="complete-test-functions",
                 repository_url="public",
                 languages=["python"],
                 source_roots=["src/flask"],
