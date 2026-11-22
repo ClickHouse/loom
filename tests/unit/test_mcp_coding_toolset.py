@@ -383,12 +383,15 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_tools_leave_eager_loading_to_the_host_by_default(monkeypatch, profile) -> None:
+def test_coding_search_and_discovery_entrypoints_load_upfront_by_default(
+    monkeypatch, profile
+) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 21
-    assert not any("anthropic/alwaysLoad" in tool.get("_meta", {}) for tool in tools)
+    flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {"loom_search", "loom_code_search", "loom_code_symbol", "loom_op"}
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
@@ -425,6 +428,40 @@ def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mcp_always_load_tools", "")
     tools = asyncio.run(_tools_descriptor(toolset="coding"))
     assert not any(t.get("_meta") for t in tools)
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact", "full"])
+def test_synthetic_operations_and_tools_honor_explicit_loading_metadata(
+    monkeypatch, profile
+) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "search.query,loom_op,loom_activate")
+    tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+    flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {"loom_search", "loom_op", "loom_activate"}
+
+
+@pytest.mark.parametrize(
+    "toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly", "assistant"]
+)
+def test_loading_metadata_never_adds_a_tool_or_widens_its_roster(monkeypatch, toolset) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "")
+    deferred = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    monkeypatch.setattr(
+        settings, "mcp_always_load_tools", "search.query,code.search,loom_op,memory.delete"
+    )
+    upfront = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    assert {t["name"] for t in upfront} == {t["name"] for t in deferred}
+    assert [{k: v for k, v in t.items() if k != "_meta"} for t in upfront] == deferred
+    if toolset == "assistant":
+        assert "loom_op" not in {t["name"] for t in upfront}
+
+
+@pytest.mark.parametrize("toolset,writes", [("coding", True), ("readonly", False)])
+def test_operation_dispatcher_annotations_cover_its_possible_effects(toolset, writes) -> None:
+    tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    op = next(t for t in tools if t["name"] == "loom_op")
+    assert op["annotations"]["readOnlyHint"] is not writes
+    assert op["annotations"]["destructiveHint"] is writes
 
 
 def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:

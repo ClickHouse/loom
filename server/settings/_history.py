@@ -63,10 +63,11 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         version="1.3.1",
         name="mcp_always_load_tools",
         old="code.search,code.symbol",
-        new="",
+        new="search.query,code.search,code.symbol,loom_op",
         why=(
-            "Leave tool loading to the host so sessions do not need unused code schemas "
-            "upfront. Set an explicit operation list to request eager loading."
+            "Expose search and operation discovery without a preliminary tool lookup; "
+            "other schemas stay under client discovery. An explicit list selects entrypoints, "
+            "and an empty value leaves loading to the host."
         ),
     ),
     DefaultChange(

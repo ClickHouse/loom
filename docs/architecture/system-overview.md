@@ -196,6 +196,10 @@ and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-
 - **Discover by task.** Curated rosters list common tools; `loom_op` help discovers
   other reachable operations without loading every schema. Instructions name tools
   the connection can use. The assistant toolset has only its listed read tools.
+- **Offer an entrypoint.** Search and operation discovery request upfront schema
+  loading where listed; other tools can be discovered when needed. The loading
+  setting applies to registry operations and synthetic tools. Clearing it leaves
+  loading to the client. A loading hint never invokes a tool or widens its roster.
 - **Keep one contract.** The operation registry supplies schemas and handlers for
   every transport. Descriptions explain when to call, inputs, and useful results.
   Listings follow registry order and do not embed caller-specific context.

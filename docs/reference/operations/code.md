@@ -1438,7 +1438,7 @@ Report the progress of a SCIP upload batch: parts received and apply status.
 
 ## `code.search`
 
-Search the shared code index of this repository (fresh to the last merged PR).
+Find the indexed code relevant to a coding task, concept or identifier.
 
 `POST /v1/code.search` · MCP `loom_code_search` · role `viewer` · read
 

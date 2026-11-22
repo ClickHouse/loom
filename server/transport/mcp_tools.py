@@ -112,6 +112,11 @@ def _synthetic_tool_descriptors(
         d["inputSchema"] = collapse_nullable(d["inputSchema"])
         if d["name"] == LOOM_OP_TOOL_NAME:  # its text names what this listing leaves out
             d["description"] = loom_op_description(listed, writes=writes)
+            d["annotations"] = {
+                **d["annotations"],
+                "readOnlyHint": not writes,
+                "destructiveHint": writes,
+            }
     if "coding" in toolset_parts(toolset):
         # The coding tier's activation text (same triggers,
         # one line, no persona-tone clause) and search text (derived).
@@ -497,6 +502,15 @@ def listed_ops(toolset: str | None) -> list[Operation]:
     return out
 
 
+def _with_loading_hints(descriptors: list[dict[str, Any]], requested: set[str]) -> None:
+    """Apply one loading policy to registry and synthetic descriptors alike."""
+    names = {op.mcp_tool_name for op in ALL_OPERATIONS if op.name in requested}
+    names.update(requested & SYNTHETIC_TOOL_NAMES)
+    for descriptor in descriptors:
+        if descriptor["name"] in names:
+            descriptor.setdefault("_meta", {})["anthropic/alwaysLoad"] = True
+
+
 async def _tools_descriptor(
     *, schema_profile: str | None = None, toolset: str | None = None
 ) -> list[dict[str, Any]]:
@@ -551,11 +565,10 @@ async def _tools_descriptor(
             "inputSchema": input_schema,
             "outputSchema": _shape_schema(model_schema(op.output_model)),
         }
-        if op.name in always_load:
-            descriptor["_meta"] = {"anthropic/alwaysLoad": True}
         descriptors.append(descriptor)
     if not is_assistant(toolset):
         descriptors.extend(_synthetic_tool_descriptors(toolset, listed, writes=writes))
+    _with_loading_hints(descriptors, always_load)
     from server.transport.mcp_schemas import (
         DEFAULT_SCHEMA_PROFILE,
         SCHEMA_PROFILES,

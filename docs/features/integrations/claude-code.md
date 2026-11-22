@@ -208,10 +208,17 @@ MCP tool loading. Omitting it loads the MCP schemas into context up front; it do
 show whether the task needed those tools. `--allowedTools` controls permission and
 cannot restore a tool omitted from `--tools`. See [Claude Code tool search](https://code.claude.com/docs/en/mcp#configure-tool-search).
 
-The server leaves eager loading to the host by default. An operator can set
-`LOOM_MCP_ALWAYS_LOAD_TOOLS=code.search,code.symbol` to request those schemas upfront.
-This affects loading metadata, not tool availability or permission. Tool search may
-add a discovery step when a task needs a deferred tool; no task or cost gain is guaranteed.
+The server requests upfront loading for `loom_search`, `loom_code_search`,
+`loom_code_symbol` where listed, and `loom_op`. These entrypoints support search,
+definition lookup and operation discovery without a
+preliminary tool-search call. Other schemas remain deferred on clients that use tool
+search. The published plugin uses the same MCP loading metadata.
+
+`LOOM_MCP_ALWAYS_LOAD_TOOLS` accepts operation names such as `code.symbol` and synthetic
+tool names such as `loom_op`. Set it to an empty string to leave loading to the host,
+or supply a list to replace the defaults. These hints change schema loading; the
+model still chooses calls and the server still enforces permission. No task or cost
+gain is guaranteed by advertising a schema.
 
 MCP connections receive routing for the available Loom capabilities, including
 memory, documents, code, issues, tasks and records. Prefer a fitting listed tool;

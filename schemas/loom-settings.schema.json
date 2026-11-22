@@ -3772,9 +3772,9 @@
           "description": "Request-body cap, bytes, enforced by ASGI middleware before any parser (413 PAYLOAD_TOO_LARGE); uvicorn has no limit of its own. 0 disables."
         },
         "mcp_always_load_tools": {
-          "default": "",
+          "default": "search.query,code.search,code.symbol,loom_op",
           "type": "string",
-          "description": "Comma-separated ops whose MCP descriptors request eager loading with anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected tools upfront."
+          "description": "Comma-separated operations or synthetic tools requesting upfront schema loading. Defaults cover search and discovery; empty leaves loading to the host."
         },
         "mcp_auth_mode": {
           "default": "required",

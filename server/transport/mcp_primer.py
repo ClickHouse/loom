@@ -568,7 +568,8 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         if tool[name]
     ]
     code = (
-        "\n\nInvestigating indexed code (`loom_code_*`): prefer "
+        "\n\nInvestigating indexed code (`loom_code_*`): look up missing code evidence "
+        "in Loom before local grep or reads. Use "
         + "; ".join(routes)
         + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
         "A definition does not supply callers. Use returned code and linked lessons; "
