@@ -59,6 +59,12 @@ PROVIDER_KEY_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("Langfuse secret key", re.compile(r"\b(sk-lf-[0-9a-fA-F-]{16,})")),
     ("Langfuse public key", re.compile(r"\b(pk-lf-[0-9a-fA-F-]{16,})")),
     ("AWS access key id", re.compile(r"\b(AKIA[0-9A-Z]{16})\b")),
+    (
+        "GitHub personal access token",
+        re.compile(r"\b(ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{82})\b"),
+    ),
+    # Installation tokens can carry an application id and a JWT; retain the full shape.
+    ("GitHub installation token", re.compile(r"\b(ghs_[A-Za-z0-9_.-]{36,})")),
     ("private key block", re.compile(r"(-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)")),
 ]
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
