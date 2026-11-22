@@ -12,12 +12,13 @@ import hashlib
 import json
 import math
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, ExitStack
 from dataclasses import asdict, dataclass, field, replace
 from datetime import timedelta
 from typing import Any, Literal, TypeVar
 from urllib.parse import urlsplit
 
+import anyio
 import httpx
 from jsonschema import Draft202012Validator, SchemaError
 from mcp import ClientSession, types
@@ -315,7 +316,9 @@ class _LimitedStream(httpx.AsyncByteStream):
             raise MCPSourceError(self.owner.failure) from None
 
     async def aclose(self) -> None:
-        await self.stream.aclose()
+        # The SDK cancels its task group before joining HTTP stream finalizers.
+        with anyio.CancelScope(shield=True):
+            await self.stream.aclose()
 
 
 class _PinnedTransport(httpx.AsyncBaseTransport):
@@ -500,7 +503,11 @@ class MCPSourceClient:
                         raise MCPSourceError("config")
                     for part in path:
                         _string(part, 128)
-        self._stack: AsyncExitStack | None = None
+        self._privacy: ExitStack | None = None
+        self._owner_task: asyncio.Task[None] | None = None
+        self._ready: asyncio.Future[None] | None = None
+        self._closing = False
+        self._owner_failure: ErrorCode | None = None
         self._session: ClientSession | None = None
         self._transport: _PinnedTransport | None = None
         self._operation_failure: ErrorCode | None = None
@@ -540,88 +547,121 @@ class MCPSourceClient:
         return replace(evidence, receipt=receipt)
 
     async def __aenter__(self) -> MCPSourceClient:
-        if self._stack is not None or self._deadline:
+        if self._owner_task is not None or self._deadline:
             raise MCPSourceError("closed")
-        self._stack = AsyncExitStack()
-        self._stack.enter_context(private_work())
-        self._deadline = asyncio.get_running_loop().time() + self._config.limits.timeout_seconds
+        self._privacy = ExitStack()
+        self._privacy.enter_context(private_work())
+        loop = asyncio.get_running_loop()
+        self._deadline = loop.time() + self._config.limits.timeout_seconds
+        self._ready = loop.create_future()
+        self._owner_task = asyncio.create_task(self._serve_session())
         try:
-            async with asyncio.timeout_at(self._deadline):
-                await self.validate_access()
-                transport = _PinnedTransport(
-                    self._config,
-                    self.credential,
-                    self._deadline,
-                    self.validate_access,
-                    transport=self._test_transport,
-                )
-                self._transport = transport
-                client = await self._stack.enter_async_context(
-                    httpx.AsyncClient(
-                        transport=transport,
-                        trust_env=False,
-                        follow_redirects=False,
-                        timeout=httpx.Timeout(self._config.limits.request_seconds),
-                    )
-                )
-                read, write, _ = await self._stack.enter_async_context(
-                    streamable_http_client(self._config.endpoint, http_client=client)
-                )
-                self._session = await self._stack.enter_async_context(
-                    ClientSession(
-                        read,
-                        write,
-                        read_timeout_seconds=timedelta(seconds=self._config.limits.request_seconds),
-                        message_handler=self._message_handler,
-                    )
-                )
-                result = await self._session.initialize()
-                self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
-                await self.validate_access()
+            await self._ready
             return self
-        except asyncio.CancelledError as error:
-            code = self._transport.failure if self._transport else None
+        except asyncio.CancelledError:
             try:
-                await self._close(error)
-            except (Exception, asyncio.CancelledError):  # noqa: BLE001 — SDK teardown repeats its transport refusal
-                if code is None:
-                    raise asyncio.CancelledError from None
-            if code is not None:
-                raise MCPSourceError(code) from None
-            raise
-        except Exception as error:  # noqa: BLE001 — initialization errors contain untrusted server metadata
-            code = (
-                self._transport.failure
-                if self._transport and self._transport.failure
-                else _error_code(error)
-            )
-            try:
-                await self._close(error)
-            except (Exception, asyncio.CancelledError):  # noqa: BLE001 — cleanup must preserve the first fixed failure
+                await self._close()
+            except asyncio.CancelledError:
                 pass
-            raise MCPSourceError(code) from None
+            finally:
+                self._leave_private()
+            raise
+        except Exception as error:  # noqa: BLE001 — only fixed initialization failures reach callers
+            try:
+                await self._close()
+            finally:
+                self._leave_private()
+            raise MCPSourceError(self._owner_failure or _error_code(error)) from None
 
-    async def _close(self, error: BaseException | None = None) -> None:
-        stack, self._stack = self._stack, None
-        self._session = None
-        if stack is not None:
-            await stack.__aexit__(
-                type(error) if error else None, error, error.__traceback__ if error else None
+    async def _serve_session(self) -> None:
+        # SDK AnyIO scopes are entered and exited by this one lifecycle owner.
+        with private_work():
+            try:
+                async with AsyncExitStack() as stack:
+                    async with asyncio.timeout_at(self._deadline):
+                        await self._initialize(stack)
+                        assert self._ready is not None
+                        if not self._ready.done():
+                            self._ready.set_result(None)
+                        await asyncio.Future[None]()
+            except (
+                Exception,  # noqa: BLE001 — SDK lifecycle failures must remain fixed codes
+                asyncio.CancelledError,
+            ) as error:
+                failure = self._transport.failure if self._transport else None
+                expected_close = self._closing and isinstance(error, asyncio.CancelledError)
+                if failure is not None or not expected_close:
+                    self._owner_failure = failure or _error_code(error)
+                if self._ready is not None and not self._ready.done():
+                    self._ready.set_exception(MCPSourceError(self._owner_failure or "closed"))
+            finally:
+                self._session = None
+
+    async def _initialize(self, stack: AsyncExitStack) -> None:
+        await self.validate_access()
+        transport = _PinnedTransport(
+            self._config,
+            self.credential,
+            self._deadline,
+            self.validate_access,
+            transport=self._test_transport,
+        )
+        self._transport = transport
+        client = await stack.enter_async_context(
+            httpx.AsyncClient(
+                transport=transport,
+                trust_env=False,
+                follow_redirects=False,
+                timeout=httpx.Timeout(self._config.limits.request_seconds),
             )
+        )
+        read, write, _ = await stack.enter_async_context(
+            streamable_http_client(self._config.endpoint, http_client=client)
+        )
+        self._session = await stack.enter_async_context(
+            ClientSession(
+                read,
+                write,
+                read_timeout_seconds=timedelta(seconds=self._config.limits.request_seconds),
+                message_handler=self._message_handler,
+            )
+        )
+        result = await self._session.initialize()
+        self._discovery = MCPDiscovery(result.capabilities.resources is not None, ())
+        await self.validate_access()
+
+    async def _close(self) -> None:
+        set_query_tag("mcp-source.cleanup")
+        owner = self._owner_task
+        if owner is None:
+            return
+        if not self._closing:
+            self._closing = True
+            owner.cancel()
+        interrupted: asyncio.CancelledError | None = None
+        while not owner.done():
+            try:
+                await asyncio.shield(owner)
+            except asyncio.CancelledError as error:
+                interrupted = error
+        if not owner.cancelled():
+            owner.result()
+        if interrupted is not None:
+            raise interrupted
+
+    def _leave_private(self) -> None:
+        privacy, self._privacy = self._privacy, None
+        if privacy is not None:
+            privacy.close()
 
     async def __aexit__(self, exc_type: Any, error: BaseException | None, traceback: Any) -> None:
         try:
-            await self._close(error)
-        except (Exception, asyncio.CancelledError) as cleanup:  # Preserve the first fixed refusal.
-            code = (
-                self._transport.failure
-                if self._transport and self._transport.failure
-                else _error_code(cleanup)
-            )
-            if self._operation_failure != code:
-                if isinstance(cleanup, asyncio.CancelledError):
-                    raise
-                raise MCPSourceError(code) from None
+            await self._close()
+            failure = self._owner_failure
+            if error is None and failure is not None and failure != self._operation_failure:
+                raise MCPSourceError(failure)
+        finally:
+            self._leave_private()
 
     async def _message_handler(self, message: Any) -> None:
         if isinstance(message, types.ServerNotification) and isinstance(
@@ -630,9 +670,14 @@ class MCPSourceClient:
             self._schema_changed = True
 
     async def _run(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
+        with private_work():
+            return await self._execute(action)
+
+    async def _execute(self, action: Callable[[ClientSession], Awaitable[_T]]) -> _T:
         set_query_tag("mcp-source")
         if self._session is None:
-            raise MCPSourceError("closed")
+            self._operation_failure = self._owner_failure or "closed"
+            raise MCPSourceError(self._operation_failure)
         if self._operation_failure is not None:
             raise MCPSourceError(self._operation_failure)
         try:
@@ -640,11 +685,18 @@ class MCPSourceClient:
                 await self.validate_access()
                 result = await action(self._session)
                 await self.validate_access()
+                if self._operation_failure is not None:
+                    raise MCPSourceError(self._operation_failure)
                 return result
         except asyncio.CancelledError:
             if self._transport and self._transport.failure:
                 self._operation_failure = self._transport.failure
                 raise MCPSourceError(self._operation_failure) from None
+            self._operation_failure = "closed"
+            try:
+                await self._close()
+            except asyncio.CancelledError:
+                pass
             raise
         except MCPSourceError as error:
             self._operation_failure = error.code

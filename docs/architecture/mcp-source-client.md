@@ -73,8 +73,11 @@ provenance. A citation address alone does not establish tenant or reader authori
 ## Bounds and cancellation
 
 Discovery, pagination, results, content and HTTP responses have finite limits. A session
-has an overall deadline as well as request bounds. Cancellation ends owned protocol work;
-it does not publish partial evidence as a successful read. Errors expose bounded error
+has an overall deadline, including idle time, as well as request bounds. The SDK context
+managers live in one task per open client. Cancelling an operation closes and joins that
+task before returning cancellation; another client's SDK scope remains independent.
+A cancelled client is terminal. Cancellation publishes no partial read evidence.
+Closing a request does not prove that remote processing has stopped. Errors expose bounded error
 codes rather than upstream content, endpoints or credentials.
 
 A successful final page closes that listing operation. It does not establish a deletion
