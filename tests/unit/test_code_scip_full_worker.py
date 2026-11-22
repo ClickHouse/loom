@@ -425,6 +425,37 @@ async def test_pressure_at_harness_completion_does_not_publish(full_run, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_monitor_failure_during_final_sample_stays_unapplied(full_run, monkeypatch):
+    owner = asyncio.current_task()
+    produced = asyncio.Event()
+    monitor_failed = asyncio.Event()
+
+    async def harness(*args, **kwargs):
+        produced.set()
+        return 0, "complete"
+
+    async def check(paths, minimum):
+        if not produced.is_set():
+            return
+        if asyncio.current_task() is owner:
+            await monitor_failed.wait()
+            return
+        monitor_failed.set()
+        raise app.FullIndexFailed(75, "disk reserve reached")
+
+    monkeypatch.setattr(app, "run_full_harness", harness)
+    monkeypatch.setattr(app, "_check_disk_space", check)
+    with pytest.raises(app.FullIndexFailed, match="disk reserve"):
+        async with asyncio.timeout(2):
+            await full_run.run()
+    assert monitor_failed.is_set()
+    app.apply_delta.assert_not_awaited()
+    app.mark_done.assert_not_awaited()
+    assert full_run.published.read_text() == "accepted generation"
+    assert list(full_run.scratch.iterdir()) == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failing_volume", ["checkout", "scratch"])
 async def test_each_writable_volume_is_checked(full_run, monkeypatch, failing_volume):
     def disk_usage(path):

@@ -109,7 +109,6 @@ async def _produce_with_disk_budget(
             await monitor
         result = await job
         await _check_disk_space(paths, minimum)
-        return result
     finally:
 
         async def stop() -> None:
@@ -120,6 +119,9 @@ async def _produce_with_disk_budget(
 
         # Caller cancellation must not interrupt child reaping or race temporary cleanup.
         await finish_cleanup(stop(), name="code.scip_full.stop")
+    if not monitor.cancelled():
+        monitor.result()
+    return result
 
 
 async def move_checkout(checkout: Path, bare: Path, target: str, cfg: RepoConfig) -> None:
