@@ -31,6 +31,8 @@ The delegated service lets the user manager reattach its inert pane when a tmux
 build creates a sibling scope. A missing scope or refused migration stops repair. The tmux build must support
 systemd scopes.
 The service bounds time, memory and processes and kills its control group on exit.
+The service preserves its private runtime temporary directory in the repair
+environment so CLI caches are isolated. Durable state stays outside that directory.
 Logs retain at most one MiB of runner output. State retains at most 128 source heads.
 
 Unfinished repairs resume with one-day then two-day backoff. Three attempts with

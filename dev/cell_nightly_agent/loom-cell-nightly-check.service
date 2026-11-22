@@ -8,6 +8,9 @@ Type=oneshot
 WorkingDirectory=%h/loom-cell-nightly-agent
 ExecStart=/usr/bin/python3 %h/loom-cell-nightly-agent/monitor.py
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=TMPDIR=%t/loom-cell-nightly-agent
+RuntimeDirectory=loom-cell-nightly-agent
+RuntimeDirectoryMode=0700
 TimeoutStartSec=60min
 TimeoutStopSec=30s
 KillMode=control-group

@@ -94,10 +94,12 @@ def test_existing_fix_is_reused_and_preflight_failure_does_not_consume_attempt(
 def test_existing_codex_auth_and_home_are_preserved_without_ambient_provider_keys(monkeypatch):
     monkeypatch.setenv("HOME", "/synthetic/user")
     monkeypatch.setenv("CODEX_HOME", "/synthetic/codex")
+    monkeypatch.setenv("TMPDIR", "/synthetic/private-tmp")
     monkeypatch.setenv("OPENAI_API_KEY", "synthetic-key-never-used")
     environment = monitor.repair_environment()
     assert environment["HOME"] == "/synthetic/user"
     assert environment["CODEX_HOME"] == "/synthetic/codex"
+    assert environment["TMPDIR"] == "/synthetic/private-tmp"
     assert "OPENAI_API_KEY" not in environment
 
 

@@ -86,6 +86,7 @@ def repair_environment():
         "XDG_RUNTIME_DIR",
         "DBUS_SESSION_BUS_ADDRESS",
         "CODEX_HOME",
+        "TMPDIR",
         "SSH_AUTH_SOCK",
     )
     return {key: os.environ[key] for key in allowed if key in os.environ}
