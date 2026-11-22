@@ -30,6 +30,7 @@ dependencies = [
   # Outbound MCP sources use the official protocol client; schemas constrain approved tool mappings.
   "mcp>=1.30.0,<2",
   "jsonschema>=4.20",
+  "referencing>=0.37.0",
   "idna>=3.7",           # UTS 46 host names: server.settings.catalog.ascii_host
   "dnspython>=2.6",      # a cancellable lookup for names a tenant chooses: server.core.hosts
   "tenacity>=9.0",
