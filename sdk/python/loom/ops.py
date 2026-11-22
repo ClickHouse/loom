@@ -6376,6 +6376,8 @@ class CodeCoverageClaimOutput(TypedDict, total=False):
 class CodeEnclosingInput(TypedDict, total=False):
     "Batched `path:line` -> enclosing function. Built for the grep shim:"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6391,6 +6393,8 @@ class CodeEnclosingInput(TypedDict, total=False):
 class CodeEnclosingBody(TypedDict, total=False):
     "Batched `path:line` -> enclosing function. Built for the grep shim:"
 
+    include_lessons: NotRequired[bool]
+    lesson_namespaces: NotRequired[list[str]]
     org: NotRequired[str]
     namespace: NotRequired[str]
     agent: NotRequired[str]
@@ -6404,6 +6408,8 @@ class CodeEnclosingBody(TypedDict, total=False):
 
 
 class CodeEnclosingOutput(TypedDict, total=False):
+    lessons: NotRequired[list[dict[str, Any]]]
+    lessons_left_out: NotRequired[int]
     results: Required[list[dict[str, Any]]]
     resolved: Required[int]
     paths_indexed: Required[int]

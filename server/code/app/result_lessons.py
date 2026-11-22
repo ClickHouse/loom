@@ -162,6 +162,11 @@ def outline_paths(_input: Any, out: Any) -> list[str]:
     return [out.path]
 
 
+def enclosing_paths(_input: Any, out: Any) -> list[str]:
+    # Unresolved locations are echoed by the handler; they are not indexed evidence.
+    return [str(row.get("path") or "") for row in out.results if row.get("start_line")]
+
+
 def pack_paths(_input: Any, out: Any) -> list[str]:
     # a task briefing's files; the orientation map and a PR's stored pack name none
     return list(out._paths)

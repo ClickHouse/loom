@@ -761,6 +761,8 @@ export interface CodeCoverageClaimOutput {
 }
 
 export interface CodeEnclosingInput {
+  include_lessons?: boolean;
+  lesson_namespaces?: string[];
   org?: string;
   namespace?: string;
   agent?: string;
@@ -774,6 +776,8 @@ export interface CodeEnclosingInput {
 }
 
 export interface CodeEnclosingOutput {
+  lessons?: Array<Record<string, unknown>>;
+  lessons_left_out?: number;
   results: Array<Record<string, unknown>>;
   resolved: number;
   paths_indexed: number;

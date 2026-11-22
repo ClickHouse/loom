@@ -351,6 +351,11 @@ the matched files. Lessons are read after cached match data, within the request'
 remaining deadline. Presence queries and uncovered paths carry none;
 `include_lessons=false` skips the read.
 
+`code.enclosing` carries the same file lessons for resolved locations. Repeated
+locations share one file read; unresolved locations bring no lessons. The caller's
+readable memory namespaces, narrowed-token refusal, timeout and token cap apply
+through the shared result enrichment. Empty lesson fields stay off the wire.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.

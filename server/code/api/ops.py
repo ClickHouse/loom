@@ -385,7 +385,7 @@ OPERATIONS: list[Operation] = [
         session_content=True,
         input_model=CodeEnclosingInput,
         output_model=CodeEnclosingOutput,
-        handler=handle_code_enclosing,
+        handler=result_lessons.WithLessons(handle_code_enclosing, result_lessons.enclosing_paths),
         idempotent=True,
         required_role=Role.VIEWER,
     ),
