@@ -62,7 +62,7 @@ def external(request):
         else:
             for namespace, role in body["ns_roles"].items():
                 command.extend(["--namespace-role", namespace + "=" + role])
-        result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=120)
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
         summary = json.loads(result.stdout)
         valid_roles = (
             summary.get("namespaces") == body["namespaces"] and summary.get("roles") == ["admin"]
@@ -93,9 +93,7 @@ def external(request):
                 "1",
             ]
         try:
-            result = subprocess.run(
-                command, capture_output=True, text=True, check=True, timeout=1800
-            )
+            result = subprocess.run(command, capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as error:
             diagnostics = {
                 "returncode": error.returncode,

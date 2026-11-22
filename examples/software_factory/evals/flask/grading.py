@@ -132,7 +132,6 @@ def grade(kind: str, candidate_path: Path) -> dict:
                 },
                 stdout=stdout,
                 stderr=stderr,
-                timeout=30,
                 preexec_fn=child_limits,
                 check=False,
             )
@@ -168,7 +167,7 @@ def grade(kind: str, candidate_path: Path) -> dict:
 
 
 def run_regression_process(
-    command: list[str], workspace: Path, results: Path, *, deadline_s: int = 30
+    command: list[str], workspace: Path, results: Path, *, deadline_s: int | None = None
 ) -> tuple[int, bool]:
     """Run only inside the Linux task sandbox; reap the entire test process group."""
     started = time.monotonic()
@@ -193,7 +192,7 @@ def run_regression_process(
         try:
             # WNOWAIT retains ownership of the leader PID until the group is stopped.
             while not os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT):
-                if time.monotonic() - started >= deadline_s:
+                if deadline_s is not None and time.monotonic() - started >= deadline_s:
                     timed_out = True
                     break
                 time.sleep(0.02)

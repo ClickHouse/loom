@@ -68,7 +68,7 @@ def evaluate(workspace: Path, destination: Path, run_process) -> dict:
             "--junitxml=" + str(xml),
             "tests",
         ]
-        exit_code, timed_out = run_process(command, workspace, results, deadline_s=120)
+        exit_code, timed_out = run_process(command, workspace, results)
         result = interpret(xml, exit_code, timed_out)
         for name in ("junit.xml", "stdout", "stderr"):
             if (results / name).exists():

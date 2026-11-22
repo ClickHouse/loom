@@ -19,7 +19,7 @@ def token_variable(order: int) -> str:
 
 
 def agent_settings(protocol: dict, slot: dict) -> str:
-    settings = '[agent]\ntimeout_sec = inf\nuser = "agent"\n'
+    settings = '[agent]\nuser = "agent"\n'
     if slot["mode"] == "baseline":
         settings += 'network_mode = "no-network"\n'
     else:

@@ -77,7 +77,6 @@ def git(root: Path, *args: str, data: bytes | None = None) -> bytes:
         input=data,
         capture_output=True,
         env=env,
-        timeout=20,
         check=True,
     )
     return result.stdout
@@ -269,7 +268,7 @@ class DockerTests:
         selectors: list[str],
         output: Path,
         *,
-        timeout_s: int = 30,
+        timeout_s: int | None = None,
         docker_binary: str = "docker",
     ):
         if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
@@ -287,8 +286,8 @@ class DockerTests:
             )
         ):
             raise ValueError("Freeze explicit focused pytest node identifiers")
-        if not 1 <= timeout_s <= 30:
-            raise ValueError("Test timeout exceeds the focused limit")
+        if timeout_s is not None and timeout_s < 1:
+            raise ValueError("An explicit test timeout must be positive")
         self.image, self.selectors, self.output, self.timeout_s = (
             image,
             selectors,

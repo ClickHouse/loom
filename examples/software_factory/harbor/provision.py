@@ -124,7 +124,7 @@ class Provisioner:
             os.fsync(stream.fileno())
         return row
 
-    def _cmd(self, command, *, data=None, timeout=1800):
+    def _cmd(self, command, *, data=None, timeout=None):
         try:
             result = self.run(
                 command, input=data, capture_output=True, text=True, check=True, timeout=timeout
@@ -403,7 +403,6 @@ class Provisioner:
                     *extra,
                     str(context),
                 ],
-                timeout=3600,
             )
             identifier = path.read_text().strip()
             self._owned("image", identifier)

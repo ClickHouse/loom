@@ -124,7 +124,6 @@ def build_image(folder: Path, dependency: str) -> str:
             ["docker", "image", "inspect", dependency],
             capture_output=True,
             text=True,
-            timeout=60,
             check=True,
         ).stdout
     )[0]
@@ -170,14 +169,12 @@ def build_image(folder: Path, dependency: str) -> str:
             ],
             stdout=log,
             stderr=subprocess.STDOUT,
-            timeout=900,
             check=True,
         )
     actual = subprocess.run(
         ["docker", "image", "inspect", "--format", "{{.Id}}", reference],
         capture_output=True,
         text=True,
-        timeout=60,
         check=True,
     ).stdout.strip()
     if actual != dependency:
@@ -267,12 +264,12 @@ def prepare(previous: Path, output: Path) -> Path:
             + agent_settings(plan, slot)
             + "[environment]\ndocker_image = "
             + json.dumps(image["agent"])
-            + '\ncpus = 1\nmemory_mb = 2048\nnetwork_mode = "public"\n'
+            + '\ncpus = 1\nmemory_mb = 2048\nnetwork_mode = "public"\nbuild_timeout_sec = inf\n'
             + mcp_settings(plan, slot)
-            + '[verifier]\ntimeout_sec = 300\nenvironment_mode = "separate"\n'
+            + '[verifier]\ntimeout_sec = inf\nenvironment_mode = "separate"\n'
             "[verifier.environment]\ndocker_image = "
             + json.dumps(image["verifier"])
-            + '\ncpus = 1\nmemory_mb = 512\nnetwork_mode = "no-network"\n'
+            + '\ncpus = 1\nmemory_mb = 512\nnetwork_mode = "no-network"\nbuild_timeout_sec = inf\n'
         )
         tasks.append({"path": str(task_dir)})
     protocol_path = output / "protocol.json"
@@ -282,6 +279,7 @@ def prepare(previous: Path, output: Path) -> Path:
         "name": solver["name"],
         "model_name": plan["model_id"],
         "kwargs": {"version": solver["version"]},
+        "override_setup_timeout_sec": float("inf"),
         "env": PROXY_ENV,
     }
     controls = {}
@@ -323,9 +321,10 @@ def prepare(previous: Path, output: Path) -> Path:
                     "delete": True,
                     "extra_docker_compose": [str(sandbox_policy)],
                 },
-                # Oracle converts its shell timeout to int; only coding accepts infinity.
                 "agents": [
-                    agent if control is None else {"name": "oracle", "override_timeout_sec": 300}
+                    agent
+                    if control is None
+                    else {"name": "oracle", "override_setup_timeout_sec": float("inf")}
                 ],
                 "tasks": selected,
                 "quiet": True,

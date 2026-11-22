@@ -24,7 +24,7 @@ def sha(path: Path) -> str:
 
 
 def command(args: list[str], *, data: bytes | None = None) -> bytes:
-    return subprocess.run(args, input=data, capture_output=True, check=True, timeout=600).stdout
+    return subprocess.run(args, input=data, capture_output=True, check=True).stdout
 
 
 def check_files(files: dict) -> None:
@@ -50,7 +50,6 @@ def _git(root, *args):
         ],
         capture_output=True,
         check=True,
-        timeout=20,
         env={
             "PATH": os.defpath,
             "GIT_CONFIG_NOSYSTEM": "1",

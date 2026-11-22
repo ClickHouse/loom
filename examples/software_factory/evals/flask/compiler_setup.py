@@ -34,7 +34,7 @@ def _sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def _run(command, *, data=None, timeout=300, env=None):
+def _run(command, *, data=None, timeout=None, env=None):
     return subprocess.run(
         command, input=data, capture_output=True, check=True, timeout=timeout, env=env
     ).stdout
@@ -340,7 +340,6 @@ def _build_images(output, archives, images, receipt):
                 str(folder / "image.id"),
                 str(folder),
             ],
-            timeout=600,
         )
         image = (folder / "image.id").read_text().strip()
         built[dependency] = image

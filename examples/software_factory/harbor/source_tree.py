@@ -26,7 +26,6 @@ def git(repo, *args, data=None):
         input=data,
         capture_output=True,
         check=True,
-        timeout=120,
         env={"PATH": os.defpath, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
     ).stdout
 
