@@ -15,6 +15,8 @@ import pytest
 from server.memory.app import session_outcomes as so
 from server.memory.store.session_outcomes import OUTCOMES_TABLE
 
+pytestmark = pytest.mark.usefixtures("no_blacklisted_values")
+
 
 @pytest.fixture
 def qualified_sessions(monkeypatch):
