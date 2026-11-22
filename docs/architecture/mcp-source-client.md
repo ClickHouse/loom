@@ -81,13 +81,16 @@ client terminal and closes and joins that task before returning, including when 
 request deadline expires while HTTP response data is still arriving. Another client's
 SDK scope remains independent. A known background transport failure or an expired
 deadline refuses discovery and result publication, including cached discovery.
+Unexpected HTTP status or response media types are terminal before protocol handoff.
+Optional GET and DELETE responses with status 405 remain supported.
 Cancellation publishes no partial read evidence.
 The transport retains cleanup ownership while checking authority after response headers
 arrive and before handing the response to the protocol client.
 Closing a request does not prove that remote processing has stopped. Errors expose bounded error
 codes rather than upstream content, endpoints or credentials.
 
-An omitted optional mapped cursor ends that listing. Issued cursors are bound to their
+Only an omitted optional mapped cursor ends that listing. Every present mapped cursor
+must be a nonempty bounded string; an explicit null is refused. Issued cursors are bound to their
 operation and query, so a cursor from one query cannot authorize another. Reusing a
 cursor in the same listing is refused even when another listing uses the same text.
 A successful final page closes that listing operation. It does not establish a deletion

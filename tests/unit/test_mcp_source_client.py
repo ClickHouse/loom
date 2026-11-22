@@ -132,7 +132,11 @@ async def synthetic_server(
             read.input_schema["properties"]["danger"] = dict(STRING)
         return types.ListToolsResult(
             tools=[
-                types.Tool(name="find", inputSchema=INPUT_SCHEMA, outputSchema=SEARCH_SCHEMA),
+                types.Tool(
+                    name="find",
+                    inputSchema=INPUT_SCHEMA,
+                    outputSchema=state.get("search_output_schema", SEARCH_SCHEMA),
+                ),
                 types.Tool(
                     name="fetch", inputSchema=read.input_schema, outputSchema=DOCUMENT_SCHEMA
                 ),
@@ -154,6 +158,8 @@ async def synthetic_server(
             "text": state["text"],
         }
         result = {"documents": [document]} if params.name == "find" else document
+        if params.name == "find":
+            result.update(state.get("search_extra", {}))
         if params.name == "find" and state.get("paginate") and "cursor" not in params.arguments:
             result["cursor"] = state.get("page_cursor", "page-2")
         return types.CallToolResult(content=[], structuredContent=result)
@@ -694,7 +700,7 @@ async def test_existing_pin_helper_is_used_once_and_transport_strips_foreign_hea
 
     async def reply(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, text="synthetic")
+        return httpx.Response(200, text="synthetic", headers={"content-type": "text/event-stream"})
 
     monkeypatch.setattr(webhooks, "vet_host", resolve)
     transport = source._PinnedTransport(
@@ -907,3 +913,87 @@ async def test_state_guard_search_cannot_publish_after_terminal_failure(
             with pytest.raises(source.MCPSourceError, match=code):
                 await remote.search("beta")
             assert len(state["requests"]) == before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("present", [False, True])
+async def test_status_cursor_null_schema_distinguishes_presence_from_omission(
+    monkeypatch: pytest.MonkeyPatch, present: bool
+) -> None:
+    conf = paginated_config()
+    assert conf.search is not None
+    conf.search.output_schema["properties"]["cursor"] = {"type": "null"}
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        state["search_output_schema"] = conf.search.output_schema
+        state["paginate"], state["page_cursor"] = present, None
+        if present:
+            with pytest.raises(source.MCPSourceError, match="schema"):
+                await remote.search("alpha")
+            assert state["calls"][-1][0] == "find"
+            assert remote._owner_task is not None and remote._owner_task.done()
+            requests = len(state["requests"])
+            with pytest.raises(source.MCPSourceError, match="schema"):
+                await remote.search("beta")
+            assert len(state["requests"]) == requests
+        else:
+            final = await remote.search("alpha")
+            assert final.complete and final.next_cursor is None
+            assert all(item.receipt is None for item in final.items)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cursor,schema",
+    [
+        (False, {"type": "boolean"}),
+        (17, {"type": "integer"}),
+        ([], {"type": "array", "maxItems": 1, "items": STRING}),
+        ({}, {"type": "object", "additionalProperties": False}),
+        ("", STRING),
+    ],
+)
+async def test_status_cursor_schema_admitted_invalid_values_refuse(
+    monkeypatch: pytest.MonkeyPatch, cursor: Any, schema: dict[str, Any]
+) -> None:
+    conf = paginated_config()
+    assert conf.search is not None
+    conf.search.output_schema["properties"]["cursor"] = schema
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        state["search_output_schema"] = conf.search.output_schema
+        state["paginate"], state["page_cursor"] = True, cursor
+        with pytest.raises(source.MCPSourceError, match="schema"):
+            await remote.search("alpha")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parent,schema", [(None, {"type": "null"}), (17, {"type": "integer"})])
+async def test_status_cursor_malformed_nested_parent_never_counts_as_missing(
+    monkeypatch: pytest.MonkeyPatch, parent: Any, schema: dict[str, Any]
+) -> None:
+    conf = paginated_config()
+    assert conf.search is not None
+    output = copy.deepcopy(conf.search.output_schema)
+    output["properties"]["page"] = schema
+    conf = replace(
+        conf, search=replace(conf.search, output_schema=output, next_cursor_path=("page", "cursor"))
+    )
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        state["search_output_schema"] = output
+        state["search_extra"] = {"page": parent}
+        with pytest.raises(source.MCPSourceError, match="schema"):
+            await remote.search("alpha")
+
+
+@pytest.mark.asyncio
+async def test_status_cursor_schema_admitted_string_still_has_normalized_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conf = paginated_config()
+    assert conf.search is not None
+    conf.search.output_schema["properties"]["cursor"] = {"type": "string", "maxLength": 4096}
+    async with synthetic_server(monkeypatch, tools=True) as state, client(conf) as remote:
+        state["search_output_schema"] = conf.search.output_schema
+        state["paginate"], state["page_cursor"] = True, "x" * 2049
+        with pytest.raises(source.MCPSourceError, match="limit"):
+            await remote.search("alpha")
+        assert state["calls"][-1][0] == "find"
