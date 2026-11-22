@@ -1,6 +1,6 @@
 source "https://rubygems.org"
 
 ruby "3.4.4"
-gem "roast-ai", "1.4.1"
+gem "roast-ai", git: "https://github.com/Shopify/roast.git", ref: "c55ba249d71db12f98e38dd254aeef0bb4ddc03b"
 gem "clickhouse-loom", path: "../../sdk/ruby"
 gem "minitest", "5.25.5"

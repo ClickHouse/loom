@@ -4,8 +4,11 @@ This Ruby workflow saves one synthetic release checklist fact to Loom and retrie
 it in a later process. It uses Roast's ordinary `ruby` cog and the existing
 [Ruby SDK](../../sdk/ruby/README.md). No model or provider credentials are needed.
 
-Use Ruby 3.4.4 and Bundler 2.6.9. The Gemfile pins Roast 1.4.1 (`roast-ai`);
-`clickhouse-loom` comes from this checkout, without assuming a published gem.
+Use Ruby 3.4.4 and Bundler 2.6.9. The Gemfile pins the real Roast source at
+`c55ba249d71db12f98e38dd254aeef0bb4ddc03b` (`roast-ai`, source version 1.4.1).
+Bundler installs it from Git; this does not assume that version is on a gem
+registry. `clickhouse-loom` comes from this checkout through its supported source
+build route.
 
 ```sh
 git clone --filter=blob:none --sparse https://github.com/ClickHouse/loom.git
