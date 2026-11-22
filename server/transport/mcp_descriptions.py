@@ -1416,9 +1416,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "reported, not flagged."
     ),
     "code.search": (
-        "Find the indexed code relevant to a coding task, concept or identifier. "
-        "Returns ranked definitions, bodies, file:line spans and linked lessons when available. "
-        "Use returned evidence before opening more files. For an exact definition use "
+        "Start an issue investigation or implementation task here when repository context "
+        "is missing. Give the problem, question or identifier as `query`: one response "
+        "combines relevant indexed source, file:line spans and any code-linked project "
+        "decisions or lessons. Saved project constraints can add context that a local "
+        "file read does not contain. Use returned evidence before opening more files. "
+        "For an exact definition use "
         "code.symbol; callers, code.callers; indexed literals or errors, code.grep. "
         "Use local tools for uncommitted or unindexed code, explicit local-tool requests, "
         "or an unavailable or abstaining index. For a synthesized answer use code.ask. "
@@ -2201,10 +2204,29 @@ ATOMIC_TOOL_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-# Descriptions for the coding toolset (a trimmed roster). The tier shares
-# TOOL_DESCRIPTIONS; memory.set's text is the core text with the chat-only sentences
-# removed. Derived, not copied, so the prose cannot drift from the core tier.
+# Coding descriptions focus on implementation tasks. Shared policies below are
+# derived from core text so revision and memory guidance stay consistent.
 CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
+    "code.symbol": (
+        "Read a known function, class or other definition, including its retained source "
+        "and any linked project lessons. Use when a task or search result names the "
+        "definition; use code.search when you need to find the implementation first. "
+        "Pass `name` or `symbol_id`. If you also need callers, set `uses_brief: true` "
+        "to get the definition and a compact caller summary together when one definition "
+        "resolves; use code.callers for a larger call graph. `uses: true` requests the "
+        "full mention list. `near_paths` or `pr_number` rank ambiguous definitions. "
+        "Read freshness and elision disclosures; use local tools for changed or "
+        "unindexed code."
+    ),
+    "code.grep": (
+        "Find exact text or a regex in indexed source, with source lines and enclosing "
+        "symbols. Use when you know the text to locate; for a bug report or behavior "
+        "question use code.search to retrieve implementation context. Pass `pattern`, "
+        "not a natural-language query; `regex: true` selects regex matching. Narrow "
+        "with `path_prefix`, `path_globs` or `langs`, and follow `next_cursor` for more "
+        "matches. Coverage disclosures distinguish absent matches from incomplete "
+        "indexed source."
+    ),
     # The coding tier lists blast radius with the sentences a coding session
     # acts on; the paging / overlay detail stays on `tracker` / `all`.
     "code.impact": (

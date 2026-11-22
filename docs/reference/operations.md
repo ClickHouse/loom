@@ -205,7 +205,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.examples`](operations/code.md#codeexamples) | Real call sites of a symbol, ranked test-covered-first — a current, tested usage example beats the deprecated one grep finds first. | viewer | read | no |  |
 | [`code.files`](operations/code.md#codefiles) | Which indexed files have this NAME — an rg-style glob (`tests/queries/0_stateless/05138_*`, `/*Parquet*.cpp`), a basename stem (`05138_with_fill` matches the stem exactly or as its leading prefix… | viewer | read | no |  |
 | [`code.first_build`](operations/code.md#codefirst_build) | Which CI build first carried this commit? | viewer | read | no |  |
-| [`code.grep`](operations/code.md#codegrep) | Exact-match lookup over the indexed corpus. | viewer | read | yes |  |
+| [`code.grep`](operations/code.md#codegrep) | Literal or regex search of indexed source with enclosing symbols and coverage. | viewer | read | yes |  |
 | [`code.history`](operations/code.md#codehistory) | The merged PRs that most recently touched a symbol or path: number, title, author, labels, and what reviewers said about that file — up to `reviews_per_pr` (default 3, 0 = none) human review comments… | viewer | read | yes |  |
 | [`code.impact`](operations/code.md#codeimpact) | Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius. | viewer | read | yes |  |
 | [`code.index_errors`](operations/code.md#codeindex_errors) | List the files the code index failed to parse or ingest, with the error and the commit. | viewer | read | yes |  |
@@ -228,7 +228,7 @@ Fields for every `code` op: [operations/code.md](operations/code.md).
 | [`code.review_brief`](operations/code.md#codereview_brief) | A merged PR's review brief: the point read of what the ingest built at merge — touched symbols with callers and fan-in, coverage verdicts, setting facts, regression history, blame of the deleted… | viewer | read | no |  |
 | [`code.scip_ingest`](operations/code.md#codescip_ingest) | Accept one part of a SCIP index upload (compiler-tier symbols and references) for a batch. | writer | idempotent | no | yes |
 | [`code.scip_status`](operations/code.md#codescip_status) | Report the progress of a SCIP upload batch: parts received and apply status. | viewer | read | no |  |
-| [`code.search`](operations/code.md#codesearch) | Find the indexed code relevant to a coding task, concept or identifier. | viewer | read | yes |  |
+| [`code.search`](operations/code.md#codesearch) | Start an issue investigation or implementation task here when repository context is missing. | viewer | read | yes |  |
 | [`code.setting_facts`](operations/code.md#codesetting_facts) | One ClickHouse setting, the four places that define it: its declaration and tier (production / important / beta / experimental / obsolete), every default change with the release it shipped in… | viewer | read | no |  |
 | [`code.symbol`](operations/code.md#codesymbol) | Exact symbol lookup: definition, signature, doc comment, and body of a function/class/enum by (qualified) name — compiler-grade where available (tier='scip'), resolved across C++ overloads… | viewer | read | yes |  |
 | [`code.symbol_history`](operations/code.md#codesymbol_history) | The regression history of one function: the merged PRs that touched it (with linked issues, reverts, inline review comments inside its span), and — through the tracker namespace bound to this code… | viewer | read | no |  |

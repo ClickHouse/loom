@@ -6541,7 +6541,7 @@ class CodeFirstBuildOutput(TypedDict, total=False):
 
 
 class CodeGrepInput(TypedDict, total=False):
-    "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
+    "Literal or regex search of indexed source with enclosing symbols and coverage."
 
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]
@@ -6568,7 +6568,7 @@ class CodeGrepInput(TypedDict, total=False):
 
 
 class CodeGrepBody(TypedDict, total=False):
-    "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
+    "Literal or regex search of indexed source with enclosing symbols and coverage."
 
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]

@@ -43,13 +43,19 @@ class CodeSymbolInput(_CodeIdentity):
     # ("src/Foo.cpp:123"), which resolves to the innermost function
     # containing that line: a grep hit or review comment becomes the whole
     # function in one call.
-    name: str = ""
+    name: str = Field(
+        default="",
+        description="Definition name or source path:line. Qualified names disambiguate matches.",
+    )
     # An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it
     # wins over `name` and resolves exactly that definition.
     symbol_id: str = ""
-    # Read each definition's body; a 200+ line class ships its skeleton plus member
-    # outline instead. False = signature, doc and pointer only.
-    include_body: bool = True
+    # An unavailable complete body is disclosed with an outline or source pointer.
+    include_body: bool = Field(
+        default=True,
+        description="Include retained implementation source when available; "
+        "false returns metadata.",
+    )
     # Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition.
     include_history: bool = True
     # Attach `examples` (call sites that use the symbol) to the first definition.
@@ -88,7 +94,10 @@ class CodeSymbolInput(_CodeIdentity):
     uses_limit: int = Field(default=50, ge=1, le=200)
     # Serve the compact `uses` block when the lookup resolves to one definition;
     # ignored when `uses` is true.
-    uses_brief: bool = False
+    uses_brief: bool = Field(
+        default=False,
+        description="Include a compact caller summary when one definition resolves.",
+    )
     # When several definitions match, rank them by the change at hand — the files in
     # `near_paths` (<= 20) or the merged PR's file list for `pr_number` from the ledger:
     # same file, same directory, co-change in code_pr_history, then path distance.

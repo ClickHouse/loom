@@ -196,6 +196,9 @@ and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-
 - **Discover by task.** Curated rosters list common tools; `loom_op` help discovers
   other reachable operations without loading every schema. Instructions name tools
   the connection can use. The assistant toolset has only its listed read tools.
+  Coding instructions distinguish issue investigation, known-definition reads and
+  literal searches. Code-linked project knowledge explains what retrieval adds to
+  a source-file read; argument descriptions carry the inputs for each workflow.
 - **Offer an entrypoint.** Search and operation discovery request upfront schema
   loading where listed; other tools can be discovered when needed. The loading
   setting applies to registry operations and synthetic tools. Clearing it leaves

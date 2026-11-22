@@ -558,8 +558,8 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
     routes = [
         f"{tool[name]} {purpose}"
         for name, purpose in (
+            ("code.search", "for an issue, task or conceptual question"),
             ("code.symbol", "for a named definition"),
-            ("code.search", "for a concept"),
             ("code.grep", "for exact text or an error"),
             ("code.callers", "for callers"),
             ("code.impact", "for change effects"),
@@ -567,14 +567,26 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         )
         if tool[name]
     ]
+    caller_hint = (
+        "For a definition and its callers together, pass `uses_brief: true` to "
+        f"{tool['code.symbol']}. "
+        if tool["code.symbol"]
+        else ""
+    )
     code = (
-        "\n\nInvestigating indexed code (`loom_code_*`): look up missing code evidence "
-        "in Loom before local grep or reads. Use "
+        "\n\nInvestigating or fixing code (`loom_code_*`): retrieve missing repository "
+        "context in Loom before exploring file by file. Code answers combine indexed "
+        "implementation with linked lessons and project decisions when available; "
+        "that knowledge can explain constraints beyond the source text. Use "
         + "; ".join(routes)
         + ". Discover a deferred tool by its name (ToolSearch in Claude Code). "
-        "A definition does not supply callers. Use returned code and linked lessons; "
+        + caller_hint
+        + "Read a Loom result before scheduling equivalent local searches or reads; "
+        "do not duplicate that lookup in parallel. Use returned code and linked lessons; "
         "retrieve only missing evidence. Use local tools for uncommitted or unindexed "
         "code, explicit local-tool requests, or an unavailable or abstaining index. "
+        "Check source freshness and memory `code_state` before relying on a saved lesson. "
+        "Edit and test in the checkout. "
         "Skip retrieval when current context already answers the question."
         if routes
         else ""

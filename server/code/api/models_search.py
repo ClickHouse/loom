@@ -42,7 +42,10 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # symbol table first (`route` says which path answered). A long one (a pasted issue
     # body) is clipped to QUERY_MAX_CHARS, never refused: the search keeps its rarest
     # terms (code_search_query_max_tokens) whatever its length.
-    query: str = Field(min_length=1)
+    query: str = Field(
+        min_length=1,
+        description="Issue, task, behavior question or identifier to locate in indexed code.",
+    )
 
     @field_validator("query", mode="before")
     @classmethod
@@ -88,7 +91,11 @@ class CodeSearchInput(_CodeIdentity, _ResultLessons):
     # the budget is generous. "none": cards always — the survey mode; fetch
     # a body via code.symbol when one card wins.
     # None = the deployment default (settings.code_search_bodies_default).
-    bodies: Literal["auto", "none"] | None = None
+    bodies: Literal["auto", "none"] | None = Field(
+        default=None,
+        description="Source response mode: auto includes source, none returns pointers. "
+        "Omit to use the deployment default.",
+    )
     # Chunk-kind prior override: None = code_search_kind_prior; "default" /
     # "flat" pick a table, "structural" applies only the phrasing rule, "off" disables.
     kind_prior: Literal["off", "default", "flat", "structural"] | None = Field(

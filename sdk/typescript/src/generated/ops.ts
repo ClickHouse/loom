@@ -875,6 +875,7 @@ export interface CodeGrepInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Exact text to find, or an RE2 expression when regex is true. */
   pattern: string;
   regex?: boolean;
   case_sensitive?: boolean;
@@ -1555,6 +1556,7 @@ export interface CodeSearchInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Issue, task, behavior question or identifier to locate in indexed code. */
   query: string;
   top_k?: number;
   token_budget?: number | null;
@@ -1564,6 +1566,7 @@ export interface CodeSearchInput {
   rerank?: string;
   expand?: boolean;
   annotate?: boolean;
+  /** Source response mode: auto includes source, none returns pointers. Omit to use the deployment default. */
   bodies?: "auto" | "none" | null;
   kind_prior?: "off" | "default" | "flat" | "structural" | null;
   pr_leg_before?: string | null;
@@ -1678,8 +1681,10 @@ export interface CodeSymbolInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Definition name or source path:line. Qualified names disambiguate matches. */
   name?: string;
   symbol_id?: string;
+  /** Include retained implementation source when available; false returns metadata. */
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
@@ -1690,6 +1695,7 @@ export interface CodeSymbolInput {
   sort_by?: "score" | "fan_in";
   uses?: boolean | null;
   uses_limit?: number;
+  /** Include a compact caller summary when one definition resolves. */
   uses_brief?: boolean;
   near_paths?: string[];
   pr_number?: number;

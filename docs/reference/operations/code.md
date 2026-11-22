@@ -708,7 +708,7 @@ Which CI build first carried this commit?
 
 ## `code.grep`
 
-Exact-match lookup over the indexed corpus.
+Literal or regex search of indexed source with enclosing symbols and coverage.
 
 `POST /v1/code.grep` · MCP `loom_code_grep` · role `viewer` · read
 
@@ -721,7 +721,7 @@ Exact-match lookup over the indexed corpus.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `pattern` | `str` | required | The text to find: a literal substring, or an RE2 expression with `regex`. |
+| `pattern` | `str` | required | Exact text to find, or an RE2 expression when regex is true. |
 | `regex` | `bool` | `False` | True reads `pattern` as RE2; an invalid expression is a 422. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
@@ -1438,7 +1438,7 @@ Report the progress of a SCIP upload batch: parts received and apply status.
 
 ## `code.search`
 
-Find the indexed code relevant to a coding task, concept or identifier.
+Start an issue investigation or implementation task here when repository context is missing.
 
 `POST /v1/code.search` · MCP `loom_code_search` · role `viewer` · read
 
@@ -1451,7 +1451,7 @@ Find the indexed code relevant to a coding task, concept or identifier.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `query` | `str` | required | The question, identifier or phrase to search for; a symbol-shaped query tries the symbol table first (`route` says which path answered). |
+| `query` | `str` | required | Issue, task, behavior question or identifier to locate in indexed code. |
 | `top_k` | `int` | `5` | At most this many results per page (1-25). |
 | `token_budget` | `int \| None` | `None` | Response budget in tokens; 0 = unlimited, omitted = LOOM_CODE_SEARCH_TOKEN_BUDGET (default 0). |
 | `path_prefix` | `str` | `''` | Keep only units whose path starts with this prefix; "" = the whole namespace. |
@@ -1460,7 +1460,7 @@ Find the indexed code relevant to a coding task, concept or identifier.
 | `rerank` | `str` | `''` | Reranker over the fused pool: "" = the deployment default (LOOM_CODE_SEARCH_RERANK_DEFAULT, for prose questions of its kinds), "none" = off for this request, "builtin:openai" / "builtin:cohere", or the name of an endpoint in… |
 | `expand` | `bool` | `False` | Vocabulary bridge: one LLM hop proposes codebase identifiers for the lexical leg (natural-language wording often misses the implementing subsystem's vocabulary). |
 | `annotate` | `bool` | `True` | Risk annotations + one-hop callee context per result (churn/amp/tested/ callees on each unit). |
-| `bodies` | `Literal['auto', 'none'] \| None` | `None` | "auto" (default): granularity scales with budget-per-slot — cards when the budget can't fit any body (~<200 tok/slot), whole units in the normal range, and top hits expand toward their WHOLE FILE when the budget is generous. "none": cards… |
+| `bodies` | `Literal['auto', 'none'] \| None` | `None` | Source response mode: auto includes source, none returns pointers. |
 | `kind_prior` | `Literal['off', 'default', 'flat', 'structural'] \| None` | `None` | Chunk-kind prior override: None = code_search_kind_prior; "default" / "flat" pick a table, "structural" applies only the phrasing rule, "off" disables. |
 | `pr_leg_before` | `datetime \| None` | `None` | Only PRs merged strictly before this instant may vote — the time-travel pin a bench mined from merged PRs needs so the fix PR cannot vote for its own files. |
 | `embedding_model` | `str` | `''` | Bench-only override of the embedding_model label the legs read: "" = the deployment embedder's model name. |
@@ -1555,9 +1555,9 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | bare, qualified, or partially qualified name — or `path:line` ("src/Foo.cpp:123"), which resolves to the innermost function containing that line: a grep hit or review comment becomes the whole function in one call. |
+| `name` | `str` | `''` | Definition name or source path:line. |
 | `symbol_id` | `str` | `''` | An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it wins over `name` and resolves exactly that definition. |
-| `include_body` | `bool` | `True` | Read each definition's body; a 200+ line class ships its skeleton plus member outline instead. |
+| `include_body` | `bool` | `True` | Include retained implementation source when available; false returns metadata. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
 | `include_examples` | `bool` | `True` | Attach `examples` (call sites that use the symbol) to the first definition. |
 | `include_lessons` | `bool` | `True` | Attach `lessons` to the first definition: the memories linked to the symbol from `lesson_namespaces` (over MCP the caller's memory home by default) and the repository's team namespace, each with its `code_state` (`fresh`, `moved`, or… |
@@ -1567,7 +1567,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `sort_by` | `Literal['score', 'fan_in']` | `'score'` | `score` keeps the resolver's order; `fan_in` puts the most-called definition first. |
 | `uses` | `bool \| None` | `None` | `uses=true` returns the definition AND the lines that mention its bare name — what a separate code.grep on the name would return, read beside the definition from the same chunk index — minus the definition's own span(s). |
 | `uses_limit` | `int` | `50` | At most this many `uses` lines (1–200) when `uses` is true. |
-| `uses_brief` | `bool` | `False` | Serve the compact `uses` block when the lookup resolves to one definition; ignored when `uses` is true. |
+| `uses_brief` | `bool` | `False` | Include a compact caller summary when one definition resolves. |
 | `near_paths` | `list[str]` | *(computed)* | When several definitions match, rank them by the change at hand — the files in `near_paths` (<= 20) or the merged PR's file list for `pr_number` from the ledger: same file, same directory, co-change in code_pr_history, then path distance. |
 | `pr_number` | `int` | `0` | A merged PR whose file list (from the PR ledger) ranks several matching definitions; 0 = no PR ranking. |
 | `namespaces` | `list[str]` | *(computed)* | Presence on several namespaces: `presence: true` runs the resolve once per entry of `namespaces` (at most 8; `namespace`, when set and absent, leads the list; unset list = the addressed namespace alone), concurrently under… |

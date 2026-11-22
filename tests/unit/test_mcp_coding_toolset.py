@@ -195,6 +195,8 @@ def test_coding_descriptions_derive_from_the_core_texts():
         "memory.set",
         "loom_activate",
         "code.impact",
+        "code.symbol",
+        "code.grep",
     }
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
@@ -530,7 +532,7 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
     for name, purpose in (
         ("loom_code_symbol", "for a named definition"),
-        ("loom_code_search", "for a concept"),
+        ("loom_code_search", "for an issue, task or conceptual question"),
         ("loom_code_grep", "for exact text or an error"),
         ("loom_code_callers", "for callers"),
         ("loom_code_impact", "for change effects"),
@@ -541,6 +543,23 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     assert "linked lessons" in coding
     assert "uncommitted or unindexed" in coding
     assert "current context already answers" in coding
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact"])
+async def test_coding_schemas_keep_the_inputs_needed_to_select_and_call_code_tools(profile) -> None:
+    from server.transport.mcp_tools import _tools_descriptor
+
+    descriptors = {
+        row["name"]: row
+        for row in await _tools_descriptor(toolset="coding", schema_profile=profile)
+    }
+    for name, fields in (
+        ("loom_code_search", ("query", "bodies")),
+        ("loom_code_symbol", ("name", "include_body", "uses_brief")),
+        ("loom_code_grep", ("pattern",)),
+    ):
+        properties = descriptors[name]["inputSchema"]["properties"]
+        assert all(properties[field].get("description") for field in fields)
 
 
 @pytest.mark.parametrize("defaults", [None, {"namespace": ""}])

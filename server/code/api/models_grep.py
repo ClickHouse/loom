@@ -33,14 +33,17 @@ from server.operations.base import MCP_HIDDEN
 
 
 class CodeGrepInput(_CodeIdentity, _ResultLessons):
-    """Exact-match lookup over the indexed corpus. Unlike shell grep, the
-    answer arrives WITH what raw grep can't attach: the
-    enclosing symbol per hit, one indexed round-trip, and a hit list that
-    distinguishes code from the repo's 14K .reference fixtures (unindexed
-    by design). Literal by default; regex=True switches to RE2."""
+    """Literal or regex search of indexed source with enclosing symbols and coverage.
+
+    Literal by default; regex=True switches to RE2.
+    """
 
     # The text to find: a literal substring, or an RE2 expression with `regex`.
-    pattern: str = Field(min_length=2, max_length=1000)
+    pattern: str = Field(
+        min_length=2,
+        max_length=1000,
+        description="Exact text to find, or an RE2 expression when regex is true.",
+    )
     # True reads `pattern` as RE2; an invalid expression is a 422.
     regex: bool = False
     # False matches `pattern` regardless of letter case.

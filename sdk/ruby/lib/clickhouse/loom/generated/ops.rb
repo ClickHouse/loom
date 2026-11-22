@@ -575,7 +575,7 @@ module ClickHouse
         end
 
         # `code.grep` (viewer, read-only).
-        # Exact-match lookup over the indexed corpus. Unlike shell grep, the
+        # Literal or regex search of indexed source with enclosing symbols and coverage.
         # Required: pattern.
         def grep(body = nil, request_options: nil, **fields)
           call_op("code.grep", body, fields, request_options)
