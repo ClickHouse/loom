@@ -17,8 +17,10 @@ Which suite a test belongs in, what each suite needs to run, how tests skip when
 | Python SDK adapters whose framework is an extra | `sdk/python/tests/`                                                  | `uv`; installs each adapter extra in its own venv under `.venv-sdk-adapters/` | `make test-sdk-adapters`                                       | `sdk-python-adapters`                                          |
 | TypeScript SDK                                  | `sdk/typescript/`                                                    | Node                                                                          | `npm --prefix sdk/typescript run check`                        | `sdk-typescript`                                               |
 | Rust SDK                                        | `sdk/rust/`                                                          | Rust and Cargo                                                                | `cargo test --manifest-path sdk/rust/Cargo.toml`               | `sdk-rust`, Rust 1.84.1 and stable                             |
-| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | none                                                           |
-| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET 8 SDK                                                                    | `cd sdk/dotnet && dotnet test`                                 | none                                                           |
+| Go SDK                                          | `sdk/go/`                                                            | Go                                                                            | `cd sdk/go && go test ./...`                                   | `native SDK packages`: build, vet and race tests               |
+| .NET SDK                                        | `sdk/dotnet/`                                                        | .NET LTS SDK                                                                  | `cd sdk/dotnet && dotnet test`                                 | `native SDK packages`: tests and installed package             |
+| Java SDK core                                   | `sdk/java/`                                                          | Java and Maven                                                                | `mvn -f sdk/java verify`                                       | `native SDK packages`: tests and jar consumer                  |
+| Ruby SDK                                        | `sdk/ruby/`                                                          | Ruby and Bundler                                                              | `cd sdk/ruby && bundle install && bundle exec rake test`       | `native SDK packages`: tests and installed gem                 |
 | Benchmarks and gates                            | `bench/*.py`, `make bench-*`                                         | a server with **real** providers                                              | [running benchmarks](../benchmarks/running.md)                 | never (the CI embedder is fake)                                |
 
 **Why benchmarks stay out of CI.** CI runs with `LOOM_EMBEDDING_MODEL=fake-ngram-1024`
@@ -384,3 +386,33 @@ those PR checks from starting. Inspect mergeability when no checks follow a push
 - [Local development](./local-development.md), [code generation](./code-generation.md),
   [migrations](./migrations.md)
 - [Benchmarks methodology](../benchmarks/methodology.md)
+
+## Native SDK package checks
+
+The `native SDK packages` workflow runs the Go, Java core, .NET and Ruby SDK suites
+on pull requests, main pushes and a weekly schedule. Each job requires executed tests
+and writes their count to its summary. The Go job builds, vets and runs the HTTP tests
+with the race detector. The other jobs build their package and load or compile an
+independent consumer outside the source tree. Java adapter modules have their own
+requirements and are not part of the core job.
+
+The .NET job builds the unchanged target assembly and runs it on the supported LTS
+runtime with explicit major-version roll-forward. This does not qualify the older
+runtime or change the package target. Toolchains are selected in the workflow;
+checks do not certify every SDK's declared minimum version or a published registry
+package. Tests use their existing handler fakes or owned loopback servers. They need
+no running Loom, database, provider credentials or paid service.
+
+Pull requests have read-only tokens. A separate trusted-main job can create a failure
+task for each SDK and append a comment when its success/failure state changes. A new
+run alone does not add a comment. It executes no checked-out project code, publishes
+no raw failure text and links to the native logs. Closed decisions and human-edited
+bodies remain intact. Keep the task identity in its title or body; removing both
+markers removes its association with the check. Security-sensitive reports use
+[the private reporting route](../../SECURITY.md).
+
+The publisher permits forty API calls, ten issue pages and a hundred comments per
+task, with a five-minute job limit. It refuses exhausted pagination or comment
+history instead of guessing a prior state. At most four tasks or status comments
+can be written in one run. These bounds can defer diagnosis until the publisher's
+own error is resolved; a successful SDK check does not close an issue automatically.

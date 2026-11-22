@@ -1,0 +1,291 @@
+name: native SDK packages
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "41 5 * * 2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-sdk-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    name: Go SDK (build, vet, race tests)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/go
+    steps:
+      - name: Check out the Go source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdk/go
+      - name: Install Go
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - name: Build and vet the module
+        run: |
+          go build ./...
+          go vet ./...
+      - name: Run the real HTTP tests with the race detector
+        run: go test -race -count=1 -timeout=3m -json ./... | tee "$RUNNER_TEMP/go-tests.jsonl"
+      - name: Require executed tests and report the count
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          rows = [json.loads(line) for line in (Path(os.environ["RUNNER_TEMP"]) / "go-tests.jsonl").read_text().splitlines()]
+          passed = sum(row.get("Action") == "pass" and bool(row.get("Test")) for row in rows)
+          assert passed > 0, "The Go suite executed no passing test"
+          assert not any(row.get("Action") == "fail" for row in rows)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"Go: build and vet passed; {passed} tests passed with the race detector.\n")
+          PY
+
+  java:
+    name: Java SDK (tests and jar consumer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/java
+    steps:
+      - name: Check out the core Java source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdk/java
+      - name: Install the declared Java target
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Build and run the existing fake-server tests
+        run: mvn --batch-mode --no-transfer-progress -DfailIfNoTests=true verify
+      - name: Require executed tests and consume the jar
+        run: |
+          python3 - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          reports = [ET.parse(path).getroot() for path in Path("target/surefire-reports").glob("TEST-*.xml")]
+          total = sum(int(row.get("tests", "0")) for row in reports)
+          skipped = sum(int(row.get("skipped", "0")) for row in reports)
+          assert total > skipped, "The Java suite executed no test"
+          assert all(int(row.get("failures", "0")) == int(row.get("errors", "0")) == 0 for row in reports)
+          pom = ET.parse("pom.xml").getroot()
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          jar = Path("target") / (pom.findtext("m:artifactId", namespaces=ns) + "-" + pom.findtext("m:version", namespaces=ns) + ".jar")
+          assert jar.is_file() and jar.stat().st_size > 0
+          (Path(os.environ["RUNNER_TEMP"]) / "java-package-path").write_text(str(jar.resolve()))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"Java core: {total - skipped} tests passed; {skipped} skipped.\n")
+          PY
+          package=$(cat "$RUNNER_TEMP/java-package-path")
+          jar --list --file "$package" | grep -Fx 'com/clickhouse/loom/LoomClient.class'
+          mvn --batch-mode --no-transfer-progress org.apache.maven.plugins:maven-dependency-plugin:3.11.0:copy-dependencies -DincludeScope=runtime -DoutputDirectory="$RUNNER_TEMP/loom-java-dependencies"
+          consumer="$RUNNER_TEMP/loom-java-consumer"
+          mkdir -p "$consumer"
+          printf '%s\n' 'import com.clickhouse.loom.LoomClient;' 'class Consumer { public static void main(String[] args) { var client = LoomClient.builder().baseUrl("http://127.0.0.1:1").org("test").namespace("test").agent("consumer").build(); System.out.println(client.getClass().getName()); } }' > "$consumer/Consumer.java"
+          classpath="$package:$RUNNER_TEMP/loom-java-dependencies/*"
+          javac -cp "$classpath" "$consumer/Consumer.java"
+          java -cp "$classpath:$consumer" Consumer
+
+  dotnet:
+    name: .NET SDK (tests and package consumer)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/dotnet
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      # Run the unchanged net8.0 assembly on the supported LTS runtime.
+      DOTNET_ROLL_FORWARD: Major
+    steps:
+      - name: Check out the .NET source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdk/dotnet
+      - name: Install the supported LTS SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: "10.0.404"
+      - name: Build and run the existing handler and loopback tests
+        run: dotnet test ClickHouse.Loom.sln --configuration Release --logger trx --results-directory "$RUNNER_TEMP/dotnet-results"
+      - name: Require executed tests
+        run: |
+          python3 - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          reports = list((Path(os.environ["RUNNER_TEMP"]) / "dotnet-results").glob("*.trx"))
+          counters = [ET.parse(path).getroot().find(".//{*}Counters") for path in reports]
+          assert counters and all(row is not None for row in counters), "Missing test counters"
+          executed = sum(int(row.get("executed", "0")) for row in counters)
+          assert executed > 0, "The .NET suite executed no test"
+          assert all(int(row.get("failed", "0")) == int(row.get("error", "0")) == int(row.get("timeout", "0")) == 0 for row in counters)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f".NET: {executed} tests executed without failure on the LTS runtime.\n")
+          PY
+      - name: Pack and install into an independent consumer
+        run: |
+          packages="$RUNNER_TEMP/loom-dotnet-packages"
+          consumer="$RUNNER_TEMP/loom-dotnet-consumer"
+          dotnet pack src/ClickHouse.Loom/ClickHouse.Loom.csproj --configuration Release --no-build --output "$packages"
+          python3 - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          version = ET.parse("src/ClickHouse.Loom/ClickHouse.Loom.csproj").getroot().findtext(".//Version")
+          package = Path(os.environ["RUNNER_TEMP"]) / "loom-dotnet-packages" / f"ClickHouse.Loom.{version}.nupkg"
+          assert package.is_file() and package.stat().st_size > 0
+          (Path(os.environ["RUNNER_TEMP"]) / "dotnet-package-version").write_text(version)
+          PY
+          version=$(cat "$RUNNER_TEMP/dotnet-package-version")
+          dotnet new console --framework net10.0 --output "$consumer"
+          dotnet add "$consumer" package ClickHouse.Loom --version "$version" --source "$packages"
+          printf '%s\n' 'Console.WriteLine(typeof(ClickHouse.Loom.LoomClient).FullName);' > "$consumer/Program.cs"
+          dotnet run --project "$consumer" --no-restore
+
+  ruby:
+    name: Ruby SDK (tests and installed gem)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: sdk/ruby
+    steps:
+      - name: Check out the Ruby source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: sdk/ruby
+      - name: Install Ruby
+        uses: ruby/setup-ruby@be3c7df29b3349ec6bcfc6b4792f1cf9f5237d18 # v1.343.0
+        with:
+          ruby-version: "3.4.13"
+          bundler-cache: false
+      - name: Install test dependencies and run the existing tests
+        run: |
+          bundle install --jobs 2 --retry 0
+          bundle exec rake test | tee "$RUNNER_TEMP/ruby-tests.txt"
+      - name: Require executed tests and report the count
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          text = (Path(os.environ["RUNNER_TEMP"]) / "ruby-tests.txt").read_text()
+          counts = re.findall(r"(\d+) runs, (\d+) assertions, (\d+) failures, (\d+) errors, (\d+) skips", text)
+          assert len(counts) == 1, "Missing or ambiguous Ruby test counters"
+          runs, assertions, failures, errors, skips = map(int, counts[0])
+          assert runs > skips and assertions > 0 and failures == errors == 0
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"Ruby: {runs} tests, {assertions} assertions, {skips} skips.\n")
+          PY
+      - name: Build and load the installed gem outside the source tree
+        run: |
+          package="$RUNNER_TEMP/clickhouse-loom.gem"
+          gem build clickhouse-loom.gemspec --output "$package"
+          test -s "$package"
+          gem install --local "$package" --no-document --install-dir "$RUNNER_TEMP/loom-ruby-gems"
+          cd "$RUNNER_TEMP"
+          GEM_HOME="$RUNNER_TEMP/loom-ruby-gems" GEM_PATH="$RUNNER_TEMP/loom-ruby-gems" ruby -rclickhouse/loom -e 'abort "Missing packaged client" unless defined?(ClickHouse::Loom::Client); puts ClickHouse::Loom::VERSION'
+
+  maintenance:
+    name: Record trusted SDK failures
+    needs: [go, java, dotnet, ruby]
+    if: >-
+      always() && github.repository == 'ClickHouse/loom' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'schedule')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write # Record synthetic SDK check failures on trusted main runs only.
+    steps:
+      - name: Reconcile failure tasks without executing project code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SDK_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          from urllib.parse import urlencode
+          repo = "repos/ClickHouse/loom/issues"
+          bot = "github-actions[bot]"
+          marker = re.compile(r"<!-- loom-native-sdk:v1 (go|java|dotnet|ruby) -->")
+          state = re.compile(r"<!-- loom-native-sdk-state:v1 (failure|success) -->")
+          titles = {key: f"[native-sdk-ci] Repair the {key} SDK check" for key in ("go", "java", "dotnet", "ruby")}
+          calls = 0
+          def api(method, endpoint, payload=None):
+              global calls
+              calls += 1
+              assert calls <= 40, "SDK issue API budget exhausted"
+              command = ["gh", "api", "--method", method, endpoint, "--hostname", "github.com"]
+              if payload is not None:
+                  command += ["--input", "-"]
+              result = subprocess.run(command, input=None if payload is None else json.dumps(payload), text=True, capture_output=True, timeout=20, check=True)
+              assert len(result.stdout) <= 2 * 1024 * 1024, "SDK issue response exceeds budget"
+              return json.loads(result.stdout)
+          managed = {}
+          for page in range(1, 11):
+              issues = api("GET", repo + "?" + urlencode({"state": "all", "creator": bot, "per_page": 100, "page": page}))
+              assert isinstance(issues, list)
+              for issue in issues:
+                  if "pull_request" in issue or issue.get("user", {}).get("login") != bot:
+                      continue
+                  keys = marker.findall(issue.get("body") or "")
+                  keys += [key for key, title in titles.items() if issue.get("title") == title]
+                  keys = set(keys)
+                  assert len(keys) <= 1, "Conflicting SDK issue markers"
+                  if keys:
+                      key = keys.pop()
+                      assert key not in managed, "Duplicate SDK failure task"
+                      managed[key] = issue
+              if len(issues) < 100:
+                  break
+          else:
+              raise RuntimeError("SDK issue pagination budget exhausted")
+          results = json.loads(os.environ["SDK_RESULTS"])
+          assert set(results) == set(titles)
+          run_id = os.environ["GITHUB_RUN_ID"]
+          assert run_id.isdecimal()
+          url = "https://github.com/ClickHouse/loom/actions/runs/" + run_id
+          changed = 0
+          for key in titles:
+              result = results[key]["result"]
+              assert result in {"success", "failure", "cancelled", "skipped"}
+              issue = managed.get(key)
+              if result not in {"success", "failure"} or (issue and issue["state"] == "closed"):
+                  continue
+              text = f"<!-- loom-native-sdk:v1 {key} -->\n<!-- loom-native-sdk-state:v1 {result} -->\n\nThe {key} SDK check reports **{result}** on trusted main. [Read the native build, tests and package logs]({url}).\n\nReproduce the named workflow job using the existing SDK tests. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              if issue is None:
+                  if result == "failure":
+                      api("POST", repo, {"title": titles[key], "body": text})
+                      changed += 1
+                  continue
+              number = issue["number"]
+              assert isinstance(number, int) and number > 0
+              comments = api("GET", f"{repo}/{number}/comments?per_page=100")
+              assert isinstance(comments, list) and len(comments) < 100, "SDK comment history budget exhausted"
+              candidates = [issue] + sorted(comments, key=lambda row: (row["created_at"], row["id"]))
+              states = [state.findall(row.get("body") or "") for row in candidates if row.get("user", {}).get("login") == bot]
+              states = [value[-1] for value in states if value]
+              if not states or states[-1] != result:
+                  api("POST", f"{repo}/{number}/comments", {"body": text})
+                  changed += 1
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+              output.write(f"SDK task reconciliation: {changed} task or status writes; closed decisions preserved.\n")
+          PY
