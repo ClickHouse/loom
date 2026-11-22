@@ -1085,9 +1085,12 @@ has a gold question set; it is never run in CI, whose embedder is fake
   the mirror host loop; every other code worker keeps its own switch
   ([workers](../reference/workers.md)).
 - **Retire a repository.** A maintainer uses **Retire…** on the repository's Access tab
-  (`code.repo.remove` with `confirm` set to the namespace). The entry goes inactive, an
-  erasure saga purges every `loom.code_*` table for the namespace, and the bare mirror is
-  deleted when no other branch uses it. Search telemetry is kept. An operator-configured
+  (`code.repo.remove` with `confirm` set to the namespace). The registry and directory
+  entries go inactive, and a resumable namespace erasure saga purges selected index
+  tables plus search traces and outcomes. The inactive registry row remains. The index
+  purge excludes `code_answers`; a separate step deletes answers whose quoted
+  `memory_namespace` matches the erased namespace, so other cached code answers can
+  remain. The bare mirror is deleted when no other branch uses it. An operator-configured
   entry is refused with `REPO_FROM_CONFIG`: remove it from `LOOM_CODE_REPOS_JSON`
   instead. With `LOOM_CODE_INTEL_ENABLED=false` the page cannot list repositories, but
   `code.repo.remove` over HTTP, MCP or the SDK is still served; the other replicas then

@@ -304,8 +304,9 @@ models keep the caller's requested temperature. An opaque gateway alias or appli
 inference-profile ARN does not identify its backing model and receives no inferred
 restriction.
 
-Each client builds the rest of its request (the lowest reasoning effort and an
-output cap), and provider responses teach other traits once per model per process:
+The OpenAI-compatible and Anthropic clients build the rest of their requests (the
+lowest reasoning effort and an output cap). Provider responses teach other traits
+once per model per process:
 
 - a 400 naming a field the model does not take (`temperature`, `reasoning_effort`, an
   `output_config`, the cap field under its other name) drops that field: the call is
@@ -317,6 +318,10 @@ output cap), and provider responses teach other traits once per model per proces
   reports become the model's reserve (twice the most seen, at most
   `LOOM_LLM_HIDDEN_REASONING_RESERVE_MAX`), added to every caller's cap. A reply that hit
   the cap with no visible text is re-sent once with the ceiling as its reserve.
+
+The native Bedrock client sends the caller's cap as `maxTokens` and learns only a
+rejected `temperature` field. It does not add the reasoning reserves or negotiate
+effort and cap limits described above.
 
 An unrecognized model learns traits from its responses. Documented sampling
 restrictions and provider-default sampling avoid an initial temperature request; learned traits supplement
