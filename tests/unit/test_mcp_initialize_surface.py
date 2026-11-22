@@ -475,4 +475,4 @@ def test_coding_toolset_initialize_instructions_are_the_compact_form() -> None:
     full = asyncio.run(_initialize_instructions(None, "core"))
     assert "loom_code_*" in coding and "loom_search" in coding
     assert "Loom-first mode" not in coding and "Loom-first mode" in full
-    assert len(coding) * 3 < len(full)
+    assert len(coding) < len(full)

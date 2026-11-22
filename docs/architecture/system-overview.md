@@ -188,6 +188,32 @@ summary plus the lean sections), `loom_op` (calls any op by name through the sam
 `op: "help"` lists them, `server/transport/mcp_op.py`) and `loom_activate` (the primer,
 the one tool that is not a registry op).
 
+#### Tool design
+
+The MCP surface follows the [MCP tools specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)
+and [tool design guidance](https://www.anthropic.com/research/writing-tools-for-agents):
+
+- **Discover by task.** Curated rosters list common tools; `loom_op` help discovers
+  other reachable operations without loading every schema. Instructions name tools
+  the connection can use. The assistant toolset has only its listed read tools.
+- **Keep one contract.** The operation registry supplies schemas and handlers for
+  every transport. Descriptions explain when to call, inputs, and useful results.
+  Listings follow registry order and do not embed caller-specific context.
+- **Spend context on evidence.** Reuse sufficient context and retrieve missing
+  evidence. A default memory namespace enables the task pack; a hook that already
+  supplied context avoids a duplicate lookup. Instructions also reach MCP-only
+  clients without plugin hooks.
+- **Enforce access in the server.** Instructions and read-only, destructive and
+  idempotent annotations guide clients; call-time authorization decides access.
+  Discovery and routing keep hidden operations hidden and respect read-only
+  connections. Writes require the user's intent and permission.
+- **Make results usable.** Return structured results and readable text, with
+  recovery guidance for argument errors and refusals. Result shaping retains
+  evidence while removing accounting detail unless requested.
+- **Measure outcomes.** A connected server, advertised tool and completed call are
+  separate observations. Evaluate task success, time, cost and tokens alongside
+  tool use; instructions alone prove no performance benefit.
+
 `_call_tool` (`mcp_call.py`; the telemetry, response and failure answer in
 `mcp_outcome.py`) runs these phases in order:
 

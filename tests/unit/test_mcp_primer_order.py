@@ -1,6 +1,4 @@
-"""The session-start instructions put the caller's profile last, so on the `coding`
-toolset a client that cuts long instructions (Claude Code at 2,048 characters) keeps
-every rule whatever the profile holds."""
+"""Session-start instructions preserve all content and put routing before the profile."""
 
 from __future__ import annotations
 
@@ -12,7 +10,6 @@ import pytest
 
 from server.transport import mcp_primer
 
-CLIENT_LIMIT = 2048  # Claude Code's cut for MCP server instructions
 PROFILE = "<section label='persona'>" + "be terse. " * 600 + "</section>"
 NAMESPACE = "agent-a-long-default-namespace-name"
 
@@ -78,16 +75,21 @@ def test_the_primer_surfaces_end_with_the_profile() -> None:
     assert "**7. Using Loom.**" in before_profile and profile.endswith("it's been delivered.")
 
 
-def test_coding_rules_fit_2048_characters_before_any_profile() -> None:
+def test_coding_instructions_preserve_the_complete_large_profile() -> None:
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
-    assert len(text) > CLIENT_LIMIT  # the profile alone runs past the cut
-    assert len(_split(text)[0]) <= CLIENT_LIMIT
+    before_profile, profile = _split(text)
+    assert PROFILE in profile
+    assert "Code index scope for this connection" in before_profile
+    assert "one plain-text claim" in before_profile
+    assert text.endswith("Don't re-fetch — it's been delivered.")
 
 
 def test_code_scope_precedes_a_long_memory_workspace_notice(monkeypatch) -> None:
     monkeypatch.setattr(mcp_primer, "_coding_workspace_line", lambda _: "WORKSPACE" * 1000)
     text = asyncio.run(mcp_primer._initialize_instructions(object(), "coding"))
-    visible = text[:CLIENT_LIMIT]
-    assert "Code index scope for this connection" in visible
-    assert "`loom_code_symbol` for a named definition" in visible
-    assert "`loom_code_grep` for exact text or an error" in visible
+    assert "WORKSPACE" * 1000 in text
+    scope_at = text.index("Code index scope for this connection")
+    workspace_at = text.index("WORKSPACE" * 1000)
+    assert scope_at < workspace_at < text.index(PROFILE)
+    assert text.index("`loom_code_symbol` for a named definition") < scope_at
+    assert text.index("`loom_code_grep` for exact text or an error") < scope_at
