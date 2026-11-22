@@ -1,0 +1,1 @@
+{"type":"object","properties":{"disposition":{"type":"string","enum":["resolved","unfinished","blocked"]},"pr_url":{"type":"string"},"summary":{"type":"string"}},"required":["disposition","pr_url","summary"],"additionalProperties":false}
