@@ -63,8 +63,8 @@ original lab behavior. The written analysis below needs instructor assessment.
 | ------------------------------------------- | ---------------- | ------------------------- | ----------------------------- | ------------ | -------------------- | ----------- |
 | Fill from the original responses and labels |                  |                           |                               |              |                      |             |
 
-For an arithmetic example, three relevant top-three hits among four answerable
-questions give recall@3 of 3/4. If one of two unanswerable questions crosses the
+For an arithmetic example, if three of four answerable questions each have at least
+one relevant hit in the top three, recall@3 is 3/4. If one of two unanswerable questions crosses the
 cutoff, the false-positive fraction is 1/2. These are example counts, not measured
 Loom results.
 
