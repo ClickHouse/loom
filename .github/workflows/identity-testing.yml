@@ -223,7 +223,7 @@ jobs:
               issue = managed.get(key)
               if result not in {"success", "failure", "review"} or (issue and issue["state"] == "closed"):
                   continue
-              text = f"<!-- loom-endpoint-probe:v1 {key} -->\n<!-- loom-endpoint-probe-state:v1 {result} -->\n\nThe bounded {key} probe reports **{result}** on trusted main. [Read the bounded probe logs and mutation summary]({url}).\n\nReproduce the named workflow job. A mutation survivor needs review for a missing assertion or equivalent mutation; it is not a vulnerability claim. No crash input or source excerpt is published here. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
+              text = f"<!-- loom-endpoint-probe:v1 {key} -->\n<!-- loom-endpoint-probe-state:v1 {result} -->\n\n### Company or project name\n\nClickHouse\n\nThe bounded {key} probe reports **{result}** on trusted main. [Read the bounded probe logs and mutation summary]({url}).\n\nReproduce the named workflow job. A mutation survivor needs review for a missing assertion or equivalent mutation; it is not a vulnerability claim. No crash input or source excerpt is published here. Keep security-sensitive reports in the private route in SECURITY.md. Automation preserves edited bodies and closed decisions."
               if issue is None:
                   if result in {"failure", "review"}:
                       api("POST", repo, {"title": titles[key], "body": text})
