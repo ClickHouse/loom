@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
 _TEST_FILE = "tests/contracts/test_http_schema.py"
 _SEEN: set[tuple[int | None, str]] = set()
+
+
+def _error(message: str) -> None:
+    line = sys._getframe(1).f_lineno
+    print(f"::error file=tests/contracts/ci_diagnostics.py,line={line}::{message}", flush=True)
 
 
 def pytest_runtest_logreport(report: Any) -> None:
@@ -33,21 +39,21 @@ def pytest_runtest_logreport(report: Any) -> None:
 def pytest_collectreport(report: Any) -> None:
     if report.failed and (None, "collection") not in _SEEN and len(_SEEN) < 10:
         _SEEN.add((None, "collection"))
-        print("::error::HTTP contract collection failed.", flush=True)
+        _error("HTTP contract collection failed.")
 
 
 def verify_report(path: Path) -> bool:
     if not path.is_file():
-        print("::error::HTTP contract report is missing.")
+        _error("HTTP contract report is missing.")
         return False
     try:
         with path.open("rb") as source:
             payload = source.read(1024 * 1024 + 1)
     except OSError:
-        print("::error::HTTP contract report cannot be read.")
+        _error("HTTP contract report cannot be read.")
         return False
     if len(payload) > 1024 * 1024:
-        print("::error::HTTP contract report exceeds the size limit.")
+        _error("HTTP contract report exceeds the size limit.")
         return False
     try:
         suites = ET.fromstring(payload).findall(".//testsuite")
@@ -62,11 +68,11 @@ def verify_report(path: Path) -> bool:
             if counts[field] > 10_000:
                 raise ValueError
     except (ET.ParseError, ValueError):
-        print("::error::HTTP contract report has invalid XML or counts.")
+        _error("HTTP contract report has invalid XML or counts.")
         return False
     print("HTTP contract counts: " + json.dumps(counts, sort_keys=True))
     if counts != {"tests": 10, "skipped": 0, "failures": 0, "errors": 0}:
-        print("::error::HTTP contract requires ten tests without skips, failures or errors.")
+        _error("HTTP contract requires ten tests without skips, failures or errors.")
         return False
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
         output.write(

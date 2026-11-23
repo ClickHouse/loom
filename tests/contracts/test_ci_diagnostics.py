@@ -57,6 +57,24 @@ class Diagnostics(unittest.TestCase):
         )
         self.assertEqual(self.emit(_Report()), "")
 
+    def test_producer_location_reads_no_frame_locals_or_traceback(self) -> None:
+        class Frame:
+            f_lineno = 42
+
+            def __getattr__(self, name):
+                raise AssertionError("Frame context access is forbidden")
+
+        output = io.StringIO()
+        with (
+            redirect_stdout(output),
+            patch.object(diagnostics.sys, "_getframe", return_value=Frame()),
+        ):
+            diagnostics._error("Synthetic static error.")
+        self.assertEqual(
+            output.getvalue(),
+            "::error file=tests/contracts/ci_diagnostics.py,line=42::Synthetic static error.\n",
+        )
+
     def test_other_paths_and_successes_emit_nothing(self) -> None:
         for path in ("/private/test.py", "../test.py", "tests/contracts/test_http_schema.py%0A"):
             self.assertEqual(
@@ -91,9 +109,10 @@ class Diagnostics(unittest.TestCase):
             "",
         )
         diagnostics._SEEN.clear()
-        self.assertEqual(
-            self.emit(SimpleNamespace(failed=True), collect=True),
-            "::error::HTTP contract collection failed.\n",
+        collection = self.emit(SimpleNamespace(failed=True), collect=True)
+        self.assertRegex(
+            collection,
+            r"^::error file=tests/contracts/ci_diagnostics\.py,line=\d+::HTTP contract collection failed\.\n$",
         )
         self.assertEqual(self.emit(SimpleNamespace(failed=True), collect=True), "")
 
@@ -116,7 +135,7 @@ class Diagnostics(unittest.TestCase):
         ):
             accepted, output, summary = self.check_xml(payload)
             self.assertFalse(accepted)
-            self.assertTrue(output.startswith("::error::"))
+            self.assertRegex(output, r"^::error file=tests/contracts/ci_diagnostics\.py,line=\d+::")
             self.assertEqual(summary, "")
             self.assertNotIn("PRIVATE_SENTINEL", output)
 
