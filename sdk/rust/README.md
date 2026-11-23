@@ -18,14 +18,14 @@ From your Rust application's directory, add the SDK from
 [crates.io](https://crates.io/crates/clickhouse-loom):
 
 ```bash
-cargo add clickhouse-loom
+cargo add clickhouse-loom@0.1.1
 ```
 
 The equivalent `Cargo.toml` dependency is:
 
 ```toml
 [dependencies]
-clickhouse-loom = "0.1"
+clickhouse-loom = "0.1.1"
 ```
 
 Cargo resolves the SDK's dependencies automatically.
