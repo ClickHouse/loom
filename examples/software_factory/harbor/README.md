@@ -42,9 +42,10 @@ reads and writes, uncached input, and estimated cost for each measured model ste
 trajectory. Tool-call IDs join the step to the recorded tool responses. The source
 hash names the trajectory, and missing usage fields stay unknown. Attempt totals
 remain authoritative for cost. This optional capture runs after billing collection.
-Attempt reports link this usage to the corresponding tool-response summary and
-Loom's retrieval stages. Claude Code supplies solver usage. Loom supplies its
-request traces and provider ledger.
+Attempt reports join this usage to the recorded tool names and result sizes by
+response and link to Loom's retrieval stages. Use the same task and repeat to
+compare the baseline and Loom report. Claude Code supplies solver usage. Loom
+supplies its request traces and provider ledger.
 
 Attempt reports include the UTF-8 size of Loom's initialization instructions
 and the compact JSON size of its listing from the frozen MCP qualification.

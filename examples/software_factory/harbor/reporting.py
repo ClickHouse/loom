@@ -376,6 +376,32 @@ def _trace_table(record):
     )
 
 
+def _model_response_table(usage, trace):
+    if not usage["turns"]:
+        return ""
+    calls = {call["tool_call_id"]: call for call in trace["calls"]}
+    fields = (
+        "input_tokens",
+        "uncached_input_tokens",
+        "cache_write_tokens",
+        "cache_read_tokens",
+        "output_tokens",
+    )
+    lines = [
+        "### Model responses",
+        "",
+        "| Step | Tools | Result chars | Input | Uncached | Cache writes | Cache reads | Output |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for turn in usage["turns"]:
+        requested = [calls.get(call_id, {}) for call_id in turn["tool_call_ids"]]
+        names = ", ".join(call.get("tool", "unknown") for call in requested)
+        chars = ", ".join(_number(call.get("result_chars"), 0) for call in requested)
+        usage_cells = " | ".join(_number(turn.get(field), 0) for field in fields)
+        lines.append(f"| {turn['step_id']} | {names or '—'} | {chars or '—'} | {usage_cells} |")
+    return "\n".join(lines) + "\n"
+
+
 def _summary(slots, observed):
     records = [observed[s["order"]]["result"] for s in slots if s["order"] in observed]
     costs = [r.get("generation_cost_usd") for r in records]
@@ -694,6 +720,15 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"
                 )
                 text += _trace_table(record)
+                usage_link = item["links"].get("model usage by turn")
+                trace_link = item["links"].get("tool response summary")
+                if usage_link and trace_link:
+                    try:
+                        text += _model_response_table(
+                            _read(path.parent / usage_link), _read(path.parent / trace_link)
+                        )
+                    except (OSError, ValueError, KeyError, TypeError):
+                        text += "Model response details unavailable.\n"
             else:
                 text += "No measured result yet. Cost, time and success remain unknown.\n"
             _atomic(path.with_suffix(".md"), text)
