@@ -16,6 +16,7 @@ The output directory contains:
 - `reports/charts.html` and `reports/charts.json`: bar charts for hidden success, blind fixed judgments, regressions, provider cost,
   agent time, tests, Loom calls, memory writes and tokens and total tool calls, with scenario and attempt filters.
   The matched table shows cost and time changes from No Loom, first-prompt cache activity, and solver token totals with cache reads, cache writes and output.
+  Equal-cold and equal-warm estimates replace only the first solver input charge using the same price rule for every arm. Reported cost stays visible alongside both estimates.
 - `reporting-manifest.json`: source job, derived jobs and report locations.
 
 With three scenarios, three repeats and five arms, the primary comparison has

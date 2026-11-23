@@ -347,6 +347,8 @@ def _summary(slots, observed):
         "infrastructure_errors": sum(not r.get("harbor_reward_valid", False) for r in records),
         "generation_cost_usd": sum(costs) if costs and None not in costs else None,
         "total_provider_cost_usd": _known_sum(records, "total_provider_cost_usd"),
+        "equal_cold_provider_cost_usd": _known_sum(records, "equal_cold_provider_cost_usd"),
+        "equal_warm_provider_cost_usd": _known_sum(records, "equal_warm_provider_cost_usd"),
         "loom_provider_cost_usd": _known_sum(records, "loom_provider_cost_usd"),
         "known_generation_cost_usd": sum(c for c in costs if c is not None) if costs else None,
         "unknown_generation_costs": sum(c is None for c in costs),
@@ -387,18 +389,25 @@ def _number(value, digits=3):
 
 def _table(arms):
     lines = [
-        "| Arm | Observed / expected | Pending | Resolved | Generation estimate (USD) "
+        "| Arm | Observed / expected | Pending | Resolved | Solver USD | Observed provider USD "
+        "| Equal cold USD | Equal warm USD "
         "| Mean full end-to-end (s) | Mean native Harbor (s) |",
-        "|---|---:|---:|---:|---:|---:|---:|",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for arm, info in arms.items():
         lines.append(
             f"| {arm} | {info['observed']} / {info['expected']} | {info['pending']} "
             f"| {info['resolved']} | {_number(info['generation_cost_usd'], 7)} "
+            f"| {_number(info['total_provider_cost_usd'], 7)} "
+            f"| {_number(info['equal_cold_provider_cost_usd'], 7)} "
+            f"| {_number(info['equal_warm_provider_cost_usd'], 7)} "
             f"| {_number(info['mean_end_to_end_s'])} "
             f"| {_number(info['mean_native_duration_s'])} |"
         )
-    return "\n".join(lines) + "\n"
+    return "\n".join(lines) + (
+        "\n\nEqual-cache estimates reprice the first solver input as a full five-minute "
+        "cache write or a full cache read. Later turns and Loom charges use the recorded values.\n"
+    )
 
 
 def generate_reports(protocol, entries, *, job_name="live"):
@@ -518,8 +527,11 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                     f"Resolved: {record['resolved']}. "
                     f"Full end-to-end: {_number(record['end_to_end_s'])}s. "
                     f"Native Harbor: {_number(record['native_duration_s'])}s. "
-                    "Generation estimate (USD): "
-                    f"{_number(record.get('generation_cost_usd'), 7)}.\n\n"
+                    f"Solver cost (USD) {_number(record.get('generation_cost_usd'), 7)}. "
+                    "Observed provider cost (USD) "
+                    f"{_number(record.get('total_provider_cost_usd'), 7)}. "
+                    f"Equal cold {_number(record.get('equal_cold_provider_cost_usd'), 7)}. "
+                    f"Equal warm {_number(record.get('equal_warm_provider_cost_usd'), 7)}.\n\n"
                 )
                 text += (
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"

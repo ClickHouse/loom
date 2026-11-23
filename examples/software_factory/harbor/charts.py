@@ -104,6 +104,8 @@ def chart_data(protocol, entries, views_manifest):
                 seconds=number(result.get("end_to_end_s")),
                 native_seconds=number(result.get("harbor_wall_s")),
                 cost=number(result.get("total_provider_cost_usd")),
+                equal_cold_cost=number(result.get("equal_cold_provider_cost_usd")),
+                equal_warm_cost=number(result.get("equal_warm_provider_cost_usd")),
                 generation_cost=number(result.get("generation_cost_usd")),
                 loom_provider_cost=number(result.get("loom_provider_cost_usd")),
                 agent_seconds=number(result.get("agent_time_s")),
@@ -170,8 +172,8 @@ def chart_data(protocol, entries, views_manifest):
         "evaluation_complete": evaluation_complete,
         "comparison_url": views_manifest.get("links", {}).get("comparison"),
         "target_reduction": 0.20,
-        "cost_note": "Provider cost combines generation list-price estimates and "
-        "matched Loom provider ledger costs, including failed attempts. "
+        "cost_note": "Provider cost combines the solver-reported cost (or Harbor's fallback "
+        "estimate) and paid model calls recorded by Loom, including failed attempts. "
         "Unmatched backend cost remains unknown. Judge and infrastructure costs are separate.",
     }
 

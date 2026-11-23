@@ -27,16 +27,18 @@ and embeddings are unpriced. No coding agent writes memory.
 
 ## Prompt cache
 
-| Arm                  | First cache-read tokens | First cache-write tokens | Observed cost change | Agent-time change | End-to-end change | Equal cold first-input cost change | Equal warm first-input cost change |
-| -------------------- | ----------------------: | -----------------------: | -------------------: | ----------------: | ----------------: | ---------------------------------: | ---------------------------------: |
-| No Loom              |                       0 |                   17,624 |                +0.0% |             +0.0% |             +0.0% |                              +0.0% |                              +0.0% |
-| Tree-sitter          |                  17,833 |                    4,462 |               −42.4% |            −20.9% |             −6.3% |                              +8.1% |                             −10.3% |
-| Tree-sitter + memory |                  17,833 |                    4,453 |               −43.9% |            −36.7% |            −18.0% |                              +6.7% |                             −13.1% |
-| SCIP                 |                       0 |                   22,297 |                +8.4% |            −24.3% |             −9.1% |                              +8.4% |                              −9.7% |
-| SCIP + memory        |                  22,286 |                        0 |               −51.6% |            −31.5% |            −14.0% |                             +11.6% |                              −3.2% |
+| Arm                  | First cache-read tokens | First cache-write tokens | Observed cost change | Agent-time change | End-to-end change | Equal-cold estimate | Equal-warm estimate |
+| -------------------- | ----------------------: | -----------------------: | -------------------: | ----------------: | ----------------: | ------------------: | ------------------: |
+| No Loom              |                       0 |                   17,624 |                +0.0% |             +0.0% |             +0.0% |             $0.1694 |             $0.0848 |
+| Tree-sitter          |                  17,833 |                    4,462 |               −42.4% |            −20.9% |             −6.3% |     $0.1831 (+8.1%) |    $0.0761 (−10.3%) |
+| Tree-sitter + memory |                  17,833 |                    4,453 |               −43.9% |            −36.7% |            −18.0% |     $0.1807 (+6.7%) |    $0.0737 (−13.1%) |
+| SCIP                 |                       0 |                   22,297 |                +8.4% |            −24.3% |             −9.1% |     $0.1836 (+8.4%) |     $0.0766 (−9.7%) |
+| SCIP + memory        |                  22,286 |                        0 |               −51.6% |            −31.5% |            −14.0% |    $0.1890 (+11.6%) |     $0.0820 (−3.2%) |
 
-The sensitivity changes the price of the first prompt only. Later requests
-and usage use the recorded values. Every Loom arm costs more than baseline
+The estimates price the first input as a full five-minute write or a full
+cache read. Output, later turns, and Loom provider costs use the recorded
+values. Each percentage uses the No Loom estimate from the same column.
+Every Loom arm costs more than baseline
 in the equal-cold estimate. The largest equal-warm cost reduction is 13.1%.
 The observed cost comparison reflects provider cache reuse.
 

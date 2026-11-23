@@ -38,6 +38,10 @@ const tokenParts = [
   ["model_cache_write_tokens", "cache writes"],
   ["model_output_tokens", "output"],
 ];
+const cacheCosts = [
+  { key: "equal_cold_cost", title: "Equal-cold estimate", kind: "cost" },
+  { key: "equal_warm_cost", title: "Equal-warm estimate", kind: "cost" },
+];
 const signedPercent = new Intl.NumberFormat(undefined, {
   style: "percent",
   minimumFractionDigits: 1,
@@ -64,6 +68,14 @@ function changeFromBaseline(value, baseline) {
 }
 function firstPromptCache(read, write) {
   return `First prompt cache: ${format(read, "count")} read · ${format(write, "count")} written`;
+}
+function addCacheCosts(cell, valueFor, baselineFor = () => null) {
+  for (const metric of cacheCosts) {
+    const value = valueFor(metric);
+    const delta = changeFromBaseline(value, baselineFor(metric));
+    const valueLabel = format(value, "cost");
+    cell.append(node("small", `${metric.title} ${valueLabel}${delta === null ? "" : ` (${delta})`}`));
+  }
 }
 function aggregate(rows, arm, metric) {
   const observed = rows.filter((row) => row.arm === arm && row.state !== "pending");
@@ -160,6 +172,11 @@ function summary(rows, plannedRows) {
       if (value.known < value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
       if (metric === cost && observed.length) {
         cell.append(node("small", firstPromptCache(tokens("first_cache_read_tokens"), tokens("first_cache_write_tokens"))));
+        addCacheCosts(
+          cell,
+          (variant) => aggregate(rows, arm, variant).value,
+          (variant) => (arm === "baseline" ? null : aggregate(rows, "baseline", variant).value),
+        );
       }
       row.append(cell);
     }
@@ -214,11 +231,12 @@ function issuesTable(rows, plannedRows) {
 function chart(rows, plannedRows) {
   const key = byId("chart-metric").value;
   const metric =
-    key === "cost"
+    cacheCosts.find((metric) => metric.key === key) ||
+    (key === "cost"
       ? costMetric(rows)
       : key === "agent_seconds"
         ? timeMetric()
-        : { key: "resolved", title: "Attempts passed", kind: "rate" };
+        : { key: "resolved", title: "Attempts passed", kind: "rate" });
   const sums = Object.fromEntries(arms.map((arm) => [arm, aggregate(rows, arm, metric)]));
   const maximum = metric.kind === "rate" ? 1 : Math.max(...Object.values(sums).map((x) => x.value ?? 0), 0) * 1.1 || 1;
   const target =
@@ -319,6 +337,7 @@ function attemptsTable(rows) {
     const costCell = node("td", format(row[cost.key], "cost"), "numeric");
     if (row.state !== "pending") {
       costCell.append(node("small", firstPromptCache(row.first_cache_read_tokens, row.first_cache_write_tokens)));
+      addCacheCosts(costCell, (metric) => row[metric.key]);
     }
     item.append(
       costCell,

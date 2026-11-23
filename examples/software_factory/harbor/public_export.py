@@ -37,6 +37,9 @@ TOKEN_FIELDS = (
     "model_output_tokens",
     "model_cache_read_tokens",
     "model_cache_write_tokens",
+    "first_prompt_input_tokens",
+    "first_cache_read_tokens",
+    "first_cache_write_tokens",
     "model_total_tokens",
     "loom_provider_input_tokens",
     "loom_provider_output_tokens",
@@ -48,6 +51,11 @@ NUMERIC = (
     "generation_cost_usd",
     "loom_provider_cost_usd",
     "total_provider_cost_usd",
+    "first_observed_input_cost_usd",
+    "first_cold_input_cost_usd",
+    "first_warm_input_cost_usd",
+    "equal_cold_provider_cost_usd",
+    "equal_warm_provider_cost_usd",
     "agent_time_s",
     "end_to_end_s",
     "harbor_wall_s",
@@ -362,6 +370,10 @@ def export_public(protocol, output: Path, *, public_config=None, require_complet
             "cost_scope": (
                 "Native Claude Code reported cost plus authenticated Loom provider ledger; "
                 "setup and judging separate."
+            ),
+            "cache_cost_scope": (
+                "Estimates replace the first solver input with a full five-minute cache write "
+                "or a full cache read. Later turns, output and Loom costs use the recorded values."
             ),
         }
         write(output / "results.json", payload)
