@@ -360,6 +360,11 @@ through the shared result enrichment. Resolved symbol names rank matching lesson
 after constraints and pins; unresolved names contribute no query terms. Empty
 lesson fields stay off the wire.
 
+When several grep hits need implementation source, pass their `path:line`
+locations to `code.enclosing` with `include_body=true`. It returns complete
+enclosing definitions together. `code.symbol` resolves a named definition or
+one location; the batch avoids a separate lookup for every located definition.
+
 Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.
@@ -516,6 +521,14 @@ after one on N. Other processes keep the rows they read for up to
 Every column is in the generated [schema reference](../reference/schema.md).
 
 ## Query patterns
+
+A file-qualified symbol request (`src/module.py:Type.method` or
+`src/Type.cpp:Namespace::Type::method`) keeps the filename as a hard constraint.
+Candidate discovery reads that file's symbol rows; the authoritative live read
+checks the filename again before ranking and limiting. It never retries the name
+against other files. `resolved_by: file_symbol` discloses the binding; stored
+symbol names and ids stay intact. The shared resolver applies this spelling to
+structural code operations.
 
 Python import spellings use the bounded short-name candidate read after an exact
 symbol miss. Read-side matching preserves dotted module scopes and treats a package's

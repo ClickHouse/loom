@@ -39,13 +39,13 @@ from server.operations.base import MCP_HIDDEN
 
 
 class CodeSymbolInput(_CodeIdentity):
-    # bare, qualified, or partially qualified name — or `path:line`
+    # bare, qualified, or partially qualified name — or `path:line` / `path:symbol`
     # ("src/Foo.cpp:123"), which resolves to the innermost function
     # containing that line: a grep hit or review comment becomes the whole
     # function in one call.
     name: str = Field(
         default="",
-        description="Definition name or source path:line. Qualified names disambiguate matches.",
+        description="Definition name, path:line, or path:symbol. A filename constrains the lookup.",
     )
     # An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it
     # wins over `name` and resolves exactly that definition.
@@ -194,7 +194,7 @@ class CodeSymbolOutput(BaseModel):
     # — same_file | same_dir | co_change | path_distance | none. "" and off the wire
     # when no context was given.
     picked_by: str = ""
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
     # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # The document sections that cite the definition (the Markdown lane's `reads` edges)
@@ -382,13 +382,13 @@ class CodeCallersOutput(_LessonsOut):
     # Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`;
     # when it is on, "" or how many changed files it did not fully read.
     overlay_note: str = ""
-    # How an over-qualified name bound when the exact form missed —
+    # How a read-side name spelling bound —
     # `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a
     # namespace the definition does not carry dropped; one definition fit), or
     # `registration` when a SQL-level name (`sumMap`, `arrayFold::executeImpl`) bound to
     # the implementing class's methods through its registration statement, or
-    # `python_module` for an import spelling of a retained Python name. "" and
-    # off the wire for an exact hit.
+    # `python_module` for an import spelling of a retained Python name, or
+    # `file_symbol` for a name constrained by a filename. "" and off the wire for an exact hit.
     resolved_by: str = ""
     # A bare short name that resolves to many unrelated definitions (setColumns
     # on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the
@@ -565,7 +565,7 @@ class CodeImpactOutput(_LessonsOut):
     # True when `impacted_symbols` is a page of the radius (per_hop_limit /
     # offset sliced it, or the per-hop edge read hit its cap).
     truncated: bool = False
-    # `anonymous_namespace` | `tail` | `python_module` | `registration` when a
+    # `anonymous_namespace` | `tail` | `python_module` | `registration` | `file_symbol` when a
     # read-side name form bound; "" and off the wire for an exact hit.
     resolved_by: str = ""
     # Why the radius is empty, '' when it is not. Answers:

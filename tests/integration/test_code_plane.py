@@ -277,3 +277,21 @@ async def test_deletion_tombstones_everything(code_env) -> None:
     assert await repo.live_chunks_for_path(org, ns, "src/S.cpp", model) == []
     assert await repo.live_symbols_for_path(org, ns, "src/S.cpp", "treesitter") == []
     assert await repo.live_edges_for_path(org, ns, "src/S.cpp", "treesitter") == []
+
+
+async def test_file_qualified_symbol_keeps_overloads_and_declines_other_files(code_env) -> None:
+    from server.code.app.symbol.resolve import _resolve_symbols, near_misses
+
+    repo, org, ns = code_env
+    await _ingest(repo, org, ns)
+    plain = await repo.symbols_by_name(org, ns, "Squasher::insert")
+    scoped = await _resolve_symbols(repo, org, ns, symbol_id="", name="src/S.cpp:Squasher::insert")
+    assert len(scoped) == 2
+    assert {r["symbol_id"] for r in scoped} == {r["symbol_id"] for r in plain}
+    assert all(r["resolved_by"] == "file_symbol" for r in scoped)
+    assert not await _resolve_symbols(
+        repo, org, ns, symbol_id="", name="src/Other.cpp:Squasher::insert"
+    )
+    assert not await near_misses(repo, org, ns, "src/Other.cpp:Squasher::insert")
+    limited = await repo.symbols_by_name(org, ns, "insert", path="src/S.cpp", limit=1)
+    assert len(limited) == 1 and limited[0]["path"] == "src/S.cpp"

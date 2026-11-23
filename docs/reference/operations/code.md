@@ -299,7 +299,7 @@ What does this symbol call — forward call edges (depth<=3), tier-marked like c
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
@@ -353,7 +353,7 @@ Who calls this symbol — exact reverse call edges (depth<=3), compiler-resolved
 | `overlay_head_sha` | `str` | The PR head commit whose post-image was parsed; "" when there is no overlay. |
 | `overlay_added` | `int` | How many functions the PR adds in its parsed files. |
 | `overlay_note` | `str` | Why the overlay is off: `head_not_in_mirror`, `no_merge_base` or `no_repo_entry`; when it is on, "" or how many changed files it did not fully read. |
-| `resolved_by` | `str` | How an over-qualified name bound when the exact form missed — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a… |
+| `resolved_by` | `str` | How a read-side name spelling bound — `anonymous_namespace` (`(anonymous namespace)::` segments stripped) or `tail` (a namespace the definition does not carry dropped; one definition fit), or `registration` when a SQL-level name (`sumMap`… |
 | `ambiguous` | `bool` | A bare short name that resolves to many unrelated definitions (setColumns on 60 classes) is not walked: `ambiguous` is set, `candidates` lists the qualified names to pick from, and edges is empty. |
 | `candidates` | `list[str]` | With `ambiguous`: up to 20 qualified names to pick from. |
 | `dispatch_seeds` | `list[dict[str, str]]` | Virtual dispatch: when the seed is an override, calls in the code go to the BASE declaration, so its callers are included and listed here as {"symbol", "via": "overrides" \| "inherits"}. |
@@ -590,11 +590,11 @@ Batched `path:line` -> enclosing function.
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `locations` | `list[str]` | required | "src/Foo.cpp:123" — repo-relative path, 1-based line. |
-| `include_body` | `bool` | `False` | include_body: ship the enclosing function's whole body with each resolved location, so a grep hit becomes the function it sits in without a follow-up code.symbol or a file read (most index answers are otherwise followed by a read of the… |
-| `token_budget` | `int` | `0` | Estimated-token cap on included bodies; 0 (default) is unlimited. |
-| `neighbours` | `bool \| None` | `None` | neighbours: a graph evidence block per distinct enclosing function: up to neighbour_k callers, callees (compiler tier preferred, symbols outside the repo dropped, parser guesses below 0.8 confidence dropped) and mapped tests, the module… |
-| `neighbour_k` | `int` | `5` | With `neighbours`: at most this many callers and callees per function (1..20). |
+| `locations` | `list[str]` | required | Repo-relative path:line locations to resolve together. |
+| `include_body` | `bool` | `False` | Include retained enclosing source per location; default false. |
+| `token_budget` | `int` | `0` | Estimated tokens for body content; zero is unlimited (default). |
+| `neighbours` | `bool \| None` | `None` | Attach callers, callees and mapped tests per function; default off. |
+| `neighbour_k` | `int` | `5` | Maximum callers and callees per function; default five. |
 
 | Output field | Type | Meaning |
 | --- | --- | --- |
@@ -843,7 +843,7 @@ Symbol-shaped (name/symbol_id) or diff-shaped (files/diff) blast radius.
 | `causes` | `list[str]` | Why `epistemic` is `lower_bound`, from the set above; empty when it is `exact`. |
 | `by_hop_counts` | `dict[int, int]` | Distinct symbols reached per hop BEFORE any slicing: {1: n, 2: m}. |
 | `truncated` | `bool` | True when `impacted_symbols` is a page of the radius (per_hop_limit / offset sliced it, or the per-hop edge read hit its cap). |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` when a read-side name form bound; "" and off the wire for an exact hit. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
 | `verdict` | `str` | Why the radius is empty, '' when it is not. |
 | `paths_seen` | `list[dict[str, str]]` | Diff shape: every path the request named, with its class — `test` \| `doc` \| `config` \| `unindexed` (outside the indexed prefixes, or a source path the index holds no file row for) \| `src` — so the verdict is actionable without re-deriving… |
 | `overlay` | `bool` | On the wire only when `pr_number` was given — see CodeCallersOutput. |
@@ -1555,7 +1555,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `agent` | `str` | `'-'` | The writing or reading agent; `'-'` or `'*'` means any agent where the op allows it. |
 | `user_id` | `str` | `'-'` | The end user the row belongs to; `'-'` for none. |
 | `consumer` | `str` | `''` | trace attribution: which integration is calling (clickgap\|claude-code\|…) |
-| `name` | `str` | `''` | Definition name or source path:line. |
+| `name` | `str` | `''` | Definition name, path:line, or path:symbol. |
 | `symbol_id` | `str` | `''` | An index symbol id (a definition's `unit_id`, an edge's `*_symbol_id`); when set it wins over `name` and resolves exactly that definition. |
 | `include_body` | `bool` | `True` | Include retained implementation source when available; false returns metadata. |
 | `include_history` | `bool` | `True` | Attach `recent_prs` (merged PRs over the definitions' paths) to the first definition. |
@@ -1588,7 +1588,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | `uses_truncated` | `bool` | True when `uses_limit` shortened the list or the token cap withheld `uses_brief`. |
 | `uses_tokens` | `int` | Estimated tokens the compact `uses` block cost out of `token_budget`. |
 | `picked_by` | `str` | Which context key ranked the definitions when `near_paths` / `pr_number` was given — same_file \| same_dir \| co_change \| path_distance \| none. "" and off the wire when no context was given. |
-| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` when a read-side name form bound; "" and off the wire for an exact hit. |
+| `resolved_by` | `str` | `anonymous_namespace` \| `tail` \| `python_module` \| `registration` \| `file_symbol` when a read-side name form bound; "" and off the wire for an exact hit. |
 | `documented_in` | `list[dict[str, Any]]` | The document sections that cite the definition (the Markdown lane's `reads` edges) — section qualified name, path, line; at most five distinct sections, first by confidence. |
 | `neighbours` | `list[dict[str, Any]]` | The neighbours graph block on the definitions (one entry per definition anchor); empty unless `neighbours` ran. |
 | `anchors` | `int` | How many definitions the `neighbours` block was built for; 0 when it is off. |
