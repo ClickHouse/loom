@@ -100,6 +100,10 @@ async def lessons_for(
         if resolved is None or remaining <= 0:
             return path_lessons.Lessons([])
         org, nss, trunk, on_trunk = resolved
+        if isinstance(input, CodeSearchInput):
+            query = input.query
+        elif isinstance(input, CodeGrepInput):
+            query = " ".join(input.pattern) if isinstance(input.pattern, list) else input.pattern
         try:
             return await path_lessons.lessons_for_paths(
                 org,
@@ -109,13 +113,7 @@ async def lessons_for(
                 token_budget=settings.code_result_lessons_tokens,
                 timeout_s=remaining,
                 matched_symbols=matched_symbols if on_trunk else None,
-                query=(
-                    input.query
-                    if isinstance(input, CodeSearchInput)
-                    else input.pattern
-                    if isinstance(input, CodeGrepInput)
-                    else query
-                ),
+                query=query,
             )
         except Exception as e:  # noqa: BLE001 — lesson enrichment must not fail the code answer
             logger.debug("code lessons skipped: %s", e)

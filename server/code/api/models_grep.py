@@ -4,7 +4,7 @@ code.files (indexed files by name).
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -32,17 +32,18 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
+GrepText = Annotated[str, Field(min_length=2, max_length=1000)]
+
+
 class CodeGrepInput(_CodeIdentity, _ResultLessons):
     """Literal or regex search of indexed source with enclosing symbols and coverage.
 
     Literal by default; regex=True switches to RE2.
     """
 
-    # The text to find: a literal substring, or an RE2 expression with `regex`.
-    pattern: str = Field(
-        min_length=2,
-        max_length=1000,
-        description="Exact text to find, or an RE2 expression when regex is true.",
+    # multiSearchAny accepts up to 255 alternatives in a scan.
+    pattern: GrepText | Annotated[list[GrepText], Field(min_length=1, max_length=255)] = Field(
+        description="Literal text, a list of alternatives, or one RE2 expression with regex=true.",
     )
     # True reads `pattern` as RE2; an invalid expression is a 422.
     regex: bool = False
