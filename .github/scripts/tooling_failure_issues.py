@@ -267,11 +267,22 @@ def main() -> None:
         raise SystemExit("Tooling issues require the default branch of the owning repository")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_name = os.environ["GITHUB_EVENT_NAME"]
-    workflows = select_workflows(event_name, event)
-    created = report(github_api, collect_failures(github_api, workflows))
+    findings: dict[str, Finding] = {}
+    failed_sources: list[str] = []
+    for workflow in select_workflows(event_name, event):
+        try:
+            findings.update(collect_failures(github_api, [workflow]))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            failed_sources.append(f"{workflow} ({type(exc).__name__})")
     if event_name in {"schedule", "workflow_dispatch"}:
-        created += report(github_api, collect_scanning_findings(github_api))
+        try:
+            findings.update(collect_scanning_findings(github_api))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            failed_sources.append(f"Code scanning ({type(exc).__name__})")
+    created = report(github_api, findings)
     print(f"Tooling maintenance issues opened: {created}")
+    if failed_sources:
+        raise SystemExit("Tooling sweep incomplete for " + ", ".join(failed_sources))
 
 
 if __name__ == "__main__":

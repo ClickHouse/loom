@@ -1,5 +1,8 @@
+import os
+import tempfile
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
 
@@ -8,6 +11,7 @@ from tooling_failure_issues import (
     REPO,
     collect_failures,
     collect_scanning_findings,
+    main,
     report,
     select_workflows,
     shared_failures,
@@ -17,7 +21,8 @@ from tooling_failure_issues import (
 def run(
     number: int,
     *,
-    conclusion: str = "failure",
+    conclusion: str | None = "failure",
+    status: str = "completed",
     event: str = "push",
     repository: str = REPO,
     branch: str = "main",
@@ -29,6 +34,7 @@ def run(
         "head_branch": branch,
         "event": event,
         "conclusion": conclusion,
+        "status": status,
         "path": ".github/workflows/external-links.yml",
         "raw_error": "information from the check output",
     }
@@ -56,8 +62,15 @@ def fake_api(
             return issues or []
         if "missing.yml" in path:
             raise HTTPError(path, 404, "Not found", None, None)
-        event = parse_qs(urlsplit(path).query)["event"][0]
-        return {"workflow_runs": [row for row in runs if row["event"] == event]}
+        params = parse_qs(urlsplit(path).query)
+        assert params["branch"] == ["main"] and params["status"] == ["completed"]
+        return {
+            "workflow_runs": [
+                row
+                for row in runs
+                if row["event"] == params["event"][0] and row["status"] == params["status"][0]
+            ]
+        }
 
     return Mock(side_effect=request)
 
@@ -84,6 +97,46 @@ class ToolingIssuesTests(unittest.TestCase):
         api = fake_api([run(2), run(3, event="schedule", conclusion="success")])
         self.assertEqual(report_failures(api, ["external-links.yml"]), 0)
         self.assertFalse(any("payload" in call.kwargs for call in api.call_args_list))
+
+    def test_running_workflow_does_not_hide_a_completed_failure(self) -> None:
+        issues: list[dict] = []
+        api = fake_api([run(2), run(3, status="in_progress", conclusion=None)], issues)
+        self.assertEqual(report_failures(api, ["external-links.yml"]), 1)
+        self.assertIn("/actions/runs/2", issues[0]["body"])
+
+    def test_sweep_reports_other_findings_after_a_workflow_lookup_failure(self) -> None:
+        issues: list[dict] = []
+        alerts = [{"number": 4, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([run(2)], issues, alerts)
+
+        def request(path: str, *, payload: dict | None = None) -> dict | list:
+            if "/jobs?" in path:
+                raise HTTPError(path, 503, "Service unavailable", None, None)
+            return api(path, payload=payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            event = Path(directory) / "event.json"
+            event.write_text("{}")
+            env = {
+                "GITHUB_REPOSITORY": REPO,
+                "GITHUB_REF": "refs/heads/main",
+                "GITHUB_EVENT_PATH": str(event),
+                "GITHUB_EVENT_NAME": "schedule",
+            }
+            with (
+                patch.dict(os.environ, env),
+                patch("tooling_failure_issues.github_api", request),
+                patch(
+                    "tooling_failure_issues.select_workflows",
+                    return_value=["external-links.yml", "http-contract.yml"],
+                ),
+                self.assertRaisesRegex(SystemExit, r"http-contract[.]yml"),
+            ):
+                main()
+
+        self.assertEqual(len(issues), 2)
+        self.assertTrue(any("external-links" in issue["title"] for issue in issues))
+        self.assertTrue(any("codeql-alerts" in issue["title"] for issue in issues))
 
     def test_report_creates_one_issue_and_never_copies_run_content(self) -> None:
         issues: list[dict] = []
