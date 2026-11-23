@@ -43,7 +43,8 @@ The observed cost comparison reflects provider cache reuse.
 SCIP's first model turn costs $0.11345, or $0.02077 more than No Loom.
 Its remaining turns cost $0.07014, or $0.00654 less. Tree-sitter with
 memory has the lowest combined cost for later turns at $0.06776, 11.6%
-below No Loom. These are the recorded costs of each phase.
+below No Loom. Harbor's per-turn estimates sum to the reported Claude Code
+total for each arm within $0.00000001.
 
 Both CLI cohorts run the arms in the same order. SCIP is first in both and
 records zero first-prompt cache reads. The repeated order leaves position
