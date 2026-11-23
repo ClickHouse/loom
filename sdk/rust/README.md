@@ -14,7 +14,17 @@ feature provides the same operations through a synchronous client.
 
 ## Install
 
-Clone this repository and add its Rust SDK from your application's directory:
+From your application's directory, add the latest published stable release:
+
+```bash
+cargo add clickhouse-loom
+```
+
+Cargo records the selected version in your application's `Cargo.toml` and
+resolves its dependencies automatically.
+
+To use APIs from this checkout before they are published, clone this repository
+and add the SDK by path:
 
 ```bash
 cargo add clickhouse-loom --path ../loom/sdk/rust
@@ -27,9 +37,8 @@ The equivalent `Cargo.toml` dependency is:
 clickhouse-loom = { path = "../loom/sdk/rust" }
 ```
 
-Adjust the path to your checkout. The generated operation client is version
-`0.1.1` in this checkout; its crates.io publication is a separate step.
-Cargo resolves the SDK's dependencies automatically.
+Adjust the path to your checkout. The APIs in this README describe the checkout;
+the latest published release may expose fewer operations.
 
 Use the current stable Rust and Cargo toolchain for installation from crates.io.
 The SDK source supports Rust 1.84+, but resolved dependencies may require a newer
