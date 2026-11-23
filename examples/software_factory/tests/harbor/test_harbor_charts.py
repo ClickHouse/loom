@@ -90,6 +90,7 @@ class HarborCharts(unittest.TestCase):
                 "Agent time",
                 "Test runs by the agent",
                 "Loom tool calls",
+                "Total tool calls",
                 "Memory rows written",
                 "Solver LLM tokens",
                 "Loom LLM tokens",

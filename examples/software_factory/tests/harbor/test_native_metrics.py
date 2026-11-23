@@ -28,6 +28,7 @@ class NativeMeasurements(TestCase):
                 "steps": [
                     {
                         "step_id": 1,
+                        "source": "agent",
                         "metrics": metrics,
                         "tool_calls": [
                             {**call, "arguments": {"query": "private source"}},
@@ -76,6 +77,8 @@ class NativeMeasurements(TestCase):
             self.assertEqual(row["model_total_tokens"], 105)
             self.assertEqual(row["model_cache_read_tokens"], 70)
             self.assertEqual(row["model_cache_write_tokens"], 20)
+            self.assertEqual(row["first_cache_read_tokens"], 70)
+            self.assertIsNone(row["first_cache_write_tokens"])
             self.assertEqual(row["generation_cost_usd"], 0.02)
             self.assertEqual(row["agent_time_s"], 10)
             self.assertEqual(row["agent_test_runs"], 1)

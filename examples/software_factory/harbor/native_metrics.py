@@ -167,6 +167,17 @@ def measurements(raw: dict, trial: Path) -> dict:
         number(metrics.get("total_completion_tokens")),
     )
     extra = metrics.get("extra") or {}
+    first_step = next(
+        (
+            step
+            for step in (trajectory or {}).get("steps", [])
+            if step.get("source") == "agent"
+            and not step.get("is_copied_context")
+            and not (step.get("extra") or {}).get("is_sidechain")
+        ),
+        {},
+    )
+    first = first_step.get("metrics") or {}
     return {
         **initialization(trial),
         **summarize(trial)["metrics"],
@@ -182,6 +193,10 @@ def measurements(raw: dict, trial: Path) -> dict:
         else None,
         "model_cache_read_tokens": number(metrics.get("total_cached_tokens")),
         "model_cache_write_tokens": number(extra.get("total_cache_creation_input_tokens")),
+        "first_cache_read_tokens": number(first.get("cached_tokens")),
+        "first_cache_write_tokens": number(
+            (first.get("extra") or {}).get("cache_creation_input_tokens")
+        ),
         "tool_total_requests": len(calls) if calls is not None else None,
         "loom_tool_calls": sum(count for name, count in counts.items() if is_loom_tool(name))
         if counts is not None

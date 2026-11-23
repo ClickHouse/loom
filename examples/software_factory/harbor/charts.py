@@ -124,6 +124,8 @@ def chart_data(protocol, entries, views_manifest):
                         "model_output_tokens",
                         "model_cache_read_tokens",
                         "model_cache_write_tokens",
+                        "first_cache_read_tokens",
+                        "first_cache_write_tokens",
                         "loom_provider_input_tokens",
                         "loom_provider_output_tokens",
                         "loom_provider_total_tokens",

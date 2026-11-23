@@ -33,12 +33,37 @@ const node = (tag, text, cls) => {
   return element;
 };
 const finite = (value) => typeof value === "number" && Number.isFinite(value);
+const tokenParts = [
+  ["model_cache_read_tokens", "cache reads"],
+  ["model_cache_write_tokens", "cache writes"],
+  ["model_output_tokens", "output"],
+];
+const signedPercent = new Intl.NumberFormat(undefined, {
+  style: "percent",
+  minimumFractionDigits: 1,
+  maximumFractionDigits: 1,
+  signDisplay: "exceptZero",
+});
 function format(value, kind) {
   if (!finite(value)) return "Unknown";
   if (kind === "cost") return "$" + value.toFixed(4);
   if (kind === "rate") return (value * 100).toFixed(0) + "%";
   if (kind === "time") return value.toFixed(1) + " s";
   return Math.round(value).toLocaleString();
+}
+function tokenCell(label, partValue) {
+  const cell = node("td", label, "numeric");
+  for (const [key, label] of tokenParts) {
+    const value = partValue(key);
+    if (finite(value)) cell.append(node("small", `${format(value, "count")} ${label}`));
+  }
+  return cell;
+}
+function changeFromBaseline(value, baseline) {
+  return finite(value) && baseline > 0 ? signedPercent.format(value / baseline - 1) : null;
+}
+function firstPromptCache(read, write) {
+  return `First prompt cache: ${format(read, "count")} read · ${format(write, "count")} written`;
 }
 function aggregate(rows, arm, metric) {
   const observed = rows.filter((row) => row.arm === arm && row.state !== "pending");
@@ -101,9 +126,12 @@ function headings(id, cells) {
 }
 function summary(rows, plannedRows) {
   const cost = costMetric(rows),
-    time = timeMetric();
+    time = timeMetric(),
+    metrics = [cost, time];
+  const baseline = metrics.map((metric) => aggregate(rows, "baseline", metric).value);
+  const baselineTokens = aggregate(rows, "baseline", { key: "model_total_tokens", kind: "count" }).value;
   const empty = plannedRows.some((row) => row.state === "complete") ? "Awaiting pairs" : "Not run";
-  headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title]);
+  headings("summary-heading", ["Arm", "Issues solved", "Attempts passed", cost.title, time.title, "Solver tokens"]);
   const body = byId("summary-body");
   body.replaceChildren();
   for (const arm of arms) {
@@ -113,6 +141,7 @@ function summary(rows, plannedRows) {
     const planned = new Set(plannedRows.filter((row) => row.arm === arm).map((row) => row.task));
     const row = node("tr");
     row.append(node("th", labelFor(arm)));
+    const tokens = (key) => aggregate(rows, arm, { key, kind: "count" }).value;
     const issues = node("td", tried.size ? `${solved.size} / ${tried.size} tried` : empty, "numeric");
     if (tried.size < planned.size) issues.append(node("small", `${planned.size} issues scheduled`));
     row.append(
@@ -123,12 +152,21 @@ function summary(rows, plannedRows) {
         "numeric",
       ),
     );
-    for (const metric of [cost, time]) {
+    for (const [index, metric] of metrics.entries()) {
       const value = aggregate(rows, arm, metric);
       const cell = node("td", value.n ? format(value.value, metric.kind) : empty, "numeric");
-      if (value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
+      const delta = arm === "baseline" ? null : changeFromBaseline(value.value, baseline[index]);
+      if (delta !== null) cell.append(node("small", `${delta} vs No Loom`));
+      if (value.known < value.n) cell.append(node("small", `${value.known} of ${value.n} measured`));
+      if (metric === cost && observed.length) {
+        cell.append(node("small", firstPromptCache(tokens("first_cache_read_tokens"), tokens("first_cache_write_tokens"))));
+      }
       row.append(cell);
     }
+    const total = tokens("model_total_tokens");
+    const tokenDelta = arm === "baseline" ? null : changeFromBaseline(total, baselineTokens);
+    const tokenLabel = observed.length ? format(total, "count") : empty;
+    row.append(tokenCell(tokenDelta === null ? tokenLabel : `${tokenLabel} (${tokenDelta})`, tokens));
     body.append(row);
   }
   const partial = !data.complete || rows.length !== plannedRows.length || !matched(rows);
@@ -136,12 +174,11 @@ function summary(rows, plannedRows) {
   const plannedBlocks = new Set(plannedRows.map((row) => `${row.task}:${row.repeat}`)).size;
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
   byId("comparison-note").textContent =
-    `Comparing ${blocks} of ${plannedBlocks} issue/repeat blocks: ${blocks} matched attempts per arm. ` +
-    "Only blocks graded in all five arms contribute; failed hidden tests remain included. " +
-    `${waiting} completed attempt(s) await matching arms and remain in progress totals and individual records. ` +
     (partial
-      ? "Partial comparison; the remaining blocks can change the result. "
-      : "All planned blocks are matched. A/A controls show variation. ") +
+      ? `${blocks} of ${plannedBlocks} planned blocks matched across all five arms. `
+      : `${blocks} matched ${blocks === 1 ? "attempt" : "attempts"} per arm. `) +
+    (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
+    "Hidden test failures are included. " +
     (cost.key === "generation_cost"
       ? "Costs below are solver-only; the combined provider-cost audit is not complete."
       : "Costs include solver and matched Loom provider charges. Infrastructure and judge costs are separate.");
@@ -277,12 +314,18 @@ function attemptsTable(rows) {
       row.state === "complete" ? "Completed" : row.state === "error" ? "Error / not graded" : "Not run",
       row.state === "complete" ? (row.resolved ? "Pass" : "Fail") : "Not graded",
       row.comparison_included ? "Matched" : "Awaiting matching arms",
-      format(row[cost.key], "cost"),
-      format(row[time.key], "time"),
-      format(row.loom_tool_calls, "count"),
-      format(row.model_total_tokens, "count"),
     ])
       item.append(node("td", text));
+    const costCell = node("td", format(row[cost.key], "cost"), "numeric");
+    if (row.state !== "pending") {
+      costCell.append(node("small", firstPromptCache(row.first_cache_read_tokens, row.first_cache_write_tokens)));
+    }
+    item.append(
+      costCell,
+      node("td", format(row[time.key], "time"), "numeric"),
+      node("td", format(row.loom_tool_calls, "count"), "numeric"),
+    );
+    item.append(tokenCell(format(row.model_total_tokens, "count"), (key) => row[key]));
     const cell = node("td");
     const target = reportLink(row.url);
     if (target) {
