@@ -28,10 +28,12 @@ only when all expected attempts in that arm have completed. Unknown cost and
 tool counts remain unknown.
 
 `diagnostics/attempt-NN.json` records a passive main-session trace summary after
-each attempt: model-response groups, tool errors, body and lesson characters,
-lesson repetition, and native CLI/API duration. It contains no tool arguments,
-source bodies or lesson excerpts. Model turns and tool requests are separate
-counts; several tools can share a model response. Native trajectories remain
+each attempt. It counts model responses, tool errors, source characters, lesson
+characters and repetitions, and reports native CLI/API duration. Source counts
+separate enclosing bodies, grep line matches, grep windows and caller windows.
+It contains no tool arguments, source bodies or lesson excerpts. Model turns and
+tool requests have separate counts because several tools can share a model
+response. Native trajectories remain
 authoritative for global counts including subagents.
 
 `diagnostics/attempt-NN-model-usage.json` records input and output tokens, cache

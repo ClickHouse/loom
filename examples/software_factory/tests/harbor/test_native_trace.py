@@ -34,7 +34,7 @@ class NativeTrace(unittest.TestCase):
                             {
                                 "type": "tool_use",
                                 "id": "two",
-                                "name": "mcp__loom__loom_code_symbol",
+                                "name": "mcp__loom__loom_code_grep",
                                 "input": {},
                             },
                         ],
@@ -48,7 +48,15 @@ class NativeTrace(unittest.TestCase):
                                 "type": "tool_result",
                                 "tool_use_id": "one",
                                 "content": json.dumps(
-                                    {"definitions": [{"body": "abc", "lessons": [lesson]}]}
+                                    {
+                                        "definitions": [
+                                            {
+                                                "body": "abc",
+                                                "lessons": [lesson],
+                                                "examples": [{"context": {"text": "caller"}}],
+                                            }
+                                        ]
+                                    }
                                 ),
                             },
                             {
@@ -56,9 +64,11 @@ class NativeTrace(unittest.TestCase):
                                 "tool_use_id": "two",
                                 "content": json.dumps(
                                     {
+                                        "matches": [{"text": "line"}],
+                                        "contexts": [{"text": "around"}],
                                         "lessons": [
                                             {**lesson, "path": "file.py", "excerpt": "note text"}
-                                        ]
+                                        ],
                                     }
                                 ),
                             },
@@ -79,6 +89,9 @@ class NativeTrace(unittest.TestCase):
             self.assertEqual(metrics["parallel_tool_groups_main"], 1)
             self.assertEqual(metrics["tool_calls_main"], 2)
             self.assertEqual(metrics["loom_source_chars_main"], 3)
+            self.assertEqual(metrics["loom_match_chars_main"], 4)
+            self.assertEqual(metrics["loom_context_chars_main"], 6)
+            self.assertEqual(metrics["loom_caller_context_chars_main"], 6)
             self.assertEqual(metrics["loom_lesson_chars_main"], 18)
             self.assertEqual(metrics["loom_repeated_lesson_chars_main"], 9)
             self.assertEqual(metrics["loom_fresh_linked_lesson_rows_main"], 2)

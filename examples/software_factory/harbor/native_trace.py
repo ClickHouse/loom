@@ -17,6 +17,9 @@ COUNTERS = (
     "tool_result_chars_main",
     "loom_result_chars_main",
     "loom_source_chars_main",
+    "loom_match_chars_main",
+    "loom_context_chars_main",
+    "loom_caller_context_chars_main",
     "loom_lesson_chars_main",
     "loom_repeated_lesson_chars_main",
     "loom_fresh_linked_lesson_rows_main",
@@ -41,17 +44,24 @@ def _body(content):
     return value if isinstance(value, dict) else None
 
 
+def _dict_rows(value):
+    return [row for row in value if isinstance(row, dict)] if isinstance(value, list) else []
+
+
+def _text_chars(rows, key):
+    return sum(len(text) for row in rows if isinstance(text := row.get(key), str))
+
+
 def _content_counts(body, seen):
     rows = [body]
     for key in ("results", "definitions"):
-        if isinstance(values := body.get(key), list):
-            rows.extend(value for value in values if isinstance(value, dict))
-    lessons = [
-        lesson
+        rows.extend(_dict_rows(body.get(key)))
+    lessons = [lesson for row in rows for lesson in _dict_rows(row.get("lessons"))]
+    caller_contexts = [
+        context
         for row in rows
-        if isinstance(row.get("lessons"), list)
-        for lesson in row["lessons"]
-        if isinstance(lesson, dict)
+        for example in _dict_rows(row.get("examples"))
+        if isinstance(context := example.get("context"), dict)
     ]
     repeated, states, usable_states = 0, Counter(), Counter()
     for lesson in lessons:
@@ -71,15 +81,16 @@ def _content_counts(body, seen):
                 repeated += len(excerpt)
             seen.add(identity)
     return {
-        "source_chars": sum(len(row["body"]) for row in rows if isinstance(row.get("body"), str)),
+        "source_chars": _text_chars(rows, "body"),
+        "match_chars": _text_chars(_dict_rows(body.get("matches")), "text"),
+        "context_chars": _text_chars(_dict_rows(body.get("contexts")), "text"),
+        "caller_context_chars": _text_chars(caller_contexts, "text"),
         "source_bodies": sum(
             bool(row.get("body")) for row in rows if isinstance(row.get("body"), str)
         ),
         "elided_bodies": sum(row.get("body_elided") is True for row in rows),
         "lesson_rows": len(lessons),
-        "lesson_chars": sum(
-            len(row["excerpt"]) for row in lessons if isinstance(row.get("excerpt"), str)
-        ),
+        "lesson_chars": _text_chars(lessons, "excerpt"),
         "repeated_lesson_chars": repeated,
         "lesson_states": dict(states),
         "fresh_linked_lesson_rows": usable_states["fresh"],
@@ -179,6 +190,9 @@ def summarize(trial):
                 observed.update(counted)
                 for source, target in (
                     ("source_chars", "loom_source_chars_main"),
+                    ("match_chars", "loom_match_chars_main"),
+                    ("context_chars", "loom_context_chars_main"),
+                    ("caller_context_chars", "loom_caller_context_chars_main"),
                     ("lesson_chars", "loom_lesson_chars_main"),
                     ("repeated_lesson_chars", "loom_repeated_lesson_chars_main"),
                     ("fresh_linked_lesson_rows", "loom_fresh_linked_lesson_rows_main"),
