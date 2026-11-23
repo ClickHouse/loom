@@ -50,6 +50,7 @@ public final class LoomClient {
   private final String agent;
   private final Duration timeout;
   private final HttpClient http;
+  private final SessionProtection sessionProtection;
 
   private LoomClient(Builder b) {
     String base = b.baseUrl != null ? b.baseUrl : env("LOOM_BASE_URL");
@@ -63,6 +64,7 @@ public final class LoomClient {
     this.namespace = required(b.namespace, "namespace");
     this.agent = required(b.agent, "agent");
     this.timeout = b.timeout;
+    this.sessionProtection = b.sessionProtection;
     this.http =
         b.httpClient != null
             ? b.httpClient
@@ -237,7 +239,74 @@ public final class LoomClient {
     return body;
   }
 
+  /** Generic wire operation. Inputs use the operation reference's exact field names. */
+  public JsonNode call(String op, Map<String, ?> input) {
+    ObjectNode wire = JSON.valueToTree(input);
+    return call(op, wire);
+  }
+
+  /** One explicit human invocation; callbacks retain no permission from this call. */
+  public JsonNode callHuman(String op, Map<String, ?> input) {
+    return dispatch(op, JSON.valueToTree(input), true);
+  }
+
+  /** Retains source contributors across a queued callback or another client. */
+  public JsonNode callAutomatic(SessionProtection.Capture capture, String op, Map<String, ?> input) {
+    try { return capture.call(() -> call(op, input)); }
+    catch (RuntimeException e) { throw e; }
+    catch (Exception e) { throw new SessionProtection.Unavailable(e); }
+  }
+
+  public JsonNode sourceMcpRead(Map<String, ?> input) {
+    return call("knowledge.source.mcp_read", sourceBody(input));
+  }
+
+  public JsonNode connectionMcpBrowse(Map<String, ?> input) {
+    ObjectNode wire = JSON.createObjectNode().put("org", org);
+    input.forEach((key, value) -> wire.set(key, JSON.valueToTree(value)));
+    return call("knowledge.connection.mcp_browse", wire);
+  }
+
+  public JsonNode sourceMcpList(Map<String, ?> input) {
+    return call("knowledge.source.mcp_list", sourceBody(input));
+  }
+
+  public JsonNode sourceMcpPause(Map<String, ?> input) {
+    return call("knowledge.source.mcp_pause", sourceBody(input));
+  }
+
+  public JsonNode sourceMcpRefresh(Map<String, ?> input) {
+    return call("knowledge.source.mcp_refresh", sourceBody(input));
+  }
+
+  private ObjectNode sourceBody(Map<String, ?> input) {
+    ObjectNode wire = JSON.createObjectNode().put("org", org).put("namespace", namespace);
+    input.forEach((key, value) -> wire.set(key, JSON.valueToTree(value)));
+    return wire;
+  }
+
   private JsonNode call(String op, ObjectNode body) {
+    return dispatch(op, body, false);
+  }
+
+  private JsonNode dispatch(String op, ObjectNode body, boolean human) {
+    if (!op.matches("[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+")) {
+      throw new IllegalArgumentException("op must be a dotted operation name");
+    }
+    try (SessionProtection.Observation observation = SessionProtection.begin(sessionProtection, human)) {
+      if (observation.bound() && (http.followRedirects() != HttpClient.Redirect.NEVER
+          || http.authenticator().isPresent()
+          || !("http".equals(baseUrl.getScheme()) || "https".equals(baseUrl.getScheme()))
+          || baseUrl.getHost() == null || baseUrl.getRawUserInfo() != null
+          || baseUrl.getRawQuery() != null || baseUrl.getRawFragment() != null)) {
+        throw new SessionProtection.Unavailable();
+      }
+      return send(op, body, observation, human);
+    }
+  }
+
+  private JsonNode send(
+      String op, ObjectNode body, SessionProtection.Observation observation, boolean human) {
     String requestId = UUID.randomUUID().toString();
     HttpRequest.Builder req =
         HttpRequest.newBuilder(URI.create(baseUrl + "/v1/" + op))
@@ -252,10 +321,17 @@ public final class LoomClient {
     if (token != null) {
       req.header("Authorization", "Bearer " + token);
     }
+    if (observation.bound()) { req.header("x-loom-session-protection", "v1"); }
     HttpResponse<String> res;
     try {
-      req.POST(HttpRequest.BodyPublishers.ofString(JSON.writeValueAsString(body)));
-      res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
+      String encoded = observation.bound() ? ProtectedBody.encode(JSON, body) : JSON.writeValueAsString(body);
+      req.POST(HttpRequest.BodyPublishers.ofString(encoded));
+      observation.beforeSend(human);
+      if (observation.bound()) {
+        res = ProtectedBody.send(http, req.build(), timeout);
+      } else {
+        res = http.send(req.build(), HttpResponse.BodyHandlers.ofString());
+      }
     } catch (HttpTimeoutException e) {
       throw noAnswer(op, "TIMEOUT", "timed out after " + timeout, requestId, e);
     } catch (IOException e) {
@@ -265,6 +341,7 @@ public final class LoomClient {
       throw noAnswer(op, "INTERRUPTED", "interrupted", requestId, e);
     }
     String echoed = res.headers().firstValue("X-Request-Id").orElse(requestId);
+    if (observation.bound()) { observation.observe(res.body()); }
     JsonNode parsed = parse(res.body());
     if (res.statusCode() / 100 != 2) {
       Double retryAfter =
@@ -328,6 +405,7 @@ public final class LoomClient {
     private String agent;
     private Duration timeout = Duration.ofSeconds(30);
     private HttpClient httpClient;
+    private SessionProtection sessionProtection;
 
     private Builder() {}
 
@@ -367,6 +445,12 @@ public final class LoomClient {
     /** A preconfigured {@link HttpClient} (proxy, TLS, executor). */
     public Builder httpClient(HttpClient httpClient) {
       this.httpClient = httpClient;
+      return this;
+    }
+
+    /** Bind the same application-owned authority on every client for a conversation. */
+    public Builder sessionProtection(SessionProtection family) {
+      this.sessionProtection = Objects.requireNonNull(family, "family");
       return this;
     }
 
