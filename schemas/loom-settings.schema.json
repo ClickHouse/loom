@@ -1607,7 +1607,7 @@
           "default": 0,
           "minimum": 0,
           "type": "integer",
-          "description": "Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4 characters a token; 0 means unlimited."
+          "description": "Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4 characters a token; 0 means unlimited. Rows are whole or left out."
         },
         "code_review_brief_mirror_miss_ttl_s": {
           "default": 600.0,

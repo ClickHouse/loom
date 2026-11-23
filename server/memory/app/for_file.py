@@ -67,11 +67,11 @@ _READ_BYTES = f"if({_WHOLE_ROW}, {{whole_bytes:UInt32}}, {_VALUE_BYTES})"
 _SELECT = f"""
 SELECT
     memory_key, memory_type,
-    substring(value, 1, {_READ_BYTES}) AS value,
+    if({{full_values:UInt8}}, value, substring(value, 1, {_READ_BYTES})) AS value,
     tags, confidence, pinned, CAST(status AS String) AS status_text, agent, updated_at, actor,
     memory_id, conflict_with, source_resource_id,
     verified_by, verified_sha256, content_sha256,
-    value_len > {_READ_BYTES} AS value_truncated,
+    ({{full_values:UInt8}} = 0 AND value_len > {_READ_BYTES}) AS value_truncated,
     arrayFilter(f -> {_FILE_MATCH}, files) AS matched_files
 FROM loom.memory FINAL
 WHERE org = {{org:String}} AND namespace = {{ns:String}}
@@ -462,6 +462,7 @@ async def _rows_for(
     linked: asyncio.Task[dict[str, list[LinkRow]] | None],
     *,
     whole_only: bool = False,
+    full_values: bool = False,
 ) -> list[dict[str, Any]]:
     """One namespace's rows naming the file or linked to code still in it (`linked`:
     memory_id -> its links here, read alongside the files match; None when that read
@@ -479,6 +480,7 @@ async def _rows_for(
         "lim": int(input.top_k),
         "whole_bytes": _whole_bytes(),
         "whole_only": int(whole_only),
+        "full_values": int(full_values),
     }
     ch = get_client()
     found, read = await asyncio.gather(ch.query_all(_FILES_SQL, params), linked)
@@ -565,7 +567,12 @@ def _order_key(r: dict[str, Any]) -> tuple[Any, ...]:
 
 
 async def _merged_rows(
-    input: MemoryForFileInput, path: str, base: str, *, whole_only: bool = False
+    input: MemoryForFileInput,
+    path: str,
+    base: str,
+    *,
+    whole_only: bool = False,
+    full_values: bool = False,
 ) -> tuple[list[dict[str, Any]], bool]:
     """(rows, links skipped): the caller's namespace, plus each readable extra namespace
     (tag filter on the caller's only), merged in constraint-first order, deduplicated by
@@ -577,13 +584,32 @@ async def _merged_rows(
     try:
         tags = list(input.tags or [])
         own = await _rows_for(
-            input, input.namespace, path, base, tags, linked, whole_only=whole_only
+            input,
+            input.namespace,
+            path,
+            base,
+            tags,
+            linked,
+            whole_only=whole_only,
+            full_values=full_values,
         )
         skipped = linked.result() is None  # read by the own read above
         if not extras:
             return _supersede_order(own), skipped
         got = await asyncio.gather(
-            *(_rows_for(input, ns, path, base, [], linked, whole_only=whole_only) for ns in extras),
+            *(
+                _rows_for(
+                    input,
+                    ns,
+                    path,
+                    base,
+                    [],
+                    linked,
+                    whole_only=whole_only,
+                    full_values=full_values,
+                )
+                for ns in extras
+            ),
             return_exceptions=True,
         )
     finally:
@@ -634,11 +660,12 @@ async def listing_rows(
     """(rows, links skipped) for a reader that lists several files' rows itself: each row the
     hit memory.for_file serves with its `memory_id` and `supersedes_ids` (the older rows it
     is placed above), and whether the code-links read failed (a row reached only by a link
-    is then missing). `whole_only` keeps the decisions and constraints (typed `decision`, or
-    tagged `decision` or `constraint`)."""
+    is then missing). Values are complete so the reader can apply its own output budget.
+    `whole_only` keeps decisions and constraints (typed `decision`, or tagged `decision`
+    or `constraint`)."""
     path = repo_relative(input.path)
     base = path.rsplit("/", 1)[-1]
-    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only)
+    rows, skipped = await _merged_rows(input, path, base, whole_only=whole_only, full_values=True)
     return [_with_ids(_hit(r, input), r) for r in rows], skipped
 
 

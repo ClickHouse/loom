@@ -1578,6 +1578,7 @@ Exact symbol lookup: definition, signature, doc comment, and body of a function/
 | Output field | Type | Meaning |
 | --- | --- | --- |
 | `definitions` | `list[CodeUnit]` | The resolved definitions (at most 10), fitted to `token_budget`; empty when nothing resolved (see `candidates`) or on a presence answer. |
+| `lessons_left_out` | `int` | Whole linked lessons omitted to preserve definitions within an explicit request budget. |
 | `ambiguous` | `bool` | True when the served definitions carry more than one distinct name/signature pair. |
 | `hierarchy` | `dict[str, list[dict[str, Any]]]` | For a class / interface / enum definition, its type hierarchy from the `inherits` edges of both tiers, folded by qualified name: {"supertypes": [...], "subtypes": [...]} of {symbol, kind, via (extends \| implements), tier, confidence, path… |
 | `candidates` | `list[dict[str, Any]]` | When nothing resolved: cheap fuzzy candidates (names + paths only). |

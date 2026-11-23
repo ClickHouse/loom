@@ -1707,6 +1707,7 @@ export interface CodeSymbolInput {
 
 export interface CodeSymbolOutput {
   definitions: CodeUnit[];
+  lessons_left_out?: number;
   ambiguous?: boolean;
   hierarchy?: Record<string, Array<Record<string, unknown>>>;
   candidates?: Array<Record<string, unknown>>;
