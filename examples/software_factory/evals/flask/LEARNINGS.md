@@ -19,9 +19,9 @@ assistant can still miss a required change after reading its definition.
 
 ## Evidence boundaries
 
-The two index tiers use the same source base, issue and grader. Model choice,
-prompt-cache state, call grouping, generated patch and verification choices can
-differ between attempts. A difference between parser and compiler arms does not
+The two index tiers use the same source base, issue, model and grader. Prompt-cache
+state, call grouping, generated patch and verification choices can differ between
+attempts. A difference between parser and compiler arms does not
 by itself identify a compiler-index defect.
 
 Historical memory adds sourced facts as well as code links. This comparison cannot
