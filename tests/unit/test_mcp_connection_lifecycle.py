@@ -7,6 +7,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+from uuid import UUID
 
 import pytest
 
@@ -617,3 +618,107 @@ async def test_owner_erasure_refuses_history_growth_past_bound_under_lease(
     with pytest.raises(ValidationError, match="the connected account is unavailable"):
         await restore.accounts.stop_subjects([OWNER[1]], erase_owner=True, revoke=False)
     assert calls == 2 and not state.events
+
+
+@pytest.mark.asyncio
+async def test_owner_erasure_bounds_generations_sharing_each_owners_prefix(
+    owner_history: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = owner_history
+    owners = [OWNER, (OWNER[0], "owner-two", SLOT)]
+    for owner, prefix in zip(owners, "ab", strict=True):
+        source = _owner_source(owner, prefix)
+        state.history[owner] = [
+            source,
+            replace(source, connection_id=prefix * 32 + "/1" + "e" * 31),
+        ]
+    monkeypatch.setattr(restore.settings, "knowledge_connected_registry_scan_limit", 2)
+    with pytest.raises(ValidationError, match="the connected account is unavailable"):
+        await restore.accounts.stop_subjects(
+            [owner[1] for owner in owners], erase_owner=True, revoke=False
+        )
+    assert not state.events and not state.fences and not state.rows
+    assert set(state.history) == set(owners)
+
+
+@pytest.mark.asyncio
+async def test_owner_erasure_bounds_new_generation_on_final_owners_existing_prefix(
+    owner_history: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = owner_history
+    owners = [OWNER, (OWNER[0], "owner-two", SLOT)]
+    state.history = {
+        owner: [_owner_source(owner, prefix)] for owner, prefix in zip(owners, "ab", strict=True)
+    }
+    calls: dict[Any, int] = defaultdict(int)
+
+    async def history(*, owner: Any = None, **kwargs: Any) -> list[Any]:
+        calls[owner] += 1
+        sources = list(state.history[owner])
+        if owner == owners[1] and calls[owner] == 2:
+            assert state.held == [owner] and ("erase", owners[0]) in state.events
+            sources.append(replace(sources[0], connection_id="b" * 32 + "/1" + "e" * 31))
+        assert len(sources) <= 2
+        return sources
+
+    monkeypatch.setattr(restore.source_store, "connected_history", history)
+    monkeypatch.setattr(restore.settings, "knowledge_connected_registry_scan_limit", 2)
+    with pytest.raises(ValidationError, match="the connected account is unavailable"):
+        await restore.accounts.stop_subjects(
+            [owner[1] for owner in owners], erase_owner=True, revoke=False
+        )
+    assert ("erase", owners[0]) in state.events
+    assert not any(owner == owners[1] for _event, owner in state.events)
+    assert set(state.history) == {owners[1]}
+
+
+@pytest.mark.asyncio
+async def test_offline_restore_dry_run_bounds_generations_not_only_prefixes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    owners = [OWNER, (OWNER[0], "owner-two", SLOT)]
+    keys = [
+        (*owner, prefix * 32 + "/1" + tail * 31)
+        for owner, prefix in zip(owners, "ab", strict=True)
+        for tail in "de"
+    ]
+    client = object()
+    monkeypatch.setattr(restore.ch_module, "get_client", lambda: client)
+    monkeypatch.setattr(restore, "offline_refusal", AsyncMock(return_value=""))
+    monkeypatch.setattr(restore, "_metadata", AsyncMock(return_value=(keys, [])))
+    monkeypatch.setattr(restore.settings, "knowledge_connected_registry_scan_limit", 2)
+    mutate = AsyncMock(side_effect=AssertionError("dry run must not mutate"))
+    monkeypatch.setattr(restore, "_restore_owner", mutate)
+    with pytest.raises(ValidationError, match="the connected account is unavailable"):
+        await restore.restore_all(apply=False, ch=client)
+    mutate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generic", [False, True])
+async def test_restore_inventory_normalizes_driver_uuid_without_weakening_binding(
+    monkeypatch: pytest.MonkeyPatch, generic: bool
+) -> None:
+    source_id = UUID("abcd1234-1234-4234-8234-123456789abc")
+
+    async def query(sql: str, *, params: dict[str, Any]) -> list[dict[str, Any]]:
+        return [
+            {
+                "org": OWNER[0],
+                "namespace": "collection-one",
+                "name": "selected-documents",
+                "source_id": source_id,
+                "source_kind": "mcp" if generic else "gdrive",
+                "owner_subject": OWNER[1],
+                "connection_id": CONNECTION,
+                "credential_mode": "mcp" if generic else "connected",
+                "connection_slot": SLOT if generic else "",
+                "source_contract_version": 65535 if generic else 0,
+            }
+        ]
+
+    monkeypatch.setattr(restore.account_store, "restore_keys", AsyncMock(return_value=[]))
+    keys, sources = await restore._metadata(SimpleNamespace(query_all=query))
+    assert keys == [(OWNER[0], OWNER[1], SLOT if generic else "gdrive", CONNECTION)]
+    assert len(sources) == 1 and sources[0].source_id == str(source_id)
+    assert isinstance(sources[0].source_id, str)

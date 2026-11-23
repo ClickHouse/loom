@@ -616,7 +616,7 @@ async def connected_history(
             namespace=row["namespace"],
             name=row["name"],
             kind=row["source_kind"],
-            source_id=row["source_id"],
+            source_id=str(row.get("source_id") or ""),
             owner_subject=row["owner_subject"],
             connection_id=row["connection_id"],
             credential_mode=str(row.get("credential_mode") or "connected"),
