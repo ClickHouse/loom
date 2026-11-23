@@ -539,10 +539,13 @@ model and path scope because the text index has no token for them.
 
 Literal hits, rendered-message matches and symbol mentions use the same retained-source
 line mapping as definition bodies. Copied doc comments and continuation headers do not
-become file lines. Compacted class skeletons and incomplete source fragments cannot
-establish exact hit coordinates: grep omits those lines and marks its response partial,
-and symbol mentions disclose truncation. A missing hit in that response is not evidence
-that the file lacks the text.
+become file lines. Compacted class skeletons cannot establish exact hit coordinates.
+Grep and symbol mentions recover their retained raw chunks under the same tenant,
+model and path. A summary is replaced only when those chunks cover its span without
+gaps or disagreements with already-read source. Recovery shares the grep scan's
+character bound and any caller-supplied deadline. Incomplete or failed recovery leaves
+grep partial and symbol mentions truncated. A missing hit in that response is not
+evidence that the file lacks the text.
 
 Grep continuation pools retain source-mapping and partial-coverage metadata. A
 pool with another mapping triggers a disclosed rerun; restart pagination for

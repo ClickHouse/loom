@@ -32,6 +32,26 @@ _MESSAGE_STATEMENT_KEYWORDS: tuple[str, ...] = (
 class GrepMixin(CodeRepoBase):
     """Content matches over live chunks."""
 
+    async def grep_source_chunks_for_span(
+        self, org: str, ns: str, path: str, start: int, end: int, model: str
+    ) -> list[dict[str, Any]]:
+        """Raw source behind a matched summary, retaining each chunk's enclosing symbol.
+
+        The extra row detects a capped read; it cannot establish complete coverage.
+        """
+        return await self._ch.query_all(
+            """
+            SELECT DISTINCT scope, symbol_ids, kind, start_line, end_line, content
+            FROM loom.code_chunks FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND path = {path:String} AND embedding_model = {model:String}
+              AND start_line <= {end:UInt32} AND end_line >= {start:UInt32}
+              AND kind != 'class_skeleton' AND tombstoned_at IS NULL
+            ORDER BY start_line, end_line LIMIT 401
+            """,
+            {"org": org, "ns": ns, "path": path, "model": model, "start": start, "end": end},
+        )
+
     async def grep_files(
         self,
         org: str,

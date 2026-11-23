@@ -18,6 +18,7 @@ from server.code.app.common import (
     resolve_code_identity,
     schedule_code_trace,
 )
+from server.code.app.grep_source import recover_source_chunks
 from server.code.app.search.shared import (
     _not_covered_output,
     _partial_fields,
@@ -258,6 +259,10 @@ async def _grep_lines(
         route += suffix
         span_attrs(sp, chunks_matched=len(chunks))
 
+    matched_chunks = len(chunks)
+    chunks = await recover_source_chunks(
+        repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS, budget=budget
+    )
     spans = await _unit_spans(repo, org, ns, chunks)
     # extract past the page: the extra lines become the continuation pool. Off the event
     # loop: a scan of 200 chunks must not stall every other request on this worker.
@@ -265,7 +270,7 @@ async def _grep_lines(
         _matching_lines, chunks, spans, input, line_re, limit + _GREP_POOL_EXTRA
     )
 
-    truncated = scan_capped or len(matches) > limit or len(chunks) >= min(200, limit * 3)
+    truncated = scan_capped or len(matches) > limit or matched_chunks >= min(200, limit * 3)
     trace_run_id = new_trace_run_id()
     pool_matches = matches
     matches = matches[:limit]
@@ -280,7 +285,7 @@ async def _grep_lines(
         pool_matches,
         served=limit,
         run_id=trace_run_id,
-        chunks_matched=len(chunks),
+        chunks_matched=matched_chunks,
         truncated=truncated,
         partial=bool(coverage.get("partial")),
         partial_reason=str(coverage.get("partial_reason") or ""),
@@ -309,13 +314,13 @@ async def _grep_lines(
         consumer=input.consumer,
         agent=input.agent,
         user_id=input.user_id,
-        chunks_matched=len(chunks),
+        chunks_matched=matched_chunks,
         path_prefix=input.path_prefix,
     )
     set_code_span_attributes(
         route=route,
         results=len(matches),
-        chunks_matched=len(chunks),
+        chunks_matched=matched_chunks,
         path_prefix=input.path_prefix,
         truncated=truncated,
         abstain=not matches,
@@ -326,7 +331,7 @@ async def _grep_lines(
         matches=matches,
         next_cursor=next_cursor,
         has_more=bool(next_cursor),
-        chunks_matched=len(chunks),
+        chunks_matched=matched_chunks,
         truncated=truncated,
         as_of=await as_of,
         note=note,
@@ -409,7 +414,7 @@ _CONTINUED_PREFIXES = ("// … continued from ", "# … continued from ", "/* �
 # LOOM_CODE_CHUNK_MAX_CHARS (6000) is 1.2 MB, so 2 MB leaves room for older, larger
 # chunks and still bounds the work one request can ask of a worker.
 _LINE_SCAN_MAX_CHARS = 2_000_000
-_GREP_LINE_MAPPING_VERSION = 1
+_GREP_LINE_MAPPING_VERSION = 2
 
 
 def _matching_lines(
@@ -945,6 +950,9 @@ async def _message_scan(
             **({"scope": scope} if scope is not None and scope.has_path_filters else {}),
         )
         span_attrs(sp, chunks_matched=len(chunks), admitted_files=admitted)
+    chunks = await recover_source_chunks(
+        repo, org, ns, chunks, max_chars=_LINE_SCAN_MAX_CHARS, budget=budget
+    )
     return chunks, admitted, ""
 
 
