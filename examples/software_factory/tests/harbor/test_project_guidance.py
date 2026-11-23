@@ -26,5 +26,6 @@ class ProjectInstructions(TestCase):
             actual = (workspace / "CLAUDE.md").read_bytes()
         self.assertEqual(hashlib.sha256(actual).hexdigest(), instructions["sha256"])
         self.assertIn("services, crates", actual.decode())
-        self.assertEqual(instructions["cohort"], "shared-optional-project-instructions")
-        self.assertIn("Local source reads are available in every arm.", actual.decode())
+        self.assertEqual(instructions["cohort"], "shared-coverage-based-project-instructions")
+        self.assertIn("When Loom is configured, use it", actual.decode())
+        self.assertIn("Use local tools for edits, tests, Git", actual.decode())

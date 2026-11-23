@@ -1,9 +1,14 @@
 # Repository context
 
-Use the available tools to investigate the issue, edit the checkout and verify
-the fix. If Loom is configured, it can search the indexed roots and return
-linked project history where available. Check source references and link
-freshness before relying on a historical note.
+When Loom is configured, use it to discover and read unchanged source in the
+indexed roots. Use Loom when you need linked project history. Use the source
+already in context when it answers your question. Check source references and
+link freshness before relying on a historical note.
 
-Choose between Loom and local tools based on what you need. If no Loom server
-is configured, use local tools. Local source reads are available in every arm.
+Use local tools for edits, tests, Git, and source outside Loom's coverage.
+Read locally when Loom is unavailable or reports that it cannot supply the
+needed source. State the missing evidence when you fall back for indexed source.
+Use the working copy when you need to read a file you changed. If Loom is not
+configured, use the available local tools.
+
+Choose the calls, edits and verification needed to solve the issue.

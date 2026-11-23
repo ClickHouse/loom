@@ -30,10 +30,11 @@ none are inserted into the issue prompt. The memory contrast measures both acces
 to historical knowledge and native memory capability, rather than linking alone.
 
 Every arm receives identical [project instructions](harbor/project-guidance.md)
-in `/workspace/CLAUDE.md`. They describe Loom's indexed roots and historical
-context when available. Claude can choose local source reads or Loom in any
-Loom-enabled arm. The protocol freezes the instruction text and hash. Task images
-use those bytes. Published runs retain the guidance from their serving revision.
+in `/workspace/CLAUDE.md`. Claude uses Loom for unchanged source within its
+coverage and for linked history when Loom is configured. Local tools handle
+edits, tests, Git, working-copy reads and source outside Loom's coverage. The
+baseline uses local tools throughout. The protocol freezes the instructions
+and their hash. Published runs retain the guidance from their serving revision.
 
 This example uses MCP directly; it does not install the Loom plugin or its hooks.
 The server supplies initialization guidance. Reports record startup connection

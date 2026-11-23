@@ -90,12 +90,15 @@ issue in an ordinary shallow checkout at its buggy base. Claude chooses its
 reads, edits, commands, retrieval, subagents and stopping point. There is no
 factory coding loop, injected source context, forced Loom call or final review turn.
 
-Every arm receives identical optional retrieval guidance in `/workspace/CLAUDE.md`,
+Every arm receives identical coverage-based retrieval guidance in `/workspace/CLAUDE.md`,
 including the no-Loom arm. The [shared template](../../harbor/project-guidance.md)
-lists the available context, and the agent can use local tools for any source read.
-The protocol and public reproduction manifest retain its exact text and SHA-256,
-and the fairness audit checks every task image's staged copy. Use the serving
-revision in a published result to reproduce its particular instructions.
+routes unchanged indexed source and linked history through Loom when configured.
+Local tools cover source the index cannot serve, edits, tests and Git. Claude
+chooses how much evidence it needs and which available calls retrieve it. The
+protocol and public reproduction manifest retain the exact text and SHA-256,
+and the fairness audit checks each task image's staged copy. This comparison
+measures the configured workflow. Use a published result's serving revision
+to reproduce its instructions.
 
 The model, Claude Code version, checkout image, one CPU and 2 GiB agent memory
 are shared across arms for each issue. During coding, the sandbox allows the
