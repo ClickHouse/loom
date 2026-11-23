@@ -1010,6 +1010,9 @@ Knowledge documents and conversations: chunking, search floor, thread titles.
 | `LOOM_KNOWLEDGE_CONNECTED_REVOKE_TIMEOUT_S` | `float` | `5.0` |  | Seconds for best-effort provider revocation after every local stop has committed. |
 | `LOOM_KNOWLEDGE_CONNECTED_LEASE_TTL_S` | `float` | `60.0` |  | Seconds the renewed account-generation lease lives. Source leases follow it; provider requests hold neither. |
 | `LOOM_KNOWLEDGE_CONNECTED_LEASE_WAIT_S` | `float` | `5.0` |  | Seconds a connection change waits for another holder's account-generation lease. |
+| `LOOM_KNOWLEDGE_MCP_ENVELOPE_MAX_BYTES` | `int` | `32768` |  | Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire ceiling. |
+| `LOOM_KNOWLEDGE_MCP_SELECTED_RESOURCES_MAX` | `int` | `1000` |  | Maximum explicitly selected MCP identities per source, without implicit recursion. |
+| `LOOM_KNOWLEDGE_MCP_RESOURCE_ID_MAX_BYTES` | `int` | `2048` |  | Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_SCAN_LIMIT` | `int` | `4096` |  | Maximum complete owner scan; exceeding it refuses instead of stopping a subset. |
 | `LOOM_KNOWLEDGE_CONNECTED_REGISTRY_PAGE_SIZE` | `int` | `256` |  | Registrations per page during root-secret resealing. |
 | `LOOM_KNOWLEDGE_CONNECTED_OAUTH_TIMEOUT_S` | `float` | `30.0` |  | Seconds one connected-account OAuth request may take, including its response. The caller's remaining deadline can shorten this bound. |

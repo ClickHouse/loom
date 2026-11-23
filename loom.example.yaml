@@ -2961,6 +2961,18 @@ settings:
   # [restart]
   # knowledge_connected_lease_wait_s: 5.0
 
+  # Maximum sealed MCP plaintext bytes admitted by this deployment, up to the v1 wire
+  # ceiling. [restart]
+  # knowledge_mcp_envelope_max_bytes: 32768
+
+  # Maximum explicitly selected MCP identities per source, without implicit recursion.
+  # [restart]
+  # knowledge_mcp_selected_resources_max: 1000
+
+  # Maximum UTF-8 bytes in one selected MCP identity, up to the v1 wire ceiling.
+  # [restart]
+  # knowledge_mcp_resource_id_max_bytes: 2048
+
   # Maximum complete owner scan; exceeding it refuses instead of stopping a subset.
   # [restart]
   # knowledge_connected_registry_scan_limit: 4096
