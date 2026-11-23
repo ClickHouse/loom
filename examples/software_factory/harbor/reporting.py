@@ -17,6 +17,7 @@ from urllib.parse import quote, urlencode
 from uuid import UUID, uuid5
 
 from .arms import PRIMARY
+from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 
 PRIMARY_VIEWS = {name: "no-loom" if name == "baseline" else name for name in PRIMARY}
@@ -451,6 +452,37 @@ def _cache_tables(cache_arms):
     )
 
 
+def _cache_pair_table(pairs):
+    lines = [
+        "## First-prompt reuse by arm",
+        "",
+        "| Arm | Cold reads | Cold writes | Warm reads | Warm writes | Prefix size matches |",
+        "| --- | ---: | ---: | ---: | ---: | --- |",
+    ]
+    fields = (
+        "cold_first_read_tokens",
+        "cold_first_write_tokens",
+        "warm_first_read_tokens",
+        "warm_first_write_tokens",
+    )
+    for pair in pairs:
+        counters = " | ".join("—" if pair[key] is None else f"{pair[key]:,}" for key in fields)
+        matched = {True: "Yes", False: "No", None: "Unverified"}[
+            pair["first_prefix_token_count_match"]
+        ]
+        lines.append(f"| {PRIMARY[pair['arm']].label} | {counters} | {matched} |")
+    lines.extend(
+        (
+            "",
+            "A match means the warm read count equals that arm's cold write count and "
+            "the warm first response wrote zero tokens. The provider reports counts for "
+            "the first response. Later responses have their own cache usage.",
+            "",
+        )
+    )
+    return "\n".join(lines)
+
+
 def generate_reports(protocol, entries, *, job_name="live"):
     """Regenerate aggregates and add each finalized trial's native assets once.
 
@@ -556,7 +588,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                     item["links"][label] = url
             for label, suffix in (
                 ("model usage by turn", "-model-usage"),
-                ("Loom retrieval stages", "-code-traces"),
+                ("Loom retrieval stages and request ledger", "-code-traces"),
                 ("tool response summary", ""),
             ):
                 name = f"attempt-{order:02d}{suffix}.json"
@@ -657,6 +689,9 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         }
         for task, repeat in paired
     ]
+    cache_pairs = pair_usage(
+        schedule, {order: entry["result"] for order, entry in observed.items()}
+    )
     scenarios, scenario_links = {}, []
     for task in sorted({s["task_id"] for s in schedule}):
         selected = [s for s in schedule if s["task_id"] == task]
@@ -679,6 +714,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         cache_arms = _cache_arm_summaries(selected, observed)
         if cache_arms:
             info["cache_start_arms"] = cache_arms
+            info["cache_pairs"] = cache_pairs
         scenarios[task] = info
         safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", task) + "-" + _digest(task)[:8]
         scenario_links.append((task, "scenarios/" + safe_name + ".md"))
@@ -691,7 +727,11 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         _atomic(
             report_dir / "scenarios" / (safe_name + ".md"),
             f"# Scenario {task}\n\n"
-            + (_cache_tables(cache_arms) if cache_arms else _table(info["arms"]))
+            + (
+                _cache_tables(cache_arms) + "\n" + _cache_pair_table(cache_pairs)
+                if cache_arms
+                else _table(info["arms"])
+            )
             + "\n## A/A controls\n\n"
             + _table(info["aa_control_arms"])
             + "\n"
@@ -735,6 +775,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
     cache_arms = _cache_arm_summaries(schedule, observed)
     if cache_arms:
         report["cache_start_arms"] = cache_arms
+        report["cache_pairs"] = cache_pairs
     _atomic(report_dir / "comparison.json", report)
     text = (
         f"# Factory comparison\n\n{len(observed)}/{len(schedule)} attempts observed across "
@@ -744,6 +785,8 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         "Native Harbor comparison links include all scenarios.\n\n"
     )
     text += (_cache_tables(cache_arms) if cache_arms else _table(primary)) + "\n"
+    if cache_pairs:
+        text += _cache_pair_table(cache_pairs) + "\n"
     text += " · ".join(f"[{key}]({value})" for key, value in links.items())
     for family, cohort in cohort_reports.items():
         if family != cohorts["default"]:

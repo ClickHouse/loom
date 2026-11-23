@@ -1,4 +1,4 @@
-"""Preserve existing code-stage traces before the private index is removed."""
+"""Preserve code-stage traces and request ledger measurements before cleanup."""
 
 from __future__ import annotations
 
@@ -26,7 +26,25 @@ async def main():
             'FROM loom.code_search_trace WHERE org={org:String} '
             'AND namespace={namespace:String} AND trace_run_id IN {trace_run_ids:Array(String)}',
             params)
-        print(json.dumps(rows,default=str))
+        try:
+            requests=await client.query_all(
+                "SELECT org,namespace,args['out_trace_run_id'] AS trace_run_id,"
+                "operation,request_id,latency_ms,"
+                "args['out_stage_ms'] AS stage_ms,"
+                "toUInt64OrNull(args['out_lesson_rows']) AS lesson_rows,"
+                "toUInt64OrNull(args['out_lesson_chars']) AS lesson_chars,"
+                "toUInt64OrNull(args['out_ch_statements']) AS ch_statements,"
+                "toUInt64OrNull(args['out_ch_read_rows']) AS ch_rows,"
+                "toUInt64OrNull(args['out_ch_read_bytes']) AS ch_bytes,"
+                "toFloat64OrNull(args['out_ch_elapsed_ms']) AS ch_elapsed_ms "
+                "FROM loom.agent_events WHERE org={org:String} AND namespace={namespace:String} "
+                "AND args['out_trace_run_id'] IN {trace_run_ids:Array(String)} AND transport='mcp'",
+                params)
+            ledger_error=None
+        except Exception as error:  # noqa: BLE001 — the ledger must not hide retrieval traces
+            requests=[]
+            ledger_error=type(error).__name__
+        print(json.dumps(dict(rows=rows, requests=requests, ledger_error=ledger_error),default=str))
     finally: await client.disconnect()
 asyncio.run(main())
 """
@@ -70,6 +88,8 @@ def capture(protocol, order):
         "state": "unavailable",
         "rows": saved["rows"] if saved else [],
         "missing_trace_run_ids": ids,
+        "request_ledger": saved.get("request_ledger", []) if saved else [],
+        "request_ledger_missing_trace_run_ids": ids,
     }
     if identity["native_source_sha256"] is not None:
         if ids:
@@ -104,24 +124,35 @@ def _capture(protocol, order, ids, receipt):
             text=True,
             check=True,
         )
-        rows = json.loads(observed.stdout)
-        if not isinstance(rows, list) or any(
-            not isinstance(row, dict)
-            or row.get("org") != binding["org"]
-            or row.get("namespace") != binding["code_namespace"]
-            or row.get("trace_run_id") not in ids
-            for row in rows
-        ):
-            raise PermissionError("Code trace scope differs from the attempt")
+        captured = json.loads(observed.stdout)
+        rows = _scoped_rows(captured["rows"], binding, ids)
+        requests = _scoped_rows(captured["requests"], binding, ids)
         receipt["rows"] = rows
         missing = sorted(set(ids) - {row["trace_run_id"] for row in rows})
         receipt.update(
             complete=not missing,
             state="partial" if missing else "captured",
             missing_trace_run_ids=missing,
+            request_ledger=requests,
+            request_ledger_error=captured["ledger_error"],
+            request_ledger_missing_trace_run_ids=sorted(
+                set(ids) - {row["trace_run_id"] for row in requests}
+            ),
         )
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
+    except (KeyError, OSError, subprocess.SubprocessError, ValueError, TypeError) as error:
         receipt.update(state="capture_error", error_type=type(error).__name__)
         receipt["missing_trace_run_ids"] = sorted(
             set(ids) - {row["trace_run_id"] for row in receipt["rows"]}
         )
+
+
+def _scoped_rows(rows, binding, ids):
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict)
+        or row.get("org") != binding["org"]
+        or row.get("namespace") != binding["code_namespace"]
+        or row.get("trace_run_id") not in ids
+        for row in rows
+    ):
+        raise PermissionError("Code trace scope differs from the attempt")
+    return sorted(rows, key=lambda row: (row["trace_run_id"], row.get("request_id", "")))

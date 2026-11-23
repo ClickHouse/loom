@@ -200,12 +200,17 @@ function summary(rows, plannedRows) {
   const waiting = plannedRows.filter((row) => row.state === "complete" && !row.comparison_included).length;
   const graded = plannedRows.filter((row) => row.state === "complete");
   const verified = graded.filter((row) => row.cache_start_verified === true).length;
+  const measuredPairs = (data.cache_pairs || []).filter(
+    (pair) => typeof pair.first_prefix_token_count_match === "boolean",
+  );
+  const matchingPairs = measuredPairs.filter((pair) => pair.first_prefix_token_count_match).length;
   byId("comparison-note").textContent =
     (partial
       ? `${blocks} of ${plannedBlocks} planned blocks matched across all five arms. `
       : `${blocks} matched ${blocks === 1 ? "attempt" : "attempts"} per arm. `) +
     (waiting ? `${waiting} completed attempts await matching arms. ` : "") +
     (cacheStarts.length ? `Provider cache evidence matches the planned start in ${verified} of ${graded.length} graded attempts. ` : "") +
+    (measuredPairs.length ? `In ${matchingPairs} of ${measuredPairs.length} measured pairs, the warm first response read the same number of tokens the cold response wrote and wrote zero new tokens. ` : "") +
     "Hidden test failures are included. " +
     (cost.key === "generation_cost"
       ? "Observed costs use solver charges. Equal-cache estimates require a known combined provider cost."

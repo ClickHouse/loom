@@ -130,8 +130,10 @@ an output-size measure, with separate counters for provider token usage.
    enclosing definitions carry 4,659 characters. The relevant 704-character
    span covers all of the source lines the next command read with Tree-sitter,
    Tree-sitter with memory, and SCIP with memory.
-   Those commands also read unindexed tests or changelog content. A new paid
-   trajectory must establish whether the shorter source windows save a turn.
+   Those commands also read tests or changelog content. The test file is
+   indexed and Loom can serve its test definition. The changelog is outside
+   the configured roots. A new paid trajectory must establish whether the
+   shorter source windows save a turn.
    [Grep source windows](https://github.com/ClickHouse/loom/pull/1272)
 3. **Measure memory delivery before crediting quality.** Record whether a
    linked fact arrived before editing and whether its code link was fresh at

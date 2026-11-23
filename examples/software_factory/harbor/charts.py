@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from .arms import PRIMARY
+from .cache_start import pair_usage
 from .cohorts import comparison_cohorts
 from .source import reporting_identity
 
@@ -175,6 +176,7 @@ def chart_data(protocol, entries, views_manifest):
         "titles": titles,
         "cohorts": comparison_cohorts(protocol),
         "attempts": rows,
+        "cache_pairs": pair_usage(protocol["schedule"], observed),
         "observed": len(entries),
         "scheduled": len(protocol["schedule"]),
         "complete": complete,
