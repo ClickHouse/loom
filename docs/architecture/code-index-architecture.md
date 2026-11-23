@@ -382,8 +382,13 @@ Search and grep rank candidate lessons across all selected files by query-term
 overlap after constraints and pinned rows. English inflections share stems; equal
 matches keep path order, then the listing's confidence and recency order.
 The remaining file-lesson reads retain path and listing order.
-This reorders the same readable candidates within the same response token budget;
-it adds no model call or storage read. Superseded rows and unrelated paths remain excluded.
+The ranking uses the existing namespace-scoped candidates. On trunk, uncapped
+search and grep-match responses can focus a file's lessons when every returned
+hit names a definition and an exact linked lesson is available. Whole-file
+search hits use file-level selection. Read the broader file history with
+`memory.for_file`. Before omitting a lesson by scope, the enrichment checks its
+live link set for pending and uncertain links within the request's enrichment
+deadline. Ranking and focusing add no model calls.
 
 File and symbol lessons carry complete memory text, including source references.
 The internal file listing reads complete values; the pre-edit block keeps its own

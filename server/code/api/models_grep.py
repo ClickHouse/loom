@@ -4,7 +4,7 @@ code.files (indexed files by name).
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -32,29 +32,43 @@ from server.operations.base import MCP_HIDDEN
 # ============================================================
 
 
+GrepText = Annotated[str, Field(min_length=2, max_length=1000)]
+
+
 class CodeGrepInput(_CodeIdentity, _ResultLessons):
     """Literal or regex search of indexed source with enclosing symbols and coverage.
 
     Literal by default; regex=True switches to RE2.
     """
 
-    # The text to find: a literal substring, or an RE2 expression with `regex`.
-    pattern: str = Field(
-        min_length=2,
-        max_length=1000,
-        description="Exact text to find, or an RE2 expression when regex is true.",
+    # multiSearchAny accepts up to 255 alternatives in a scan.
+    pattern: GrepText | Annotated[list[GrepText], Field(min_length=1, max_length=255)] = Field(
+        description="Literal text, a list of alternatives, or one RE2 expression with regex=true.",
     )
-    # True reads `pattern` as RE2; an invalid expression is a 422.
-    regex: bool = False
+    regex: bool = Field(
+        default=False,
+        description="Use RE2 syntax without lookaround or backreferences when true.",
+    )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
+    include_body: bool = Field(
+        default=False,
+        description="Include distinct enclosing bodies in matches mode; default false.",
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""
     # Continuation (matches mode): the `next_cursor` of an earlier response to this
     # pattern; the next page of matching lines is one point read of what the first call
     # extracted.
-    cursor: str = Field(default="", max_length=1024)
+    cursor: str = Field(
+        default="",
+        max_length=1024,
+        description=(
+            "In matches mode, pass `next_cursor` with the original search arguments "
+            "and omit it to start a new search."
+        ),
+    )
     # The caller's seen-set. Grep serves no unit ids, so these are PATHS
     # (what its trace records as returned_ids): lines in them are skipped.
     exclude_unit_ids: list[str] = Field(
@@ -136,12 +150,21 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
 
 
 class CodeGrepOutput(_LessonsOut):
+    # File lessons omitted by symbol focus, a token budget, truncation or supersession.
+    lessons_left_out: int = 0
+
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # the presence block rides only when it fired, the neighbours block
         # only when it ran, and the message fields only with a verdict
         data = _drop_empty_presence_keys(handler(self))
         data = _drop_unfired_symbol_blocks(data)
+        if not data.get("definitions"):
+            data.pop("definitions", None)
+        if not data.get("definitions_partial"):
+            data.pop("definitions_partial", None)
+        if not data.get("definitions_note"):
+            data.pop("definitions_note", None)
         if not data.get("verdict"):
             for k in ("verdict", "template", "error_code", "coverage"):
                 data.pop(k, None)
@@ -155,6 +178,12 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # include_body: distinct enclosing units, in hit order; `lines` names the matching
+    # lines each definition covers. Unavailable bodies retain the enclosing result's
+    # disclosure and next lookup. Empty without include_body or without matches.
+    definitions: list[dict[str, Any]] = Field(default_factory=list)
+    definitions_partial: bool = False
+    definitions_note: str = ""
     # Continuation: cursor for the next page of matching lines, "" when the extracted
     # set is exhausted. has_more mirrors it.
     next_cursor: str = ""
