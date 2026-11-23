@@ -87,6 +87,14 @@ recovery work; it grants no checkout authority. Retirement and all raw-history
 censuses must finish before the recovery row disappears. Retrying neither adds a
 registration nor skips a historical generation or its prefix validation.
 
+Deployment admission limits live in the settings catalog: sealed plaintext bytes,
+selected identities per source and UTF-8 bytes per selected identity. The app codecs
+apply these bounds when writing and reading contracts. The pure version-one wire
+models retain their fixed ceilings, so configuration can narrow admission without
+accepting a format another lifecycle-aware build cannot parse. Lowering a limit
+refuses an oversized stored contract; lifecycle preservation and erasure still use
+its unchanged raw columns. The configured codecs create the hosted sealed fixture.
+
 Disconnect and explicit erasure retain their existing meanings. Local bearer removal
 does not prove remote token revocation. Restore is destructive offline lifecycle
 work with fencing and a final census; it is not a reconfiguration or upgrade tool.

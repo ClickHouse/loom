@@ -200,7 +200,8 @@ class Fixture:
         from server.core.secrets_at_rest import seal
         from server.knowledge.app import connected_accounts as accounts
         from server.knowledge.domain.connected_accounts import ConnectedAccount
-        from server.knowledge.domain.mcp_sources import ConnectionEnvelope, encode_envelope
+        from server.knowledge.app.mcp_contracts import encode_envelope
+        from server.knowledge.domain.mcp_sources import ConnectionEnvelope
 
         a, b = self.orgs
         owners = [
