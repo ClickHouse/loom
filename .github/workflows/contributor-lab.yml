@@ -47,6 +47,7 @@ jobs:
             /scripts/
             /schemas/
             /dev/
+            /deploy/clickhouse-config/
             /extractor/
             /.github/mcp-inspector/
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
@@ -70,6 +71,7 @@ jobs:
           export PATH="$PWD/.venv/bin:$PATH"
           LOOM_CLICKHOUSE_IMAGE=$(bash dev/clickhouse_release.sh)
           export LOOM_CLICKHOUSE_IMAGE
+          test -f deploy/clickhouse-config/keeper.xml
           bash dev/ci_start_clickhouse.sh
           python -m server.core.schema.migrate
           LOOM_JWT_SECRET=$(openssl rand -hex 32)
