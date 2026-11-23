@@ -13,9 +13,12 @@ on:
       - "docker-smoke"
       - "codeql"
       - "CodeQL extended security"
+      - "contributor lab"
       - "Dashboard browser smoke"
       - "External documentation links"
+      - "endpoint identity probes"
       - "Go SDK API compatibility"
+      - "HTTP schema contract"
       - "Maven dependency graph"
       - "Rust dependency advisories"
       - "Rust SDK API compatibility"
@@ -23,6 +26,7 @@ on:
       - "Synthetic memory load"
       - "TypeScript API report"
       - "workflow lint"
+      - "workflow security findings"
       - "native SDK packages"
       - "scorecard"
     types: [completed]
@@ -67,6 +71,7 @@ jobs:
       actions: read
       contents: read
       issues: write
+      security-events: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

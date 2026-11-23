@@ -1,4 +1,4 @@
-"""Open maintenance issues for failed tooling checks on the default branch."""
+"""Open maintenance issues for failed checks and scanner alerts on the default branch."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import os
 import re
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError
@@ -20,8 +21,11 @@ WORKFLOWS = {
     "browser-smoke.yml": ("dashboard-browsers", "Dashboard browser smoke"),
     "codeql.yml": ("codeql", "CodeQL execution"),
     "codeql-extended.yml": ("codeql-extended", "Extended CodeQL execution"),
+    "contributor-lab.yml": ("contributor-lab", "Contributor lab"),
     "external-links.yml": ("external-links", "External documentation links"),
     "go-api.yml": ("go-api", "Go SDK API compatibility"),
+    "http-contract.yml": ("http-contract", "HTTP schema contract"),
+    "identity-testing.yml": ("endpoint-identity", "Endpoint identity probes"),
     "maven-dependency-graph.yml": ("maven-graph", "Maven dependency graph"),
     "rust-advisories.yml": ("rust-advisories", "Rust dependency advisory check"),
     "rust-api.yml": ("rust-api", "Rust SDK API compatibility"),
@@ -31,8 +35,11 @@ WORKFLOWS = {
     "service-load.yml": ("memory-load", "Synthetic memory load"),
     "typescript-api-report.yml": ("typescript-api", "TypeScript SDK API report"),
     "workflow-lint.yml": ("workflow-lint", "Workflow lint"),
+    "zizmor.yml": ("workflow-audit", "Workflow security audit execution"),
 }
 SHARED_WORKFLOWS = ("ci.yml", "docker-smoke.yml")
+SCANNERS = {"CodeQL": "codeql-alerts", "Scorecard": "scorecard-alerts"}
+SECURITY_URL = f"https://github.com/{REPO}/security/code-scanning"
 CI_STEPS = {
     "Validate the PyPI description in both distributions": (
         "twine",
@@ -46,6 +53,15 @@ CI_STEPS = {
 MARKER = re.compile(r"<!-- loom-tooling-failure:v1 ([a-z0-9-]+) (\d+) -->")
 TITLE = re.compile(r"^\[tooling-ci:([a-z0-9-]+)\]")
 Api = Callable[..., Any]
+
+
+@dataclass(frozen=True)
+class Finding:
+    source_id: int
+    title: str
+    description: str
+    link_text: str
+    link: str
 
 
 def github_api(path: str, *, payload: dict[str, str] | None = None) -> Any:
@@ -142,7 +158,7 @@ def shared_failures(workflow: str, jobs: Iterator[dict[str, Any]]) -> set[tuple[
     return failures
 
 
-def collect_failures(api: Api, workflows: list[str]) -> dict[str, tuple[str, int]]:
+def collect_failures(api: Api, workflows: list[str]) -> dict[str, Finding]:
     failures = {}
     for workflow in workflows:
         run = latest_run(api, workflow)
@@ -161,19 +177,50 @@ def collect_failures(api: Api, workflows: list[str]) -> dict[str, tuple[str, int
                 list_rows(api, f"actions/runs/{run_id}/jobs?filter=latest", field="jobs"),
             )
         for key, label in checks:
-            failures[key] = (label, run_id)
+            failures[key] = Finding(
+                run_id,
+                f"{label} failed on main",
+                f"{label} reported a workflow failure on `main`.",
+                "Review the checks",
+                f"https://github.com/{REPO}/actions/runs/{run_id}",
+            )
     return failures
 
 
-def existing_issues(api: Api, failures: dict[str, tuple[str, int]]) -> set[str]:
+def collect_scanning_findings(api: Api) -> dict[str, Finding]:
+    query = urlencode({"state": "open", "ref": "refs/heads/main"})
+    latest: dict[str, int] = {}
+    for alert in list_rows(api, f"code-scanning/alerts?{query}"):
+        tool = (alert.get("tool") or {}).get("name")
+        if tool not in SCANNERS or alert.get("state") != "open":
+            continue
+        number = alert["number"]
+        if type(number) is not int or number <= 0:
+            raise ValueError("Expected a positive code scanning alert number")
+        latest[tool] = max(latest.get(tool, 0), number)
+    return {
+        SCANNERS[tool]: Finding(
+            number,
+            f"Review open {tool} alerts on main",
+            f"{tool} has open code scanning alerts on `main`.",
+            "Review code scanning alerts",
+            SECURITY_URL,
+        )
+        for tool, number in latest.items()
+    }
+
+
+def existing_issues(api: Api, findings: dict[str, Finding]) -> set[str]:
     matched = set()
     query = urlencode({"state": "all", "creator": BOT})
     for issue in list_rows(api, f"issues?{query}"):
         if "pull_request" in issue or (issue.get("user") or {}).get("login") != BOT:
             continue
         body = issue.get("body") or ""
-        for key, run_id in MARKER.findall(body):
-            if key in failures and (issue["state"] == "open" or int(run_id) == failures[key][1]):
+        for key, source_id in MARKER.findall(body):
+            if key in findings and (
+                issue["state"] == "open" or int(source_id) == findings[key].source_id
+            ):
                 matched.add(key)
         title = TITLE.match(issue.get("title") or "")
         if title and issue["state"] == "open":
@@ -181,25 +228,23 @@ def existing_issues(api: Api, failures: dict[str, tuple[str, int]]) -> set[str]:
     return matched
 
 
-def report(api: Api, workflows: list[str]) -> int:
-    failures = collect_failures(api, workflows)
-    if not failures:
+def report(api: Api, findings: dict[str, Finding]) -> int:
+    if not findings:
         return 0
-    matched = existing_issues(api, failures)
+    matched = existing_issues(api, findings)
     created = 0
-    for key in sorted(failures.keys() - matched):
-        label, run_id = failures[key]
+    for key in sorted(findings.keys() - matched):
+        finding = findings[key]
         api(
             "issues",
             payload={
-                "title": f"[tooling-ci:{key}] {label} failed on main",
+                "title": f"[tooling-ci:{key}] {finding.title}",
                 "body": (
-                    f"<!-- loom-tooling-failure:v1 {key} {run_id} -->\n\n"
+                    f"<!-- loom-tooling-failure:v1 {key} {finding.source_id} -->\n\n"
                     "### Company or project name\n\n"
                     "ClickHouse\n\n"
-                    f"{label} reported a workflow failure on `main`.\n\n"
-                    f"[Review the checks]("
-                    f"https://github.com/{REPO}/actions/runs/{run_id})\n"
+                    f"{finding.description}\n\n"
+                    f"[{finding.link_text}]({finding.link})\n"
                 ),
             },
         )
@@ -211,8 +256,12 @@ def main() -> None:
     if os.environ["GITHUB_REPOSITORY"] != REPO or os.environ["GITHUB_REF"] != "refs/heads/main":
         raise SystemExit("Tooling issues require the default branch of the owning repository")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    workflows = select_workflows(os.environ["GITHUB_EVENT_NAME"], event)
-    print(f"Tooling maintenance issues opened: {report(github_api, workflows)}")
+    event_name = os.environ["GITHUB_EVENT_NAME"]
+    workflows = select_workflows(event_name, event)
+    created = report(github_api, collect_failures(github_api, workflows))
+    if event_name in {"schedule", "workflow_dispatch"}:
+        created += report(github_api, collect_scanning_findings(github_api))
+    print(f"Tooling maintenance issues opened: {created}")
 
 
 if __name__ == "__main__":
