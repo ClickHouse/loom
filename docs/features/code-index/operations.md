@@ -91,8 +91,9 @@ the parentheses. All alternatives share a result limit, and each matching line
 or file appears once.
 `mode: "message"` and `regex: true` require a single string.
 
-In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
-beside the hit lines. Each definition appears once; its `lines` lists the matching
+In matches mode, `code.grep` returns the enclosing definitions beside the hit
+lines by default. Pass `include_body=false` for names, lines or locations only.
+Each definition appears once. Its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
 and document-section fallback. The Python index keeps decorators in their
 owning function's source chunk, so a hit inside a decorator can return the

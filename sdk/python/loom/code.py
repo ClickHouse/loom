@@ -110,6 +110,7 @@ class CodeClient:
         path_prefix: str = "",
         limit: int | None = None,
         context_lines: int = 0,
+        include_body: bool | None = None,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -120,7 +121,9 @@ class CodeClient:
         carries its enclosing symbol (`scope`) and that unit's span
         (`scope_start_line` / `scope_end_line`, 0 outside any unit), so a
         caller can skip `enclosing()` for a hit inside a function it has
-        already shown. `context_lines` adds nearby retained source in matches mode.
+        already shown. Matches include distinct enclosing bodies by default.
+        Pass `include_body=False` for names or locations only.
+        `context_lines` adds nearby retained source in matches mode.
         `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
@@ -147,6 +150,8 @@ class CodeClient:
             body["limit"] = limit
         if context_lines:
             body["context_lines"] = context_lines
+        if include_body is not None:
+            body["include_body"] = include_body
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

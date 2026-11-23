@@ -724,12 +724,12 @@ Literal or regex search of indexed source with enclosing symbols and coverage.
 | `pattern` | `str \| list[str]` | required | Literal text, a list of alternatives, or one RE2 expression with regex=true. |
 | `regex` | `bool` | `False` | Use RE2 syntax without lookaround or backreferences when true. |
 | `case_sensitive` | `bool` | `True` | False matches `pattern` regardless of letter case. |
-| `include_body` | `bool` | `False` | Include distinct enclosing bodies in matches mode; default false. |
 | `context_lines` | `int` | `0` | Retained lines on each side of a match. |
 | `path_prefix` | `str` | `''` | Only paths under this repo-relative prefix; '' = the whole index. |
 | `cursor` | `str` | `''` | In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. |
 | `exclude_unit_ids` | `list[str]` | *(computed)* | The caller's seen-set. |
 | `mode` | `Literal['matches', 'files', 'presence', 'message']` | `'matches'` | matches: up to `limit` matching LINES with text + enclosing scope. files: up to `limit` matching FILES (path, matching chunk count, first line) and no line text — the coverage question ("which files mention X?") that a 20-line cap cannot… |
+| `include_body` | `bool` | *(computed)* | Return bodies by default in matches mode, or set false for lines only. |
 | `limit` | `int \| None` | `None` | Default depends on mode: 20 lines, or the 500-file ceiling — a files answer capped at 20 reads like a complete coverage answer to a caller that did not know to send a limit. matches mode is clamped to 200 lines. |
 | `path_globs` | `list[str]` | *(computed)* | File filters, rg `-g` / `-t` style: keep paths matching any glob, drop paths matching any exclude, restrict to a language's extension set. |
 | `exclude_globs` | `list[str]` | *(computed)* | Drop paths matching any of these rg-style globs. |

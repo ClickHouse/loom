@@ -133,7 +133,7 @@ async def test_hits_share_one_definition_and_pages_keep_only_their_lines(monkeyp
     monkeypatch.setattr(enclosing, "handle_code_enclosing", read)
     matches = [{"path": "a.py", "line": line, "text": "target()"} for line in (3, 8)]
     out = await definitions_for(
-        CodeGrepInput(pattern="target", include_body=True),
+        CodeGrepInput(pattern="target"),
         matches,
         None,
         match_commits=_verified(matches),
@@ -146,7 +146,7 @@ async def test_hits_share_one_definition_and_pages_keep_only_their_lines(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_default_is_unchanged_and_body_failures_are_disclosed(monkeypatch):
+async def test_body_opt_out_and_lookup_failures_are_disclosed(monkeypatch):
     from server.code.app.symbol import enclosing
 
     async def unavailable(_input, **_kwargs):
@@ -155,7 +155,9 @@ async def test_default_is_unchanged_and_body_failures_are_disclosed(monkeypatch)
     monkeypatch.setattr(enclosing, "handle_code_enclosing", unavailable)
     matches = [{"path": "a.py", "line": 3}]
     assert (
-        await definitions_for(CodeGrepInput(pattern="target"), matches, None, match_commits={})
+        await definitions_for(
+            CodeGrepInput(pattern="target", include_body=False), matches, None, match_commits={}
+        )
         == {}
     )
     plain = CodeGrepOutput(matches=[], chunks_matched=0).model_dump()
@@ -172,6 +174,11 @@ async def test_default_is_unchanged_and_body_failures_are_disclosed(monkeypatch)
     from server.observability.event_args import project_result
 
     assert project_result(out, op_name="code.grep")["out_definitions_partial"] == "true"
+
+
+@pytest.mark.parametrize("mode", ["files", "presence", "message"])
+def test_body_default_only_applies_to_matches(mode):
+    assert CodeGrepInput(pattern="target", mode=mode).include_body is False
 
 
 @pytest.mark.asyncio

@@ -396,12 +396,13 @@ def test_the_compact_profile_keeps_the_tool_names():
             assert not {r for r in _OP_REF.findall(t["description"]) if r in listed}, t["name"]
 
 
-def test_compact_coding_grep_advertises_single_call_bodies_and_literal_alternatives():
+def test_compact_coding_grep_advertises_body_default_and_literal_alternatives():
     tools = {t["name"]: t for t in _listing("coding", True, "compact")}
     description = tools["loom_code_grep"]["description"]
     assert "stable literal fragment" in description
     assert "literal alternatives" in description
-    assert "`include_body: true` adds enclosing definitions in the same call" in description
+    assert "Matches include enclosing bodies by default" in description
+    assert "`include_body: false` for names or locations only" in description
     assert "loom_code_search" in description
     assert "`context_lines` for a short excerpt" in description
 

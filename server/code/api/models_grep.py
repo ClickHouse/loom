@@ -52,10 +52,6 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     )
     # False matches `pattern` regardless of letter case.
     case_sensitive: bool = True
-    include_body: bool = Field(
-        default=False,
-        description="Include distinct enclosing bodies in matches mode; default false.",
-    )
     include_lessons: bool = Field(
         default=True,
         description=(
@@ -100,6 +96,10 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     # template matches (a code line, not a rendered message) is run once more as a plain
     # matches grep and says so in `fallback`.
     mode: Literal["matches", "files", "presence", "message"] = "matches"
+    include_body: bool = Field(
+        default_factory=lambda data: data["mode"] == "matches",
+        description="Return bodies by default in matches mode, or set false for lines only.",
+    )
     # Default depends on mode: 20 lines, or the 500-file ceiling — a files
     # answer capped at 20 reads like a complete coverage answer to a caller
     # that did not know to send a limit. matches mode is clamped to 200 lines.

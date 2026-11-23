@@ -54,7 +54,7 @@ async def test_search_grep_trace_verify_coverage_wire_fields() -> None:
     ag = _Agent()
     c = CodeClient(ag)  # type: ignore[arg-type]
     await c.search("q", bodies="none", annotate=False, path_prefix="src/")
-    await c.grep("LOGICAL_ERROR", regex=False, path_prefix="src/Core")
+    await c.grep("LOGICAL_ERROR", regex=False, path_prefix="src/Core", include_body=False)
     await c.trace("#0 DB::foo()\n#1 DB::bar()")
     await c.verify("calls", "DB::A", obj="DB::B", depth=3)
     await c.coverage()
@@ -68,6 +68,7 @@ async def test_search_grep_trace_verify_coverage_wire_fields() -> None:
     ]
     search = ag.transport.calls[0][1]
     assert search["bodies"] == "none" and search["annotate"] is False
+    assert ag.transport.calls[1][1]["include_body"] is False
     verify = ag.transport.calls[3][1]
     assert verify == {
         "kind": "calls",

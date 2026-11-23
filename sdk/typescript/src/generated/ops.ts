@@ -886,8 +886,6 @@ export interface CodeGrepInput {
   /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
-  /** Include distinct enclosing bodies in matches mode; default false. */
-  include_body?: boolean;
   /** Retained lines on each side of a match. */
   context_lines?: number;
   path_prefix?: string;
@@ -895,6 +893,8 @@ export interface CodeGrepInput {
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
+  /** Return bodies by default in matches mode, or set false for lines only. */
+  include_body?: boolean;
   limit?: number | null;
   path_globs?: string[];
   exclude_globs?: string[];
