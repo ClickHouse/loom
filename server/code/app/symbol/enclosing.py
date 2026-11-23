@@ -5,6 +5,7 @@ body, the document sections for a prose file and the neighbour block.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -74,8 +75,11 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
         rows = await repo.functions_for_paths(org, ns, paths, limit=2000, kinds=ENCLOSING_KINDS)
         span_attrs(sp, rows=len(rows))
     by_path = _by_path(rows)
-    if input.include_body:
+    widened = (
         await extend_decorated_spans(repo, org, ns, [p for p in parsed if p], by_path)
+        if input.include_body
+        else set()
+    )
 
     # Second pass, only for lines no function contains: the class / struct
     # whose body holds the line (a member declaration in a header). One
@@ -158,7 +162,7 @@ async def handle_code_enclosing(input: CodeEnclosingInput) -> CodeEnclosingOutpu
     bodies_returned = bodies_elided = tokens = 0
     if input.include_body and resolved:
         bodies_returned, bodies_elided, tokens = await _attach_enclosing_bodies(
-            repo, org, ns, results, input.token_budget
+            repo, org, ns, results, input.token_budget, widened
         )
 
     want_neighbours = bool(input.neighbours)  # unset = off
@@ -286,11 +290,12 @@ async def _attach_enclosing_bodies(
     ns: str,
     results: list[dict[str, Any]],
     token_budget: int,
+    widened: set[str],
 ) -> tuple[int, int, int]:
     """Fetch each distinct enclosing function's body once and attach it to
     every hit inside it, filling by first appearance until the budget is
     spent. Whole units only (a body is never cut): a function that does not
-    fit ships `body == ""`, `body_elided`, and the code.symbol call that
+    fit ships `body == ""`, `body_elided`, and the lookup that
     fetches it. Returns (bodies_returned, bodies_elided, tokens)."""
     from server.code.domain.units import estimate_tokens
 
@@ -334,7 +339,13 @@ async def _attach_enclosing_bodies(
         body = served.get(sid, "")
         r["body"] = body
         r["body_elided"] = not body
-        r["next"] = "" if body else f'code.symbol(symbol_id="{sid}")'
+        if body:
+            r["next"] = ""
+        elif sid in widened:
+            loc = json.dumps(f"{r['path']}:{r['start_line']}")
+            r["next"] = f"code.enclosing(locations=[{loc}], include_body=true)"
+        else:
+            r["next"] = f'code.symbol(symbol_id="{sid}")'
     for r in order:
         if str(r["symbol_id"]) in served:
             returned += 1

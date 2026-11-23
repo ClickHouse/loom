@@ -61,7 +61,11 @@ async def definitions_for(
         logger.warning("code.grep enclosing body lookup failed", exc_info=True)
         incomplete, note = True, "some enclosing bodies could not be read"
     definitions = _distinct(rows)
-    if any(not row.get("body") for row in definitions) or len(rows) != len(locations):
+    if len(rows) != len(locations) or any(
+        not row.get("body")
+        or any(not row["start_line"] <= line <= row["end_line"] for line in row["lines"])
+        for row in definitions
+    ):
         incomplete = True
         note = (
             note

@@ -6,6 +6,8 @@ import asyncio
 from typing import Any
 from unittest.mock import patch
 
+import pytest
+
 from server.settings import settings
 
 ROWS = [
@@ -203,7 +205,8 @@ def test_default_mode_has_no_body_fields(monkeypatch):
     assert "body" not in out.results[0] and out.bodies_returned == 0 and out.tokens_returned == 0
 
 
-def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch):
+@pytest.mark.parametrize("token_budget", [0, 1])
+def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch, token_budget):
     from server.code.api.models_navigation import CodeEnclosingInput
     from server.code.app.symbol import enclosing as h
 
@@ -244,14 +247,25 @@ def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch):
     with patch.object(h, "CodeRepo", Repo), patch.object(h, "index_as_of", new=_as_of):
         result = asyncio.run(
             h.handle_code_enclosing(
-                CodeEnclosingInput(org="o", namespace="n", locations=locations, include_body=True)
+                CodeEnclosingInput(
+                    org="o",
+                    namespace="n",
+                    locations=locations,
+                    include_body=True,
+                    token_budget=token_budget,
+                )
             )
         )
 
     body_hit, decorator_hit, file_scope = result.results
-    assert result.bodies_returned == 1 and result.bodies_elided == 0
     assert body_hit["start_line"] == decorator_hit["start_line"] == 4
-    assert body_hit["body"] == decorator_hit["body"] == decorator + definition
+    if token_budget:
+        assert result.bodies_returned == 0 and result.bodies_elided == 1
+        assert decorator_hit["body"] == ""
+        assert decorator_hit["next"] == 'code.enclosing(locations=["cli.py:4"], include_body=true)'
+    else:
+        assert result.bodies_returned == 1 and result.bodies_elided == 0
+        assert body_hit["body"] == decorator_hit["body"] == decorator + definition
     assert file_scope["symbol"] == ""
     assert lookup["start_line"] == 8
 

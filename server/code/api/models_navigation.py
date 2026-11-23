@@ -175,7 +175,7 @@ class CodeEnclosingOutput(_LessonsOut):
     # (file scope, unindexed path, or the index has not caught up).
     # With include_body, resolved entries add {body, body_elided, next}:
     # body is the whole unit ("" when elided for budget), next is the
-    # code.symbol call that fetches it.
+    # lookup that fetches it.
     results: list[dict[str, Any]]
     # Locations that landed inside a function, type, or document section.
     resolved: int
