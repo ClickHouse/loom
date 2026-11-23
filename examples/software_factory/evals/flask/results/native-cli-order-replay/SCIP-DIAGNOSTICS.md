@@ -36,10 +36,10 @@ model time and local commands have separate timings.
   across the five attempts and the fastest agent attempt overall. The time
   trace supports measuring lesson work separately from its effect on later
   model responses.
-- **SCIP.** The exact caller let the agent skip a separate grep. The agent
-  read a wider source span and looked up tests in the same shell call. This
-  path points to better source context around caller sites. The cost overage
-  occurred before that caller arrived.
+- **SCIP.** The symbol response included an exact caller. The agent went
+  straight to a shell call that read a wider source span and looked up tests.
+  This path points to better source context around caller sites. The cost
+  overage occurred before that caller arrived.
 - **SCIP + memory.** The agent received the same fresh note twice and still
   used grep, a combined source and test read, and a second test run on the
   workspace with the source patch stashed. The warm first response accounted
