@@ -656,6 +656,7 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
         entry = observed.get(order)
         view_name = view_names[view_by_order[str(order)]]
         item = {**slot, "state": "observed" if entry else "pending", "metrics": None, "links": {}}
+        model_responses = ""
         if entry:
             record = entry["result"]
             folder = Path(record["harbor_trial"])
@@ -680,18 +681,30 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
             for label, (path, url) in assets.items():
                 if (folder / path).exists():
                     item["links"][label] = url
+            diagnostics = {}
             for label, suffix in (
                 ("model usage by turn", "-model-usage"),
                 ("Loom retrieval stages and request ledger", "-code-traces"),
                 ("tool response summary", ""),
             ):
                 name = f"attempt-{order:02d}{suffix}.json"
-                if (output / "diagnostics" / name).is_file():
+                diagnostic = output / "diagnostics" / name
+                if diagnostic.is_file():
                     item["links"][label] = "../../diagnostics/" + name
+                    diagnostics[label] = diagnostic
+            usage_path = diagnostics.get("model usage by turn")
+            trace_path = diagnostics.get("tool response summary")
+            if usage_path and trace_path:
+                try:
+                    model_responses = _model_response_table(_read(usage_path), _read(trace_path))
+                except (OSError, ValueError, KeyError, TypeError):
+                    model_responses = "Model response details unavailable.\n"
+                item["model_response_table_sha256"] = hashlib.sha256(
+                    model_responses.encode()
+                ).hexdigest()
         attempts.append(item)
         path = report_dir / "attempts" / f"attempt-{order:02d}.json"
         if not path.exists() or _read(path) != item or not path.with_suffix(".md").exists():
-            _atomic(path, item)
             text = (
                 f"# Attempt {order}\n\n{slot['task_id']} · repeat {slot['repeat']} "
                 f"· {slot['arm']} · {item['state']}\n\n"
@@ -720,18 +733,11 @@ def _generate(protocol, entries, output, jobs, base, names, job_name):
                     " · ".join(f"[{key}]({value})" for key, value in item["links"].items()) + "\n"
                 )
                 text += _trace_table(record)
-                usage_link = item["links"].get("model usage by turn")
-                trace_link = item["links"].get("tool response summary")
-                if usage_link and trace_link:
-                    try:
-                        text += _model_response_table(
-                            _read(path.parent / usage_link), _read(path.parent / trace_link)
-                        )
-                    except (OSError, ValueError, KeyError, TypeError):
-                        text += "Model response details unavailable.\n"
+                text += model_responses
             else:
                 text += "No measured result yet. Cost, time and success remain unknown.\n"
             _atomic(path.with_suffix(".md"), text)
+            _atomic(path, item)
     all_scenarios = {
         arm: _summary(slots, observed) for arm, slots in groups.items() if arm in PRIMARY_VIEWS
     }
