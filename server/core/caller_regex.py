@@ -42,5 +42,7 @@ def compile_caller_regex(
             reason = reason.decode("utf-8", "replace")
         raise ValidationError(
             f"pattern is not a valid RE2 regular expression ({reason}); "
+            "escape literal punctuation (for example, \\( matches a literal opening "
+            "parenthesis), or correct the regex syntax; "
             "RE2 has no backreferences or lookaround"
         ) from None

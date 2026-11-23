@@ -540,7 +540,8 @@ jobs:
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=
           refused "networkPolicy.egressExcept must be a list of CIDRs" --set networkPolicy.egressExcept=0
       - name: install PyYAML for the render gates
-        run: python3 -m pip install --quiet --user pyyaml==6.0.3
+        run: |
+          python3 -m pip install --quiet --user --require-hashes --only-binary=:all: -r scripts/gates/requirements.txt
       # What the extractor's pods can be reached by and reach, read off the render.
       - name: extractor isolation
         run: python3 scripts/gates/helm_extractor_isolation.py
@@ -1365,7 +1366,9 @@ jobs:
       - name: Claude memory tool with Anthropic 1.11
         working-directory: sdk/typescript
         run: |
-          npm install --no-save --package-lock=false --no-audit --no-fund @anthropic-ai/sdk@1.11.0
+          npm ci --prefix ../../.github/anthropic-sdk-1.11 --ignore-scripts --no-audit --no-fund
+          rm -r node_modules/@anthropic-ai/sdk
+          ln -s "$GITHUB_WORKSPACE/.github/anthropic-sdk-1.11/node_modules/@anthropic-ai/sdk" node_modules/@anthropic-ai/sdk
           npm run type-check
           npx vitest run src/integrations/claude-memory.test.ts src/integrations/claude-memory-runner.test.ts
           npx vitest run --config vitest.dist.config.ts test/package/exports.test.ts
@@ -1428,8 +1431,9 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python }}
-      - name: Install uv
-        run: pip install uv
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
       - name: Build wheel + sdist
         run: uv build sdk/python --out-dir dist
       - name: Install the wheel into a clean venv

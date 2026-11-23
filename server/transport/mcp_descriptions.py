@@ -1368,8 +1368,8 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "or logs to their source templates; code-shaped input falls back to literal. "
         "`mode: 'presence'` with `namespaces` (up to eight) returns each branch's "
         "present / absent / unknown verdict and a summary. Optional `deadline_ms` "
-        "returns hits found before expiry with `partial: true`. Coverage disclosures "
-        "distinguish absent matches from incomplete indexed source. For paths use "
+        "returns hits found before expiry with `partial: true`. Coverage distinguishes "
+        "absent matches from incomplete indexed source. For paths use "
         "code.files; this searches content. Use local tools for uncommitted source."
     ),
     "code.files": (
@@ -2209,7 +2209,8 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
     ),
     "code.grep": (
         "Find exact text or regex in indexed source, with source lines and enclosing "
-        "symbols. Pass `pattern`; `regex: true` selects regex. For behavior questions "
+        "symbols. Pass `pattern`; regex=true uses RE2: escape literal code punctuation. "
+        "For behavior questions "
         "use code.search. Narrow with `path_prefix`, `path_globs` or `langs`; "
         "`next_cursor` pages remaining matches. For several hit bodies, use "
         "code.enclosing with locations [path:line, ...] and include_body=true. "
