@@ -31,7 +31,7 @@ from .billing import audit_provider_costs
 from .cache_start import CACHE_5M_SECONDS, quiet_period, verified_start
 from .fairness import audit_fairness
 from .judging import load_verdicts, run_judging
-from .mcp_qualification import verify_catalog
+from .mcp_qualification import STARTUP_COUNTS, verify_catalog
 from .metrics import known_total, paid_token_totals
 from .native_environment import PROXY_ENV, agent_settings, load_credentials, mcp_settings
 from .native_metrics import measurements
@@ -472,6 +472,7 @@ def enrich_evaluations(protocol, entries, job_name):
             for entry in receipt["attempts"]
         }
     verdicts = load_verdicts(protocol) if job_name == "live" else {}
+    mcp_receipts = verify_catalog(protocol) if job_name == "live" else {}
     billing = {}
     bill_path = Path(protocol["output_root"]) / "provider-costs.json"
     if job_name == "live" and bill_path.exists():
@@ -481,6 +482,8 @@ def enrich_evaluations(protocol, entries, job_name):
         billing = receipt["attempts"]
     for entry in entries:
         result = entry["result"]
+        mcp = mcp_receipts.get(str(entry["order"]), {})
+        result.update({key: mcp.get(key) for key in STARTUP_COUNTS})
         billed = billing.get(str(entry["order"]), {})
         if billed.get("proof_status") != "known":
             billed = {}
@@ -624,6 +627,7 @@ def export(protocol: dict, job_name="live") -> dict:
             "first_uncached_input_tokens",
             "first_cache_read_tokens",
             "first_cache_write_tokens",
+            *STARTUP_COUNTS,
             "loom_provider_input_tokens",
             "loom_provider_output_tokens",
             "loom_embedding_tokens",

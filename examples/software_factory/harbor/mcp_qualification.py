@@ -10,6 +10,17 @@ from examples.software_factory.factory.model import digest
 from .native_environment import MCP_SCHEMA_PROFILES, mcp_endpoint
 from .scopes import frozen_json
 
+STARTUP_COUNTS = (
+    "loom_mcp_instruction_bytes",
+    "loom_mcp_catalog_bytes",
+    "loom_mcp_upfront_hint_tool_count",
+    "loom_mcp_upfront_hint_descriptor_bytes",
+)
+
+
+def _json_bytes(value):
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
 
 def qualify(client, url, token, binding, *, schema_profile):
     endpoint = mcp_endpoint(url, schema_profile)
@@ -70,25 +81,27 @@ def qualify(client, url, token, binding, *, schema_profile):
         )
         if result.get("isError") or "src/flask/blueprints.py" not in json.dumps(result):
             raise PermissionError("Native MCP code scope did not resolve the frozen repository")
+        instructions = initialized.get("instructions", "")
+        instruction_bytes = instructions.encode("utf-8")
+        loading = {
+            tool["name"]: bool(tool.get("_meta", {}).get("anthropic/alwaysLoad")) for tool in tools
+        }
         return {
             "qualified": True,
-            "instructions_sha256": hashlib.sha256(
-                initialized.get("instructions", "").encode("utf-8")
-            ).hexdigest(),
-            "instructions_chars": len(initialized.get("instructions", "")),
-            "code_routes_named": sorted(
-                name for name in required if name in initialized.get("instructions", "")
+            "instructions_sha256": hashlib.sha256(instruction_bytes).hexdigest(),
+            "instructions_chars": len(instructions),
+            "loom_mcp_instruction_bytes": len(instruction_bytes),
+            "loom_mcp_catalog_bytes": _json_bytes(tools),
+            "loom_mcp_upfront_hint_tool_count": sum(loading.values()),
+            "loom_mcp_upfront_hint_descriptor_bytes": sum(
+                _json_bytes(tool) for tool in tools if loading[tool["name"]]
             ),
+            "code_routes_named": sorted(name for name in required if name in instructions),
             "code_scope": {
                 key: binding[key] for key in ("org", "code_namespace", "memory_namespace")
             },
             "tool_names": sorted(names),
-            "tool_loading_sha256": digest(
-                {
-                    tool["name"]: bool(tool.get("_meta", {}).get("anthropic/alwaysLoad"))
-                    for tool in tools
-                }
-            ),
+            "tool_loading_sha256": digest(loading),
             "tools_sha256": digest(tools),
             "provider_generation": False,
             "solver_credentials_used": False,
@@ -123,12 +136,12 @@ def qualified_catalog(schema_profile, receipts, standard):
 
 
 def verify_catalog(protocol):
-    """Check execution and reporting against the same immutable receipts."""
+    """Return the frozen per-attempt receipts after checking catalog identity."""
     execution = protocol.get("loom_mcp")
     public = protocol.get("public_reproduction", {}).get("loom_mcp")
     path = protocol.get("mcp_qualification_file")
     if execution is None and public is None and path is None:
-        return
+        return {}
     if not path:
         raise PermissionError("Loom MCP catalog qualification is missing")
     receipt = frozen_json(path, protocol["public_inputs"].get(path))
@@ -142,3 +155,4 @@ def verify_catalog(protocol):
     )
     if catalog != execution or catalog != public:
         raise PermissionError("Loom MCP profile differs from the qualified catalog")
+    return receipt["attempts"]

@@ -1,22 +1,62 @@
 """Treatment configuration uses native MCP and the same coding agent."""
 
 import hashlib
+import json
 import tempfile
 import tomllib
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
+import httpx
+
 from examples.software_factory.factory.model import digest
 from examples.software_factory.harbor.fairness import audit_fairness
 from examples.software_factory.harbor.index import TABLES
-from examples.software_factory.harbor.mcp_qualification import qualified_catalog
+from examples.software_factory.harbor.mcp_qualification import qualified_catalog, qualify
 from examples.software_factory.harbor.native_environment import agent_settings, mcp_settings
 from examples.software_factory.harbor.project_guidance import guidance, stage
 from examples.software_factory.harbor.runtime import write
 
 
 class NativeTreatment(TestCase):
+    def test_mcp_startup_counts_measure_advertised_bytes_and_loading_hints(self):
+        instructions = "Use loom_code_grep for café"
+        eager = {
+            "name": "loom_code_grep",
+            "description": "Find café",
+            "_meta": {"anthropic/alwaysLoad": True},
+        }
+        tools = [eager, {"name": "loom_code_symbol"}, {"name": "loom_code_search"}]
+        responses = {
+            "initialize": {"protocolVersion": "2025-03-26", "instructions": instructions},
+            "tools/list": {"tools": tools},
+            "tools/call": {"content": [{"text": "src/flask/blueprints.py"}]},
+        }
+
+        def serve(request):
+            data = json.loads(request.content)
+            if "id" not in data:
+                return httpx.Response(202)
+            return httpx.Response(200, json={"id": data["id"], "result": responses[data["method"]]})
+
+        binding = {"org": "org", "code_namespace": "code", "memory_namespace": None}
+        with httpx.Client(transport=httpx.MockTransport(serve)) as client:
+            receipt = qualify(
+                client, "http://mock", "mock-token", binding, schema_profile="compact"
+            )
+        self.assertEqual(receipt["instructions_chars"], len(instructions))
+        self.assertEqual(receipt["loom_mcp_instruction_bytes"], len(instructions.encode()))
+        self.assertEqual(receipt["loom_mcp_upfront_hint_tool_count"], 1)
+        self.assertEqual(
+            receipt["loom_mcp_upfront_hint_descriptor_bytes"],
+            len(json.dumps(eager, ensure_ascii=False, separators=(",", ":")).encode()),
+        )
+        self.assertEqual(
+            receipt["loom_mcp_catalog_bytes"],
+            len(json.dumps(tools, ensure_ascii=False, separators=(",", ":")).encode()),
+        )
+
     def test_compact_qualification_requires_one_distinct_catalog_with_the_same_loading(self):
         standard = {
             "tools_sha256": "a" * 64,

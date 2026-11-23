@@ -46,6 +46,13 @@ Attempt reports link this usage to the corresponding tool-response summary and
 Loom's retrieval stages. Claude Code supplies solver usage. Loom supplies its
 request traces and provider ledger.
 
+Attempt reports include the UTF-8 size of Loom's initialization instructions
+and the compact JSON size of its listing from the frozen MCP qualification.
+They also show the count and total JSON size of descriptors with an upfront
+loading hint. These sizes describe what Loom advertised before the run.
+Provider receipts supply first prompt token counts after the client selects
+and formats its tools.
+
 `diagnostics/attempt-NN-code-traces.json` preserves the existing code-search trace
 rows named by that attempt's returned trace ids, scoped to its source namespace.
 It retains routes, index revision, result counts and per-stage timings, without

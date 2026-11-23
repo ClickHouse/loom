@@ -326,6 +326,13 @@ def _trace_table(record):
         ("First prompt cache reads", "first_cache_read_tokens"),
         ("First prompt cache writes", "first_cache_write_tokens"),
         ("First prompt uncached input", "first_uncached_input_tokens"),
+        ("Qualified Loom instructions (bytes)", "loom_mcp_instruction_bytes"),
+        ("Qualified Loom catalog (bytes)", "loom_mcp_catalog_bytes"),
+        ("Tools with upfront loading hints", "loom_mcp_upfront_hint_tool_count"),
+        (
+            "Descriptors with upfront loading hints (bytes)",
+            "loom_mcp_upfront_hint_descriptor_bytes",
+        ),
         ("Solver tokens", "model_total_tokens"),
         ("Solver uncached input", "model_uncached_input_tokens"),
         ("Solver cache reads", "model_cache_read_tokens"),
@@ -361,7 +368,9 @@ def _trace_table(record):
     return (
         "\n| Diagnostic | Value |\n| --- | ---: |\n" + rows + "\n\n"
         "API time includes model, network and queuing. Concurrent tools can share one "
-        "model response. Character counts are observed content, not provider tokens. "
+        "model response. Character and byte counts describe content. "
+        "MCP qualification measures the server listing and its loading hints. "
+        "The client selects which schemas to send. Provider receipts supply token totals. "
         "Stream events are one-based JSONL line numbers. Shell and delegated tool requests "
         "count as potential edits even when they only read.\n\n"
     )
