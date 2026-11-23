@@ -342,6 +342,8 @@ def _trace_table(record):
         ("Main-session discovery calls", "tool_discovery_calls_main"),
         ("Native CLI duration (s)", "claude_cli_time_s"),
         ("Native model API duration (s)", "claude_api_time_s"),
+        ("Index fingerprint before the trial (s)", "index_snapshot_before_s"),
+        ("Index fingerprint after the trial (s)", "index_snapshot_after_s"),
         ("Main-session Loom errors", "loom_errors_main"),
         ("Main-session Loom result characters", "loom_result_chars_main"),
         ("Main-session Loom body characters", "loom_source_chars_main"),

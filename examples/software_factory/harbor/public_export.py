@@ -64,6 +64,8 @@ NUMERIC = (
     "agent_time_s",
     "end_to_end_s",
     "harbor_wall_s",
+    "index_snapshot_before_s",
+    "index_snapshot_after_s",
     "full_suite_regressions",
     "full_suite_failed_tests",
     *COUNTERS,

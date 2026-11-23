@@ -13,6 +13,7 @@ COPY examples/software_factory/factory/model.py ./examples/software_factory/fact
 COPY examples/software_factory/harbor/anchors.py ./examples/software_factory/harbor/anchors.py
 COPY examples/software_factory/harbor/compiler_parity.py ./examples/software_factory/harbor/compiler_parity.py
 COPY examples/software_factory/harbor/native_setup.py ./examples/software_factory/harbor/native_setup.py
+COPY examples/software_factory/harbor/index.py ./examples/software_factory/harbor/index.py
 COPY examples/software_factory/harbor/index_setup.py ./examples/software_factory/harbor/index_setup.py
 COPY examples/software_factory/harbor/source_tree.py ./examples/software_factory/harbor/source_tree.py
 COPY scripts/scip_harness ./scripts/scip_harness

@@ -343,6 +343,7 @@ class Provisioner:
                 "harbor/anchors.py",
                 "harbor/compiler_parity.py",
                 "harbor/native_setup.py",
+                "harbor/index.py",
                 "harbor/index_setup.py",
                 "harbor/source_tree.py",
                 "harbor/Provisioner.Dockerfile",

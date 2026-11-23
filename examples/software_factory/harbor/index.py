@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import subprocess
+import sys
 
 MUTABLE_STATE_KEYS = frozenset(
     {
@@ -79,29 +81,43 @@ def snapshot(container: str, scopes: list[dict]) -> list:
         raise PermissionError("Snapshot requires explicit live code scopes")
     if not selected:
         return fingerprint({table: [] for table in TABLES})
-    code = """import asyncio, json
-from server.core.ch import get_client, set_query_tag
-async def main():
-    client=get_client()
-    await client.connect()
-    set_query_tag('bench.factory.harbor.index_snapshot')
-    try:
-        tables={}
-        for table in TABLES:
-            sql=('SELECT * FROM loom.'+table
-                 +' FINAL WHERE (org,namespace) IN {scopes:Array(Tuple(String,String))}')
-            tables[table]=await client.query_all(sql, {'scopes': SCOPES})
-        print(json.dumps(tables, default=str))
-    finally:
-        await client.disconnect()
-asyncio.run(main())
-"""
-    prefix = "TABLES=" + repr(TABLES) + "\nSCOPES=" + repr(selected) + "\n"
     run = subprocess.run(
-        ["docker", "exec", "-i", container, "/opt/venv/bin/python", "-c", prefix + code],
+        [
+            "docker",
+            "exec",
+            container,
+            "/opt/venv/bin/python",
+            "-m",
+            "examples.software_factory.harbor.index",
+            json.dumps(selected),
+        ],
         capture_output=True,
         text=True,
         timeout=60,
         check=True,
     )
-    return fingerprint(json.loads(run.stdout))
+    return json.loads(run.stdout)
+
+
+async def _live_fingerprint(scopes: list) -> list:
+    from server.core.ch import get_client, set_query_tag
+
+    client = get_client()
+    await client.connect()
+    set_query_tag("bench.factory.harbor.index_snapshot")
+    try:
+        tables = {}
+        for table in TABLES:
+            sql = (
+                "SELECT * FROM loom."
+                + table
+                + " FINAL WHERE (org,namespace) IN {scopes:Array(Tuple(String,String))}"
+            )
+            tables[table] = await client.query_all(sql, {"scopes": scopes})
+        return fingerprint(tables)
+    finally:
+        await client.disconnect()
+
+
+if __name__ == "__main__":
+    print(json.dumps(asyncio.run(_live_fingerprint(json.loads(sys.argv[1])))))

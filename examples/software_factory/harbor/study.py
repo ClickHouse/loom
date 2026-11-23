@@ -660,7 +660,7 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         )
 
     async def start(event):
-        timers[event.trial_name] = time.monotonic()
+        started = time.monotonic()
         verify(protocol)
         order = int(event.config.task.path.name.removeprefix("slot-"))
         if meter is not None:
@@ -670,7 +670,9 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         if not next_orders or order != next_orders.pop(0):
             raise PermissionError("Harbor changed the frozen trial order")
         scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        audit_started = time.monotonic()
         current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
+        timers[event.trial_name] = (started, time.monotonic() - audit_started)
         write(output / f"{kind}-index-before-{order:02d}.json", current)
         if current != select_snapshot(frozen_snapshot, scopes):
             raise PermissionError("Source index changed before the Harbor trial")
@@ -691,15 +693,20 @@ async def run(protocol_path: Path, kind: str, *, meter=None):
         nonlocal lease
         order = int(event.config.task.path.name.removeprefix("slot-"))
         scopes = selected_scopes(protocol, protocol["schedule"][order]) if kind == "live" else []
+        audit_started = time.monotonic()
         current = await asyncio.to_thread(snapshot, protocol["server_container"], scopes)
+        snapshot_after_s = time.monotonic() - audit_started
         write(output / f"{kind}-index-after-{order:02d}.json", current)
         if current != select_snapshot(frozen_snapshot, scopes):
             raise PermissionError("Source index changed during the Harbor trial")
         trial_folder = event.config.trials_dir / event.trial_name
+        started, snapshot_before_s = timers.pop(event.trial_name)
         write(
             trial_folder / "factory-measurement.json",
             {
-                "end_to_end_s": time.monotonic() - timers.pop(event.trial_name),
+                "end_to_end_s": time.monotonic() - started,
+                "index_snapshot_before_s": snapshot_before_s,
+                "index_snapshot_after_s": snapshot_after_s,
                 "harbor_wall_s": (
                     event.result.finished_at - event.result.started_at
                 ).total_seconds(),
