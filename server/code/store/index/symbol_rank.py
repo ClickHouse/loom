@@ -164,15 +164,16 @@ def demote_member_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def collapse_outline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Source-ordered outline rows, one per (qualified_name, start_line):
     the row with the widest extent wins the span, and `tier` is 'scip' when
-    ANY tier-scip row named the declaration at that line. Pure so the
-    handler tests can feed it two-tier fixtures."""
+    ANY tier-scip row named the declaration at that line. The signature
+    keeps its own tier so the formatter can distinguish a real empty
+    parameter list from a compiler placeholder."""
     best: dict[tuple[str, int], dict[str, Any]] = {}
     order: list[tuple[str, int]] = []
     for r in rows:
         key = (str(r.get("qualified_name") or ""), int(r.get("start_line") or 0))
         cur = best.get(key)
         if cur is None:
-            best[key] = dict(r)
+            best[key] = {**r, "signature_tier": r.get("tier")}
             order.append(key)
             continue
         if int(r.get("end_line") or 0) > int(cur.get("end_line") or 0):
@@ -180,10 +181,13 @@ def collapse_outline_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             tier = "scip" if "scip" in tiers else str(r.get("tier") or "")
             cur.update({k: v for k, v in r.items() if k != "tier"})
             cur["tier"] = tier
+            if "signature" in r:
+                cur["signature_tier"] = r.get("tier")
         elif str(r.get("tier")) == "scip":
             cur["tier"] = "scip"
             if not cur.get("signature") and r.get("signature"):
                 cur["signature"] = r["signature"]
+                cur["signature_tier"] = r.get("tier")
     # A class/struct row with no extent is a forward declaration, a `using`
     # alias or a compiler-only sighting (types_for_paths excludes the same
     # rows): it declares nothing a reader can open. Functions keep their

@@ -10,9 +10,10 @@ quality feature: a tight, relevant context beats a 30K-token dump.
 from __future__ import annotations
 
 import ast
+import io
 import json
 import re
-import textwrap
+import tokenize
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -261,24 +262,47 @@ def readable_signature(row: dict[str, Any], *, body: str = "") -> str:
         return ""
     if not (
         sig == "()"
-        and row.get("tier") == "scip"
+        and row.get("signature_tier", row.get("tier")) == "scip"
         and row.get("kind") in {"function", "method"}
         and str(row.get("path") or "").lower().endswith((".py", ".pyi"))
     ):
         return sig
-    if not body:
-        return ""
     name = str(row.get("qualified_name") or "").rsplit("::", 1)[-1]
+    return _python_parameters(body, name) if body and name else ""
+
+
+def _python_parameters(body: str, name: str) -> str:
+    # Read only the first declaration's header. Token strings keep multiline defaults intact.
+    tokens = (
+        token
+        for token in tokenize.generate_tokens(io.StringIO(body).readline)
+        if token.type not in {tokenize.COMMENT, tokenize.NL, tokenize.INDENT}
+    )
     try:
-        statements = ast.parse(textwrap.dedent(body)).body
-        if (
-            len(statements) == 1
-            and isinstance(declaration := statements[0], (ast.FunctionDef, ast.AsyncFunctionDef))
-            and declaration.name == name
-        ):
-            return f"({ast.unparse(declaration.args)})"
-    except (SyntaxError, ValueError, RecursionError):
-        # A retained declaration can use syntax newer than the server interpreter.
+        head = next(tokens)
+        while head.string == "@":
+            next(token for token in tokens if token.type == tokenize.NEWLINE)
+            head = next(tokens)
+        if head.string == "async":
+            head = next(tokens)
+        if head.string != "def" or next(tokens).string != name:
+            return ""
+
+        header = [(tokenize.NAME, "def"), (tokenize.NAME, "_")]
+        depth = 0
+        for token in tokens:
+            if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
+                break
+            if token.type == tokenize.OP:
+                if token.string == ":" and depth == 0:
+                    statement = ast.parse(tokenize.untokenize(header) + ": pass").body[0]
+                    if isinstance(statement, ast.FunctionDef):
+                        return f"({ast.unparse(statement.args)})"
+                    break
+                depth += int(token.string in "([{") - int(token.string in ")]}")
+            header.append((token.type, token.string))
+    except (StopIteration, SyntaxError, tokenize.TokenError, ValueError, RecursionError):
+        # The retained source can use syntax newer than the server interpreter.
         return ""
     return ""
 
