@@ -60,3 +60,36 @@ async def test_qualified_cpp_lookup_is_unchanged() -> None:
     )
     assert params["sql_suffix"] == "::IColumn::insert"  # harmless: equals the :: suffix
     assert "dot_suffix" not in sql and "OR qualified_name = {bare:String}" not in sql
+
+
+@pytest.mark.asyncio
+async def test_file_qualified_candidates_and_live_rows_bind_the_path_before_limit() -> None:
+    class Rows(_CH):
+        async def query_all(
+            self, sql: str, params: dict[str, Any] | None = None
+        ) -> list[dict[str, Any]]:
+            await super().query_all(sql, params)
+            return (
+                [{"tier": "treesitter", "qualified_name": "Type::method", "symbol_id": "s"}]
+                if "SELECT DISTINCT" in sql
+                else []
+            )
+
+    ch = Rows()
+    await CodeRepo(ch).symbols_by_name("o", "n", "Type::method", path="src/Type.cpp", limit=1)
+    assert len(ch.calls) == 2
+    for sql, params in ch.calls:
+        assert "path = {path:String}" in sql and params["path"] == "src/Type.cpp"
+        assert "src/Type.cpp" not in sql
+    assert "FROM loom.code_symbols" in ch.calls[0][0]
+    assert ch.calls[1][0].index("path = {path:String}") < ch.calls[1][0].index("LIMIT")
+    assert "tombstoned_at IS NULL" in ch.calls[1][0]
+
+
+@pytest.mark.asyncio
+async def test_file_qualified_fuzzy_candidates_keep_the_same_path_constraint() -> None:
+    ch = _CH()
+    await CodeRepo(ch).symbols_fuzzy("o", "n", "method", path="src/Type.cpp", limit=3)
+    sql, params = ch.calls[0]
+    assert "path = {path:String}" in sql and params["path"] == "src/Type.cpp"
+    assert sql.index("path = {path:String}") < sql.index("LIMIT")

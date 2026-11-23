@@ -663,6 +663,7 @@
  "llm_response_cache_table": "loom.llm_response_cache",
  "llm_retry_attempts": 4,
  "llm_retry_max_wait_s": 20.0,
+ "local_embedding_batch_size": 16,
  "local_embedding_model_dir": "var/models",
  "local_llm_base_url": "http://localhost:11434/v1",
  "log_format": "text",

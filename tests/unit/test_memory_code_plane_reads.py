@@ -237,6 +237,21 @@ async def _lessons(
 
 
 @pytest.mark.asyncio
+async def test_symbol_lessons_keep_whole_values_and_honor_an_opt_in_budget(monkeypatch) -> None:
+    links = [_link("m1"), _link("m2")]
+    value = "Keep the original context object. " * 80 + "Source: https://example.com/design#context"
+    excerpts = [dict(_excerpt("m1", "long"), excerpt=value), _excerpt("m2", "short")]
+    definitions = [("src/a.py", "src.a::Reader::read", "h1")]
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
+    whole = await _lessons(monkeypatch, links, excerpts, definitions)
+    assert whole[0]["excerpt"] == value
+    assert len(whole) == 2
+    monkeypatch.setattr(settings, "code_result_lessons_tokens", 80)
+    bounded = await _lessons(monkeypatch, links, excerpts, definitions)
+    assert [row["memory_key"] for row in bounded] == ["short"]
+
+
+@pytest.mark.asyncio
 async def test_code_gone_from_trunk_still_teaches_the_branch_that_has_it(monkeypatch) -> None:
     links = [_link("m1", state="missing", since="c3")]
     excerpts = [_excerpt("m1", "k1")]
@@ -500,3 +515,23 @@ async def test_a_lesson_read_whose_parse_gave_up_waiting_is_read_as_unreadable(
     with bounded_parse._LOCK:  # another parse holds the process's turn
         here = await code_plane_reads._definitions_at("o", "code-a", "h", ["a.go"], "f")
     assert here is None
+
+
+def test_symbol_request_budget_preserves_source_before_whole_lessons() -> None:
+    from server.code.app.symbol.symbol import _budget_definitions
+    from server.code.domain.units import CodeUnit
+
+    lesson = {"memory_key": "history/design", "excerpt": "A historical condition. " * 600}
+    short = {"memory_key": "history/brief", "excerpt": "Keep the caller context."}
+    unit = CodeUnit(
+        path="src/context.py",
+        symbol="context",
+        body="def context():\n    return current\n",
+        lessons=[lesson, short],
+    )
+    kept, tokens, left_out = _budget_definitions([unit], 3000)
+    assert len(kept) == 1 and kept[0].body == unit.body and not kept[0].elided
+    assert kept[0].lessons == [short] and left_out == 1 and tokens <= 3000
+    assert unit.lessons == [lesson, short]
+    unlimited, _, left_out = _budget_definitions([unit], 0)
+    assert unlimited[0].lessons == [lesson, short] and left_out == 0

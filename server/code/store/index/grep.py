@@ -16,6 +16,7 @@ from server.code.domain.index.grep_plan import (
 from server.code.domain.search_scope import SearchScope
 from server.code.store.index.base import CodeRepoBase
 from server.code.store.index.sql import _batched, _scope_path_sql
+from server.core.ch_params import chunks
 
 # A raising or logging statement carries one of these; the message grep's
 # chunk pre-filter, mirrored by the ranker in
@@ -29,14 +30,48 @@ _MESSAGE_STATEMENT_KEYWORDS: tuple[str, ...] = (
 )
 
 
+def _scan_predicate(
+    pattern: str | list[str], *, regex: bool, case_sensitive: bool
+) -> tuple[str, dict[str, Any]]:
+    if isinstance(pattern, str):
+        return content_predicate(
+            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
+        )
+    search = "multiSearchAny" if case_sensitive else "multiSearchAnyCaseInsensitive"
+    # Keep each HTTP form field small while matching all alternatives in one scan.
+    bound = {f"literals_{i}": part for i, part in enumerate(chunks(pattern))}
+    terms = [f"{search}(content, {{{key}:Array(String)}})" for key in bound]
+    return "(" + " OR ".join(terms) + ")", bound
+
+
 class GrepMixin(CodeRepoBase):
     """Content matches over live chunks."""
+
+    async def grep_source_chunks_for_span(
+        self, org: str, ns: str, path: str, start: int, end: int, model: str
+    ) -> list[dict[str, Any]]:
+        """Raw source behind a matched summary, retaining each chunk's enclosing symbol.
+
+        The extra row detects a capped read; it cannot establish complete coverage.
+        """
+        return await self._ch.query_all(
+            """
+            SELECT DISTINCT scope, symbol_ids, kind, start_line, end_line, content
+            FROM loom.code_chunks FINAL
+            WHERE org = {org:String} AND namespace = {ns:String}
+              AND path = {path:String} AND embedding_model = {model:String}
+              AND start_line <= {end:UInt32} AND end_line >= {start:UInt32}
+              AND kind != 'class_skeleton' AND tombstoned_at IS NULL
+            ORDER BY start_line, end_line LIMIT 401
+            """,
+            {"org": org, "ns": ns, "path": path, "model": model, "start": start, "end": end},
+        )
 
     async def grep_files(
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -51,9 +86,7 @@ class GrepMixin(CodeRepoBase):
 
         One FINAL-free scan statement carrying the total as a window.
         `max_execution_s` stops the scan there and returns what it read."""
-        cond, cond_params = content_predicate(
-            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
-        )
+        cond, cond_params = _scan_predicate(pattern, regex=regex, case_sensitive=case_sensitive)
         prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         path_sql, path_params = _scope_path_sql(scope)
         params = {
@@ -157,7 +190,7 @@ class GrepMixin(CodeRepoBase):
         self,
         org: str,
         ns: str,
-        pattern: str,
+        pattern: str | list[str],
         *,
         regex: bool = False,
         case_sensitive: bool = True,
@@ -166,16 +199,14 @@ class GrepMixin(CodeRepoBase):
         scope: SearchScope | None = None,
         max_execution_s: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Chunks whose content matches a literal (default) or RE2 regex.
+        """Chunks whose content matches any supplied literal or one RE2 regex.
 
         Powers code.grep — the exact-literal lookup, in place of shell grep.
         Returns whole chunk rows (content + scope + span + symbol_ids); the
         handler extracts matching lines and attaches the enclosing unit's
         span to each. Chunk coverage is not
         byte-complete for a file, so results are a floor."""
-        cond, cond_params = content_predicate(
-            pattern, regex=regex, case_sensitive=case_sensitive, index_guard=False
-        )
+        cond, cond_params = _scan_predicate(pattern, regex=regex, case_sensitive=case_sensitive)
         prefix_clause = "AND startsWith(path, {prefix:String})" if path_prefix else ""
         path_sql, path_params = _scope_path_sql(scope)
         return await self._ch.query_all(

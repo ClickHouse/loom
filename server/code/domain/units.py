@@ -16,6 +16,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, SerializerFunctionWrapHandler, model_serializer
 
+from server.code.domain.symbol_body import retained_source_lines
+
 # Characters per token by content kind, measured with o200k_base over 300 randomly
 # sampled chunks per kind from a ClickHouse index (cl100k within 1%): cpp 4.33, h 4.38,
 # py 4.20, md 4.23, json 4.75 — the plain bytes/4 is right, slightly conservative, for
@@ -186,6 +188,53 @@ class CodeUnit(BaseModel):
         return f"{self.path}:{self.start_line}-{self.end_line}"
 
 
+_PYTHON_CLASS_HEADER = re.compile(r"(?m)^(?P<indent>[ \t]*)class[ \t]+(?P<name>\w+)\b")
+_PYTHON_CLASS_DOCSTRING = re.compile(
+    r"[^\n]*:[ \t]*\n(?P<indent>[ \t]+)(?P<quote>['\"])(?P=quote){2}"
+)
+
+
+def _python_class_without_doc_prefix(unit: CodeUnit) -> CodeUnit:
+    """Keep the skeleton from its class header when its docstring repeats the preface."""
+    if unit.body.startswith("# … continued from "):
+        return unit
+    header = _PYTHON_CLASS_HEADER.search(unit.body)
+    if header is None or header["name"] != unit.symbol.rsplit("::", 1)[-1]:
+        return unit
+    prefix = unit.body[: header.start()].removesuffix("\n")
+    if not prefix:
+        return unit
+    match = _PYTHON_CLASS_DOCSTRING.match(unit.body, header.end())
+    if (
+        match is None
+        or not match["indent"].startswith(header["indent"])
+        or match["indent"] == header["indent"]
+    ):
+        return unit
+    docstring, closing, _ = unit.body[match.end() :].partition(match["quote"] * 3)
+    if closing and docstring.strip("\"' \n").startswith(prefix):
+        return unit.model_copy(update={"body": unit.body[header.start() :]})
+    return unit
+
+
+def _without_repeated_context(unit: CodeUnit) -> CodeUnit:
+    """Keep retrieval context unless its entire text already occurs in the source."""
+    if unit.granularity != "unit" or unit.start_line < 1 or not unit.body:
+        return unit
+    if unit.kind == "class_skeleton" and unit.path.endswith((".py", ".pyi")):
+        return _python_class_without_doc_prefix(unit)
+    if unit.kind != "function":
+        return unit
+    lines = retained_source_lines(
+        {"content": unit.body, "start_line": unit.start_line, "end_line": unit.end_line}
+    )
+    if lines is None:
+        return unit
+    source = "".join(lines)
+    prefix = unit.body[: len(unit.body) - len(source)].strip()
+    return unit.model_copy(update={"body": source}) if prefix and prefix in source else unit
+
+
 def unit_from_chunk(row: dict[str, Any], *, score: float = 0.0) -> CodeUnit:
     return CodeUnit(
         unit_id=str(row.get("chunk_id") or ""),
@@ -252,7 +301,10 @@ def budget_units(
     """
     # A head is the unit as its elided card would serve — pointer, next
     # hint, JSON envelope included — so the reservation is the wire cost.
-    heads = [estimate_unit_tokens(_card_of(u)) for u in units]
+    # Bodyless cards already carry the pointer the caller will receive.
+    if bodies != "none":
+        units = [_without_repeated_context(u) for u in units]
+    heads = [estimate_unit_tokens(_card_of(u) if u.body else u) for u in units]
     kept = 0
     reserved = 0
     for h in heads:

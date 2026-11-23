@@ -6541,7 +6541,7 @@ class CodeFirstBuildOutput(TypedDict, total=False):
 
 
 class CodeGrepInput(TypedDict, total=False):
-    "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
+    "Literal or regex search of indexed source with enclosing symbols and coverage."
 
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]
@@ -6550,9 +6550,10 @@ class CodeGrepInput(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    pattern: Required[str]
+    pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     case_sensitive: NotRequired[bool]
+    include_body: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6568,7 +6569,7 @@ class CodeGrepInput(TypedDict, total=False):
 
 
 class CodeGrepBody(TypedDict, total=False):
-    "Exact-match lookup over the indexed corpus. Unlike shell grep, the"
+    "Literal or regex search of indexed source with enclosing symbols and coverage."
 
     include_lessons: NotRequired[bool]
     lesson_namespaces: NotRequired[list[str]]
@@ -6577,9 +6578,10 @@ class CodeGrepBody(TypedDict, total=False):
     agent: NotRequired[str]
     user_id: NotRequired[str]
     consumer: NotRequired[str]
-    pattern: Required[str]
+    pattern: Required[Union[str, list[str]]]
     regex: NotRequired[bool]
     case_sensitive: NotRequired[bool]
+    include_body: NotRequired[bool]
     path_prefix: NotRequired[str]
     cursor: NotRequired[str]
     exclude_unit_ids: NotRequired[list[str]]
@@ -6598,6 +6600,9 @@ class CodeGrepOutput(TypedDict, total=False):
     lessons: NotRequired[list[dict[str, Any]]]
     lessons_left_out: NotRequired[int]
     matches: Required[list[dict[str, Any]]]
+    definitions: NotRequired[list[dict[str, Any]]]
+    definitions_partial: NotRequired[bool]
+    definitions_note: NotRequired[str]
     next_cursor: NotRequired[str]
     has_more: NotRequired[bool]
     files: NotRequired[list[dict[str, Any]]]
@@ -7838,6 +7843,7 @@ class CodeSymbolBody(TypedDict, total=False):
 
 class CodeSymbolOutput(TypedDict, total=False):
     definitions: Required[list["CodeUnit"]]
+    lessons_left_out: NotRequired[int]
     ambiguous: NotRequired[bool]
     hierarchy: NotRequired[dict[str, list[dict[str, Any]]]]
     candidates: NotRequired[list[dict[str, Any]]]
@@ -14611,6 +14617,8 @@ class MemoryListInput(TypedDict, total=False):
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
+    pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 
@@ -14641,6 +14649,8 @@ class MemoryListBody(TypedDict, total=False):
     tags: NotRequired[list[str]]
     tags_every: NotRequired[bool]
     contains: NotRequired[Optional[str]]
+    pinned_only: NotRequired[bool]
+    conflicted_only: NotRequired[bool]
     fields: NotRequired[list[str]]
     known_version: NotRequired[Union[int, str, None]]
 

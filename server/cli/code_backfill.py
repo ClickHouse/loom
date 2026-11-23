@@ -73,20 +73,7 @@ async def _backfill(args: argparse.Namespace) -> int:
     head = await _backfill_head(git_dir, cfg, args)
     prefixes = cfg.path_prefixes
     paths_file = getattr(args, "paths_file", "")
-    if paths_file:
-        listed = await asyncio.to_thread(pathlib.Path(paths_file).read_text, "utf-8")
-        wanted = [ln.strip() for ln in listed.splitlines() if ln.strip()]
-        paths = [p for p in wanted if p.startswith(prefixes)]
-        print(f"repair mode: {len(paths)} of {len(wanted)} listed paths are inside {prefixes}")
-    else:
-        paths = await _tree_paths_with_coverage(git_dir, head, prefixes)
-    if args.limit:
-        paths = paths[: args.limit]
-    # A source file's edge stage reads its class's header from
-    # the header's indexed chunks, so headers are indexed first
-    from server.code.app.index.ingest_headers import headers_first
-
-    paths = headers_first(paths)
+    paths = await _backfill_paths(cfg, args, head, paths_file)
     print(
         f"backfill: {cfg.org}/{cfg.namespace} branch={cfg.git_branch} "
         f"{len(paths)} files at {head[:12]} (prefixes {prefixes}"
@@ -184,7 +171,15 @@ async def _backfill(args: argparse.Namespace) -> int:
     for b_start in range(start_idx, len(paths), batch):
         chunk_paths = paths[b_start : b_start + batch]
         held = await _held_batch(
-            repo, org, ns, chunk_paths, source=_source, one=_one, denylist=denylist
+            repo,
+            org,
+            ns,
+            chunk_paths,
+            source=_source,
+            one=_one,
+            denylist=denylist,
+            git_dir=cfg.git_dir,
+            head=head,
         )
         if held:
             print(f"backfill stopped at {b_start}/{len(paths)}: {held}", file=sys.stderr)
@@ -219,6 +214,7 @@ async def _backfill(args: argparse.Namespace) -> int:
             head=head,
             model_name=model_name,
             sem=sem,
+            git_dir=cfg.git_dir,
         )
         counters["edges_second_pass"] = second["edges"]
         counters["errors"] += second["errors"]
@@ -290,6 +286,24 @@ async def _tree_paths_with_coverage(
     return paths
 
 
+async def _backfill_paths(
+    cfg: Any, args: argparse.Namespace, head: str, paths_file: str
+) -> list[str]:
+    from server.code.app.index.ingest_headers import headers_first
+
+    prefixes = cfg.path_prefixes
+    if paths_file:
+        listed = await asyncio.to_thread(pathlib.Path(paths_file).read_text, "utf-8")
+        wanted = [ln.strip() for ln in listed.splitlines() if ln.strip()]
+        paths = [p for p in wanted if p.startswith(prefixes)]
+        print(f"repair mode: {len(paths)} of {len(wanted)} listed paths are inside {prefixes}")
+    else:
+        paths = await _tree_paths_with_coverage(cfg.git_dir, head, prefixes)
+    if args.limit:
+        paths = paths[: args.limit]
+    return headers_first(paths)
+
+
 def second_pass_wanted(*, explicit: bool, declined: bool, paths_file: bool, done_upto: str) -> bool:
     """A namespace's FIRST full backfill indexes files in
     tree order, so a call to a function whose file comes later binds
@@ -317,6 +331,7 @@ async def _second_edge_pass(
     head: str,
     model_name: str,
     sem: asyncio.Semaphore,
+    git_dir: str,
 ) -> dict[str, int]:
     """The edges-only pass over the same paths once the whole
     tree is indexed. The first pass resolved each file against the name table
@@ -361,6 +376,8 @@ async def _second_edge_pass(
             source=source,
             one=_one,
             denylist=denylist,
+            git_dir=git_dir,
+            head=head,
         )
     print(
         f"second edge pass complete: files={counters['files']} edges=+{counters['edges']} "
@@ -444,14 +461,31 @@ async def _close_index(
 
 
 async def _held_batch(
-    repo: Any, org: str, ns: str, batch_paths: list[str], *, source: Any, one: Any, denylist: Any
+    repo: Any,
+    org: str,
+    ns: str,
+    batch_paths: list[str],
+    *,
+    source: Any,
+    one: Any,
+    denylist: Any,
+    git_dir: str,
+    head: str,
 ) -> str:
     """One cursor batch as the org's model calls, so its switch applies to them;
     "" once written, else why the switch held it (the cursor stays)."""
     try:
         with customer.for_org(org, namespace=ns):
             await _backfill_batch_rounds(
-                repo, org, ns, batch_paths, source=source, one=one, denylist=denylist
+                repo,
+                org,
+                ns,
+                batch_paths,
+                source=source,
+                one=one,
+                denylist=denylist,
+                git_dir=git_dir,
+                head=head,
             )
     except customer.HOLDS as e:
         return str(e)
@@ -467,6 +501,8 @@ async def _backfill_batch_rounds(
     source: Any,
     one: Any,
     denylist: Any,
+    git_dir: str,
+    head: str,
 ) -> None:
     """One cursor batch of the CLI backfill in rounds of
     `code_ingest_round_files`: the round's sources
@@ -477,16 +513,18 @@ async def _backfill_batch_rounds(
     whole-namespace-slice scan per file (~1 s, growing with the branch), which
     caps a 50k-file release branch at ~2 files/s whatever `--concurrency`.
     Round size 0 keeps the per-file reads (the wrapper then only delegates)."""
+    from server.code.app.index.pass_budget import git_text_source
     from server.code.app.index.round_reads import RoundReads, round_size, rounds
 
     size = round_size()
-    for rnd in rounds(batch_paths, size):
-        found = dict(await asyncio.gather(*(source(p) for p in rnd)))
-        sources = {p: src for p, src in found.items() if src is not None}
-        async with RoundReads(repo, org, ns) as reads:
-            if size > 0:
-                await reads.prefetch(sources, denylist)
-            await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
+    with git_text_source(git_dir, head):
+        for rnd in rounds(batch_paths, size):
+            found = dict(await asyncio.gather(*(source(p) for p in rnd)))
+            sources = {p: src for p, src in found.items() if src is not None}
+            async with RoundReads(repo, org, ns) as reads:
+                if size > 0:
+                    await reads.prefetch(sources, denylist)
+                await gather_or_cancel(*(one(reads, p, sources[p]) for p in rnd if p in sources))
 
 
 async def _backfill_head(git_dir: str, cfg: Any, args: argparse.Namespace) -> str:

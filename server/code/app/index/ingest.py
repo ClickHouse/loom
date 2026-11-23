@@ -40,6 +40,7 @@ from server.code.app.index.ingest_reconcile import (
     _reconcile_facets,
     _reconcile_symbols,
 )
+from server.code.app.index.ingest_resolve import _live_paths, _py_layout
 from server.code.app.index.ingest_stats import (
     SKIPPED,
     EmbedResult,
@@ -215,11 +216,16 @@ async def ingest_file(
 
     # chunking can parse again (a host file's shell, a TLA+ spec): off the event loop
     try:  # A declared-only file has no chunks (the reconcile retires any)
+        layout = None
+        if pf.lang == "python" and not declared_only:
+            present = await _live_paths(repo, org, ns, pf)
+            if present is not None:
+                layout = await _py_layout(repo, org, ns, present)
         chunks, structural_prefixes, facets = (
             ([], {}, [])
             if declared_only
             else await asyncio.to_thread(
-                _chunks_for, pf, path, source, max_chunk_chars, (org, ns), stats.error
+                _chunks_for, pf, path, source, max_chunk_chars, layout, stats.error
             )
         )
     except Exception as chunk_exc:  # noqa: BLE001 — one bad file must not sink the commit

@@ -6,6 +6,7 @@ and those of `memory.for_file`."""
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
@@ -110,7 +111,18 @@ async def lessons_for_symbol(
                 "suggestion": suggestion,
             },
         )
-    return [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    ranked = [lesson for _, lesson in sorted(out.values(), key=lambda x: x[0])][:limit]
+    budget = settings.code_result_lessons_tokens
+    if not budget:
+        return ranked
+    kept: list[dict[str, Any]] = []
+    spent = 0
+    for lesson in ranked:
+        cost = len(json.dumps(lesson, ensure_ascii=False)) // 4 + 1
+        if spent + cost <= budget:
+            kept.append(lesson)
+            spent += cost
+    return kept
 
 
 # Each path's read keeps this many rows.

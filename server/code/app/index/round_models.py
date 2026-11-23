@@ -103,7 +103,7 @@ async def _plans(
         try:
             # chunking can parse again (a host file's shell, a TLA+ spec): off the event loop
             chunks, prefixes, _facets = await asyncio.to_thread(
-                _chunks_for, pf, path, sources[path], max_chars, (org, ns), got[1]
+                _chunks_for, pf, path, sources[path], max_chars, None, got[1]
             )
         except Exception:  # noqa: BLE001 — the file's own ingest records the error
             continue

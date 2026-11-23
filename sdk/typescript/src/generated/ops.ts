@@ -768,10 +768,15 @@ export interface CodeEnclosingInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Repo-relative path:line locations to resolve together. */
   locations: string[];
+  /** Include retained enclosing source per location; default false. */
   include_body?: boolean;
+  /** Estimated tokens for body content; zero is unlimited (default). */
   token_budget?: number;
+  /** Attach callers, callees and mapped tests per function; default off. */
   neighbours?: boolean | null;
+  /** Maximum callers and callees per function; default five. */
   neighbour_k?: number;
 }
 
@@ -875,10 +880,15 @@ export interface CodeGrepInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
-  pattern: string;
+  /** Literal text, a list of alternatives, or one RE2 expression with regex=true. */
+  pattern: string | string[];
+  /** Use RE2 syntax without lookaround or backreferences when true. */
   regex?: boolean;
   case_sensitive?: boolean;
+  /** Include distinct enclosing bodies in matches mode; default false. */
+  include_body?: boolean;
   path_prefix?: string;
+  /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   mode?: "matches" | "files" | "presence" | "message";
@@ -896,6 +906,9 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  definitions?: Array<Record<string, unknown>>;
+  definitions_partial?: boolean;
+  definitions_note?: string;
   next_cursor?: string;
   has_more?: boolean;
   files?: Array<Record<string, unknown>>;
@@ -1555,15 +1568,18 @@ export interface CodeSearchInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Issue, task, behavior question or identifier to locate in indexed code. */
   query: string;
   top_k?: number;
   token_budget?: number | null;
   path_prefix?: string;
+  /** Pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
   exclude_unit_ids?: string[];
   rerank?: string;
   expand?: boolean;
   annotate?: boolean;
+  /** Source response mode: auto includes source, none returns pointers. Omit to use the deployment default. */
   bodies?: "auto" | "none" | null;
   kind_prior?: "off" | "default" | "flat" | "structural" | null;
   pr_leg_before?: string | null;
@@ -1678,8 +1694,10 @@ export interface CodeSymbolInput {
   agent?: string;
   user_id?: string;
   consumer?: string;
+  /** Definition name, path:line, or path:symbol. A filename constrains the lookup. */
   name?: string;
   symbol_id?: string;
+  /** Include retained implementation source when available; false returns metadata. */
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
@@ -1690,6 +1708,7 @@ export interface CodeSymbolInput {
   sort_by?: "score" | "fan_in";
   uses?: boolean | null;
   uses_limit?: number;
+  /** Include a compact caller summary when one definition resolves. */
   uses_brief?: boolean;
   near_paths?: string[];
   pr_number?: number;
@@ -1701,6 +1720,7 @@ export interface CodeSymbolInput {
 
 export interface CodeSymbolOutput {
   definitions: CodeUnit[];
+  lessons_left_out?: number;
   ambiguous?: boolean;
   hierarchy?: Record<string, Array<Record<string, unknown>>>;
   candidates?: Array<Record<string, unknown>>;
@@ -6317,6 +6337,8 @@ export interface MemoryListInput {
   tags?: string[];
   tags_every?: boolean;
   contains?: string | null;
+  pinned_only?: boolean;
+  conflicted_only?: boolean;
   fields?: string[];
   known_version?: number | string | null;
 }

@@ -323,9 +323,30 @@ def _apply_enrichment(units: list[Any], enrichment: dict[str, Any]) -> None:
         setattr(units[0], field, value)
 
 
+def _budget_definitions(units: list[Any], token_budget: int) -> tuple[list[Any], int, int]:
+    """Reserve source before fitting whole lessons into an explicit request budget."""
+    from server.code.domain.units import budget_units, estimate_unit_tokens
+
+    if not token_budget or not any(u.lessons for u in units):
+        kept, tokens = budget_units(units, token_budget)
+        return kept, tokens, 0
+    lessons = [u.lessons for u in units]
+    bare = [u.model_copy(update={"lessons": []}) for u in units]
+    kept, tokens = budget_units(bare, token_budget)
+    left_out = sum(len(rows) for rows in lessons)
+    for unit, rows in zip(kept, lessons, strict=False):
+        for lesson in rows:
+            candidate = unit.model_copy(update={"lessons": [*unit.lessons, lesson]})
+            extra = estimate_unit_tokens(candidate) - estimate_unit_tokens(unit)
+            if tokens + extra <= token_budget:
+                unit.lessons.append(lesson)
+                tokens += extra
+                left_out -= 1
+    return kept, tokens, left_out
+
+
 async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
     from server.code.app import fan_in as code_fan_in
-    from server.code.domain.units import budget_units
 
     require_code_intel()
     # Presence on several namespaces: one verdict per namespace, no bodies. Unset: the
@@ -442,7 +463,7 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
     if brief_omitted:
         brief, uses_tokens = {}, 0
     with code_span("symbol.budget"):
-        budgeted, tokens = budget_units(
+        budgeted, tokens, lessons_left_out = _budget_definitions(
             units, remaining_token_budget(input.token_budget, uses_tokens)
         )
     tokens += uses_tokens
@@ -499,6 +520,7 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
     )
     return CodeSymbolOutput(
         definitions=budgeted,
+        lessons_left_out=lessons_left_out,
         ambiguous=ambiguous,
         candidates=[],
         tokens_returned=tokens,

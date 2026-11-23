@@ -19,17 +19,16 @@ async def served_excerpts(
     ch: _CHClient | None = None,
 ) -> list[dict[str, Any]]:
     """The served rows of `namespaces` among `memory_ids` (live, unexpired, not `high`),
-    with the first 200 characters of the value as text (a JSON string value decoded),
-    for a code read's lessons."""
+    with the complete value as text (a JSON string value decoded), for a code read's
+    lessons."""
     if not memory_ids or not namespaces:
         return []
     return await query_all_sliced(
         ch or _default_client(),
         """
         SELECT toString(memory_id) AS mid, memory_key, namespace,
-               substringUTF8(
-                   if(startsWith(value, '"'), JSONExtractString(value), value), 1, 200
-               ) AS excerpt, pinned, confidence
+               if(startsWith(value, '"'), JSONExtractString(value), value) AS excerpt,
+               pinned, confidence
         FROM loom.memory FINAL
         WHERE org = {org:String} AND namespace IN {nss:Array(String)}
           AND memory_id IN {ids:Array(UUID)}

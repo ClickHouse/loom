@@ -5,12 +5,18 @@ stack running. It runs the lab code, reads back what it wrote, prints one line
 per check and exits non-zero when any check fails. In GitHub Actions it also
 writes the table to the job summary.
 
+A student step that waits past LOOM_GRADE_STEP_TIMEOUT fails that check, and
+the later checks still run. The deadline is a cooperative async wait: it does
+not stop blocking synchronous code, a CPU loop, or a step that ignores
+cancellation.
+
 Lab 3 and the written answers in answers.md are graded by hand.
 """
 
 import asyncio
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -28,6 +34,28 @@ BASE_URL = os.environ.get("LOOM_BASE_URL", "http://localhost:7777")
 INSTALL_DIR = os.environ.get("LOOM_INSTALL_DIR", str(Path.home() / ".loom"))
 
 
+def _deadline_s(raw: str) -> float:
+    try:
+        timeout = float(raw)
+    except ValueError as e:
+        raise RuntimeError(
+            f"LOOM_GRADE_STEP_TIMEOUT must be a number of seconds, not {raw!r}"
+        ) from e
+    # inf would wait forever, which is the failure this deadline exists to stop.
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise RuntimeError(
+            f"LOOM_GRADE_STEP_TIMEOUT must be a positive finite number of seconds, not {raw!r}"
+        )
+    return timeout
+
+
+# Instructors change the budget with LOOM_GRADE_STEP_TIMEOUT. The timeout
+# cancels the waiting step and the grader awaits that cancellation, so a later
+# check can run. A blocking call, a CPU loop, or a step that swallows
+# cancellation still holds the grader: it shares the student's process.
+STEP_TIMEOUT_S = _deadline_s(os.environ.get("LOOM_GRADE_STEP_TIMEOUT", "60"))
+
+
 class Failed(Exception):
     """A check's reason for failing, shown to the student."""
 
@@ -42,9 +70,15 @@ def load(name: str) -> ModuleType:
 
 async def run_student(step: Awaitable[object]) -> object:
     try:
-        return await step
+        async with asyncio.timeout(STEP_TIMEOUT_S) as budget:
+            return await step
     except NotImplementedError as e:
         raise Failed(f"{e} is not written yet") from e
+    except TimeoutError as e:
+        # A TimeoutError the step raised itself is the student's, not this budget.
+        if not budget.expired():
+            raise
+        raise Failed(f"did not finish within {STEP_TIMEOUT_S:g} seconds") from e
 
 
 async def lab1_fact_saved_and_revised() -> None:

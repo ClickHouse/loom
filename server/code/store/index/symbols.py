@@ -252,18 +252,21 @@ class SymbolsMixin(CodeRepoBase):
         return table
 
     async def symbols_by_name(
-        self, org: str, ns: str, name: str, *, limit: int = 50
+        self, org: str, ns: str, name: str, *, limit: int = 50, path: str = ""
     ) -> list[dict[str, Any]]:
         """Exact/suffix symbol lookup, both tiers. `name` may be bare
         (`insert`), qualified (`DB::IColumn::insert`), or partially
         qualified (`IColumn::insert`). The bare-name equality predicate is
         index-served (ngrambf on name); qualification filters app-visible
-        rows. Callers prefer tier='scip' per (qualified_name, symbol_id)."""
+        rows. An explicit `path` binds both candidate and live reads before ranking.
+        Callers prefer tier='scip' per (qualified_name, symbol_id)."""
         # Python surface form: agents write Cls.method / module.fn with
         # dots, the index stores :: — normalize before matching. Module
         # scopes contain dots INSIDE one component
         # (tests.integration.x.test::f), so this is a query-side
         # convenience only and never applied to stored names.
+        candidate_table = "loom.code_symbols" if path else "loom.code_symbol_names"
+        path_filter = "AND path = {path:String}\n" if path else ""
         written = name
         if "." in name and "::" not in name:
             name = name.replace(".", "::")
@@ -291,14 +294,15 @@ class SymbolsMixin(CodeRepoBase):
         # size. The regex is bound as a parameter, never interpolated
         # (ClickHouse string literals eat backslashes).
         # Key discovery from the name-keyed side table (code_symbol_names,
-        # a point read by (org, namespace, name)), then the
-        # ranked FINAL read of the main table by full sort key.
+        # a point read by (org, namespace, name)), or the main table
+        # when a filename constrains discovery, then the live read by full key.
         cand = await self._ch.query_all(
             f"""
             SELECT DISTINCT tier, qualified_name, symbol_id
-            FROM loom.code_symbol_names
+            FROM {candidate_table}
             WHERE org = {{org:String}} AND namespace = {{ns:String}}
               AND name IN {{names:Array(String)}}
+              {path_filter}
               AND (qualified_name = {{full:String}}
                    OR endsWith(qualified_name, {{suffix:String}})
                    OR endsWith(qualified_name, {{sql_suffix:String}})
@@ -318,6 +322,7 @@ class SymbolsMixin(CodeRepoBase):
                 "suffix": "::" + name,
                 "sql_suffix": "::" + written,
                 "dot_suffix": "." + bare,
+                "path": path,
             },
         )
         keys = [(str(r["tier"]), str(r["qualified_name"]), str(r["symbol_id"])) for r in cand]
@@ -330,6 +335,9 @@ class SymbolsMixin(CodeRepoBase):
               AND (tier, qualified_name, symbol_id)
                   IN {keys:Array(Tuple(String, String, String))}
               AND tombstoned_at IS NULL
+            """
+            + path_filter
+            + """
             ORDER BY match(path, {noise:String}) ASC,
                      match(path, {generated:String}) ASC,
                      kind IN ('suite', 'statement', 'section') ASC,
@@ -344,6 +352,7 @@ class SymbolsMixin(CodeRepoBase):
                 "ns": ns,
                 "keys": keys[:4000],
                 "limit": limit,
+                "path": path,
                 "noise": SYMBOL_NOISE_PATH_RE,
                 "generated": SYMBOL_GENERATED_PATH_RE,
             },
@@ -668,7 +677,7 @@ class SymbolsMixin(CodeRepoBase):
         return out
 
     async def symbols_fuzzy(
-        self, org: str, ns: str, needle: str, *, limit: int = 25
+        self, org: str, ns: str, needle: str, *, limit: int = 25, path: str = ""
     ) -> list[dict[str, Any]]:
         """Symbols whose name contains `needle`, case-insensitively.
 
@@ -686,6 +695,9 @@ class SymbolsMixin(CodeRepoBase):
               AND lower(name) LIKE {like:String}
               AND positionCaseInsensitive(name, {needle:String}) > 0
               AND tombstoned_at IS NULL
+            """
+            + ("AND path = {path:String}\n" if path else "")
+            + """
             ORDER BY tier DESC, length(name), qualified_name
             LIMIT {limit:UInt32}
             """,
@@ -695,6 +707,7 @@ class SymbolsMixin(CodeRepoBase):
                 "needle": needle,
                 "like": like_contains(needle.lower()),
                 "limit": limit,
+                "path": path,
             },
         )
         return _prefer_scip(rows)

@@ -212,6 +212,8 @@ async def _hidden_under_prefix(
         # The same tag match as `total`, so only the status filter makes the difference.
         tag_filter=tag_filter,
         contains=input.contains or None,
+        pinned_only=input.pinned_only,
+        conflicted_only=input.conflicted_only,
         include_tombstoned=input.include_tombstoned,
         as_of=input.as_of,
         include_duplicates=True,
@@ -293,6 +295,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             source_trace=input.source_trace or None,
             tag_filter=tag_filter,
             contains=input.contains or None,
+            pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             order_by="created_at_desc",
             limit=input.limit + 1,
             offset=input.offset,
@@ -324,6 +328,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
         input.source_trace or "",
         tag_filter,
         input.contains or "",
+        bool(input.pinned_only),
+        bool(input.conflicted_only),
         bool(input.include_tombstoned),
         str(input.as_of or ""),
         tuple(sorted(_served.items())),
@@ -341,6 +347,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             source_trace=input.source_trace or None,
             tag_filter=tag_filter,
             contains=input.contains or None,
+            pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             include_tombstoned=input.include_tombstoned,
             as_of=input.as_of,
             **_served,
@@ -355,6 +363,8 @@ async def _handle_memory_list(input: MemoryListInput) -> MemoryListOutput:
             source_trace=input.source_trace or None,
             tag_filter=tag_filter,
             contains=input.contains or None,
+            pinned_only=input.pinned_only,
+            conflicted_only=input.conflicted_only,
             include_tombstoned=input.include_tombstoned,
             created_since=_today_start,
             **_served,
@@ -487,6 +497,10 @@ async def _list_by_score(
     if input.contains:
         where.append(memory_repo.CONTAINS_PREDICATE)
         params["contains"] = input.contains
+    if input.pinned_only:
+        where.append("pinned = 1")
+    if input.conflicted_only:
+        where.append("status = 'conflicted'")
     if input.as_of is not None:
         where.append(
             "(valid_at IS NOT NULL AND valid_at <= {as_of:DateTime} "
@@ -515,19 +529,7 @@ async def _list_by_score(
     """
     rows_dict = await get_client().query_all(sql, params=params)
     if input.quotas:
-        per_type_counts: dict[str, int] = {}
-        kept: list[dict[str, Any]] = []
-        for r in rows_dict:
-            t = r.get("memory_type", "")
-            cap = int(input.quotas.get(t, 0))
-            used = per_type_counts.get(t, 0)
-            if cap > 0 and used >= cap:
-                continue
-            kept.append(r)
-            per_type_counts[t] = used + 1
-            if len(kept) >= input.limit + 1:
-                break
-        rows_dict = kept
+        rows_dict = _within_quotas(rows_dict, input.quotas, input.limit + 1)
     truncated = len(rows_dict) > input.limit
     rows_dict = await memory_repo.served_rows(
         [{**r, "org": input.org, "namespace": input.namespace} for r in rows_dict[: input.limit]]
@@ -543,6 +545,26 @@ async def _list_by_score(
         entries=[_score_entry(r) for r in rows_dict],
         truncated=truncated,
     )
+
+
+def _within_quotas(
+    rows: list[dict[str, Any]], quotas: dict[str, int], keep: int
+) -> list[dict[str, Any]]:
+    """The rows in order, at most `quotas[type]` of each memory type (a type not named, or
+    at 0, is uncapped), stopping at `keep` rows."""
+    per_type_counts: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for r in rows:
+        t = r.get("memory_type", "")
+        cap = int(quotas.get(t, 0))
+        used = per_type_counts.get(t, 0)
+        if cap > 0 and used >= cap:
+            continue
+        kept.append(r)
+        per_type_counts[t] = used + 1
+        if len(kept) >= keep:
+            break
+    return kept
 
 
 def _score_entry(r: dict[str, Any]) -> _MemoryListEntry:

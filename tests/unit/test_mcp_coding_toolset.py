@@ -195,7 +195,8 @@ def test_coding_descriptions_derive_from_the_core_texts():
         "memory.set",
         "loom_activate",
         "code.impact",
-        "context.pack",
+        "code.symbol",
+        "code.grep",
     }
     # derived: every replace took effect and the rest of the text is the core text
     assert "native memory" not in CODING_TOOL_DESCRIPTIONS["memory.set"]
@@ -384,12 +385,27 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_tools_leave_eager_loading_to_the_host_by_default(monkeypatch, profile) -> None:
+def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch, profile) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 21
-    assert not any("anthropic/alwaysLoad" in tool.get("_meta", {}) for tool in tools)
+    flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {
+        "loom_search",
+        "loom_code_search",
+        "loom_code_symbol",
+        "loom_code_grep",
+    }
+    assert any(tool["name"] == "loom_op" for tool in tools)
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
+def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(monkeypatch, toolset) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "auto")
+    tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    dispatcher = next(tool for tool in tools if tool["name"] == "loom_op")
+    assert dispatcher["_meta"]["anthropic/alwaysLoad"] is True
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
@@ -426,6 +442,40 @@ def test_mcp_always_load_tools_names_the_flagged_ops(monkeypatch) -> None:
     monkeypatch.setattr(settings, "mcp_always_load_tools", "")
     tools = asyncio.run(_tools_descriptor(toolset="coding"))
     assert not any(t.get("_meta") for t in tools)
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact", "full"])
+def test_synthetic_operations_and_tools_honor_explicit_loading_metadata(
+    monkeypatch, profile
+) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "search.query,loom_op,loom_activate")
+    tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
+    flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
+    assert flagged == {"loom_search", "loom_op", "loom_activate"}
+
+
+@pytest.mark.parametrize(
+    "toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly", "assistant"]
+)
+def test_loading_metadata_never_adds_a_tool_or_widens_its_roster(monkeypatch, toolset) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "")
+    deferred = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    monkeypatch.setattr(
+        settings, "mcp_always_load_tools", "search.query,code.search,loom_op,memory.delete"
+    )
+    upfront = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    assert {t["name"] for t in upfront} == {t["name"] for t in deferred}
+    assert [{k: v for k, v in t.items() if k != "_meta"} for t in upfront] == deferred
+    if toolset == "assistant":
+        assert "loom_op" not in {t["name"] for t in upfront}
+
+
+@pytest.mark.parametrize("toolset,writes", [("coding", True), ("readonly", False)])
+def test_operation_dispatcher_annotations_cover_its_possible_effects(toolset, writes) -> None:
+    tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    op = next(t for t in tools if t["name"] == "loom_op")
+    assert op["annotations"]["readOnlyHint"] is not writes
+    assert op["annotations"]["destructiveHint"] is writes
 
 
 def test_the_primer_names_collection_list_by_the_tool_that_reaches_it() -> None:
@@ -476,13 +526,13 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
     assert f"Skip it when {FIRST_STEP_HOOK}." in coding
     rules = mcp_primer._loom_rules("core", None)
     assert (
-        "**1. Task context.** First step of each task: call `loom_context_pack` with the task as `query`"
+        "**1. Task context.** With a default memory namespace, call `loom_context_pack` first with the task as `query`"
         in rules
     )
     assert f"Skip it when {FIRST_STEP_HOOK}." in rules
     assert "For one fact, rule 2's search alone is enough." in rules
     summary = first_sentence(TOOL_DESCRIPTIONS["context.pack"])
-    assert summary.startswith("A task's memories, decisions and procedures: call it first")
+    assert summary.startswith("Task context: call first with a default memory namespace")
     # loom_op's help catalog shows its own cut of the same sentence
     assert mcp_op._purpose(OPERATIONS_BY_NAME["context.pack"]).endswith(
         f"unless {FIRST_STEP_HOOK}."
@@ -494,7 +544,7 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
     for name, purpose in (
         ("loom_code_symbol", "for a named definition"),
-        ("loom_code_search", "for a concept"),
+        ("loom_code_search", "for an issue, task or conceptual question"),
         ("loom_code_grep", "for exact text or an error"),
         ("loom_code_callers", "for callers"),
         ("loom_code_impact", "for change effects"),
@@ -505,6 +555,30 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     assert "linked lessons" in coding
     assert "uncommitted or unindexed" in coding
     assert "current context already answers" in coding
+
+
+@pytest.mark.parametrize("profile", ["standard", "compact"])
+async def test_coding_schemas_keep_the_inputs_needed_to_select_and_call_code_tools(profile) -> None:
+    from server.transport.mcp_tools import _tools_descriptor
+
+    descriptors = {
+        row["name"]: row
+        for row in await _tools_descriptor(toolset="coding", schema_profile=profile)
+    }
+    for name, fields in (
+        ("loom_code_search", ("query", "bodies")),
+        ("loom_code_symbol", ("name", "include_body", "uses_brief")),
+        ("loom_code_grep", ("pattern",)),
+    ):
+        properties = descriptors[name]["inputSchema"]["properties"]
+        assert all(properties[field].get("description") for field in fields)
+
+    for name in ("loom_code_search", "loom_code_grep"):
+        cursor = descriptors[name]["inputSchema"]["properties"]["cursor"]["description"]
+        assert "`next_cursor` with the original search arguments" in cursor
+        assert "omit it to start a new search" in cursor
+    regex = descriptors["loom_code_grep"]["inputSchema"]["properties"]["regex"]["description"]
+    assert "without lookaround or backreferences" in regex
 
 
 @pytest.mark.parametrize("defaults", [None, {"namespace": ""}])
@@ -518,6 +592,24 @@ def test_coding_connections_without_a_memory_home_do_not_request_a_memory_pack(d
 def test_coding_tool_listing_conditions_the_memory_pack_on_a_default_workspace() -> None:
     tools = asyncio.run(mt._tools_descriptor(toolset="coding"))
     description = next(t["description"] for t in tools if t["name"] == "loom_context_pack")
-    assert "call it first when a default memory namespace exists" in description
+    assert "call first with a default memory namespace" in description
     assert "call it first in each task" not in description
     assert "Pass the task as `query`" in description
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding", "tasks", "tracker", "atomic", "readonly"])
+def test_shared_routing_covers_capabilities_and_safe_operation_discovery(toolset) -> None:
+    for text in (mcp_primer._loom_rules(toolset, None), mcp_primer._coding_instructions(toolset)):
+        for purpose in ("saved knowledge", "documents", "code", "issues", "tasks", "records"):
+            assert purpose in text
+        assert '`op="help"`' in text
+        assert "never invent an unlisted tool name" in text
+        assert "make only calls needed for the task" in text
+        assert "Writes need user intent and permission" in text
+
+
+def test_assistant_routing_stays_with_listed_read_tools() -> None:
+    text = mcp_primer._assistant_primer(None)
+    assert "relevant listed Loom read tools" in text
+    assert "cannot write or route unlisted operations" in text
+    assert "loom_op" not in text

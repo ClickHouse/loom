@@ -269,18 +269,13 @@ def _lean_search(out: dict[str, Any]) -> None:
                 r.pop("callees")
 
 
-# A definition body over this many characters (about 1,500 tokens) is left to a
-# ranged Read: an agent reading the unit reads it from its checkout either way,
-# and a body it did not need is paid for on every later turn.
-_BODY_MAX_CHARS = 6000
 _NO_DOC = "No documentation available."
 # Search hits past this rank keep where they are, not what they do.
 _DESCRIBED_HITS = 3
 
 
 def _lean_symbol(out: dict[str, Any]) -> None:
-    """A definition that carries its body leaves out its outline (the body
-    shows the members); a body over `_BODY_MAX_CHARS` becomes a ranged Read.
+    """Keep requested source and leave out an outline the body already supplies.
     Asked for a class, the class answers: definitions of
     its own members that matched the bare name (its constructor) keep their
     path and span, not their bodies; `next` fetches one."""
@@ -290,13 +285,6 @@ def _lean_symbol(out: dict[str, Any]) -> None:
             d.pop("outline")
         if d.get("description") == _NO_DOC:
             d.pop("description")
-        body = d.get("body")
-        if isinstance(body, str) and len(body) > _BODY_MAX_CHARS and d.get("start_line"):
-            # a long body is read once, from the file, in the range the agent picks
-            d.pop("body")
-            d["elided"] = True
-            span = int(d.get("end_line") or d["start_line"]) - int(d["start_line"]) + 1
-            d["next"] = f"Read {d.get('path')} offset={d['start_line']} limit={span}"
     if not defs or defs[0].get("granularity") != "skeleton" or not defs[0].get("body"):
         return
     owner = str(defs[0].get("symbol") or "")

@@ -116,6 +116,59 @@ per search: `returned_keys`, `returned_scores`, `abstain`, `retrieval_risk`,
 `latency_ms`, and the `query` when `LOOM_LANGFUSE_CAPTURE_IO_LEVEL` is not `off` (its
 default is `off`, so by default the rows carry keys and scores without the question).
 
+## Diagnose coding-agent overhead
+
+Separate three clocks: the agent's model requests, its tool and local work, and the
+Loom request. A Loom trace measures the last one. The caller must supply its own
+model duration, input/output and cache usage, and tool-call groups. Several tools
+issued in one model response are several tool calls but one model turn; replacing
+them with a batch does not necessarily save a model round trip. Concurrent spans
+can overlap, so summing their duration is not elapsed agent time.
+
+For a completed code call, inspect the handler result's content counts and work:
+
+```sql
+SELECT request_id, trace_id, operation, latency_ms, response_tokens,
+       args['out_grep_match_lines'] AS grep_lines,
+       args['out_source_bodies'] AS bodies,
+       args['out_source_chars'] AS source_chars,
+       args['out_elided_bodies'] AS elided_bodies,
+       args['out_lesson_rows'] AS lessons,
+       args['out_lesson_chars'] AS lesson_chars,
+       args['out_lesson_rows_omitted'] AS omitted_lessons,
+       args['out_ch_elapsed_ms'] AS ch_ms,
+       args['out_stage_ms'] AS stages
+FROM loom.agent_events
+WHERE org = 'acme' AND namespace = 'repository'
+  AND operation LIKE 'code.%' AND kind = 'request'
+ORDER BY ts DESC
+LIMIT 20;
+```
+
+An absent map entry is unknown, including rows written by an older build. A zero
+count says what that result contained; it does not explain why a lesson was absent.
+The [telemetry field definitions](../features/observability/telemetry.md#the-ledger)
+name the measured containers and character units.
+
+For grep in matches mode, compare line and body counts to see what the response
+returned. Check coverage and partial-result flags before interpreting zero lines.
+The ledger stage timings include inline lesson work with the exporter disabled.
+A trace row written before enrichment can contain fewer stages than the request
+row.
+
+Use `trace_id` to find the same request in the configured trace backend. The
+[Langfuse integration](../features/integrations/langfuse.md) forwards the existing
+span tree and these numeric response attributes when its credentials and OTel are
+configured. An installed integration alone does not establish export: check
+`GET /v1/health?include=langfuse` for local processor state, then verify a known
+request in the remote project. Local exporter state is not proof of remote delivery.
+
+Retain the caller's trajectory and the scoped ledger before removing a disposable
+evaluation environment. Include failed calls, distinguish interrupted attempts from
+failed solutions, and keep setup and judging costs separate from coding costs.
+Record whether source and lessons were present before attributing a bad patch to
+retrieval. Successful delivery does not establish relevance or correct use.
+
 ## 4. Explain a write
 
 - **The write's own answer.** `memory.set` returns `status`, `conflict_verdict`, `peers`,

@@ -174,6 +174,11 @@ async def test_lessons_match_the_result_file_by_path(
         ["server/memory/app/loom_search/handler.py"],
     )
     _set(org, control_plane_url, token, "design/memo", DECISION, [PATH], memory_type="decision")
+    long_note = (
+        "Callbacks release their context resources. " * 60
+        + "Source: https://example.com/design#cleanup"
+    )
+    _set(org, control_plane_url, token, "notes/long", long_note, [PATH])
     # More rows about other directories' handler.py than a small read would keep: the
     # exact path's rows still come back.
     for i in range(12):
@@ -192,11 +197,11 @@ async def test_lessons_match_the_result_file_by_path(
         rows = (
             await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=2000)
         ).rows
-        if len(rows) >= 3:
+        if len(rows) >= 4:
             break
         await asyncio.sleep(0.2)
     keys = {r["memory_key"] for r in rows}
-    assert keys == {"notes/exact", "notes/bare", "design/memo"}, rows
+    assert keys == {"notes/exact", "notes/bare", "design/memo", "notes/long"}, rows
     by_key = {r["memory_key"]: r for r in rows}
     assert by_key["notes/exact"] == {
         "path": PATH,
@@ -206,6 +211,22 @@ async def test_lessons_match_the_result_file_by_path(
         "code_state": "",
     }
     assert by_key["design/memo"]["excerpt"] == " ".join(DECISION.split())
+    assert by_key["notes/long"]["excerpt"] == long_note
+    # Symbol lessons use the same stored value through their own read projection.
+    from server.memory.store.code_plane_reads import served_excerpts
+
+    response = await asyncio.to_thread(
+        httpx.post,
+        f"{control_plane_url}/v1/memory.get",
+        json={"org": org, "namespace": "dev", "agent": "claude-code", "memory_key": "notes/long"},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=10,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    memory_id = payload.get("data", payload)["memory_id"]
+    (stored,) = await served_excerpts(org, ["dev"], [memory_id])
+    assert stored["excerpt"] == long_note
     # a cap below the decision's size leaves it out, never cut
     small = (await path_lessons.lessons_for_paths(org, ["dev"], "", [PATH], token_budget=60)).rows
     assert "design/memo" not in {r["memory_key"] for r in small}

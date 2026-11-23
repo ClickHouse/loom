@@ -123,26 +123,45 @@ class CodeEnclosingInput(_CodeIdentity, _ResultLessons):
     comments that cite `path:line`."""
 
     # "src/Foo.cpp:123" — repo-relative path, 1-based line.
-    locations: list[str] = Field(min_length=1, max_length=200)
+    locations: list[str] = Field(
+        min_length=1,
+        max_length=200,
+        description="Repo-relative path:line locations to resolve together.",
+    )
     # include_body: ship the enclosing function's whole body with each resolved
     # location, so a grep hit becomes the function it sits in without a follow-up
     # code.symbol or a file read (most index answers are otherwise followed by a read of
     # the same span). Bodies are fetched once per distinct symbol — ten hits in one
-    # function cost one body — and fill by first appearance until token_budget is spent;
+    # function cost one fetch — and fill by first appearance until token_budget is spent;
     # the rest ship elided with the pasteable `next` escalation. Default off: the grep
     # shim only wants the name on every line.
-    include_body: bool = False
+    include_body: bool = Field(
+        default=False,
+        description="Include retained enclosing source per location; default false.",
+    )
     # Estimated-token cap on included bodies; 0 (default) is unlimited.
-    token_budget: int = Field(default=0, ge=0)
+    token_budget: int = Field(
+        default=0,
+        ge=0,
+        description="Estimated tokens for body content; zero is unlimited (default).",
+    )
     # neighbours: a graph evidence block per distinct enclosing function:
     # up to neighbour_k callers, callees (compiler tier preferred, symbols
     # outside the repo dropped, parser guesses below 0.8 confidence dropped)
     # and mapped tests, the module (top two directory segments) and the
     # epistemic envelope. Presentation only — it never enters a rank. At
     # most 20 anchors per call; None = off.
-    neighbours: bool | None = None
+    neighbours: bool | None = Field(
+        default=None,
+        description="Attach callers, callees and mapped tests per function; default off.",
+    )
     # With `neighbours`: at most this many callers and callees per function (1..20).
-    neighbour_k: int = Field(default=5, ge=1, le=20)
+    neighbour_k: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Maximum callers and callees per function; default five.",
+    )
 
 
 class CodeEnclosingOutput(_LessonsOut):

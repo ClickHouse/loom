@@ -187,17 +187,16 @@ def loom_op_description(listed: Set[str], *, writes: bool) -> str:
         op = OPERATIONS_BY_NAME[name]
         if op.mcp_tool_name not in listed and _routed(op, writes):
             shown.append(f"{what} ({name})")
-    such_as = f" It reaches, for example, {' and '.join(shown)}." if shown else ""
+    such_as = f" Also: {'; '.join(shown)}." if shown else ""
     kind = "op" if writes else "read op"  # a read-only connection routes reads only
     # compact keeps about the first 280 chars, so the help call, the example call and
     # what this connection routes come first.
     return (
-        f"Run a Loom {kind} this list does not show as a tool, by its dotted name: "
-        '{"op": "help", "query": "<words>"} lists matching ops, then call one as '
+        f"Run a Loom {kind} by its dotted name: "
+        '{"op": "help", "query": "<words>"} finds ops and arguments; then '
         '{"op": "memory.related", "arguments": {"memory_key": "deploy_day"}}.\n'
-        f'A description\'s "(via loom_op)" means this tool.{such_as} '
-        "Prefer a listed tool when one fits. Identity and namespace are filled in "
-        "as for a listed tool."
+        f'"(via loom_op)" routes here.{such_as} '
+        "Prefer a fitting listed tool; identity and namespace default as usual."
     )
 
 
@@ -219,7 +218,7 @@ DESCRIPTOR: dict[str, Any] = {
     # The target op's own output: one object whatever the op (strict clients
     # validate structuredContent against a declared schema).
     "outputSchema": {"type": "object"},
-    "annotations": {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False},
+    "annotations": {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False},
 }
 
 

@@ -296,6 +296,10 @@ settings:
   # [restart]
   # local_embedding_model_dir: "var/models"
 
+  # Texts per local ONNX inference batch; smaller values reduce peak memory. Every input
+  # is still embedded, in order; this does not limit input count or length. [restart]
+  # local_embedding_batch_size: 16
+
   # --- memory ---
 
   # memory.ask synthesis (the strong tier when the cascade is on). [restart]
@@ -1038,8 +1042,8 @@ settings:
   # their top files. [live]
   # code_result_lessons: true
 
-  # Estimated-token cap on one answer's `lessons`, counted on the serialized rows at 4
-  # characters a token; 0 means unlimited. [live]
+  # Estimated-token cap on file or symbol `lessons`, counted on serialized rows at 4
+  # characters a token; 0 means unlimited. Rows are whole or left out. [live]
   # code_result_lessons_tokens: 0
 
   # How many of an answer's files, in rank order, its `lessons` are read for. [live]
@@ -3137,10 +3141,9 @@ settings:
   # `?schema_profile=`. [restart]
   # mcp_schema_profile: "standard"
 
-  # Comma-separated ops whose MCP descriptors request eager loading with
-  # anthropic/alwaysLoad. Empty leaves loading to the host; set names to keep selected
-  # tools upfront. [restart]
-  # mcp_always_load_tools: ""
+  # "auto" selects upfront tools by toolset. A comma-separated list overrides it; empty
+  # leaves loading to the host. [restart]
+  # mcp_always_load_tools: "auto"
 
   # Seconds without a tool call after which the mcp_session_run_sweep worker closes an
   # MCP session's implicit run (one per token and `Mcp-Session-Id`, begun on the first

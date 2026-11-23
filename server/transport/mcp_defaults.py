@@ -9,18 +9,16 @@ a large repository, where the brief one carries the
 watermarks, lags and tiers. So over MCP the op defaults to `brief: true`,
 and a model that wants the rest passes `brief: false`.
 
-`code.search` over MCP returns pointers and descriptions by default, with bodies
-available on request. Its token budget follows the same deployment default as HTTP:
-unlimited unless configured or supplied by the caller.
+`code.search` uses the same body mode and token budget over MCP and HTTP:
+automatic bodies by default, with no token cap unless configured or supplied by the caller.
 
 `code.symbol` over MCP leaves out the recent PRs (about a third of a definition's
 tokens): they serve a review, not a where/how lookup, and a model that wants them
-passes `include_history`. The lessons stay: up to three memories linked to that
-symbol, each cut to its first 200 characters. `code.search`, `code.callers`,
+passes `include_history`. The lessons stay: up to three complete memories linked to that
+symbol within `code_result_lessons_tokens` (unlimited by default). `code.search`, `code.callers`,
 `code.callees`, `code.impact`, `code.outline` and a task's `code.context_pack` carry
 the memories of their top files (`server.code.app.result_lessons`): as many as fit in
-`code_result_lessons_tokens`, a decision or constraint whole, any other cut at 200
-characters.
+`code_result_lessons_tokens` (unlimited by default), each whole or left out.
 
 `code.grep` over MCP answers ten matches a page (each with its enclosing
 function), the cursor for the rest: in paired runs an agent's grep through the
@@ -33,7 +31,6 @@ from typing import Any
 
 MCP_DEFAULT_ARGUMENTS: dict[str, dict[str, Any]] = {
     "code.index_status": {"brief": True},
-    "code.search": {"bodies": "none"},
     "code.symbol": {"include_history": False},
     "code.grep": {"limit": 10},
 }
