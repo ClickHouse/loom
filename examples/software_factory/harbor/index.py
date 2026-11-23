@@ -99,7 +99,7 @@ def snapshot(container: str, scopes: list[dict]) -> list:
     return json.loads(run.stdout)
 
 
-async def _live_fingerprint(scopes: list) -> list:
+async def _live_fingerprint(scopes: list[tuple[str, str]]) -> list:
     from server.core.ch import get_client, set_query_tag
 
     client = get_client()
@@ -120,4 +120,5 @@ async def _live_fingerprint(scopes: list) -> list:
 
 
 if __name__ == "__main__":
-    print(json.dumps(asyncio.run(_live_fingerprint(json.loads(sys.argv[1])))))
+    scopes = [(org, namespace) for org, namespace in json.loads(sys.argv[1])]
+    print(json.dumps(asyncio.run(_live_fingerprint(scopes))))
