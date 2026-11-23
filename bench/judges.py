@@ -1,6 +1,6 @@
 """One chat call for bench readers and judges, on either provider.
 
-The request is shaped the way Loom's own clients shape it: `server/llm/openai.py`
+The request is shaped the way Loom's own clients shape it: `server/llm/chat_completions.py`
 and `server/llm/anthropic.py` build the payload, and `server/llm/traits.py` learns
 each model's refused fields, lowest reasoning effort, output limit and the room
 its hidden reasoning needs from the provider's answers; there is no model list here.
@@ -24,6 +24,7 @@ import httpx
 from server.llm import anthropic as _anthropic
 from server.llm import openai as _openai
 from server.llm import traits
+from server.llm.chat_completions import ChatCompletions
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 
@@ -65,11 +66,29 @@ async def achat(
         url = openai_chat_url()
         headers = {"Authorization": f"Bearer {key}"}
 
-        def build() -> dict[str, Any]:
-            return _openai._payload(model, system, prompt, max_tokens, None, 0.0)
+        wire = ChatCompletions()
+        call = _openai.Call(
+            system=system,
+            user=prompt,
+            max_tokens=max_tokens,
+            response_format=None,
+            temperature=0.0,
+            effort="",
+        )
 
-        learn, starved = _openai._learn_from_refusal, _openai._starved
-        hidden, cap_field = _openai._reasoning_tokens, ""
+        def build() -> dict[str, Any]:
+            return wire.payload(model, call)
+
+        def learn(model_name: str, resp: httpx.Response, sent: dict[str, Any]) -> bool:
+            return _openai.learn_from_refusal(wire, model_name, resp, sent)
+
+        def starved(data: dict[str, Any]) -> bool:
+            return wire.reply(data).starved
+
+        def hidden(data: dict[str, Any]) -> int:
+            return wire.reply(data).hidden
+
+        cap_field = ""
 
     payload = build()
     r = await client.post(url, headers=headers, json=payload, timeout=timeout_s)

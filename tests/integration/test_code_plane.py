@@ -120,6 +120,15 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     assert not rich.definitions_partial
     assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
     assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
+    nearby = await handle_code_grep(
+        CodeGrepInput(org=org, namespace=ns, pattern="squashImpl", context_lines=1)
+    )
+    source_lines = _SRC.decode().splitlines(keepends=True)
+    assert nearby.matches == plain.matches and nearby.contexts and not nearby.contexts_partial
+    for window in nearby.contexts:
+        assert window["text"] == "".join(
+            source_lines[window["start_line"] - 1 : window["end_line"]]
+        )
 
     # A vanished continuation pool reruns lines, but must hydrate only its page.
     from server.code.app import grep
@@ -137,9 +146,9 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     original = grep.definitions_for
     hydrated = []
 
-    async def bodies(input, matches, budget):
+    async def bodies(input, matches, budget, *, match_commits):
         hydrated.extend((row["path"], row["line"]) for row in matches)
-        return await original(input, matches, budget)
+        return await original(input, matches, budget, match_commits=match_commits)
 
     async def missing_pool(*args):
         return None
@@ -294,6 +303,7 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     from server.code.api.models_symbol import CodeCallersInput, CodeSymbolInput
     from server.code.app.search.handler import handle_code_search
     from server.code.app.symbol import handle_code_callers, handle_code_symbol
+    from server.code.domain.units import _card_of, estimate_unit_tokens
     from server.embedding.fake import fake_model_name
     from server.settings import settings
 
@@ -333,6 +343,35 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
         CodeCallersInput(org=org, namespace=ns, name="DB::Squasher::squashImpl")
     )
     assert any(e.from_symbol == "DB::Squasher::flush" for e in c.edges)
+
+    query = CodeSymbolInput(
+        org=org,
+        namespace=ns,
+        name="DB::Squasher::squashImpl",
+        include_history=False,
+        include_lessons=False,
+    )
+    plain_response = await handle_code_symbol(query)
+    plain = plain_response.definitions[0].examples
+    examples = await handle_code_symbol(query.model_copy(update={"example_context_lines": 2}))
+    sites = examples.definitions[0].examples
+    assert plain and [{k: v for k, v in site.items() if k != "context"} for site in sites] == plain
+    site = next(site for site in sites if site["caller"] == "DB::Squasher::flush")
+    context = site["context"]
+    assert context["commit"] == "a" * 40
+    assert context["start_line"] <= site["line"] <= context["end_line"]
+    assert context["text"].splitlines()[site["line"] - context["start_line"]].strip() == (
+        "void flush() { squashImpl(); }"
+    )
+    plain_definition = plain_response.definitions[0]
+    budget = max(
+        estimate_unit_tokens(plain_definition), estimate_unit_tokens(_card_of(plain_definition))
+    )
+    limited = await handle_code_symbol(
+        query.model_copy(update={"example_context_lines": 2, "token_budget": budget})
+    )
+    assert limited.definitions[0].body == plain_definition.body
+    assert limited.definitions[0].examples == plain
 
 
 async def test_deletion_tombstones_everything(code_env) -> None:

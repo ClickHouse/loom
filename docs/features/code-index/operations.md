@@ -94,11 +94,21 @@ or file appears once.
 In matches mode, `code.grep(include_body=true)` returns the enclosing definitions
 beside the hit lines. Each definition appears once; its `lines` lists the matching
 locations. The same retained-source reader backs `code.enclosing`, including type
-and document-section fallback. No token budget is imposed on these bodies.
+and document-section fallback. The Python index keeps decorators in their
+owning function's source chunk, so a hit inside a decorator can return the
+complete definition. No token budget is imposed on these grep bodies.
 
-The default remains matching lines only. Bodies are read only for the served page,
-and page reruns remove definitions belonging to earlier pages. If source cannot be
-read, matching lines remain available with `definitions_partial=true` and a
+`code.grep(context_lines=3)` adds up to three retained lines on either side of
+each match in `contexts`. Each window gives its path, inclusive source line
+range and exact text at the match's retained revision. Overlapping lines in the
+served page appear once. Conflicting lines and context with uncertain revision
+are left out and set `contexts_partial=true`. Windows stop at the edges of
+available source chunks. The option is available in matches mode.
+
+The default returns matching lines. Bodies are read only for the served page
+and must contain the matching line at its retained revision. Page reruns remove
+definitions belonging to earlier pages. If source cannot be verified,
+matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural
 disclosures and next lookup when available. Check those fields before treating a
 missing body as missing code. The flag is rejected outside matches mode.
@@ -142,6 +152,12 @@ d = await agent.code.symbol("QuotaLimiter::check", uses_brief=True, include_body
 located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes.py:140"])
 ```
 
+Set `example_context_lines` on `code.symbol` to return retained source around each
+usage example alongside the definition. Where the source is available, the
+example's `context` contains `commit`, `start_line`, `end_line` and `text`.
+Source must match the indexed revision of the usage site. An explicit token
+budget reserves room for the definition before adding usage context.
+
 `code.search` fields worth knowing: `path_prefix`, `path_globs` / `exclude_globs`
 (rg `-g`), `langs` (rg `-t`), `pattern` (constrains both legs to chunks containing it),
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,
@@ -150,6 +166,9 @@ located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes
 For `code.search` and `code.grep` in matches mode, pass the returned `next_cursor` as
 `cursor` with the original search arguments to get the next page. Omit `cursor`
 when starting a new search with a different query, pattern or filters.
+
+`code.grep` includes linked lessons when available. Set `include_lessons: false`
+for a follow-up lookup when the relevant notes are already in context.
 
 `code.search` has no response token cap by default. Set
 `LOOM_CODE_SEARCH_TOKEN_BUDGET` to a positive token count to set a deployment default;

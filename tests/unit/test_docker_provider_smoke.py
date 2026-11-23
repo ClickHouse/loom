@@ -65,10 +65,10 @@ def test_injected_failure_recovers_without_changing_model_or_data(provider):
 
 
 def test_llm_transport_fixture_still_checks_credentials(provider):
-    result = post(provider, "/v1/chat/completions", {}, key="docker-smoke-llm-key")
-    assert result["choices"][0]["message"]["content"] == "OK"
+    result = post(provider, "/v1/responses", {}, key="docker-smoke-llm-key")
+    assert result["output"][0]["content"][0]["text"] == "OK"
     with pytest.raises(urllib.error.HTTPError) as error:
-        post(provider, "/v1/chat/completions", {}, key="wrong")
+        post(provider, "/v1/responses", {}, key="wrong")
     assert error.value.code == 401
 
 

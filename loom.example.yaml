@@ -409,8 +409,9 @@ settings:
   # Longest backoff, in seconds, between two attempts of an embedding call. [live]
   # embedding_retry_max_wait_s: 10.0
 
-  # OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible
-  # inference gateway in front of OpenAI (its /v1 root). [restart]
+  # OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it
+  # at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root).
+  # [restart]
   # openai_base_url: "https://api.openai.com/v1"
 
   # Anthropic's API root (the Messages API is <root>/v1/messages): point it at a gateway
@@ -581,8 +582,8 @@ settings:
   # require_real_providers: false
 
   # Reasoning effort sent to OpenAI models. "" = the lowest the model accepts (learned
-  # from its refusals, see server/llm/traits.py); set to pin one value for every call.
-  # [restart]
+  # from its refusals, see server/llm/traits.py); set to pin one value for every call,
+  # raised to that lowest; a refused pin above it sends no effort. [restart]
   # llm_openai_reasoning_effort: ""
 
   # Thinking effort sent to Claude models as `output_config.effort`: "low" | "medium" |

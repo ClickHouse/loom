@@ -3695,7 +3695,7 @@
         "llm_openai_reasoning_effort": {
           "default": "",
           "type": "string",
-          "description": "Reasoning effort sent to OpenAI models. \"\" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call."
+          "description": "Reasoning effort sent to OpenAI models. \"\" = the lowest the model accepts (learned from its refusals, see server/llm/traits.py); set to pin one value for every call, raised to that lowest; a refused pin above it sends no effort."
         },
         "llm_policy_by_traffic_class": {
           "default": "{\"bench\": {\"llm_cache\": true}}",
@@ -5811,7 +5811,7 @@
         "openai_base_url": {
           "default": "https://api.openai.com/v1",
           "type": "string",
-          "description": "OpenAI's API root, for chat and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root)."
+          "description": "OpenAI's API root, for the Responses API (<root>/responses) and embeddings: point it at an OpenAI-compatible inference gateway in front of OpenAI (its /v1 root)."
         },
         "ops_op_mix_min_writes": {
           "default": 500,

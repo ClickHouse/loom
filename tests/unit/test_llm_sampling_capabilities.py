@@ -8,6 +8,7 @@ import pytest
 from server.clients import bedrock
 from server.llm import anthropic, customer, gateway, openai, traits
 from server.llm.bedrock import BedrockLLMClient
+from server.llm.chat_completions import ChatCompletions
 
 MODELS_WITHOUT_TEMPERATURE = (
     "gpt-6-luna",
@@ -25,6 +26,27 @@ MODELS_WITHOUT_TEMPERATURE = (
 )
 
 
+def _openai_payloads(model: str, system: str, temperature: float | None) -> list[dict]:
+    """The request each OpenAI wire builds: the Responses API and chat completions."""
+    call = openai.Call(
+        system=system,
+        user="question",
+        max_tokens=1024,
+        response_format=None,
+        temperature=temperature,
+        effort="",
+    )
+    return [openai.Responses().payload(model, call), ChatCompletions().payload(model, call)]
+
+
+def _cap(payload: dict) -> int:
+    return next(
+        payload[k]
+        for k in ("max_output_tokens", "max_completion_tokens", "max_tokens")
+        if k in payload
+    )
+
+
 @pytest.fixture(autouse=True)
 def fresh_traits():
     traits.reset_for_tests()
@@ -34,16 +56,16 @@ def fresh_traits():
 
 @pytest.mark.parametrize("model", MODELS_WITHOUT_TEMPERATURE)
 @pytest.mark.parametrize("temperature", [0, 0.7, None])
-def test_known_models_omit_temperature_in_both_http_protocols(model, temperature):
+def test_known_models_omit_temperature_in_every_http_protocol(model, temperature):
     for _ in range(2):
         traits.reset_for_tests()
         for payload in (
-            openai._payload(model, "instructions", "question", 1024, None, temperature),
+            *_openai_payloads(model, "instructions", temperature),
             anthropic._payload(model, "instructions", "question", 1024, temperature),
         ):
             assert "temperature" not in payload
             assert payload["model"] == model
-            assert payload.get("max_tokens", payload.get("max_completion_tokens")) == 1024
+            assert _cap(payload) == 1024
 
 
 @pytest.mark.asyncio
@@ -54,14 +76,12 @@ async def test_http_client_sends_one_valid_request_from_a_cold_process(monkeypat
         200,
         request=httpx.Request("POST", "https://provider.example"),
         json={
-            "choices": [{"message": {"content": "complete"}, "finish_reason": "stop"}],
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "complete"}]}
+            ],
             "content": [{"type": "text", "text": "complete"}],
-            "usage": {
-                "prompt_tokens": 4,
-                "completion_tokens": 1,
-                "input_tokens": 4,
-                "output_tokens": 1,
-            },
+            "usage": {"input_tokens": 4, "output_tokens": 1},
         },
     )
     http = AsyncMock()
@@ -111,7 +131,8 @@ async def test_known_bedrock_model_never_sends_temperature_even_after_restart(mo
     ],
 )
 def test_other_models_keep_requested_temperature(model):
-    assert openai._payload(model, "", "question", 1024, None, 0.7)["temperature"] == 0.7
+    for payload in _openai_payloads(model, "", 0.7):
+        assert payload["temperature"] == 0.7
     assert anthropic._payload(model, "", "question", 1024, 0.7)["temperature"] == 0.7
 
 

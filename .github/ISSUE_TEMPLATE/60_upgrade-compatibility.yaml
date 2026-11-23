@@ -8,12 +8,13 @@ body:
         > Check the release notes of every version you skipped, and [upgrades](https://github.com/ClickHouse/loom/blob/main/docs/operations/upgrades.md), first.
         > **Never paste tokens, API keys, JWTs, passwords or customer data.** `loom report` output is safe to paste: it records only whether each secret is set.
         > A security issue goes to security@clickhouse.com, not here ([SECURITY.md](https://github.com/ClickHouse/loom/blob/main/SECURITY.md)).
-  - type: textarea
+  - type: input
+    id: company
     attributes:
-      label: Company or project name
-      description: Optional. Put your company name or project description here.
+      label: Company
+      description: Your company or organization. Enter "Independent" if filing personally.
     validations:
-      required: false
+      required: true
   - type: textarea
     id: what-broke
     attributes:

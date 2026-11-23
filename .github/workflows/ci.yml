@@ -225,7 +225,6 @@ jobs:
           fi
           pytest tests/unit -vv -n auto -p randomly -p tests._worker_status --randomly-seed="$SEED" --durations=15 \
             "${NATIVE_ARGS[@]}" \
-            -o faulthandler_timeout=300 \
             --cov=server --cov=sdk/python/loom --cov-branch --cov-report= \
             --junitxml=junit-unit-${{ matrix.part }}.xml
       # Also after a failure: the failing part's test times are what a reader needs.

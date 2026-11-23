@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 from pydantic import (
     BaseModel,
     Field,
+    PrivateAttr,
     SerializerFunctionWrapHandler,
     field_validator,
     model_serializer,
@@ -54,6 +55,16 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
     include_body: bool = Field(
         default=False,
         description="Include distinct enclosing bodies in matches mode; default false.",
+    )
+    include_lessons: bool = Field(
+        default=True,
+        description=(
+            "Include linked lessons (default true) or set false "
+            "when you already have the relevant notes."
+        ),
+    )
+    context_lines: int = Field(
+        default=0, ge=0, le=20, description="Retained lines on each side of a match."
     )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
@@ -137,6 +148,8 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
                 "neighbours on code.grep requires mode: 'matches' — the block hangs off "
                 "the hits' enclosing functions"
             )
+        if self.context_lines and self.mode != "matches":
+            raise ValueError("context_lines requires mode: 'matches'")
         self.namespaces = _lead_namespaces(self.namespace, self.namespaces)
         return self
 
@@ -152,6 +165,7 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
 class CodeGrepOutput(_LessonsOut):
     # File lessons omitted by symbol focus, a token budget, truncation or supersession.
     lessons_left_out: int = 0
+    _match_commits: dict[tuple[str, int], str] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
     def _drop_unfired_mode_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
@@ -165,6 +179,9 @@ class CodeGrepOutput(_LessonsOut):
             data.pop("definitions_partial", None)
         if not data.get("definitions_note"):
             data.pop("definitions_note", None)
+        for key in ("contexts", "contexts_partial"):
+            if not data.get(key):
+                data.pop(key, None)
         if not data.get("verdict"):
             for k in ("verdict", "template", "error_code", "coverage"):
                 data.pop(k, None)
@@ -178,6 +195,9 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # Exact retained source windows for this page, with inclusive line bounds.
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
     # include_body: distinct enclosing units, in hit order; `lines` names the matching
     # lines each definition covers. Unavailable bodies retain the enclosing result's
     # disclosure and next lookup. Empty without include_body or without matches.

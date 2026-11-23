@@ -29,11 +29,13 @@ loom init --agent nightly-triage --server-url https://<loom> --purpose "Files th
 `--ttl-days` sets the token lifetime (default 365). `--org` picks an org other than the
 server's self-signup org.
 
-**In CI**, print the token instead of writing files and store it as a secret. With
-`--no-files` the token is the first line of the output:
+**In CI**, use `--no-files` to print the token rather than save the CLI's configuration
+files, then store it as a secret. The token is the first output line. Create the
+capture file with mode `600` before redirecting output:
 
 ```bash
-loom init --agent ci-reviewer --server-url https://<loom> --no-files | head -n 1 > token.txt
+install -m 600 /dev/null token.txt &&
+  loom init --agent ci-reviewer --server-url https://<loom> --no-files | head -n 1 > token.txt
 ```
 
 With `--json` the sign-up result is printed as JSON without the token; with
