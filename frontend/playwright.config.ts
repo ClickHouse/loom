@@ -39,7 +39,7 @@ export default defineConfig({
         {
           name: smokeBrowser,
           testMatch: /(?:navigation|keyboard)\.spec\.ts$/,
-          use: { browserName: smokeBrowser, launchOptions: {} },
+          use: { browserName: smokeBrowser === "firefox" ? "firefox" : "webkit", launchOptions: {} },
         },
       ]
     : [
