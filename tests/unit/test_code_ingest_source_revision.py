@@ -142,7 +142,9 @@ def test_indexed_text_does_not_mask_the_git_source(revisions) -> None:
 
 
 @pytest.mark.parametrize("revision", [0, 1])
-def test_first_python_file_keeps_its_revision_entrypoint(revisions, monkeypatch, revision) -> None:
+def test_first_python_file_keeps_its_revision_entrypoint(
+    revisions, monkeypatch, caplog, revision
+) -> None:
     from server.code.app.index.ingest import ingest_file
     from server.code.store.index import CodeRepo
     from tests.unit.ch_fake import RecordingCH
@@ -159,7 +161,7 @@ def test_first_python_file_keeps_its_revision_entrypoint(revisions, monkeypatch,
         "code_symbol_names",
         "code_edges",
         "code_call_sites_unresolved",
-        "code_call_guards",
+        "code_caller_guards",
         "code_test_facets",
     ]:
         ch.on(f"FROM loom.{table}", [])
@@ -177,6 +179,7 @@ def test_first_python_file_keeps_its_revision_entrypoint(revisions, monkeypatch,
             )
         )
     assert not stats.error
+    assert "call-guard rows failed" not in caplog.text
     facets = [
         row
         for row in ch.inserted("code_test_facets")
