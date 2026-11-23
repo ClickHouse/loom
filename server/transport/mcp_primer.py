@@ -573,14 +573,15 @@ def _coding_instructions(toolset: str | None, defaults: dict[str, Any] | None = 
         else ""
     )
     code = (
-        "\n\nFor missing repository context, use "
+        "\n\nUse Loom first to search and read unchanged indexed source. Use "
         + "; ".join(routes)
         + ". Discover deferred tools by name with ToolSearch in Claude Code. "
         + caller_hint
         + "Read Loom's result before a local lookup for the same evidence. Reuse returned "
         "source, linked lessons and project decisions. Check source freshness and lesson "
-        "`code_state`. Use local tools for edits, tests, uncommitted or unindexed code, "
-        "explicit local-tool requests, and evidence Loom cannot supply. "
+        "`code_state`. Use local tools for edits and tests. For source retrieval, "
+        "use Bash, Grep, Read or Glob only for uncommitted or unindexed code, "
+        "explicit local-tool requests, or evidence Loom cannot supply. "
         "Skip retrieval when current context already answers."
         if routes
         else ""

@@ -542,6 +542,7 @@ def test_memory_scoped_primers_and_the_tool_make_context_pack_the_first_step() -
 
 def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     coding = mcp_primer._coding_instructions("coding")
+    assert "Use Loom first to search and read unchanged indexed source" in coding
     for name, purpose in (
         ("loom_code_symbol", "for a named definition"),
         ("loom_code_search", "for an issue, task or conceptual question"),
@@ -556,6 +557,7 @@ def test_coding_connections_teach_code_routing_without_plugin_hooks() -> None:
     assert "`code_state`" in coding
     assert "`uses_brief: true`" in coding
     assert "before a local lookup for the same evidence" in coding
+    assert "use Bash, Grep, Read or Glob only for uncommitted or unindexed code" in coding
     assert "uncommitted or unindexed" in coding
     assert "evidence Loom cannot supply" in coding
     assert "current context already answers" in coding
