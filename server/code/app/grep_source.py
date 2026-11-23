@@ -28,18 +28,41 @@ def _wanted_lines(matches: list[dict[str, Any]], radius: int) -> dict[str, set[i
 
 
 def collect_contexts(
-    chunks: list[dict[str, Any]], matches: list[dict[str, Any]], radius: int, max_chars: int
+    chunks: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    radius: int,
+    max_chars: int,
+    *,
+    match_commits: dict[tuple[str, int], str],
 ) -> ContextSource:
-    """Keep each requested retained line once, including conflicts between chunk views."""
+    """Keep context at each path's verified match revision, with omissions marked."""
     wanted = _wanted_lines(matches, radius)
-    by_path: ContextSource = {}
+    revisions: dict[str, str] = {}
+    for hit in matches:
+        path = str(hit["path"])
+        commit = match_commits.get((path, int(hit["line"])), "")
+        if revisions.setdefault(path, commit) != commit:
+            revisions[path] = ""
+    by_path: ContextSource = {
+        path: {str(line): None for line in lines}
+        for path, lines in wanted.items()
+        if not revisions[path]
+    }
+    other_revisions: dict[str, set[str]] = {}
     scanned = 0
     for chunk in chunks:
         path = str(chunk["path"])
         scanned += len(str(chunk.get("content") or ""))
         if scanned > max_chars:
             break
-        if path not in wanted or (lines := retained_source_lines(chunk)) is None:
+        if not revisions.get(path) or (lines := retained_source_lines(chunk)) is None:
+            continue
+        commit = str(chunk.get("indexed_commit") or "").rstrip("\0")
+        if commit != revisions[path]:
+            start = int(chunk["start_line"])
+            other_revisions.setdefault(path, set()).update(
+                str(line) for line in wanted[path].intersection(range(start, start + len(lines)))
+            )
             continue
         source = by_path.setdefault(path, {})
         for line, text in enumerate(lines, int(chunk["start_line"])):
@@ -47,6 +70,10 @@ def collect_contexts(
                 key = str(line)
                 if source.setdefault(key, text) != text:
                     source[key] = None
+    for path, keys in other_revisions.items():
+        source = by_path.setdefault(path, {})
+        for key in keys:
+            source.setdefault(key, None)
     return by_path
 
 

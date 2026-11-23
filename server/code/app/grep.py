@@ -312,7 +312,12 @@ async def _grep_lines(
     context_source: ContextSource = {}
     if input.context_lines:
         context_source = await asyncio.to_thread(
-            collect_contexts, chunks, pool_matches, input.context_lines, _LINE_SCAN_MAX_CHARS
+            collect_contexts,
+            chunks,
+            pool_matches,
+            input.context_lines,
+            _LINE_SCAN_MAX_CHARS,
+            match_commits=match_commits,
         )
         context = page_contexts(context_source, matches, input.context_lines)
     bodies = await definitions_for(input, matches, budget)

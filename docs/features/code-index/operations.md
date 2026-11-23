@@ -100,9 +100,10 @@ complete definition. No token budget is imposed on these grep bodies.
 
 `code.grep(context_lines=3)` adds up to three retained lines on either side of
 each match in `contexts`. Each window gives its path, inclusive source line
-range and exact text. Overlapping lines in the served page appear once. Conflicting
-lines are left out and set `contexts_partial=true`. Windows stop at the edges
-of available source chunks. The option is available in matches mode.
+range and exact text at the match's retained revision. Overlapping lines in the
+served page appear once. Conflicting lines and context with uncertain revision
+are left out and set `contexts_partial=true`. Windows stop at the edges of
+available source chunks. The option is available in matches mode.
 
 The default returns matching lines. Bodies are read only for the served page,
 and page reruns remove definitions belonging to earlier pages. If source cannot be

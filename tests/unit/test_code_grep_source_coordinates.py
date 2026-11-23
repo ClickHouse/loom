@@ -55,10 +55,17 @@ def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
         "start_line": 20,
         "end_line": 23,
         "content": "# Presentation prefix\n" + text,
+        "indexed_commit": "a" * 40,
     }
     request = CodeGrepInput(pattern="target", context_lines=1)
     matches, _ = _matching_lines([chunk], {}, request, None, 20)
-    pool = collect_contexts([chunk], matches, request.context_lines, 1000)
+    pool = collect_contexts(
+        [chunk],
+        matches,
+        request.context_lines,
+        1000,
+        match_commits={("cli.py", 21): "a" * 40, ("cli.py", 22): "a" * 40},
+    )
     combined = page_contexts(pool, matches, request.context_lines)
     assert [hit["line"] for hit in matches] == [21, 22]
     assert combined["contexts"] == [
@@ -76,17 +83,48 @@ def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:
         "start_line": 1,
         "end_line": 2,
         "content": "prepare()\ntarget()\n",
+        "indexed_commit": "a" * 40,
     }
     chunks = [row, {**row, "content": "setup()\ntarget()\n"}]
     request = CodeGrepInput(pattern="target", context_lines=1)
     matches, _ = _matching_lines(chunks, {}, request, None, 20)
     assert [hit["line"] for hit in matches] == [2]
-    pool = collect_contexts(chunks, matches, request.context_lines, 1000)
+    pool = collect_contexts(
+        chunks, matches, request.context_lines, 1000, match_commits={("app.py", 2): "a" * 40}
+    )
     output = page_contexts(pool, matches, request.context_lines)
     assert output == {
         "contexts": [{"path": "app.py", "start_line": 2, "end_line": 2, "text": "target()\n"}],
         "contexts_partial": True,
     }
+
+
+def test_grep_context_excludes_lines_from_other_revisions() -> None:
+    row = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 10,
+        "end_line": 10,
+        "content": "target()\n",
+        "indexed_commit": "a" * 40,
+    }
+    other = {
+        **row,
+        "start_line": 11,
+        "end_line": 11,
+        "content": "# target at another revision\n",
+        "indexed_commit": "b" * 40,
+    }
+    all_matches = [{"path": "app.py", "line": line} for line in (10, 11)]
+    commits = {("app.py", 10): "a" * 40, ("app.py", 11): "b" * 40}
+    matches = all_matches[:1]
+    pool = collect_contexts([row, other], matches, 1, 1000, match_commits=commits)
+    assert page_contexts(pool, matches, 1) == {
+        "contexts": [{"path": "app.py", "start_line": 10, "end_line": 10, "text": "target()\n"}],
+        "contexts_partial": True,
+    }
+    ambiguous = collect_contexts([row, other], all_matches, 1, 1000, match_commits=commits)
+    assert page_contexts(ambiguous, all_matches, 1) == {"contexts": [], "contexts_partial": True}
 
 
 def test_a_grep_line_uses_retained_chunk_provenance() -> None:
