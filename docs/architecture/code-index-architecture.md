@@ -32,6 +32,14 @@ backfill commit, including their edge reconciliation pass. Search chunks can car
 doc comments and overlapping context, so their concatenation is not authoritative
 source text for parsing a sibling module.
 
+Sibling text, Python layouts, workspace registries, module indexes, compiler configs
+and barrel targets cache by tenant and namespace plus the pinned Git directory and
+commit. Concurrent passes share a pending read only within that source. Indexed-text
+reads use a separate cache scope. Each cache expires entries and bounds their count;
+the text cache also bounds the bytes it holds. Python ingestion resolves its layout
+before chunking and passes the layout snapshot to facet extraction; chunking threads
+do not access the mutable cache.
+
 A history read (`blame_range`, bisect, `first_build`, a lesson's code check) on a host
 without the mirror clones it once in the background
 (`server/code/app/index/mirrors.py`, `history_dir`). A read that names its op waits up
