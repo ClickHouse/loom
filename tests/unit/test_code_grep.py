@@ -238,12 +238,14 @@ def test_literal_alternatives_match_punctuation_and_deduplicate_lines() -> None:
         "path": "app.py",
         "scope": "",
         "start_line": 1,
-        "end_line": 4,
-        "content": "REVERSED(item.parts)\nchain(names, item.parts)\nchain(other)\n'pair|value'\n",
+        "end_line": 5,
+        "content": (
+            "REVERSED(item.parts)\nchain(names, item.parts)\nchain(other)\n'pair|value'\nCAFÉ\n"
+        ),
     }
     out = _run(
         [chunk],
-        pattern=["reversed(", "item.parts", "chain(names", "pair|value"],
+        pattern=["reversed(", "item.parts", "chain(names", "pair|value", "café"],
         case_sensitive=False,
     )
     assert [hit["line"] for hit in out.matches] == [1, 2, 4]

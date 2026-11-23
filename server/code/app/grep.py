@@ -34,6 +34,7 @@ from server.code.app.spans import (
     start_stage_wall,
 )
 from server.code.domain import deadline as code_deadline
+from server.code.domain.index.grep_plan import ascii_lower
 from server.code.domain.symbol_body import retained_source_lines
 from server.code.store.index import CodeRepo
 from server.core.caller_regex import compile_caller_regex
@@ -452,9 +453,13 @@ def _matching_lines(
     """(matching lines, capped): the lines of `chunks` the pattern matches, stopping past
     `keep` lines or `_LINE_SCAN_MAX_CHARS` of text (capped=True). Pure; runs in a thread."""
     pattern = input.pattern
+    # ClickHouse's case-insensitive multiSearch folds ASCII only.
+    fold_case = ascii_lower if isinstance(pattern, list) else str.lower
     if not input.case_sensitive:
         pattern = (
-            pattern.lower() if isinstance(pattern, str) else [text.lower() for text in pattern]
+            fold_case(pattern)
+            if isinstance(pattern, str)
+            else [fold_case(text) for text in pattern]
         )
     excluded_paths = set(input.exclude_unit_ids)
     matches: list[dict[str, Any]] = []
@@ -477,7 +482,7 @@ def _matching_lines(
             if line_re is not None:
                 hit = line_re.search(line)
             else:
-                hay = line if input.case_sensitive else line.lower()
+                hay = line if input.case_sensitive else fold_case(line)
                 hit = (
                     pattern in hay
                     if isinstance(pattern, str)
