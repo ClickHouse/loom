@@ -73,9 +73,10 @@ an output-size measure, with separate counters for provider token usage.
    The native Claude Code prompt can include other setup text and tool metadata.
    [Anthropic token counting](https://platform.claude.com/docs/en/build-with-claude/token-counting)
 2. **Return the requested source span.** In the retained option search, six
-   exact matches can carry 2,268 characters of nearby indexed source. The
+   exact matches can carry 2,286 characters of nearby indexed source. The
    enclosing definitions carry 4,659 characters. The relevant 704-character
-   span covers all of the source lines the next command read in three arms.
+   span covers all of the source lines the next command read with Tree-sitter,
+   Tree-sitter with memory, and SCIP with memory.
    Those commands also read unindexed tests or changelog content. A new paid
    trajectory must establish whether the shorter source windows save a turn.
    [Grep source windows](https://github.com/ClickHouse/loom/pull/1272)
