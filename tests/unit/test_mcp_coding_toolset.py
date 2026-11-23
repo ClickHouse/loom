@@ -385,9 +385,7 @@ def test_a_plus_union_of_curated_rosters_is_one_listing():
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
-def test_coding_search_and_discovery_entrypoints_load_upfront_by_default(
-    monkeypatch, profile
-) -> None:
+def test_coding_search_and_definition_tools_load_upfront_by_default(monkeypatch, profile) -> None:
     default = Settings.model_fields["mcp_always_load_tools"].get_default()
     monkeypatch.setattr(settings, "mcp_always_load_tools", default)
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
@@ -398,8 +396,16 @@ def test_coding_search_and_discovery_entrypoints_load_upfront_by_default(
         "loom_code_search",
         "loom_code_symbol",
         "loom_code_grep",
-        "loom_op",
     }
+    assert any(tool["name"] == "loom_op" for tool in tools)
+
+
+@pytest.mark.parametrize("toolset", ["core", "coding+tracker"])
+def test_other_default_toolsets_keep_the_generic_dispatcher_upfront(monkeypatch, toolset) -> None:
+    monkeypatch.setattr(settings, "mcp_always_load_tools", "auto")
+    tools = asyncio.run(mt._tools_descriptor(toolset=toolset))
+    dispatcher = next(tool for tool in tools if tool["name"] == "loom_op")
+    assert dispatcher["_meta"]["anthropic/alwaysLoad"] is True
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
