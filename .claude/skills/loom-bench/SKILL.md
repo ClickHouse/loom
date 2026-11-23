@@ -43,6 +43,13 @@ Before reading a single score, check from the run's own output or the server's l
 - recall@K and judged QA accuracy are separate axes; never set one beside the other ([recall and answer accuracy](../../../docs/benchmarks/methodology.md#recall-and-answer-accuracy-are-separate-axes)).
 - Report every category, including the one that went down.
 
+### Native coding-agent comparisons
+
+- Freeze the issue, source, model, instructions and graders across arms. Keep native tool choice. Record advertised tools, actual calls, historical facts delivered before edits and independent verifier outcomes. A one-issue quality tie cannot measure historical memory lift.
+- Pair each cold attempt with a fresh warm attempt on the same arm. Wait for provider cache expiry between arms. Check first-prompt writes and reads against the raw provider receipt, including how much of the preceding cold write the warm prompt read. Keep missed states visible. Track Loom-local caches and index preparation separately.
+- Compare like cache states. Split startup cost from later turns and retain uncached input, cache reads, writes by TTL and output. Use reported solver cost and account for Loom upstream charges separately. Report agent time and full end-to-end time.
+- Count model responses as well as tools. Check the next model response before crediting a smaller payload or a batched lookup with saving a turn. Use [Harbor reports](../../../examples/software_factory/harbor/README.md) for attempt receipts.
+
 ## 5. Write it up
 
 - The PR body carries the numbers, the command that reproduces them, the model and judge, and the item count.
