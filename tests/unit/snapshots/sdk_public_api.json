@@ -2159,6 +2159,7 @@
           "include_body",
           "include_history",
           "include_examples",
+          "example_context_lines",
           "include_lessons",
           "token_budget",
           "uses",

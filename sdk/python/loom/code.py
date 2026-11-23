@@ -236,6 +236,7 @@ class CodeClient:
         include_body: bool = True,
         include_history: bool = True,
         include_examples: bool = True,
+        example_context_lines: int = 0,
         include_lessons: bool = True,
         token_budget: int = 0,
         uses: bool | None = None,
@@ -250,6 +251,8 @@ class CodeClient:
         ("src/Foo.cpp:123"), which returns the innermost function containing
         that line — compiler-grade where available, enriched with recent
         PRs, tested usage examples, and lessons from the memory plane.
+
+        Set `example_context_lines` to include retained source around usage examples.
 
         `uses_brief=True` makes a lookup that resolves to
         one definition carry a compact `uses` block: `count`, `files`, the
@@ -291,6 +294,8 @@ class CodeClient:
                 body["uses_limit"] = uses_limit
         if uses_brief:
             body["uses_brief"] = True
+        if example_context_lines:
+            body["example_context_lines"] = example_context_lines
         if near_paths:
             body["near_paths"] = list(near_paths)
         if pr_number:

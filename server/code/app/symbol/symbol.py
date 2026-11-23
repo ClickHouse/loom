@@ -300,7 +300,15 @@ async def _enrichment(
             _staged("enrich.prs", _soft(code_enrich.recent_prs(repo, org, ns, paths), None))
             if input.include_history
             else none(),
-            _staged("enrich.examples", _soft(code_enrich.usage_examples(repo, org, ns, sids), None))
+            _staged(
+                "enrich.examples",
+                _soft(
+                    code_enrich.usage_examples(
+                        repo, org, ns, sids, context_lines=input.example_context_lines
+                    ),
+                    None,
+                ),
+            )
             if input.include_examples
             else none(),
             _staged("enrich.lessons", _soft(lessons(), None)) if input.include_lessons else none(),
@@ -503,6 +511,9 @@ async def handle_code_symbol(input: CodeSymbolInput) -> CodeSymbolOutput:
             "pr_number",
             "uses_brief",
             "uses",
+            example_context_lines=(
+                (input.example_context_lines or None) if input.include_examples else None
+            ),
             near_paths_n=len(input.near_paths) or None,
             picked_by=picked_by or None,
             shape=shape or None,

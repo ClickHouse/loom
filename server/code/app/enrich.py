@@ -15,7 +15,10 @@ import logging
 from collections.abc import Awaitable
 from typing import Any
 
+from server.code.app.spans import code_span
+from server.code.domain.symbol_body import complete_source_span
 from server.code.store.index import CodeRepo
+from server.embedding.embedder import served_model_label
 from server.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -51,7 +54,13 @@ async def recent_prs(
 
 
 async def usage_examples(
-    repo: CodeRepo, org: str, ns: str, symbol_ids: list[str], *, limit: int = 3
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    symbol_ids: list[str],
+    *,
+    limit: int = 3,
+    context_lines: int = 0,
 ) -> list[dict[str, Any]]:
     """Call sites of the symbol, test-covered callers first, newest first."""
     edges = await bounded(
@@ -85,7 +94,44 @@ async def usage_examples(
         )
         if len(out) >= limit:
             break
+    if context_lines and settings.embedding_model:
+        model = served_model_label(settings.embedding_model)
+        return list(
+            await asyncio.gather(
+                *(_example_context(repo, org, ns, site, context_lines, model) for site in out)
+            )
+        )
     return out
+
+
+async def _example_context(
+    repo: CodeRepo,
+    org: str,
+    ns: str,
+    site: dict[str, Any],
+    radius: int,
+    model: str,
+) -> dict[str, Any]:
+    line = site["line"]
+    if line <= 0:
+        return site
+    start, end = max(1, line - radius), line + radius
+    with code_span("enrich.example_context"):
+        rows = await bounded(
+            repo.source_chunks_for_span(org, ns, site["path"], start, end, model), []
+        )
+    if len(rows) > 400:
+        return site
+    containing = [row for row in rows if row["start_line"] <= line <= row["end_line"]]
+    if not containing:
+        return site
+    # Keep the evidence around the caller when the index lacks surrounding file text.
+    start = max(start, min(row["start_line"] for row in containing))
+    end = min(end, max(row["end_line"] for row in containing))
+    text = complete_source_span(rows, start, end, max_chars=0)
+    if not text:
+        return site
+    return {**site, "context": {"start_line": start, "end_line": end, "text": text}}
 
 
 async def lessons_for_symbol(

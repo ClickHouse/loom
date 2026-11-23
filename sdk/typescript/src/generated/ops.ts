@@ -1701,6 +1701,8 @@ export interface CodeSymbolInput {
   include_body?: boolean;
   include_history?: boolean;
   include_examples?: boolean;
+  /** Retained source lines on each side of a usage example. Default 0 omits text. */
+  example_context_lines?: number;
   include_lessons?: boolean;
   lesson_namespaces?: string[];
   token_budget?: number;

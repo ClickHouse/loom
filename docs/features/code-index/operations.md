@@ -142,6 +142,11 @@ d = await agent.code.symbol("QuotaLimiter::check", uses_brief=True, include_body
 located = await agent.code.enclosing(["src/quota/limiter.py:88", "src/api/routes.py:140"])
 ```
 
+Set `example_context_lines` on `code.symbol` to return retained source around each
+usage example alongside the definition. Where the source is available, the
+example's `context` contains `start_line`, `end_line` and `text`. A recorded site
+can still appear without source when the index lacks its retained span.
+
 `code.search` fields worth knowing: `path_prefix`, `path_globs` / `exclude_globs`
 (rg `-g`), `langs` (rg `-t`), `pattern` (constrains both legs to chunks containing it),
 `bodies: "none"` (spans and signatures only, the cheapest answer), `token_budget`,

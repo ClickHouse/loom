@@ -334,6 +334,24 @@ async def test_read_ops_and_abstain(code_env, monkeypatch) -> None:
     )
     assert any(e.from_symbol == "DB::Squasher::flush" for e in c.edges)
 
+    query = CodeSymbolInput(
+        org=org,
+        namespace=ns,
+        name="DB::Squasher::squashImpl",
+        include_history=False,
+        include_lessons=False,
+    )
+    plain = (await handle_code_symbol(query)).definitions[0].examples
+    examples = await handle_code_symbol(query.model_copy(update={"example_context_lines": 2}))
+    sites = examples.definitions[0].examples
+    assert plain and [{k: v for k, v in site.items() if k != "context"} for site in sites] == plain
+    site = next(site for site in sites if site["caller"] == "DB::Squasher::flush")
+    context = site["context"]
+    assert context["start_line"] <= site["line"] <= context["end_line"]
+    assert context["text"].splitlines()[site["line"] - context["start_line"]].strip() == (
+        "void flush() { squashImpl(); }"
+    )
+
 
 async def test_deletion_tombstones_everything(code_env) -> None:
     from server.code.app.index.ingest import tombstone_file
