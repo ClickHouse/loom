@@ -127,6 +127,34 @@ def test_without_a_wall_a_span_still_yields_and_records_nothing() -> None:
     assert spans.with_stage_ms({"a": 1}) == {"a": 1}
 
 
+@pytest.mark.asyncio
+async def test_concurrent_children_are_subtracted_from_the_parent_once(clock: _Clock) -> None:
+    ready_first = asyncio.Event()
+    ready_second = asyncio.Event()
+    release = asyncio.Event()
+
+    async def child(stage: str, ready: asyncio.Event) -> None:
+        with spans.code_span(stage):
+            ready.set()
+            await release.wait()
+
+    work = request_work.RequestWork()
+    with request_work.bind(work):
+        wall = spans.start_stage_wall()
+        with spans.code_span("symbol.enrich"):
+            clock.advance(10)
+            first = asyncio.create_task(child("enrich.examples", ready_first))
+            second = asyncio.create_task(child("enrich.lessons", ready_second))
+            await asyncio.gather(ready_first.wait(), ready_second.wait())
+            clock.advance(30)
+            release.set()
+            await asyncio.gather(first, second)
+            clock.advance(10)
+    stages = {"enrich": 20, "examples": 30, "lessons": 30}
+    assert wall.column() == stages
+    assert {name: round(value) for name, value in work.code_stage_ms.items()} == stages
+
+
 def test_spans_in_gathered_leg_tasks_report_into_one_wall() -> None:
     async def _run() -> dict[str, float]:
         wall = spans.start_stage_wall()

@@ -150,10 +150,11 @@ count says what that result contained; it does not explain why a lesson was abse
 The [telemetry field definitions](../features/observability/telemetry.md#the-ledger)
 name the measured containers and character units.
 
-For grep, compare line count with source body count to distinguish a literal miss
-from a line-only result. The ledger stage timings include inline lesson work with
-the exporter disabled. A trace row written before enrichment can contain fewer
-stages than the request row.
+For grep in matches mode, compare line and body counts to see what the response
+returned. Check coverage and partial-result flags before interpreting zero lines.
+The ledger stage timings include inline lesson work with the exporter disabled.
+A trace row written before enrichment can contain fewer stages than the request
+row.
 
 Use `trace_id` to find the same request in the configured trace backend. The
 [Langfuse integration](../features/integrations/langfuse.md) forwards the existing
