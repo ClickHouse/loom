@@ -117,4 +117,15 @@ DEFAULT_CHANGES: tuple[DefaultChange, ...] = (
         new=0,
         why="Return selected review rationale without an implicit token cap.",
     ),
+    DefaultChange(
+        version="1.3.1",
+        name="mcp_always_load_tools",
+        old="search.query,code.search,code.symbol,loom_op",
+        new="search.query,code.search,code.symbol,code.grep,loom_op",
+        why=(
+            "Make literal code search callable without a preliminary tool lookup. "
+            "An explicit list still replaces the defaults; an empty value leaves "
+            "loading to the host."
+        ),
+    ),
 )

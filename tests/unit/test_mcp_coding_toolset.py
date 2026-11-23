@@ -393,7 +393,13 @@ def test_coding_search_and_discovery_entrypoints_load_upfront_by_default(
     tools = asyncio.run(mt._tools_descriptor(schema_profile=profile, toolset="coding"))
     assert len(tools) == 21
     flagged = {tool["name"] for tool in tools if tool.get("_meta", {}).get("anthropic/alwaysLoad")}
-    assert flagged == {"loom_search", "loom_code_search", "loom_code_symbol", "loom_op"}
+    assert flagged == {
+        "loom_search",
+        "loom_code_search",
+        "loom_code_symbol",
+        "loom_code_grep",
+        "loom_op",
+    }
 
 
 @pytest.mark.parametrize("profile", ["standard", "compact", "full"])
