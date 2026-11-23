@@ -2,6 +2,7 @@ import { generateKeyPairSync, type KeyObject, verify } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import fc from "fast-check";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readEnv } from "./client.js";
 import { AuthError, BackendUnavailable, type LoomError, TimeoutError } from "./errors.js";
@@ -612,6 +613,53 @@ describe("Transport with a token provider", () => {
     release("shared");
     expect(await patient).toEqual({ ok: true });
     expect(v1(srv).map(auth)).toEqual(["Bearer shared"]);
+  });
+
+  it("cancels only the selected callers across token and response schedules", async () => {
+    const indices = [0, 1, 2, 3, 4, 5];
+    await fc.assert(
+      fc.asyncProperty(
+        fc.scheduler(),
+        fc.shuffledSubarray(indices, { minLength: 1, maxLength: 5 }),
+        async (scheduler, cancelled) => {
+          let releaseToken!: (token: string) => void;
+          const pending = new Promise<string>((resolve) => {
+            releaseToken = resolve;
+          });
+          const srv = server();
+          const transport = new Transport({
+            baseUrl: BASE,
+            tokenProvider: { token: () => pending, origin: BASE },
+            fetch: scheduler.scheduleFunction(srv.fetch),
+          });
+          const controllers = indices.map(() => new AbortController());
+          const requests = indices.map(async (index) => {
+            const request = transport.post(
+              "memory.get",
+              { org: "o", memory_key: `key-${index}` },
+              { signal: controllers[index].signal },
+            );
+            if (cancelled.includes(index)) {
+              await expect(request).rejects.toThrow("aborted");
+            } else {
+              await expect(request).resolves.toEqual({ ok: true });
+            }
+          });
+          const release = Promise.all(
+            cancelled.map((index) =>
+              scheduler.schedule(Promise.resolve(), `cancel ${index}`).then(() => controllers[index].abort()),
+            ),
+          ).then(() => releaseToken("shared"));
+          await scheduler.waitFor(Promise.all([release, ...requests]));
+
+          const received = v1(srv);
+          const keys = received.map(({ init }) => JSON.parse(String(init.body)).memory_key);
+          expect(keys.sort()).toEqual(indices.filter((index) => !cancelled.includes(index)).map((i) => `key-${i}`));
+          expect(received.every((call) => auth(call) === "Bearer shared")).toBe(true);
+        },
+      ),
+      { numRuns: 50 },
+    );
   });
 
   it("leaves no timer behind when a caller gives up on a stalled token", async () => {
