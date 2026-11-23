@@ -198,6 +198,7 @@ def collect_failures(api: Api, workflows: list[str]) -> dict[str, Finding]:
 
 
 def collect_scanning_findings(api: Api) -> dict[str, Finding]:
+    # The issue acknowledges alert numbers. GitHub Security tracks their lifecycle.
     query = urlencode({"state": "open", "ref": "refs/heads/main"})
     latest: dict[str, int] = {}
     for alert in list_rows(api, f"code-scanning/alerts?{query}"):
@@ -238,28 +239,31 @@ def existing_issues(api: Api, findings: dict[str, Finding]) -> set[str]:
     return matched
 
 
-def report(api: Api, findings: dict[str, Finding]) -> int:
+def report(api: Api, findings: dict[str, Finding]) -> tuple[int, list[str]]:
     if not findings:
-        return 0
+        return 0, []
     matched = existing_issues(api, findings)
     created = 0
+    failed: list[str] = []
     for key in sorted(findings.keys() - matched):
         finding = findings[key]
-        api(
-            "issues",
-            payload={
-                "title": f"[tooling-ci:{key}] {finding.title}",
-                "body": (
-                    f"<!-- loom-tooling-failure:v1 {key} {finding.source_id} -->\n\n"
-                    "### Company or project name\n\n"
-                    "ClickHouse\n\n"
-                    f"{finding.description}\n\n"
-                    f"[{finding.link_text}]({finding.link})\n"
-                ),
-            },
-        )
-        created += 1
-    return created
+        issue = {
+            "title": f"[tooling-ci:{key}] {finding.title}",
+            "body": (
+                f"<!-- loom-tooling-failure:v1 {key} {finding.source_id} -->\n\n"
+                "### Company or project name\n\n"
+                "ClickHouse\n\n"
+                f"{finding.description}\n\n"
+                f"[{finding.link_text}]({finding.link})\n"
+            ),
+        }
+        try:
+            api("issues", payload=issue)
+        except (OSError, ValueError) as exc:
+            failed.append(f"{key} issue creation ({type(exc).__name__})")
+        else:
+            created += 1
+    return created, failed
 
 
 def main() -> None:
@@ -279,7 +283,8 @@ def main() -> None:
             findings.update(collect_scanning_findings(github_api))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             failed_sources.append(f"Code scanning ({type(exc).__name__})")
-    created = report(github_api, findings)
+    created, failed_writes = report(github_api, findings)
+    failed_sources.extend(failed_writes)
     print(f"Tooling maintenance issues opened: {created}")
     if failed_sources:
         raise SystemExit("Tooling sweep incomplete for " + ", ".join(failed_sources))

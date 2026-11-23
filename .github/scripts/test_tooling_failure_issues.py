@@ -76,7 +76,9 @@ def fake_api(
 
 
 def report_failures(api: Mock, workflows: list[str]) -> int:
-    return report(api, collect_failures(api, workflows))
+    created, failed = report(api, collect_failures(api, workflows))
+    assert not failed
+    return created
 
 
 class ToolingIssuesTests(unittest.TestCase):
@@ -138,6 +140,24 @@ class ToolingIssuesTests(unittest.TestCase):
         self.assertTrue(any("external-links" in issue["title"] for issue in issues))
         self.assertTrue(any("codeql-alerts" in issue["title"] for issue in issues))
 
+    def test_one_failed_issue_create_does_not_skip_other_findings(self) -> None:
+        issues: list[dict] = []
+        alerts = [{"number": 4, "state": "open", "tool": {"name": "CodeQL"}}]
+        api = fake_api([run(2)], issues, alerts)
+        findings = collect_scanning_findings(api)
+        findings.update(collect_failures(api, ["external-links.yml"]))
+
+        def request(path: str, *, payload: dict | None = None) -> dict | list:
+            if payload is not None and payload["title"].startswith("[tooling-ci:codeql-alerts]"):
+                raise HTTPError(path, 503, "Service unavailable", None, None)
+            return api(path, payload=payload)
+
+        self.assertEqual(
+            report(request, findings), (1, ["codeql-alerts issue creation (HTTPError)"])
+        )
+        self.assertEqual(len(issues), 1)
+        self.assertTrue(issues[0]["title"].startswith("[tooling-ci:external-links]"))
+
     def test_report_creates_one_issue_and_never_copies_run_content(self) -> None:
         issues: list[dict] = []
         api = fake_api([run(2), run(3, repository="fork/loom")], issues)
@@ -183,8 +203,8 @@ class ToolingIssuesTests(unittest.TestCase):
             )
         ]
         api = fake_api([], issues, alerts)
-        self.assertEqual(report(api, collect_scanning_findings(api)), 2)
-        self.assertEqual(report(api, collect_scanning_findings(api)), 0)
+        self.assertEqual(report(api, collect_scanning_findings(api)), (2, []))
+        self.assertEqual(report(api, collect_scanning_findings(api)), (0, []))
         self.assertEqual(
             [issue["title"] for issue in issues],
             [
@@ -209,9 +229,9 @@ class ToolingIssuesTests(unittest.TestCase):
         ]
         alerts = [{"number": 2, "state": "open", "tool": {"name": "CodeQL"}}]
         api = fake_api([], issues, alerts)
-        self.assertEqual(report(api, collect_scanning_findings(api)), 0)
+        self.assertEqual(report(api, collect_scanning_findings(api)), (0, []))
         alerts.append({"number": 4, "state": "open", "tool": {"name": "CodeQL"}})
-        self.assertEqual(report(api, collect_scanning_findings(api)), 1)
+        self.assertEqual(report(api, collect_scanning_findings(api)), (1, []))
         self.assertEqual(issues[0]["state"], "closed")
 
     def test_contributor_and_contract_workflows_can_report_failures(self) -> None:
