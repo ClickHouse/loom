@@ -135,15 +135,24 @@ async def _example_context(
         )
     if len(rows) > 400:
         return site
-    containing = [row for row in rows if row["start_line"] <= line <= row["end_line"]]
-    if not containing:
+    covered: set[int] = set()
+    stale: set[int] = set()
+    for row in rows:
+        span = range(max(start, row["start_line"]), min(end, row["end_line"]) + 1)
+        if str(row.get("indexed_commit") or "").rstrip("\0") == revision:
+            covered.update(span)
+        else:
+            stale.update(span)
+    covered.difference_update(stale)
+    if line not in covered:
         return site
-    # Keep the evidence around the caller when the index lacks surrounding file text.
-    start = max(start, min(row["start_line"] for row in containing))
-    end = min(end, max(row["end_line"] for row in containing))
+    # Keep only the contiguous same-revision interval that contains the caller.
+    start = end = line
+    while start - 1 in covered:
+        start -= 1
+    while end + 1 in covered:
+        end += 1
     overlapping = [row for row in rows if row["start_line"] <= end and row["end_line"] >= start]
-    if any(str(row.get("indexed_commit") or "").rstrip("\0") != revision for row in overlapping):
-        return site
     text = complete_source_span(overlapping, start, end, max_chars=0)
     if not text:
         return site
