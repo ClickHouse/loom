@@ -484,15 +484,15 @@ Where the SDK finds its server and credential is in
 The TypeScript SDK installs with `npm install @clickhouse/loom`
 ([from a clone](../reference/typescript-sdk.md#install)).
 
-The Rust SDK installs from your application's directory with:
+From your application's directory, install the Rust SDK from crates.io:
 
 ```bash
 cargo add clickhouse-loom
 ```
 
-This selects the latest published stable release. APIs not yet published can be
-used from a checkout with `cargo add clickhouse-loom --path ../loom/sdk/rust`;
-adjust the path to your clone. Installation and client configuration are in the
+To install from source, clone this repository and run
+`cargo add clickhouse-loom --path ../loom/sdk/rust`, adjusting the path to your
+clone. Installation and client configuration are in the
 [Rust SDK README](https://github.com/ClickHouse/loom/blob/main/sdk/rust/README.md#install).
 
 The client surfaces are in the [Python SDK](../reference/python-sdk.md) and
