@@ -95,7 +95,10 @@ async def test_query_relevance_keeps_older_matching_lessons_inside_the_cap(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("namespace", ["code-repo", "code-branch"])
-@pytest.mark.parametrize("op", ["grep", "search", "search_file"])
+@pytest.mark.parametrize(
+    "op",
+    ["grep", "grep_mixed", "grep_overlap", "grep_stale", "grep_cursor", "search", "search_file"],
+)
 async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     monkeypatch: pytest.MonkeyPatch, namespace: str, op: str
 ) -> None:
@@ -124,7 +127,15 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     async def all_links(_org: str, ids: list[str]) -> list[dict[str, Any]]:
         assert ids == ["mem-home/other", "mem-home/pending"]
         return [
-            {**link, "code_namespace": "code-repo", "memory_id": mid, "path": "a.py"}
+            {
+                **link,
+                "code_namespace": "code-repo",
+                "memory_id": mid,
+                "path": "a.py",
+                "start_line": 20,
+                "end_line": 30,
+                "checked_commit": "b" * 40 if op == "grep_stale" else "a" * 40,
+            }
             for mid in ids
             for link in links[mid]
         ] + [
@@ -145,9 +156,15 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
         return []
 
     async def grep(_input: CodeGrepInput) -> CodeGrepOutput:
+        matches: list[dict[str, Any]] = [
+            {"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}
+        ]
+        if op != "grep":
+            matches.append({"path": "a.py", "line": 24 if op == "grep_overlap" else 40})
         return CodeGrepOutput(
-            matches=[{"path": "a.py", "line": 5, "scope": "Thing::run", "scope_start_line": 1}],
+            matches=matches,
             chunks_matched=1,
+            as_of={"commit": "a" * 40},
         )
 
     async def search(_input: CodeSearchInput) -> CodeSearchOutput:
@@ -167,13 +184,20 @@ async def test_code_matches_preserve_lessons_with_uncertain_or_nested_links(
     monkeypatch.setattr("server.code.app.memory_links.trunk_namespace", lambda *_: "code-repo")
     monkeypatch.setattr("server.identity.app.request_scope.request_narrowed", lambda: False)
     monkeypatch.setattr(settings, "code_result_lessons_tokens", 0)
-    if op == "grep":
+    if op.startswith("grep"):
         wrapped = result_lessons.WithLessons(grep, result_lessons.grep_paths)
-        answer = await wrapped(CodeGrepInput(org="acme", namespace=namespace, pattern="run"))
+        answer = await wrapped(
+            CodeGrepInput(
+                org="acme",
+                namespace=namespace,
+                pattern="run",
+                cursor="saved-matches" if op == "grep_cursor" else "",
+            )
+        )
     else:
         wrapped = result_lessons.WithLessons(search, result_lessons.search_paths)
         answer = await wrapped(CodeSearchInput(org="acme", namespace=namespace, query="run"))
-    focused = namespace == "code-repo" and op != "search_file"
+    focused = namespace == "code-repo" and op in {"grep", "grep_mixed", "search"}
     expected = {"exact", "nested", "incomplete", "pending", "constraint", "file"}
     assert {row["memory_key"] for row in answer.lessons} == (
         expected if focused else expected | {"other"}

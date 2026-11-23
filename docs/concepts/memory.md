@@ -469,8 +469,10 @@ The links are read where the code is:
   never enters the search memo, and is skipped for `include_lessons: false`, with
   `code_result_lessons` off, or for a token narrowed to its own user or session.
 - `code.search` and `code.grep` in matches mode can focus inline lessons when
-  every hit in a trunk file names a definition and a complete lesson links to
-  one of those definitions. They count omitted lessons in `lessons_left_out`.
+  returned definitions in a trunk file have a complete linked lesson.
+  They count omitted lessons in `lessons_left_out`. When grep also finds a
+  line with no enclosing definition, it keeps lessons with overlapping links
+  or unverified ranges at the answered revision.
   File-wide notes, pending or uncertain links, nested definitions, decisions,
   constraints and pins remain eligible. Whole-file search hits, an unavailable
   live link check, or a configured lesson budget use file-level selection. Use

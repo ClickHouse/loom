@@ -88,6 +88,25 @@ class Lessons(NamedTuple):
     left_out: int = 0
 
 
+class UnscopedGrep(NamedTuple):
+    """Positions of grep matches that lack an enclosing definition."""
+
+    commit: str
+    by_path: dict[str, set[int]]
+
+    def excludes(self, link: code_links.LinkRow) -> bool:
+        lines = self.by_path.get(link["path"])
+        if not lines:
+            return True
+        start, end = link["start_line"], link["end_line"]
+        return (
+            bool(self.commit)
+            and link["checked_commit"] == self.commit
+            and 0 < start <= end
+            and not any(line <= 0 or start <= line <= end for line in lines)
+        )
+
+
 def _ordered_candidates(
     candidates: list[tuple[str, dict[str, Any]]], query: str
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -150,6 +169,7 @@ async def _confirmed_omissions(
     symbols: dict[str, set[str]],
     focused: set[str],
     timeout_s: float | None,
+    unscoped_grep: UnscopedGrep | None,
 ) -> set[tuple[str, str]]:
     """Path reads miss pending links. Check only the rows being considered for omission."""
     omitted = {
@@ -174,6 +194,8 @@ async def _confirmed_omissions(
             continue
         if not link["complete"] or link["state"] not in ("fresh", "moved", "changed"):
             uncertain.add(link["memory_id"])
+        elif unscoped_grep is not None and not unscoped_grep.excludes(link):
+            uncertain.add(link["memory_id"])
         else:
             resolved[(link["path"], link["memory_id"])].append(link["qualified_name"])
     return {
@@ -194,6 +216,7 @@ async def lessons_for_paths(
     timeout_s: float | None = None,
     query: str = "",
     matched_symbols: dict[str, set[str]] | None = None,
+    unscoped_grep: UnscopedGrep | None = None,
 ) -> Lessons:
     """The live memories of `namespaces` (each already checked readable) that name or are
     linked to code in `paths`, in path order, then each file's memory.for_file order (past
@@ -248,7 +271,9 @@ async def lessons_for_paths(
     remaining = (
         None if timeout_s is None else timeout_s - (asyncio.get_running_loop().time() - started)
     )
-    omitted = await _confirmed_omissions(org, trunk_ns, candidates, symbols, focused, remaining)
+    omitted = await _confirmed_omissions(
+        org, trunk_ns, candidates, symbols, focused, remaining, unscoped_grep
+    )
     for path, hit in _ordered_candidates(candidates, query):
         key = (str(hit["namespace"]), str(hit["memory_key"]))
         if key in seen:
