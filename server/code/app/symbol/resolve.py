@@ -159,7 +159,22 @@ async def symbol_body(
     rows = await repo.source_chunks_for_span(org, ns, path, start, end, model)
     if len(rows) > 400:
         return ""
-    return complete_source_span(rows, start, end, max_chars=0)
+    # A one-line Python def may be the last line of its own decorated function
+    # chunk. A mere compiler location inside a different unit still proves no body.
+    own_declaration = (
+        start == end
+        and path.lower().endswith((".py", ".pyi", ".pyw"))
+        and (
+            len(rows) == 1
+            and rows[0].get("kind") == "function"
+            and int(rows[0]["end_line"]) == end
+            and (
+                str(sym.get("symbol_id") or "") in (rows[0].get("symbol_ids") or [])
+                or bool(rows[0].get("scope") and rows[0]["scope"] == sym.get("qualified_name"))
+            )
+        )
+    )
+    return complete_source_span(rows, start, end, max_chars=0, own_declaration=own_declaration)
 
 
 async def _file_row(repo: CodeRepo, org: str, ns: str, path: str) -> dict[str, Any] | None:

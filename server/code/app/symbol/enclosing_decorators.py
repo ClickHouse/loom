@@ -41,7 +41,7 @@ async def extend_decorated_spans(
         return
     keys = list(
         dict.fromkeys(
-            (path, str(sid))
+            (path, str(sid), int(row["start_line"]))
             for (path, _), (row, _) in candidates.items()
             for sid in (row.get("tier_ids") or [row["symbol_id"]])
         )
@@ -58,7 +58,7 @@ async def extend_decorated_spans(
     for (path, _), (row, lines) in candidates.items():
         definition = int(row["start_line"])
         start = min(
-            starts.get((path, str(sid)), definition)
+            starts.get((path, str(sid), definition), definition)
             for sid in (row.get("tier_ids") or [row["symbol_id"]])
         )
         if 0 < start < definition and any(start <= line for line in lines):

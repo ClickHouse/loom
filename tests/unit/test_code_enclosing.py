@@ -226,8 +226,8 @@ def test_enclosing_decorator_and_def_share_one_retained_body(monkeypatch):
             return [lookup]
 
         async def function_chunk_starts(self, org, ns, model, keys):
-            assert keys == [("cli.py", "run-id")]
-            return {("cli.py", "run-id"): 4}
+            assert keys == [("cli.py", "run-id", 8)]
+            return {("cli.py", "run-id", 2): 1, ("cli.py", "run-id", 8): 4}
 
         async def source_chunks_for_span(self, org, ns, path, start, end, model):
             assert (path, start, end) == ("cli.py", 4, 9)

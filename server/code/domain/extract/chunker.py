@@ -482,7 +482,8 @@ def _file_header_chunk(
 
 
 def chunk_file(
-    pf: ParsedFile, max_chars: int = 6000, merge_target_chars: int = 0
+    pf: ParsedFile, max_chars: int = 6000, merge_target_chars: int = 0, *,
+    prefix_starts: dict[Symbol, int] | None = None,
 ) -> list[Chunk]:
     """Chunk a parsed file. The AST path is language-agnostic — it works
     off symbol line spans, so any parsed language (cpp/python/shell) gets
@@ -508,16 +509,18 @@ def chunk_file(
 
     covered = [False] * (len(src_lines) + 2)
     container_source = [False] * len(covered)
+    prefix_starts = prefix_starts or {}
 
     # function chunks (whole definitions, with the doc comment attached)
     for fn in sorted(fn_syms, key=lambda s: (s.start_line, -s.end_line)):
-        if covered[fn.start_line]:
+        definition = fn.start_line
+        if covered[definition]:
             continue  # nested/lambda duplication guard
-        start = fn.start_line
+        start = prefix_starts.get(fn, definition)
         doc = fn.doc_comment
         body = "".join(src_lines[start - 1 : fn.end_line])
         content = (doc + "\n" if doc else "") + body
-        header = src_lines[start - 1] if start - 1 < len(src_lines) else fn.qualified_name
+        header = src_lines[definition - 1] if definition - 1 < len(src_lines) else fn.qualified_name
         for i in range(start, fn.end_line + 1):
             if i < len(covered):
                 covered[i] = True
@@ -534,7 +537,7 @@ def chunk_file(
                 )
             )
         else:
-            node = _body_node(_unit_node(pf, start, fn.end_line, _FUNCTION_NODE_TYPES))
+            node = _body_node(_unit_node(pf, definition, fn.end_line, _FUNCTION_NODE_TYPES))
             for piece, s_ln, e_ln in _split_oversized(
                 body, header, start, max_chars, node=node, doc=doc, leader=leader
             ):
