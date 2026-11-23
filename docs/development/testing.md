@@ -423,7 +423,7 @@ Other rules and higher severity observations remain in the complete audit and ar
 by a separate trusted job to the existing code scanning view. That job has contents
 read and security-events write permissions, without issue write access. The public
 issue selector is not a scanner ignore or a claim that other findings are harmless.
-Security-sensitive reports follow [SECURITY.md](../../SECURITY.md); automation does not
+Security-sensitive reports follow [the security policy](../../SECURITY.md); automation does not
 send emails, publish exploit payloads or promise a bounty.
 
 Issue snapshots include the last hundred comment timeline entries in bounded pages, so unchanged tasks
