@@ -114,17 +114,21 @@ def _sdk_index(root: Path) -> tuple[dict[str, dict[str, set[str]]], dict[str, st
             continue
         for cls in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
             for node in ast.walk(cls):
+                if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                    target = node.targets[0]
+                elif isinstance(node, ast.AnnAssign):
+                    target = node.target
+                else:
+                    continue
                 if (
-                    isinstance(node, ast.Assign)
-                    and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Attribute)
-                    and isinstance(node.targets[0].value, ast.Name)
-                    and node.targets[0].value.id == "self"
+                    isinstance(target, ast.Attribute)
+                    and isinstance(target.value, ast.Name)
+                    and target.value.id == "self"
                     and isinstance(node.value, ast.Call)
                     and isinstance(node.value.func, ast.Name)
                 ):
-                    target = agent_attrs if cls.name == "Agent" else attrs
-                    target[node.targets[0].attr] = node.value.func.id
+                    receivers = agent_attrs if cls.name == "Agent" else attrs
+                    receivers[target.attr] = node.value.func.id
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
                 methods = classes.setdefault(node.name, {})
