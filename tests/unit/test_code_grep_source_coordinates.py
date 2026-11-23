@@ -6,6 +6,7 @@ import pytest
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.app.grep import _matching_lines
+from server.code.app.grep_source import page_contexts
 from server.code.app.symbol.uses import _uses_lines
 
 
@@ -43,6 +44,30 @@ def test_unicode_string_separators_are_not_source_line_boundaries() -> None:
     }
     matches, _ = _matching_lines([row], {}, CodeGrepInput(pattern="target"), None, 20)
     assert [(hit["line"], hit["text"]) for hit in matches] == [(3, "return target()")]
+
+
+def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
+    text = "def register():\n    after(target)\n    before(target)\n    return done\n"
+    chunk = {
+        "path": "cli.py",
+        "scope": "register",
+        "kind": "function",
+        "start_line": 20,
+        "end_line": 23,
+        "content": "# Presentation prefix\n" + text,
+    }
+    request = CodeGrepInput(pattern="target", context_lines=1)
+    matches, _ = _matching_lines([chunk], {}, request, None, 20)
+    hits, combined = page_contexts(matches)
+    assert [hit["line"] for hit in hits] == [21, 22]
+    assert all("_context" not in hit for hit in hits)
+    assert combined["contexts"] == [
+        {"path": "cli.py", "start_line": 20, "end_line": 23, "text": text}
+    ]
+    next_hits, next_page = page_contexts(matches[1:])
+    assert next_hits == hits[1:]
+    assert next_page["contexts"][0]["start_line"] == 21
+    assert not combined["contexts_partial"]
 
 
 def test_compacted_class_text_does_not_invent_a_matching_source_line() -> None:

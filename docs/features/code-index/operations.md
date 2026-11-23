@@ -96,7 +96,13 @@ beside the hit lines. Each definition appears once; its `lines` lists the matchi
 locations. The same retained-source reader backs `code.enclosing`, including type
 and document-section fallback. No token budget is imposed on these bodies.
 
-The default remains matching lines only. Bodies are read only for the served page,
+`code.grep(context_lines=3)` adds up to three retained lines on either side of
+each match in `contexts`. Each window gives its path, inclusive source line
+range and exact text. Overlapping lines in the served page appear once. Conflicting
+lines are left out and set `contexts_partial=true`. Windows stop at the edges
+of available source chunks. The option is available in matches mode.
+
+The default returns matching lines. Bodies are read only for the served page,
 and page reruns remove definitions belonging to earlier pages. If source cannot be
 read, matching lines remain available with `definitions_partial=true` and a
 `definitions_note`. Unresolved or elided definitions retain their structural

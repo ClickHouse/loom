@@ -19,7 +19,7 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
-from server.code.app.grep_source import recover_source_chunks
+from server.code.app.grep_source import page_contexts, recover_source_chunks
 from server.code.app.search.shared import (
     _not_covered_output,
     _partial_fields,
@@ -296,6 +296,9 @@ async def _grep_lines(
     trace_run_id = new_trace_run_id()
     pool_matches = matches
     matches = matches[offset : offset + served_limit]
+    context: dict[str, Any] = {}
+    if input.context_lines:
+        matches, context = await asyncio.to_thread(page_contexts, matches)
     bodies = await definitions_for(input, matches, budget)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
@@ -328,6 +331,7 @@ async def _grep_lines(
         returned_scores=[],
         top_k=served_limit,
         tokens_returned=sum(len(m["text"]) for m in matches) // 4
+        + _context_tokens(context)
         + neighbour_tokens
         + definitions_tokens(bodies),
         abstain=not matches,
@@ -366,6 +370,7 @@ async def _grep_lines(
         anchors_capped=anchors_capped,
         neighbour_tokens=neighbour_tokens,
         **bodies,
+        **context,
         **coverage,
     )
 
@@ -494,16 +499,19 @@ def _matching_lines(
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
             seen.add(key)
-            matches.append(
-                {
-                    "path": key[0],
-                    "line": key[1],
-                    "text": line.strip()[:300],
-                    "scope": scope,
-                    "scope_start_line": span[0],
-                    "scope_end_line": span[1],
-                }
-            )
+            match = {
+                "path": key[0],
+                "line": key[1],
+                "text": line.strip()[:300],
+                "scope": scope,
+                "scope_start_line": span[0],
+                "scope_end_line": span[1],
+            }
+            if input.context_lines:
+                before = max(0, off - input.context_lines)
+                after = off + input.context_lines + 1
+                match["_context"] = (key[1] - off + before, lines[before:after])
+            matches.append(match)
             if len(matches) > keep:
                 return matches, False
     return matches, False
@@ -521,6 +529,10 @@ def _grep_trace_query(input: CodeGrepInput) -> str:
     )
 
 
+def _context_tokens(context: dict[str, Any]) -> int:
+    return sum(len(row["text"]) for row in context.get("contexts", ())) // 4
+
+
 def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
     """The grep arguments that change the answer, for the trace row, so a flip between two
     same-second calls (0 -> N matches) can be pinned on the argument that differed."""
@@ -536,6 +548,7 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
         "limit",
         "deadline_ms",
         "include_body",
+        "context_lines",
         paged=bool(input.cursor) or None,
     )
 
@@ -543,13 +556,15 @@ def _grep_trace_args(input: CodeGrepInput) -> dict[str, Any]:
 def _grep_params_hash(input: CodeGrepInput) -> str:
     import hashlib
 
-    parts = {
+    parts: dict[str, Any] = {
         "pattern": input.pattern,
         "regex": input.regex,
         "case_sensitive": input.case_sensitive,
         "path_prefix": input.path_prefix,
         "mode": input.mode,
     }
+    if input.context_lines:
+        parts["context_lines"] = input.context_lines
     return hashlib.sha256(json.dumps(parts, sort_keys=True).encode()).hexdigest()[:16]
 
 
@@ -640,6 +655,9 @@ async def _serve_grep_page(
         else ""
     )
     files = list(dict.fromkeys(m["path"] for m in page))
+    context: dict[str, Any] = {}
+    if input.context_lines:
+        page, context = await asyncio.to_thread(page_contexts, page)
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(
@@ -657,6 +675,7 @@ async def _serve_grep_page(
         returned_scores=[],
         top_k=limit,
         tokens_returned=sum(len(str(m.get("text") or "")) for m in page) // 4
+        + _context_tokens(context)
         + definitions_tokens(bodies),
         abstain=not page,
         retrieval_risk="low" if page else "abstain",
@@ -692,6 +711,7 @@ async def _serve_grep_page(
             partial=bool(payload.get("partial")),
             partial_reason=str(payload.get("partial_reason") or ""),
             **bodies,
+            **context,
         ),
         "",
         offset,

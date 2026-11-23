@@ -14,6 +14,51 @@ from server.code.store.index import CodeRepo
 logger = logging.getLogger(__name__)
 
 
+def page_contexts(matches: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Union page windows without duplicating source or resolving conflicting lines."""
+    public = []
+    by_path: dict[str, dict[int, str | None]] = {}
+    partial = False
+    for row in matches:
+        match = dict(row)
+        public.append(match)
+        window = match.pop("_context", None)
+        if window is None:
+            partial = True
+            continue
+        start, lines = window
+        source = by_path.setdefault(match["path"], {})
+        for line, text in enumerate(lines, start):
+            if source.setdefault(line, text) != text:
+                source[line] = None
+                partial = True
+    contexts = []
+    for path, source in by_path.items():
+        window = []
+        start = previous = 0
+        for line, text in sorted(source.items()):
+            if window and (text is None or line != previous + 1 or not window[-1].endswith("\n")):
+                contexts.append(
+                    {
+                        "path": path,
+                        "start_line": start,
+                        "end_line": previous,
+                        "text": "".join(window),
+                    }
+                )
+                window = []
+            if text is not None:
+                if not window:
+                    start = line
+                window.append(text)
+                previous = line
+        if window:
+            contexts.append(
+                {"path": path, "start_line": start, "end_line": previous, "text": "".join(window)}
+            )
+    return public, {"contexts": contexts, "contexts_partial": partial}
+
+
 def _summary_spans(chunks: list[dict[str, Any]]) -> dict[tuple[str, str, str], tuple[int, int]]:
     spans: dict[tuple[str, str, str], tuple[int, int]] = {}
     for chunk in chunks:

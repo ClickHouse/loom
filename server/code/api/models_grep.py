@@ -55,6 +55,9 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
         default=False,
         description="Include distinct enclosing bodies in matches mode; default false.",
     )
+    context_lines: int = Field(
+        default=0, ge=0, le=20, description="Retained lines on each side of a match."
+    )
     # Only paths under this repo-relative prefix; '' = the whole index. A prefix outside
     # the indexed ones answers `not_covered`.
     path_prefix: str = ""
@@ -137,6 +140,8 @@ class CodeGrepInput(_CodeIdentity, _ResultLessons):
                 "neighbours on code.grep requires mode: 'matches' — the block hangs off "
                 "the hits' enclosing functions"
             )
+        if self.context_lines and self.mode != "matches":
+            raise ValueError("context_lines requires mode: 'matches'")
         self.namespaces = _lead_namespaces(self.namespace, self.namespaces)
         return self
 
@@ -165,6 +170,9 @@ class CodeGrepOutput(_LessonsOut):
             data.pop("definitions_partial", None)
         if not data.get("definitions_note"):
             data.pop("definitions_note", None)
+        for key in ("contexts", "contexts_partial"):
+            if not data.get(key):
+                data.pop(key, None)
         if not data.get("verdict"):
             for k in ("verdict", "template", "error_code", "coverage"):
                 data.pop(k, None)
@@ -178,6 +186,9 @@ class CodeGrepOutput(_LessonsOut):
     # by `scope` (0/0 when the line sits in no unit) — enough to decide whether
     # to fetch the body, or to skip it when that unit is already on screen.
     matches: list[dict[str, Any]]
+    # Exact retained source windows for this page, with inclusive line bounds.
+    contexts: list[dict[str, Any]] = Field(default_factory=list)
+    contexts_partial: bool = False
     # include_body: distinct enclosing units, in hit order; `lines` names the matching
     # lines each definition covers. Unavailable bodies retain the enclosing result's
     # disclosure and next lookup. Empty without include_body or without matches.

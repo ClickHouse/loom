@@ -887,6 +887,8 @@ export interface CodeGrepInput {
   case_sensitive?: boolean;
   /** Include distinct enclosing bodies in matches mode; default false. */
   include_body?: boolean;
+  /** Retained lines on each side of a match. */
+  context_lines?: number;
   path_prefix?: string;
   /** In matches mode, pass `next_cursor` with the original search arguments and omit it to start a new search. */
   cursor?: string;
@@ -906,6 +908,8 @@ export interface CodeGrepOutput {
   lessons?: Array<Record<string, unknown>>;
   lessons_left_out?: number;
   matches: Array<Record<string, unknown>>;
+  contexts?: Array<Record<string, unknown>>;
+  contexts_partial?: boolean;
   definitions?: Array<Record<string, unknown>>;
   definitions_partial?: boolean;
   definitions_note?: string;

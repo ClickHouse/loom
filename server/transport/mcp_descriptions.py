@@ -1358,15 +1358,13 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "per-frame grep-and-open loop."
     ),
     "code.grep": (
-        "Find text in indexed source, with lines and enclosing symbols. "
-        "`pattern` is a string or list of literal alternatives. `regex: true` uses one RE2 string. "
-        "Scope with `path_prefix`, `path_globs` or `langs`. `include_body` adds definitions. "
-        "`neighbours` adds callers, callees, tests and docs. "
-        "A regex-shaped string with no literal hit may be retried as regex and disclosed. "
-        "`mode: 'message'` finds error or log templates, with a literal fallback. "
-        "`mode: 'presence'` checks branches via `namespaces`. "
-        "`deadline_ms` allows partial results. Check coverage before inferring absence. "
-        "Use code.files for paths and local tools for uncommitted source."
+        "Find text and enclosing symbols in indexed source. "
+        "Use literal strings or one RE2 string with `regex: true`. "
+        "`context_lines` adds nearby source. `include_body` adds definitions. "
+        "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "`mode: 'message'` finds printed error templates. "
+        "`mode: 'presence'` checks `namespaces`. "
+        "Check coverage before inferring absence. Use code.files for paths."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "
@@ -2205,7 +2203,7 @@ CODING_TOOL_DESCRIPTIONS: dict[str, str] = {
         'Pass a `pattern` string or a list of literals like ["parse(", "load("]. '
         "`regex: true` uses one RE2 string. For behavior use code.search. "
         "Scope with `path_prefix`, `path_globs` or `langs`. "
-        "`include_body` returns distinct enclosing definitions. "
+        "`context_lines` adds nearby source. `include_body` adds distinct definitions. "
         "`definitions_partial` flags missing source. Check coverage before inferring absence."
     ),
     # The coding tier lists blast radius with the sentences a coding session

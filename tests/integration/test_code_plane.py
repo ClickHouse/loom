@@ -120,6 +120,15 @@ async def test_grep_can_return_distinct_retained_enclosing_bodies(ch_client, mon
     assert not rich.definitions_partial
     assert len(rich.definitions) == len({row["symbol_id"] for row in rich.definitions}) == 2
     assert all("squashImpl" in row["body"] and not row["body_elided"] for row in rich.definitions)
+    nearby = await handle_code_grep(
+        CodeGrepInput(org=org, namespace=ns, pattern="squashImpl", context_lines=1)
+    )
+    source_lines = _SRC.decode().splitlines(keepends=True)
+    assert nearby.matches == plain.matches and nearby.contexts and not nearby.contexts_partial
+    for window in nearby.contexts:
+        assert window["text"] == "".join(
+            source_lines[window["start_line"] - 1 : window["end_line"]]
+        )
 
     # A vanished continuation pool reruns lines, but must hydrate only its page.
     from server.code.app import grep
