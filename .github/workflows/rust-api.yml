@@ -1,0 +1,41 @@
+name: Rust SDK API compatibility
+
+on:
+  pull_request:
+    branches: [main, "release/**"]
+    paths:
+      - "sdk/rust/**"
+      - ".github/workflows/rust-api.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The SDK source shipped with Loom v1.3.0.
+          ref: 47b479dcdae4c089aef2690428fa4c9a8f54554c
+          path: release-baseline
+          persist-credentials: false
+          sparse-checkout: sdk/rust
+      - name: Install cargo-semver-checks
+        working-directory: ${{ runner.temp }}
+        run: |
+          archive=cargo-semver-checks-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.51.0/$archive" -o "$archive"
+          echo "cacadafaa5cd27ae6d05a74a103266917ebab4c5e43c898360e177d4fbf06a65  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" cargo-semver-checks
+      - name: Compare the public Rust SDK with the release baseline
+        run: |
+          "$RUNNER_TEMP/cargo-semver-checks" semver-checks \
+            --manifest-path sdk/rust/Cargo.toml --baseline-root release-baseline/sdk/rust
