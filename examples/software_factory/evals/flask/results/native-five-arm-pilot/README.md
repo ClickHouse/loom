@@ -6,6 +6,11 @@ frozen at `f8eb6721e3d0f8e9f4edd7c5fa1065ee39b5458d`. Harbor uses its built-in
 Claude Code agent, version `2.1.326`, with `claude-opus-5-5`. The complete numeric
 export and original artifact hashes are in [results.json](results.json).
 
+This pilot selects repeat zero from the frozen full schedule. The completed
+five-arm block in the preceding development run was repeat two, so arm order
+differs between those runs. Between-run changes cannot be attributed solely to a
+product fix, particularly when prompt-cache state also differs.
+
 | Arm                  | Hidden solved | Blind fixed | Full-suite failures | Regressions | Provider USD | Agent seconds | Cost saving | Time saving |
 | -------------------- | ------------: | ----------- | ------------------: | ----------: | -----------: | ------------: | ----------: | ----------: |
 | No Loom              |           1/1 | Yes         |                   0 |           0 |    0.2213612 |     56.363912 |           — |           — |
