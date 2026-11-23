@@ -8,35 +8,64 @@ from typing import Any
 
 from server.code.app.spans import code_span, span_attrs
 from server.code.domain.deadline import Budget
-from server.code.domain.symbol_body import complete_source_span
+from server.code.domain.symbol_body import complete_source_span, retained_source_lines
 from server.code.store.index import CodeRepo
 
 logger = logging.getLogger(__name__)
 
 
-def page_contexts(matches: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Union page windows without duplicating source or resolving conflicting lines."""
-    public = []
-    by_path: dict[str, dict[int, str | None]] = {}
-    partial = False
-    for row in matches:
-        match = dict(row)
-        public.append(match)
-        window = match.pop("_context", None)
-        if window is None:
-            partial = True
+ContextSource = dict[str, dict[str, str | None]]
+
+
+def _wanted_lines(matches: list[dict[str, Any]], radius: int) -> dict[str, set[int]]:
+    wanted: dict[str, set[int]] = {}
+    for hit in matches:
+        line = int(hit["line"])
+        wanted.setdefault(str(hit["path"]), set()).update(
+            range(max(1, line - radius), line + radius + 1)
+        )
+    return wanted
+
+
+def collect_contexts(
+    chunks: list[dict[str, Any]], matches: list[dict[str, Any]], radius: int, max_chars: int
+) -> ContextSource:
+    """Keep each requested retained line once, including conflicts between chunk views."""
+    wanted = _wanted_lines(matches, radius)
+    by_path: ContextSource = {}
+    scanned = 0
+    for chunk in chunks:
+        path = str(chunk["path"])
+        scanned += len(str(chunk.get("content") or ""))
+        if scanned > max_chars:
+            break
+        if path not in wanted or (lines := retained_source_lines(chunk)) is None:
             continue
-        start, lines = window
-        source = by_path.setdefault(match["path"], {})
-        for line, text in enumerate(lines, start):
-            if source.setdefault(line, text) != text:
-                source[line] = None
-                partial = True
+        source = by_path.setdefault(path, {})
+        for line, text in enumerate(lines, int(chunk["start_line"])):
+            if line in wanted[path]:
+                key = str(line)
+                if source.setdefault(key, text) != text:
+                    source[key] = None
+    return by_path
+
+
+def page_contexts(
+    source: ContextSource, matches: list[dict[str, Any]], radius: int
+) -> dict[str, Any]:
+    """Render only this page's windows from retained lines that agree."""
+    wanted = _wanted_lines(matches, radius)
+    partial = False
     contexts = []
-    for path, source in by_path.items():
-        window = []
+    for path, lines in wanted.items():
+        retained = source.get(path, {})
+        window: list[str] = []
         start = previous = 0
-        for line, text in sorted(source.items()):
+        for line in sorted(lines):
+            key = str(line)
+            text = retained.get(key)
+            if text is None and key in retained:
+                partial = True
             if window and (text is None or line != previous + 1 or not window[-1].endswith("\n")):
                 contexts.append(
                     {
@@ -56,7 +85,7 @@ def page_contexts(matches: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], 
             contexts.append(
                 {"path": path, "start_line": start, "end_line": previous, "text": "".join(window)}
             )
-    return public, {"contexts": contexts, "contexts_partial": partial}
+    return {"contexts": contexts, "contexts_partial": partial}
 
 
 def _summary_spans(chunks: list[dict[str, Any]]) -> dict[tuple[str, str, str], tuple[int, int]]:

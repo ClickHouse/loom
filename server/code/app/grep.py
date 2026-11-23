@@ -19,7 +19,12 @@ from server.code.app.common import (
     schedule_code_trace,
 )
 from server.code.app.grep_bodies import definitions_for, definitions_tokens
-from server.code.app.grep_source import page_contexts, recover_source_chunks
+from server.code.app.grep_source import (
+    ContextSource,
+    collect_contexts,
+    page_contexts,
+    recover_source_chunks,
+)
 from server.code.app.search.shared import (
     _not_covered_output,
     _partial_fields,
@@ -297,8 +302,12 @@ async def _grep_lines(
     pool_matches = matches
     matches = matches[offset : offset + served_limit]
     context: dict[str, Any] = {}
+    context_source: ContextSource = {}
     if input.context_lines:
-        matches, context = await asyncio.to_thread(page_contexts, matches)
+        context_source = await asyncio.to_thread(
+            collect_contexts, chunks, pool_matches, input.context_lines, _LINE_SCAN_MAX_CHARS
+        )
+        context = page_contexts(context_source, matches, input.context_lines)
     bodies = await definitions_for(input, matches, budget)
     neighbours, anchors_capped, neighbour_tokens, route = await _grep_neighbours(
         repo, org, ns, input, matches, route, budget=budget
@@ -315,6 +324,7 @@ async def _grep_lines(
         truncated=truncated,
         partial=bool(coverage.get("partial")),
         partial_reason=str(coverage.get("partial_reason") or ""),
+        context_source=context_source,
     )
     # one entry per matched FILE (ids and paths alike — grep has no unit ids,
     # so the outcome fold skips this op; the paths still feed opened_file)
@@ -499,19 +509,16 @@ def _matching_lines(
             if key in seen:
                 continue  # the same span indexed twice (re-parse race)
             seen.add(key)
-            match = {
-                "path": key[0],
-                "line": key[1],
-                "text": line.strip()[:300],
-                "scope": scope,
-                "scope_start_line": span[0],
-                "scope_end_line": span[1],
-            }
-            if input.context_lines:
-                before = max(0, off - input.context_lines)
-                after = off + input.context_lines + 1
-                match["_context"] = (key[1] - off + before, lines[before:after])
-            matches.append(match)
+            matches.append(
+                {
+                    "path": key[0],
+                    "line": key[1],
+                    "text": line.strip()[:300],
+                    "scope": scope,
+                    "scope_start_line": span[0],
+                    "scope_end_line": span[1],
+                }
+            )
             if len(matches) > keep:
                 return matches, False
     return matches, False
@@ -580,6 +587,7 @@ def _issue_grep_cursor(
     truncated: bool,
     partial: bool = False,
     partial_reason: str = "",
+    context_source: ContextSource | None = None,
 ) -> str:
     """Store every extracted line (served ones included, so offsets are
     pool positions) and return the cursor for the page after `served`;
@@ -603,6 +611,7 @@ def _issue_grep_cursor(
             "line_mapping": _GREP_LINE_MAPPING_VERSION,
             "partial": partial,
             "partial_reason": partial_reason,
+            **({"context_source": context_source} if context_source else {}),
         },
         indexed_commit="",
         route="grep",
@@ -657,7 +666,7 @@ async def _serve_grep_page(
     files = list(dict.fromkeys(m["path"] for m in page))
     context: dict[str, Any] = {}
     if input.context_lines:
-        page, context = await asyncio.to_thread(page_contexts, page)
+        context = page_contexts(payload.get("context_source") or {}, page, input.context_lines)
     trace_run_id = new_trace_run_id()
     route = route + "+page"
     bodies = await definitions_for(

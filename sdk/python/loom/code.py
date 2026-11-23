@@ -109,6 +109,7 @@ class CodeClient:
         regex: bool = False,
         path_prefix: str = "",
         limit: int | None = None,
+        context_lines: int = 0,
         mode: str = "matches",
         path_globs: list[str] | None = None,
         exclude_globs: list[str] | None = None,
@@ -119,7 +120,8 @@ class CodeClient:
         carries its enclosing symbol (`scope`) and that unit's span
         (`scope_start_line` / `scope_end_line`, 0 outside any unit), so a
         caller can skip `enclosing()` for a hit inside a function it has
-        already shown. `mode="files"` answers "which files
+        already shown. `context_lines` adds nearby retained source in matches mode.
+        `mode="files"` answers "which files
         mention X" (no line text) — use it for coverage questions. `limit`
         defaults per mode: 20 lines, or the 500-file ceiling, so a files
         answer is complete unless `truncated` says otherwise. `not_covered:
@@ -143,6 +145,8 @@ class CodeClient:
             body["namespaces"] = list(namespaces)
         if limit is not None:
             body["limit"] = limit
+        if context_lines:
+            body["context_lines"] = context_lines
         if path_globs:
             body["path_globs"] = list(path_globs)
         if exclude_globs:

@@ -1362,9 +1362,10 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
         "Use literal strings or one RE2 string with `regex: true`. "
         "`context_lines` adds nearby source. `include_body` adds definitions. "
         "Filter by `path_prefix`, `path_globs` or `langs`. "
+        "`neighbours` adds graph links. `deadline_ms` allows partial results. "
         "`mode: 'message'` finds printed error templates. "
         "`mode: 'presence'` checks `namespaces`. "
-        "Check coverage before inferring absence. Use code.files for paths."
+        "Check coverage. Use code.files for paths and local tools for uncommitted source."
     ),
     "code.files": (
         "Indexed files by NAME: an rg-style glob "

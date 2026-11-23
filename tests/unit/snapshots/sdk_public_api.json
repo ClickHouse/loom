@@ -2068,6 +2068,7 @@
           "regex",
           "path_prefix",
           "limit",
+          "context_lines",
           "mode",
           "path_globs",
           "exclude_globs",

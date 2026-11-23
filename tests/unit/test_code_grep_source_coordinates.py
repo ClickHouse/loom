@@ -6,7 +6,7 @@ import pytest
 
 from server.code.api.models_grep import CodeGrepInput
 from server.code.app.grep import _matching_lines
-from server.code.app.grep_source import page_contexts
+from server.code.app.grep_source import collect_contexts, page_contexts
 from server.code.app.symbol.uses import _uses_lines
 
 
@@ -58,16 +58,35 @@ def test_grep_context_unions_overlapping_windows_on_the_served_page() -> None:
     }
     request = CodeGrepInput(pattern="target", context_lines=1)
     matches, _ = _matching_lines([chunk], {}, request, None, 20)
-    hits, combined = page_contexts(matches)
-    assert [hit["line"] for hit in hits] == [21, 22]
-    assert all("_context" not in hit for hit in hits)
+    pool = collect_contexts([chunk], matches, request.context_lines, 1000)
+    combined = page_contexts(pool, matches, request.context_lines)
+    assert [hit["line"] for hit in matches] == [21, 22]
     assert combined["contexts"] == [
         {"path": "cli.py", "start_line": 20, "end_line": 23, "text": text}
     ]
-    next_hits, next_page = page_contexts(matches[1:])
-    assert next_hits == hits[1:]
+    next_page = page_contexts(pool, matches[1:], request.context_lines)
     assert next_page["contexts"][0]["start_line"] == 21
     assert not combined["contexts_partial"]
+
+
+def test_grep_context_discloses_conflicting_lines_from_duplicate_hits() -> None:
+    row = {
+        "path": "app.py",
+        "scope": "",
+        "start_line": 1,
+        "end_line": 2,
+        "content": "prepare()\ntarget()\n",
+    }
+    chunks = [row, {**row, "content": "setup()\ntarget()\n"}]
+    request = CodeGrepInput(pattern="target", context_lines=1)
+    matches, _ = _matching_lines(chunks, {}, request, None, 20)
+    assert [hit["line"] for hit in matches] == [2]
+    pool = collect_contexts(chunks, matches, request.context_lines, 1000)
+    output = page_contexts(pool, matches, request.context_lines)
+    assert output == {
+        "contexts": [{"path": "app.py", "start_line": 2, "end_line": 2, "text": "target()\n"}],
+        "contexts_partial": True,
+    }
 
 
 def test_compacted_class_text_does_not_invent_a_matching_source_line() -> None:
