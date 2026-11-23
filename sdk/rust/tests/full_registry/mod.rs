@@ -1,8 +1,70 @@
 use super::*;
 use clickhouse_loom::{
-    CallOptions, KnowledgeUpsertInput, MemoryAskInput, ObserveRecordInput, RunBeginInput,
-    RunCompleteInput, RunCompleteInputStatus, RunGetInput,
+    CallOptions, DecisionRecordInput, KnowledgeUpsertInput, MemoryAskInput, MemoryDigestsInput,
+    ObserveRecordInput, RunBeginInput, RunCompleteInput, RunCompleteInputStatus, RunGetInput,
 };
+
+pub(super) fn digest_filter_cases() -> Vec<MemoryDigestsInput> {
+    vec![
+        MemoryDigestsInput::new(),
+        MemoryDigestsInput::new().session_id("*"),
+        MemoryDigestsInput::new().session_id("-"),
+        MemoryDigestsInput::new().session_id("previous-session"),
+        MemoryDigestsInput::new().session_id("current-session"),
+    ]
+}
+
+pub(super) fn decision_run_cases() -> Vec<DecisionRecordInput> {
+    vec![
+        DecisionRecordInput::new("category", "scenario", "reasoning", "outcome"),
+        DecisionRecordInput::new("category", "scenario", "reasoning", "outcome")
+            .run_id("other-run"),
+    ]
+}
+
+#[tokio::test]
+async fn digest_session_filters_survive_bound_identity() {
+    let cases = digest_filter_cases();
+    let server = Server::new(vec![response(400, "{}", ""); cases.len()]);
+    let client = Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .session_id("current-session")
+        .build()
+        .unwrap();
+    for input in cases {
+        let expected = input.session_id.clone();
+        client.memory_digests(input).await.unwrap_err();
+        let request = server.request().await;
+        assert_eq!(request.line, "POST /v1/memory.digests HTTP/1.1");
+        assert_eq!(request.body.get("session_id").is_some(), expected.is_some());
+        if let Some(expected) = expected {
+            assert_eq!(request.body["session_id"], expected);
+        }
+    }
+}
+
+#[tokio::test]
+async fn decisions_inherit_bound_run_authorship() {
+    let cases = decision_run_cases();
+    let server = Server::new(vec![response(400, "{}", ""); cases.len()]);
+    let client = Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .run_id("current-run")
+        .build()
+        .unwrap();
+    for input in cases {
+        input
+            .send(&client, CallOptions::default())
+            .await
+            .unwrap_err();
+        let request = server.request().await;
+        assert_eq!(request.line, "POST /v1/decision.record HTTP/1.1");
+        assert_eq!(request.body["run_id"], "current-run");
+        assert_eq!(request.headers["x-loom-run-id"], "current-run");
+    }
+}
 
 pub(super) fn conversation_cases() -> Vec<(&'static str, Value, Value)> {
     let mut cases = vec![

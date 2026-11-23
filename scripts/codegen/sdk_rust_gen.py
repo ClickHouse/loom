@@ -618,6 +618,7 @@ def operation_facts() -> str:
             "memory.set_from_messages",
             "memory.bulk_set",
             "memory.link",
+            "decision.record",
             "observe.record",
             "working_memory.set",
             "working_memory.append",
@@ -627,6 +628,8 @@ def operation_facts() -> str:
             identity.discard("run_id")
         if op.name in {"memory.ask", "memory.search", "memory.search_trace"}:
             identity -= {"agent", "user_id", "session_id"}
+        if op.name == "memory.digests":
+            identity.discard("session_id")
         defaults = set()
         if op.name.startswith("conversation.") and fact.read_only:
             identity -= {"agent", "user_id", "session_id"}

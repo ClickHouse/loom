@@ -509,6 +509,30 @@ async fn base_path_is_preserved_and_redirects_are_not_followed() {
 }
 
 #[test]
+fn bound_run_ids_are_validated_before_calls() {
+    for run_id in ["private\nrun", "private\rrun", "private\0run"] {
+        let error = Client::builder("org", "ns", "bot")
+            .api_key("")
+            .run_id(run_id)
+            .build()
+            .unwrap_err();
+        assert!(matches!(error, Error::Configuration(_)));
+        assert!(!format!("{error:?} {error}").contains("private"));
+    }
+    for run_id in ["run-123", "-", ""] {
+        assert!(Client::builder("org", "ns", "bot")
+            .api_key("")
+            .run_id(run_id)
+            .build()
+            .is_ok());
+    }
+    assert!(Client::builder("org", "ns", "bot")
+        .api_key("")
+        .build()
+        .is_ok());
+}
+
+#[test]
 fn invalid_configuration_and_debug_never_expose_credentials() {
     for endpoint in [
         "not a url",

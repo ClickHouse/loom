@@ -290,8 +290,19 @@ it does not infer that the document supports the fact. It creates no resources.
 ### multi_agent_handoff.rs
 
 Set `LOOM_ORG` and `LOOM_NAMESPACE` to an existing shared namespace. Set
-`LOOM_PLANNER_API_KEY` to an admin token with subject `handoff-planner`, and
-`LOOM_WORKER_API_KEY` to a distinct writer token with subject `handoff-worker`.
+`LOOM_PLANNER_API_KEY` to an admin service-account token with subject
+`handoff-planner`, and `LOOM_WORKER_API_KEY` to a distinct writer service-account
+token with subject `handoff-worker`. The example verifies `process:` writer
+actors, which require service-account credentials.
+
+From an operator environment with `LOOM_JWT_SECRET` and verified stores:
+
+```bash
+export LOOM_PLANNER_API_KEY="$(loom mint-token --subject handoff-planner \
+  --org "$LOOM_ORG" --namespaces "$LOOM_NAMESPACE" --roles admin --service-account)"
+export LOOM_WORKER_API_KEY="$(loom mint-token --subject handoff-worker \
+  --org "$LOOM_ORG" --namespaces "$LOOM_NAMESPACE" --roles writer --service-account)"
+```
 
 ```bash
 cargo run --manifest-path sdk/rust/Cargo.toml --example multi_agent_handoff
@@ -329,9 +340,20 @@ including keys already removed by erasure.
 
 Requires an existing public repository index, a shared memory namespace and
 an admitted review inbox owned by `factory-reviewer`. Set distinct
-`LOOM_IMPLEMENTATION_API_KEY` and `LOOM_REVIEW_API_KEY` credentials with subjects
+`LOOM_IMPLEMENTATION_API_KEY` and `LOOM_REVIEW_API_KEY` service-account credentials with subjects
 `factory-implementation` and `factory-reviewer`. Both need source read and memory
-access, and their respective task permissions.
+access, and their respective task permissions. The example verifies `process:`
+writer actors, which require service-account credentials.
+
+For the namespace arguments below, an operator with `LOOM_JWT_SECRET` and
+verified stores can mint scoped tokens:
+
+```bash
+export LOOM_IMPLEMENTATION_API_KEY="$(loom mint-token --subject factory-implementation \
+  --org acme --namespace-role shared=writer --namespace-role source=viewer --service-account)"
+export LOOM_REVIEW_API_KEY="$(loom mint-token --subject factory-reviewer \
+  --org acme --namespace-role shared=writer --namespace-role source=viewer --service-account)"
+```
 
 ```bash
 cargo run --manifest-path sdk/rust/Cargo.toml --example software_factory_memory -- \

@@ -475,6 +475,10 @@ impl ClientBuilder {
         if self.timeout.is_zero() {
             return Err(Error::Configuration("timeout must be positive".into()));
         }
+        if let Some(run_id) = self.identity.get("run_id").and_then(Value::as_str) {
+            HeaderValue::from_str(run_id)
+                .map_err(|_| Error::Configuration("invalid run ID header".into()))?;
+        }
         let endpoint = self
             .base_url
             .or_else(|| env_value("LOOM_BASE_URL"))

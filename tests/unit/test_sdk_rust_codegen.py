@@ -244,6 +244,14 @@ def test_operation_policies_cover_registry_and_distinguish_filters() -> None:
         assert all(f'"{field}"' in line for field in expected)
 
 
+def test_digest_session_is_a_filter_and_decision_run_is_authorship() -> None:
+    facts = gen.operation_facts()
+    digest = next(line for line in facts.splitlines() if line.startswith('("memory.digests",'))
+    decision = next(line for line in facts.splitlines() if line.startswith('("decision.record",'))
+    assert '"session_id"' not in digest
+    assert '"run_id"' in decision
+
+
 def test_registered_factory_defaults_match_server_values() -> None:
     from server.operations.registry import ALL_OPERATIONS
 

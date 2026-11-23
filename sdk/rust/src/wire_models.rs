@@ -442,14 +442,7 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         "memory.digests",
         true,
         true,
-        &[
-            "agent",
-            "namespace",
-            "org",
-            "run_id",
-            "session_id",
-            "user_id",
-        ],
+        &["agent", "namespace", "org", "run_id", "user_id"],
         &[],
     ),
     (
@@ -1256,7 +1249,14 @@ pub(crate) const OP_POLICIES: &[OperationPolicy] = &[
         "decision.record",
         true,
         false,
-        &["agent", "namespace", "org", "session_id", "user_id"],
+        &[
+            "agent",
+            "namespace",
+            "org",
+            "run_id",
+            "session_id",
+            "user_id",
+        ],
         &[],
     ),
     (

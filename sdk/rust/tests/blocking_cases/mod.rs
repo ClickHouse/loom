@@ -13,6 +13,66 @@ fn request(server: &Server) -> Request {
 }
 
 #[test]
+fn bound_run_ids_are_validated_before_calls() {
+    for run_id in ["private\nrun", "private\rrun", "private\0run"] {
+        let error = blocking::Client::builder("org", "ns", "bot")
+            .api_key("")
+            .run_id(run_id)
+            .build()
+            .unwrap_err();
+        assert!(matches!(error, Error::Configuration(_)));
+        assert!(!format!("{error:?} {error}").contains("private"));
+    }
+    assert!(blocking::Client::builder("org", "ns", "bot")
+        .api_key("")
+        .run_id("run-123")
+        .build()
+        .is_ok());
+}
+
+#[test]
+fn digest_session_filters_survive_bound_identity() {
+    let cases = full_registry::digest_filter_cases();
+    let server = Server::new(vec![response(400, "{}", ""); cases.len()]);
+    let client = blocking::Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .session_id("current-session")
+        .build()
+        .unwrap();
+    for input in cases {
+        let expected = input.session_id.clone();
+        client.memory_digests(input).unwrap_err();
+        let received = request(&server);
+        assert_eq!(
+            received.body.get("session_id").is_some(),
+            expected.is_some()
+        );
+        if let Some(expected) = expected {
+            assert_eq!(received.body["session_id"], expected);
+        }
+    }
+}
+
+#[test]
+fn decisions_inherit_bound_run_authorship() {
+    let cases = full_registry::decision_run_cases();
+    let server = Server::new(vec![response(400, "{}", ""); cases.len()]);
+    let client = blocking::Client::builder("org", "ns", "bot")
+        .base_url(&server.url)
+        .api_key("")
+        .run_id("current-run")
+        .build()
+        .unwrap();
+    for input in cases {
+        client.decision_record(input).unwrap_err();
+        let received = request(&server);
+        assert_eq!(received.body["run_id"], "current-run");
+        assert_eq!(received.headers["x-loom-run-id"], "current-run");
+    }
+}
+
+#[test]
 fn conversation_reads_preserve_filters_and_default_only_required_identity() {
     let cases = full_registry::conversation_cases();
     let server = Server::new(vec![response(400, "{}", ""); cases.len()]);
