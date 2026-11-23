@@ -1318,6 +1318,51 @@ class KnowledgeOps:
             await self._agent.call("knowledge.bulk_delete", body, **options),
         )
 
+    async def connection_mcp_connect(
+        self, body: _ops.KnowledgeConnectionMcpConnectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpConnectOutput:
+        """`knowledge.connection.mcp_connect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpConnectOutput",
+            await self._agent.call("knowledge.connection.mcp_connect", body, **options),
+        )
+
+    async def connection_mcp_disconnect(
+        self, body: _ops.MCPSlotBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpDisconnectOutput:
+        """`knowledge.connection.mcp_disconnect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpDisconnectOutput",
+            await self._agent.call("knowledge.connection.mcp_disconnect", body, **options),
+        )
+
+    async def connection_mcp_discover(
+        self, body: _ops.MCPSlotBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpDiscoverOutput:
+        """`knowledge.connection.mcp_discover`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpDiscoverOutput",
+            await self._agent.call("knowledge.connection.mcp_discover", body, **options),
+        )
+
+    async def connection_mcp_inspect(
+        self, body: _ops.KnowledgeConnectionMcpInspectBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpInspectOutput:
+        """`knowledge.connection.mcp_inspect`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpInspectOutput",
+            await self._agent.call("knowledge.connection.mcp_inspect", body, **options),
+        )
+
+    async def connection_mcp_list(
+        self, body: _ops.KnowledgeConnectionMcpListBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeConnectionMcpListOutput:
+        """`knowledge.connection.mcp_list`."""
+        return cast(
+            "_ops.KnowledgeConnectionMcpListOutput",
+            await self._agent.call("knowledge.connection.mcp_list", body, **options),
+        )
+
     async def dataset_approve(
         self, body: _ops.KnowledgeDatasetApproveBody | None = None, /, **options: Any
     ) -> _ops.KnowledgeDatasetApproveOutput:
@@ -1554,6 +1599,15 @@ class KnowledgeOps:
         return cast(
             "_ops.KnowledgeSourceListOutput",
             await self._agent.call("knowledge.source.list", body, **options),
+        )
+
+    async def source_mcp_profiles(
+        self, body: _ops.KnowledgeSourceMcpProfilesBody | None = None, /, **options: Any
+    ) -> _ops.KnowledgeSourceMcpProfilesOutput:
+        """`knowledge.source.mcp_profiles`."""
+        return cast(
+            "_ops.KnowledgeSourceMcpProfilesOutput",
+            await self._agent.call("knowledge.source.mcp_profiles", body, **options),
         )
 
     async def source_parse_links(

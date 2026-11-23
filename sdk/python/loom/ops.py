@@ -169,6 +169,11 @@ OpName = Literal[
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.connection.mcp_connect",
+    "knowledge.connection.mcp_disconnect",
+    "knowledge.connection.mcp_discover",
+    "knowledge.connection.mcp_inspect",
+    "knowledge.connection.mcp_list",
     "knowledge.dataset_approve",
     "knowledge.dataset_get",
     "knowledge.dedup_list",
@@ -196,6 +201,7 @@ OpName = Literal[
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.mcp_profiles",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
     "knowledge.source.push_confirm",
@@ -548,6 +554,11 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.add",
     "knowledge.bulk_add",
     "knowledge.bulk_delete",
+    "knowledge.connection.mcp_connect",
+    "knowledge.connection.mcp_disconnect",
+    "knowledge.connection.mcp_discover",
+    "knowledge.connection.mcp_inspect",
+    "knowledge.connection.mcp_list",
     "knowledge.dataset_approve",
     "knowledge.dataset_get",
     "knowledge.dedup_list",
@@ -575,6 +586,7 @@ OP_NAMES: tuple[str, ...] = (
     "knowledge.source.check",
     "knowledge.source.inspect",
     "knowledge.source.list",
+    "knowledge.source.mcp_profiles",
     "knowledge.source.parse_links",
     "knowledge.source.push_configure",
     "knowledge.source.push_confirm",
@@ -2357,6 +2369,66 @@ OPS: dict[str, OpSpec] = {
         True,
         False,
     ),
+    "knowledge.connection.mcp_connect": OpSpec(
+        "knowledge.connection.mcp_connect",
+        "KnowledgeConnectionMcpConnectInput",
+        "KnowledgeConnectionMcpConnectBody",
+        "KnowledgeConnectionMcpConnectOutput",
+        False,
+        "viewer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.connection.mcp_disconnect": OpSpec(
+        "knowledge.connection.mcp_disconnect",
+        "MCPSlotInput",
+        "MCPSlotBody",
+        "KnowledgeConnectionMcpDisconnectOutput",
+        False,
+        "viewer",
+        "experimental",
+        30000,
+        True,
+        False,
+    ),
+    "knowledge.connection.mcp_discover": OpSpec(
+        "knowledge.connection.mcp_discover",
+        "MCPSlotInput",
+        "MCPSlotBody",
+        "KnowledgeConnectionMcpDiscoverOutput",
+        True,
+        "viewer",
+        "experimental",
+        30000,
+        False,
+        True,
+    ),
+    "knowledge.connection.mcp_inspect": OpSpec(
+        "knowledge.connection.mcp_inspect",
+        "KnowledgeConnectionMcpInspectInput",
+        "KnowledgeConnectionMcpInspectBody",
+        "KnowledgeConnectionMcpInspectOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
+        False,
+        True,
+    ),
+    "knowledge.connection.mcp_list": OpSpec(
+        "knowledge.connection.mcp_list",
+        "KnowledgeConnectionMcpListInput",
+        "KnowledgeConnectionMcpListBody",
+        "KnowledgeConnectionMcpListOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
+        False,
+        True,
+    ),
     "knowledge.dataset_approve": OpSpec(
         "knowledge.dataset_approve",
         "KnowledgeDatasetApproveInput",
@@ -2678,6 +2750,18 @@ OPS: dict[str, OpSpec] = {
         "viewer",
         "experimental",
         300,
+        False,
+        True,
+    ),
+    "knowledge.source.mcp_profiles": OpSpec(
+        "knowledge.source.mcp_profiles",
+        "KnowledgeSourceMcpProfilesInput",
+        "KnowledgeSourceMcpProfilesBody",
+        "KnowledgeSourceMcpProfilesOutput",
+        True,
+        "viewer",
+        "experimental",
+        5000,
         False,
         True,
     ),
@@ -10578,6 +10662,100 @@ class KnowledgeBulkDeleteResult(TypedDict, total=False):
     chunks_tombstoned: Required[int]
 
 
+class KnowledgeConnectionMcpConnectInput(TypedDict, total=False):
+    org: Required[str]
+    profile_id: Required[str]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    bearer: NotRequired[Optional[str]]
+
+
+class KnowledgeConnectionMcpConnectBody(TypedDict, total=False):
+    org: NotRequired[str]
+    profile_id: Required[str]
+    request_id: Required[str]
+    label: NotRequired[Optional[str]]
+    bearer: NotRequired[Optional[str]]
+
+
+class KnowledgeConnectionMcpConnectOutput(TypedDict, total=False):
+    connection: Required["MCPConnectionEntry"]
+
+
+class MCPConnectionEntry(TypedDict, total=False):
+    slot: Required[str]
+    generation: Required[str]
+    state: Required[Literal["configured", "stopped", "unavailable", "approval_drift"]]
+    profile_id: NotRequired[Optional[str]]
+    profile_sha256: NotRequired[Optional[str]]
+    label: NotRequired[Optional[str]]
+    compatibility: NotRequired[Literal["unchecked"]]
+    remote_identity_verified: NotRequired[Literal[False]]
+
+
+class MCPSlotInput(TypedDict, total=False):
+    org: Required[str]
+    slot: Required[str]
+
+
+class MCPSlotBody(TypedDict, total=False):
+    org: NotRequired[str]
+    slot: Required[str]
+
+
+class KnowledgeConnectionMcpDisconnectOutput(TypedDict, total=False):
+    disconnected: Required[bool]
+    upstream_revoked: NotRequired[Literal[False]]
+    upstream_action: NotRequired[Literal["revoke_credential_upstream"]]
+
+
+class KnowledgeConnectionMcpDiscoverOutput(TypedDict, total=False):
+    slot: Required[str]
+    generation: Required[str]
+    resources: Required[bool]
+    mapped_read: Required[bool]
+    mapped_search: Required[bool]
+    supported_reads: Required[bool]
+    limitations: Required[list[str]]
+    remote_identity_verified: NotRequired[Literal[False]]
+
+
+class KnowledgeConnectionMcpInspectInput(TypedDict, total=False):
+    org: Required[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeConnectionMcpInspectBody(TypedDict, total=False):
+    org: NotRequired[str]
+    slot: NotRequired[str]
+    request_id: NotRequired[str]
+
+
+class KnowledgeConnectionMcpInspectOutput(TypedDict, total=False):
+    found: Required[bool]
+    slot: Required[str]
+    connection: NotRequired[Optional["MCPConnectionEntry"]]
+    reconciliation: Required[Literal["absent", "present", "incomplete"]]
+
+
+class KnowledgeConnectionMcpListInput(TypedDict, total=False):
+    org: Required[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpListBody(TypedDict, total=False):
+    org: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeConnectionMcpListOutput(TypedDict, total=False):
+    connections: Required[list["MCPConnectionEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+
+
 class KnowledgeDatasetApproveInput(TypedDict, total=False):
     "Approve a dataset's schema, retyping the columns named: its rows are"
 
@@ -11904,6 +12082,41 @@ class KnowledgeSourceEntry(TypedDict, total=False):
     created_by: NotRequired[str]
     created_at: NotRequired[str]
     sync: NotRequired["KnowledgeSourceSync"]
+
+
+class KnowledgeSourceMcpProfilesInput(TypedDict, total=False):
+    "List approved profile declarations for the signed-in caller's organization."
+
+    org: Required[str]
+    query: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeSourceMcpProfilesBody(TypedDict, total=False):
+    "List approved profile declarations for the signed-in caller's organization."
+
+    org: NotRequired[str]
+    query: NotRequired[str]
+    cursor: NotRequired[Optional[str]]
+    limit: NotRequired[int]
+
+
+class KnowledgeSourceMcpProfilesOutput(TypedDict, total=False):
+    profiles: Required[list["MCPProfileEntry"]]
+    next_cursor: NotRequired[Optional[str]]
+    self_service_enabled: Required[bool]
+
+
+class MCPProfileEntry(TypedDict, total=False):
+    "An operator declaration, without remote identity or compatibility verification."
+
+    id: Required[str]
+    label: Required[str]
+    auth: Required[Literal["none", "bearer"]]
+    profile_sha256: Required[str]
+    approved_tools: Required[list[str]]
+    allow_collection_copy: Required[bool]
 
 
 class KnowledgeSourceParseLinksInput(TypedDict, total=False):

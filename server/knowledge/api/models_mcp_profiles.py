@@ -46,3 +46,6 @@ class MCPProfileEntry(BaseModel):
 class MCPProfilesOutput(BaseModel):
     profiles: list[MCPProfileEntry]
     next_cursor: str | None = None
+    self_service_enabled: bool = Field(
+        description="Whether the operator permits self-service source and credential registration."
+    )

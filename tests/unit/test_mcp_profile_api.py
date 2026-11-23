@@ -67,6 +67,7 @@ def auth(subject: str = "person-a", org: str = "org-a", **changes: Any) -> AuthI
 def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
     fake = SimpleNamespace(
         knowledge_source_mcp_profiles_json="",
+        knowledge_source_self_service_enabled=True,
         jwt_secret="unit-profile-cursor-key",
         auth_actually_required=lambda: True,
     )
@@ -100,6 +101,7 @@ def world(monkeypatch: pytest.MonkeyPatch) -> Iterator[SimpleNamespace]:
     monkeypatch.setattr(mcp_profiles, "MCPSourceClient", refuse)
     monkeypatch.setattr(accounts.store, "owned", refuse)
     monkeypatch.setattr(mcp_profiles, "settings", fake)
+    monkeypatch.setattr(mcp_profile_api, "settings", fake, raising=False)
     monkeypatch.setattr(settings_module, "settings", fake)
     monkeypatch.setattr(accounts, "settings", fake)
     monkeypatch.setattr(reader_identity, "settings", fake)
@@ -129,7 +131,11 @@ def test_setting_is_empty_bounded_and_not_live() -> None:
 @pytest.mark.asyncio
 async def test_empty_setting_returns_no_profiles(world: SimpleNamespace) -> None:
     result = await handle_mcp_profiles(MCPProfilesInput(org="org-a"))
-    assert result.model_dump() == {"profiles": [], "next_cursor": None}
+    assert result.model_dump() == {
+        "profiles": [],
+        "next_cursor": None,
+        "self_service_enabled": True,
+    }
     assert world.seen == [("org-a", "person-a")]
 
 
@@ -367,7 +373,11 @@ async def test_query_matches_only_eligible_id_or_label(world: SimpleNamespace) -
     assert [item.id for item in result.profiles] == ["alpha"]
     assert result.next_cursor is None
     missing = await handle_mcp_profiles(MCPProfilesInput(org="org-a", query="hidden"))
-    assert missing.model_dump() == {"profiles": [], "next_cursor": None}
+    assert missing.model_dump() == {
+        "profiles": [],
+        "next_cursor": None,
+        "self_service_enabled": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -380,3 +390,15 @@ async def test_signed_cursor_does_not_preserve_a_revoked_identity(world: SimpleN
     with pytest.raises(LoomServerError) as caught:
         await handle_mcp_profiles(MCPProfilesInput(org="org-a", limit=1, cursor=first.next_cursor))
     assert "MCP_PROFILE_INVALID" not in str(caught.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_operator_registration_policy_is_visible_without_hiding_approved_metadata(
+    world: SimpleNamespace, enabled: bool
+) -> None:
+    configure(world, profile("approved", ["org-a"]))
+    world.settings.knowledge_source_self_service_enabled = enabled
+    result = await handle_mcp_profiles(MCPProfilesInput(org="org-a"))
+    assert result.self_service_enabled is enabled
+    assert [item.id for item in result.profiles] == ["approved"]

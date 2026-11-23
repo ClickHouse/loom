@@ -12,6 +12,7 @@ from server.knowledge.api.models_mcp_profiles import (
 )
 from server.knowledge.app import connected_accounts as accounts
 from server.knowledge.app.mcp_profiles import MCPProfileError, load_mcp_profile_catalog
+from server.settings import settings
 
 # Catalog IDs have no timestamp; the shared cursor carries this fixed keyset anchor.
 _CURSOR_TIME = datetime(1970, 1, 1, tzinfo=UTC)
@@ -43,6 +44,7 @@ async def handle_mcp_profiles(input: MCPProfilesInput) -> MCPProfilesOutput:
             else None
         )
         return MCPProfilesOutput(
+            self_service_enabled=settings.knowledge_source_self_service_enabled,
             profiles=[
                 MCPProfileEntry(
                     id=item.id,

@@ -2476,6 +2476,11 @@ class KnowledgeSettings(BaseModel):
             raise ValueError("MCP_PROFILE_INVALID") from None
         return value
 
+    # Allow self-service source registration and credential storage or replacement.
+    # False refuses those mutations before a probe; existing reads and removal remain available.
+    knowledge_source_self_service_enabled: bool = True
+    # Active MCP connection slots one canonical person may hold per organization.
+    knowledge_mcp_connections_max_per_person: int = Field(default=32, ge=1, le=4096)
     # Active document sources (knowledge.source.add) one namespace may register; an
     # add past it is refused with SOURCE_QUOTA.
     knowledge_sources_max_per_namespace: Annotated[int, LIVE] = Field(default=8, ge=1)
@@ -6428,6 +6433,14 @@ OP_BUDGETS_P99_MS: dict[str, int] = {
     "knowledge.source.check": 30000,
     "knowledge.source.inspect": 400,
     "knowledge.source.list": 300,
+    # Verified owner lookup and a cold bounded operator catalog parse; no source request.
+    "knowledge.source.mcp_profiles": 5000,
+    # Local owner enrollment/retirement is bounded; discovery also waits for the MCP server.
+    "knowledge.connection.mcp_connect": 30000,
+    "knowledge.connection.mcp_disconnect": 30000,
+    "knowledge.connection.mcp_discover": 30000,
+    "knowledge.connection.mcp_inspect": 5000,
+    "knowledge.connection.mcp_list": 5000,
     "knowledge.source.parse_links": 50,
     "knowledge.source.remove": 400,
     "knowledge.source.rotate": 30000,
