@@ -1350,15 +1350,18 @@ async def write_document(
         blob_content_type=str(f.get("mimeType") or "") if original else "",
         source_class="imported",
     )
+    guard = (
+        functools.partial(publication_guard, src) if src.credential_mode == "connected" else None
+    )
+    if src.kind == "mcp":
+        from server.knowledge.app.mcp_source_authority import publication_guard as mcp_guard
+
+        guard = functools.partial(mcp_guard, src)
     with contextlib.suppress(PublicationPending):  # committed; the worker publishes it
         await writes.handle_knowledge_upsert(
             request,
             permissions=permissions,
-            commit_guard=(
-                functools.partial(publication_guard, src)
-                if src.credential_mode == "connected"
-                else None
-            ),
+            commit_guard=guard,
         )
     return True
 
