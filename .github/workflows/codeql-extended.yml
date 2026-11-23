@@ -62,4 +62,11 @@ jobs:
             [.[].runs[].results[]?] as $results
             | "Findings: \($results | length)", "",
               ($results | group_by(.ruleId)[] | "- \(.[0].ruleId): \(length)")
-          ' "$SARIF_DIR"/*.sarif >> "$GITHUB_STEP_SUMMARY"
+          ' "$SARIF_DIR"/*.sarif | tee "$RUNNER_TEMP/codeql-rule-counts.txt" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.event_name == 'pull_request'
+        with:
+          name: codeql-extended-${{ matrix.language }}-counts
+          path: ${{ runner.temp }}/codeql-rule-counts.txt
+          if-no-files-found: error
+          retention-days: 7
