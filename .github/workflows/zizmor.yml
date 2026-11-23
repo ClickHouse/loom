@@ -45,11 +45,6 @@ jobs:
           "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
             --persona=auditor --collect=workflows,dependabot --no-exit-codes \
             --format=json . > "$RUNNER_TEMP/zizmor.json"
-      - name: Annotate findings
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/zizmor-tool/zizmor" --offline --strict-collection --no-config --no-ignores \
-            --persona=auditor --collect=workflows,dependabot --no-exit-codes --format=github .
       - name: List all findings in the job summary
         shell: bash
         run: |
@@ -63,7 +58,7 @@ jobs:
 
           source = Path(os.environ["RUNNER_TEMP"]) / "zizmor.json"
           if source.stat().st_size > 8 * 1024 * 1024:
-              raise ValueError("Findings exceed the report input budget; inspect the annotation log")
+              raise ValueError("Findings exceed the report input budget")
           findings = json.loads(source.read_text())
           counts = Counter(finding["ident"] for finding in findings)
           lines = [f"Total findings: {len(findings)}", ""]
@@ -82,11 +77,10 @@ jobs:
                      "Hosted scanner: zizmor 1.32.0; network mode offline; auditor persona; workflows and dependency-update configuration.\n\n"
                      "Report only: findings need source review; a green job is not a clean audit. "
                      "Scanner, collection and reporting errors fail the job. "
-                     "GitHub limits displayed annotations. "
-                     "Every finding is listed below and emitted in the annotation step log.\n\n"
+                     "Every finding is listed below and in the escaped report log.\n\n"
                      "<pre>" + html.escape("\n".join(lines)) + "</pre>\n")
           if len(summary.encode("utf-8")) > 900_000:
-              raise ValueError("Complete findings exceed the job summary budget; inspect the annotation log")
+              raise ValueError("Complete findings exceed the job summary budget")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
               output.write(summary)
           command_token = secrets.token_hex(16)

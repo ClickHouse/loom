@@ -137,6 +137,7 @@ class WorkflowAuditIssues(unittest.TestCase):
         AUDIT.publish(self.api, self.groups, URL)
         self.assertEqual(len(self.api.issues), 1)
         self.assertEqual(self.api.issues[0]["body"], "Human replaced the entire body")
+        self.assertFalse(self.api.comments)
 
     def test_title_identity_survives_body_replacement_and_finding_absence(self):
         AUDIT.publish(self.api, self.groups, URL)
@@ -271,15 +272,18 @@ class WorkflowAuditIssues(unittest.TestCase):
         self.assertEqual(len(self.api.comments[1]), 3)
         self.assertEqual(AUDIT.publish(self.api, changed, URL)["unchanged"], 1)
 
-    def test_unknown_state_beyond_comment_window_fails_without_guessing(self):
+    def test_unknown_state_beyond_comment_window_defers_only_that_task(self):
         AUDIT.publish(self.api, self.groups, URL)
         self.api.comments[1] = [
             {"id": i, "user": {"login": "contributor"}, "body": "Human reply"} for i in range(101)
         ]
         self.api.calls.clear()
-        with self.assertRaisesRegex(RuntimeError, "100-comment history budget"):
-            AUDIT.publish(self.api, self.groups, URL)
-        self.assertFalse(any(call[0] == "POST" for call in self.api.calls))
+        groups = AUDIT.public_findings([finding(), finding(path=".github/workflows/another.yml")])
+        result = AUDIT.publish(self.api, groups, URL)
+        self.assertEqual(result["deferred"], 1)
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(len(self.api.comments[1]), 101)
+        self.assertFalse(any(call[1].endswith("/comments") for call in self.api.calls))
 
     def test_human_reply_does_not_replace_last_automated_state(self):
         AUDIT.publish(self.api, self.groups, URL)
@@ -472,6 +476,47 @@ class WorkflowAuditIssues(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "no fallback"):
                 client.issue_snapshot()
             self.assertEqual(request.call_count, 1)
+
+    def test_snapshot_retries_an_oversized_page_with_fewer_issues(self):
+        client = AUDIT.GitHub("synthetic-token")
+        response = self.graphql_page()
+        with patch.object(
+            client, "request", side_effect=[AUDIT.ResponseTooLarge("oversized"), response]
+        ) as request:
+            self.assertEqual(len(client.issue_snapshot()), 1)
+        sizes = [call.args[2]["variables"]["size"] for call in request.call_args_list]
+        self.assertEqual(sizes, [100, 50])
+
+    def test_long_path_keeps_the_complete_issue_fingerprint(self):
+        path = ".github/workflows/" + "x" * 180 + ".yml"
+        groups = AUDIT.public_findings([finding(path=path)])
+        key = next(iter(groups))
+        self.assertEqual(AUDIT.publish(self.api, groups, URL)["created"], 1)
+        issue = self.api.issues[0]
+        self.assertLessEqual(len(issue["title"]), 250)
+        self.assertTrue(issue["title"].endswith(f"[workflow-audit:{key}]"))
+        self.assertIn(path, issue["body"])
+        self.assertEqual(AUDIT.publish(self.api, groups, URL)["unchanged"], 1)
+
+    def test_stale_main_run_does_not_read_report_or_publish(self):
+        api = Mock()
+        api.request.return_value = {"object": {"sha": "b" * 40}}
+        env = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": "ClickHouse/loom",
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_SHA": "a" * 40,
+            "GITHUB_RUN_ID": "123",
+            "GH_TOKEN": "synthetic-token",
+        }
+        with (
+            patch.dict(AUDIT.os.environ, env, clear=True),
+            patch("sys.argv", ["audit", "/nonexistent-synthetic-report"]),
+            patch.object(AUDIT, "GitHub", return_value=api),
+        ):
+            AUDIT.main()
+        api.request.assert_called_once_with("GET", AUDIT._MAIN_REF)
 
     def test_graphql_transport_uses_fixed_host_and_rejects_redirects(self):
         response = Mock(status=200)

@@ -389,8 +389,7 @@ those PR checks from starting. Inspect mergeability when no checks follow a push
 
 The workflow security findings workflow runs a bounded audit on pull requests, main
 and release-branch pushes, and a weekly schedule. Pull-request jobs have read-only
-contents access. Findings appear as native annotations, a complete job summary and a
-complete escaped log record. Display limits on annotations do not limit the full report.
+contents access. Findings appear in the job summary and the escaped report log.
 
 The scanner is pinned with a verified archive checksum. It checks workflow and
 dependency-update configuration with the auditor persona, strict collection, no
@@ -406,7 +405,7 @@ vulnerabilities. Ordinary repository checks still gate each change.
 
 Trusted main pushes and the weekly schedule automatically reconcile maintenance issues.
 No manual triage or dispatch is required. The job uses its own trusted checkout and a
-fresh scan; it never consumes a pull-request artifact, executable or report. Its token
+fresh scan. It publishes only when the audited commit is still the default-branch head. Its token
 has contents read and issues write permissions. Pull-request jobs receive no issue
 write permission.
 
@@ -426,9 +425,10 @@ issue selector is not a scanner ignore or a claim that other findings are harmle
 Security-sensitive reports follow [the security policy](../../SECURITY.md); automation does not
 send emails, publish exploit payloads or promise a bounty.
 
-Issue snapshots include the last hundred comment timeline entries in bounded pages, so unchanged tasks
-and human replies do not each consume another API call. If the latest automated state
-is beyond that window, publication fails explicitly rather than guesses or duplicates it.
+Issue snapshots include up to a hundred recent comment timeline entries per task. The
+reporter reduces the page or comment window when the response exceeds its byte limit. It
+defers a task if its last automated status is outside that window. If an edit removes
+the only saved status, the reporter waits until a scan confirms the finding is absent.
 Status follows comment creation time, with its full numeric identifier breaking ties;
 a human edit to an older status cannot make it the latest automated state. Each task has a stable rule-and-path fingerprint. Line shifts, commit hashes and new
 run links do not create another task or status comment. A changed observation count

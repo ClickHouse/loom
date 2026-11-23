@@ -15,6 +15,7 @@ from typing import Any
 
 _REPO = "ClickHouse/loom"
 _ROOT = "/repos/" + _REPO + "/issues"
+_MAIN_REF = "/repos/" + _REPO + "/git/ref/heads/main"
 _BOT = "github-actions[bot]"
 # These rules describe maintainability, not vulnerability or exploit claims.
 _PUBLIC_RULES = {
@@ -101,6 +102,10 @@ def snapshot_user(author: dict[str, Any] | None) -> dict[str, Any]:
     return user
 
 
+class ResponseTooLarge(RuntimeError):
+    """The requested page exceeded the API response limit."""
+
+
 class GitHub:
     """Fixed-host client with bounded calls, responses and wall time; no redirects or retries."""
 
@@ -115,6 +120,7 @@ class GitHub:
         if not (
             (path.startswith(_ROOT) and method in {"GET", "POST"})
             or (path == "/graphql" and method == "POST")
+            or (path == _MAIN_REF and method == "GET")
         ):
             raise ValueError("Unapproved audit API request")
         self.calls += 1
@@ -135,18 +141,19 @@ class GitHub:
             if response.status != (200 if method == "GET" or path == "/graphql" else 201):
                 raise RuntimeError(f"Workflow audit API returned HTTP {response.status}; no retry")
             if len(data) > 2 * 1024 * 1024:
-                raise RuntimeError("Workflow audit API response exceeds budget")
+                raise ResponseTooLarge("Workflow audit API response exceeds budget")
             return json.loads(data)
         finally:
             connection.close()
 
     def issue_snapshot(self) -> list[dict[str, Any]]:
         # Fetch the latest comment with each issue, rather than one read per unchanged task.
-        query = """query($cursor:String) { repository(owner:"ClickHouse",name:"loom") {
-          issues(first:100,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
+        query = """query($cursor:String,$size:Int!,$history:Int!) {
+          repository(owner:"ClickHouse",name:"loom") {
+          issues(first:$size,after:$cursor,filterBy:{createdBy:"github-actions[bot]"},
                  states:[OPEN,CLOSED],orderBy:{field:CREATED_AT,direction:ASC}) {
             nodes { number title body state author {__typename login}
-                    comments:timelineItems(last:100,itemTypes:[ISSUE_COMMENT]) {
+                    comments:timelineItems(last:$history,itemTypes:[ISSUE_COMMENT]) {
                       totalCount nodes { ... on IssueComment {
                         fullDatabaseId createdAt body author {__typename login}
                       } }
@@ -157,20 +164,32 @@ class GitHub:
         output: list[dict[str, Any]] = []
         cursor = None
         seen: set[str] = set()
-        for _ in range(10):
-            response = self.request(
-                "POST", "/graphql", {"query": query, "variables": {"cursor": cursor}}
-            )
+        size = 100
+        history = 100
+        for _ in range(30):
+            variables = {"cursor": cursor, "size": size, "history": history}
+            try:
+                response = self.request(
+                    "POST", "/graphql", {"query": query, "variables": variables}
+                )
+            except ResponseTooLarge:
+                if size > 1:
+                    size = max(1, size // 2)
+                elif history > 1:
+                    history = max(1, history // 2)
+                else:
+                    raise
+                continue
             if response.get("errors"):
                 raise RuntimeError("Workflow issue snapshot query failed; no fallback")
             page = response["data"]["repository"]["issues"]
             nodes, info = page["nodes"], page["pageInfo"]
-            if not isinstance(nodes, list) or len(nodes) > 100:
+            if not isinstance(nodes, list) or len(nodes) > size:
                 raise ValueError("Invalid workflow issue snapshot page")
             for issue in nodes:
                 comments = issue["comments"]
                 latest = comments["nodes"]
-                if not isinstance(latest, list) or len(latest) > 100:
+                if not isinstance(latest, list) or len(latest) > history:
                     raise ValueError("Invalid workflow issue comment window")
                 output.append(
                     {
@@ -236,9 +255,13 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
             counts["deferred"] += 1
             continue
         if issue is None:
-            title = f"Review {group['rule']} in {group['path']} [workflow-audit:{key}]"
-            if len(title) > 250:
-                raise ValueError("Workflow issue title exceeds budget")
+            prefix = f"Review {group['rule']} in "
+            suffix = f" [workflow-audit:{key}]"
+            limit = 250 - len(prefix) - len(suffix)
+            path = group["path"]
+            if len(path) > limit:
+                path = path[: limit - 3] + "..."
+            title = prefix + path + suffix
             api.request("POST", _ROOT, {"title": title, "body": status_body(key, group, run_url)})
             counts["created"] += 1
             continue
@@ -253,8 +276,14 @@ def publish(api: Any, groups: dict[str, dict[str, Any]], run_url: str) -> dict[s
             if comment.get("user", {}).get("login") == _BOT:
                 recent_states.extend(_STATE.findall(comment.get("body") or ""))
         if issue.get("comment_count", 0) > len(comments) and not recent_states:
-            raise RuntimeError("Latest automated state is outside the 100-comment history budget")
+            counts["deferred"] += 1
+            continue
         states.extend(recent_states)
+        # An edited initial body can erase the last observation. Keep the issue
+        # quiet until a later scan can confirm the finding is absent.
+        if not states and group is not None:
+            counts["deferred"] += 1
+            continue
         if states and state_hash(group) == states[-1]:
             counts["unchanged"] += 1
             continue
@@ -284,12 +313,17 @@ def main() -> None:
     run = os.environ["GITHUB_RUN_ID"]
     if not re.fullmatch(r"[1-9][0-9]{0,19}", run):
         raise ValueError("Invalid hosted run identifier")
+    sha = os.environ["GITHUB_SHA"]
+    if not re.fullmatch(r"[a-f0-9]{40}", sha):
+        raise ValueError("Invalid hosted commit")
+    api = GitHub(os.environ["GH_TOKEN"])
+    if api.request("GET", _MAIN_REF)["object"]["sha"] != sha:
+        print("The audit commit is older than the default branch head")
+        return
     if args.findings.stat().st_size > 8 * 1024 * 1024:
         raise ValueError("Workflow findings exceed input budget")
     groups = public_findings(json.loads(args.findings.read_text()))
-    counts = publish(
-        GitHub(os.environ["GH_TOKEN"]), groups, f"https://github.com/{_REPO}/actions/runs/{run}"
-    )
+    counts = publish(api, groups, f"https://github.com/{_REPO}/actions/runs/{run}")
     summary = "Workflow maintenance issues: " + json.dumps(counts, sort_keys=True)
     print(summary)
     with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
