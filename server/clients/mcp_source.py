@@ -160,6 +160,8 @@ class MCPToolMapping:
     revision_path: tuple[str, ...] | None = None
     cursor_argument: str | None = None
     next_cursor_path: tuple[str, ...] | None = None
+    result_format: Literal["structured", "json_text", "text"] = "structured"
+    require_output_schema: bool = True
 
 
 @dataclass(frozen=True, repr=False)
@@ -190,6 +192,7 @@ class MCPReadReceipt:
     requested_id: str
     content_sha256: str
     config_sha256: str
+    identity_verified: bool = True
 
 
 @dataclass(frozen=True, repr=False)
@@ -254,53 +257,138 @@ def _origin(url: str) -> tuple[str, str, int]:
     return endpoint.scheme, endpoint.raw_host.decode("ascii"), endpoint.port or 443
 
 
-# This subset has no references, regular expressions or combinatorial validators.
-_SCHEMA_KEYS = frozenset({"type", "enum", "const", "title", "description"})
+# Instance limits do not depend on a server supplying restrictive schema keywords.
+_MAX_DATA_NODES = 4096
+_MAX_DATA_DEPTH = 16
+_MAX_DATA_ITEMS = 1000
+_MAX_DATA_STRING_BYTES = 1_000_000
+_SCHEMA_ANNOTATIONS = frozenset({"title", "description", "default", "examples"})
+_SCHEMA_KEYS = _SCHEMA_ANNOTATIONS | {"enum", "const"}
 _SCHEMA_TYPE_KEYS = {
-    "object": {"properties", "required", "additionalProperties"},
+    "object": {"properties", "required", "additionalProperties", "minProperties", "maxProperties"},
     "array": {"items", "maxItems", "minItems"},
     "string": {"maxLength", "minLength"},
-    "integer": {"minimum", "maximum"},
-    "number": {"minimum", "maximum"},
+    "integer": {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"},
+    "number": {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"},
     "boolean": set(),
     "null": set(),
 }
 
 
+def _bounded_data(value: Any, maximum: int, *, policy: bool = False) -> None:
+    remaining = _MAX_DATA_NODES
+    pending = [(value, 0)]
+    while pending:
+        node, depth = pending.pop()
+        remaining -= 1
+        if remaining < 0 or depth > _MAX_DATA_DEPTH:
+            raise MCPSourceError("limit")
+        if isinstance(node, dict):
+            if len(node) > 256 or any(not isinstance(key, str) for key in node):
+                raise MCPSourceError("limit")
+            pending.extend((item, depth + 1) for pair in node.items() for item in pair)
+        elif isinstance(node, list):
+            if len(node) > _MAX_DATA_ITEMS:
+                raise MCPSourceError("limit")
+            pending.extend((item, depth + 1) for item in node)
+        elif isinstance(node, str):
+            try:
+                if policy:
+                    _string(node, min(maximum, _MAX_DATA_STRING_BYTES), empty=True)
+                if len(node.encode()) > min(maximum, _MAX_DATA_STRING_BYTES):
+                    raise MCPSourceError("limit")
+            except UnicodeError:
+                raise MCPSourceError("schema") from None
+        elif type(node) is int:
+            if node.bit_length() > 4096:
+                raise MCPSourceError("limit")
+        elif node is not None and type(node) not in (bool, float):
+            raise MCPSourceError("schema")
+    _json(value, maximum)
+
+
+def _schema_kind(node: dict[str, Any]) -> str | None:
+    kind = node.get("type")
+    if isinstance(kind, list):
+        if len(kind) != 2 or "null" not in kind:
+            raise MCPSourceError("schema")
+        non_null = [item for item in kind if item != "null"]
+        if len(non_null) != 1:
+            raise MCPSourceError("schema")
+        kind = non_null[0]
+    if kind is not None and (not isinstance(kind, str) or kind not in _SCHEMA_TYPE_KEYS):
+        raise MCPSourceError("schema")
+    return kind
+
+
+def _schema_children(node: dict[str, Any], *, root: bool = False) -> list[Any]:
+    keys = set(node) - ({"$defs"} if root else set())
+    if "enum" in node and (not isinstance(node["enum"], list) or len(node["enum"]) > 32):
+        raise MCPSourceError("schema")
+    if "$ref" in node:
+        if keys - (_SCHEMA_ANNOTATIONS | {"$ref"}):
+            raise MCPSourceError("schema")
+        return []
+    if "anyOf" in node:
+        choices = node["anyOf"]
+        if (
+            keys - (_SCHEMA_KEYS | {"anyOf"})
+            or not isinstance(choices, list)
+            or len(choices) != 2
+            or sum(choice == {"type": "null"} for choice in choices) != 1
+        ):
+            raise MCPSourceError("schema")
+        return choices
+    kind = _schema_kind(node)
+    allowed = _SCHEMA_KEYS | ({"type"} | _SCHEMA_TYPE_KEYS[kind] if kind else set())
+    if keys - allowed:
+        raise MCPSourceError("schema")
+    if kind == "object":
+        properties = node.get("properties", {})
+        additional = node.get("additionalProperties", True)
+        if not isinstance(properties, dict) or len(properties) > 64:
+            raise MCPSourceError("schema")
+        for name in properties:
+            _string(name, 128)
+        if type(additional) is not bool and not isinstance(additional, dict):
+            raise MCPSourceError("schema")
+        return [*properties.values(), *([additional] if isinstance(additional, dict) else [])]
+    return [node["items"]] if kind == "array" and "items" in node else []
+
+
 def _schema(schema: dict[str, Any]) -> None:
-    _json(schema, 16_384)
+    if not isinstance(schema, dict):
+        raise MCPSourceError("schema")
+    _bounded_data(schema, 16_384)
+    definitions = schema.get("$defs", {})
+    if not isinstance(definitions, dict) or len(definitions) > 64:
+        raise MCPSourceError("schema")
+    for name in definitions:
+        _string(name, 128)
+        if any(char in name for char in "/~#%"):
+            raise MCPSourceError("schema")
     remaining = 256
 
-    def visit(node: Any, depth: int) -> None:
+    def visit(node: Any, depth: int, active: tuple[str, ...] = (), *, root: bool = False) -> None:
         nonlocal remaining
         remaining -= 1
-        if remaining < 0 or depth > 8 or not isinstance(node, dict):
+        if remaining < 0 or depth > 16 or not isinstance(node, dict):
             raise MCPSourceError("schema")
-        kind = node.get("type")
-        if not isinstance(kind, str) or kind not in _SCHEMA_TYPE_KEYS:
-            raise MCPSourceError("schema")
-        if set(node) - (_SCHEMA_KEYS | _SCHEMA_TYPE_KEYS[kind]):
-            raise MCPSourceError("schema")
-        if node["type"] == "object":
-            if node.get("additionalProperties") is not False:
+        children = _schema_children(node, root=root)
+        if "$ref" in node:
+            ref = node["$ref"]
+            if not isinstance(ref, str) or not ref.startswith("#/$defs/"):
                 raise MCPSourceError("schema")
-            properties = node.get("properties", {})
-            if not isinstance(properties, dict) or len(properties) > 32:
+            name = ref[len("#/$defs/") :]
+            if name not in definitions or name in active:
                 raise MCPSourceError("schema")
-            for name, child in properties.items():
-                _string(name, 128)
-                visit(child, depth + 1)
-        if node["type"] == "array":
-            if type(node.get("maxItems")) is not int or not 0 <= node["maxItems"] <= 1000:
-                raise MCPSourceError("schema")
-            visit(node.get("items"), depth + 1)
-        if node["type"] == "string":
-            if type(node.get("maxLength")) is not int or not 0 <= node["maxLength"] <= 4_000_000:
-                raise MCPSourceError("schema")
-        if "enum" in node and (not isinstance(node["enum"], list) or len(node["enum"]) > 32):
-            raise MCPSourceError("schema")
+            visit(definitions[name], depth + 1, (*active, name))
+        for child in children:
+            visit(child, depth + 1, active)
 
-    visit(schema, 0)
+    for name, definition in definitions.items():
+        visit(definition, 1, (name,))
+    visit(schema, 0, root=True)
     try:
         Draft202012Validator.check_schema(schema)
     except (SchemaError, ValueError, TypeError, RecursionError):
@@ -308,13 +396,125 @@ def _schema(schema: dict[str, Any]) -> None:
 
 
 def _validate(schema: dict[str, Any], value: Any, maximum: int) -> None:
-    _json(value, maximum)
+    _bounded_data(value, maximum)
     try:
         # An explicit empty registry never retrieves external schema resources.
         valid = Draft202012Validator(schema, registry=Registry()).is_valid(value)
-    except Unresolvable:
+    except (Unresolvable, ValueError, TypeError, RecursionError):
         raise MCPSourceError("schema") from None
     if not valid:
+        raise MCPSourceError("schema")
+
+
+def validate_mcp_tool_mapping(mapping: MCPToolMapping, *, search: bool = False) -> None:
+    """Validate an operator contract without opening a session or granting authority."""
+    _string(mapping.name, 128)
+    _string(mapping.argument_name, 128)
+    _schema(mapping.input_schema)
+    _schema(mapping.output_schema)
+    if (
+        mapping.result_format not in ("structured", "json_text", "text")
+        or type(mapping.require_output_schema) is not bool
+        or mapping.input_schema.get("type") != "object"
+        or mapping.output_schema.get("type")
+        != ("string" if mapping.result_format == "text" else "object")
+        or (search and mapping.result_format == "text")
+        or (mapping.result_format == "text" and mapping.items_path)
+    ):
+        raise MCPSourceError("config")
+    if mapping.result_format == "text" and (
+        (mapping.id_path, mapping.title_path, mapping.text_path, mapping.uri_path)
+        != (("id",), ("title",), ("text",), ("uri",))
+        or mapping.revision_path is not None
+        or mapping.next_cursor_path is not None
+        or mapping.cursor_argument is not None
+    ):
+        raise MCPSourceError("config")
+    if not isinstance(mapping.fixed_arguments, dict):
+        raise MCPSourceError("config")
+    if mapping.cursor_argument is not None:
+        _string(mapping.cursor_argument, 128)
+    _bounded_data(mapping.fixed_arguments, 16_384, policy=True)
+    if mapping.argument_name in mapping.fixed_arguments or (
+        mapping.cursor_argument is not None
+        and (
+            mapping.cursor_argument == mapping.argument_name
+            or mapping.cursor_argument in mapping.fixed_arguments
+        )
+    ):
+        raise MCPSourceError("config")
+    for path in (
+        mapping.items_path,
+        mapping.id_path,
+        mapping.title_path,
+        mapping.text_path,
+        mapping.uri_path,
+        mapping.revision_path,
+        mapping.next_cursor_path,
+    ):
+        if path is not None:
+            if not isinstance(path, tuple) or len(path) > 8:
+                raise MCPSourceError("config")
+            for part in path:
+                _string(part, 128)
+
+
+def _json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    if len(pairs) > 256:
+        raise MCPSourceError("limit")
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise MCPSourceError("schema")
+        result[key] = value
+    return result
+
+
+def _nonfinite(value: str) -> None:
+    raise MCPSourceError("schema")
+
+
+def _text_json(text: str, maximum: int) -> Any:
+    _bounded_data(text, maximum)
+    try:
+        return json.loads(text, object_pairs_hook=_json_pairs, parse_constant=_nonfinite)
+    except (ValueError, TypeError, RecursionError):
+        raise MCPSourceError("schema") from None
+
+
+def _tool_value(result: types.CallToolResult, mapping: MCPToolMapping, limits: MCPLimits) -> Any:
+    if result.isError:
+        raise MCPSourceError("protocol")
+    _bounded_data(result.model_dump(mode="json"), limits.max_wire_bytes)
+    if any(not isinstance(block, types.TextContent) for block in result.content):
+        raise MCPSourceError("unsupported")
+    if mapping.result_format == "structured":
+        value: Any = result.structuredContent
+        if value is None:
+            raise MCPSourceError("protocol")
+    else:
+        if result.structuredContent is not None or len(result.content) != 1:
+            raise MCPSourceError("protocol")
+        block = result.content[0]
+        if not isinstance(block, types.TextContent):
+            raise MCPSourceError("unsupported")
+        value = (
+            _text_json(block.text, limits.max_content_bytes)
+            if mapping.result_format == "json_text"
+            else block.text
+        )
+    _validate(mapping.output_schema, value, limits.max_content_bytes)
+    return value
+
+
+def _check_tool_schema(tool: types.Tool, mapping: MCPToolMapping) -> None:
+    _schema(tool.inputSchema)
+    if tool.inputSchema != mapping.input_schema:
+        raise MCPSourceError("schema")
+    if tool.outputSchema is not None:
+        _schema(tool.outputSchema)
+    expected = mapping.output_schema if mapping.require_output_schema else None
+    if tool.outputSchema != expected:
         raise MCPSourceError("schema")
 
 
@@ -522,42 +722,7 @@ class MCPSourceClient:
         if set(config.approved_tools) != {m.name for m in mappings}:
             raise MCPSourceError("config")
         for mapping in mappings:
-            _string(mapping.name, 128)
-            _string(mapping.argument_name, 128)
-            _schema(mapping.input_schema)
-            _schema(mapping.output_schema)
-            if (
-                mapping.input_schema["type"] != "object"
-                or mapping.output_schema["type"] != "object"
-            ):
-                raise MCPSourceError("config")
-            if not isinstance(mapping.fixed_arguments, dict):
-                raise MCPSourceError("config")
-            if mapping.cursor_argument is not None:
-                _string(mapping.cursor_argument, 128)
-            _json(mapping.fixed_arguments, 16_384)
-            if mapping.argument_name in mapping.fixed_arguments or (
-                mapping.cursor_argument is not None
-                and (
-                    mapping.cursor_argument == mapping.argument_name
-                    or mapping.cursor_argument in mapping.fixed_arguments
-                )
-            ):
-                raise MCPSourceError("config")
-            for path in (
-                mapping.items_path,
-                mapping.id_path,
-                mapping.title_path,
-                mapping.text_path,
-                mapping.uri_path,
-                mapping.revision_path,
-                mapping.next_cursor_path,
-            ):
-                if path is not None:
-                    if not isinstance(path, tuple) or len(path) > 8:
-                        raise MCPSourceError("config")
-                    for part in path:
-                        _string(part, 128)
+            validate_mcp_tool_mapping(mapping, search=mapping is self._config.search)
         self._privacy: ExitStack | None = None
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
@@ -591,13 +756,18 @@ class MCPSourceClient:
         return hashlib.sha256(_json(asdict(self._config), 131_072)).hexdigest()
 
     def _with_receipt(
-        self, evidence: MCPEvidence, operation: Literal["resources/read", "tools/call"]
+        self,
+        evidence: MCPEvidence,
+        operation: Literal["resources/read", "tools/call"],
+        *,
+        identity_verified: bool = True,
     ) -> MCPEvidence:
         receipt = MCPReadReceipt(
             operation,
             evidence.resource_id,
             hashlib.sha256(evidence.text.encode()).hexdigest(),
             self.config_sha256,
+            identity_verified,
         )
         return replace(evidence, receipt=receipt)
 
@@ -803,11 +973,7 @@ class MCPSourceClient:
                             continue
                         for mapping in (self._config.search, self._config.read):
                             if mapping is not None and mapping.name == tool.name:
-                                if (
-                                    tool.inputSchema != mapping.input_schema
-                                    or tool.outputSchema != mapping.output_schema
-                                ):
-                                    raise MCPSourceError("schema")
+                                _check_tool_schema(tool, mapping)
                         found.add(tool.name)
                     if len(seen) > self._config.limits.max_results:
                         raise MCPSourceError("limit")
@@ -886,15 +1052,18 @@ class MCPSourceClient:
                 raise MCPSourceError("unsupported")
             arguments[mapping.cursor_argument] = cursor
         _validate(mapping.input_schema, arguments, 32_768)
-        result = await session.call_tool(mapping.name, arguments)
+        # Public SDK RPC path lets independent data bounds precede schema validation.
+        result = await session.send_request(
+            types.ClientRequest(
+                types.CallToolRequest(
+                    params=types.CallToolRequestParams(name=mapping.name, arguments=arguments)
+                )
+            ),
+            types.CallToolResult,
+        )
         if self._schema_changed:
             raise MCPSourceError("schema")
-        if result.isError or result.structuredContent is None:
-            raise MCPSourceError("protocol")
-        _validate(
-            mapping.output_schema, result.structuredContent, self._config.limits.max_content_bytes
-        )
-        return result.structuredContent
+        return _tool_value(result, mapping, self._config.limits)
 
     def _evidence(self, value: Any, mapping: MCPToolMapping) -> MCPEvidence:
         identity = _string(_path(value, mapping.id_path))
@@ -934,19 +1103,25 @@ class MCPSourceClient:
 
         return await self._run(action)
 
+    async def _read_tool(self, session: ClientSession, identity: str) -> MCPEvidence:
+        mapping = self._config.read
+        assert mapping is not None
+        result = await self._tool(session, mapping, identity)
+        if mapping.result_format == "text":
+            evidence = MCPEvidence(identity, identity, identity, result)
+            return self._with_receipt(evidence, "tools/call", identity_verified=False)
+        evidence = self._evidence(_path(result, mapping.items_path), mapping)
+        if evidence.resource_id != identity:
+            raise MCPSourceError("protocol")
+        return self._with_receipt(evidence, "tools/call")
+
     async def read(self, resource_id: str) -> MCPEvidence:
         async def action(session: ClientSession) -> MCPEvidence:
             identity = _string(resource_id)
             if identity not in self._selected_ids:
                 raise MCPSourceError("denied")
             if self._config.read is not None:
-                result = await self._tool(session, self._config.read, identity)
-                evidence = self._evidence(
-                    _path(result, self._config.read.items_path), self._config.read
-                )
-                if evidence.resource_id != identity:
-                    raise MCPSourceError("protocol")
-                return self._with_receipt(evidence, "tools/call")
+                return await self._read_tool(session, identity)
             if self._discovery is None or not self._discovery.resources:
                 raise MCPSourceError("unsupported")
             result = await session.read_resource(AnyUrl(identity))

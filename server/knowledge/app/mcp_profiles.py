@@ -18,6 +18,7 @@ from server.clients.mcp_source import (
     MCPSourceConfig,
     MCPSourceError,
     MCPToolMapping,
+    validate_mcp_tool_mapping,
 )
 from server.knowledge.domain.mcp_sources import (
     ConnectionEnvelope,
@@ -84,7 +85,7 @@ def _nonfinite(value: str) -> None:
 def _bounded_tree(value: Any) -> None:
     remaining = MAX_PROFILE_NODES
 
-    def visit(node: Any, depth: int) -> None:
+    def visit(node: Any, depth: int, *, schema_data: bool = False) -> None:
         nonlocal remaining
         remaining -= 1
         if remaining < 0 or depth > MAX_PROFILE_DEPTH:
@@ -92,12 +93,21 @@ def _bounded_tree(value: Any) -> None:
         if isinstance(node, dict):
             for key, child in node.items():
                 _text(key, MAX_SCHEMA_BYTES, empty=True)
-                visit(child, depth + 1)
+                visit(
+                    child,
+                    depth + 1,
+                    schema_data=schema_data
+                    or (depth == 2 and key in {"input_schema", "output_schema"}),
+                )
         elif isinstance(node, list):
             for child in node:
-                visit(child, depth + 1)
+                visit(child, depth + 1, schema_data=schema_data)
         elif isinstance(node, str):
-            _text(node, MAX_SCHEMA_BYTES, empty=True)
+            if schema_data:
+                if len(node.encode()) > MAX_SCHEMA_BYTES:
+                    raise MCPProfileError()
+            else:
+                _text(node, MAX_SCHEMA_BYTES, empty=True)
         elif isinstance(node, float) and not math.isfinite(node):
             raise MCPProfileError()
 
@@ -113,7 +123,7 @@ def _strings(value: Any, count: int, size: int) -> tuple[str, ...]:
     return result
 
 
-def _mapping(value: Any) -> MCPToolMapping | None:
+def _mapping(value: Any, *, search: bool = False) -> MCPToolMapping | None:
     if value is None:
         return None
     data = dict(
@@ -147,7 +157,9 @@ def _mapping(value: Any) -> MCPToolMapping | None:
             if not isinstance(path, list) or len(path) > 8:
                 raise MCPProfileError()
             data[name] = tuple(_text(part, 128) for part in path)
-    return MCPToolMapping(**data)
+    mapping = MCPToolMapping(**data)
+    validate_mcp_tool_mapping(mapping, search=search)
+    return mapping
 
 
 def _config(value: Any) -> MCPSourceConfig:
@@ -164,7 +176,7 @@ def _config(value: Any) -> MCPSourceConfig:
         endpoint=_text(data["endpoint"], 2048),
         bearer_audience=audience,
         approved_tools=_strings(data.get("approved_tools", []), 2, 128),
-        search=_mapping(data.get("search")),
+        search=_mapping(data.get("search"), search=True),
         read=_mapping(data.get("read")),
         limits=MCPLimits(**limits),
     )

@@ -59,17 +59,66 @@ Returned resource links are evidence, never instructions to fetch an arbitrary U
 Listing and search do not expand the explicitly approved resource identities. An empty
 selection grants no read authority.
 
-The qualified content profile is text resources and mapped structured tool output. Binary
-resource blobs and tools that return only unstructured text are unsupported. Approved
-tool schemas use a bounded subset with closed objects, bounded arrays and strings,
-and no references, regular expressions or combinatorial validators.
-Keywords must belong to the schema's declared type. External schema retrieval is
-disabled independently of configuration validation.
+Text resources and explicitly mapped tool results use the same evidence engine. Binary
+resource blobs and binary tool content remain unsupported. A mapping declares
+`result_format`; content, descriptions and tool hints never select a format:
+
+| Format | Result contract |
+| --- | --- |
+| `structured` (default) | Validate `structuredContent` against the configured object schema. Text alone is refused. |
+| `json_text` | Require exactly one text block and no structured content. Parse strict JSON, then validate the configured object schema and apply its exact selectors. Duplicate keys, nonfinite numbers, prose and malformed JSON are refused. |
+| `text` | Read only: require exactly one text block and no structured content, validated against a string schema. Bind the body to the selected request identity; custom structured selectors and cursors are refused. |
+
+Search always needs a validated structured row projection, including when its carrier is
+JSON text. No model parses a result and no format falls back to another format. Numeric
+resource identities are unsupported; identities and cursor values remain bounded strings.
+
+`require_output_schema` defaults to true: discovery admits and compares the advertised
+output schema exactly with the configured result contract. With false, the server must
+omit `outputSchema`; the operator's configured schema validates every result. Appearance
+or disappearance of that advertised schema is drift. Input schema admission and exact
+comparison apply in both cases. Defaults in schemas never fill fixed arguments or grant
+scope. The public SDK session request API performs the tool RPC; independent result bounds
+run before the client's schema validator, without invoking duplicate SDK output validation.
+
+### Schema subset and work bounds
+
+Schemas may describe typed objects, homogeneous arrays, primitive values and nullable
+optionals. Object `additionalProperties` may be omitted, boolean or a supported schema.
+String and array length keywords are optional. `enum`, `const`, numeric bounds and bounded
+`title`, `description`, `default` and `examples` data are supported. Descriptions may contain
+newlines; endpoint, identity, tool, selector and fixed policy strings may not.
+
+Root `$defs` and acyclic `#/$defs/name` references are supported. Definition names cannot
+contain pointer escapes, slashes, fragments or percent escapes. A nullable `anyOf` contains
+exactly one null schema and one supported alternative; a two-element `type` array may
+likewise pair one type with null. Empty schemas permit bounded data. Mapping roots still
+declare an object type, or a string type for plain text.
+
+Admission rejects external or dynamic references, cycles, nested definitions, schema
+resource identifiers, regex keywords, format validators and other combinators. Keywords
+must apply to their declared type, so an inapplicable keyword cannot hide a reference.
+Schemas are limited to 16,384 serialized bytes, 64 definitions, 64 properties per typed
+object, depth 16 and 256 expanded schema visits. Every definition is checked even if unused;
+shared-reference fanout consumes the expanded budget. Runtime validation uses the public
+JSON Schema validator and an empty public reference registry: no URI can trigger remote
+schema retrieval even if admission is bypassed.
+
+Instances have independent limits before validation: 4,096 data nodes (including object
+keys), depth 16, 256 object members, 1,000 array items, 1,000,000 UTF-8 bytes per string and
+4,096 bits per integer, plus the configured serialized payload byte limit. Protocol results
+and extracted values are both bounded. Together with the finite expanded schema traversal
+and nullable-only branching, these limits bound validation work without requiring servers
+to advertise restrictive length keywords. This subset does not claim general JSON Schema
+compatibility.
 
 Each read produces normalized evidence: resource identity, citation URI, title, media
 type, content and any supplied revision. A read receipt binds the requested identity,
 configured operation and returned body; listing metadata and search snippets have no
-successful resource-read receipt. Identity is scoped by the source connection;
+successful resource-read receipt. `identity_verified` is false for plain-text tool reads:
+that receipt binds the approved request and body but verifies no separately echoed identity.
+Other reads verify the returned identity and set it true. Neither value establishes reader
+permissions. Identity is scoped by the source connection;
 the same upstream identifier on another connection denotes separate evidence. A caller
 that persists a document must retain the connection and resource identity with its
 provenance. A citation address alone does not establish tenant or reader authority.
