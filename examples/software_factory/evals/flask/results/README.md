@@ -5,6 +5,12 @@ contains 45 primary attempts and six baseline controls using stock Claude Code.
 All 36 Loom attempts invoke Loom, but no arm meets the combined quality, cost and
 time target. Historical memory does not improve quality in this cohort.
 
+The [native CLI option-order replay](native-cli-order-replay/README.md)
+records one matched attempt per arm after the startup and Python decorator
+changes. All five pass the hidden and blind grades. Three Loom arms reach
+both observed cost and agent-time targets. The first-prompt cache sensitivity
+and end-to-end time leave the combined target open.
+
 The [native CLI option-order pilot](native-cli-order-pilot/README.md) records
 five matched attempts on a separate upstream issue. All pass the hidden and
 blind grades. Tree-sitter and SCIP with memory meet the observed cost and
